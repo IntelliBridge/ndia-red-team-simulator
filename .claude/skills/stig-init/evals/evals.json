@@ -1,0 +1,75 @@
+{
+  "skill_name": "stig-init",
+  "evals": [
+    {
+      "id": 1,
+      "name": "greenfield-fastapi-keycloak",
+      "prompt": "I have a fresh FastAPI app with a Keycloak realm export. Can you set up STIG checklist tracking? It's a single backend service called 'orders-api' at apps/orders-api/, with a realm at infra/keycloak/realm-export.json. No existing eMASS state.",
+      "expected_output": "After the skill runs, the target repo has stig/config.yaml with one asset (`orders-api`) declaring fastapi + keycloak stacks and the keycloak_realm path correctly set. stig/checklists/orders-api.cklb exists with stig_id=Application_Security_Development_STIG, version=6, and the MFA + TLS rules have evaluated.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "monorepo-with-library-fan-out",
+      "prompt": "Help me bootstrap STIG tracking for our monorepo. We have three apps under apps/ (one fastapi backend, one react frontend, one keycloak gateway) and 5 shared python libraries under packages/. The libraries should be tracked as one logical asset, not five.",
+      "expected_output": "stig/config.yaml ends up with 4 assets: the three apps with correct stacks, plus one consolidated library asset (audit_logger / audit_events paths from the most central package). Validate emits no library-fan-out advisory after the consolidation.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "migration-from-existing-stig-manager",
+      "prompt": "We already have STIG Manager set up with three assets imported under host_names dsa-backend, dsa-frontend, and psp7-gateway. Can you migrate this repo to the stig-check tracking pattern without breaking the existing STIG Manager link? The auto-detector probably names them differently.",
+      "expected_output": "stig/config.yaml's host_name fields are byte-stable to the prior values (dsa-backend, dsa-frontend, psp7-gateway). The skill explicitly confirms host_names with the user before generating checklists. Asset names in config also match. Re-import would update existing rows, not create duplicates.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "author-grep-rule-hsts-header",
+      "prompt": "I want to add a stig-check rule that checks our FastAPI backend emits a `Strict-Transport-Security` HTTP response header. The dsa-backend asset's middleware path is already declared in stig/config.yaml. Drop the rule and a paired pytest into a new directory at /tmp/stig-rule-eval-4/ -- do NOT modify the actual stig/rules/ in the repo. Use the existing stig-check engine and follow the project's rule conventions.",
+      "expected_output": "Two files exist under /tmp/stig-rule-eval-4/: a rule file V_NNNNNN.py with @register, vuln_id, stig_id, requires_stacks=('fastapi',), requires_paths including backend_middleware, and an evaluate() that uses grep against the middleware path. A paired test file at tests/test_V_NNNNNN.py covers passes/opens/not_applicable cases. The agent picked a real V-id from the vendored XCCDF (HSTS maps to a TLS / transmission-confidentiality control), and used the appropriate path key.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "manual-control-flagged-not-automatable",
+      "prompt": "Can you automate the STIG control about ensuring the application's security plan is reviewed annually by the ISSO? I want it as a stig-check rule with a paired test. Drop the files into /tmp/stig-rule-eval-5/.",
+      "expected_output": "The skill recognizes this is a manual / paperwork control and does NOT pretend to automate it. Either: (a) it scaffolds a rule that returns RuleResult.not_reviewed(...) with a clear summary like 'manual review only -- see SSP', and explains in the docstring that the check_content text requires human review; OR (b) it explicitly declines to scaffold and explains the control isn't automatable, recommending the user document it in stig/README.md and leave the .cklb status as not_reviewed. Either response demonstrates the skill's judgment about manual vs automatable controls.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "name": "author-structural-keycloak-rule",
+      "prompt": "Write a stig-check rule for the psp7-gateway asset that validates the Keycloak realm export has bruteForceProtected=true AND failureFactor (lockoutThreshold) >= 3 attempts. Pair it with a pytest covering: the realm has both fields set correctly (not_a_finding), the realm has bruteForceProtected=false (open), the realm has bruteForceProtected=true but failureFactor=1 (open), and the asset doesn't declare keycloak_realm (not_applicable). Drop everything into /tmp/stig-rule-eval-6/.",
+      "expected_output": "A structural-parse rule under /tmp/stig-rule-eval-6/V_NNNNNN.py that loads the realm JSON, checks both fields, returns appropriate RuleResults with informative evidence (snippets of the realm JSON), and handles JSON parse errors as not_reviewed. requires_stacks=('keycloak',), requires_paths=('keycloak_realm',). Paired test at /tmp/stig-rule-eval-6/tests/test_V_NNNNNN.py exercises all four cases and uses the engine's RuleContext + Config fixture pattern.",
+      "files": []
+    },
+    {
+      "id": 7,
+      "name": "multibenchmark-wizard-asd-plus-websrg",
+      "prompt": "I'm setting up stig-check on a fresh repo at /tmp/stig-eval-7/. It's got a FastAPI backend at apps/api/ (which talks to a Keycloak realm at infra/keycloak/realm.json) plus an nginx reverse proxy in front of it (configs at deploy/nginx/tls.conf and deploy/nginx/http.conf). I need both ASD STIG and the DISA Web Server SRG since this thing terminates TLS in nginx. Walk me through the setup -- you can skip the actual XCCDF download but the config and proposal should be done. Don't touch any other directory.",
+      "expected_output": "Under /tmp/stig-eval-7/ the agent creates stig/config.yaml that uses the new `benchmarks:` list (NOT the legacy single `xccdf:` field) declaring both `asd` and `websrg` benchmark ids. The websrg benchmark's `applies_to_assets` is correctly scoped (the api asset gets ASD; the nginx-bearing asset gets BOTH asd + websrg, or websrg is unscoped and applies everywhere if that's the agent's call). Each asset declares the right stacks (api=[fastapi, keycloak], nginx asset includes nginx and points at nginx_config). Agent uses `stig-check init --with-benchmark asd --with-benchmark websrg --skip-xccdf` (or equivalent flags). Agent does NOT write a legacy `xccdf:` line.",
+      "files": []
+    },
+    {
+      "id": 8,
+      "name": "websrg-decision-rule-mixed-assets",
+      "prompt": "Look at this stig/config.yaml I have at /tmp/stig-eval-8/stig/config.yaml -- I want to add the Web Server SRG to it. There are 5 assets: a fastapi backend (no nginx), a react frontend served by nginx, a keycloak+nginx gateway, an nginx-only static asset host, and a python library bundle (no HTTP at all). Which assets should get the websrg benchmark and why? Update the config to add it with the right `applies_to_assets:` scoping. Don't touch the existing benchmark or asset definitions. Don't run the engine or generate cklbs.",
+      "expected_output": "The agent adds a second benchmark spec under `benchmarks:` with `id: websrg` AND a non-empty `applies_to_assets:` list. The list includes the three assets with HTTP surfaces (frontend nginx, keycloak gateway, nginx-only host) and EXCLUDES the fastapi-only backend (no nginx) and the python library bundle. The agent explains its decision -- ideally citing the 'When does Web Server SRG apply?' rule (nginx, fastify, or any HTTP-serving asset) and explicitly noting why the backend-without-nginx and the library are excluded. Bonus: the agent flags that if the fastapi backend is fronted by the gateway nginx in production, security controls migrate to the gateway asset (defense-in-depth pattern).",
+      "files": []
+    },
+    {
+      "id": 9,
+      "name": "author-websrg-nginx-rule-csp-header",
+      "prompt": "Author a stig-check rule for the Web Server SRG that confirms our nginx config emits a `Content-Security-Policy` response header on TLS server blocks. Pick a real vuln id from the vendored U_Web_Server_V3R3 XCCDF (the closest control family is the HTTP security headers / minimize disclosure family). Drop the rule and paired pytest into /tmp/stig-rule-eval-9/. Use the engine helpers (nginx_conf_paths, grep, evidence_lines). Don't modify the actual repo's stig/rules/.",
+      "expected_output": "Under /tmp/stig-rule-eval-9/ a rule file (named after the picked vuln id, e.g. V_206XXX.py) declares `benchmark_id = 'websrg'`, `requires_stacks=('nginx',)`, `requires_paths=('nginx_config',)`, and uses `nginx_conf_paths(ctx, 'nginx_config')` plus `grep(ctx, ...)` to look for `add_header Content-Security-Policy` in the resolved .conf files. Returns RuleResult.not_a_finding when found, RuleResult.open with a finding_details suggesting the directive when missing, and RuleResult.not_applicable when no nginx confs are present. A paired test under tests/ exercises pass + fail + not_applicable using a RuleContext built against tmp_path fixtures (matching the test_starters_websrg.py style). The vuln id picked is real (one of V-206350..V-260902, ideally in the SRG-APP-000266 disclosure family or SRG-APP-000439 transmission family).",
+      "files": []
+    },
+    {
+      "id": 10,
+      "name": "author-websrg-fastify-rule-cookie-secure",
+      "prompt": "Write a Web Server SRG stig-check rule that verifies our @cdao/mcp-data-server's Fastify setup registers @fastify/cookie with the `secure: true` option (so cookies aren't sent over plain HTTP). The Fastify constructor lives in packages/mcp-data-server/src/server.ts in the real repo, but for this eval the asset's `server_config` path points at /tmp/stig-rule-eval-10/fixtures/server.ts -- you'll need to create a representative TS source there too. Drop rule + test + fixture into /tmp/stig-rule-eval-10/.",
+      "expected_output": "Under /tmp/stig-rule-eval-10/ a rule file declares `benchmark_id = 'websrg'`, `requires_stacks=('fastify',)`, `requires_paths=('server_config',)`, and uses a regex (case-insensitive on the Fastify constructor name, e.g. `[Ff]astify`) to verify `@fastify/cookie` is registered AND `secure: true` (or a truthy non-false expression) appears in its options. Pattern correctly handles common variations: helmet/cookie/cors plugin chains, multi-line option blocks, conditional truthy expressions like `secure: process.env.NODE_ENV === 'production'`. A paired test exercises pass/fail/not_applicable. The fixture TS source under /tmp/stig-rule-eval-10/fixtures/server.ts is a credible Fastify server with the registration. The rule does NOT spawn a Node process -- it's a static regex check.",
+      "files": []
+    }
+  ]
+}

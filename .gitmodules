@@ -1,0 +1,12 @@
+[submodule "project_repos/cai"]
+	path = project_repos/cai
+	url = https://github.com/aliasrobotics/cai.git
+[submodule "project_repos/mcp-kali-server"]
+	path = project_repos/mcp-kali-server
+	url = https://gitlab.com/kalilinux/packages/mcp-kali-server.git
+[submodule "project_repos/vulnerability-fixer"]
+	path = project_repos/vulnerability-fixer
+	url = https://github.com/OpenHands/vulnerability-fixer.git
+[submodule "project_repos/strix"]
+	path = project_repos/strix
+	url = https://github.com/usestrix/strix.git

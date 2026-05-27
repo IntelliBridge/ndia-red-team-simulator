@@ -1,0 +1,39 @@
+{
+  "id": "vuln-0001",
+  "title": "SQL Injection in Login Form",
+  "severity": "critical",
+  "timestamp": "2026-05-27 10:30:00 UTC",
+  "description": "The login endpoint at /rest/user/login is vulnerable to SQL injection via the email parameter. An attacker can bypass authentication by injecting SQL syntax into the email field.",
+  "impact": "Complete authentication bypass. Attacker can log in as any user including admin. Full database access possible via UNION-based injection.",
+  "target": "http://localhost:3000",
+  "technical_analysis": "The application passes the email parameter directly to a SQL query without parameterization. The backend uses sequelize ORM but raw queries are used for the login endpoint.",
+  "poc_description": "Send a POST request to /rest/user/login with email set to a SQL injection payload",
+  "poc_script_code": "curl -X POST http://localhost:3000/rest/user/login -H 'Content-Type: application/json' -d '{\"email\": \"' OR 1=1--\", \"password\": \"anything\"}'",
+  "remediation_steps": "1. Use parameterized queries instead of string concatenation.\n2. Replace the raw SQL query with Sequelize model methods.\n3. Add input validation for email format.",
+  "cvss": 9.8,
+  "cvss_breakdown": {
+    "AV": "N",
+    "AC": "L",
+    "PR": "N",
+    "UI": "N",
+    "S": "U",
+    "C": "H",
+    "I": "H",
+    "A": "H"
+  },
+  "endpoint": "/rest/user/login",
+  "method": "POST",
+  "cve": null,
+  "cwe": "CWE-89",
+  "code_locations": [
+    {
+      "file": "routes/login.js",
+      "start_line": 42,
+      "end_line": 48,
+      "snippet": "models.sequelize.query(`SELECT * FROM Users WHERE email = '${req.body.email}' AND password = '${hash}'`)",
+      "label": "Vulnerable SQL query",
+      "fix_before": "models.sequelize.query(`SELECT * FROM Users WHERE email = '${req.body.email}' AND password = '${hash}'`)",
+      "fix_after": "models.sequelize.query('SELECT * FROM Users WHERE email = ? AND password = ?', { replacements: [req.body.email, hash], type: models.sequelize.QueryTypes.SELECT })"
+    }
+  ]
+}

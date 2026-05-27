@@ -1,0 +1,83 @@
+name: Aegis CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_e2e:
+        description: "Run the fixture-assisted E2E demo job"
+        type: boolean
+        default: false
+
+jobs:
+  unit:
+    name: Unit tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Aegis
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,dev]"
+
+      - name: Lint (ruff)
+        continue-on-error: true
+        run: ruff check aegis tests
+
+      - name: Type-check (mypy)
+        continue-on-error: true
+        run: mypy aegis
+
+      - name: Run tests
+        run: pytest -q --cov=aegis --cov-report=term-missing
+
+  no-leaked-artifacts:
+    name: aegis_output is not committed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if aegis_output is tracked
+        run: |
+          if git ls-files --error-unmatch aegis_output 2>/dev/null; then
+            echo "::error::aegis_output/ is tracked in git; add to .gitignore and untrack"
+            exit 1
+          fi
+
+  e2e-fixture-assisted:
+    name: E2E (fixture-assisted, deterministic)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.run_e2e
+    needs: unit
+    env:
+      AEGIS_E2E: "1"
+      AEGIS_DISABLE_LLM: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Aegis
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,dev]"
+
+      - name: Run fixture-assisted E2E
+        run: pytest -q tests/e2e/
