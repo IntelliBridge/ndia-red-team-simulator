@@ -16,16 +16,34 @@ export function logout(): void {
   if (typeof window === "undefined") return;
   localStorage.removeItem("aegis_token");
   localStorage.removeItem("aegis_email");
+  // Also tell the NextAuth callback to clear the Aegis cookies.
+  // Fire-and-forget; the redirect to /login happens regardless.
+  void fetch("/api/auth/signout-aegis", { method: "POST" }).catch(() => {});
+}
+
+function _hasCsrfCookie(): boolean {
+  if (typeof document === "undefined") return false;
+  const name = process.env.NEXT_PUBLIC_AEGIS_CSRF_COOKIE ?? "aegis_csrf";
+  return document.cookie
+    .split(";")
+    .some((c) => c.trim().startsWith(`${name}=`));
 }
 
 /**
  * Bounce to /login when no token is present. Returns the token (or undefined
  * during the brief server-render pass; the redirect fires on hydration).
+ *
+ * F18: cookie-authed users have no localStorage token but do have an
+ * httpOnly aegis_api_session cookie. We can't read that from JS, so we
+ * additionally check for the non-httpOnly aegis_csrf cookie that the
+ * NextAuth callback (F13) sets alongside it.
  */
 export function requireAuth(router: { push: (path: string) => void }): string | undefined {
   const token = getToken();
-  if (!token && typeof window !== "undefined") {
+  if (token) return token;
+  if (_hasCsrfCookie()) return "(cookie)";
+  if (typeof window !== "undefined") {
     router.push("/login");
   }
-  return token;
+  return undefined;
 }
