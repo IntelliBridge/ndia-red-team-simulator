@@ -1,0 +1,146 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import useSWR from "swr";
+
+import { RoleGated } from "@aegis/design-system";
+import { api } from "@/lib/api";
+import { requireAuth } from "@/lib/auth";
+import { useRoles } from "@/hooks/useRoles";
+
+interface MembershipResponse {
+  project: {
+    id: string;
+    slug: string;
+    name: string;
+    daily_llm_budget_cents: number | null;
+  };
+  members: { sub: string; email: string; display_name: string; role: string }[];
+}
+
+const fetcher = (path: string) => api<MembershipResponse>(path);
+
+export default function ProjectSettingsPage({
+  params,
+}: {
+  params: { slug: string };
+}) {
+  const router = useRouter();
+  const [authed, setAuthed] = useState(false);
+  useEffect(() => {
+    if (requireAuth(router)) setAuthed(true);
+  }, [router]);
+
+  const { data, error, isLoading, mutate } = useSWR(
+    authed ? `/v1/projects/${params.slug}/membership` : null,
+    fetcher,
+  );
+  const { roles } = useRoles();
+  const [budget, setBudget] = useState<string>("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (data?.project.daily_llm_budget_cents != null) {
+      setBudget(String(data.project.daily_llm_budget_cents));
+    }
+  }, [data]);
+
+  if (!authed) return <p className="text-slate-500">Redirecting to sign in…</p>;
+  if (isLoading) return <p className="text-slate-500">Loading…</p>;
+  if (error)
+    return (
+      <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+        Failed to load: {String(error)}
+      </p>
+    );
+  if (!data) return null;
+
+  const callerRole = roles[data.project.id] ?? roles[data.project.slug];
+
+  const saveBudget = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/v1/projects/${params.slug}/settings`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          daily_llm_budget_cents:
+            budget.trim() === "" ? null : Number(budget),
+        }),
+      });
+      await mutate();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <header>
+        <h1 className="text-2xl font-semibold">{data.project.name}</h1>
+        <p className="font-mono text-xs text-slate-500">{data.project.slug}</p>
+      </header>
+
+      <section className="space-y-3">
+        <h2 className="text-sm uppercase tracking-wide text-slate-500">
+          Members
+        </h2>
+        <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-3 py-2">Email</th>
+                <th className="px-3 py-2">Role</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.members.map((m) => (
+                <tr key={m.sub} className="border-t border-slate-100">
+                  <td className="px-3 py-2">{m.email}</td>
+                  <td className="px-3 py-2">{m.role}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <RoleGated minRole="admin" callerRole={callerRole}>
+        <section className="space-y-3">
+          <h2 className="text-sm uppercase tracking-wide text-slate-500">
+            LLM budget
+          </h2>
+          <div className="flex items-end gap-3">
+            <label className="flex flex-col text-sm">
+              <span className="mb-1">Daily limit (cents)</span>
+              <input
+                type="number"
+                min="0"
+                value={budget}
+                onChange={(e) => setBudget(e.target.value)}
+                className="rounded-md border border-slate-200 px-2 py-1.5"
+              />
+            </label>
+            <button
+              onClick={saveBudget}
+              disabled={busy}
+              className="rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+            >
+              Save
+            </button>
+          </div>
+          {err && (
+            <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+              {err}
+            </p>
+          )}
+        </section>
+      </RoleGated>
+    </div>
+  );
+}
