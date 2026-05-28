@@ -81,6 +81,63 @@ def _load_findings_objects(state):
 
 
 # ---------------------------------------------------------------------------
+# API dispatch helpers (used when ``--api`` / ``AEGIS_MODE=api``)
+# ---------------------------------------------------------------------------
+
+def _cmd_scan_api(args, _config):
+    from aegis.cli import api_client
+
+    client = api_client.build_client()
+    try:
+        result = client.start_scan(
+            target=args.target_url,
+            project_id=getattr(args, "project_id", None) or "default",
+            scanner=getattr(args, "scanner", None) or "strix",
+            instruction=getattr(args, "instruction", None),
+            override_authorized=getattr(args, "override_authorized", False),
+        )
+    except api_client.ApiError as exc:
+        _err(f"scan rejected by API: {exc}")
+        sys.exit(1)
+    _info(f"Run ID: {result.get('run_id')}")
+    _info(f"Job ID: {result.get('job_id')}")
+    if result.get("status_url"):
+        _info(f"Status: {result['status_url']}")
+
+
+def _cmd_fix_api(args, _config):
+    from aegis.cli import api_client
+
+    client = api_client.build_client()
+    try:
+        result = client.fix(
+            finding_id=args.finding_id,
+            strategy=("deps" if args.deps else "live" if args.live else "patch"),
+            apply=bool(getattr(args, "apply", False)),
+            open_pr=bool(getattr(args, "open_pr", False)),
+            repo=getattr(args, "repo", None),
+        )
+    except api_client.ApiError as exc:
+        _err(f"fix rejected by API: {exc}")
+        sys.exit(1)
+    _info(f"Job ID: {result.get('job_id')}")
+    if result.get("run_id"):
+        _info(f"Run ID: {result['run_id']}")
+
+
+def _cmd_verify_api(args, _config):
+    from aegis.cli import api_client
+
+    client = api_client.build_client()
+    try:
+        result = client.verify(finding_id=args.finding_id)
+    except api_client.ApiError as exc:
+        _err(f"verify rejected by API: {exc}")
+        sys.exit(1)
+    _info(f"Job ID: {result.get('job_id')}")
+
+
+# ---------------------------------------------------------------------------
 # Command implementations
 # ---------------------------------------------------------------------------
 
@@ -126,10 +183,17 @@ def cmd_scan(args, config):
     Local-only conveniences (loading pre-existing Strix events.jsonl,
     bundled demo fixture) stay at this layer; everything that needs an
     audit event lives behind the service boundary.
+
+    F4: when ``--api`` / ``AEGIS_MODE=api`` is set, dispatches the scan
+    via ``aegis.cli.api_client`` and returns the run handle.
     """
     from aegis.adapters.strix_adapter import load_strix_events, convert_strix_findings
+    from aegis.cli import api_client
     from aegis.services.scans import start_scan
     from aegis.state import RunState
+
+    if api_client.is_api_mode(args):
+        return _cmd_scan_api(args, config)
 
     target_url = args.target_url
     repo_path = args.repo
@@ -273,7 +337,15 @@ def cmd_fix(args, config):
     / PR logic lives in the service. The ``--rollback`` short-circuit and
     the ``--deps`` Trivy re-scan are local conveniences that still belong
     at this layer (they don't produce audit events of their own).
+
+    F4: when ``--api`` / ``AEGIS_MODE=api`` is set, dispatches to the API
+    instead. ``--rollback`` stays local because it's a repo-side operation.
     """
+    from aegis.cli import api_client
+
+    if api_client.is_api_mode(args) and not args.rollback:
+        return _cmd_fix_api(args, config)
+
     from aegis.remediate.patch_workflow import rollback
     from aegis.services.fixes import generate_fix
 
@@ -431,7 +503,15 @@ def _report_fix_outcomes(state, finding_id, outcomes, ran_deps: bool) -> None:
 
 
 def cmd_verify(args, config):
-    """Verify a finding by replaying its PoC — thin shell over the service."""
+    """Verify a finding by replaying its PoC — thin shell over the service.
+
+    F4: when ``--api`` / ``AEGIS_MODE=api`` is set, dispatches to the API.
+    """
+    from aegis.cli import api_client
+
+    if api_client.is_api_mode(args):
+        return _cmd_verify_api(args, config)
+
     from aegis.services.verify import verify as verify_svc
 
     state = _resolve_run_state(config, args.run)
@@ -875,6 +955,12 @@ def main(argv: list[str] | None = None) -> None:
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    # F4: --api sets AEGIS_MODE=api for the rest of the process so the
+    # api_client + status + downstream calls all agree on the mode.
+    if getattr(args, "global_api", False):
+        import os
+        os.environ["AEGIS_MODE"] = "api"
 
     # Union the global flags with subcommand-specific equivalents.
     if getattr(args, "global_override_authorized", False):

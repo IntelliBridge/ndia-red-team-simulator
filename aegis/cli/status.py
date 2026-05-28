@@ -53,4 +53,21 @@ def cmd_status(_args, config: AegisConfig) -> None:
         print(f"{_YELLOW}~{_RESET} AEGIS_API_URL is set but AEGIS_MODE is "
               f"'{mode}'. Set AEGIS_MODE=api or use --api to route through "
               f"the server.")
+
+    # F4: when in api mode, also probe /health so the user sees whether
+    # the configured API is actually reachable from this shell.
+    if mode == "api":
+        print()
+        if not api_url:
+            _kv("api health", "AEGIS_API_URL is unset", color=_YELLOW)
+        else:
+            from aegis.cli.api_client import ApiClient, load_token
+            health = ApiClient(base_url=api_url, token=load_token()).health()
+            if health is None:
+                _kv("api health", "unreachable", color=_YELLOW)
+            else:
+                ok = health.get("status") == "ok" or health.get("ok") is True
+                _kv("api health", "healthy" if ok else str(health),
+                    color=_GREEN if ok else _YELLOW)
+
     sys.exit(0)
