@@ -13,6 +13,7 @@ required.
 | `vulnerability-fixer`             | https://github.com/OpenHands/vulnerability-fixer      | (tracked via `.gitmodules` HEAD)            | Phase 2  | Vulnfixer export adapter                            |
 | `strix`                           | https://github.com/usestrix/strix                     | (tracked via `.gitmodules` HEAD)            | Phase 2  | Strix DAST scanner                                  |
 | `shadcn-ui`                       | https://github.com/shadcn-ui/ui                       | `360e8a19c3ee13ac78b656027462007c8bdaa6d5`  | Phase 4 v0.4.0 F15 | `@aegis/design-system` primitives generated via `pnpm dlx shadcn add` |
+| `opentelemetry-collector-contrib` | https://github.com/open-telemetry/opentelemetry-collector-contrib | `d7957a20ce54ab42a87b8f9e91eda73f7b3b48e5` | Phase 4 v0.4.1 F19 | Source-of-truth for the OTel Collector image we run under the `obs` compose profile; SLSA / fork target |
 
 ## License notes
 
@@ -21,6 +22,8 @@ required.
 - `vulnerability-fixer` — Apache-2.0
 - `strix` — Apache-2.0
 - `shadcn-ui` — MIT (see `shadcn-ui/LICENSE.md`)
+- `opentelemetry-collector-contrib` — Apache-2.0 (see
+  `opentelemetry-collector-contrib/LICENSE`)
 
 All upstream licenses are preserved in their cloned form.
 

@@ -13,3 +13,6 @@
 [submodule "project_repos/shadcn-ui"]
 	path = project_repos/shadcn-ui
 	url = https://github.com/shadcn-ui/ui
+[submodule "project_repos/opentelemetry-collector-contrib"]
+	path = project_repos/opentelemetry-collector-contrib
+	url = https://github.com/open-telemetry/opentelemetry-collector-contrib
