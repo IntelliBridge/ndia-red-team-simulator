@@ -117,12 +117,72 @@ services:
       NEXTAUTH_URL: http://localhost:3300
       NEXTAUTH_SECRET: dev-secret-change-me
 
+  # ----- Always-on Postgres log mirror (F20c) ------------------------------
+  # The aegis-log-ingest sidecar receives OTLP/Logs (under the obs profile)
+  # and/or direct JSON batches from the API + worker (default profile) and
+  # writes them to application_logs. SELECT * FROM application_logs WHERE
+  # run_id='...' returns the full trace without needing Loki or
+  # Elasticsearch up.
+  aegis-log-ingest:
+    image: aegis-log-ingest:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.log_ingest
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@postgres:5432/aegis
+    ports: ["4319:4319"]
+
+  # ----- obs profile: Collector + Loki + Jaeger ----------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.108.0
+    profiles: ["obs"]
+    depends_on:
+      aegis-log-ingest: { condition: service_started }
+      loki: { condition: service_started }
+    volumes:
+      - ./otel/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4320:4318"   # OTLP HTTP (4318 taken by Jaeger below; remap)
+
+  loki:
+    image: grafana/loki:2.9.7
+    profiles: ["obs"]
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./loki/config.yaml:/etc/loki/config.yaml:ro
+    ports:
+      - "3100:3100"
+
   jaeger:
     image: jaegertracing/all-in-one:1.55
     profiles: ["obs"]
     ports:
       - "16686:16686"
       - "4318:4318"
+
+  # ----- obs-search profile: Elasticsearch + Kibana ------------------------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    profiles: ["obs-search"]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.0
+    profiles: ["obs-search"]
+    depends_on: [elasticsearch]
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "5601:5601"
 
 volumes:
   postgres-data:

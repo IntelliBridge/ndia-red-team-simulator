@@ -1,0 +1,29 @@
+# aegis-log-ingest — receives OTLP/Logs from the Collector and writes
+# the canonical Postgres mirror.
+#
+# The image is intentionally minimal: just enough Python to run the
+# FastAPI app + SQLAlchemy. No CAI / Strix / Trivy.
+
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# Zscaler / corporate proxy cert is mounted via env (AEGIS_TLS_CERT_FILE)
+# in dev; in production the base image's bundled CA roots are sufficient.
+
+COPY pyproject.toml /app/
+COPY aegis /app/aegis
+
+RUN pip install --no-cache-dir ".[api]" \
+    && pip install --no-cache-dir uvicorn
+
+EXPOSE 4319
+
+# Bind to 4319 so 4318 (OTLP/HTTP) stays available for the Collector
+# itself; the Collector posts to us via the otlphttp/aegis-ingest
+# exporter pointing at this port.
+CMD ["uvicorn", "aegis.log_ingest.server:app", \
+     "--host", "0.0.0.0", "--port", "4319"]
