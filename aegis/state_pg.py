@@ -73,22 +73,31 @@ class PostgresRunState:
     # ---- Findings ---------------------------------------------------------
 
     def save_findings(self, findings: list) -> None:
+        """Phase 4 v0.3.1 F9: rows are keyed by an internal UUID; the
+        scanner's upstream identifier goes into ``scanner_finding_id``,
+        which is uniquely constrained per-run. ``schema_blob["id"]``
+        keeps the scanner's identifier so downstream consumers (exports,
+        report HTML, deps_workflow) see the contract they expect.
+        """
         existing = self.session.execute(
             select(Finding).where(Finding.run_id == self.run_id)
         ).scalars().all()
-        existing_ids = {f.id for f in existing}
+        by_scanner_id = {f.scanner_finding_id: f for f in existing}
+
         for raw in findings:
             data = raw.to_dict() if hasattr(raw, "to_dict") else dict(raw)
-            fid = data["id"]
-            if fid in existing_ids:
-                row = next(f for f in existing if f.id == fid)
-                row.schema_blob = data
-                row.status = data.get("status", row.status)
-                row.severity = data.get("severity", row.severity)
-                row.updated_at = _now()
+            scanner_id = data["id"]
+            existing_row = by_scanner_id.get(scanner_id)
+            if existing_row is not None:
+                existing_row.schema_blob = data
+                existing_row.status = data.get("status", existing_row.status)
+                existing_row.severity = data.get("severity", existing_row.severity)
+                existing_row.updated_at = _now()
             else:
                 self.session.add(Finding(
-                    id=fid, run_id=self.run_id, project_id=self.project_id,
+                    id=str(uuid4()),
+                    scanner_finding_id=scanner_id,
+                    run_id=self.run_id, project_id=self.project_id,
                     schema_blob=data, status=data.get("status", "open"),
                     severity=data.get("severity", "low"),
                     source_tool=data.get("source_tool"),
@@ -100,10 +109,22 @@ class PostgresRunState:
             select(Finding).where(Finding.run_id == self.run_id)
             .order_by(Finding.created_at)
         ).scalars().all()
+        # schema_blob already carries the scanner's original ``id``; the DB
+        # UUID stays internal.
         return [r.schema_blob for r in rows]
 
     def update_finding_status(self, finding_id: str, status: str) -> None:
+        """Update finding status. ``finding_id`` accepts either the internal
+        UUID or the upstream ``scanner_finding_id`` for this run."""
         row = self.session.get(Finding, finding_id)
+        if row is None:
+            # Fall back to looking up by scanner_finding_id within this run.
+            row = self.session.execute(
+                select(Finding).where(
+                    Finding.run_id == self.run_id,
+                    Finding.scanner_finding_id == finding_id,
+                )
+            ).scalar_one_or_none()
         if row is not None:
             row.status = status
             row.schema_blob = {**row.schema_blob, "status": status,

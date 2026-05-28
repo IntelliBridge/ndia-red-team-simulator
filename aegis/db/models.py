@@ -114,8 +114,19 @@ class Job(Base):
 
 
 class Finding(Base):
+    """Phase 4 v0.3.1 F9: ``id`` is now an internal UUID; the scanner's
+    upstream identifier lives in ``scanner_finding_id`` and is uniquely
+    constrained per-run, not globally. This prevents PK collisions when
+    two runs independently emit findings with the same scanner-side ID
+    (e.g. both emit ``vuln-0001`` from Strix).
+
+    The ``schema_blob.id`` field still carries the scanner's original
+    identifier for downstream contract stability — vulnfixer export,
+    report HTML, deps_workflow continue to see what they expect.
+    """
     __tablename__ = "findings"
-    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)  # UUID
+    scanner_finding_id: Mapped[str] = mapped_column(String(256), nullable=False)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False, index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
     schema_blob: Mapped[dict] = mapped_column(JSONB, nullable=False)
@@ -127,6 +138,11 @@ class Finding(Base):
     dedup_key: Mapped[str | None] = mapped_column(String(256), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    __table_args__ = (
+        UniqueConstraint("run_id", "scanner_finding_id",
+                         name="uq_findings_run_scanner_id"),
+        Index("ix_findings_scanner_finding_id", "scanner_finding_id"),
+    )
 
 
 class LLMUsage(Base):
