@@ -127,6 +127,17 @@ plugins:
   - search
 
 # ---------------------------------------------------------------------
+# Build hooks
+# ---------------------------------------------------------------------
+#
+# readme_as_index.py reads ../README.md at build time and rewrites
+# its docs/X.md paths so the README renders cleanly as docs/index.md.
+# Single source of truth: README.md at the repo root.
+
+hooks:
+  - hooks/readme_as_index.py
+
+# ---------------------------------------------------------------------
 # Navigation
 # ---------------------------------------------------------------------
 #
