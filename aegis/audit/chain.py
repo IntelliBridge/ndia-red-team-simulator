@@ -97,13 +97,25 @@ class AuditWriter(Protocol):
 class JsonlAuditWriter:
     """Filesystem chain writer.
 
-    ``directory`` holds one ``.jsonl`` per chain. The chain id is derived
-    from ``(project_id, run_id)`` at append time.
+    Two on-disk layout modes:
+
+    - **Per-chain files** (``single_file=None``, default): one file per
+      chain id under ``directory``, named ``<chain_safe>.jsonl``. This
+      is the Phase 4 canonical layout for ``<output_dir>/audit/``.
+    - **Single file** (``single_file="audit.jsonl"``): all events from
+      every chain land in one file under ``directory``. Used as the
+      Phase 2 / Phase 3 compatibility path when ``authorize()`` is
+      invoked with only ``run_path`` — the audit ends up at
+      ``<run_path>/audit.jsonl`` exactly where the old ``_append_audit``
+      helper wrote it. Each event still carries its full chain metadata
+      (chain_id, seq, prev_hash, this_hash); only the file naming
+      changes. Chains stay logically separate inside the file.
     """
 
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, *, single_file: str | None = None):
         self.directory = Path(directory)
         self.directory.mkdir(parents=True, exist_ok=True)
+        self._single_file = single_file
         self._locks: dict[str, threading.Lock] = {}
         self._global_lock = threading.Lock()
 
@@ -115,6 +127,8 @@ class JsonlAuditWriter:
         return "system"
 
     def _path(self, chain_id: str) -> Path:
+        if self._single_file is not None:
+            return self.directory / self._single_file
         # Filenames can't contain ':' on all filesystems; replace with '__'.
         safe = chain_id.replace(":", "__").replace("/", "_")
         return self.directory / f"{safe}.jsonl"
