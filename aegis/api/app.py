@@ -22,13 +22,26 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
         redoc_url=None if settings.is_prod else "/redoc",
     )
 
+    # F14b: CORS allow_credentials=True is only legal against an
+    # explicit, finite origin list. The web origin is added defensively
+    # if it's not already in the configured list.
+    cors_origins = list(settings.cors_origins or [])
+    if settings.web_origin and settings.web_origin not in cors_origins:
+        cors_origins.append(settings.web_origin)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins,
+        allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type",
+                       settings.api_csrf_header_name,
+                       "X-Aegis-Request-ID"],
+        expose_headers=["X-Aegis-Request-ID"],
     )
+
+    # F14b: double-submit CSRF on cookie-authenticated mutations.
+    from aegis.api.middleware.csrf import csrf_middleware
+    app.middleware("http")(csrf_middleware(settings))
 
     # Rate-limit middleware on write routes.
     from aegis.api.middleware.rate_limit import rate_limit_middleware
