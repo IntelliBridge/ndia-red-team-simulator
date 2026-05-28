@@ -60,6 +60,16 @@ async def receive(request: Request) -> dict[str, Any]:
     event = request.headers.get("X-GitHub-Event", "")
     import json
     payload = json.loads(body or b"{}")
-    return {"event": event, "delivery_id": delivery_id,
-            "action": payload.get("action"),
-            "received": True}
+
+    handler_result: dict[str, Any] = {}
+    if event == "pull_request":
+        from aegis.integrations.github_handlers import on_pull_request_event
+        handler_result = on_pull_request_event(payload)
+
+    return {
+        "event": event,
+        "delivery_id": delivery_id,
+        "action": payload.get("action"),
+        "received": True,
+        **handler_result,
+    }
