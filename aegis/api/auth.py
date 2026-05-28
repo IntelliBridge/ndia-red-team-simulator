@@ -74,14 +74,21 @@ def _dev_user(token: str) -> CurrentUser:
     )
 
 
-def get_current_user(
-    authorization: str | None = Header(default=None),
-    settings: APISettings = Depends(load_settings),
-) -> CurrentUser:
-    if not authorization or not authorization.lower().startswith("bearer "):
+def _resolve_from_token(token: str, settings: APISettings | None = None) -> CurrentUser:
+    """Resolve a bearer token to a ``CurrentUser``.
+
+    Extracted from ``get_current_user`` so contexts without a FastAPI
+    dependency-injection scope (e.g. the WebSocket upgrade handler in
+    F12) can share the same auth logic. Raises ``HTTPException`` on
+    invalid / unauthorized tokens — WS callers should catch it and
+    close with policy violation.
+    """
+    if settings is None:
+        settings = load_settings()
+    token = (token or "").strip()
+    if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Bearer token required")
-    token = authorization.split(" ", 1)[1].strip()
+                            detail="empty token")
 
     if settings.auth_mode == "dev":
         if settings.is_prod:
@@ -93,7 +100,6 @@ def get_current_user(
             return _dev_user(token)
 
     if token.startswith("worker:") and settings.worker_signing_key:
-        # ``worker:<hmac>`` — the worker bootstrap signs with the shared key.
         from hmac import compare_digest, new as hmac_new
         from hashlib import sha256
         sig = token.split(":", 1)[1]
@@ -119,3 +125,14 @@ def get_current_user(
         display_name=claims.get("name") or "",
         project_memberships={str(k): str(v) for k, v in roles_map.items()},
     )
+
+
+def get_current_user(
+    authorization: str | None = Header(default=None),
+    settings: APISettings = Depends(load_settings),
+) -> CurrentUser:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Bearer token required")
+    token = authorization.split(" ", 1)[1].strip()
+    return _resolve_from_token(token, settings)
