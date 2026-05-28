@@ -228,3 +228,30 @@ class GitHubInstallation(Base):
     org_login: Mapped[str] = mapped_column(String(256), nullable=False)
     account_type: Mapped[str] = mapped_column(String(32), default="Organization")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ApplicationLog(Base):
+    """Phase 4 v0.4.1 F20c — Postgres mirror of the OTel log stream.
+
+    The Collector exporter fans out to Loki / Elasticsearch under the
+    ``obs`` and ``obs-search`` compose profiles; the always-on
+    Postgres path lands here via ``aegis-log-ingest``. The schema
+    intentionally carries every correlation key the API + worker +
+    scanner emit so a single ``WHERE run_id = …`` returns the full
+    trace of a request across services.
+    """
+    __tablename__ = "application_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    service: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    run_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    job_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    project_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    actor: Mapped[str | None] = mapped_column(String(256))
+    request_id: Mapped[str | None] = mapped_column(String(128), index=True)
+    trace_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    span_id: Mapped[str | None] = mapped_column(String(32))
+    attrs: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
