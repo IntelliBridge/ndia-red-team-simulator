@@ -6,6 +6,133 @@ doesn't tell you.
 
 ---
 
+## ▶ Start-here prompt
+
+> You're picking up Aegis at v0.4.1 with the entire Phase-4 release
+> sequence shipped and a complete docs site in place. Your job is
+> **v0.4.2 — close the OnePager gap.** The README's capability table
+> calls out the honest delta between what's shipped (8 wired agents,
+> 14 tools) and what the OnePager promises (60+ agents, 35+ tools).
+> Start narrowing that gap. Detailed plan below.
+
+### Default plan (start here)
+
+Work the items in this order. Each is a contained, F-style milestone
+with its own commit. Keep `pytest -q` green at every step.
+
+**1. Repo housekeeping (≤ 1 hour).** Settle this before publishing
+anything externally.
+
+   a. Resolve the GitHub repo URL. Either:
+      - Identify the canonical URL (org + repo name), or
+      - Create the repo and push.
+
+   b. Global find-replace of the placeholder. After deciding the URL
+      `<owner>/<repo>`:
+      ```bash
+      grep -rln "github.com/example/aegis" . \
+        --exclude-dir=node_modules --exclude-dir=.venv \
+        --exclude-dir=site --exclude-dir=project_repos --exclude-dir=.git \
+        | xargs sed -i '' 's|github.com/example/aegis|github.com/<owner>/<repo>|g'
+      ```
+      Files touched will include `README.md`, `mkdocs.yml`,
+      `hooks/readme_as_index.py` (the fallback default), every
+      `docs/*.md` with absolute github links, and `CONTRIBUTING.md`.
+
+   c. Enable GitHub Pages (Settings → Pages → Source → GitHub
+      Actions). The workflow at `.github/workflows/docs.yml` does
+      the rest.
+
+   d. Commit as `chore: set canonical repo URL` (one commit).
+
+**2. Wire the 7 registered-but-not-wired CAI agents (1-2 sessions).**
+   These are the fastest gap-closers — they're already in the
+   registry as `wired_in_phase_3=False` stubs.
+
+   Files:
+   - `aegis/agents/cai/builtins.py` — `_NOT_WIRED` list at line ~101.
+   - The seven: `memory_analysis`, `network_traffic_analyzer`,
+     `reverse_engineering`, `android_sast_agent`, `subghz_sdr_agent`,
+     `wifi_security_tester`, `replay_attack_agent`.
+
+   For each:
+
+   a. Find the matching CAI agent attribute on the imported
+      `bundle` from `aegis/integrations/cai_loader.py`. Some won't
+      exist upstream — those stay as `_not_wired` with a doc note.
+   b. Move the row from `_NOT_WIRED` to `_WIRED` with the right
+      `cai_attr`.
+   c. Add a test in `tests/test_agent_registry.py` (create if it
+      doesn't exist) asserting `dispatch(<name>)` returns
+      `status='ok'` against a mocked CAI bundle.
+   d. Update the capability table in `README.md` to reflect new
+      counts.
+
+   Commit each as `F-agents: wire <name>`; or batch related ones
+   (e.g. all three forensic agents → one commit).
+
+**3. Add 5+ scanners / tools toward the "35+ tools" target.**
+   `aegis/scanners/` has 4 adapters today (Strix, Trivy, Semgrep,
+   Nuclei). The OnePager + plan's deferred list call out:
+   - **ZAP** (DAST) — `aegis/scanners/zap_adapter.py`
+   - **CodeQL** (SAST) — `aegis/scanners/codeql_adapter.py`
+   - **Bandit** (Python SAST) — `aegis/scanners/bandit_adapter.py`
+   - **Grype** (container vuln) — `aegis/scanners/grype_adapter.py`
+   - **Checkov** (IaC) — `aegis/scanners/checkov_adapter.py`
+   - **Trufflehog** (secrets) — `aegis/scanners/trufflehog_adapter.py`
+
+   Pattern to follow: `aegis/scanners/trivy_adapter.py` is the
+   smallest reference. Each adapter:
+
+   a. Implements `dispatch(run_state, options) -> ScanResult`.
+   b. Normalises output into `AegisFinding` objects.
+   c. Registers in `aegis/scanners/registry.py`.
+   d. Carries a test fixture under `tests/fixtures/scanners/` and
+      a parser test in `tests/test_scanners.py`.
+
+   Each adapter → one commit. The Kali MCP tools side is a separate
+   axis — keep that on the v0.4.3 list.
+
+**4. Capability table refresh + CHANGELOG entry.**
+
+   - Update the README capability table: shipped agent count, tool
+     count, scanner adapter list.
+   - Write the `[0.4.2]` CHANGELOG entry mirroring the v0.4.1
+     structure (Added / Changed / Migration notes / Verification).
+   - Bump `pyproject.toml` version to `0.4.2`.
+   - Tag `v0.4.2` after final verification.
+
+### Alternative tracks (pick if user redirects)
+
+- **UI-side polish.** Dark mode in `@aegis/design-system`, the
+  second component batch (Toast / Dialog primitives via shadcn),
+  flip on the Storybook test-runner CI gate, audit-chain
+  visualisation page in `web/`.
+- **Observability hardening.** Battle-test the `obs-search` compose
+  profile (Elasticsearch + Kibana). The Collector exporter is
+  currently commented in `deploy/otel/config.yaml`.
+- **Database append-only enforcement.** `pg_audit` + role
+  separation on `audit_events`. Listed in `SECURITY.md` as a known
+  gap.
+- **Authenticated DAST flows.** Strix supports auth contexts; we
+  pass none today.
+
+### Rules of the road (re-read every session)
+
+- **Phase 2 offline path is sacred** — `pytest -q` must stay green
+  with no Postgres / Redis / Keycloak.
+- **API write routes call admission services only**; **Celery
+  tasks call execution services only**.
+- **Audit-before-enqueue is load-bearing** — never persist a Run /
+  Job row that doesn't have a chain event before it.
+- **`mkdocs build --strict` must stay clean.** CI gate.
+
+Full guardrails: [`CONTRIBUTING.md`](CONTRIBUTING.md) +
+[`docs/architecture/overview.md`](docs/architecture/overview.md) §
+"Layered service architecture".
+
+---
+
 ## The 30-second picture
 
 Aegis is a full-lifecycle AI security platform that ties Strix, CAI,
