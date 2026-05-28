@@ -7,8 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from aegis.api.settings import APISettings, load_settings
 from aegis.api.v1 import (
-    audit, exports, findings, findings_by_scanner_id, fix, health, projects,
-    reports, runs, runs_cancel, scans, targets, tools, verify,
+    audit, exports, findings, findings_by_scanner_id, fix, health, logs,
+    projects, reports, runs, runs_cancel, scans, targets, tools, verify,
 )
 
 
@@ -74,6 +74,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(verify.router, prefix="/v1")
     app.include_router(targets.router, prefix="/v1")
     app.include_router(projects.router, prefix="/v1")
+    app.include_router(logs.router, prefix="/v1")
 
     # GitHub webhook receiver.
     from aegis.integrations.github_webhooks import router as gh_router
