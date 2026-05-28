@@ -137,6 +137,13 @@ plugins:
 hooks:
   - hooks/readme_as_index.py
 
+# `mkdocs serve` watches docs_dir + mkdocs.yml by default; tell it to
+# also rebuild when the README (rendered as index.md via the hook) or
+# the hook itself changes.
+watch:
+  - README.md
+  - hooks/
+
 # ---------------------------------------------------------------------
 # Navigation
 # ---------------------------------------------------------------------
