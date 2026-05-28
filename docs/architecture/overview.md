@@ -14,42 +14,47 @@ their own dedicated doc; this file is the shared mental model.
 ## System context
 
 ```mermaid
-C4Context
-    title Aegis — system context (v0.4.1)
+flowchart LR
+  subgraph callers["Callers"]
+    dev["Developer<br/>CLI user"]
+    approver["Approver<br/>web UI"]
+    gh["GitHub<br/>PR webhooks"]
+  end
 
-    Person(dev, "Developer / CLI user", "Runs aegis scan / fix / verify")
-    Person(approver, "Approver", "Reviews + applies fixes in the web UI")
-    System_Ext(gh, "GitHub", "PR webhooks, Check Runs, installation tokens")
-    System_Ext(kc, "Keycloak", "OIDC identity for browser users")
-    System_Ext(llm, "LLM providers", "Anthropic / OpenAI / etc. — via CAI")
+  subgraph aegis["Aegis"]
+    api["aegis-api<br/>FastAPI: RBAC, admission,<br/>audit, read/stream"]
+    worker["aegis-worker<br/>Celery: scanner and CAI<br/>execution + status"]
+    web["@aegis/web<br/>Next.js 14 dashboard"]
+    li["aegis-log-ingest<br/>OTLP/Logs to Postgres"]
+  end
 
-    System_Boundary(aegis, "Aegis") {
-        System(api, "aegis-api", "FastAPI — RBAC, admission, audit, read/stream routes")
-        System(worker, "aegis-worker", "Celery — scanner/CAI execution, status persistence")
-        System(web, "@aegis/web", "Next.js 14 — dashboard, role-gated controls")
-        System(log_ingest, "aegis-log-ingest", "OTLP/Logs → Postgres mirror")
-    }
+  subgraph ext["External systems"]
+    kc["Keycloak<br/>OIDC identity"]
+    llm["LLM providers<br/>via CAI"]
+  end
 
-    SystemDb_Ext(pg, "Postgres", "runs, jobs, findings, audit_events, application_logs")
-    SystemDb_Ext(s3, "MinIO / S3", "Artifact + report blob store")
-    SystemDb_Ext(redis, "Redis", "Celery broker + pub/sub")
-    SystemDb_Ext(kali, "MCP Kali Server", "nmap / nikto / sqlmap host")
+  subgraph data["Data plane"]
+    pg[("Postgres<br/>runs / jobs / findings<br/>audit_events<br/>application_logs")]
+    s3[("MinIO / S3<br/>artifacts + reports")]
+    redis[("Redis<br/>broker + pub/sub")]
+    kali["MCP Kali Server<br/>nmap / nikto / sqlmap"]
+  end
 
-    Rel(dev, api, "bearer")
-    Rel(approver, web, "browser")
-    Rel(web, api, "cookie + CSRF")
-    Rel(gh, api, "HMAC webhooks")
-    Rel(api, kc, "JWKS (OIDC tokens)")
-    Rel(api, redis, "enqueue")
-    Rel(worker, redis, "consume")
-    Rel(worker, kali, "REST")
-    Rel(worker, llm, "via CAI")
-    Rel(api, pg, "read/write")
-    Rel(worker, pg, "read/write")
-    Rel(worker, s3, "artifacts")
-    Rel(api, s3, "stream reports")
-    Rel(worker, log_ingest, "OTLP/Logs")
-    Rel(log_ingest, pg, "batched INSERTs")
+  dev -- "bearer" --> api
+  approver -- "browser" --> web
+  web -- "cookie + CSRF" --> api
+  gh -- "HMAC webhook" --> api
+  api -- "JWKS" --> kc
+  api -- "enqueue" --> redis
+  worker -- "consume" --> redis
+  worker -- "REST" --> kali
+  worker -- "via CAI" --> llm
+  api -- "read/write" --> pg
+  worker -- "read/write" --> pg
+  worker -- "artifacts" --> s3
+  api -- "stream reports" --> s3
+  worker -- "OTel logs" --> li
+  li -- "batched INSERT" --> pg
 ```
 
 ## Deployment topology
@@ -58,7 +63,7 @@ Three compose profiles ship out of the box:
 
 ```mermaid
 flowchart TB
-  subgraph default["compose profile: default"]
+  subgraph p_default["compose profile: default"]
     direction LR
     api[aegis-api]
     worker[aegis-worker]
@@ -69,33 +74,41 @@ flowchart TB
     kc[Keycloak]
     minio[(MinIO)]
     kali[mcp-kali]
-    api & worker & li --- pg
-    api & worker --- redis
+    api --- pg
+    worker --- pg
+    li --- pg
+    api --- redis
+    worker --- redis
     web --- api
     api --- minio
     api --- kc
     worker --- kali
-    api & worker -. POST /ingest .-> li
+    api -. "POST /ingest" .-> li
+    worker -. "POST /ingest" .-> li
   end
 
-  subgraph obs["+ profile: obs"]
+  subgraph p_obs["+ profile: obs"]
     col[otel-collector]
     loki[(Loki)]
     jaeger[Jaeger]
-    api2[aegis-api] & worker2[aegis-worker] -. OTLP .-> col
-    col -. logs .-> loki
-    col -. logs .-> li
-    col -. traces .-> jaeger
+    api2[aegis-api]
+    worker2[aegis-worker]
+    api2 -. "OTLP" .-> col
+    worker2 -. "OTLP" .-> col
+    col -. "logs" .-> loki
+    col -. "logs" .-> li
+    col -. "traces" .-> jaeger
   end
 
-  subgraph search["+ profile: obs-search"]
+  subgraph p_search["+ profile: obs-search"]
     es[(Elasticsearch)]
     kibana[Kibana]
-    col2[otel-collector] -. logs .-> es
+    col2[otel-collector]
+    col2 -. "logs" .-> es
     kibana --- es
   end
 
-  default --> obs --> search
+  p_default --> p_obs --> p_search
 ```
 
 - **default** — everything you need to demo the platform locally.
@@ -132,7 +145,7 @@ execution code paths run regardless of which entry point invoked them
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U as Caller<br/>(CLI / UI / GitHub)
+    participant U as Caller (CLI / UI / GitHub)
     participant API as aegis-api
     participant Wr as PostgresAuditWriter
     participant DB as Postgres
@@ -140,22 +153,22 @@ sequenceDiagram
     participant W as aegis-worker
     participant S as Scanner (Strix)
 
-    U->>API: POST /v1/scans  { target, project_id }
-    API->>API: policy.check(user, SCAN_START, project_id)
-    API->>Wr: authorize("scan.start", target, …)
+    U->>API: POST /v1/scans
+    API->>API: policy.check SCAN_START
+    API->>Wr: authorize scan.start
     Wr->>DB: INSERT audit_events (chained)
     API->>DB: INSERT runs, INSERT jobs
     API->>Q: scan_start.delay(job_id)
-    API-->>U: { run_id, job_id, status_url }
+    API-->>U: run_id, job_id, status_url
 
     W->>Q: pull task
-    W->>DB: UPDATE jobs SET status='running', started_at=now()
-    W->>Wr: authorize("scan.execute.strix", target, …)
-    Wr->>DB: INSERT audit_events (chained, run-scoped)
-    W->>S: dispatch(strix, target, scope)
-    S-->>W: { findings, exit_code }
-    W->>DB: INSERT findings (UUID PK, scanner_finding_id)
-    W->>DB: UPDATE jobs SET status='succeeded'
+    W->>DB: UPDATE jobs status running
+    W->>Wr: authorize scan.execute.strix
+    Wr->>DB: INSERT audit_events (run-scoped)
+    W->>S: dispatch strix
+    S-->>W: findings + exit_code
+    W->>DB: INSERT findings
+    W->>DB: UPDATE jobs status succeeded
 ```
 
 The load-bearing invariant: the audit row for `scan.start` is on the
@@ -177,8 +190,8 @@ erDiagram
     findings ||--o{ remediation_attempts : has
     runs ||--o{ artifacts : emits
     audit_chain_heads ||--o{ audit_events : tracks
-    application_logs }o--|| projects : "project_id (nullable)"
-    application_logs }o--|| runs : "run_id (nullable)"
+    application_logs }o--|| projects : project_id
+    application_logs }o--|| runs : run_id
 
     findings {
         UUID id PK
@@ -189,7 +202,7 @@ erDiagram
         STRING validation_state
     }
     audit_events {
-        STRING chain_id "run:<id> | project:<id> | system"
+        STRING chain_id "run-scoped or project-scoped"
         INT seq
         BYTEA prev_hash
         BYTEA this_hash
@@ -227,25 +240,25 @@ Two design choices worth highlighting:
 ```mermaid
 flowchart TB
   subgraph Entry["Entry points"]
-    cli[aegis CLI]
-    api[/v1/* HTTP routes]
-    worker[Celery tasks]
+    cli["aegis CLI"]
+    api["/v1/* HTTP routes"]
+    worker["Celery tasks"]
   end
 
   subgraph Services["aegis/services/ — admission + execution"]
     direction LR
-    create["create_*_job<br/>(admission)"]
-    execute["start_scan / generate_fix /<br/>verify / render_reports<br/>(execution)"]
+    create["create_*_job<br/>admission"]
+    execute["start_scan / generate_fix /<br/>verify / render_reports<br/>execution"]
   end
 
   subgraph Primitives["Primitives"]
     direction LR
-    safety["safety.authorize<br/>(emits audit)"]
-    chain["audit/chain.py<br/>(JsonlAuditWriter,<br/>PostgresAuditWriter)"]
-    state["state, state_pg<br/>(RunState)"]
+    safety["safety.authorize<br/>emits audit"]
+    chain["audit/chain.py<br/>JsonlAuditWriter,<br/>PostgresAuditWriter"]
+    state["state, state_pg<br/>RunState"]
     schema["schema.AegisFinding"]
-    scanners["scanners/<br/>(Strix, Trivy, …)"]
-    remediate["remediate/<br/>(cai_runner, patch_workflow)"]
+    scanners["scanners/<br/>Strix, Trivy, ..."]
+    remediate["remediate/<br/>cai_runner, patch_workflow"]
   end
 
   cli --> create
@@ -269,45 +282,45 @@ request-scoped; execution is the long-running scanner / CAI work.
 ## Phase 4 release map
 
 ```mermaid
-graph TD
+flowchart TD
     subgraph v031["v0.3.1 — Stabilization"]
-      f1[F1 detach CIGate]
-      f2[F2 lock files + markers]
-      f5[F5 cmd_migrate fix]
-      f9[F9 Finding PK UUID]
-      f7[F7 retire _append_audit]
-      f8[F8 retire tool-calls.jsonl]
-      f3[F3 CLI thru services]
-      f6[F6 admission + audit-before-enqueue]
-      f11[F11 worker persists status]
-      f4[F4 --api dispatch]
-      f12[F12 project-access on read]
-      f10[F10 cai_loader + llm.router]
-      fw[FW worker SA + rotation]
-      fp[FP membership endpoints]
+      f1["F1 detach CIGate"]
+      f2["F2 lock files + markers"]
+      f5["F5 cmd_migrate fix"]
+      f9["F9 Finding PK UUID"]
+      f7["F7 retire _append_audit"]
+      f8["F8 retire tool-calls.jsonl"]
+      f3["F3 CLI thru services"]
+      f6["F6 admission + audit-before-enqueue"]
+      f11["F11 worker persists status"]
+      f4["F4 --api dispatch"]
+      f12["F12 project-access on read"]
+      f10["F10 cai_loader + llm.router"]
+      fw["FW worker SA + rotation"]
+      fp["FP membership endpoints"]
     end
 
     subgraph v040["v0.4.0 — Identity & UX"]
-      f14a[F14a session cookie]
-      f14b[F14b CSRF + CORS]
-      f14c[F14c WS Origin + subproto]
-      f14d[F14d report CSP]
-      f13[F13 NextAuth]
-      f15[F15 vendor shadcn/ui]
-      f16[F16 design-system + Storybook]
-      f17[F17 pages rebuilt]
-      f18[F18 api() helper + useRoles]
+      f14a["F14a session cookie"]
+      f14b["F14b CSRF + CORS"]
+      f14c["F14c WS Origin + subproto"]
+      f14d["F14d report CSP"]
+      f13["F13 NextAuth"]
+      f15["F15 vendor shadcn/ui"]
+      f16["F16 design-system + Storybook"]
+      f17["F17 pages rebuilt"]
+      f18["F18 api() helper + useRoles"]
     end
 
     subgraph v041["v0.4.1 — Observability & GitHub"]
-      f19[F19 vendor OTel contrib]
-      f20a[F20a obs profile]
-      f20c[F20c log-ingest]
-      f21[F21 structlog → OTel]
-      f22[F22 /v1/logs]
-      f23a[F23a PRScope]
-      f23b[F23b PR scans]
-      f23c[F23c fork restricted]
+      f19["F19 vendor OTel contrib"]
+      f20a["F20a obs profile"]
+      f20c["F20c log-ingest"]
+      f21["F21 structlog to OTel"]
+      f22["F22 /v1/logs"]
+      f23a["F23a PRScope"]
+      f23b["F23b PR scans"]
+      f23c["F23c fork restricted"]
     end
 
     v031 --> v040 --> v041

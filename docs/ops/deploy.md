@@ -12,35 +12,36 @@ be generated, the deployment topology, and the rotation runbook.
 
 ```mermaid
 flowchart LR
-  subgraph internet[Internet]
-    users[Users]
-    ghext[github.com]
+  subgraph internet["Internet"]
+    users["Users"]
+    ghext["github.com"]
   end
 
-  subgraph edge[Edge]
-    lb[Load balancer / TLS]
+  subgraph edge["Edge"]
+    lb["Load balancer + TLS"]
   end
 
-  subgraph cluster[Cluster / hosts]
-    web[@aegis/web]
-    api[aegis-api]
-    worker[aegis-worker]
-    li[aegis-log-ingest]
-    col[otel-collector]
+  subgraph cluster["Cluster / hosts"]
+    web["@aegis/web"]
+    api["aegis-api"]
+    worker["aegis-worker"]
+    li["aegis-log-ingest"]
+    col["otel-collector"]
   end
 
-  subgraph data[Data plane]
-    pg[(Postgres)]
-    redis[(Redis)]
-    blob[(S3)]
-    kc[Keycloak]
-    loki[(Loki)]
-    es[(Elasticsearch — optional)]
+  subgraph data["Data plane"]
+    pg[("Postgres")]
+    redis[("Redis")]
+    blob[("S3")]
+    kc["Keycloak"]
+    loki[("Loki")]
+    es[("Elasticsearch (optional)")]
   end
 
-  users --> lb --> web
-  users --> lb --> api
-  ghext --> lb --> api
+  users --> lb
+  ghext --> lb
+  lb --> web
+  lb --> api
   web --> api
   api --> redis
   worker --> redis

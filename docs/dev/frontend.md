@@ -64,12 +64,12 @@ build step.
 
 ```mermaid
 flowchart LR
-  upstream[project_repos/shadcn-ui<br/>vendored, pinned SHA]
-  cmd["pnpm dlx shadcn add <comp>"]
-  prims[design-system/src/primitives/]
-  comps[design-system/src/components/]
-  index[design-system/src/index.ts]
-  web[web/src/app/**]
+  upstream["project_repos/shadcn-ui<br/>vendored, pinned SHA"]
+  cmd["pnpm dlx shadcn add"]
+  prims["design-system/src/primitives/"]
+  comps["design-system/src/components/"]
+  index["design-system/src/index.ts"]
+  web["web/src/app/"]
 
   upstream -- "registry read" --> cmd
   cmd -- "scripted copy" --> prims

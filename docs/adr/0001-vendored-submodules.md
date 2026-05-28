@@ -32,10 +32,10 @@ submodule pinned at a specific SHA. The matrix lives in
 
 ```mermaid
 flowchart LR
-  upstream[upstream main branch] --> snap[git submodule add --depth=1]
-  snap --> pin[project_repos/<name>@<SHA>]
-  pin --> manifest[AEGIS_VENDORED.md row]
-  pin --> consume["consumed by:<br/>- shadcn registry config<br/>- Dockerfiles<br/>- aegis.integrations.cai_loader<br/>- scanner runners"]
+  upstream["upstream main branch"] --> snap["git submodule add --depth=1"]
+  snap --> pin["project_repos/name @ SHA"]
+  pin --> manifest["AEGIS_VENDORED.md row"]
+  pin --> consume["consumed by:<br/>shadcn registry config<br/>Dockerfiles<br/>aegis.integrations.cai_loader<br/>scanner runners"]
 ```
 
 Rules:

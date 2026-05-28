@@ -99,40 +99,40 @@ development.
 ```mermaid
 flowchart LR
   subgraph Clients
-    CLI[aegis CLI]
-    UI[Next.js web]
-    GH[GitHub webhooks]
+    CLI["aegis CLI"]
+    UI["Next.js web"]
+    GH["GitHub webhooks"]
   end
 
   subgraph Aegis
-    API[FastAPI<br/>aegis-api]
-    W[Celery worker<br/>aegis-worker]
-    LI[aegis-log-ingest]
-    DB[(Postgres)]
-    RDS[(Redis)]
-    BLOB[(MinIO / S3)]
+    API["FastAPI<br/>aegis-api"]
+    W["Celery worker<br/>aegis-worker"]
+    LI["aegis-log-ingest"]
+    DB[("Postgres")]
+    RDS[("Redis")]
+    BLOB[("MinIO / S3")]
   end
 
   subgraph Scanners
-    STRIX[Strix]
-    KALI[mcp-kali]
-    CAI[CAI agents]
+    STRIX["Strix"]
+    KALI["mcp-kali"]
+    CAI["CAI agents"]
   end
 
-  CLI --bearer--> API
-  UI  --cookie+CSRF--> API
-  GH  --HMAC webhook--> API
-  API --enqueue--> RDS
-  RDS --task--> W
-  W --runs--> STRIX
-  W --runs--> CAI
-  W --runs--> KALI
-  W --writes--> DB
-  W --writes--> BLOB
-  API --reads--> DB
-  API --serves--> BLOB
-  W --OTel logs--> LI
-  LI --inserts--> DB
+  CLI -- "bearer" --> API
+  UI  -- "cookie + CSRF" --> API
+  GH  -- "HMAC webhook" --> API
+  API -- "enqueue" --> RDS
+  RDS -- "task" --> W
+  W -- "runs" --> STRIX
+  W -- "runs" --> CAI
+  W -- "runs" --> KALI
+  W -- "writes" --> DB
+  W -- "writes" --> BLOB
+  API -- "reads" --> DB
+  API -- "serves" --> BLOB
+  W -- "OTel logs" --> LI
+  LI -- "inserts" --> DB
 ```
 
 The [architecture overview](architecture/overview.md) goes into

@@ -8,39 +8,40 @@ Loki / Elasticsearch aren't up.
 
 ```mermaid
 flowchart LR
-  subgraph apps[Aegis processes]
-    api[aegis-api]
-    worker[aegis-worker]
-    web[@aegis/web]
-    scan[scanner subprocesses]
+  subgraph apps["Aegis processes"]
+    api["aegis-api"]
+    worker["aegis-worker"]
+    web["@aegis/web"]
+    scan["scanner subprocesses"]
   end
 
-  subgraph default[default compose profile]
-    li[aegis-log-ingest]
-    pg[(Postgres<br/>application_logs)]
+  subgraph p_default["default compose profile"]
+    li["aegis-log-ingest"]
+    pg[("Postgres<br/>application_logs")]
     li --> pg
   end
 
-  subgraph obs[+ profile: obs]
-    col[otel-collector]
-    loki[(Loki)]
-    jaeger[Jaeger]
-    col -. logs .-> loki
-    col -. logs .-> li
-    col -. traces .-> jaeger
+  subgraph obs["+ profile: obs"]
+    col["otel-collector"]
+    loki[("Loki")]
+    jaeger["Jaeger"]
+    col -. "logs" .-> loki
+    col -. "logs" .-> li
+    col -. "traces" .-> jaeger
   end
 
-  subgraph search[+ profile: obs-search]
-    es[(Elasticsearch)]
-    kibana[Kibana]
-    col2[otel-collector] -. logs .-> es
+  subgraph search["+ profile: obs-search"]
+    es[("Elasticsearch")]
+    kibana["Kibana"]
+    col2["otel-collector"]
+    col2 -. "logs" .-> es
     kibana --- es
   end
 
-  apps -. OTLP/Logs+Traces .-> col
-  apps -. POST /ingest .-> li
-  worker -. tail stderr .-> apps
-  scan -. stderr .-> worker
+  apps -. "OTLP logs + traces" .-> col
+  apps -. "POST /ingest" .-> li
+  worker -. "tail stderr" .-> apps
+  scan -. "stderr" .-> worker
 ```
 
 The default profile gives you in-app queries with zero ops overhead;
@@ -72,7 +73,7 @@ continues to log to stdout.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant code as "logger.info('scan.start', target=…)"
+    participant code as logger.info call
     participant SL as structlog
     participant OTEL as OTel Logs SDK
     participant COL as otel-collector
@@ -80,11 +81,11 @@ sequenceDiagram
     participant PG as Postgres
 
     code->>SL: event_dict
-    SL->>SL: _inject_correlation_ids<br/>(request_id, trace_id, span_id)
+    SL->>SL: _inject_correlation_ids<br/>request_id, trace_id, span_id
     SL->>OTEL: LoggingHandler.emit
-    OTEL->>COL: OTLP/Logs (batched)
-    COL->>LI: otlphttp/aegis-ingest<br/>(POST /v1/logs)
-    LI->>LI: parse OTLP envelope<br/>buffer 500/2s
+    OTEL->>COL: OTLP logs batched
+    COL->>LI: otlphttp aegis-ingest<br/>POST /v1/logs
+    LI->>LI: parse OTLP envelope<br/>buffer 500 per 2s
     LI->>PG: INSERT application_logs
 ```
 
@@ -109,14 +110,14 @@ migration that creates it is `0003_application_logs`.
 
 ```mermaid
 flowchart LR
-  apiA[aegis-api] -- "default profile: POST /ingest" --> LI[aegis-log-ingest]
-  workerA[aegis-worker] -- "default profile: POST /ingest" --> LI
+  apiA["aegis-api"] -- "default: POST /ingest" --> LI["aegis-log-ingest"]
+  workerA["aegis-worker"] -- "default: POST /ingest" --> LI
 
-  apiB[aegis-api] -- "obs profile: OTLP/Logs" --> COL[otel-collector]
-  workerB[aegis-worker] -- "obs profile: OTLP/Logs" --> COL
+  apiB["aegis-api"] -- "obs profile: OTLP logs" --> COL["otel-collector"]
+  workerB["aegis-worker"] -- "obs profile: OTLP logs" --> COL
   COL -- "otlphttp/aegis-ingest" --> LI
 
-  LI --> pg[(application_logs)]
+  LI --> pg[("application_logs")]
 ```
 
 Two paths converge on the same `LogIngestWriter`:
@@ -197,20 +198,20 @@ sequenceDiagram
     autonumber
     participant U as Caller
     participant API as aegis-api
-    participant DB as Postgres<br/>(audit_events,<br/>application_logs)
+    participant DB as Postgres
     participant W as aegis-worker
     participant T as Jaeger
 
-    U->>API: POST /v1/scans<br/>X-Aegis-Request-ID: req-abc
-    Note over API: middleware: rid -> ContextVar<br/>OTel span starts with trace_id=t1
-    API->>DB: INSERT audit_events {<br/>  action='scan.start',<br/>  detail.request_id='req-abc' }
-    API->>DB: INSERT application_logs {<br/>  request_id='req-abc',<br/>  trace_id=t1 }
-    API-->>U: { run_id, job_id }
+    U->>API: POST /v1/scans<br/>X-Aegis-Request-ID req-abc
+    Note over API: middleware sets ContextVar<br/>OTel span trace_id t1
+    API->>DB: INSERT audit_events<br/>action scan.start<br/>request_id req-abc
+    API->>DB: INSERT application_logs<br/>request_id req-abc trace_id t1
+    API-->>U: run_id, job_id
 
-    W->>DB: SELECT … FROM jobs<br/>(detail.request_id='req-abc' lifted)
-    Note over W: bootstrap sets the same request_id ContextVar
-    W->>DB: INSERT audit_events {<br/>  action='scan.execute.strix',<br/>  detail.request_id='req-abc' }
-    W->>DB: INSERT application_logs {<br/>  request_id='req-abc',<br/>  trace_id=t2 (worker root span) }
+    W->>DB: SELECT FROM jobs<br/>request_id req-abc lifted
+    Note over W: bootstrap sets the same ContextVar
+    W->>DB: INSERT audit_events<br/>action scan.execute.strix<br/>request_id req-abc
+    W->>DB: INSERT application_logs<br/>request_id req-abc trace_id t2
     W->>T: emit traces for both spans
 ```
 

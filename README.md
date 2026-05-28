@@ -118,40 +118,40 @@ history, not for orientation.
 ```mermaid
 flowchart LR
   subgraph Clients
-    CLI[aegis CLI]
-    UI[Next.js web]
-    GH[GitHub webhooks]
+    CLI["aegis CLI"]
+    UI["Next.js web"]
+    GH["GitHub webhooks"]
   end
 
   subgraph Aegis
-    API[FastAPI<br/>aegis-api]
-    W[Celery worker<br/>aegis-worker]
-    LI[aegis-log-ingest]
-    DB[(Postgres<br/>runs/jobs/findings<br/>audit_events<br/>application_logs)]
-    RDS[(Redis<br/>broker)]
-    BLOB[(MinIO / S3<br/>artifacts + reports)]
+    API["FastAPI<br/>aegis-api"]
+    W["Celery worker<br/>aegis-worker"]
+    LI["aegis-log-ingest"]
+    DB[("Postgres<br/>runs / jobs / findings<br/>audit_events<br/>application_logs")]
+    RDS[("Redis<br/>broker")]
+    BLOB[("MinIO / S3<br/>artifacts + reports")]
   end
 
   subgraph Scanners
-    STRIX[Strix]
-    KALI[mcp-kali]
-    CAI[CAI agents]
+    STRIX["Strix"]
+    KALI["mcp-kali"]
+    CAI["CAI agents"]
   end
 
-  CLI --bearer--> API
-  UI  --cookie+CSRF--> API
-  GH  --HMAC webhook--> API
-  API --enqueue--> RDS
-  RDS --task--> W
-  W --runs--> STRIX
-  W --runs--> CAI
-  W --runs--> KALI
-  W --writes--> DB
-  W --writes--> BLOB
-  API --reads--> DB
-  API --serves--> BLOB
-  W --OTel logs--> LI
-  LI --inserts--> DB
+  CLI -- "bearer" --> API
+  UI  -- "cookie + CSRF" --> API
+  GH  -- "HMAC webhook" --> API
+  API -- "enqueue" --> RDS
+  RDS -- "task" --> W
+  W -- "runs" --> STRIX
+  W -- "runs" --> CAI
+  W -- "runs" --> KALI
+  W -- "writes" --> DB
+  W -- "writes" --> BLOB
+  API -- "reads" --> DB
+  API -- "serves" --> BLOB
+  W -- "OTel logs" --> LI
+  LI -- "inserts" --> DB
 ```
 
 For the full deployment topology (compose profiles, OTel Collector,

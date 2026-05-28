@@ -68,9 +68,9 @@ Each Aegis caller mode resolves to one `AuditWriter` instance:
 
 ```mermaid
 flowchart LR
-  off["AEGIS_DB_URL unset<br/>(offline CLI)"] --> jsonl[JsonlAuditWriter<br/>aegis_output/audit/<chain>.jsonl]
-  api["AEGIS_DB_URL set<br/>(api / worker)"] --> pg[PostgresAuditWriter<br/>audit_events + audit_chain_heads]
-  test["AEGIS_TEST_AUDIT=memory"] --> mem[InMemoryAuditWriter<br/>(list)]
+  off["AEGIS_DB_URL unset<br/>offline CLI"] --> jsonl["JsonlAuditWriter<br/>aegis_output/audit/chain.jsonl"]
+  api["AEGIS_DB_URL set<br/>api or worker"] --> pg["PostgresAuditWriter<br/>audit_events + audit_chain_heads"]
+  test["AEGIS_TEST_AUDIT=memory"] --> mem["InMemoryAuditWriter<br/>list"]
 ```
 
 Construction:
@@ -101,19 +101,19 @@ sequenceDiagram
     participant heads as audit_chain_heads
     participant events as audit_events
 
-    Caller->>safety: authorize("fix.apply", target, …, writer=…)
-    safety->>safety: is_target_allowed(target, allowlist)
-    safety->>writer: append(action, actor, target, …, detail)
+    Caller->>safety: authorize fix.apply target writer
+    safety->>safety: is_target_allowed
+    safety->>writer: append action actor target detail
 
     rect rgb(245,250,255)
     Note over writer,events: PostgresAuditWriter path
-    writer->>heads: SELECT … FOR UPDATE ON CONFLICT … chain_id
-    writer->>events: INSERT (chain_id, seq, prev_hash, this_hash, …)
-    writer->>heads: UPDATE head_seq, head_hash
+    writer->>heads: SELECT FOR UPDATE on chain_id
+    writer->>events: INSERT chain_id seq prev_hash this_hash
+    writer->>heads: UPDATE head_seq head_hash
     end
 
     writer-->>safety: AuditEvent
-    safety-->>Caller: returns (or raises AuthorizationError)
+    safety-->>Caller: returns or raises AuthorizationError
 ```
 
 The `FOR UPDATE` lock on `audit_chain_heads` is what serialises

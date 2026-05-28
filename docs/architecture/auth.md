@@ -36,23 +36,23 @@ Aegis-managed RSA key — three concerns, three keys:
 sequenceDiagram
     autonumber
     participant U as User browser
-    participant N as Next.js<br/>(NextAuth)
+    participant N as Next.js NextAuth
     participant K as Keycloak
     participant API as aegis-api
 
     U->>N: GET /dashboard
-    N->>K: 302 to authorization endpoint
+    N->>K: redirect to authorization endpoint
     U->>K: Keycloak login form
-    K-->>N: callback /api/auth/callback/keycloak?code=…
-    N->>K: POST /token (exchange code)
-    K-->>N: { access_token, id_token }
-    Note over N: jwt callback stores sub/email/aegis_project_roles
-    Note over N: session callback signs an aegis_api_session JWT<br/>and sets aegis_csrf alongside it
-    N-->>U: Set-Cookie: next-auth.session-token<br/>Set-Cookie: aegis_api_session (httpOnly)<br/>Set-Cookie: aegis_csrf (NOT httpOnly)
+    K-->>N: callback with auth code
+    N->>K: POST token (exchange code)
+    K-->>N: access_token + id_token
+    Note over N: jwt callback stores sub, email,<br/>aegis_project_roles
+    Note over N: session callback mints<br/>aegis_api_session + aegis_csrf
+    N-->>U: Set-Cookie aegis_api_session (httpOnly)<br/>+ aegis_csrf (readable by SPA)
 
-    U->>API: GET /v1/runs (Cookie: aegis_api_session=…)
-    API->>API: verify_session_cookie() against AEGIS_API_SESSION_PUBLIC_KEY
-    API-->>U: 200 { runs: [...] }
+    U->>API: GET /v1/runs with aegis_api_session cookie
+    API->>API: verify against AEGIS_API_SESSION_PUBLIC_KEY
+    API-->>U: 200 runs payload
 ```
 
 The Aegis cookie's claims:
@@ -146,20 +146,20 @@ sequenceDiagram
     participant W as aegis-worker
     participant API as aegis-api
 
-    Note over W: issue_worker_token("w-7")<br/>signed with current key v2
-    W->>API: GET /v1/something<br/>Authorization: Bearer worker:v2.w-7.<exp>.<sig>
+    Note over W: issue_worker_token w-7<br/>signed with current key v2
+    W->>API: GET /v1/something<br/>Authorization Bearer worker.v2.w-7.exp.sig
 
     rect rgb(245,250,255)
     Note over API: _verify_worker_token
-    API->>API: try v2 key — payload matches?
+    API->>API: try v2 key, payload matches?
     alt sig valid with v2
-        API-->>W: 200 + sub="service:worker:w-7"
+        API-->>W: 200 + sub=service.worker.w-7
     else sig invalid with v2
         API->>API: try v1 key (overlap window)
         alt sig valid with v1
             API-->>W: 200 (legacy worker accepted)
         else
-            API-->>W: 401 "invalid or expired worker token"
+            API-->>W: 401 invalid or expired worker token
         end
     end
     end
@@ -195,23 +195,23 @@ violation) and a short reason string.
 
 ```mermaid
 flowchart TB
-  start([WS upgrade request]) --> hasOrigin{Origin header set?}
-  hasOrigin -- no --> accept[accept]
-  hasOrigin -- yes --> originOk{In CORS allowlist?}
-  originOk -- no --> close1[close 1008<br/>"origin not allowed"]
+  start(["WS upgrade request"]) --> hasOrigin{"Origin header set?"}
+  hasOrigin -- no --> accept["accept"]
+  hasOrigin -- yes --> originOk{"In CORS allowlist?"}
+  originOk -- no --> close1["close 1008<br/>origin not allowed"]
   originOk -- yes --> accept
 
-  accept --> hasSubproto{Sec-WebSocket-Protocol:<br/>aegis.bearer.* offered?}
-  hasSubproto -- yes --> echoSub[accept(subprotocol=…)<br/>+ verify token]
-  hasSubproto -- no  --> bareAccept[accept()]
+  accept --> hasSubproto{"aegis.bearer.* subprotocol<br/>offered?"}
+  hasSubproto -- yes --> echoSub["accept with subprotocol<br/>+ verify token"]
+  hasSubproto -- no  --> bareAccept["accept"]
 
-  echoSub --> hasUser{user resolved?}
-  bareAccept --> resolveOther[try Authorization header<br/>→ cookie<br/>→ legacy ?token]
+  echoSub --> hasUser{"user resolved?"}
+  bareAccept --> resolveOther["try Authorization header<br/>then cookie<br/>then legacy query token"]
   resolveOther --> hasUser
-  hasUser -- no --> close2[close 1008<br/>"auth required"]
-  hasUser -- yes --> projectAccess{user has membership<br/>on run.project_id?}
-  projectAccess -- no --> close3[close 1008<br/>"no project membership"]
-  projectAccess -- yes --> stream[stream Redis pubsub frames]
+  hasUser -- no --> close2["close 1008<br/>auth required"]
+  hasUser -- yes --> projectAccess{"user has membership<br/>on run.project_id?"}
+  projectAccess -- no --> close3["close 1008<br/>no project membership"]
+  projectAccess -- yes --> stream["stream Redis pubsub frames"]
 ```
 
 The legacy `?token=…` query parameter is still accepted for one
