@@ -26,3 +26,7 @@ htmlcov/
 *.swo
 .vscode/
 .idea/
+
+# Corporate proxy CA bundles — machine/org-specific, never commit.
+deploy/certs/*.pem
+deploy/certs/*.crt

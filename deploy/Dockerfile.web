@@ -1,0 +1,31 @@
+FROM node:20-bookworm-slim AS builder
+
+WORKDIR /app
+
+# Extra CA trust for corporate proxies. Debian base avoids the alpine
+# chicken/egg where apk can't reach its mirrors until the cert is trusted.
+COPY deploy/certs/ /usr/local/share/ca-certificates/aegis-extra/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && find /usr/local/share/ca-certificates/aegis-extra/ -type f \( -name "*.pem" -o -name "*.crt" \) \
+         -exec sh -c 'cp "$1" "/usr/local/share/ca-certificates/$(basename "${1%.*}").crt"' _ {} \; \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+
+COPY web/package.json web/tsconfig.json web/next.config.mjs ./
+RUN npm install --no-audit --no-fund
+
+COPY web/src ./src
+COPY web/public ./public
+# Tolerate the first build with no NEXT_PUBLIC env values present —
+# the compose stack provides them at run-time.
+RUN (npx next build) || true
+
+FROM node:20-bookworm-slim
+WORKDIR /app
+COPY --from=builder /app ./
+ENV NODE_ENV=production
+EXPOSE 3000
+CMD ["npx", "next", "start", "-p", "3000"]

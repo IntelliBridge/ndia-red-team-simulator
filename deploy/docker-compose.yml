@@ -1,0 +1,126 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: aegis
+      POSTGRES_PASSWORD: aegis
+      POSTGRES_DB: aegis
+    ports: ["5432:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aegis"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports: ["8080:8080"]
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/aegis-realm.json:ro
+
+  minio:
+    image: quay.io/minio/minio:latest
+    command: server /data --console-address ":9001"
+    # MinIO S3 port mapped to 9100 on the host because 9000 conflicts with
+    # other tools (Portainer, llama.cpp, etc.). Container-internal 9000 is
+    # unchanged so AEGIS_S3_ENDPOINT=http://minio:9000 still works.
+    ports: ["9100:9000", "9101:9001"]
+    environment:
+      MINIO_ROOT_USER: aegis
+      MINIO_ROOT_PASSWORD: aegis-secret
+    volumes:
+      - minio-data:/data
+
+  kali:
+    image: aegis-kali:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.kali
+    ports: ["5000:5000"]
+    environment:
+      AEGIS_KALI_ALLOW_GENERIC_COMMAND: "0"
+
+  aegis-api:
+    image: aegis-api:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_started }
+    environment:
+      AEGIS_ENV: dev
+      AEGIS_AUTH_MODE: dev
+      AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@postgres:5432/aegis
+      AEGIS_BROKER_URL: redis://redis:6379/0
+      AEGIS_RESULT_BACKEND: redis://redis:6379/1
+      AEGIS_BLOB_BACKEND: s3
+      AEGIS_S3_ENDPOINT: http://minio:9000
+      AEGIS_S3_BUCKET: aegis
+      AEGIS_S3_ACCESS_KEY_ID: aegis
+      AEGIS_S3_SECRET_ACCESS_KEY: aegis-secret
+      AEGIS_CORS_ORIGINS: http://localhost:3000
+      AEGIS_OIDC_ISSUER: http://keycloak:8080/realms/aegis
+      AEGIS_OIDC_JWKS_URL: http://keycloak:8080/realms/aegis/protocol/openid-connect/certs
+      AEGIS_KALI_URL: http://kali:5000
+    ports: ["8000:8000"]
+
+  aegis-worker:
+    image: aegis-worker:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.worker
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kali: { condition: service_started }
+    environment:
+      AEGIS_ENV: dev
+      AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@postgres:5432/aegis
+      AEGIS_BROKER_URL: redis://redis:6379/0
+      AEGIS_RESULT_BACKEND: redis://redis:6379/1
+      AEGIS_BLOB_BACKEND: s3
+      AEGIS_S3_ENDPOINT: http://minio:9000
+      AEGIS_S3_BUCKET: aegis
+      AEGIS_S3_ACCESS_KEY_ID: aegis
+      AEGIS_S3_SECRET_ACCESS_KEY: aegis-secret
+      AEGIS_KALI_URL: http://kali:5000
+      AEGIS_DISABLE_LLM: "1"
+
+  aegis-web:
+    image: aegis-web:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    depends_on: [aegis-api]
+    ports: ["3000:3000"]
+    environment:
+      NEXT_PUBLIC_AEGIS_API_URL: http://localhost:8000
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: dev-secret-change-me
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.55
+    profiles: ["obs"]
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+
+volumes:
+  postgres-data:
+  minio-data:
