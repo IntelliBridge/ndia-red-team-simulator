@@ -1,7 +1,4 @@
-"""`aegis migrate` — moves filesystem runs into Postgres.
-
-Skeleton lands in M0.5 so the subcommand exists; real implementation in M11.
-"""
+"""`aegis migrate` — moves filesystem runs into Postgres."""
 
 from __future__ import annotations
 
@@ -9,17 +6,17 @@ import sys
 
 
 def cmd_migrate(args, config) -> None:
-    """Migrate filesystem run data into Postgres (M11)."""
+    """Migrate filesystem run data into Postgres."""
     direction = getattr(args, "direction", "fs->pg")
     if direction != "fs->pg":
         print(f"unknown migration direction: {direction!r}", file=sys.stderr)
         sys.exit(2)
 
     try:
-        from aegis.migrate.fs_to_pg import migrate as run_migration  # M11
+        from aegis.migrate.fs_to_pg import migrate as run_migration
     except ImportError:
-        print("aegis migrate lands in M11; skeleton in place.")
-        sys.exit(0)
+        print("aegis.migrate module unavailable.", file=sys.stderr)
+        sys.exit(1)
 
     summary = run_migration(
         source_dir=args.source,
@@ -27,6 +24,7 @@ def cmd_migrate(args, config) -> None:
         project_id=args.project,
         dry_run=getattr(args, "dry_run", False),
     )
-    for k, v in summary.items():
+    # MigrationSummary is a dataclass; serialise via to_dict() to iterate.
+    for k, v in summary.to_dict().items():
         print(f"  {k:<28} {v}")
-    sys.exit(0)
+    sys.exit(0 if not summary.failures else 1)
