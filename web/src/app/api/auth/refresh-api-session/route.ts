@@ -9,7 +9,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 
-import { authOptions } from "../[...nextauth]/route";
+import { authOptions } from "@/server/auth-options";
 import {
   csrfCookieName,
   mintAegisSessionJwt,

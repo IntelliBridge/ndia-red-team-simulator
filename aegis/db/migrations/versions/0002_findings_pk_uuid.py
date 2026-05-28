@@ -30,6 +30,17 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     bind = op.get_bind()
 
+    # Idempotency: 0001_initial uses Base.metadata.create_all against the
+    # CURRENT models.py, which already includes scanner_finding_id (since
+    # F9 changed the model). A fresh `alembic upgrade head` therefore
+    # arrives here with the post-F9 schema already in place. Detect that
+    # case and short-circuit. The migration body still runs in full when
+    # a real v0.3.0 schema is being upgraded incrementally.
+    inspector = sa.inspect(bind)
+    columns = {c["name"] for c in inspector.get_columns("findings")}
+    if "scanner_finding_id" in columns:
+        return
+
     # 1. Add the new scanner_finding_id column (nullable for the backfill).
     op.add_column(
         "findings",

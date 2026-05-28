@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 
@@ -38,7 +38,10 @@ const SEV_TONE: Record<string, string> = {
   fatal: "text-red-900",
 };
 
-export default function LogsPage() {
+// Next.js 14 requires useSearchParams() to live inside a Suspense
+// boundary so the page can prerender (CSR-bailout). LogsView reads
+// the params; the default export wraps it.
+function LogsView() {
   const router = useRouter();
   const params = useSearchParams();
   const [authed, setAuthed] = useState(false);
@@ -129,5 +132,13 @@ export default function LogsPage() {
         </table>
       </div>
     </div>
+  );
+}
+
+export default function LogsPage() {
+  return (
+    <Suspense fallback={<p className="text-slate-500">Loading…</p>}>
+      <LogsView />
+    </Suspense>
   );
 }

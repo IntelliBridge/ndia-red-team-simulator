@@ -11,8 +11,19 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-# Zscaler / corporate proxy cert is mounted via env (AEGIS_TLS_CERT_FILE)
-# in dev; in production the base image's bundled CA roots are sufficient.
+# Extra CA trust for corporate proxies (same pattern as
+# Dockerfile.api / Dockerfile.worker). The certs/ directory is
+# gitignored — empty in CI, populated locally for Zscaler.
+COPY deploy/certs/ /usr/local/share/ca-certificates/aegis-extra/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+    && find /usr/local/share/ca-certificates/aegis-extra/ -type f \( -name "*.pem" -o -name "*.crt" \) \
+         -exec sh -c 'cp "$1" "/usr/local/share/ca-certificates/$(basename "${1%.*}").crt"' _ {} \; \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
 COPY pyproject.toml /app/
 COPY aegis /app/aegis

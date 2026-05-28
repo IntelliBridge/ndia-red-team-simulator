@@ -25,6 +25,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # Idempotency — see 0002 for the same pattern + reasoning.
+    inspector = sa.inspect(op.get_bind())
+    if "application_logs" in inspector.get_table_names():
+        return
+
     op.create_table(
         "application_logs",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),

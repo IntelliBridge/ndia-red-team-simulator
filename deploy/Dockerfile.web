@@ -1,9 +1,17 @@
+# Dockerfile for @aegis/web (Next.js 14).
+#
+# Builds against the pnpm workspace at the repo root (v0.4.0 F16),
+# so @aegis/web and @aegis/design-system are linked the same way
+# they are in dev. ``docker build`` MUST be invoked from the repo
+# root with ``-f deploy/Dockerfile.web .``.
+
 FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
 # Extra CA trust for corporate proxies. Debian base avoids the alpine
 # chicken/egg where apk can't reach its mirrors until the cert is trusted.
+# The certs/ directory is gitignored — empty in CI, populated locally.
 COPY deploy/certs/ /usr/local/share/ca-certificates/aegis-extra/
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
@@ -14,18 +22,46 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
-COPY web/package.json web/tsconfig.json web/next.config.mjs ./
-RUN npm install --no-audit --no-fund
+# pnpm via corepack (ships with node:20). Pin to the version used in
+# dev so reproducible installs land on the same resolver behaviour.
+RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
 
-COPY web/src ./src
-COPY web/public ./public
-# Tolerate the first build with no NEXT_PUBLIC env values present —
-# the compose stack provides them at run-time.
-RUN (npx next build) || true
+# Workspace manifest + lockfile first, for layer cache efficiency.
+COPY pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY web/package.json ./web/
+COPY project_repos/design-system/package.json ./project_repos/design-system/
 
+# Frozen install of the workspace. Both @aegis/web and
+# @aegis/design-system land in their workspace locations; design-
+# system's source is then copied below.
+RUN pnpm install --frozen-lockfile --filter @aegis/web...
+
+# Now the source. Two trees, because the workspace links them.
+COPY web/ ./web/
+COPY project_repos/design-system/ ./project_repos/design-system/
+
+# NEXT_PUBLIC env values come from the compose stack at run-time;
+# tolerate their absence at build time.
+RUN pnpm --filter @aegis/web build || true
+
+# --------------------------------------------------------------------
+# Runtime
+# --------------------------------------------------------------------
 FROM node:20-bookworm-slim
 WORKDIR /app
+
+# Copy the entire workspace tree as built. pnpm's symlinks point into
+# /app/node_modules, so the on-disk layout from the builder is enough
+# to start Next.js — no need to re-resolve packages at run time.
 COPY --from=builder /app ./
+
 ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["npx", "next", "start", "-p", "3000"]
+
+# Start `next` directly via the workspace-local binary symlink. We
+# stay in /app/web so Next finds its build output at ./.next; no
+# pnpm needed at runtime (the runtime stage doesn't carry the
+# corporate CA bundle, so corepack would fail trying to download
+# pnpm).
+WORKDIR /app/web
+CMD ["./node_modules/.bin/next", "start", "-p", "3000"]

@@ -113,16 +113,15 @@ jobs:
         with:
           node-version: "20"
           cache: "pnpm"
-          cache-dependency-path: web/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
+      # Workspace lives at the repo root (v0.4.0 F16); install from
+      # there so both @aegis/web and @aegis/design-system are linked.
       - name: Install (frozen lockfile)
-        working-directory: web
         run: pnpm install --frozen-lockfile
       - name: Typecheck
-        working-directory: web
-        run: pnpm run typecheck || true
+        run: pnpm --filter @aegis/web typecheck || true
       - name: Build
-        working-directory: web
-        run: pnpm run build
+        run: pnpm --filter @aegis/web build
 
   docker-images:
     name: Build images (no push)
@@ -148,6 +147,12 @@ jobs:
         with:
           context: .
           file: deploy/Dockerfile.web
+          push: false
+      - name: Build log-ingest
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/Dockerfile.log_ingest
           push: false
 
   e2e-stack:
