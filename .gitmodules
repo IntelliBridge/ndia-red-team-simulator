@@ -10,3 +10,6 @@
 [submodule "project_repos/strix"]
 	path = project_repos/strix
 	url = https://github.com/usestrix/strix.git
+[submodule "project_repos/shadcn-ui"]
+	path = project_repos/shadcn-ui
+	url = https://github.com/shadcn-ui/ui

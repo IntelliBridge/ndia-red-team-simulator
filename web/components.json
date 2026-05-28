@@ -1,0 +1,21 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "rsc": true,
+  "tsx": true,
+  "tailwind": {
+    "config": "tailwind.config.ts",
+    "css": "src/app/globals.css",
+    "baseColor": "slate",
+    "cssVariables": true,
+    "prefix": ""
+  },
+  "aliases": {
+    "components": "@aegis/design-system/src/primitives",
+    "utils": "@aegis/design-system/src/lib/utils",
+    "ui": "@aegis/design-system/src/primitives",
+    "lib": "@aegis/design-system/src/lib",
+    "hooks": "@aegis/design-system/src/hooks"
+  },
+  "registry": "file:../project_repos/shadcn-ui/apps/v4/registry"
+}
