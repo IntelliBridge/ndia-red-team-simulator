@@ -12,4 +12,4 @@ this stub is what readers see.
 
 The site landing comes from the project README. If you're seeing
 this stub, the build hook didn't run — see
-[`hooks/readme_as_index.py`](https://github.com/example/aegis/blob/main/hooks/readme_as_index.py).
+[`hooks/readme_as_index.py`](https://github.com/IntelliBridge/aegis/blob/main/hooks/readme_as_index.py).

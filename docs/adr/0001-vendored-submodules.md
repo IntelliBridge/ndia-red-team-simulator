@@ -28,7 +28,7 @@ Tracking the moving tip of every upstream would mean:
 
 Every upstream we depend on is added to `project_repos/` as a git
 submodule pinned at a specific SHA. The matrix lives in
-[`project_repos/AEGIS_VENDORED.md`](https://github.com/example/aegis/blob/main/project_repos/AEGIS_VENDORED.md).
+[`project_repos/AEGIS_VENDORED.md`](https://github.com/IntelliBridge/aegis/blob/main/project_repos/AEGIS_VENDORED.md).
 
 ```mermaid
 flowchart LR

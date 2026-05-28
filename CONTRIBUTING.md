@@ -99,7 +99,7 @@ matching chain event.
 ## Submodule discipline
 
 Every entry under `project_repos/` is pinned at a specific SHA in
-[`project_repos/AEGIS_VENDORED.md`](https://github.com/example/aegis/blob/main/project_repos/AEGIS_VENDORED.md).
+[`project_repos/AEGIS_VENDORED.md`](https://github.com/IntelliBridge/aegis/blob/main/project_repos/AEGIS_VENDORED.md).
 Bumping a pointer is an explicit operation — see
 [`docs/adr/0001-vendored-submodules.md`](docs/adr/0001-vendored-submodules.md)
 for the full policy. CI verifies the pinned SHAs match what's
@@ -108,7 +108,7 @@ checked in.
 ## Security
 
 Found a vulnerability in Aegis itself? See
-[`SECURITY.md`](https://github.com/example/aegis/blob/main/SECURITY.md). Do not file a public issue.
+[`SECURITY.md`](https://github.com/IntelliBridge/aegis/blob/main/SECURITY.md). Do not file a public issue.
 
 For changes to the auth / audit / cookie / CSRF / WS path, the PR
 description should reference the relevant section of

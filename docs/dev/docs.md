@@ -51,7 +51,7 @@ make docs-build         # equivalent to mkdocs build
 1. Write the page under the appropriate directory (`docs/architecture/`,
    `docs/api/`, `docs/ops/`, `docs/dev/`, `docs/security/`, or
    `docs/adr/`).
-2. Add it to the `nav:` block in [`mkdocs.yml`](https://github.com/example/aegis/blob/main/mkdocs.yml)
+2. Add it to the `nav:` block in [`mkdocs.yml`](https://github.com/IntelliBridge/aegis/blob/main/mkdocs.yml)
    under the section it belongs to. Pages **not** referenced in
    `nav` will surface a build warning unless they live under
    `architecture/legacy/`.
@@ -106,5 +106,5 @@ in a regular commit.
 ## Hosting
 
 The site builds on every PR via
-[`.github/workflows/docs.yml`](https://github.com/example/aegis/blob/main/.github/workflows/docs.yml).
+[`.github/workflows/docs.yml`](https://github.com/IntelliBridge/aegis/blob/main/.github/workflows/docs.yml).
 Pushes to `main` deploy to GitHub Pages.

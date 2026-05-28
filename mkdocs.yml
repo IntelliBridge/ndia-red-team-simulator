@@ -18,7 +18,7 @@ site_description: >-
   target, on whose authority, always has a verifiable answer.
 site_url: https://aegis-docs.example.com
 repo_name: aegis
-repo_url: https://github.com/example/aegis
+repo_url: https://github.com/IntelliBridge/aegis
 edit_uri: edit/main/docs/
 
 docs_dir: docs
@@ -169,11 +169,11 @@ nav:
       - Editing the docs: dev/docs.md
   - Security:
       - Fork-PR safety: security/fork-prs.md
-      - "Policy (SECURITY.md)": https://github.com/example/aegis/blob/main/SECURITY.md
+      - "Policy (SECURITY.md)": https://github.com/IntelliBridge/aegis/blob/main/SECURITY.md
   - ADRs:
       - "0001 — Vendored submodules": adr/0001-vendored-submodules.md
-  - "Changelog ↗": https://github.com/example/aegis/blob/main/CHANGELOG.md
-  - "Contributing ↗": https://github.com/example/aegis/blob/main/CONTRIBUTING.md
+  - "Changelog ↗": https://github.com/IntelliBridge/aegis/blob/main/CHANGELOG.md
+  - "Contributing ↗": https://github.com/IntelliBridge/aegis/blob/main/CONTRIBUTING.md
   - Legacy:
       - About legacy docs: architecture/legacy/README.md
       - Phase 3 plan: architecture/legacy/PLAN_PHASE3.md
@@ -195,7 +195,7 @@ extra:
   generator: false
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/example/aegis
+      link: https://github.com/IntelliBridge/aegis
 copyright: >-
   Aegis is Apache-2.0. Vendored upstreams keep their own licenses —
-  see <a href="https://github.com/example/aegis/blob/main/project_repos/AEGIS_VENDORED.md">AEGIS_VENDORED.md</a>.
+  see <a href="https://github.com/IntelliBridge/aegis/blob/main/project_repos/AEGIS_VENDORED.md">AEGIS_VENDORED.md</a>.

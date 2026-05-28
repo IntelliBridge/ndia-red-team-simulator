@@ -20,30 +20,15 @@ doesn't tell you.
 Work the items in this order. Each is a contained, F-style milestone
 with its own commit. Keep `pytest -q` green at every step.
 
-**1. Repo housekeeping (≤ 1 hour).** Settle this before publishing
-anything externally.
+**1. Repo housekeeping.** Done in the previous session. Canonical
+repo URL is now `github.com/IntelliBridge/aegis` (private). The
+placeholder `github.com/example/aegis` has been globally replaced.
+One thing still on you:
 
-   a. Resolve the GitHub repo URL. Either:
-      - Identify the canonical URL (org + repo name), or
-      - Create the repo and push.
-
-   b. Global find-replace of the placeholder. After deciding the URL
-      `<owner>/<repo>`:
-      ```bash
-      grep -rln "github.com/example/aegis" . \
-        --exclude-dir=node_modules --exclude-dir=.venv \
-        --exclude-dir=site --exclude-dir=project_repos --exclude-dir=.git \
-        | xargs sed -i '' 's|github.com/example/aegis|github.com/<owner>/<repo>|g'
-      ```
-      Files touched will include `README.md`, `mkdocs.yml`,
-      `hooks/readme_as_index.py` (the fallback default), every
-      `docs/*.md` with absolute github links, and `CONTRIBUTING.md`.
-
-   c. Enable GitHub Pages (Settings → Pages → Source → GitHub
-      Actions). The workflow at `.github/workflows/docs.yml` does
-      the rest.
-
-   d. Commit as `chore: set canonical repo URL` (one commit).
+   - **Enable GitHub Pages** (Settings → Pages → Source → GitHub
+     Actions). The workflow at `.github/workflows/docs.yml` does
+     the rest. Without this toggle, every push to `main` builds the
+     docs in CI but doesn't publish them anywhere.
 
 **2. Wire the 7 registered-but-not-wired CAI agents (1-2 sessions).**
    These are the fastest gap-closers — they're already in the
@@ -214,14 +199,14 @@ site is live + CI-built on PR + deployed on `main` push.
 ### Placeholder GitHub URL
 
 Every cross-tree absolute link uses
-`https://github.com/example/aegis/...`. **Replace globally with the
+`https://github.com/IntelliBridge/aegis/...`. **Replace globally with the
 real repo URL** before the docs site is published anywhere external.
 Locations: `mkdocs.yml` (`repo_url` + `copyright`), every doc that
 links to CONTRIBUTING/SECURITY/CHANGELOG/AEGIS_VENDORED, and the
 README. A single find-replace covers it.
 
 ```bash
-grep -rln "github.com/example/aegis" . \
+grep -rln "github.com/IntelliBridge/aegis" . \
   --exclude-dir=node_modules --exclude-dir=.venv \
   --exclude-dir=site --exclude-dir=project_repos
 ```
