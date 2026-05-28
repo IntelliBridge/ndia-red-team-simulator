@@ -1,4 +1,11 @@
-"""MCP Kali Server HTTP client with safety boundaries."""
+"""MCP Kali Server HTTP client with safety boundaries.
+
+Phase 4 v0.3.1 F8: ``tool-calls.jsonl`` is retired. Every Kali tool
+invocation lands on the canonical hash-chained audit via the injected
+``audit_writer``; the forensic detail shape (digests + refs + duration,
+no raw stdout/stderr) is built by ``aegis.audit.forensic.tool_detail``.
+The legacy ``audit_path`` flat-JSONL fallback has been removed.
+"""
 
 from __future__ import annotations
 
@@ -7,10 +14,8 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Callable
 
+from aegis.audit.forensic import tool_detail
 from aegis.safety import AuthorizationError, is_target_allowed
 
 
@@ -41,7 +46,6 @@ class KaliClient:
                  target_allowlist: list[str] | None = None,
                  allow_generic_command: bool = False,
                  timeout: int = 180,
-                 audit_path: Path | None = None,
                  caller: str = "cli",
                  audit_writer=None,
                  run_id: str | None = None,
@@ -50,7 +54,6 @@ class KaliClient:
         self.target_allowlist = target_allowlist or ["127.0.0.1", "localhost"]
         self.allow_generic_command = allow_generic_command
         self.timeout = timeout
-        self.audit_path = audit_path
         self.caller = caller
         self.audit_writer = audit_writer
         self.run_id = run_id
@@ -66,38 +69,34 @@ class KaliClient:
 
     def _audit(self, tool: str, params: dict, allowlist_check: str,
                result: ToolResult, duration_ms: int) -> None:
-        if self.audit_writer is not None:
-            self.audit_writer.append(
-                action=f"kali.{tool}",
-                actor=self.caller,
-                target=params.get("target") or params.get("url"),
-                allowlist_check=allowlist_check,
-                override=False,
-                success=result.success,
-                detail={
-                    "tool": tool, "params": params,
-                    "return_code": result.return_code,
-                    "duration_ms": duration_ms,
-                },
-                run_id=self.run_id,
-                project_id=self.project_id,
-            )
+        """Emit one forensic audit row for the tool invocation.
+
+        Phase 4 v0.3.1 F8: when no writer is wired the call is a no-op
+        — the safety layer and toolbelt constructors both supply a
+        canonical-chain writer; absence here means the caller
+        explicitly opted out (e.g. ``health()`` smoke probes).
+        """
+        if self.audit_writer is None:
             return
-        if self.audit_path is None:
-            return
-        record = {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "tool": tool,
-            "params": params,
-            "allowlist_check": allowlist_check,
-            "success": result.success,
-            "return_code": result.return_code,
-            "duration_ms": duration_ms,
-            "caller": self.caller,
-        }
-        self.audit_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.audit_path, "a") as fh:
-            fh.write(json.dumps(record) + "\n")
+        detail = tool_detail(
+            tool=tool,
+            params=params,
+            return_code=result.return_code,
+            duration_ms=duration_ms,
+            stdout=result.stdout,
+            stderr=result.stderr,
+        )
+        self.audit_writer.append(
+            action=f"kali.{tool}",
+            actor=self.caller,
+            target=params.get("target") or params.get("url"),
+            allowlist_check=allowlist_check,
+            override=False,
+            success=result.success,
+            detail=detail,
+            run_id=self.run_id,
+            project_id=self.project_id,
+        )
 
     def _post(self, path: str, data: dict) -> ToolResult:
         """Make a POST request to the Kali server."""

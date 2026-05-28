@@ -34,19 +34,37 @@ def _maybe_import_function_tool():
         return None
 
 
-def build_kali_toolbelt(config: AegisConfig, *, run_path: Path | None = None,
-                       caller: str = "cai_tool") -> _Toolbelt:
+def build_kali_toolbelt(config: AegisConfig, *,
+                       run_path: Path | None = None,
+                       caller: str = "cai_tool",
+                       audit_writer=None,
+                       run_id: str | None = None,
+                       project_id: str | None = None) -> _Toolbelt:
     """Construct the CAI toolbelt.
 
-    When CAI isn't importable, ``tools`` is an empty list — the agent then
-    runs without these tools (or callers can short-circuit and skip CAI).
+    When CAI isn't importable, ``tools`` is an empty list — the agent
+    then runs without these tools (or callers can short-circuit and
+    skip CAI).
+
+    Phase 4 v0.3.1 F8: every tool invocation emits an audit-chain event
+    via ``audit_writer``. When the caller passes no writer but supplies
+    ``run_path``, the underlying KaliClient writes through the safety
+    layer's offline shim (a JsonlAuditWriter in single-file mode at
+    ``<run_path>/audit.jsonl``) — same chain backend, just the compat
+    file naming used by Phase 2. ``tool-calls.jsonl`` is retired.
     """
-    audit_path = (run_path / "tool-calls.jsonl") if run_path else None
+    if audit_writer is None and run_path is not None:
+        # Match the safety layer's compat shim so this client and the
+        # services layer write through the same on-disk chain file.
+        from aegis.audit.chain import JsonlAuditWriter
+        audit_writer = JsonlAuditWriter(run_path, single_file="audit.jsonl")
     client = KaliClient(
         base_url=config.mcp_kali_url,
         target_allowlist=config.target_allowlist,
-        audit_path=audit_path,
         caller=caller,
+        audit_writer=audit_writer,
+        run_id=run_id,
+        project_id=project_id,
     )
 
     function_tool = _maybe_import_function_tool()

@@ -19,11 +19,20 @@ class TestBuildKaliToolbelt(unittest.TestCase):
         # Either a list of tools or empty depending on whether CAI is importable
         self.assertIsInstance(toolbelt.tools, list)
 
-    def test_audit_path_threaded_through_to_client(self):
+    def test_audit_writer_threaded_through_to_client(self):
+        # Phase 4 v0.3.1 F8: tool-calls.jsonl is retired. The KaliClient now
+        # routes per-call audit events through the canonical chain. When the
+        # caller passes only ``run_path`` (no explicit writer), the toolbelt
+        # constructs the offline-mode ``JsonlAuditWriter`` in single-file
+        # mode at ``<run_path>/audit.jsonl`` (matching the safety layer).
+        from aegis.audit.chain import JsonlAuditWriter
         with tempfile.TemporaryDirectory() as tmp:
             run_path = Path(tmp)
             toolbelt = build_kali_toolbelt(AegisConfig(), run_path=run_path)
-            self.assertEqual(toolbelt.client.audit_path, run_path / "tool-calls.jsonl")
+            self.assertIsNotNone(toolbelt.client.audit_writer)
+            self.assertIsInstance(toolbelt.client.audit_writer, JsonlAuditWriter)
+            # And there is no audit_path attribute on the client any more.
+            self.assertFalse(hasattr(toolbelt.client, "audit_path"))
 
 
 if __name__ == "__main__":

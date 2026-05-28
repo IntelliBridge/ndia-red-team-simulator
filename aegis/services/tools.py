@@ -1,12 +1,10 @@
 """Tool-execution service.
 
 Wraps ``aegis.tools.kali_client.KaliClient`` behind the authorization +
-audit boundary so every Kali tool invocation lands on the canonical chain.
-
-Phase 2's KaliClient still maintains a per-call audit file at
-``tool-calls.jsonl`` for offline / back-compat. M2 will retire that second
-writer and route through the central audit chain via an injected
-``AuditWriter``; this service is the entry point that does so.
+audit boundary so every Kali tool invocation lands on the canonical
+hash-chained audit. Phase 4 v0.3.1 F8 retired the side-channel
+``tool-calls.jsonl`` file — the KaliClient now requires an
+``audit_writer`` and writes through the shared chain.
 """
 
 from __future__ import annotations
@@ -39,8 +37,18 @@ def run_kali_tool(
     config: AegisConfig,
     override_authorized: bool = False,
     client: KaliClient | None = None,
+    audit_writer=None,
+    run_id: str | None = None,
+    project_id: str | None = None,
 ) -> ToolOutcome:
-    """Run a named Kali tool with safety + audit at the service boundary."""
+    """Run a named Kali tool with safety + audit at the service boundary.
+
+    ``audit_writer`` (Phase 4 v0.3.1 F8) is the canonical destination
+    for both the authorize() event and the tool's per-call audit row.
+    When ``None``, the safety layer constructs the offline
+    ``JsonlAuditWriter`` compat shim — this fallback is retired by
+    F3+F6 once every service caller threads a writer explicitly.
+    """
     target = params.get("target") or params.get("url") or ""
     try:
         authorize(
@@ -48,6 +56,8 @@ def run_kali_tool(
             allowlist=config.target_allowlist,
             run_path=run_state.run_path,
             override_authorized=override_authorized,
+            actor=actor, writer=audit_writer,
+            run_id=run_id, project_id=project_id,
             detail={"actor": actor, "tool": name, "params": params},
         )
     except AuthorizationError as exc:
@@ -56,11 +66,16 @@ def run_kali_tool(
                            error="authorization refused")
 
     if client is None:
+        # The KaliClient also emits its own per-tool audit row with
+        # forensic detail (return code, duration, stdout/stderr digests).
+        # We thread the same writer in so all events land on one chain.
         client = KaliClient(
             base_url=config.mcp_kali_url,
             target_allowlist=config.target_allowlist,
-            audit_path=run_state.run_path / "tool-calls.jsonl",
             caller=f"service:{actor}",
+            audit_writer=audit_writer,
+            run_id=run_id,
+            project_id=project_id,
         )
 
     result: ToolResult = client.run_tool(name, params)
