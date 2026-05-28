@@ -1,13 +1,18 @@
-"""Target management (admin-only)."""
+"""Target management (admin-only).
+
+F6: writes go through ``services.targets`` so each create/delete lands
+on the audit chain before the DB row is mutated.
+"""
 
 from __future__ import annotations
-
-from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 
 from aegis.api.auth import CurrentUser, get_current_user
 from aegis.api.policy import Action, check
+from aegis.audit.chain import resolve_writer
+from aegis.config import load_config
+from aegis.services import targets as targets_svc
 
 router = APIRouter(prefix="/targets", tags=["targets"])
 
@@ -38,16 +43,14 @@ def create_target(body: dict = Body(default_factory=dict),
     if not value:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="value required")
-    from aegis.db.models import Target
-    from aegis.db.session import get_session
-    tid = f"target-{uuid4().hex[:12]}"
-    with get_session() as sess:
-        sess.add(Target(
-            id=tid, project_id=project_id, kind=kind, value=value,
-            verified=False,
-        ))
-        sess.flush()
-    return {"id": tid, "kind": kind, "value": value, "project_id": project_id}
+    config = load_config()
+    record = targets_svc.create_target(
+        project_id=project_id, kind=kind, value=value,
+        actor=f"user:{user.sub}", config=config,
+        audit_writer=resolve_writer(config),
+    )
+    return {"id": record.id, "kind": record.kind, "value": record.value,
+            "project_id": record.project_id}
 
 
 @router.delete("/{target_id}")
@@ -60,6 +63,16 @@ def delete_target(target_id: str,
         if target is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail="target not found")
-        check(user, Action.TARGET_MANAGE, target.project_id)
-        sess.delete(target)
+        project_id = target.project_id
+
+    check(user, Action.TARGET_MANAGE, project_id)
+    config = load_config()
+    try:
+        targets_svc.delete_target(
+            target_id=target_id, actor=f"user:{user.sub}",
+            config=config, audit_writer=resolve_writer(config),
+        )
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="target not found")
     return {"deleted": target_id}

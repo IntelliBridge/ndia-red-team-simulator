@@ -1,8 +1,16 @@
 """Fix orchestration service.
 
-Encapsulates the patch / live / deps strategy paths that previously lived
-inside ``cmd_fix``. The CLI, API, and workers all call this with explicit
-arguments; argparse-specific concerns stay in ``aegis/cli.py``.
+Phase 4 v0.3.1 F6 split:
+
+- **Admission** (``create_fix_job``): authorize the fix request, create
+  the ``Job`` row, emit a chained audit event, enqueue the worker
+  task. Called from the API. Returns a ``JobHandle``.
+- **Execution** (``generate_fix``): the long-running CAI / patch /
+  PR work. Called from Celery workers and the offline CLI.
+
+``generate_fix`` keeps its v0.3.0 signature so existing CLI / test
+parity holds in v0.3.1; F11 will rename it to ``execute_fix_job`` and
+move the worker task body to call it.
 """
 
 from __future__ import annotations
@@ -10,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from aegis.config import AegisConfig
 from aegis.remediate.cai_runner import RemediationResult, run_code_fix, run_live_hardening
@@ -21,10 +30,66 @@ from aegis.remediate.patch_workflow import (
 )
 from aegis.safety import authorize
 from aegis.schema import AegisFinding
+from aegis.services.scans import JobHandle
 from aegis.state import RunState
 
 
 Strategy = Literal["patch", "live", "deps"]
+
+
+def create_fix_job(
+    *,
+    finding_id: str,
+    strategy: Strategy = "patch",
+    apply: bool = False,
+    open_pr: bool = False,
+    repo: str | None = None,
+    project_id: str,
+    run_id: str,
+    actor: str,
+    config: AegisConfig,
+    audit_writer,
+    enqueue: bool = True,
+) -> JobHandle:
+    """Admission boundary for ``fix.generate`` / ``fix.apply``.
+
+    F6 contract: emit the audit row (``fix.apply`` when ``apply`` is
+    true, ``fix.generate`` otherwise), persist the Job, enqueue the
+    worker. Target authorisation happens at execution time — the
+    audit row here is the request-time record.
+    """
+    action = "fix.apply" if apply else "fix.generate"
+    authorize(
+        action, None,
+        allowlist=config.target_allowlist,
+        actor=actor, writer=audit_writer,
+        project_id=project_id, run_id=run_id,
+        detail={"actor": actor, "finding_id": finding_id,
+                "strategy": strategy, "apply": apply,
+                "open_pr": open_pr, "repo": repo},
+    )
+
+    from aegis.db.models import Job
+    from aegis.db.session import get_session
+
+    job_id = f"job-{uuid4().hex[:12]}"
+    with get_session() as sess:
+        sess.add(Job(
+            id=job_id, run_id=run_id, project_id=project_id,
+            type="fix.generate", status="queued", created_by=actor,
+            detail={"finding_id": finding_id, "strategy": strategy,
+                    "apply": apply, "open_pr": open_pr, "repo": repo},
+        ))
+        sess.flush()
+
+    if enqueue:
+        try:
+            from aegis.workers.tasks.fix import fix_generate
+            fix_generate.delay(job_id)
+        except Exception:
+            pass
+
+    return JobHandle(run_id=run_id, job_id=job_id)
 
 
 @dataclass

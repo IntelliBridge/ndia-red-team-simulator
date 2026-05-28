@@ -1,21 +1,23 @@
-"""POST /v1/runs/{id}/cancel — mark run cancelled (best-effort revoke)."""
+"""POST /v1/runs/{id}/cancel — admission service emits audit + cancels."""
 
 from __future__ import annotations
-
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from aegis.api.auth import CurrentUser, get_current_user
 from aegis.api.policy import Action, check
+from aegis.audit.chain import resolve_writer
+from aegis.config import load_config
+from aegis.safety import AuthorizationError
+from aegis.services.runs import cancel_run
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 
 @router.post("/{run_id}/cancel")
 def cancel(run_id: str, user: CurrentUser = Depends(get_current_user)):
-    from sqlalchemy import select
-    from aegis.db.models import Job, Run
+    """F6 admission entry — RBAC then delegate to ``services.runs.cancel_run``."""
+    from aegis.db.models import Run
     from aegis.db.session import get_session
 
     with get_session() as sess:
@@ -23,21 +25,21 @@ def cancel(run_id: str, user: CurrentUser = Depends(get_current_user)):
         if run is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail="run not found")
-        check(user, Action.RUN_CANCEL, run.project_id)
-        run.status = "cancelled"
-        run.completed_at = datetime.now(timezone.utc)
-        jobs = sess.execute(
-            select(Job).where(Job.run_id == run_id,
-                              Job.status.in_(["queued", "running"]))
-        ).scalars().all()
-        for j in jobs:
-            j.status = "cancelled"
-            j.completed_at = datetime.now(timezone.utc)
-            try:
-                from aegis.workers.celery_app import app
-                if j.celery_task_id:
-                    app.control.revoke(j.celery_task_id, terminate=True)
-            except Exception:
-                pass
-    return {"run_id": run_id, "status": "cancelled",
-            "jobs_cancelled": len(jobs)}
+        project_id = run.project_id
+
+    check(user, Action.RUN_CANCEL, project_id)
+
+    config = load_config()
+    try:
+        outcome = cancel_run(
+            run_id=run_id, actor=f"user:{user.sub}",
+            config=config, audit_writer=resolve_writer(config),
+        )
+    except AuthorizationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail=str(exc))
+    except LookupError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="run not found")
+    return {"run_id": outcome.run_id, "status": outcome.status,
+            "jobs_cancelled": outcome.jobs_cancelled}

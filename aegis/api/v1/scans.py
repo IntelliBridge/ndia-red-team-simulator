@@ -1,13 +1,15 @@
-"""POST /v1/scans — enqueue a scan."""
+"""POST /v1/scans — enqueue a scan via the admission service."""
 
 from __future__ import annotations
-
-from uuid import uuid4
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 
 from aegis.api.auth import CurrentUser, get_current_user
 from aegis.api.policy import Action, check
+from aegis.audit.chain import resolve_writer
+from aegis.config import load_config
+from aegis.safety import AuthorizationError
+from aegis.services.scans import create_scan_job
 
 router = APIRouter(prefix="/scans", tags=["scans"])
 
@@ -17,6 +19,13 @@ def start(
     body: dict = Body(default_factory=dict),
     user: CurrentUser = Depends(get_current_user),
 ):
+    """F6 admission entry — RBAC → ``create_scan_job`` → return JobHandle.
+
+    The admission service emits the ``scan.start`` audit row *before*
+    the Run and Job rows are created and *before* Celery is touched,
+    so a worker crash mid-enqueue can never produce a row without a
+    matching chain event.
+    """
     project_id = body.get("project_id") or "default"
     target = body.get("target")
     scanner = body.get("scanner", "strix")
@@ -25,36 +34,21 @@ def start(
                             detail="target required")
     check(user, Action.SCAN_START, project_id)
 
-    from datetime import datetime, timezone
-    from aegis.db.models import Job, Run
-    from aegis.db.session import get_session
-
-    run_id = f"run-{uuid4().hex[:12]}"
-    job_id = f"job-{uuid4().hex[:12]}"
-    with get_session() as sess:
-        sess.add(Run(
-            id=run_id, project_id=project_id, mode="api", status="queued",
-            scanner=scanner, created_by=user.sub, stage_table={},
-        ))
-        sess.flush()    # FK precedence: Run must exist before Job references it.
-        sess.add(Job(
-            id=job_id, run_id=run_id, project_id=project_id,
-            type="scan.start", status="queued",
-            created_by=user.sub,
-            detail={"target": target, "scanner": scanner,
-                    "instruction": body.get("instruction")},
-        ))
-        sess.flush()
-
-    # Enqueue via Celery if available (M5).
+    config = load_config()
     try:
-        from aegis.workers.tasks.scan import scan_start
-        scan_start.delay(job_id)
-    except Exception:
-        # Worker not running / Celery not configured — leave the job queued.
-        pass
+        handle = create_scan_job(
+            target=target, scanner=scanner,
+            project_id=project_id, actor=f"user:{user.sub}",
+            instruction=body.get("instruction"),
+            config=config,
+            audit_writer=resolve_writer(config),
+            override_authorized=bool(body.get("override_authorized", False)),
+        )
+    except AuthorizationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail=str(exc))
 
     return {
-        "run_id": run_id, "job_id": job_id,
-        "status_url": f"/v1/runs/{run_id}",
+        "run_id": handle.run_id, "job_id": handle.job_id,
+        "status_url": f"/v1/runs/{handle.run_id}",
     }

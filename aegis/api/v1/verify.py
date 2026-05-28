@@ -1,20 +1,25 @@
-"""POST /v1/findings/{id}/verify — enqueue a verification."""
+"""POST /v1/findings/{id}/verify — enqueue a verification via admission service."""
 
 from __future__ import annotations
-
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from aegis.api.auth import CurrentUser, get_current_user
 from aegis.api.policy import Action, check
+from aegis.audit.chain import resolve_writer
+from aegis.config import load_config
+from aegis.safety import AuthorizationError
+from aegis.services.verify import create_verify_job
 
 router = APIRouter(prefix="/findings", tags=["verify"])
 
 
 @router.post("/{finding_id}/verify")
 def verify(finding_id: str, user: CurrentUser = Depends(get_current_user)):
-    from aegis.db.models import Finding, Job
+    """F6 admission entry — looks up the finding, runs RBAC, then
+    delegates to ``services.verify.create_verify_job``.
+    """
+    from aegis.db.models import Finding
     from aegis.db.session import get_session
 
     with get_session() as sess:
@@ -22,19 +27,19 @@ def verify(finding_id: str, user: CurrentUser = Depends(get_current_user)):
         if finding is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail="finding not found")
-        check(user, Action.VERIFY_REPLAY, finding.project_id)
-        job_id = f"job-{uuid4().hex[:12]}"
-        sess.add(Job(
-            id=job_id, run_id=finding.run_id, project_id=finding.project_id,
-            type="verify.replay", status="queued", created_by=user.sub,
-            detail={"finding_id": finding_id},
-        ))
-        sess.flush()
+        project_id = finding.project_id
+        run_id = finding.run_id
 
+    check(user, Action.VERIFY_REPLAY, project_id)
+
+    config = load_config()
     try:
-        from aegis.workers.tasks.verify import verify_replay
-        verify_replay.delay(job_id)
-    except Exception:
-        pass
-
-    return {"job_id": job_id}
+        handle = create_verify_job(
+            finding_id=finding_id, project_id=project_id, run_id=run_id,
+            actor=f"user:{user.sub}",
+            config=config, audit_writer=resolve_writer(config),
+        )
+    except AuthorizationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail=str(exc))
+    return {"job_id": handle.job_id}

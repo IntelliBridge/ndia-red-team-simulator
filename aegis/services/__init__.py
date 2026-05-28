@@ -1,28 +1,33 @@
 """Aegis service layer.
 
-The service layer is the single source of orchestration logic for scans,
-fixes, verification, reporting, and tool execution. The CLI (`aegis/cli.py`),
-the FastAPI service (`aegis/api/`), and the Celery workers (`aegis/workers/`)
-all call into these functions. They never duplicate logic.
+Phase 4 v0.3.1 F6 split:
 
-Each service function:
+- **Admission** (``create_*_job``): request-scoped. Runs ``authorize()``
+  against the supplied ``audit_writer``, persists Run+Job rows, and
+  enqueues the Celery task. Called from API write routes and the CLI's
+  ``--api`` dispatch.
+- **Execution** (``start_scan`` / ``generate_fix`` / ``verify``):
+  long-running. Called from Celery workers and (for backward compat)
+  the offline CLI.
 
-- Takes a ``RunStateAPI`` and an ``actor`` string.
-- Routes active operations through ``aegis.safety.authorize``.
-- Emits audit events at operation boundaries (M2).
-- Returns a structured dataclass result.
+Both halves live side-by-side in the same module per primitive so the
+audit row's detail and the worker's behaviour can be reasoned about
+together.
 """
 
-from aegis.services.scans import ScanOutcome, start_scan
-from aegis.services.fixes import FixOutcome, generate_fix
-from aegis.services.verify import VerifyOutcome, verify
+from aegis.services.fixes import FixOutcome, create_fix_job, generate_fix
 from aegis.services.reports import ReportOutcome, render_reports
+from aegis.services.runs import CancelOutcome, cancel_run
+from aegis.services.scans import JobHandle, ScanOutcome, create_scan_job, start_scan
 from aegis.services.tools import ToolOutcome, run_kali_tool
+from aegis.services.verify import VerifyOutcome, create_verify_job, verify
 
 __all__ = [
-    "ScanOutcome", "start_scan",
-    "FixOutcome", "generate_fix",
-    "VerifyOutcome", "verify",
+    "JobHandle",
+    "ScanOutcome", "create_scan_job", "start_scan",
+    "FixOutcome", "create_fix_job", "generate_fix",
+    "VerifyOutcome", "create_verify_job", "verify",
+    "CancelOutcome", "cancel_run",
     "ReportOutcome", "render_reports",
     "ToolOutcome", "run_kali_tool",
 ]
