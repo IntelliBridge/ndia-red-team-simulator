@@ -121,10 +121,15 @@ def cmd_init(_args, _config):
 
 
 def cmd_scan(args, config):
-    """Scan a target — normalize existing Strix output or use an explicit demo fixture."""
-    from aegis.state import RunState
+    """Scan a target — thin CLI shell over ``services.scans.start_scan``.
+
+    Local-only conveniences (loading pre-existing Strix events.jsonl,
+    bundled demo fixture) stay at this layer; everything that needs an
+    audit event lives behind the service boundary.
+    """
     from aegis.adapters.strix_adapter import load_strix_events, convert_strix_findings
-    from aegis.safety import authorize
+    from aegis.services.scans import start_scan
+    from aegis.state import RunState
 
     target_url = args.target_url
     repo_path = args.repo
@@ -136,28 +141,24 @@ def cmd_scan(args, config):
     findings = []
 
     if getattr(args, "use_strix", False):
-        from aegis.adapters.strix_runner import run_strix
-        authorize(
-            "strix.run", target_url,
-            allowlist=config.target_allowlist, run_path=state.run_path,
-            override_authorized=getattr(args, "override_authorized", False),
-            detail={"target": target_url},
-        )
         _info("Launching Strix as a subprocess (this may take a while)")
-        result = run_strix(
-            target_url, state,
+        outcome = start_scan(
+            run_state=state, target=target_url, scanner="strix",
             instruction=getattr(args, "instruction", None),
             timeout=getattr(args, "timeout", 1800),
-            strix_command=getattr(config, "strix_command", None),
-            strix_path=config.strix_path,
+            actor="cli:scan",
+            config=config,
+            override_authorized=getattr(args, "override_authorized", False),
+            use_strix=True,
         )
-        findings = result.findings
-        if result.success:
+        findings = outcome.findings
+        if outcome.success:
             _info(f"Strix completed: {len(findings)} finding(s)")
-        elif result.partial_success:
-            _warn(f"Strix exited rc={result.return_code} but emitted {len(findings)} finding(s) — partial success")
+        elif outcome.partial_success:
+            _warn(f"Strix exited rc={outcome.return_code} but emitted "
+                  f"{len(findings)} finding(s) — partial success")
         else:
-            _err(f"Strix failed: {result.error or 'unknown error'}")
+            _err(f"Strix failed: {outcome.error or 'unknown error'}")
 
     # Try to load Strix events.jsonl from an explicit path or the repo path.
     events_path = Path(args.events) if getattr(args, "events", None) else None
@@ -265,26 +266,22 @@ def cmd_export(args, config):
 
 
 def cmd_fix(args, config):
-    """Remediate a finding using CAI CodeAgent or BlueteamAgent."""
-    from aegis.remediate.cai_runner import run_code_fix, run_live_hardening
-    from aegis.remediate.patch_workflow import (
-        apply_patch,
-        commit_patch,
-        open_pull_request,
-        rollback,
-    )
-    from aegis.safety import authorize
+    """Remediate a finding — thin CLI shell over ``services.fixes.generate_fix``.
+
+    The CLI parses options, resolves the run + finding, and prints the
+    structured outcome the service returns. All authorize / patch / commit
+    / PR logic lives in the service. The ``--rollback`` short-circuit and
+    the ``--deps`` Trivy re-scan are local conveniences that still belong
+    at this layer (they don't produce audit events of their own).
+    """
+    from aegis.remediate.patch_workflow import rollback
+    from aegis.services.fixes import generate_fix
 
     finding_id = args.finding_id
     state = _resolve_run_state(config, args.run)
     findings = _load_findings_objects(state)
 
-    target_finding = None
-    for f in findings:
-        if f.id == finding_id:
-            target_finding = f
-            break
-
+    target_finding = next((f for f in findings if f.id == finding_id), None)
     if target_finding is None:
         _err(f"Finding '{finding_id}' not found in run {state.run_id}.")
         sys.exit(1)
@@ -313,255 +310,129 @@ def cmd_fix(args, config):
         return
 
     state.update_finding_status(finding_id, "fixing")
+    outcomes: list = []
 
-    # Status tracking for the patch path. Defaults: not "fixed" unless
-    # an --apply path produces a successful commit.
-    patch_status: str | None = None     # None | "fixed" | "failed" | "pending_apply"
-
-    results = []
     if args.patch:
         if args.use_golden_patch:
             _info(f"Using golden patch fixture for {finding_id}")
         else:
             _info(f"Invoking CAI CodeAgent to generate patch for {finding_id}")
-        result = run_code_fix(
-            target_finding,
-            repo_path=args.repo,
-            use_golden_patch=args.use_golden_patch,
-        )
-        results.append(result)
-        # If the runner itself failed, that's a hard "failed" — no diff means
-        # nothing to apply.
-        if not result.success:
-            patch_status = "failed"
+        outcomes.append(generate_fix(
+            run_state=state, finding=target_finding, strategy="patch",
+            repo=args.repo, apply=args.apply, open_pr=args.open_pr,
+            branch=args.branch, allow_dirty=args.allow_dirty,
+            push=args.push, use_golden_patch=args.use_golden_patch,
+            actor="cli:fix", config=config,
+        ))
 
-        if result.success and result.diff and args.repo:
-            authorize(
-                "patch.apply",
-                None,
-                allowlist=config.target_allowlist,
-                run_path=state.run_path,
-                detail={"finding_id": finding_id, "repo": args.repo,
-                        "diff_sha256": result.diff_sha256_hex,
-                        "source": result.source, "dry_run": not args.apply},
-            )
-            # Persist the diff regardless of --apply.
-            patches_dir = state.run_path / "artifacts" / "patches"
-            patches_dir.mkdir(parents=True, exist_ok=True)
-            (patches_dir / f"{finding_id}.diff").write_text(result.diff)
-            _info(f"Patch written to {patches_dir / f'{finding_id}.diff'}")
-
-            if not args.apply:
-                # Dry-run: only validate that the patch *would* apply, never
-                # mutate the working tree. apply_patch with dry_run=True maps
-                # to ``git apply --check``. A successful dry-run is NOT a
-                # "fixed" status — the repo has not actually been patched.
-                check = apply_patch(args.repo, result.diff, dry_run=True)
-                if check.success:
-                    _info("Dry-run OK — patch applies cleanly. Pass --apply to commit.")
-                    patch_status = "pending_apply"
-                else:
-                    _warn(f"Dry-run failed (`git apply --check`): {check.stderr}")
-                    patch_status = "failed"
-            else:
-                # --apply: commit_patch does the single canonical apply +
-                # commit on a new branch, with auto-rollback on failure.
-                commit_result = commit_patch(
-                    args.repo,
-                    target_finding,
-                    result.diff,
-                    branch=args.branch,
-                    allow_dirty=args.allow_dirty,
-                )
-                if commit_result.success:
-                    _info(f"Committed on branch {commit_result.branch} ({commit_result.commit_hash})")
-                    state.append_remediation_log(
-                        finding_id,
-                        action="patch_commit",
-                        result=(f"branch={commit_result.branch} "
-                                f"commit={commit_result.commit_hash} "
-                                f"ref_before={commit_result.ref_before} "
-                                f"diff_sha256={commit_result.diff_sha256}"),
-                        success=True,
-                    )
-                    patch_status = "fixed"
-                    if args.open_pr:
-                        authorize(
-                            "github.open_pr",
-                            None,
-                            allowlist=config.target_allowlist,
-                            run_path=state.run_path,
-                            detail={"branch": commit_result.branch},
-                        )
-                        ok, url_or_err = open_pull_request(
-                            args.repo,
-                            commit_result.branch,
-                            title=f"Aegis fix: {target_finding.title} ({finding_id})",
-                            body=f"Automated fix from Aegis run {state.run_id}.\n\n"
-                                 f"Source: {result.source}\n"
-                                 f"diff sha256: {commit_result.diff_sha256}\n",
-                            push=args.push,
-                        )
-                        if ok:
-                            _info(f"PR opened: {url_or_err}")
-                            state.append_remediation_log(
-                                finding_id, action="open_pr",
-                                result=url_or_err, success=True,
-                            )
-                        else:
-                            _warn(f"PR creation failed: {url_or_err}")
-                else:
-                    _warn(f"commit failed: {commit_result.error} (repo rolled back to {commit_result.ref_before})")
-                    # commit_patch already rolled back; surface the partial
-                    # failure to the caller.
-                    result.success = False
-                    patch_status = "failed"
-
-    live_status: str | None = None
     if args.live:
-        authorize(
-            "cai.live_hardening",
-            target_finding.target,
-            allowlist=config.target_allowlist,
-            run_path=state.run_path,
-            override_authorized=getattr(args, "override_authorized", False),
-            detail={"finding_id": finding_id},
-        )
         _info(f"Invoking CAI BlueteamAgent to harden target for {finding_id}")
-        live_result = run_live_hardening(target_finding)
-        results.append(live_result)
-        live_status = "fixed" if live_result.success else "failed"
+        outcomes.append(generate_fix(
+            run_state=state, finding=target_finding, strategy="live",
+            repo=args.repo, apply=False, open_pr=False, branch=None,
+            allow_dirty=False, push=False, use_golden_patch=False,
+            actor="cli:fix", config=config,
+            override_authorized=getattr(args, "override_authorized", False),
+        ))
 
     if args.deps:
         if not args.repo:
             _err("--deps requires --repo")
             sys.exit(1)
-        from aegis.adapters.trivy_runner import run_trivy
-        from aegis.remediate.deps_workflow import build_version_bump_diff
-        from aegis.remediate.patch_workflow import apply_patch, commit_patch
-
-        # Always re-scan so the run's findings reflect repo HEAD before bumping.
-        _info(f"Running Trivy fs scan on {args.repo}")
-        trivy_result = run_trivy(
-            args.repo, run_id=state.run_id,
-            output_dir=state.run_path / "trivy",
-        )
-        if not trivy_result.success:
-            _warn(f"Trivy run failed: {trivy_result.error}")
-        else:
-            existing = [AegisFinding.from_dict(f) for f in state.load_findings()]
-            by_id = {f.id: f for f in existing}
-            for tf in trivy_result.findings:
-                by_id[tf.id] = tf
-            state.save_findings(list(by_id.values()))
-            _info(f"Trivy: {len(trivy_result.findings)} dependency finding(s); "
-                  f"run now has {len(by_id)} total")
-
-        # Resolve the dep finding to bump
-        all_findings = [AegisFinding.from_dict(f) for f in state.load_findings()]
-        dep_finding = next((f for f in all_findings if f.id == finding_id), None)
-        if dep_finding is None or dep_finding.finding_type != "dependency":
-            _err(f"--deps requires a dependency finding id; '{finding_id}' is missing or wrong type")
+        dep_finding = _refresh_deps_findings(args, state, finding_id)
+        if dep_finding is None:
             sys.exit(1)
+        outcomes.append(generate_fix(
+            run_state=state, finding=dep_finding, strategy="deps",
+            repo=args.repo, apply=args.apply, open_pr=args.open_pr,
+            branch=args.branch, allow_dirty=args.allow_dirty,
+            push=args.push, use_golden_patch=False,
+            actor="cli:fix", config=config,
+        ))
 
-        bump = build_version_bump_diff(dep_finding, args.repo)
-        if bump.diff is None:
-            _warn(f"could not synthesize bump diff: {bump.error}")
-        else:
-            authorize(
-                "deps.bump", None,
-                allowlist=config.target_allowlist, run_path=state.run_path,
-                detail={"finding_id": dep_finding.id, "repo": args.repo,
-                        "package": dep_finding.package_name,
-                        "from": dep_finding.installed_version,
-                        "to": dep_finding.fixed_version,
-                        "manifest": bump.rel_path},
-            )
-            patches_dir = state.run_path / "artifacts" / "patches"
-            patches_dir.mkdir(parents=True, exist_ok=True)
-            (patches_dir / f"{dep_finding.id}.diff").write_text(bump.diff)
-            _info(f"Bump diff written to {patches_dir / (dep_finding.id + '.diff')}")
+    _report_fix_outcomes(state, finding_id, outcomes, args.deps)
 
-            if args.apply:
-                commit_result = commit_patch(
-                    args.repo, dep_finding, bump.diff,
-                    branch=args.branch, allow_dirty=args.allow_dirty,
-                )
-                if commit_result.success:
-                    _info(f"Bump committed on branch {commit_result.branch} "
-                          f"({commit_result.commit_hash})")
-                    state.append_remediation_log(
-                        dep_finding.id, action="deps_bump",
-                        result=(f"branch={commit_result.branch} "
-                                f"commit={commit_result.commit_hash} "
-                                f"manifest={bump.rel_path} "
-                                f"diff_sha256={commit_result.diff_sha256}"),
-                        success=True,
-                    )
-                    state.update_finding_status(dep_finding.id, "fixed")
-                    if args.open_pr:
-                        ok, url_or_err = open_pull_request(
-                            args.repo, commit_result.branch,
-                            title=f"Aegis deps: bump {dep_finding.package_name} "
-                                  f"to {dep_finding.fixed_version}",
-                            body=(f"CVE: {dep_finding.cve or dep_finding.id}\n"
-                                  f"Manifest: {bump.rel_path}\n"
-                                  f"diff sha256: {commit_result.diff_sha256}\n"),
-                            push=args.push,
-                        )
-                        _info(f"PR: {url_or_err}") if ok else _warn(f"PR failed: {url_or_err}")
-                else:
-                    _warn(f"bump commit failed: {commit_result.error}")
-                    state.update_finding_status(dep_finding.id, "failed")
-            else:
-                check = apply_patch(args.repo, bump.diff, dry_run=True)
-                _info(
-                    f"Dry-run: bump {dep_finding.package_name} "
-                    f"{dep_finding.installed_version} -> {dep_finding.fixed_version} "
-                    f"{'passes' if check.success else 'FAILS git apply --check'}"
-                )
 
-    # Resolve the finding's final status. --deps manages its own status
-    # inside its branch (and may operate on a different finding id), so we
-    # never let the generic logic clobber it. --patch and --live each
-    # contribute a status; if both run, "failed" wins.
+def _refresh_deps_findings(args, state, finding_id):
+    """Re-run Trivy fs to refresh deps findings then return the requested one.
+
+    Trivy execution is a deterministic local scan; staying at the CLI layer
+    keeps the dep-bump service signature single-purpose (one finding in,
+    one outcome out).
+    """
+    from aegis.adapters.trivy_runner import run_trivy
+
+    _info(f"Running Trivy fs scan on {args.repo}")
+    trivy_result = run_trivy(
+        args.repo, run_id=state.run_id,
+        output_dir=state.run_path / "trivy",
+    )
+    if not trivy_result.success:
+        _warn(f"Trivy run failed: {trivy_result.error}")
+    else:
+        existing = [AegisFinding.from_dict(f) for f in state.load_findings()]
+        by_id = {f.id: f for f in existing}
+        for tf in trivy_result.findings:
+            by_id[tf.id] = tf
+        state.save_findings(list(by_id.values()))
+        _info(f"Trivy: {len(trivy_result.findings)} dependency finding(s); "
+              f"run now has {len(by_id)} total")
+
+    all_findings = [AegisFinding.from_dict(f) for f in state.load_findings()]
+    dep_finding = next((f for f in all_findings if f.id == finding_id), None)
+    if dep_finding is None or dep_finding.finding_type != "dependency":
+        _err(f"--deps requires a dependency finding id; "
+             f"'{finding_id}' is missing or wrong type")
+        return None
+    return dep_finding
+
+
+def _report_fix_outcomes(state, finding_id, outcomes, ran_deps: bool) -> None:
+    """Print a structured summary for each service outcome + persist status."""
     candidates: list[str] = []
-    if patch_status is not None:
-        candidates.append(patch_status)
-    if live_status is not None:
-        candidates.append(live_status)
+    for outcome in outcomes:
+        if outcome.strategy == "deps":
+            # The deps service may operate on a different finding id; persist
+            # status on the deps finding itself.
+            state.update_finding_status(outcome.finding_id, outcome.status)
+            if outcome.diff_path:
+                _info(f"Bump diff written to {outcome.diff_path}")
+            if outcome.commit_hash:
+                _info(f"Bump committed on branch {outcome.branch} ({outcome.commit_hash})")
+            if outcome.pr_url:
+                _info(f"PR: {outcome.pr_url}")
+            if not outcome.success and outcome.error:
+                _warn(f"deps: {outcome.error}")
+            continue
+
+        if outcome.diff_path:
+            _info(f"Patch written to {outcome.diff_path}")
+        if outcome.commit_hash:
+            _info(f"Committed on branch {outcome.branch} ({outcome.commit_hash})")
+        if outcome.pr_url:
+            _info(f"PR opened: {outcome.pr_url}")
+        if outcome.status == "pending_apply" and not outcome.commit_hash:
+            _info("Dry-run OK — patch applies cleanly. Pass --apply to commit.")
+        if not outcome.success and outcome.error:
+            _warn(f"{outcome.strategy}: {outcome.error}")
+        candidates.append(outcome.status)
+
     if candidates:
         if "failed" in candidates:
-            final_status = "failed"
+            final = "failed"
         elif "pending_apply" in candidates and "fixed" not in candidates:
-            final_status = "pending_apply"
+            final = "pending_apply"
         else:
-            final_status = "fixed"
-        state.update_finding_status(finding_id, final_status)
-    elif not args.deps:
-        # No strategy actually ran (shouldn't happen given the guard above,
-        # but stay safe): leave the "fixing" sentinel as "open" again.
+            final = "fixed"
+        state.update_finding_status(finding_id, final)
+    elif not ran_deps:
+        # No strategy contributed a status — restore the finding from "fixing".
         state.update_finding_status(finding_id, "open")
-
-    for result in results:
-        artifact_name = f"remediation-{finding_id}-{result.action}.txt"
-        artifact_path = state.save_artifact(artifact_name, result.output)
-        state.append_remediation_log(
-            finding_id,
-            action=result.action,
-            result=str(artifact_path),
-            success=result.success,
-        )
-        if result.success:
-            _info(f"{result.action} completed. Output saved to {artifact_path}")
-        else:
-            _warn(f"{result.action} failed: {result.error or 'unknown error'}")
-            _info(f"Generated prompt/output saved to {artifact_path}")
 
 
 def cmd_verify(args, config):
-    """Verify a finding by replaying its PoC against the running target."""
-    from aegis.verify import verify_finding
+    """Verify a finding by replaying its PoC — thin shell over the service."""
+    from aegis.services.verify import verify as verify_svc
 
     state = _resolve_run_state(config, args.run)
     findings = _load_findings_objects(state)
@@ -571,11 +442,13 @@ def cmd_verify(args, config):
         sys.exit(1)
 
     repo_path = Path(args.repo) if args.repo else None
-    result = verify_finding(
-        target,
+    result = verify_svc(
         run_state=state,
+        finding=target,
         repo_path=repo_path,
         require_rebuilt=not args.no_provenance_check,
+        actor="cli:verify",
+        config=config,
     )
 
     status_color = {
@@ -594,46 +467,21 @@ def cmd_verify(args, config):
 
 
 def cmd_report(args, config):
-    """Generate a Markdown report for a run."""
+    """Generate Markdown / JSON / HTML reports — thin shell over the service."""
+    from aegis.services.reports import render_reports
+
     state = _resolve_run_state(config, args.run)
     findings = _load_findings_objects(state)
 
     if not findings:
         return
 
-    # Lazy import — report module may be built in parallel
-    try:
-        from aegis.report import save_reports
-    except ImportError:
-        _warn("aegis.report module not yet available — generating minimal report.")
-        save_reports = None
-
-    if save_reports is not None:
-        html_flag = not getattr(args, "no_html", False)
-        md_path, json_path = save_reports(state, findings, html=html_flag)
-        _info(f"Report written to {md_path}")
-        _info(f"JSON report written to {json_path}")
-        if html_flag:
-            _info(f"HTML report written to {state.run_path / 'report.html'}")
-        return
-    else:
-        # Minimal fallback
-        lines = [
-            f"# Aegis Security Report — {state.run_id}",
-            "",
-            f"**Findings:** {len(findings)}",
-            "",
-            "| ID | Severity | Title | Status |",
-            "|---|---|---|---|",
-        ]
-        for f in findings:
-            lines.append(f"| {f.id} | {f.severity.upper()} | {f.title} | {f.status} |")
-        lines.append("")
-        md = "\n".join(lines)
-
-    report_file = state.report_path
-    report_file.write_text(md)
-    _info(f"Report written to {report_file}")
+    html_flag = not getattr(args, "no_html", False)
+    outcome = render_reports(run_state=state, findings=findings, html=html_flag)
+    _info(f"Report written to {outcome.markdown_path}")
+    _info(f"JSON report written to {outcome.json_path}")
+    if outcome.html_path is not None:
+        _info(f"HTML report written to {outcome.html_path}")
 
 
 def cmd_targets(args, config):

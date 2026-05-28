@@ -104,7 +104,9 @@ class TestCliFixStatusSemantics(unittest.TestCase):
                 source="golden_fixture",
             )
             args = _fix_args(patch=True, apply=False, repo=str(repo))
-            with patch("aegis.remediate.cai_runner.run_code_fix", return_value=result):
+            # F3: cmd_fix routes through services.fixes; patch the symbol
+            # where it is *looked up*, not where it is defined.
+            with patch("aegis.services.fixes.run_code_fix", return_value=result):
                 cmd_fix(args, config)
 
             findings = state.load_findings()
@@ -140,7 +142,9 @@ class TestCliFixStatusSemantics(unittest.TestCase):
                 source="golden_fixture",
             )
             args = _fix_args(patch=True, apply=True, repo=str(repo))
-            with patch("aegis.remediate.cai_runner.run_code_fix", return_value=result):
+            # F3: cmd_fix routes through services.fixes; patch the symbol
+            # where it is *looked up*, not where it is defined.
+            with patch("aegis.services.fixes.run_code_fix", return_value=result):
                 cmd_fix(args, config)
 
             findings = state.load_findings()
