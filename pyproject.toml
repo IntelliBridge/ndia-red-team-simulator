@@ -59,6 +59,17 @@ include = ["aegis*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# Phase 4 v0.3.1 markers. The default invocation (no -m flag) runs the
+# unit + integration tests; docker/e2e/slow/auth_required are opt-in.
+markers = [
+    "unit: pure-Python unit test (default)",
+    "integration: integration test that may hit Postgres/Redis but not Docker",
+    "docker: needs Docker; gated in CI behind workflow_dispatch",
+    "e2e: end-to-end against a live stack; gated by AEGIS_E2E env",
+    "slow: long-running test; excluded by default",
+    "auth_required: needs Keycloak/cookie flow; lands in v0.4.0",
+]
+addopts = "-m 'not docker and not e2e and not slow and not auth_required'"
 
 [tool.ruff]
 line-length = 110
