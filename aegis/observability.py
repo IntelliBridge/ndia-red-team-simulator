@@ -38,15 +38,82 @@ def configure_otel(service_name: str = "aegis") -> None:
     trace.set_tracer_provider(provider)
 
 
-def configure_structlog() -> None:
+def _inject_correlation_ids(_logger, _method_name, event_dict):
+    """structlog processor that lifts request_id / trace_id onto every event.
+
+    The request id is request-scoped via the ContextVar; the trace + span
+    ids come from the active OTel span (None when no span is active).
+    """
+    rid = _REQUEST_ID.get()
+    if rid and "request_id" not in event_dict:
+        event_dict["request_id"] = rid
+    try:
+        from opentelemetry import trace
+        span = trace.get_current_span()
+        ctx = span.get_span_context() if span else None
+        if ctx and ctx.is_valid:
+            if "trace_id" not in event_dict:
+                event_dict["trace_id"] = format(ctx.trace_id, "032x")
+            if "span_id" not in event_dict:
+                event_dict["span_id"] = format(ctx.span_id, "016x")
+    except Exception:
+        pass
+    return event_dict
+
+
+def _configure_otel_logs(service_name: str) -> None:
+    """Pipe structlog -> stdlib logging -> OTel LoggingHandler -> OTLP.
+
+    F21: when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set we route every
+    structlog event through the OTel Logs SDK's ``LoggingHandler`` so
+    the Collector receives canonical OTLP/Logs records. When the env
+    var is unset the function is a no-op and logs go to stdout via the
+    structlog JSONRenderer — Phase 2 offline path is unchanged.
+    """
+    endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
+    if not endpoint:
+        return
+    try:
+        import logging
+        from opentelemetry._logs import set_logger_provider
+        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+        from opentelemetry.exporter.otlp.proto.http._log_exporter import (
+            OTLPLogExporter,
+        )
+        from opentelemetry.sdk.resources import Resource
+    except ImportError:  # pragma: no cover
+        return
+
+    resource = Resource.create({"service.name": service_name})
+    provider = LoggerProvider(resource=resource)
+    provider.add_log_record_processor(
+        BatchLogRecordProcessor(OTLPLogExporter())
+    )
+    set_logger_provider(provider)
+    root = logging.getLogger()
+    root.addHandler(LoggingHandler(level=logging.INFO,
+                                    logger_provider=provider))
+    root.setLevel(logging.INFO)
+
+
+def configure_structlog(service_name: str = "aegis") -> None:
+    """Wire structlog + optional OTel Logs SDK.
+
+    F21: every event carries ``request_id`` / ``trace_id`` / ``span_id``
+    when they're in scope. When ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set,
+    the same events also stream to the Collector via the OTel Logs SDK.
+    """
     try:
         import structlog
     except ImportError:  # pragma: no cover
         return
+    _configure_otel_logs(service_name)
     structlog.configure(
         processors=[
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.add_log_level,
+            _inject_correlation_ids,
             structlog.processors.JSONRenderer(),
         ],
     )
