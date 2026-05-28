@@ -20,15 +20,52 @@ doesn't tell you.
 Work the items in this order. Each is a contained, F-style milestone
 with its own commit. Keep `pytest -q` green at every step.
 
-**1. Repo housekeeping.** Done in the previous session. Canonical
-repo URL is now `github.com/IntelliBridge/aegis` (private). The
-placeholder `github.com/example/aegis` has been globally replaced.
-One thing still on you:
+**1. Repo housekeeping — done in the previous session.**
 
-   - **Enable GitHub Pages** (Settings → Pages → Source → GitHub
-     Actions). The workflow at `.github/workflows/docs.yml` does
-     the rest. Without this toggle, every push to `main` builds the
-     docs in CI but doesn't publish them anywhere.
+   - Canonical repo: `github.com/IntelliBridge/aegis` (private).
+   - Placeholder `github.com/example/aegis` globally replaced.
+   - GitHub Pages: enabled, source = GitHub Actions, target URL
+     `https://intellibridge.github.io/aegis/`.
+   - `uv.lock` and `.gitignore` (node_modules) caught + fixed.
+
+**1a. Pre-existing CI failures that surfaced on the first push.**
+   Three jobs are red on the post-push CI. Unit tests are green
+   on both Py 3.12 and 3.13 (the offline-CLI guarantee holds). The
+   Docs workflow is green. The three reds are technical-debt items
+   from earlier phases that no remote-CI ever ran against. Pick
+   them up in this order:
+
+   a. **Next.js build (pnpm, frozen lockfile).**
+      `web/pnpm-lock.yaml` exists but the workflow runs
+      `pnpm install --frozen-lockfile` from the repo root where the
+      workspace lives. pnpm doesn't find a lockfile and errors:
+      `ERR_PNPM_NO_LOCKFILE`. Fix: either move
+      `web/pnpm-lock.yaml` to the repo root (matches the
+      `pnpm-workspace.yaml` location), or `cd web` in the workflow
+      step before install.
+
+   b. **Build images (no push).** `deploy/Dockerfile.web` runs
+      `npm install` against `web/package.json` only — predates the
+      v0.4.0 F16 workspace shift. The build fails on
+      `@aegis/design-system` because the design-system package
+      isn't copied into the build context. Fix: rewrite the
+      Dockerfile to install with pnpm, copy `pnpm-workspace.yaml` +
+      both package.json files + the root lockfile, then `pnpm
+      --filter @aegis/web build`.
+
+   c. **API integration (Postgres + Redis).** Alembic migration
+      `0002_findings_pk_uuid` fails with
+      `DuplicateColumn: scanner_finding_id`. Root cause:
+      `0001_initial` was generated from the CURRENT `models.py`
+      state, which already includes `scanner_finding_id` (added in
+      F9). So a fresh `alembic upgrade head` against a blank
+      Postgres errors on 0002. Fix: regenerate `0001_initial`
+      against the v0.3.0 model state (pre-F9), OR collapse the two
+      migrations into one. The local test suite passes because
+      tests use sqlite + `Base.metadata.create_all`, which bypasses
+      Alembic entirely.
+
+**2. Wire the 7 registered-but-not-wired CAI agents (1-2 sessions).**
 
 **2. Wire the 7 registered-but-not-wired CAI agents (1-2 sessions).**
    These are the fastest gap-closers — they're already in the
