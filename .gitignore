@@ -20,6 +20,9 @@ env/
 coverage.xml
 htmlcov/
 
+# MkDocs build output
+site/
+
 # OS / editor
 .DS_Store
 *.swp

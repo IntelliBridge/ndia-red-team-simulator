@@ -5,8 +5,8 @@ For the architecture this stack instantiates, see
 production deployment, see [`docs/ops/deploy.md`](../ops/deploy.md).
 
 For Phase 2 offline workflows, see
-[`CONTRIBUTING.md`](../../CONTRIBUTING.md) — the CLI runs without
-Docker.
+[`CONTRIBUTING.md`](https://github.com/example/aegis/blob/main/CONTRIBUTING.md)
+— the CLI runs without Docker.
 
 ## Prerequisites
 
@@ -147,4 +147,4 @@ docker compose exec postgres \
   Strix's sandbox image alone needs ~3 GB at runtime.
 - **`pnpm install` fails on TLS in a corporate proxy**: set
   `NODE_EXTRA_CA_CERTS=/path/to/zscaler.pem` (see
-  [`deploy/certs/README.md`](../../deploy/certs/README.md)).
+  [`deploy/certs/README.md`](https://github.com/example/aegis/blob/main/deploy/certs/README.md)).
