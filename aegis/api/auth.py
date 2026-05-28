@@ -61,6 +61,128 @@ def _verify_jwt(token: str, settings: APISettings) -> dict[str, Any]:
     return dict(claims)
 
 
+# ----- worker service-account tokens (FW v0.3.1) ----------------------------
+
+def _hmac_sign(secret: str, payload: str) -> str:
+    from hmac import new as hmac_new
+    from hashlib import sha256
+    return hmac_new(secret.encode(), payload.encode(), sha256).hexdigest()
+
+
+def issue_worker_token(
+    worker_id: str,
+    *,
+    settings: APISettings | None = None,
+    ttl_seconds: int | None = None,
+) -> str:
+    """Mint a time-bound worker service-account token.
+
+    Format: ``worker:v<key_version>.<worker_id>.<exp_ts>.<sig>`` where
+    ``sig = HMAC-SHA256(current_signing_key, "v<ver>.<worker_id>.<exp_ts>")``.
+
+    The API verifies the signature against the current key first; if
+    that fails it tries the previous key while the overlap window is
+    open (``AEGIS_WORKER_KEY_OVERLAP_SECONDS``). Maps to actor
+    ``service:worker:<worker_id>`` for audit.
+    """
+    if settings is None:
+        settings = load_settings()
+    if not settings.worker_signing_key:
+        raise RuntimeError(
+            "AEGIS_WORKER_SIGNING_KEY is not set; cannot mint worker tokens"
+        )
+    ttl = ttl_seconds if ttl_seconds is not None else settings.worker_token_ttl_seconds
+    exp = int(time.time()) + ttl
+    version = settings.worker_signing_key_version
+    payload = f"v{version}.{worker_id}.{exp}"
+    sig = _hmac_sign(settings.worker_signing_key, payload)
+    return f"worker:{payload}.{sig}"
+
+
+def _parse_worker_token(token: str) -> tuple[int, str, int, str] | None:
+    """Return ``(version, worker_id, exp_ts, sig)`` or ``None`` if malformed.
+
+    Accepts both the new v0.3.1 ``worker:v<n>.<id>.<exp>.<sig>`` format
+    and the legacy ``worker:<hex-sig>`` format (Phase 3 demo) so a
+    rolling restart isn't a hard cutover.
+    """
+    rest = token[len("worker:"):]
+    parts = rest.split(".")
+    if len(parts) == 4 and parts[0].startswith("v"):
+        try:
+            version = int(parts[0][1:])
+            worker_id = parts[1]
+            exp = int(parts[2])
+            sig = parts[3]
+            return version, worker_id, exp, sig
+        except ValueError:
+            return None
+    return None
+
+
+def _verify_worker_token(token: str, settings: APISettings) -> CurrentUser | None:
+    """Validate a worker service-account token.
+
+    Resolution order:
+
+    1. Try the current ``AEGIS_WORKER_SIGNING_KEY`` against ``v<version>``.
+    2. If the supplied version is one less than the current and a
+       ``AEGIS_WORKER_SIGNING_KEY_PREVIOUS`` is configured, try that key
+       while inside the overlap window.
+    3. Otherwise reject.
+    """
+    from hmac import compare_digest
+
+    parsed = _parse_worker_token(token)
+    if parsed is None:
+        # Legacy static-HMAC path (Phase 3): preserved for a single
+        # release-cut overlap; remove once every worker emits v1+ tokens.
+        if not settings.worker_signing_key:
+            return None
+        sig = token[len("worker:"):]
+        expected = _hmac_sign(settings.worker_signing_key, "aegis-worker")
+        if compare_digest(sig, expected):
+            return CurrentUser(
+                sub="service:worker:legacy",
+                email="worker@aegis.local",
+                project_memberships={"default": "admin"},
+                is_system=True,
+            )
+        return None
+
+    version, worker_id, exp, sig = parsed
+    now = int(time.time())
+    if exp < now:
+        return None
+
+    payload = f"v{version}.{worker_id}.{exp}"
+
+    if (settings.worker_signing_key
+            and version == settings.worker_signing_key_version):
+        expected = _hmac_sign(settings.worker_signing_key, payload)
+        if compare_digest(sig, expected):
+            return CurrentUser(
+                sub=f"service:worker:{worker_id}",
+                email=f"worker-{worker_id}@aegis.local",
+                project_memberships={"default": "admin"},
+                is_system=True,
+            )
+
+    if (settings.worker_signing_key_previous
+            and version == settings.worker_signing_key_version - 1
+            and exp - now <= settings.worker_token_ttl_seconds + settings.worker_key_overlap_seconds):
+        expected = _hmac_sign(settings.worker_signing_key_previous, payload)
+        if compare_digest(sig, expected):
+            return CurrentUser(
+                sub=f"service:worker:{worker_id}",
+                email=f"worker-{worker_id}@aegis.local",
+                project_memberships={"default": "admin"},
+                is_system=True,
+            )
+
+    return None
+
+
 def _dev_user(token: str) -> CurrentUser:
     # token format: "dev:<email>"
     _, _, email = token.partition(":")
@@ -100,19 +222,11 @@ def _resolve_from_token(token: str, settings: APISettings | None = None) -> Curr
             return _dev_user(token)
 
     if token.startswith("worker:") and settings.worker_signing_key:
-        from hmac import compare_digest, new as hmac_new
-        from hashlib import sha256
-        sig = token.split(":", 1)[1]
-        expected = hmac_new(settings.worker_signing_key.encode(),
-                            b"aegis-worker", sha256).hexdigest()
-        if compare_digest(sig, expected):
-            return CurrentUser(
-                sub="system:worker", email="worker@aegis.local",
-                project_memberships={"default": "admin"},
-                is_system=True,
-            )
+        user = _verify_worker_token(token, settings)
+        if user is not None:
+            return user
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="invalid worker token")
+                            detail="invalid or expired worker token")
 
     claims = _verify_jwt(token, settings)
     sub = claims.get("sub") or claims.get("preferred_username") or "anonymous"

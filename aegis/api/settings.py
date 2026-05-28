@@ -34,6 +34,24 @@ class APISettings:
     worker_signing_key: str | None = field(
         default_factory=lambda: os.environ.get("AEGIS_WORKER_SIGNING_KEY")
     )
+    worker_signing_key_previous: str | None = field(
+        default_factory=lambda: os.environ.get("AEGIS_WORKER_SIGNING_KEY_PREVIOUS")
+    )
+    worker_signing_key_version: int = field(
+        default_factory=lambda: int(
+            os.environ.get("AEGIS_WORKER_SIGNING_KEY_VERSION", "1")
+        )
+    )
+    worker_key_overlap_seconds: int = field(
+        default_factory=lambda: int(
+            os.environ.get("AEGIS_WORKER_KEY_OVERLAP_SECONDS", "300")
+        )
+    )
+    worker_token_ttl_seconds: int = field(
+        default_factory=lambda: int(
+            os.environ.get("AEGIS_WORKER_TOKEN_TTL_SECONDS", "300")
+        )
+    )
     cors_origins: list[str] = field(
         default_factory=lambda: _env_list("AEGIS_CORS_ORIGINS",
                                           ["http://localhost:3000"])
