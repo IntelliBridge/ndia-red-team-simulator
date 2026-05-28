@@ -1,10 +1,29 @@
-"""verify.replay — call into ``aegis.services.verify.verify``."""
+"""verify.replay — Celery wrapper around ``services.verify.verify``.
+
+Phase 4 v0.3.1 F11: the worker persists the outcome onto
+``findings.validation_state`` so subsequent CI gate evaluations and UI
+chips reflect the verify result. Mapping:
+
+  verify outcome      -> findings.validation_state
+  -------------------    ---------------------------
+  verified              poc_passed
+  still_vulnerable      poc_failed
+  inconclusive          inconclusive
+"""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 
 from aegis.workers.celery_app import app
+
+
+_STATE_MAP = {
+    "verified": "poc_passed",
+    "still_vulnerable": "poc_failed",
+    "inconclusive": "inconclusive",
+}
 
 
 @app.task(name="aegis.verify_replay", bind=True, max_retries=2)
@@ -29,5 +48,11 @@ def verify_replay(self, job_id: str) -> dict:
             if (job.detail or {}).get("repo_path") else None,
             actor=ctx.actor, config=config,
         )
+
+        state = _STATE_MAP.get(outcome.status, "inconclusive")
+        finding_row.validation_state = state
+        finding_row.validated_at = datetime.now(timezone.utc)
+
         return {"job_id": job_id, "finding_id": outcome.finding_id,
-                "status": outcome.status, "strategy": outcome.strategy}
+                "status": outcome.status, "strategy": outcome.strategy,
+                "validation_state": state}

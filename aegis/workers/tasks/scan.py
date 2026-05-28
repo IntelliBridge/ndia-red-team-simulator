@@ -1,37 +1,47 @@
-"""scan.start — run a scanner against a target."""
+"""scan.start — Celery wrapper that delegates to the execution service.
+
+Phase 4 v0.3.1 F11: the worker no longer hand-builds the audit row.
+Authorization runs through ``safety.authorize`` against the bootstrap-
+supplied ``PostgresAuditWriter``; the row carries the worker actor
+(``service:worker:*``, the bootstrap stamps ``actor`` from the Job's
+``created_by``) and is correlated with the admission row by ``run_id``.
+"""
 
 from __future__ import annotations
 
-from aegis.config import load_config
 from aegis.workers.celery_app import app
 
 
 @app.task(name="aegis.scan_start", bind=True, max_retries=2)
 def scan_start(self, job_id: str) -> dict:
-    from aegis.workers.bootstrap import task_context
+    from aegis.config import load_config
+    from aegis.db.models import Job
+    from aegis.safety import authorize
     from aegis.scanners import dispatch
     from aegis.scanners.registry import ScanOptions
+    from aegis.workers.bootstrap import task_context
 
     config = load_config()
     with task_context(job_id) as ctx:
-        job = ctx.run_state.session.execute(
-            __import__("aegis.db.models", fromlist=["Job"]).Job.__table__.select()
-            .where(__import__("aegis.db.models", fromlist=["Job"]).Job.id == ctx.job_id)
-        ).mappings().first()
-        detail = (job.get("detail") if job else {}) or {}
+        job = ctx.run_state.session.get(Job, job_id)
+        detail = (job.detail if job else {}) or {}
         target = detail.get("target")
         scanner = detail.get("scanner", "strix")
         instruction = detail.get("instruction")
 
-        ctx.audit_writer.append(
-            action="scan.start", actor=ctx.actor, target=target,
-            allowlist_check="pass", override=False, success=True,
-            detail={"job_id": job_id, "scanner": scanner},
+        # Worker-side re-check: do not trust the admission allowlist
+        # decision blindly. Any drift in config.target_allowlist would
+        # surface here before the scanner runs.
+        authorize(
+            f"scan.execute.{scanner}", target,
+            allowlist=config.target_allowlist,
+            actor=ctx.actor, writer=ctx.audit_writer,
             run_id=ctx.run_id, project_id=ctx.project_id,
+            detail={"actor": ctx.actor, "job_id": job_id,
+                    "scanner": scanner, "target": target},
         )
         result = dispatch(scanner, ctx.run_state,
-                          ScanOptions(target=target,
-                                      instruction=instruction))
+                          ScanOptions(target=target, instruction=instruction))
         ctx.run_state.save_findings(result.findings)
         return {
             "run_id": ctx.run_id, "scanner": scanner,
