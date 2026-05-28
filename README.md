@@ -67,6 +67,28 @@ pnpm --filter @aegis/web storybook           # design-system stories
 
 ---
 
+## Documentation
+
+A browseable docs site is built from this same markdown via MkDocs
+Material. Locally:
+
+```bash
+pip install -e ".[docs]"
+mkdocs serve            # http://localhost:8001
+```
+
+Or via Make:
+
+```bash
+make docs-serve         # same as above
+make docs-build-strict  # fail on any broken link or unreffed page
+```
+
+Pushes to `main` deploy the site to GitHub Pages via
+[`.github/workflows/docs.yml`](.github/workflows/docs.yml). For
+local-edit conventions see
+[`docs/dev/docs.md`](docs/dev/docs.md).
+
 ## Where to read more
 
 | Topic                     | Doc                                                                |
