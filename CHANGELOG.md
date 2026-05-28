@@ -4,6 +4,132 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.4.0] — Phase 4 Identity & UX
+
+Real browser auth, real CSRF/CSP/XSS defence, production design
+system, every web page rebuilt against it. The v0.3.1 backend is
+untouched; v0.4.0 layers identity + UX on top.
+
+### Added
+- `aegis/api/session_cookie.py` — RS256 mint + verify for the
+  Aegis API session cookie. NextAuth signs with the Aegis private
+  key; FastAPI verifies with the Aegis public key. iss=
+  ``aegis-api-session``, aud=``aegis-api``. ``generate_keypair()``
+  helper for tests + ops bootstrap (F14a).
+- `aegis/api/middleware/csrf.py` — double-submit CSRF on cookie-
+  authenticated mutations; constant-time compare; bearer callers
+  exempt (F14b).
+- `aegis/api/security_headers.py` — `REPORT_CSP` constant +
+  `html_report_headers()` / `non_html_report_headers()`. HTML
+  reports carry `default-src 'none'` (F14d).
+- New env knobs in `aegis/api/settings.py`:
+  `AEGIS_API_SESSION_PRIVATE_KEY` /
+  `AEGIS_API_SESSION_PUBLIC_KEY`,
+  `AEGIS_API_SESSION_KEY_ID`,
+  `AEGIS_API_SESSION_TTL_SECONDS`,
+  `AEGIS_API_SESSION_COOKIE`,
+  `AEGIS_CSRF_COOKIE`,
+  `AEGIS_CSRF_HEADER`,
+  `AEGIS_WEB_ORIGIN`.
+- `web/src/app/api/auth/[...nextauth]/route.ts` — Keycloak provider;
+  session callback mints `aegis_api_session` + `aegis_csrf` cookies
+  via `jose` RS256 (F13).
+- `web/src/app/api/auth/refresh-api-session/route.ts` — POST endpoint
+  re-mints both cookies for the active NextAuth session, no
+  Keycloak round trip.
+- `web/src/app/api/auth/signout-aegis/route.ts` — clears the Aegis
+  cookies during logout.
+- `web/src/server/aegis-session.ts` — server-only jose-based minter
+  + CSRF token generator + cookie-name helpers (F13).
+- `pnpm-workspace.yaml` at the repo root — packages: `web`,
+  `project_repos/design-system`.
+- `project_repos/design-system/` — new workspace package
+  `@aegis/design-system`. First component batch (each with a
+  Storybook story): `SeverityChip`, `RunStatusBadge`,
+  `AuditChainBadge`, `FindingCard`, `StageTimeline`, `EvidenceDiff`,
+  `ToastList`, `RoleGated`. `cn()` Tailwind class merger in
+  `src/lib/utils.ts` (F16).
+- `web/.storybook/{main,preview}.ts` — Storybook 8 +
+  `@storybook/addon-essentials` + `@storybook/addon-a11y`. CI gate
+  is OFF for v0.4.0 (incremental; flips on in v0.4.2 once the
+  second component batch lands).
+- `project_repos/shadcn-ui/` — vendored submodule at SHA
+  `360e8a19c3ee13ac78b656027462007c8bdaa6d5`. License (MIT)
+  preserved. `web/components.json` points the shadcn registry at
+  the local clone (F15).
+- `project_repos/AEGIS_VENDORED.md` — pin manifest + license
+  summary + rebase policy for every project_repos/ submodule.
+- `web/src/hooks/useRoles.ts` — SWR-backed reader for `/v1/projects`;
+  returns the caller's per-project roles for `<RoleGated>` and any
+  page-level conditional rendering (F18).
+- New pages: `/projects`, `/projects/[slug]/settings`, `/audit`
+  (F17).
+- Integration tests:
+  - `tests/test_cookie_and_bearer_auth_parity.py` — 7 cases.
+  - `tests/test_csrf.py` — 6 cases (double-submit + CORS).
+  - `tests/test_ws_origin_and_auth.py` — 3 cases (Origin,
+    subprotocol bearer).
+  - `tests/test_report_xss.py` — 3 cases (renderer escapes +
+    response headers).
+
+### Changed
+- `aegis/api/auth.py`: `get_current_user` resolves
+  `Authorization: Bearer …` first, then the configured
+  `aegis_api_session` cookie. `_resolve_from_cookie` /
+  `_resolve_from_token` factored out for the WebSocket handler
+  to reuse (F14a/F14c).
+- `aegis/api/app.py`: CORS hardened —
+  `allow_credentials=True` only against an explicit
+  origin list (`cors_origins` + `web_origin`), methods
+  enumerated, headers scoped to
+  `Authorization` / `Content-Type` / `X-Aegis-CSRF` /
+  `X-Aegis-Request-ID`. CSRF middleware wired (F14b).
+- `aegis/api/ws.py`: `/v1/runs/{id}/events` upgrade now closes
+  1008 on bad Origin; accepts bearer via
+  `Sec-WebSocket-Protocol: aegis.bearer.<token>` (RFC 6455)
+  with subprotocol echo; cookie path also honoured; legacy
+  `?token=` preserved one release (F14c).
+- `aegis/api/v1/reports.py`: HTML responses now carry the
+  strict CSP + `X-Content-Type-Options: nosniff` +
+  `Referrer-Policy: no-referrer` + `X-Frame-Options: DENY` +
+  `Content-Disposition: inline`. JSON/Markdown carry nosniff +
+  `Content-Disposition: attachment` with a stable filename (F14d).
+- `web/src/lib/api.ts` rewritten — cookie + bearer parity,
+  auto-attached CSRF header on mutations, auto
+  `X-Aegis-Request-ID` per call (F18).
+- `web/src/lib/auth.ts`: `requireAuth` now accepts cookie-only
+  sessions (presence of the non-httpOnly `aegis_csrf` cookie);
+  `logout()` clears the Aegis cookies via
+  `/api/auth/signout-aegis` (F18).
+- `web/src/app/{layout,dashboard,runs,findings}/*.tsx`: rewritten
+  against `@aegis/design-system`. Inline styles + per-page badges
+  gone in favour of `RunStatusBadge`, `SeverityChip`,
+  `FindingCard`, `StageTimeline`, `RoleGated`, `AuditChainBadge`
+  (F17).
+- `web/package.json` renamed to `@aegis/web`; added `jose`,
+  `class-variance-authority`, `clsx`, `tailwind-merge`,
+  `lucide-react`, `@aegis/design-system` (workspace), Storybook
+  8 + addons.
+
+### Migration notes
+- Generate an Aegis API session keypair and set
+  `AEGIS_API_SESSION_PRIVATE_KEY` (on the web/NextAuth side) and
+  `AEGIS_API_SESSION_PUBLIC_KEY` (on the API side). The
+  `generate_keypair()` helper in `aegis.api.session_cookie` is the
+  reference implementation. Both must be PKCS8-PEM (private) and
+  SubjectPublicKeyInfo-PEM (public).
+- Set `AEGIS_WEB_ORIGIN` to the production web origin; CORS
+  enforces `allow_credentials=True` only against it.
+- `pnpm install` at the repo root picks up the new workspace
+  pointer (`@aegis/design-system`) and the v0.4.0 dependencies
+  (`jose`, `clsx`, etc.).
+
+### Verification
+- `pytest -q` — 213 passed, 3 skipped on Python 3.12.
+- Backend security suite (`test_cookie_and_bearer_auth_parity`,
+  `test_csrf`, `test_ws_origin_and_auth`, `test_report_xss`) — 19
+  total cases, all green.
+
 ## [0.3.1] — Phase 4 stabilization
 
 Phase 3 shipped the platform but left ~15 architectural guarantees only
