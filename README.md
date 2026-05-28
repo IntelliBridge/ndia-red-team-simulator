@@ -105,11 +105,11 @@ local-edit conventions see
 | Fork-PR safety            | [`docs/security/fork-prs.md`](docs/security/fork-prs.md)           |
 | Contributing              | [`CONTRIBUTING.md`](CONTRIBUTING.md)                               |
 | Vendored upstreams        | [`project_repos/AEGIS_VENDORED.md`](project_repos/AEGIS_VENDORED.md) |
-| ADRs                      | [`docs/adr/`](docs/adr/)                                           |
+| ADRs                      | [`docs/adr/0001-vendored-submodules.md`](docs/adr/0001-vendored-submodules.md) |
 
 Legacy planning docs and phase-3 snapshots live under
-[`docs/architecture/legacy/`](docs/architecture/legacy/) — kept for
-history, not for orientation.
+[`docs/architecture/legacy/`](docs/architecture/legacy/README.md) — kept
+for history, not for orientation.
 
 ---
 
