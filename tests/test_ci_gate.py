@@ -2,7 +2,7 @@
 
 import unittest
 
-from aegis.workers.tasks.ci_gate import CIGatePolicy, evaluate
+from aegis.policy.ci_gate import CIGatePolicy, evaluate
 
 
 class TestEvaluatePolicy(unittest.TestCase):

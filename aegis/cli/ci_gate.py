@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from aegis.config import AegisConfig
-from aegis.workers.tasks.ci_gate import CIGatePolicy, evaluate
+from aegis.policy.ci_gate import CIGatePolicy, evaluate
 
 
 def cmd_ci_gate(args, config: AegisConfig) -> None:
