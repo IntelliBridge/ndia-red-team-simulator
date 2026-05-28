@@ -1,15 +1,23 @@
-"""Aegis run state persistence."""
+"""Aegis run state persistence (filesystem backend).
+
+Phase 3 introduces ``aegis.state_facade.RunStateAPI`` as the shared Protocol;
+``FilesystemRunState`` here implements it. The historical name ``RunState``
+remains as a back-compat alias so all Phase 2 imports keep working.
+"""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from aegis.state_facade import ArtifactRef
 
-class RunState:
+
+class FilesystemRunState:
     """Manages per-run persistence under output_dir/runs/<run_id>/."""
 
     def __init__(self, output_dir: str, run_id: str | None = None):
@@ -83,6 +91,25 @@ class RunState:
         with open(self.findings_path, "w") as fh:
             json.dump(findings, fh, indent=2)
 
+    def record_artifact(self, name: str, content,
+                        content_type: str = "application/octet-stream") -> ArtifactRef:
+        """Content-addressable artifact write (Phase 3 ``RunStateAPI``).
+
+        Computes the sha256, writes through ``save_artifact`` to keep
+        Phase 2 layout intact, and returns the canonical ref. Re-recording
+        the same content is idempotent in the resulting filesystem layout
+        (overwrites with identical bytes).
+        """
+        data = content.encode("utf-8") if isinstance(content, str) else content
+        digest = hashlib.sha256(data).hexdigest()
+        path = self.save_artifact(name, content)
+        return ArtifactRef(
+            sha256=digest,
+            location=str(path),
+            size_bytes=len(data),
+            content_type=content_type,
+        )
+
     @classmethod
     def list_runs(cls, output_dir: str) -> list[str]:
         """List all run IDs in the output directory."""
@@ -92,9 +119,13 @@ class RunState:
         return sorted([d.name for d in runs_dir.iterdir() if d.is_dir()], reverse=True)
 
     @classmethod
-    def latest_run(cls, output_dir: str) -> RunState | None:
+    def latest_run(cls, output_dir: str) -> FilesystemRunState | None:
         """Get the most recent run."""
         runs = cls.list_runs(output_dir)
         if not runs:
             return None
         return cls(output_dir, runs[0])
+
+
+# Back-compat alias so every existing import keeps working unchanged.
+RunState = FilesystemRunState

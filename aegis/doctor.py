@@ -75,7 +75,49 @@ def detect_provider(model: str) -> str:
     return "unknown"
 
 
-def run_doctor(config: AegisConfig | None = None, *, provider_override: str | None = None) -> bool:
+def _check_db(url: str) -> tuple[bool, str]:
+    try:
+        from sqlalchemy import create_engine, text
+        engine = create_engine(url, future=True, pool_pre_ping=True)
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True, "SELECT 1 ok"
+    except Exception as exc:  # pragma: no cover
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def _check_blob_backend(backend: str) -> tuple[bool, str]:
+    if backend == "fs":
+        from pathlib import Path
+        base = Path(os.environ.get("AEGIS_BLOB_FS_PATH", "aegis_output/blobs"))
+        try:
+            base.mkdir(parents=True, exist_ok=True)
+            return True, f"fs at {base}"
+        except Exception as exc:  # pragma: no cover
+            return False, f"{type(exc).__name__}: {exc}"
+    if backend == "s3":
+        try:
+            import boto3  # noqa: F401
+            return True, "boto3 importable; head-bucket probe deferred to runtime"
+        except ImportError:  # pragma: no cover
+            return False, "boto3 missing — install with pip install aegis-platform[api]"
+    return False, f"unknown backend: {backend}"
+
+
+def _check_oidc(issuer: str) -> tuple[bool, str]:
+    try:
+        with urlopen(issuer.rstrip("/") + "/.well-known/openid-configuration",
+                     timeout=5) as resp:
+            if resp.status == 200:
+                return True, f"{resp.status} from issuer"
+            return False, f"unexpected status {resp.status}"
+    except Exception as exc:  # pragma: no cover
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def run_doctor(config: AegisConfig | None = None, *,
+               provider_override: str | None = None,
+               api_mode: bool = False) -> bool:
     """Validate the Aegis development environment.
 
     Returns True if every *required* check passes, False otherwise.
@@ -138,6 +180,30 @@ def run_doctor(config: AegisConfig | None = None, *, provider_override: str | No
         _pass("GitHub token", "GITHUB_TOKEN set")
     else:
         _warn("GitHub token", "GITHUB_TOKEN not set (optional, required for --open-pr)")
+
+    if api_mode:
+        db_url = os.environ.get("AEGIS_DB_URL")
+        if db_url:
+            db_ok, db_detail = _check_db(db_url)
+            (_pass if db_ok else _fail)("Postgres", db_detail)
+            if not db_ok:
+                ok = False
+        else:
+            _fail("Postgres", "AEGIS_DB_URL not set (required in --api-mode)")
+            ok = False
+
+        backend = os.environ.get("AEGIS_BLOB_BACKEND", "fs")
+        blob_ok, blob_detail = _check_blob_backend(backend)
+        (_pass if blob_ok else _fail)("Blob backend", blob_detail)
+        if not blob_ok:
+            ok = False
+
+        issuer = os.environ.get("AEGIS_OIDC_ISSUER")
+        if issuer:
+            oidc_ok, oidc_detail = _check_oidc(issuer)
+            (_pass if oidc_ok else _warn)("OIDC issuer", oidc_detail)
+        else:
+            _warn("OIDC issuer", "AEGIS_OIDC_ISSUER not set (dev mode allowed only if AEGIS_ENV != prod)")
 
     gh_ver = _cmd_version("gh --version")
     if gh_ver:

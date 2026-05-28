@@ -84,11 +84,11 @@ def _load_findings_objects(state):
 # Command implementations
 # ---------------------------------------------------------------------------
 
-def cmd_doctor(_args, config):
+def cmd_doctor(args, config):
     """Validate the Aegis development environment."""
     from aegis.doctor import run_doctor
 
-    ok = run_doctor(config)
+    ok = run_doctor(config, api_mode=getattr(args, "api_mode", False))
     sys.exit(0 if ok else 1)
 
 
@@ -792,10 +792,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Authorize active operations against non-allowlisted hosts. "
              "Use only against systems you control and have written permission to test.",
     )
+    parser.add_argument(
+        "--api", dest="global_api", action="store_true",
+        help="Route commands through AEGIS_API_URL instead of the local "
+             "filesystem (Phase 3). Equivalent to AEGIS_MODE=api.",
+    )
     sub = parser.add_subparsers(dest="command", help="Available commands")
 
     # doctor
-    sub.add_parser("doctor", help="Validate the Aegis environment")
+    p_doctor = sub.add_parser("doctor", help="Validate the Aegis environment")
+    p_doctor.add_argument("--api-mode", dest="api_mode", action="store_true",
+                          help="Also probe DB, blob backend, OIDC issuer (Phase 3)")
 
     # init
     sub.add_parser("init", help="Create a default aegis.yaml in the current directory")
@@ -903,6 +910,47 @@ def build_parser() -> argparse.ArgumentParser:
     p_targets_down.add_argument("--run", default=None,
                                 help="Run id whose target/runtime.json should be updated")
 
+    # status (Phase 3 M0.5)
+    sub.add_parser("status", help="Print active mode, backends, and connectivity")
+
+    # audit (Phase 3 M2 — surface lands now, impl in M2)
+    p_audit = sub.add_parser("audit", help="Audit-chain operations")
+    audit_sub = p_audit.add_subparsers(dest="audit_action", required=True)
+    p_audit_verify = audit_sub.add_parser("verify", help="Verify audit-chain integrity")
+    p_audit_verify.add_argument("--run", default=None, help="Verify a specific run's chain")
+    p_audit_verify.add_argument("--project", default=None,
+                                help="Verify a specific project's chain")
+    p_audit_verify.add_argument("--all", action="store_true",
+                                help="Verify every chain known to the writer")
+
+    # migrate (Phase 3 M11 — surface lands now, impl in M11)
+    p_migrate = sub.add_parser("migrate", help="Move filesystem run data into Postgres (M11)")
+    p_migrate.add_argument("direction", choices=["fs->pg"], default="fs->pg", nargs="?",
+                           help="Migration direction (only fs->pg in Phase 3)")
+    p_migrate.add_argument("--source", required=True,
+                           help="Path to aegis_output/ on disk")
+    p_migrate.add_argument("--project", required=True,
+                           help="Target project slug or id")
+    p_migrate.add_argument("--db-url", dest="db_url", default=None,
+                           help="Override AEGIS_DB_URL for this migration")
+    p_migrate.add_argument("--dry-run", dest="dry_run", action="store_true",
+                           help="Print planned counts without writing")
+
+    # ci-gate (Phase 3 M5/M12)
+    p_ci = sub.add_parser("ci-gate",
+                          help="Evaluate findings against a CI policy and exit 0/1/2")
+    p_ci.add_argument("--findings-file", default=None,
+                      help="Path to a findings.json")
+    p_ci.add_argument("--run", default=None,
+                      help="Read findings.json from aegis_output/runs/<run>/")
+    p_ci.add_argument("--severity-threshold", default="high",
+                      choices=["critical", "high", "medium", "low"])
+    p_ci.add_argument("--max-findings", type=int, default=None)
+    p_ci.add_argument("--require-validated", action="store_true",
+                      help="Only count findings with validation_state=poc_passed")
+    p_ci.add_argument("--junit-xml", default=None,
+                      help="Path to write a JUnit XML report")
+
     # demo
     p_demo = sub.add_parser("demo", help="Opinionated end-to-end demo (defaults to fixture-assisted)")
     p_demo.add_argument("--repo", required=True, help="Path to the target source repo to patch")
@@ -940,6 +988,36 @@ _COMMANDS = {
     "demo": cmd_demo,
     "targets": cmd_targets,
 }
+
+
+def _cmd_status_dispatch(args, config):
+    from aegis.cli.status import cmd_status
+    cmd_status(args, config)
+
+
+def _cmd_audit_dispatch(args, config):
+    from aegis.cli.audit import cmd_audit_verify
+    if args.audit_action == "verify":
+        cmd_audit_verify(args, config)
+    else:
+        _err(f"Unknown audit action: {args.audit_action}")
+        sys.exit(2)
+
+
+def _cmd_migrate_dispatch(args, config):
+    from aegis.cli.migrate import cmd_migrate
+    cmd_migrate(args, config)
+
+
+def _cmd_ci_gate_dispatch(args, config):
+    from aegis.cli.ci_gate import cmd_ci_gate
+    cmd_ci_gate(args, config)
+
+
+_COMMANDS["status"] = _cmd_status_dispatch
+_COMMANDS["audit"] = _cmd_audit_dispatch
+_COMMANDS["migrate"] = _cmd_migrate_dispatch
+_COMMANDS["ci-gate"] = _cmd_ci_gate_dispatch
 
 
 def main(argv: list[str] | None = None) -> None:

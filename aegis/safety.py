@@ -82,50 +82,53 @@ def authorize(
     run_path: Path | None = None,
     override_authorized: bool = False,
     detail: dict[str, Any] | None = None,
+    actor: str | None = None,
+    writer=None,
+    run_id: str | None = None,
+    project_id: str | None = None,
 ) -> None:
     """Authorize an active operation.
 
-    - When `target` is None, the action is host-independent (e.g., local patch apply).
-    - Hosts in the allowlist always pass.
-    - Hosts outside the allowlist require `override_authorized=True`
-      (mapped from `--i-understand-this-target-is-authorized`).
-
-    Emits an audit record to `run_path/audit.jsonl` when run_path is supplied.
+    Phase 2 behaviour (when ``writer`` is None) is unchanged: an entry is
+    appended to ``<run_path>/audit.jsonl`` as a flat record. The Phase 3
+    hash-chained writer (``aegis.audit.chain.AuditWriter``) can be injected
+    via ``writer``; when present, audit events go through the chain and the
+    flat JSONL is skipped.
     """
-    detail = detail or {}
+    detail = dict(detail or {})
+    if actor is not None and "actor" not in detail:
+        detail["actor"] = actor
+    actor_str = actor or "cli:anonymous"
     ts = datetime.now(timezone.utc).isoformat()
 
-    if target is None:
+    def _emit(allowlist_check: str, override: bool, success: bool) -> None:
+        if writer is not None:
+            writer.append(
+                action=action, actor=actor_str, target=target,
+                allowlist_check=allowlist_check,
+                override=override, success=success, detail=detail,
+                run_id=run_id, project_id=project_id,
+            )
+            return
         if run_path is not None:
             _append_audit(
                 run_path,
-                AuditEvent(ts, action, None, "n/a", override_authorized, True, detail),
+                AuditEvent(ts, action, target, allowlist_check,
+                           override, success, detail),
             )
+
+    if target is None:
+        _emit("n/a", override_authorized, True)
         return
 
     allowed = is_target_allowed(target, allowlist)
     if not allowed and not override_authorized:
-        if run_path is not None:
-            _append_audit(
-                run_path,
-                AuditEvent(ts, action, target, "fail", False, False, detail),
-            )
+        _emit("fail", False, False)
         raise AuthorizationError(
             f"Target '{target}' is not in the allowlist {allowlist}. "
             f"Add it to target_allowlist in aegis.yaml or pass "
             f"--i-understand-this-target-is-authorized."
         )
 
-    if run_path is not None:
-        _append_audit(
-            run_path,
-            AuditEvent(
-                ts,
-                action,
-                target,
-                "pass" if allowed else "override",
-                override_authorized and not allowed,
-                True,
-                detail,
-            ),
-        )
+    _emit("pass" if allowed else "override",
+          override_authorized and not allowed, True)

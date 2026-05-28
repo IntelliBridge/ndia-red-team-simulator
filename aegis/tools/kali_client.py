@@ -42,13 +42,19 @@ class KaliClient:
                  allow_generic_command: bool = False,
                  timeout: int = 180,
                  audit_path: Path | None = None,
-                 caller: str = "cli"):
+                 caller: str = "cli",
+                 audit_writer=None,
+                 run_id: str | None = None,
+                 project_id: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.target_allowlist = target_allowlist or ["127.0.0.1", "localhost"]
         self.allow_generic_command = allow_generic_command
         self.timeout = timeout
         self.audit_path = audit_path
         self.caller = caller
+        self.audit_writer = audit_writer
+        self.run_id = run_id
+        self.project_id = project_id
 
     def _check_target_allowed(self, target: str) -> None:
         if not is_target_allowed(target, self.target_allowlist):
@@ -60,6 +66,23 @@ class KaliClient:
 
     def _audit(self, tool: str, params: dict, allowlist_check: str,
                result: ToolResult, duration_ms: int) -> None:
+        if self.audit_writer is not None:
+            self.audit_writer.append(
+                action=f"kali.{tool}",
+                actor=self.caller,
+                target=params.get("target") or params.get("url"),
+                allowlist_check=allowlist_check,
+                override=False,
+                success=result.success,
+                detail={
+                    "tool": tool, "params": params,
+                    "return_code": result.return_code,
+                    "duration_ms": duration_ms,
+                },
+                run_id=self.run_id,
+                project_id=self.project_id,
+            )
+            return
         if self.audit_path is None:
             return
         record = {
