@@ -8,7 +8,7 @@ from functools import lru_cache
 from typing import Any
 
 import httpx
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 
 from aegis.api.settings import APISettings, load_settings
 
@@ -241,12 +241,43 @@ def _resolve_from_token(token: str, settings: APISettings | None = None) -> Curr
     )
 
 
+def _resolve_from_cookie(cookie_value: str, settings: APISettings) -> CurrentUser:
+    """Resolve a session cookie value to a ``CurrentUser`` (F14a).
+
+    Raises ``HTTPException(401)`` on missing keys, malformed payload,
+    or expired tokens.
+    """
+    from aegis.api.session_cookie import SessionCookieError, verify_session_cookie
+    try:
+        claims = verify_session_cookie(cookie_value, settings)
+    except SessionCookieError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail=str(exc)) from exc
+    return CurrentUser(
+        sub=claims.sub, email=claims.email,
+        display_name=claims.display_name,
+        project_memberships=claims.project_memberships,
+    )
+
+
 def get_current_user(
+    request: Request,
     authorization: str | None = Header(default=None),
     settings: APISettings = Depends(load_settings),
 ) -> CurrentUser:
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Bearer token required")
-    token = authorization.split(" ", 1)[1].strip()
-    return _resolve_from_token(token, settings)
+    """Resolve the caller from header → cookie.
+
+    F14a: when ``Authorization: Bearer …`` is present, that always wins
+    (CLI / CI / programmatic). Otherwise, fall back to the configured
+    Aegis session cookie minted by the NextAuth callback.
+    """
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        return _resolve_from_token(token, settings)
+
+    cookie_value = request.cookies.get(settings.api_session_cookie_name)
+    if cookie_value:
+        return _resolve_from_cookie(cookie_value, settings)
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="authentication required")

@@ -31,6 +31,48 @@ class APISettings:
     oidc_jwks_url: str | None = field(
         default_factory=lambda: os.environ.get("AEGIS_OIDC_JWKS_URL")
     )
+    # Aegis-side cookie session key (F14a). The NextAuth callback signs;
+    # FastAPI verifies. RS256, separate from Keycloak's JWKS and from
+    # NEXTAUTH_SECRET. The private side is only required where minting
+    # happens (the same process if we're test-minting; the NextAuth
+    # callback in production); the public side is what FastAPI needs.
+    api_session_private_key: str | None = field(
+        default_factory=lambda: os.environ.get("AEGIS_API_SESSION_PRIVATE_KEY")
+    )
+    api_session_public_key: str | None = field(
+        default_factory=lambda: os.environ.get("AEGIS_API_SESSION_PUBLIC_KEY")
+    )
+    api_session_key_id: str = field(
+        default_factory=lambda: os.environ.get(
+            "AEGIS_API_SESSION_KEY_ID", "aegis-api-session-v1"
+        )
+    )
+    api_session_ttl_seconds: int = field(
+        default_factory=lambda: int(
+            os.environ.get("AEGIS_API_SESSION_TTL_SECONDS", "900")
+        )
+    )
+    api_session_cookie_name: str = field(
+        default_factory=lambda: os.environ.get(
+            "AEGIS_API_SESSION_COOKIE", "aegis_api_session"
+        )
+    )
+    api_csrf_cookie_name: str = field(
+        default_factory=lambda: os.environ.get(
+            "AEGIS_CSRF_COOKIE", "aegis_csrf"
+        )
+    )
+    api_csrf_header_name: str = field(
+        default_factory=lambda: os.environ.get(
+            "AEGIS_CSRF_HEADER", "X-Aegis-CSRF"
+        )
+    )
+    web_origin: str = field(
+        default_factory=lambda: os.environ.get(
+            "AEGIS_WEB_ORIGIN", "http://localhost:3000"
+        )
+    )
+
     worker_signing_key: str | None = field(
         default_factory=lambda: os.environ.get("AEGIS_WORKER_SIGNING_KEY")
     )
