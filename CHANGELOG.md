@@ -4,6 +4,131 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.3.1] — Phase 4 stabilization
+
+Phase 3 shipped the platform but left ~15 architectural guarantees only
+half-enforced. v0.3.1 makes them true at runtime — no UI changes, no
+new auth model, no observability changes. Pure correctness + safety
+wiring. The Phase 2 offline path remained green at every commit.
+
+### Added
+- `aegis/policy/{__init__,ci_gate}.py` — pure CIGatePolicy + evaluate;
+  Celery import chain detached from the default `pytest -q` (F1).
+- `uv.lock`, `web/pnpm-lock.yaml` committed; pytest markers (`unit`,
+  `integration`, `docker`, `e2e`, `slow`, `auth_required`) declared;
+  CI gates re-derive both lock files and fail on drift (F2).
+- `aegis/audit/forensic.py::tool_detail` — canonical detail dict for
+  per-tool audit rows. stdout/stderr reduced to sha256 + length; raw
+  output stays in the blob store and the row carries `{sha256,
+  location, kind}` refs (F8).
+- `aegis/audit/writers.py::open_writer(mode=...)` + `InMemoryAuditWriter`
+  for tests (F7).
+- `aegis/cli/api_client.py` — stdlib-only HTTP wrapper; `--api` /
+  `AEGIS_MODE=api` routes `scan` / `fix` / `verify` through the API
+  with bearer auth from `AEGIS_TOKEN` or `~/.config/aegis/token` (F4).
+- `aegis/services/runs.py::cancel_run`, `aegis/services/targets.py::
+  create_target/delete_target`, `services/{scans,fixes,verify}.create_*_job`
+  — admission services emit audit-before-enqueue (F6).
+- `aegis/api/v1/projects.py` — `GET /v1/projects`, `GET
+  /v1/projects/{slug}/membership`, `PUT /v1/projects/{slug}/settings`.
+  Prereq for v0.4.0 UI role gating (FP).
+- `aegis/api/v1/findings_by_scanner_id.py` — `GET
+  /v1/findings/by-scanner-id?run=&scanner_id=` compat lookup
+  (deprecated; sunset after v0.5) (F9).
+- `aegis/db/migrations/versions/0002_findings_pk_uuid.py` — Alembic
+  migration: Finding PK becomes UUID; scanner identifier moves to
+  `scanner_finding_id`; `UNIQUE(run_id, scanner_finding_id)`. FK
+  fan-out `ON UPDATE CASCADE` (F9).
+- `aegis/api/auth.py::issue_worker_token` — time-bound versioned
+  worker SA tokens; rotation overlap window; actor surface
+  `service:worker:<worker_id>` (FW).
+- `aegis/api/policy.py::ensure_project_access` /
+  `ensure_run_access` — F12 read-side gates.
+- Integration tests: `tests/test_admission_audit_before_enqueue.py`,
+  `tests/test_finding_pk_collision.py`,
+  `tests/test_worker_status_persistence.py`,
+  `tests/test_project_access_read.py`,
+  `tests/test_projects_api.py`,
+  `tests/test_worker_sa_auth.py`,
+  `tests/test_cai_runner_routing.py`,
+  `tests/test_api_client.py`.
+
+### Changed
+- `safety.authorize()` requires an explicit `AuditWriter` writer (F7).
+  Offline path supplies `JsonlAuditWriter(single_file="audit.jsonl")`
+  via the safety layer's compat shim; api/worker supply
+  `PostgresAuditWriter`.
+- `aegis/tools/kali_client.py`: `audit_path` kwarg removed. Every
+  Kali tool invocation lands on the canonical audit chain via the
+  injected writer; the forensic detail shape comes from
+  `aegis.audit.forensic.tool_detail` (F8).
+- `aegis/services/tools.py`: threads `audit_writer` / `run_id` /
+  `project_id` into KaliClient (F8).
+- `aegis/cli/main.py`: `cmd_scan` / `cmd_fix` / `cmd_verify` /
+  `cmd_report` reduced to thin shells that delegate to the service
+  layer (F3). `--api` sets `AEGIS_MODE=api` and dispatches via
+  `aegis.cli.api_client` (F4).
+- `aegis/cli/migrate.py`: `cmd_migrate` reads `summary.to_dict().items()`
+  (was `summary.items()`); exits non-zero on failures (F5).
+- `aegis/cli/status.py`: probes `/health` against `AEGIS_API_URL`
+  when in api mode (F4).
+- `aegis/api/v1/{scans,fix,verify,runs_cancel,targets}.py`: rewritten
+  as thin RBAC + lookup + delegate shells over the admission
+  services. `AuthorizationError` surfaces as 403; `LookupError` as
+  404. No route constructs Run/Job rows directly any more (F6).
+- `aegis/api/v1/{reports,exports}.py`: serve from blob store first,
+  filesystem fallback. Every read passes through
+  `ensure_run_access` (F12).
+- `aegis/api/ws.py`: `/v1/runs/{id}/events` resolves bearer
+  header → `?token=…` query parameter → close 1008 if missing /
+  unauthorised (F12).
+- `aegis/api/auth.py`: factored `_resolve_from_token` for the WS
+  handler to reuse the bearer resolution; worker token verification
+  now supports v1+ time-bound tokens with key rotation overlap
+  (FW).
+- `aegis/db/models.py::Finding`: `id` is now a UUID;
+  `scanner_finding_id String(256) NOT NULL`;
+  `UNIQUE(run_id, scanner_finding_id)`. `schema_blob["id"]` keeps
+  the scanner identifier so downstream consumers see the contract
+  they expect (F9).
+- `aegis/state_pg.py`: `save_findings` allocates UUIDs and writes
+  `scanner_finding_id` separately; `update_finding_status` accepts
+  either UUID or scanner_finding_id (F9).
+- `aegis/workers/tasks/{scan,fix,verify}.py`: no manual audit
+  writes; pass through `safety.authorize` with the bootstrap-
+  supplied PostgresAuditWriter; fix worker persists
+  `Finding.status`, verify worker maps to `validation_state` and
+  stamps `validated_at` (F11).
+- `aegis/remediate/cai_runner.py`: sys.path injection moved to
+  `cai_loader.load_cai`; per-task LLM selection via
+  `aegis.llm.router.route` with `project_id` + `BudgetChecker`
+  hook (F10).
+
+### Removed
+- `aegis/safety._append_audit` flat-JSONL helper (F7).
+- `tool-calls.jsonl` side-channel; the legacy `audit_path` kwarg on
+  `KaliClient` (F8).
+- The Phase 3 `_minimal markdown report` fallback in `cmd_report`
+  (F3 — unreachable: `aegis.report` has always been present).
+
+### Migration notes
+- Run Alembic migration `0002_findings_pk_uuid` against your existing
+  database before serving v0.3.1. The migration is wrapped in a single
+  transaction; create a backup table first if you want a manual
+  rollback path. Downstream consumers continue to see
+  `schema_blob["id"]` carrying the scanner-side identifier.
+- `AEGIS_WORKER_SIGNING_KEY` is still required. Optional new env vars:
+  `AEGIS_WORKER_SIGNING_KEY_PREVIOUS` (for the rotation overlap),
+  `AEGIS_WORKER_SIGNING_KEY_VERSION` (defaults to `1`),
+  `AEGIS_WORKER_KEY_OVERLAP_SECONDS` (defaults to 300),
+  `AEGIS_WORKER_TOKEN_TTL_SECONDS` (defaults to 300).
+
+### Verification
+- `pytest -q` — 194 passed, 3 skipped on Python 3.12.
+- `make up` stack remains operational; `aegis --api status` reports
+  `mode=api` + healthy/unreachable.
+- `aegis audit verify --all` walks every chain and returns ✓.
+
 ## [0.3.0] — Phase 3 — Multi-user platform
 
 Phase 3 turns the Phase 2 CLI scaffold into a multi-user, API-backed,
