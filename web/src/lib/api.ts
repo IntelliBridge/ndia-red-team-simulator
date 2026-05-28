@@ -2,6 +2,11 @@
 
 const BASE = process.env.NEXT_PUBLIC_AEGIS_API_URL ?? "http://localhost:8000";
 
+function _tokenFromStorage(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  return localStorage.getItem("aegis_token") ?? undefined;
+}
+
 export async function api<T>(
   path: string,
   init: RequestInit & { token?: string } = {},
@@ -10,7 +15,8 @@ export async function api<T>(
     "Accept": "application/json",
     ...(init.headers as Record<string, string> | undefined ?? {}),
   };
-  if (init.token) headers["Authorization"] = `Bearer ${init.token}`;
+  const token = init.token ?? _tokenFromStorage();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
   const resp = await fetch(`${BASE}${path}`, { ...init, headers });
   if (!resp.ok) {
     throw new Error(`${resp.status} ${resp.statusText}: ${await resp.text()}`);

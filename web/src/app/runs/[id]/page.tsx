@@ -1,16 +1,28 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { api, Finding } from "@/lib/api";
+import { requireAuth } from "@/lib/auth";
 
-const fetcher = (path: string) => api<{ findings: Finding[]; count: number }>(path);
+const fetcher = (path: string) =>
+  api<{ findings: Finding[]; count: number }>(path);
 
 export default function RunPage({ params }: { params: { id: string } }) {
-  const { data, error, isLoading } = useSWR(`/v1/findings?run=${params.id}`, fetcher);
+  const router = useRouter();
+  const [authed, setAuthed] = useState(false);
+  useEffect(() => {
+    if (requireAuth(router)) setAuthed(true);
+  }, [router]);
+
+  const { data, error, isLoading } = useSWR(
+    authed ? `/v1/findings?run=${params.id}` : null, fetcher,
+  );
   const [events, setEvents] = useState<{ name: string; mode: string }[]>([]);
 
   useEffect(() => {
+    if (!authed) return;
     const base = process.env.NEXT_PUBLIC_AEGIS_API_URL ?? "http://localhost:8000";
     const wsUrl = base.replace(/^http/, "ws") + `/v1/runs/${params.id}/events`;
     const ws = new WebSocket(wsUrl);
@@ -18,13 +30,12 @@ export default function RunPage({ params }: { params: { id: string } }) {
       try {
         const evt = JSON.parse(msg.data);
         if (evt?.name) setEvents((e) => [...e, evt]);
-      } catch {
-        // ignore
-      }
+      } catch { /* ignore heartbeats */ }
     };
     return () => ws.close();
-  }, [params.id]);
+  }, [params.id, authed]);
 
+  if (!authed) return <p>Redirecting to sign in…</p>;
   if (isLoading) return <p>Loading…</p>;
   if (error) return <p>Failed to load: {String(error)}</p>;
   return (

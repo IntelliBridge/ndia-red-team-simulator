@@ -1,17 +1,26 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { api, Finding } from "@/lib/api";
+import { requireAuth } from "@/lib/auth";
 
 const fetcher = (path: string) => api<Finding>(path);
 
 export default function FindingPage({ params }: { params: { id: string } }) {
+  const router = useRouter();
+  const [authed, setAuthed] = useState(false);
+  useEffect(() => {
+    if (requireAuth(router)) setAuthed(true);
+  }, [router]);
+
   const { data, error, isLoading, mutate } = useSWR(
-    `/v1/findings/${params.id}`, fetcher,
+    authed ? `/v1/findings/${params.id}` : null, fetcher,
   );
   const [busy, setBusy] = useState(false);
 
+  if (!authed) return <p>Redirecting to sign in…</p>;
   if (isLoading) return <p>Loading…</p>;
   if (error || !data) return <p>Failed to load.</p>;
 
