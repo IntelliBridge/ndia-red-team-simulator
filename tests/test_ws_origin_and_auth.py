@@ -109,8 +109,15 @@ class TestOriginValidation(unittest.TestCase):
         # subprotocol bearer or cookie path is what authorises.
         app, session_cm, settings = _build_app_with_run()
         client = TestClient(app)
+        # Drop AEGIS_BROKER_URL inside the test so the WS handler's
+        # _redis_pubsub_iter takes its no-broker heartbeat path
+        # instead of trying to subscribe to a real Redis (which CI
+        # has via the redis service container — and which would
+        # block forever waiting for a message that never publishes).
+        test_env = _env_for(settings)
+        test_env["AEGIS_BROKER_URL"] = ""
         with patch("aegis.db.session.get_session", session_cm), \
-             patch.dict(os.environ, _env_for(settings), clear=False):
+             patch.dict(os.environ, test_env, clear=False):
             cookie = mint_session_cookie(
                 sub="u-1", email="a@x",
                 project_memberships={"proj-a": "admin"},
