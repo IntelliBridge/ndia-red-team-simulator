@@ -1,4 +1,10 @@
-"""CAI agent wrappers for remediation, plus a golden-patch fallback path."""
+"""CAI agent wrappers for remediation, plus a golden-patch fallback path.
+
+Phase 4 v0.3.1 F10: the sys.path / CAI import dance lives in one place
+(``aegis.integrations.cai_loader.load_cai``); per-task model selection
+goes through ``aegis.llm.router.route`` so a project's task model
+overrides and budget caps land before we touch the runner.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +12,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
+from aegis.integrations.cai_loader import load_cai
+from aegis.llm.router import BudgetChecker, BudgetExceeded, route as route_model
 from aegis.remediate.patch_workflow import (
     diff_sha256,
     extract_unified_diff,
@@ -125,11 +133,94 @@ def _use_golden_patch(finding: AegisFinding) -> RemediationResult | None:
     )
 
 
+def _run_cai_agent(
+    *,
+    task: str,
+    action: str,
+    finding: AegisFinding,
+    prompt: str,
+    config,
+    project_id: str | None,
+    budget_checker: BudgetChecker | None,
+    extra_context: dict[str, Any] | None = None,
+) -> RemediationResult:
+    """Shared CAI invocation path used by ``run_code_fix`` and
+    ``run_live_hardening``.
+
+    Routes the LLM model selection through ``aegis.llm.router.route`` —
+    a ``BudgetExceeded`` short-circuit returns a structured failure
+    without spinning up the agent. CAI's own sys.path injection lives
+    in ``cai_loader.load_cai``; this function never touches ``sys.path``.
+    """
+    try:
+        spec = route_model(task, config, project_id=project_id,
+                           budget_checker=budget_checker)
+    except BudgetExceeded as exc:
+        return RemediationResult(
+            success=False, action=action, finding_id=finding.id,
+            output=prompt,
+            error=f"BudgetExceeded: {exc}",
+            source="cai",
+        )
+
+    bundle = load_cai(config)
+    if bundle is None:
+        return RemediationResult(
+            success=False, action=action, finding_id=finding.id,
+            output=f"CAI not available. Generated prompt:\n\n{prompt}",
+            error="ImportError: CAI library could not be loaded",
+            source="cai",
+        )
+
+    agent = bundle.codeagent if action == "code_patch" else bundle.blueteam_agent
+    context: dict[str, Any] = {
+        "finding_id": finding.id,
+        "target": finding.target,
+        "severity": finding.severity,
+        "model": spec.model,
+    }
+    if extra_context:
+        context.update(extra_context)
+
+    try:
+        result = bundle.Runner.run_sync(
+            starting_agent=agent, input=prompt, context=context,
+        )
+    except Exception as exc:
+        return RemediationResult(
+            success=False, action=action, finding_id=finding.id,
+            output=prompt, error=str(exc), source="cai",
+        )
+
+    output = _stringify_agent_result(result)
+    if action == "code_patch":
+        diff = extract_unified_diff(output)
+        if diff is None:
+            return RemediationResult(
+                success=False, action=action, finding_id=finding.id,
+                output=output,
+                error="CodeAgent returned no parseable unified diff",
+                source="cai",
+            )
+        return RemediationResult(
+            success=True, action=action, finding_id=finding.id,
+            output=output, diff=diff, diff_sha256_hex=diff_sha256(diff),
+            source="cai",
+        )
+    return RemediationResult(
+        success=True, action=action, finding_id=finding.id,
+        output=output, source="cai",
+    )
+
+
 def run_code_fix(
     finding: AegisFinding,
     *,
     repo_path: str | None = None,
     use_golden_patch: bool = False,
+    config=None,
+    project_id: str | None = None,
+    budget_checker: BudgetChecker | None = None,
 ) -> RemediationResult:
     """Invoke CAI CodeAgent to generate a code patch.
 
@@ -143,118 +234,35 @@ def run_code_fix(
         if golden is not None:
             return golden
 
-    prompt = build_code_fix_prompt(finding)
-
-    try:
-        import sys
-        from pathlib import Path
+    if config is None:
         from aegis.config import load_config
         config = load_config()
-        cai_src = Path(config.cai_path) / "src"
-        if str(cai_src) not in sys.path:
-            sys.path.insert(0, str(cai_src))
 
-        from cai.agents.codeagent import codeagent
-        from cai.sdk.agents import Runner
-
-        context = {
-            "finding_id": finding.id,
-            "target": finding.target,
-            "severity": finding.severity,
-        }
-        if repo_path:
-            context["repo_path"] = repo_path
-
-        result = Runner.run_sync(
-            starting_agent=codeagent,
-            input=prompt,
-            context=context,
-        )
-        output = _stringify_agent_result(result)
-        diff = extract_unified_diff(output)
-        if diff is None:
-            return RemediationResult(
-                success=False,
-                action="code_patch",
-                finding_id=finding.id,
-                output=output,
-                error="CodeAgent returned no parseable unified diff",
-                source="cai",
-            )
-        return RemediationResult(
-            success=True,
-            action="code_patch",
-            finding_id=finding.id,
-            output=output,
-            diff=diff,
-            diff_sha256_hex=diff_sha256(diff),
-            source="cai",
-        )
-    except ImportError as e:
-        return RemediationResult(
-            success=False,
-            action="code_patch",
-            finding_id=finding.id,
-            output=f"CAI not available. Generated prompt:\n\n{prompt}",
-            error=f"ImportError: {e}",
-            source="cai",
-        )
-    except Exception as e:
-        return RemediationResult(
-            success=False,
-            action="code_patch",
-            finding_id=finding.id,
-            output=prompt,
-            error=str(e),
-            source="cai",
-        )
+    return _run_cai_agent(
+        task="patch", action="code_patch",
+        finding=finding,
+        prompt=build_code_fix_prompt(finding),
+        config=config, project_id=project_id,
+        budget_checker=budget_checker,
+        extra_context={"repo_path": repo_path} if repo_path else None,
+    )
 
 
-def run_live_hardening(finding: AegisFinding) -> RemediationResult:
+def run_live_hardening(
+    finding: AegisFinding,
+    *,
+    config=None,
+    project_id: str | None = None,
+    budget_checker: BudgetChecker | None = None,
+) -> RemediationResult:
     """Invoke CAI BlueteamAgent for live system hardening (plan-only by default)."""
-    prompt = build_hardening_prompt(finding)
-    try:
-        import sys
-        from pathlib import Path
+    if config is None:
         from aegis.config import load_config
         config = load_config()
-        cai_src = Path(config.cai_path) / "src"
-        if str(cai_src) not in sys.path:
-            sys.path.insert(0, str(cai_src))
-
-        from cai.agents.blue_teamer import blueteam_agent
-        from cai.sdk.agents import Runner
-
-        context = {
-            "finding_id": finding.id,
-            "target": finding.target,
-            "severity": finding.severity,
-        }
-
-        result = Runner.run_sync(starting_agent=blueteam_agent, input=prompt, context=context)
-        output = _stringify_agent_result(result)
-        return RemediationResult(
-            success=True,
-            action="live_hardening",
-            finding_id=finding.id,
-            output=output,
-            source="cai",
-        )
-    except ImportError as e:
-        return RemediationResult(
-            success=False,
-            action="live_hardening",
-            finding_id=finding.id,
-            output=f"CAI not available. Generated prompt:\n\n{prompt}",
-            error=f"ImportError: {e}",
-            source="cai",
-        )
-    except Exception as e:
-        return RemediationResult(
-            success=False,
-            action="live_hardening",
-            finding_id=finding.id,
-            output=prompt,
-            error=str(e),
-            source="cai",
-        )
+    return _run_cai_agent(
+        task="harden", action="live_hardening",
+        finding=finding,
+        prompt=build_hardening_prompt(finding),
+        config=config, project_id=project_id,
+        budget_checker=budget_checker,
+    )

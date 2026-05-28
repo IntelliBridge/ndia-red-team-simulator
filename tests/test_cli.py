@@ -44,6 +44,9 @@ class TestRunCodeFixDiffRequired(unittest.TestCase):
     """run_code_fix must fail when CodeAgent returns no parseable diff."""
 
     def test_no_diff_returns_failure(self):
+        # F10: cai_runner now routes through cai_loader.load_cai, which
+        # also imports the blueteam agent. The test mocks the entire CAI
+        # surface load_cai touches so the bundle is non-None.
         from unittest.mock import MagicMock, patch as mpatch
         from aegis.remediate.cai_runner import run_code_fix
 
@@ -53,17 +56,20 @@ class TestRunCodeFixDiffRequired(unittest.TestCase):
             affected_component="x", confidence="high", status="open",
             created_at="2026", updated_at="2026",
         )
-        fake_module = MagicMock()
-        fake_module.Runner.run_sync.return_value = MagicMock(final_output="No diff here.")
-        agents_module = MagicMock()
-        agents_module.codeagent = MagicMock()
+        fake_runner = MagicMock()
+        fake_runner.Runner.run_sync.return_value = MagicMock(final_output="No diff here.")
+        codeagent_mod = MagicMock()
+        codeagent_mod.codeagent = MagicMock()
+        blueteam_mod = MagicMock()
+        blueteam_mod.blueteam_agent = MagicMock()
         with mpatch.dict("sys.modules", {
             "cai": MagicMock(),
             "cai.agents": MagicMock(),
-            "cai.agents.codeagent": agents_module,
+            "cai.agents.codeagent": codeagent_mod,
+            "cai.agents.blue_teamer": blueteam_mod,
             "cai.sdk": MagicMock(),
-            "cai.sdk.agents": fake_module,
-        }):
+            "cai.sdk.agents": fake_runner,
+        }), mpatch("aegis.integrations.cai_loader._BUNDLE", None):
             result = run_code_fix(finding)
         self.assertFalse(result.success)
         self.assertIsNone(result.diff)
