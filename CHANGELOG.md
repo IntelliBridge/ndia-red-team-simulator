@@ -4,6 +4,105 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.4.1] — Phase 4 Observability & GitHub completion
+
+Centralised logs queryable in Loki / Elasticsearch and in-app via a
+Postgres mirror; GitHub PR-scoped scans with structured scope and
+fork-restricted mode. v0.3.1 + v0.4.0 untouched; v0.4.1 layers
+observability + integrations on top.
+
+### Added
+- `aegis/log_ingest/` — in-tree FastAPI service that mirrors the OTel
+  log stream into Postgres. Two ingress paths converge on the same
+  batched writer: ``POST /ingest`` (native JSON, used by api/worker
+  when no Collector is up) and ``POST /v1/logs`` (OTLP/Logs over
+  HTTP-JSON, what the Collector's ``otlphttp/aegis-ingest`` exporter
+  posts). ``/health`` + ``/metrics`` for lag visibility. Severity
+  numbers map to text via the OTLP severity table (F20c).
+- `application_logs` table + indexes via Alembic
+  ``0003_application_logs``. Columns: ts/severity/service/message +
+  run_id/job_id/project_id/actor/request_id/trace_id/span_id +
+  freeform JSONB attrs. Index set: per-run+ts DESC, per-project+ts
+  DESC, request_id, trace_id, severity+ts DESC, service, ts (F20c).
+- `aegis/api/v1/logs.py` — `GET /v1/logs` admin endpoint with
+  run/project/service/severity/request_id/since filters and id-cursor
+  pagination. Every query lands a ``logs.queried`` chained audit
+  event so a forensic review can trace who looked at what (F22).
+- `aegis/integrations/github_handlers.py`: `PRScope`, `RestrictedMode`,
+  `pr_scope_from_payload`, `restricted_mode_for`, `scope_audit_detail`,
+  `on_pull_request_event`. Fork detection compares
+  ``head.repo.full_name`` vs ``base.repo.full_name`` (the
+  ``head.repo.fork`` flag is unreliable on forks-of-forks). Forks
+  engage restricted mode (no apply, no open_pr, depth-1 clone, no
+  secret mount, path allowlist = `changed_files`) (F23a/c).
+- `aegis/integrations/github_webhooks.py`: ``X-GitHub-Event:
+  pull_request`` events dispatch into the handler and the structured
+  scope + reason surface in the response body (F23b).
+- `project_repos/opentelemetry-collector-contrib/` — vendored at SHA
+  `d7957a20ce54ab42a87b8f9e91eda73f7b3b48e5`. Apache-2.0; source-of-
+  truth for the running ``otel/opentelemetry-collector-contrib`` image
+  + the SLSA / fork target (F19).
+- Three compose profiles (`default`, `obs`, `obs-search`) and the
+  configs they need:
+  - `deploy/otel/config.yaml` — receivers (OTLP gRPC + HTTP) →
+    `logs/loki`, `logs/aegis-ingest`, traces → Jaeger pipelines.
+  - `deploy/loki/config.yaml` — single-binary Loki dev config
+    (filesystem storage, tsdb schema v13, 7d retention).
+  - `deploy/Dockerfile.log_ingest` — thin python:3.12-slim image for
+    aegis-log-ingest (F20a + F20c).
+- `web/src/app/logs/page.tsx` — terminal-style log viewer reading
+  `/v1/logs` with run/severity/service filter query params (F22).
+- `docs/security/fork-prs.md` — policy doc for the fork-restricted
+  mode (F23c).
+- Tests:
+  - `tests/test_log_ingest.py` — 11 cases (tz-aware ts validation,
+    truncation, OTLP severity mapping, native + OTLP endpoints,
+    metrics, health).
+  - `tests/test_logs_api.py` — 3 cases (admin list, non-admin 403,
+    filter narrowing).
+  - `tests/test_structlog_correlation.py` — 4 cases (correlation
+    processor lifts request_id, leaves it alone when caller-set,
+    skips trace ids when no span).
+  - `tests/test_pr_scope.py` — 6 cases (fork detection, restricted
+    mode defaults, audit detail shape, dispatcher).
+
+### Changed
+- `aegis/observability.py`:
+  - New `_inject_correlation_ids` structlog processor lifting
+    `request_id` from the ContextVar and `trace_id` / `span_id` from
+    the active OTel span.
+  - `_configure_otel_logs(service_name)` — when
+    ``OTEL_EXPORTER_OTLP_ENDPOINT`` is set, every log event also
+    streams to the Collector via the OTel Logs SDK's
+    LoggingHandler. No-op when the env var is unset (Phase 2 path
+    untouched).
+  - `configure_structlog(service_name="aegis")` runs the OTel setup
+    before structlog.configure so every event reaches the handler
+    (F21).
+- `aegis/db/models.py`: new `ApplicationLog` model (F20c).
+- `aegis/api/app.py`: include `/v1/logs` router (F22).
+
+### Migration notes
+- Run Alembic migration `0003_application_logs` before serving
+  v0.4.1.
+- The default compose profile now brings up `aegis-log-ingest`;
+  `make up` includes it without changes. The `obs` profile adds the
+  Collector + Loki + Jaeger; `obs-search` further adds Elasticsearch
+  + Kibana.
+- Set ``OTEL_EXPORTER_OTLP_ENDPOINT`` in the API + worker environments
+  to route logs through the Collector (the compose obs profile sets
+  it via service-name DNS).
+
+### Verification
+- `pytest -q` — 237 passed, 3 skipped on Python 3.12.
+- Default compose profile: `aegis-log-ingest` writes to
+  `application_logs`; `SELECT count(*) FROM application_logs WHERE
+  request_id = ...` correlates API + worker rows.
+- `obs` profile: Loki shows the same stream via ``{service="aegis-
+  api"}``.
+- Webhook receiver: a fork PR payload returns
+  ``restricted_mode="fork.restricted=true"`` in the response.
+
 ## [0.4.0] — Phase 4 Identity & UX
 
 Real browser auth, real CSRF/CSP/XSS defence, production design
