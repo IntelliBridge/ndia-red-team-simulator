@@ -40,7 +40,6 @@ jobs:
           uv lock --check || (echo "::error::uv.lock is out of sync with pyproject.toml. Run 'uv lock' and commit."; exit 1)
 
       - name: Lint (ruff)
-        continue-on-error: true
         run: ruff check aegis tests
 
       - name: Type-check (mypy)
@@ -61,6 +60,56 @@ jobs:
             echo "::error::aegis_output/ is tracked in git; add to .gitignore and untrack"
             exit 1
           fi
+
+  submodule-integrity:
+    name: Submodules pinned and clean
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Submodules at pinned commit (no -/+/U prefix)
+        run: |
+          status="$(git submodule status --recursive)"
+          echo "$status"
+          if echo "$status" | grep -qE '^[-+U]'; then
+            echo "::error::A submodule is not at its pinned commit (-/+/U prefix). Run 'git submodule update --init --recursive'."
+            exit 1
+          fi
+      - name: Submodule working trees are clean
+        run: |
+          git submodule foreach --recursive '
+            if ! git diff --quiet || ! git diff --cached --quiet; then
+              echo "::error::Submodule $name has uncommitted changes (vendored upstream must stay pristine)"; exit 1
+            fi
+          '
+
+  secret-scan:
+    name: Secret scan (trufflehog, verified only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install trufflehog
+        run: curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sudo sh -s -- -b /usr/local/bin
+      - name: Scan filesystem (verified secrets only)
+        run: trufflehog filesystem . --only-verified --fail --no-update
+
+  coverage:
+    name: Coverage (>=90%)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aegis
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,dev]"
+      - name: Coverage gate
+        run: pytest -q --cov=aegis --cov-report=term-missing --cov-fail-under=90
 
   api-integration:
     name: API integration (Postgres + Redis)
