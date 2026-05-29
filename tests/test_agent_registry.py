@@ -71,7 +71,7 @@ class TestAgentRegistry(unittest.TestCase):
              mpatch.object(builtins, "load_config", return_value=MagicMock()):
             for a in list_agents():
                 res = dispatch(a["name"], "x", AgentContext())
-                self.assertNotEqual(res.status, "not_wired_in_phase_3",
+                self.assertNotEqual(res.status, "not_wired",
                                     f"{a['name']} still stubbed")
 
     def test_wired_cai_attrs_are_bundle_fields(self):

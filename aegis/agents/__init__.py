@@ -9,8 +9,12 @@ from aegis.agents.registry import (
     dispatch,
     get,
     list_agents,
+    maybe_load_entry_points,
     register,
 )
+
+# Third-party agents (opt-in, AEGIS_PLUGINS=1) load after the built-ins.
+maybe_load_entry_points()
 
 __all__ = [
     "AgentAdapter", "AgentContext", "AgentResult",

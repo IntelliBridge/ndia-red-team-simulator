@@ -1,10 +1,9 @@
 """Built-in CAI agent adapters.
 
-Phase 3 wires the eight agents the one-pager promises (offensive +
-defensive + forensic + remediation + audit). The remaining CAI agents are
-registered as ``wired_in_phase_3=False`` so the registry is honest about
-coverage — invoking them returns ``status='not_wired_in_phase_3'``
-instead of silently going missing.
+Wires the CAI agents the one-pager promises (offensive + defensive +
+forensic + remediation + audit). Any agent left unwired is registered with
+``wired=False`` so the registry stays honest about coverage — invoking it
+returns ``status='not_wired'`` instead of silently going missing.
 """
 
 from __future__ import annotations
@@ -57,7 +56,7 @@ def _wired(name: str, domain: str, cai_attr: str):
     adapter = _Wired()
     adapter.name = name
     adapter.domain = domain
-    adapter.wired_in_phase_3 = True
+    adapter.wired = True
 
     def invoke(self, prompt: str, context: AgentContext) -> AgentResult:
         return _invoke_cai(cai_attr, prompt, context)
@@ -73,12 +72,12 @@ def _not_wired(name: str, domain: str):
     adapter = _Stub()
     adapter.name = name
     adapter.domain = domain
-    adapter.wired_in_phase_3 = False
+    adapter.wired = False
 
     def invoke(self, prompt: str, context: AgentContext) -> AgentResult:
         return AgentResult(
-            status="not_wired_in_phase_3",
-            output=f"agent {name!r} is registered but not wired in Phase 3",
+            status="not_wired",
+            output=f"agent {name!r} is registered but not wired",
         )
 
     _Stub.invoke = invoke

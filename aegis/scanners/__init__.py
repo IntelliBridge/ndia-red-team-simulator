@@ -22,8 +22,12 @@ from aegis.scanners.registry import (
     dispatch,
     get,
     list_scanners,
+    maybe_load_entry_points,
     register,
 )
+
+# Third-party adapters (opt-in, AEGIS_PLUGINS=1) load after the built-ins.
+maybe_load_entry_points()
 
 __all__ = [
     "ScannerAdapter", "ScanOptions", "ScanResult",

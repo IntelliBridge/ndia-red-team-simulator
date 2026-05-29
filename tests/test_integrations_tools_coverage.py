@@ -2142,7 +2142,7 @@ class TestBuiltinsInvokeCAI(unittest.TestCase):
         self.assertEqual(result.status, "ok")
 
     def test_wired_agent_structure(self):
-        """All wired agents have name, domain, wired_in_phase_3=True."""
+        """All wired agents have name, domain, wired=True."""
         from aegis.agents.cai.builtins import _WIRED
         for name, domain, cai_attr in _WIRED:
             self.assertIsInstance(name, str)
@@ -2150,21 +2150,21 @@ class TestBuiltinsInvokeCAI(unittest.TestCase):
             self.assertIsInstance(cai_attr, str)
 
     def test_not_wired_agents_return_stub_status(self):
-        """_not_wired() adapters always return 'not_wired_in_phase_3'."""
+        """_not_wired() adapters always return 'not_wired'."""
         from aegis.agents.cai.builtins import _not_wired
         from aegis.agents.registry import AgentContext
         stub = _not_wired("my_stub", "offensive")
         result = stub.invoke("x", AgentContext())
-        self.assertEqual(result.status, "not_wired_in_phase_3")
+        self.assertEqual(result.status, "not_wired")
         self.assertIn("my_stub", result.output)
 
     def test_wired_agent_invoke_method(self):
-        """_wired() adapter has wired_in_phase_3=True and callable invoke."""
+        """_wired() adapter has wired=True and callable invoke."""
         from aegis.agents.cai import builtins
         from aegis.agents.cai.builtins import _wired
         from aegis.agents.registry import AgentContext
         adapter = _wired("test_agent", "forensic", "codeagent")
-        self.assertTrue(adapter.wired_in_phase_3)
+        self.assertTrue(adapter.wired)
 
         bundle = MagicMock()
         bundle.Runner = MagicMock()

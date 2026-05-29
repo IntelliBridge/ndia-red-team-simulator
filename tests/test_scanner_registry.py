@@ -51,7 +51,7 @@ class TestAgentRegistry(unittest.TestCase):
                       "red_teamer", "dfir", "retester", "reporter",
                       "web_pentester"):
             self.assertIn(wired, agents)
-            self.assertTrue(agents[wired]["wired_in_phase_3"])
+            self.assertTrue(agents[wired]["wired"])
 
     def test_phase4_agents_now_wired(self):
         # v0.4.2 wired the formerly registered-only forensic/wireless agents;
@@ -60,7 +60,7 @@ class TestAgentRegistry(unittest.TestCase):
         for name in ("memory_analysis", "network_traffic_analyzer",
                      "reverse_engineering"):
             self.assertIn(name, agents)
-            self.assertTrue(agents[name]["wired_in_phase_3"])
+            self.assertTrue(agents[name]["wired"])
 
 
 if __name__ == "__main__":

@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-import os
+import logging
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
+from aegis.registry import Registry
 from aegis.schema import AegisFinding
 from aegis.state import RunState
 
-Capability = Literal["dast", "sast", "dependency", "iac", "secret", "sbom"]
+logger = logging.getLogger(__name__)
+
+# Open capability vocabulary. Adding a capability is a one-line append here;
+# a declared capability outside this set logs a warning but still registers,
+# so third-party plugins can introduce their own without patching core.
+KNOWN_CAPABILITIES: set[str] = {"dast", "sast", "dependency", "iac", "secret", "sbom"}
+Capability = str  # back-compat alias; validated against KNOWN_CAPABILITIES at register()
 
 
 @dataclass
@@ -34,7 +41,7 @@ class ScanResult:
 
 class ScannerAdapter(Protocol):
     name: str
-    capabilities: set[Capability]
+    capabilities: set[str]
     default_timeout: int
 
     def adapter_version(self) -> str: ...
@@ -42,22 +49,26 @@ class ScannerAdapter(Protocol):
     def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult: ...
 
 
-_REGISTRY: dict[str, ScannerAdapter] = {}
+def _validate(adapter: ScannerAdapter) -> None:
+    unknown = set(adapter.capabilities) - KNOWN_CAPABILITIES
+    if unknown:
+        logger.warning(
+            "scanner %r declares unknown capabilities %s; registering anyway",
+            adapter.name, sorted(unknown),
+        )
 
 
-def register(adapter: ScannerAdapter) -> None:
-    _REGISTRY[adapter.name] = adapter
+_scanner_registry: Registry[ScannerAdapter] = Registry("scanner", validate=_validate)
+# Historical public handle: callers and tests pop/iterate this dict directly,
+# so it must stay the live backing store (same object as the registry's).
+_REGISTRY: dict[str, ScannerAdapter] = _scanner_registry._items
 
-
-def get(name: str) -> ScannerAdapter:
-    if name not in _REGISTRY:
-        raise KeyError(f"unknown scanner: {name!r}. "
-                       f"available: {sorted(_REGISTRY)}")
-    return _REGISTRY[name]
+register = _scanner_registry.register
+get = _scanner_registry.get
 
 
 def list_scanners() -> list[str]:
-    return sorted(_REGISTRY)
+    return _scanner_registry.list_names()
 
 
 def dispatch(name_or_capability: str,
@@ -75,16 +86,4 @@ def dispatch(name_or_capability: str,
 
 def maybe_load_entry_points() -> None:
     """Third-party adapter discovery, gated by AEGIS_PLUGINS=1."""
-    if os.environ.get("AEGIS_PLUGINS") != "1":
-        return
-    try:
-        from importlib.metadata import entry_points
-        eps = entry_points(group="aegis.scanners")
-    except Exception:  # pragma: no cover
-        return
-    for ep in eps:
-        try:
-            adapter = ep.load()
-            register(adapter())
-        except Exception:  # pragma: no cover
-            continue
+    _scanner_registry.maybe_load_entry_points("aegis.scanners")

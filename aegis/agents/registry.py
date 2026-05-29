@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
+from aegis.registry import Registry
+
 Domain = Literal["offensive", "defensive", "forensic",
                  "recon", "remediation", "audit"]
 
@@ -20,7 +22,7 @@ class AgentContext:
 
 @dataclass
 class AgentResult:
-    status: str                # "ok" | "not_wired_in_phase_3" | "error"
+    status: str                # "ok" | "not_wired" | "error"
     output: str
     findings: list = field(default_factory=list)
     diff: str | None = None
@@ -31,29 +33,22 @@ class AgentResult:
 class AgentAdapter(Protocol):
     name: str
     domain: Domain
-    wired_in_phase_3: bool
+    wired: bool
 
     def invoke(self, prompt: str, context: AgentContext) -> AgentResult: ...
 
 
-_REGISTRY: dict[str, AgentAdapter] = {}
+_agent_registry: Registry[AgentAdapter] = Registry("agent")
+# Historical public handle; kept as the live backing store (see scanners.registry).
+_REGISTRY: dict[str, AgentAdapter] = _agent_registry._items
 
-
-def register(adapter: AgentAdapter) -> None:
-    _REGISTRY[adapter.name] = adapter
-
-
-def get(name: str) -> AgentAdapter:
-    if name not in _REGISTRY:
-        raise KeyError(f"unknown agent: {name!r}. "
-                       f"available: {sorted(_REGISTRY)}")
-    return _REGISTRY[name]
+register = _agent_registry.register
+get = _agent_registry.get
 
 
 def list_agents() -> list[dict[str, Any]]:
     return [
-        {"name": a.name, "domain": a.domain,
-         "wired_in_phase_3": a.wired_in_phase_3}
+        {"name": a.name, "domain": a.domain, "wired": a.wired}
         for a in _REGISTRY.values()
     ]
 
@@ -61,3 +56,8 @@ def list_agents() -> list[dict[str, Any]]:
 def dispatch(name: str, prompt: str,
              context: AgentContext) -> AgentResult:
     return get(name).invoke(prompt, context)
+
+
+def maybe_load_entry_points() -> None:
+    """Third-party agent discovery, gated by AEGIS_PLUGINS=1."""
+    _agent_registry.maybe_load_entry_points("aegis.agents")

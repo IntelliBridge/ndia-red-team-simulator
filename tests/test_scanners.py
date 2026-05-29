@@ -9,14 +9,14 @@ import unittest
 from unittest.mock import patch
 
 from aegis.scanners import dispatch, get, list_scanners
-from aegis.scanners.registry import _REGISTRY, ScanOptions, ScanResult, register
+from aegis.scanners.registry import _REGISTRY, KNOWN_CAPABILITIES, ScanOptions, ScanResult, register
 
 # The 12 first-party adapters, sorted.
 _EXPECTED = [
     "bandit", "checkov", "codeql", "grype", "nuclei", "semgrep",
     "sonarqube", "strix", "syft", "trivy", "trufflehog", "zap",
 ]
-_CAPABILITIES = {"dast", "sast", "dependency", "iac", "secret", "sbom"}
+_CAPABILITIES = KNOWN_CAPABILITIES  # single source of truth: the registry's set
 
 
 class TestScannerRoster(unittest.TestCase):
