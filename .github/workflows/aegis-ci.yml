@@ -65,20 +65,23 @@ jobs:
     name: Submodules pinned and clean
     runs-on: ubuntu-latest
     steps:
+      # Top-level only: we vendor Strix, CAI, and mcp-kali-server. CAI carries
+      # its own nested benchmark submodules pinned at commits upstream has since
+      # made unfetchable, so a recursive checkout would fail on refs we don't own.
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: true
       - name: Submodules at pinned commit (no -/+/U prefix)
         run: |
-          status="$(git submodule status --recursive)"
+          status="$(git submodule status)"
           echo "$status"
           if echo "$status" | grep -qE '^[-+U]'; then
-            echo "::error::A submodule is not at its pinned commit (-/+/U prefix). Run 'git submodule update --init --recursive'."
+            echo "::error::A submodule is not at its pinned commit (-/+/U prefix). Run 'git submodule update --init'."
             exit 1
           fi
       - name: Submodule working trees are clean
         run: |
-          git submodule foreach --recursive '
+          git submodule foreach '
             if ! git diff --quiet || ! git diff --cached --quiet; then
               echo "::error::Submodule $name has uncommitted changes (vendored upstream must stay pristine)"; exit 1
             fi
