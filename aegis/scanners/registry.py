@@ -24,6 +24,7 @@ class ScanOptions:
     target: str
     instruction: str | None = None
     timeout: int = 1800
+    scan_mode: str = "standard"
     extra: dict[str, Any] = field(default_factory=dict)
 
 

@@ -26,6 +26,7 @@ class AegisConfig:
     enable_pr: bool = False
     juice_shop_image_tag: str = "bkimminich/juice-shop:v17.3.0"
     strix_command: str | None = None
+    strix_scan_mode: str = "standard"
 
 
 def load_config(path: str | None = None) -> AegisConfig:

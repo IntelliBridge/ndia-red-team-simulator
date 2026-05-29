@@ -248,7 +248,9 @@ class TestRunStrixDiscoveryFailure(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             from aegis.state import RunState
             state = RunState(tmp, "run-success")
-            events_path = state.run_path / "strix" / "events.jsonl"
+            # Strix writes events under strix_runs/<auto-name>/events.jsonl,
+            # relative to its cwd (the runner sets cwd=strix_dir).
+            events_path = state.run_path / "strix" / "strix_runs" / "auto" / "events.jsonl"
             events_path.parent.mkdir(parents=True, exist_ok=True)
 
             class FakeProc:
