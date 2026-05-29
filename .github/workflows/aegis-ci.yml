@@ -100,6 +100,29 @@ jobs:
   coverage:
     name: Coverage (>=90%)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aegis
+          POSTGRES_PASSWORD: aegis
+          POSTGRES_DB: aegis
+        options: >-
+          --health-cmd "pg_isready -U aegis"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+        ports: ["5432:5432"]
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+    env:
+      AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@localhost:5432/aegis
+      AEGIS_BROKER_URL: redis://localhost:6379/0
+      AEGIS_RESULT_BACKEND: redis://localhost:6379/1
     steps:
       - uses: actions/checkout@v4
         with:
@@ -110,7 +133,9 @@ jobs:
       - name: Install Aegis
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[test,dev]"
+          pip install -e ".[api,worker,test,dev]"
+      - name: Migrate
+        run: alembic upgrade head
       - name: Coverage gate
         run: pytest -q --cov=aegis --cov-report=term-missing --cov-fail-under=90
 
