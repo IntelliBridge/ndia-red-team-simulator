@@ -346,6 +346,27 @@ invocation lands on the audit chain at the service boundary (see
 **23 tools today: 10 Kali + 13 scanner adapters**, on the way to the 35+
 OnePager target.
 
+### Capability matrix
+
+The three seams above each reach the runtime through a different dispatch
+path. This matrix is the single view of *what exists*, *what consumes
+it*, and *where the wiring is still thin* — the map a new capability
+(e.g. a future `code_audit` adapter) slots into without diverging from
+the architecture.
+
+| Seam | Vocabulary | Registered | Runtime consumer | Dispatch |
+|------|-----------|-----------|------------------|----------|
+| Scanners | 7 capabilities | 13 adapters | `scan_start` Celery task | one adapter per job via `dispatch(name \| capability)`; defaults to `strix` |
+| Agents | 6 `Domain`s | 15 adapters | *(no registry consumer yet)* | remediation calls `cai.Runner` directly with `codeagent` / `blueteam_agent`, bypassing the registry |
+| Kali tools | 10 named tools | 10 (over MCP) | `run_kali_tool` service | per-tool REST call, audited at the service boundary |
+
+Two interconnection facts the matrix makes explicit, both tracked as
+gaps rather than intent: scanners run **one adapter per job** (there is
+no capability-sweep that fans a target across every adapter claiming a
+capability), and the **agent registry has no runtime dispatch path** —
+remediation reaches CAI directly, so the registered agent adapters are
+not reachable from any running code today.
+
 ## Release map
 
 ```mermaid
