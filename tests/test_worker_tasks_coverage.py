@@ -25,6 +25,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+# celery ships in the [worker] extra and the worker task modules import it at
+# load time. Skip this whole module when it's absent (e.g. the minimal-deps
+# unit CI job) so the offline suite stays green without the worker extra.
+pytest.importorskip("celery")
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

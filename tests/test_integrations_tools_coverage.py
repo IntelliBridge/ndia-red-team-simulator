@@ -19,6 +19,7 @@ Constraints:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 import tempfile
@@ -28,6 +29,14 @@ import urllib.error
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+# httpx ships in the optional [api] extra. The github_app integration tests
+# below import it transitively; skip them when it's absent (e.g. the
+# minimal-deps unit CI job) instead of erroring at import time.
+_REQUIRES_HTTPX = unittest.skipUnless(
+    importlib.util.find_spec("httpx") is not None,
+    "httpx not installed (optional [api] extra)",
+)
 
 # ---------------------------------------------------------------------------
 # Helpers shared across test classes
@@ -103,6 +112,7 @@ def _write_runtime(state, *, mode="source", last_rebuild_at=None,
 # aegis/integrations/github_app.py
 # ===========================================================================
 
+@_REQUIRES_HTTPX
 class TestGitHubClientInstallationToken(unittest.TestCase):
     """Token retrieval, caching, and error paths."""
 
@@ -288,6 +298,7 @@ class TestGitHubClientInstallationToken(unittest.TestCase):
         self.assertEqual(result[0]["filename"], "app.py")
 
 
+@_REQUIRES_HTTPX
 class TestGitHubLoadPrivateKey(unittest.TestCase):
     def test_missing_env_raises(self):
         from aegis.integrations.github_app import _load_private_key
@@ -309,6 +320,7 @@ class TestGitHubLoadPrivateKey(unittest.TestCase):
             Path(key_path).unlink(missing_ok=True)
 
 
+@_REQUIRES_HTTPX
 class TestGitHubClientDefaultAppId(unittest.TestCase):
     def test_app_id_from_env(self):
         from aegis.integrations.github_app import GitHubClient
@@ -323,6 +335,7 @@ class TestGitHubClientDefaultAppId(unittest.TestCase):
         self.assertEqual(client.app_id, "explicit-42")
 
 
+@_REQUIRES_HTTPX
 class TestPRInfoDataclass(unittest.TestCase):
     def test_prinfo_fields(self):
         from aegis.integrations.github_app import PRInfo
@@ -2213,6 +2226,7 @@ class TestCAILoaderBundleFields(unittest.TestCase):
 # Additional coverage for aegis/integrations/github_app.py: _app_jwt
 # ===========================================================================
 
+@_REQUIRES_HTTPX
 class TestAppJwt(unittest.TestCase):
     def test_app_jwt_encodes_rs256(self):
         """_app_jwt calls jwt.encode with RS256 header and correct payload."""
@@ -3361,6 +3375,7 @@ class TestDemoFinalizeLine295(unittest.TestCase):
         self.assertTrue(rebuild_stage.success)
 
 
+@_REQUIRES_HTTPX
 class TestGitHubAppJwt(unittest.TestCase):
     def test_app_jwt_calls_jwt_encode_with_rs256(self):
         """Lines 43-47: _app_jwt body coverage via mocked authlib.jose.jwt."""
