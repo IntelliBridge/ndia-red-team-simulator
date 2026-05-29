@@ -14,6 +14,7 @@ class AegisConfig:
     strix_path: str = "./project_repos/strix"
     cai_path: str = "./project_repos/cai"
     vulnfixer_path: str = "./project_repos/vulnerability-fixer"
+    bumblebee_path: str = "./project_repos/bumblebee"
     mcp_kali_url: str = "http://127.0.0.1:5000"
     output_dir: str = "./aegis_output"
     model: str = "gemini/gemini-2.5-flash"

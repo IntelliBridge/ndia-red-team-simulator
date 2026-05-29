@@ -16,3 +16,6 @@
 [submodule "project_repos/opentelemetry-collector-contrib"]
 	path = project_repos/opentelemetry-collector-contrib
 	url = https://github.com/open-telemetry/opentelemetry-collector-contrib
+[submodule "project_repos/bumblebee"]
+	path = project_repos/bumblebee
+	url = https://github.com/perplexityai/bumblebee.git
