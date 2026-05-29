@@ -65,8 +65,9 @@ the entire trail on `aegis audit verify ✓`.
 
 ## Where Aegis is today
 
-Aegis is **operational software**, not a vision deck. The v0.4.2 tag
-shipped May 2026 with 287 + 3 tests passing on Python 3.12 and 3.13.
+Aegis is **operational software**, not a vision deck. The v0.5.0 tag
+shipped May 2026 with 1081 tests passing (18 skipped offline) on Python
+3.12 and 3.13.
 
 | Capability | Status |
 |---|---|

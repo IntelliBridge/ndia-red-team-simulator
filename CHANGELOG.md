@@ -4,6 +4,53 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.5.0] — Harden the registry seam
+
+Architecture hardening so new capability arrives through an extension seam
+instead of by hand-editing core. Execution-layer + packaging only — no API
+write route, Celery enqueue, or audit-chain change. Offline `pytest -q`
+stays green with no Postgres/Redis/Keycloak and no scanner binaries.
+
+### Added
+- Generic `aegis.registry.Registry[T]` shared by the scanner and agent
+  registries (`register` / `get` / `list_names` + a gated
+  `maybe_load_entry_points`), collapsing two near-identical registries onto
+  one seam.
+- Live third-party plugin discovery: `aegis/scanners/__init__.py` and
+  `aegis/agents/__init__.py` now call `maybe_load_entry_points()` after the
+  built-ins, discovering entry points in groups `aegis.scanners` /
+  `aegis.agents`. Gated by `AEGIS_PLUGINS=1` (default off) so it never
+  touches the offline path — the previously-dormant hook is now wired.
+- `KNOWN_CAPABILITIES` open capability vocabulary in
+  `aegis/scanners/registry.py`: adding a capability is a one-line append;
+  an unknown declared capability logs a warning but still registers, so a
+  plugin can introduce its own without patching core.
+- `tests/test_plugin_discovery.py` — gated entry-point discovery for both
+  registries (on registers; off is a strict no-op; unknown-capability
+  warns-but-registers), fully offline.
+
+### Changed
+- Retired the stale `wired_in_phase_3` phase flag → `wired` on the agent
+  adapter Protocol, the `list_agents()` output key, and the `AgentResult`
+  status string `"not_wired_in_phase_3"` → `"not_wired"`.
+- Renamed package `aegis/adapters/` → `aegis/runners/` and the finding
+  converter `strix_adapter.py` → `strix_converter.py`, clarifying the
+  subprocess-runner / finding-converter / exporter layer and killing the
+  name collision with the registered `aegis/scanners/strix_adapter.py`.
+- `Capability` is no longer a closed `Literal`; capabilities are plain
+  `str` validated against `KNOWN_CAPABILITIES` at registration.
+
+### Migration
+- Downstream importers of `aegis.adapters.*` must switch to
+  `aegis.runners.*`; the Strix finding converter moved from
+  `aegis.adapters.strix_adapter` to `aegis.runners.strix_converter`. The
+  registered scanner adapter `aegis.scanners.strix_adapter` is unchanged.
+- Third-party scanners/agents may now register via entry-point groups
+  `aegis.scanners` / `aegis.agents` (opt-in with `AEGIS_PLUGINS=1`); see
+  the "Extending Aegis" docs.
+- Public import paths from `aegis.scanners`, `aegis.scanners.registry`,
+  `aegis.agents`, and `aegis.agents.registry` are otherwise unchanged.
+
 ## [0.4.2] — OnePager gap: forensic/wireless agents + scanner breadth
 
 Narrows the gap between shipped capability and the OnePager promise on two

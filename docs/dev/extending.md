@@ -1,0 +1,158 @@
+# Extending Aegis
+
+Aegis discovers two kinds of pluggable component at startup: **scanner
+adapters** (wrap a security tool, emit `AegisFinding`s) and **agent
+adapters** (wrap a CAI agent). Both are kept in a generic
+`name -> item` table — `aegis.registry.Registry[T]` — that backs the
+scanner registry ([`aegis/scanners/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/registry.py))
+and the agent registry ([`aegis/agents/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/registry.py)).
+
+This page covers how to add your own.
+
+## Two extension paths
+
+| Path | How it registers | When to use |
+|------|------------------|-------------|
+| **First-party** | Eager `import` in the subsystem `__init__.py`, which runs `register(...)` at module import. Fast, explicit, always present. | Adapters that ship inside the `aegis` package. |
+| **Third-party** | A Python **entry point** that Aegis discovers at startup — opt-in via `AEGIS_PLUGINS=1`. | Adapters shipped from a separate downstream package, with no edit to `aegis`. |
+
+### First-party (in-tree)
+
+The built-ins are imported eagerly so callers never have to import each
+adapter module by hand. For example,
+[`aegis/scanners/__init__.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/__init__.py)
+imports `strix_adapter`, `trivy_adapter`, and the rest; each module ends
+with a top-level `register(MyAdapter())`. Adding a first-party adapter is
+two steps: write `aegis/scanners/<tool>_adapter.py` ending in
+`register(...)`, then add it to the import list in `__init__.py`.
+
+### Third-party (entry points)
+
+A downstream package registers a plugin by declaring an entry point in
+its own `pyproject.toml` — no change to the `aegis` package:
+
+```toml
+[project.entry-points."aegis.scanners"]
+my_scanner = "my_pkg.my_module:MyScannerAdapter"
+
+[project.entry-points."aegis.agents"]
+my_agent = "my_pkg.my_module:MyAgentAdapter"
+```
+
+The entry-point **value must be a zero-arg callable** (a class works,
+since calling it with no arguments constructs an instance). Aegis calls
+`factory()` and registers the result, which must expose a `.name`
+attribute (and otherwise satisfy the relevant adapter Protocol — see
+below). The groups are `aegis.scanners` and `aegis.agents`.
+
+!!! warning "Discovery is opt-in: `AEGIS_PLUGINS=1`"
+    Entry-point discovery only runs when the environment variable
+    `AEGIS_PLUGINS=1` is set. It is **off by default**.
+
+    This is deliberate: the offline test path must stay deterministic.
+    `pytest` runs without `AEGIS_PLUGINS`, so a third-party plugin
+    installed in the same environment can never perturb the built-in
+    registry during tests. The seam is wired in
+    `Registry.maybe_load_entry_points`, which returns immediately unless
+    the flag is `"1"`; a plugin whose `factory()` raises is logged and
+    skipped, never propagated.
+
+Each subsystem exposes a no-arg wrapper —
+`aegis.scanners.maybe_load_entry_points()` and
+`aegis.agents.maybe_load_entry_points()` — that the package `__init__`
+calls **after** the built-ins are imported, so first-party adapters are
+always present and plugins layer on top.
+
+## The adapter surface
+
+A plugin's `factory()` must return an object that satisfies the
+relevant Protocol. The Protocols are the contract — match them exactly;
+the registry only checks `.name` at registration, so a missing method
+surfaces later at dispatch, not at load.
+
+### `ScannerAdapter`
+
+Defined in [`aegis/scanners/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/registry.py):
+
+| Member | Type | Purpose |
+|--------|------|---------|
+| `name` | `str` | Registry key. Used by `dispatch(name, ...)`. |
+| `capabilities` | `set[str]` | Capability tags (e.g. `{"dast"}`). Drives capability-based dispatch. |
+| `default_timeout` | `int` | Fallback scan timeout in seconds. |
+| `adapter_version()` | `-> str` | Version string for the wrapped tool. |
+| `health_check()` | `-> bool` | Whether the tool is usable (e.g. on `PATH`). |
+| `scan(run_state, options)` | `-> ScanResult` | Run the scan; return findings + metadata. |
+
+`scan` takes a `RunState` and a `ScanOptions` (`target`, optional
+`instruction`, `timeout`, `extra`) and returns a `ScanResult`
+(`findings`, `adapter_name`, `adapter_version`, `command_str`,
+`env_keys`, `exit_code`, `duration_s`, `error`). The in-tree
+`StrixAdapter` in
+[`aegis/scanners/strix_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/strix_adapter.py)
+is the reference implementation.
+
+### `AgentAdapter`
+
+Defined in [`aegis/agents/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/registry.py):
+
+| Member | Type | Purpose |
+|--------|------|---------|
+| `name` | `str` | Registry key. Used by `dispatch(name, ...)`. |
+| `domain` | `Domain` | One of `offensive`, `defensive`, `forensic`, `recon`, `remediation`, `audit`. |
+| `wired` | `bool` | Whether the agent is actually executable (vs. a stub). |
+| `invoke(prompt, context)` | `-> AgentResult` | Run the agent; return status + output. |
+
+`invoke` takes a prompt `str` and an `AgentContext` (`finding_id`,
+`target`, `repo_path`, `actor`, `extra`) and returns an `AgentResult`
+(`status`, `output`, `findings`, `diff`, `agent_version`, `error`).
+
+## Capabilities are an open vocabulary
+
+`aegis/scanners/registry.py` defines the known capability set:
+
+```python
+KNOWN_CAPABILITIES: set[str] = {"dast", "sast", "dependency", "iac", "secret", "sbom"}
+```
+
+A scanner's `capabilities` is a `set[str]` validated at `register()`:
+
+- A capability **in** the set registers silently.
+- A capability **outside** the set **logs a warning but still
+  registers**. Plugins can therefore introduce a new capability without
+  patching core.
+
+To promote a capability to first-party (so it no longer warns), it's a
+**one-line append** to `KNOWN_CAPABILITIES`.
+
+## Runners vs. converters vs. registered adapters
+
+The single most confusing distinction for a new contributor: not
+everything named `*_adapter.py` is a registered adapter, and the
+`aegis/runners/` package holds none of the registered scanner adapters.
+
+Only the `*_adapter.py` modules under **`aegis/scanners/`** implement
+the `ScannerAdapter` Protocol and call `register(...)`. Everything in
+**`aegis/runners/`** is plumbing those adapters call into — it is *not*
+registered.
+
+| Module | Role | Registered? |
+|--------|------|-------------|
+| `aegis/scanners/strix_adapter.py` (`StrixAdapter`) | The registered `ScannerAdapter`; `register()`ed into the scanner registry. | **Yes** |
+| `aegis/runners/strix_runner.py` | Subprocess **runner** — discovers + launches the Strix CLI, tails `events.jsonl`. | No |
+| `aegis/runners/trivy_runner.py` | Subprocess **runner** for Trivy. | No |
+| `aegis/runners/strix_converter.py` | **Converter** — turns raw Strix events into `AegisFinding`s (`convert_strix_finding`). | No |
+| `aegis/runners/vulnfixer_adapter.py` | **Exporter** — maps an `AegisFinding` to the vulnerability-fixer payload. | No |
+
+!!! note "Why the rename"
+    The package `aegis/adapters/` was renamed to `aegis/runners/`, and
+    `strix_adapter.py` within it became `strix_converter.py`. The old
+    name collided with the genuinely registered
+    `aegis/scanners/strix_adapter.py`. The new name says what the
+    module is: a runner package whose Strix member is a *converter*, not
+    a registered adapter. See
+    [ADR 0002](../adr/0002-registry-seam-and-runners.md).
+
+The call path ties them together: `StrixAdapter.scan` (registered
+adapter) calls `run_strix` (runner), which calls `convert_strix_finding`
+(converter) per event — so a registered adapter is the public face and
+the `runners/` modules are the implementation behind it.

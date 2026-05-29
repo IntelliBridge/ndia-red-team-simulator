@@ -166,12 +166,14 @@ nav:
   - Development:
       - Local stack: dev/local-stack.md
       - Frontend: dev/frontend.md
+      - Extending Aegis: dev/extending.md
       - Editing the docs: dev/docs.md
   - Security:
       - Fork-PR safety: security/fork-prs.md
       - "Policy (SECURITY.md)": https://github.com/IntelliBridge/aegis/blob/main/SECURITY.md
   - ADRs:
       - "0001 — Vendored submodules": adr/0001-vendored-submodules.md
+      - "0002 — Registry seam + runners": adr/0002-registry-seam-and-runners.md
   - "Changelog ↗": https://github.com/IntelliBridge/aegis/blob/main/CHANGELOG.md
   - "Contributing ↗": https://github.com/IntelliBridge/aegis/blob/main/CONTRIBUTING.md
   - Legacy:
