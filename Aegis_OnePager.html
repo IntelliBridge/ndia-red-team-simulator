@@ -497,7 +497,7 @@
     </div>
     <div class="cap-item">
       <div class="cap-check">&#10003;</div>
-      <div class="cap-text"><strong>Professional Tooling</strong> &mdash; Full Kali Linux arsenal, Nuclei, Semgrep, Playwright, and Caido natively integrated</div>
+      <div class="cap-text"><strong>Professional Tooling</strong> &mdash; Full Kali arsenal via MCP, plus Nuclei, Semgrep, Trivy, and Trufflehog &mdash; 13 scanner adapters in all</div>
     </div>
     <div class="cap-item">
       <div class="cap-check">&#10003;</div>
@@ -546,33 +546,55 @@
   <!-- Open-Source Foundation -->
   <div class="foundation">
     <div class="section-title">Open-Source Foundation</div>
+    <div class="arch-desc">Seven pinned, in-repo open-source projects &mdash; here is what each one actually powers in Aegis today.</div>
     <div class="foundation-grid">
       <div class="repo-card">
         <div class="repo-role">Pentest</div>
         <div class="repo-info">
           <div class="repo-name"><a href="https://github.com/usestrix/strix" target="_blank">usestrix/strix</a> <span class="repo-license">Apache 2.0</span></div>
-          <div class="repo-desc">Application security engine &mdash; autonomous AI pentesting with 21+ vuln classes, multi-agent orchestration, PoC validation, and CI/CD-native headless mode.</div>
+          <div class="repo-desc">The <strong>strix</strong> DAST adapter &mdash; AI-driven pentesting with PoC validation.</div>
         </div>
       </div>
       <div class="repo-card">
         <div class="repo-role red">Agents</div>
         <div class="repo-info">
           <div class="repo-name"><a href="https://github.com/aliasrobotics/cai" target="_blank">aliasrobotics/cai</a> <span class="repo-license">MIT</span></div>
-          <div class="repo-desc">Multi-domain agent framework &mdash; 24+ offensive/defensive agents upstream (15 wired in Aegis today), red+blue team parallel ops, DFIR, and autonomous system hardening.</div>
+          <div class="repo-desc">15 wired CAI agents across five security domains.</div>
         </div>
       </div>
       <div class="repo-card">
         <div class="repo-role blue">Tools</div>
         <div class="repo-info">
           <div class="repo-name"><a href="https://gitlab.com/kalilinux/packages/mcp-kali-server" target="_blank">kalilinux/mcp-kali-server</a> <span class="repo-license">MIT</span></div>
-          <div class="repo-desc">Tool execution layer &mdash; MCP bridge to Kali Linux arsenal (nmap, Metasploit, sqlmap, hydra, nikto) with generic command execution for remediation tasks.</div>
+          <div class="repo-desc">MCP bridge to 10 Kali tools &mdash; nmap, sqlmap, hydra, metasploit&hellip;</div>
         </div>
       </div>
       <div class="repo-card">
         <div class="repo-role gold">Fix</div>
         <div class="repo-info">
-          <div class="repo-name"><a href="https://github.com/OpenHands/vulnerability-fixer" target="_blank">OpenHands/vulnerability-fixer</a> <span class="repo-license">MIT</span></div>
-          <div class="repo-desc">Remediation engine &mdash; parses scanner findings to common schema, dispatches AI agents to generate code fixes, and opens PRs automatically on GitHub.</div>
+          <div class="repo-name"><a href="https://github.com/OpenHands/vulnerability-fixer" target="_blank">OpenHands/vulnerability-fixer</a> <span class="repo-license">Apache 2.0</span></div>
+          <div class="repo-desc">Vulnfixer export &mdash; turns findings into AI code-fix PRs.</div>
+        </div>
+      </div>
+      <div class="repo-card">
+        <div class="repo-role">UI</div>
+        <div class="repo-info">
+          <div class="repo-name"><a href="https://github.com/shadcn-ui/ui" target="_blank">shadcn-ui/ui</a> <span class="repo-license">MIT</span></div>
+          <div class="repo-desc">Generates the <strong>@aegis/design-system</strong> dashboard primitives.</div>
+        </div>
+      </div>
+      <div class="repo-card">
+        <div class="repo-role blue">Observability</div>
+        <div class="repo-info">
+          <div class="repo-name"><a href="https://github.com/open-telemetry/opentelemetry-collector-contrib" target="_blank">opentelemetry-collector-contrib</a> <span class="repo-license">Apache 2.0</span></div>
+          <div class="repo-desc">OTel Collector image behind the <strong>obs</strong> profile.</div>
+        </div>
+      </div>
+      <div class="repo-card">
+        <div class="repo-role red">Supply chain</div>
+        <div class="repo-info">
+          <div class="repo-name"><a href="https://github.com/perplexityai/bumblebee" target="_blank">perplexityai/bumblebee</a> <span class="repo-license">Apache 2.0</span></div>
+          <div class="repo-desc">The <strong>bumblebee</strong> supply-chain scanner adapter.</div>
         </div>
       </div>
     </div>
