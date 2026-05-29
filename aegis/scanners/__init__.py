@@ -3,6 +3,7 @@
 # Eagerly register the built-in adapters so callers don't have to import each.
 from aegis.scanners import (  # noqa: F401
     bandit_adapter,
+    bumblebee_adapter,
     checkov_adapter,
     codeql_adapter,
     grype_adapter,

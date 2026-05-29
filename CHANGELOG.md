@@ -4,6 +4,42 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.5.1] — Bumblebee supply-chain scanner via the hardened seam
+
+The first tool added through the v0.5.0 registry seam. Adding the
+`supply_chain` capability was a one-line `KNOWN_CAPABILITIES` append — the
+proof the open vocabulary works without patching core. Execution-layer +
+packaging only; the offline `pytest -q` path stays green with no
+Postgres/Redis/Keycloak and no scanner binaries.
+
+### Added
+- `BumblebeeAdapter` (`aegis/scanners/bumblebee_adapter.py`) — wraps the
+  bumblebee CLI's NDJSON output (`package` / `finding` / `scan_summary`
+  records) and emits `AegisFinding`s with `finding_type="supply_chain"`.
+  Findings carry severity directly, so there is no synthetic-severity
+  workaround.
+- New `supply_chain` capability in `KNOWN_CAPABILITIES` (a one-line append),
+  covered by the bumblebee adapter — the scanner roster is now 13.
+- Vendored `perplexityai/bumblebee` as a pinned submodule (Apache-2.0, tag
+  v0.1.1) under `project_repos/bumblebee`, recorded in `AEGIS_VENDORED.md`
+  and the ADR 0001 bumps log; `bumblebee_path` added to `AegisConfig`.
+- `tests/test_bumblebee_adapter.py` + an NDJSON fixture: severity mapping,
+  required-field conversion, and a credential-never-leaked guard, all
+  offline.
+
+### Security
+- bumblebee parses MCP-host configs that may contain credentials; the
+  adapter never copies a credential value into a finding (`evidence` is left
+  unset), mirroring the trufflehog redaction guarantee. A test asserts no
+  sentinel credential reaches the serialized finding.
+
+### Migration
+- The scanner needs `bumblebee` on `PATH` (a Go 1.25+ static binary) or a
+  build from the vendored source; when absent, `health_check()` returns
+  False and the adapter soft-degrades. The Go build dependency touches only
+  the `docker-images` image (a multi-stage `golang` builder stage) — never
+  the offline test path.
+
 ## [0.5.0] — Harden the registry seam
 
 Architecture hardening so new capability arrives through an extension seam
