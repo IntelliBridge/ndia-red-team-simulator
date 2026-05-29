@@ -4,6 +4,36 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.5.2] — Fix the bumblebee and strix scanner adapters
+
+Two shipped scanner adapters spoke interfaces their tools never exposed; both
+are corrected against the vendored source. Execution-layer only — the offline
+`pytest -q` path stays green with no scanner binaries (1091 passing, 18 skipped).
+
+### Fixed
+- **bumblebee adapter** now invokes the real CLI (`bumblebee scan --root
+  <target> --exposure-catalog <dir> --findings-only --output stdout`) and
+  parses the real NDJSON schema: records are discriminated by `record_type`
+  (was a non-existent `type` field), and `finding` records map their real
+  fields (`record_id`, `catalog_id`/`catalog_name`, `severity`, `package_name`,
+  `version`, `confidence`). The previous invented `--target`/`--format ndjson`
+  flags and `type` filter produced zero findings on real output. The exposure
+  catalog defaults to the vendored `threat_intel/*.json`.
+- **strix runner** drops the non-existent `--output-dir` flag, runs strix with
+  `cwd` set to the per-run directory, and discovers strix's real event stream
+  at `strix_runs/*/events.jsonl` (newest by mtime) instead of a fixed path
+  strix never wrote.
+
+### Added
+- `ScanOptions.scan_mode` (+ `AegisConfig.strix_scan_mode`, default
+  `"standard"`) threads strix's `-m/--scan-mode` (quick|standard|deep), so scans
+  are no longer hard-pinned to strix's `deep` default.
+
+### Security
+- The rewritten bumblebee adapter keeps the credential-never-leaked guarantee:
+  only known-safe fields are surfaced and `evidence` stays `None`. The fixture
+  uses placeholder catalog ids and no secret-like strings.
+
 ## [0.5.1] — Bumblebee supply-chain scanner via the hardened seam
 
 The first tool added through the v0.5.0 registry seam. Adding the
