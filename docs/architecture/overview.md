@@ -279,7 +279,74 @@ The split is the v0.3.1 F6 contract: **API routes call admission
 only**; **Celery tasks call execution only**. Admission is cheap and
 request-scoped; execution is the long-running scanner / CAI work.
 
-## Phase 4 release map
+## Execution surface: scanners, capabilities, and agents
+
+Aegis discovers two kinds of pluggable component at startup, both backed
+by the same generic `aegis.registry.Registry[T]` (see
+[ADR 0002](../adr/0002-registry-seam-and-runners.md) and
+[Extending Aegis](../dev/extending.md)): **scanner adapters** wrap a
+security tool and emit `AegisFinding`s; **agent adapters** wrap a CAI
+agent. First-party adapters register eagerly at import; third-party
+adapters register through the entry-point groups `aegis.scanners` /
+`aegis.agents`, discovered only when `AEGIS_PLUGINS=1` (off by default,
+so the offline test path stays deterministic).
+
+### Scanner adapters (13)
+
+Each adapter declares one or more **capabilities**; `dispatch` accepts
+either an adapter name or a capability tag.
+
+| Adapter | Capability | Wraps |
+|---------|------------|-------|
+| `strix` | `dast` | AI-driven pentester (the reference adapter) |
+| `nuclei` | `dast` | Template-based vulnerability scanner |
+| `zap` | `dast` | OWASP ZAP web-app scanner |
+| `semgrep` | `sast` | Pattern-based static analysis |
+| `codeql` | `sast` | Semantic code analysis (SARIF) |
+| `bandit` | `sast` | Python security linter |
+| `sonarqube` | `sast` | Code-quality + security analysis |
+| `trivy` | `dependency` | Vulnerability + dependency scanner |
+| `grype` | `dependency` | Dependency vulnerability scanner |
+| `checkov` | `iac` | IaC misconfiguration scanner |
+| `trufflehog` | `secret` | Secret scanner (raw material redacted) |
+| `syft` | `sbom` | SBOM generator (CycloneDX; inventory, not findings) |
+| `bumblebee` | `supply_chain` | Supply-chain / MCP-host exposure scanner |
+
+### Capabilities (7)
+
+`KNOWN_CAPABILITIES` is an **open vocabulary** validated at
+registration: `dast`, `sast`, `dependency`, `iac`, `secret`, `sbom`,
+`supply_chain`. A declared capability outside the set logs a warning but
+still registers, so a third-party plugin can add its own without
+patching core. Promoting one to first-party is a one-line append — how
+`supply_chain` landed in v0.5.1.
+
+### CAI agents (15, all wired)
+
+Agent adapters wrap upstream `cai.agents.*` agents and dispatch by name.
+Every registered agent is **wired** (executable, not a stub), spanning
+five of the six `Domain` values:
+
+| Domain | Agents |
+|--------|--------|
+| `offensive` | `bug_bounter`, `red_teamer`, `web_pentester`, `android_sast_agent`, `subghz_sdr_agent`, `wifi_security_tester`, `replay_attack_agent` |
+| `forensic` | `dfir`, `memory_analysis`, `network_traffic_analyzer`, `reverse_engineering` |
+| `audit` | `retester`, `reporter` |
+| `defensive` | `blueteam_agent` |
+| `remediation` | `codeagent` |
+| `recon` | *(none wired yet)* |
+
+### Kali toolbelt (10, via MCP)
+
+Beyond the registered scanners, the worker reaches a Kali host over MCP
+for classic offensive tooling: `nmap`, `sqlmap`, `nikto`, `hydra`,
+`gobuster`, `dirb`, `john`, `wpscan`, `enum4linux`, `metasploit`. Every
+invocation lands on the audit chain at the service boundary (see
+[Audit chain](audit-chain.md)). Counting both surfaces, Aegis ships
+**23 tools today: 10 Kali + 13 scanner adapters**, on the way to the 35+
+OnePager target.
+
+## Release map
 
 ```mermaid
 flowchart TD
@@ -323,7 +390,26 @@ flowchart TD
       f23c["F23c fork restricted"]
     end
 
-    v031 --> v040 --> v041
+    subgraph v042["v0.4.2 — Agent + scanner breadth"]
+      a1["7 agents wired (8 → 15)"]
+      a2["8 scanner adapters: zap, codeql,<br/>bandit, grype, checkov,<br/>trufflehog, sonarqube, syft"]
+      a3["sbom capability"]
+    end
+
+    subgraph v050["v0.5.0 — Registry seam hardening"]
+      r1["generic Registry[T]"]
+      r2["entry-point plugin discovery<br/>(AEGIS_PLUGINS=1)"]
+      r3["KNOWN_CAPABILITIES open vocab"]
+      r4["wired_in_phase_3 → wired"]
+      r5["adapters/ → runners/"]
+    end
+
+    subgraph v051["v0.5.1 — Supply chain"]
+      b1["bumblebee adapter (13th)"]
+      b2["supply_chain capability"]
+    end
+
+    v031 --> v040 --> v041 --> v042 --> v050 --> v051
 ```
 
 ## What's deferred
