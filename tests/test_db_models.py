@@ -3,22 +3,17 @@
 The real Postgres integration suite runs only when AEGIS_TEST_DB_URL is set.
 """
 
-import os
-import tempfile
 import unittest
-from pathlib import Path
 
 import pytest
-
 
 pytest.importorskip("sqlalchemy")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from aegis.db.models import (
-    Artifact, AuditChainHead, AuditEvent, Base, Finding, GitHubInstallation,
-    Job, LLMUsage, Organization, Project, ProjectMembership,
-    RemediationAttempt, Run, Target, User,
+    Base,
+    Organization,
 )
 
 

@@ -12,9 +12,7 @@ from aegis.remediate.cai_runner import RemediationResult
 from aegis.schema import AegisFinding
 from aegis.services.fixes import generate_fix
 from aegis.services.scans import start_scan
-from aegis.services.verify import verify as verify_svc
 from aegis.state import RunState
-
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOLDEN_DIFF = (FIXTURES / "juice_shop_login.diff").read_text()
@@ -123,7 +121,7 @@ class TestStartScanAuthorizes(unittest.TestCase):
                 )
             self.assertTrue(outcome.success)
             audit = (state.run_path / "audit.jsonl").read_text().strip().splitlines()
-            actions = [json.loads(l)["action"] for l in audit]
+            actions = [json.loads(line)["action"] for line in audit]
             self.assertIn("scan.start", actions)
 
 

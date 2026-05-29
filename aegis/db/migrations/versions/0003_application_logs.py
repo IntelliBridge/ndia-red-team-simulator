@@ -17,7 +17,6 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-
 revision: str = "0003_application_logs"
 down_revision: Union[str, None] = "0002_findings_pk_uuid"
 branch_labels: Union[str, Sequence[str], None] = None

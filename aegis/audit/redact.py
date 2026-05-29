@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 _SENSITIVE_KEYS = {
     "password", "passwd", "secret", "token", "api_key", "apikey",
     "private_key", "session", "session_token", "authorization",

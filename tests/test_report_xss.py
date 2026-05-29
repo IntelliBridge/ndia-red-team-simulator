@@ -66,6 +66,7 @@ class TestReportResponseHeaders(unittest.TestCase):
 
     def _build_app_with_run(self, tmp: Path):
         import contextlib
+
         from sqlalchemy import create_engine
         from sqlalchemy.dialects.postgresql import JSONB
         from sqlalchemy.ext.compiler import compiles

@@ -9,11 +9,12 @@ overrides and budget caps land before we touch the runner.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from aegis.integrations.cai_loader import load_cai
-from aegis.llm.router import BudgetChecker, BudgetExceeded, route as route_model
+from aegis.llm.router import BudgetChecker, BudgetExceeded
+from aegis.llm.router import route as route_model
 from aegis.remediate.patch_workflow import (
     diff_sha256,
     extract_unified_diff,

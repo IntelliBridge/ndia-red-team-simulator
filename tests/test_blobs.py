@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aegis.blobs import BlobRef, FilesystemBlobStore
+from aegis.blobs import FilesystemBlobStore
 
 
 class TestFilesystemBlobStore(unittest.TestCase):

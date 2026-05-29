@@ -21,7 +21,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from aegis.config import AegisConfig
-from aegis.remediate.cai_runner import RemediationResult, run_code_fix, run_live_hardening
+from aegis.remediate.cai_runner import run_code_fix, run_live_hardening
 from aegis.remediate.deps_workflow import build_version_bump_diff
 from aegis.remediate.patch_workflow import (
     apply_patch,
@@ -32,7 +32,6 @@ from aegis.safety import authorize
 from aegis.schema import AegisFinding
 from aegis.services.scans import JobHandle
 from aegis.state import RunState
-
 
 Strategy = Literal["patch", "live", "deps"]
 

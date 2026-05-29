@@ -21,13 +21,13 @@ def configure_otel(service_name: str = "aegis") -> None:
         return
     try:
         from opentelemetry import trace
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import (
             BatchSpanProcessor,
-        )
-        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-            OTLPSpanExporter,
         )
     except ImportError:  # pragma: no cover
         return
@@ -75,12 +75,13 @@ def _configure_otel_logs(service_name: str) -> None:
         return
     try:
         import logging
+
         from opentelemetry._logs import set_logger_provider
-        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
         from opentelemetry.exporter.otlp.proto.http._log_exporter import (
             OTLPLogExporter,
         )
+        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
         from opentelemetry.sdk.resources import Resource
     except ImportError:  # pragma: no cover
         return
@@ -190,7 +191,9 @@ def metrics_handler():
     try:
         from fastapi.responses import Response
         from prometheus_client import (
-            CONTENT_TYPE_LATEST, generate_latest, REGISTRY,
+            CONTENT_TYPE_LATEST,
+            REGISTRY,
+            generate_latest,
         )
     except ImportError:  # pragma: no cover
         async def _no_metrics():

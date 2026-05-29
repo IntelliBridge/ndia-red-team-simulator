@@ -18,6 +18,7 @@ def list_runs(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     from sqlalchemy import select
+
     from aegis.db.models import Run
     from aegis.db.session import get_session
 

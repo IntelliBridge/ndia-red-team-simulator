@@ -9,7 +9,7 @@ instead of silently going missing.
 
 from __future__ import annotations
 
-from aegis.agents.registry import AgentAdapter, AgentContext, AgentResult, register
+from aegis.agents.registry import AgentContext, AgentResult, register
 from aegis.config import load_config
 from aegis.integrations.cai_loader import load_cai
 

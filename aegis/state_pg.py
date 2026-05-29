@@ -7,10 +7,8 @@ layer is the only place audit events are written (Phase 3 M2).
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import select

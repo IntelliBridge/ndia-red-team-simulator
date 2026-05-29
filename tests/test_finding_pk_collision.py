@@ -14,7 +14,11 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from aegis.db.models import (
-    Base, Finding, Organization, Project, Run,
+    Base,
+    Finding,
+    Organization,
+    Project,
+    Run,
 )
 
 

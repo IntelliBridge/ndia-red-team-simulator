@@ -21,7 +21,6 @@ from typing import Any
 
 import httpx
 
-
 GITHUB_API = "https://api.github.com"
 
 

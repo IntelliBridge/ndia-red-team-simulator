@@ -14,7 +14,6 @@ from aegis.adapters.strix_runner import (
 )
 from aegis.state import RunState
 
-
 FIXTURE = Path(__file__).parent / "fixtures" / "strix_events_juice_shop.jsonl"
 
 

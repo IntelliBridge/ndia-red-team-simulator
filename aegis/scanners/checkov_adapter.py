@@ -13,7 +13,6 @@ from aegis.scanners.registry import ScanOptions, ScanResult, register
 from aegis.schema import AegisFinding, CodeLocation
 from aegis.state import RunState
 
-
 _SEVERITY_MAP = {
     "CRITICAL": "critical",
     "HIGH": "high",

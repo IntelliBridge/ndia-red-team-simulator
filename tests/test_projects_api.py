@@ -8,7 +8,6 @@ still enforce role rank.
 from __future__ import annotations
 
 import contextlib
-import os
 import unittest
 from unittest.mock import patch
 
@@ -40,7 +39,11 @@ def _patch_jsonb_for_sqlite() -> None:
 def _build_app_with_sqlite():
     _patch_jsonb_for_sqlite()
     from aegis.db.models import (
-        Base, Organization, Project, ProjectMembership, User,
+        Base,
+        Organization,
+        Project,
+        ProjectMembership,
+        User,
     )
 
     engine = create_engine(

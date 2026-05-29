@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from aegis.workers.celery_app import app
 
 

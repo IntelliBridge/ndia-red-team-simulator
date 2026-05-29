@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aegis.adapters.vulnfixer_adapter import to_vulnfixer_vulnerability, export_findings, ExportResult
+from aegis.adapters.vulnfixer_adapter import export_findings, to_vulnfixer_vulnerability
 from aegis.schema import AegisFinding
 
 FIXTURES = Path(__file__).parent / "fixtures"

@@ -42,6 +42,7 @@ def list_projects(user: CurrentUser = Depends(get_current_user)) -> dict:
     System callers (workers) get the whole list with ``role="system"``.
     """
     from sqlalchemy import select
+
     from aegis.db.models import Project, ProjectMembership, User
     from aegis.db.session import get_session
 
@@ -74,6 +75,7 @@ def list_projects(user: CurrentUser = Depends(get_current_user)) -> dict:
 
 def _resolve_project_by_slug(sess, slug: str):
     from sqlalchemy import select
+
     from aegis.db.models import Project
     project = sess.execute(
         select(Project).where(Project.slug == slug)
@@ -92,6 +94,7 @@ def list_membership(slug: str,
     Any member of the project can read; non-members get 403.
     """
     from sqlalchemy import select
+
     from aegis.db.models import ProjectMembership, User
     from aegis.db.session import get_session
 

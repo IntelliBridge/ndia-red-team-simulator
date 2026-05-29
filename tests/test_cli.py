@@ -6,12 +6,11 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
-from aegis.cli import build_parser, cmd_fix, main
+from aegis.cli import cmd_fix, main
 from aegis.config import AegisConfig
 from aegis.remediate.cai_runner import RemediationResult
 from aegis.schema import AegisFinding
 from aegis.state import RunState
-
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOLDEN_DIFF = (FIXTURES / "juice_shop_login.diff").read_text()
@@ -47,7 +46,9 @@ class TestRunCodeFixDiffRequired(unittest.TestCase):
         # F10: cai_runner now routes through cai_loader.load_cai, which
         # also imports the blueteam agent. The test mocks the entire CAI
         # surface load_cai touches so the bundle is non-None.
-        from unittest.mock import MagicMock, patch as mpatch
+        from unittest.mock import MagicMock
+        from unittest.mock import patch as mpatch
+
         from aegis.remediate.cai_runner import run_code_fix
 
         finding = AegisFinding(

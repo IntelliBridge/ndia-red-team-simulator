@@ -11,7 +11,6 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session as _Session
 from sqlalchemy.orm import sessionmaker
 
-
 _ENGINE: Engine | None = None
 Session: sessionmaker | None = None
 

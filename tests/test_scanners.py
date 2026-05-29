@@ -9,8 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from aegis.scanners import dispatch, get, list_scanners
-from aegis.scanners.registry import ScanOptions, ScanResult, register, _REGISTRY
-
+from aegis.scanners.registry import _REGISTRY, ScanOptions, ScanResult, register
 
 # The 12 first-party adapters, sorted.
 _EXPECTED = [

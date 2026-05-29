@@ -9,7 +9,6 @@ from pathlib import Path
 from aegis.config import AegisConfig
 from aegis.demo import run_demo
 
-
 _SEED_LOGIN_JS = (
     "module.exports = function login () {\n"
     "  return (req, res, next) => {\n"
@@ -118,7 +117,7 @@ class TestFixtureAssistedDemoApply(unittest.TestCase):
 
             # Audit log has the active events
             audit_lines = [
-                json.loads(l) for l in (run_path / "audit.jsonl").read_text().splitlines()
+                json.loads(line) for line in (run_path / "audit.jsonl").read_text().splitlines()
             ]
             actions = {e["action"] for e in audit_lines}
             self.assertIn("patch.commit", actions)

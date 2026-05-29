@@ -7,12 +7,9 @@ that the v0.3.1 F5 fix was about.
 
 import argparse
 import io
-import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from pathlib import Path
-from unittest.mock import patch
 
 from aegis.cli.migrate import cmd_migrate
 from aegis.migrate.fs_to_pg import MigrationSummary

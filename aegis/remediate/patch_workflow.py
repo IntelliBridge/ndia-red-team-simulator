@@ -8,7 +8,6 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-
 _FENCE_RE = re.compile(
     r"```(?:diff|patch)\s*\n(.*?)```", re.DOTALL | re.IGNORECASE
 )

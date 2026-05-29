@@ -7,7 +7,6 @@ from unittest.mock import patch
 
 from aegis.adapters.trivy_runner import parse_trivy_json, run_trivy
 
-
 _TRIVY_SAMPLE = {
     "SchemaVersion": 2,
     "Results": [

@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import dataclasses
 import unittest
-from unittest.mock import MagicMock, patch as mpatch
+from unittest.mock import MagicMock
+from unittest.mock import patch as mpatch
 
-from aegis.agents import registry
 from aegis.agents.cai import builtins
 from aegis.agents.registry import AgentContext, dispatch, list_agents
 from aegis.integrations.cai_loader import CAIBundle
-
 
 _NEW_WIRED = [
     "memory_analysis",

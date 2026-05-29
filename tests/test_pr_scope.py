@@ -17,13 +17,11 @@ pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
 
 from aegis.integrations.github_handlers import (
-    PRScope,
     on_pull_request_event,
     pr_scope_from_payload,
     restricted_mode_for,
     scope_audit_detail,
 )
-
 
 FIXTURES = Path(__file__).parent / "fixtures" / "github"
 

@@ -21,6 +21,7 @@ router = APIRouter(prefix="/targets", tags=["targets"])
 def list_targets(project: str = "default",
                  user: CurrentUser = Depends(get_current_user)):
     from sqlalchemy import select
+
     from aegis.db.models import Target
     from aegis.db.session import get_session
     with get_session() as sess:

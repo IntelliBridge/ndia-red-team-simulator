@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import os
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -36,7 +35,10 @@ def _patch_jsonb_for_sqlite() -> None:
 def _build_app_with_logs():
     _patch_jsonb_for_sqlite()
     from aegis.db.models import (
-        ApplicationLog, Base, Organization, Project,
+        ApplicationLog,
+        Base,
+        Organization,
+        Project,
     )
 
     engine = create_engine(

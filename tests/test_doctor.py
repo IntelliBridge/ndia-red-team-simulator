@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
 
-from aegis.doctor import detect_provider, run_doctor
 from aegis.config import AegisConfig
+from aegis.doctor import detect_provider, run_doctor
 
 
 class TestDetectProvider(unittest.TestCase):

@@ -20,7 +20,7 @@ import os
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, status
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
 
 from aegis.log_ingest.writer import (
     LogIngestRow,

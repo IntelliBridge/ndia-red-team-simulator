@@ -11,7 +11,7 @@ log rows are monotonically increasing, so ``id < cursor`` is the
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status

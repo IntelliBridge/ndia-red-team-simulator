@@ -24,7 +24,6 @@ from pathlib import Path
 from aegis.config import AegisConfig
 from aegis.demo import run_demo
 
-
 E2E_ENABLED = os.environ.get("AEGIS_E2E") == "1"
 E2E_LIVE = os.environ.get("AEGIS_E2E_LIVE") == "1"
 
@@ -117,7 +116,7 @@ class E2EDemoFixtureAssisted(unittest.TestCase):
 
             # Audit log records every active op
             audit = (run_path / "audit.jsonl").read_text().splitlines()
-            actions = {json.loads(l)["action"] for l in audit}
+            actions = {json.loads(line)["action"] for line in audit}
             for needed in ("patch.commit", "verify.replay"):
                 self.assertIn(needed, actions, f"missing audit action: {needed}")
 

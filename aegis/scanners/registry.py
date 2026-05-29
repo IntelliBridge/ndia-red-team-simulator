@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from aegis.schema import AegisFinding
 from aegis.state import RunState
-
 
 Capability = Literal["dast", "sast", "dependency", "iac", "secret", "sbom"]
 

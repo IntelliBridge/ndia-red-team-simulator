@@ -14,6 +14,7 @@ from aegis.workers.celery_app import app
 @app.task(name="aegis.parallel_fix", bind=True, max_retries=0)
 def parallel_fix(self, job_id: str) -> dict:
     from celery import group
+
     from aegis.db.models import Job
     from aegis.workers.bootstrap import task_context
     from aegis.workers.tasks.fix import fix_generate

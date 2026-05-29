@@ -49,7 +49,11 @@ def _ensure_project(sess, project_id: str) -> None:
 def _import_run(sess, run_dir: Path, project_id: str,
                 summary: MigrationSummary, blob_store, dry_run: bool) -> None:
     from aegis.db.models import (
-        Artifact, AuditEvent, Finding, RemediationAttempt, Run,
+        Artifact,
+        AuditEvent,
+        Finding,
+        RemediationAttempt,
+        Run,
     )
     run_id = run_dir.name
     if sess.get(Run, run_id):
@@ -134,7 +138,7 @@ def _import_run(sess, run_dir: Path, project_id: str,
         chain_id = f"run:{run_id}"
         seq = 0
         prev_hash: bytes | None = None
-        from aegis.audit.chain import canonical_json, compute_hash
+        from aegis.audit.chain import compute_hash
 
         # Head marker
         seq += 1

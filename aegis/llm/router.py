@@ -14,7 +14,7 @@ in the real ``llm_usage``-table check.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Protocol
 
 
 @dataclass

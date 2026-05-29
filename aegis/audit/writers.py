@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Literal
+from typing import Any, Iterator, Literal
 
 from aegis.audit.chain import (
     AuditEvent,
@@ -27,7 +27,6 @@ from aegis.audit.chain import (
     JsonlAuditWriter,
     PostgresAuditWriter,
 )
-
 
 Mode = Literal["offline", "api", "worker", "test"]
 

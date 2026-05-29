@@ -14,7 +14,6 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-
 # Hard cap on audit-row attribute payload size in bytes. Oversize ``attrs``
 # spill to the blob store with only the digest + ref in the audit row.
 MAX_AUDIT_ATTRS_BYTES = 64 * 1024

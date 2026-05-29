@@ -2,9 +2,9 @@
 
 import unittest
 
+from aegis.agents import list_agents
 from aegis.scanners import dispatch, get, list_scanners
 from aegis.scanners.registry import ScanOptions, ScanResult, register
-from aegis.agents import list_agents
 
 
 class TestScannerRegistry(unittest.TestCase):

@@ -7,8 +7,21 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from aegis.api.settings import APISettings, load_settings
 from aegis.api.v1 import (
-    audit, exports, findings, findings_by_scanner_id, fix, health, logs,
-    projects, reports, runs, runs_cancel, scans, targets, tools, verify,
+    audit,
+    exports,
+    findings,
+    findings_by_scanner_id,
+    fix,
+    health,
+    logs,
+    projects,
+    reports,
+    runs,
+    runs_cancel,
+    scans,
+    targets,
+    tools,
+    verify,
 )
 
 
@@ -52,8 +65,10 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
 
     # Correlation-id propagation + OTel + Prometheus.
     from aegis.observability import (
-        configure_otel, configure_structlog,
-        metrics_handler, request_id_middleware,
+        configure_otel,
+        configure_structlog,
+        metrics_handler,
+        request_id_middleware,
     )
     configure_otel(service_name="aegis-api")
     configure_structlog()

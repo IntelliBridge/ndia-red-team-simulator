@@ -156,8 +156,9 @@ def cmd_init(_args, _config):
         _warn("aegis.yaml already exists — skipping.")
         return
 
-    from aegis.config import AegisConfig
     import dataclasses
+
+    from aegis.config import AegisConfig
 
     defaults = AegisConfig()
     lines = ["# Aegis configuration\n"]
@@ -187,7 +188,7 @@ def cmd_scan(args, config):
     F4: when ``--api`` / ``AEGIS_MODE=api`` is set, dispatches the scan
     via ``aegis.cli.api_client`` and returns the run handle.
     """
-    from aegis.adapters.strix_adapter import load_strix_events, convert_strix_findings
+    from aegis.adapters.strix_adapter import convert_strix_findings, load_strix_events
     from aegis.cli import api_client
     from aegis.services.scans import start_scan
     from aegis.state import RunState
@@ -282,7 +283,6 @@ def cmd_findings(args, config):
 
     # Table header
     hdr_fmt = "{:<14}  {:<10}  {:<45}  {:<12}  {:<14}"
-    row_fmt = "{:<14}  {:<10}  {:<45}  {:<12}  {:<14}"
 
     print(hdr_fmt.format("ID", "Severity", "Title", "Type", "Status"))
     print("-" * 100)
@@ -298,8 +298,6 @@ def cmd_findings(args, config):
         fid = f.get("id", "?")
         ftype = f.get("finding_type", "?")
         status = f.get("status", "?")
-        # ANSI codes add ~9 chars that are not visible, compensate
-        ansi_pad = len(sev_display) - len(sev_raw.upper())
         print(f"{fid:<14}  {sev_display}{' ' * max(0, 10 - len(sev_raw.upper()) )}"
               f"  {title:<45}  {ftype:<12}  {status:<14}")
 
@@ -818,7 +816,7 @@ def build_parser() -> argparse.ArgumentParser:
     # targets
     p_targets = sub.add_parser("targets", help="Manage vulnerable-target containers")
     targets_sub = p_targets.add_subparsers(dest="targets_action", required=True)
-    p_targets_list = targets_sub.add_parser("list", help="List available target packs")
+    targets_sub.add_parser("list", help="List available target packs")
     p_targets_up = targets_sub.add_parser("up", help="Start a target")
     p_targets_up.add_argument("target_pack", help="Pack name (e.g. juice-shop, dvwa)")
     p_targets_up.add_argument("--repo", default=None,

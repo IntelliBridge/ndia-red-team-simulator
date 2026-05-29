@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 
 from aegis.api.auth import CurrentUser, get_current_user
 from aegis.api.policy import Action, check

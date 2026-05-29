@@ -10,8 +10,8 @@ from __future__ import annotations
 from typing import Sequence, Union
 
 from alembic import op
-from aegis.db.models import Base
 
+from aegis.db.models import Base
 
 revision: str = "0001_initial"
 down_revision: Union[str, None] = None

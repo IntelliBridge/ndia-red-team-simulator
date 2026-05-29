@@ -39,7 +39,6 @@ from aegis.schema import AegisFinding
 from aegis.state import RunState
 from aegis.verify import verify_finding
 
-
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
 DEFAULT_FIXTURE_EVENTS = FIXTURES_DIR / "strix_events_juice_shop.jsonl"
 DEFAULT_TARGET_PACK = "juice-shop"
@@ -129,7 +128,7 @@ def run_demo(
 
     # ---- Stage 1: target.up (must precede a live scan) -------------------
     target_pack = None
-    target_url = f"http://localhost:3000"  # placeholder; overwritten if live
+    target_url = "http://localhost:3000"  # placeholder; overwritten if live
     if live_strix or live_llm:
         try:
             from aegis.targets import get_target_pack

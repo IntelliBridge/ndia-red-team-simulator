@@ -31,6 +31,7 @@ class TestFixWorkerPersistsFindingStatus(unittest.TestCase):
 
     def test_outcome_status_lifted_onto_finding_row(self):
         from unittest.mock import MagicMock
+
         from aegis.services.fixes import FixOutcome
 
         # Simulated worker step: lift outcome.status onto the row.

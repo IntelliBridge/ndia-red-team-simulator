@@ -1,5 +1,7 @@
 """Pluggable CAI-agent registry."""
 
+# Register the built-in CAI adapters.
+from aegis.agents.cai import builtins  # noqa: F401
 from aegis.agents.registry import (
     AgentAdapter,
     AgentContext,
@@ -9,9 +11,6 @@ from aegis.agents.registry import (
     list_agents,
     register,
 )
-
-# Register the built-in CAI adapters.
-from aegis.agents.cai import builtins  # noqa: F401
 
 __all__ = [
     "AgentAdapter", "AgentContext", "AgentResult",

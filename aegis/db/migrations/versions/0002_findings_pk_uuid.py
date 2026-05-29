@@ -20,7 +20,6 @@ from uuid import uuid4
 import sqlalchemy as sa
 from alembic import op
 
-
 revision: str = "0002_findings_pk_uuid"
 down_revision: Union[str, None] = "0001_initial"
 branch_labels: Union[str, Sequence[str], None] = None

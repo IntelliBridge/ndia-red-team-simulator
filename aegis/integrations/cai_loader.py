@@ -67,8 +67,8 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
         sys.path.insert(0, str(cai_src))
 
     try:
-        from cai.agents.codeagent import codeagent  # type: ignore
         from cai.agents.blue_teamer import blueteam_agent  # type: ignore
+        from cai.agents.codeagent import codeagent  # type: ignore
         from cai.sdk.agents import Runner  # type: ignore
     except ImportError:
         return None
@@ -76,13 +76,13 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
     # Extended agents degrade to None independently: a failure importing one
     # NEW agent must not regress the working codeagent/blueteam path above.
     try:
+        from cai.agents.android_sast_agent import android_sast  # type: ignore
         from cai.agents.memory_analysis_agent import memory_analysis_agent  # type: ignore
         from cai.agents.network_traffic_analyzer import network_security_analyzer_agent  # type: ignore
+        from cai.agents.replay_attack_agent import replay_attack_agent  # type: ignore
         from cai.agents.reverse_engineering_agent import reverse_engineering_agent  # type: ignore
-        from cai.agents.android_sast_agent import android_sast  # type: ignore
         from cai.agents.subghz_sdr_agent import subghz_sdr_agent  # type: ignore
         from cai.agents.wifi_security_tester import wifi_security_agent  # type: ignore
-        from cai.agents.replay_attack_agent import replay_attack_agent  # type: ignore
         extended = {
             "memory_analysis_agent": memory_analysis_agent,
             "network_security_analyzer_agent": network_security_analyzer_agent,

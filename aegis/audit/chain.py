@@ -20,13 +20,12 @@ import hashlib
 import json
 import os
 import threading
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Protocol
 
 from aegis.audit.redact import redact_audit_detail
-
 
 SCHEMA_VERSION = 1
 
@@ -228,7 +227,9 @@ class PostgresAuditWriter:
                run_id: str | None = None,
                project_id: str | None = None) -> AuditEvent:
         from sqlalchemy import select
-        from aegis.db.models import AuditChainHead, AuditEvent as AEModel
+
+        from aegis.db.models import AuditChainHead
+        from aegis.db.models import AuditEvent as AEModel
 
         chain_id = self._chain_id(project_id, run_id)
         redacted_detail = redact_audit_detail(detail or {})
@@ -282,6 +283,7 @@ class PostgresAuditWriter:
 
     def read_chain(self, chain_id: str) -> Iterator[dict[str, Any]]:
         from sqlalchemy import select
+
         from aegis.db.models import AuditEvent as AEModel
 
         with self.session_factory() as sess:
@@ -306,6 +308,7 @@ class PostgresAuditWriter:
 
     def iter_chain_ids(self) -> Iterator[str]:
         from sqlalchemy import select
+
         from aegis.db.models import AuditChainHead
         with self.session_factory() as sess:
             for row in sess.execute(select(AuditChainHead.chain_id)).scalars():

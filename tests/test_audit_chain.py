@@ -2,15 +2,12 @@
 exercised when AEGIS_TEST_DB_URL is set)."""
 
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
 
 from aegis.audit.chain import (
     JsonlAuditWriter,
-    SCHEMA_VERSION,
-    compute_hash,
     verify_chain,
 )
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 
 from aegis.api.auth import CurrentUser, get_current_user

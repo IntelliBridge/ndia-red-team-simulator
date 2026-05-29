@@ -12,7 +12,6 @@ from aegis.scanners.registry import ScanOptions, ScanResult, register
 from aegis.schema import AegisFinding
 from aegis.state import RunState
 
-
 _SEVERITY_MAP = {
     "BLOCKER": "critical",
     "CRITICAL": "high",

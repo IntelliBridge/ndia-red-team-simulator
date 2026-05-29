@@ -18,7 +18,6 @@ from pathlib import Path
 
 from aegis.workers.celery_app import app
 
-
 _STATE_MAP = {
     "verified": "poc_passed",
     "still_vulnerable": "poc_failed",

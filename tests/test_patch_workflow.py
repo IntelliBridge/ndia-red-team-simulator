@@ -15,7 +15,6 @@ from aegis.remediate.patch_workflow import (
 )
 from aegis.schema import AegisFinding
 
-
 FIXTURES = Path(__file__).parent / "fixtures"
 GOLDEN_DIFF = (FIXTURES / "juice_shop_login.diff").read_text()
 

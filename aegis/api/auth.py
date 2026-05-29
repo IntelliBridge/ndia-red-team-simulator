@@ -35,7 +35,7 @@ def _jwks_cache(jwks_url: str) -> dict[str, Any]:
 def _verify_jwt(token: str, settings: APISettings) -> dict[str, Any]:
     # We deliberately don't pull in PyJWT just for verification — authlib
     # is in `[api]` extras and handles JWKS validation cleanly.
-    from authlib.jose import jwt, JoseError
+    from authlib.jose import JoseError, jwt
     if not settings.oidc_jwks_url:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -64,8 +64,8 @@ def _verify_jwt(token: str, settings: APISettings) -> dict[str, Any]:
 # ----- worker service-account tokens (FW v0.3.1) ----------------------------
 
 def _hmac_sign(secret: str, payload: str) -> str:
-    from hmac import new as hmac_new
     from hashlib import sha256
+    from hmac import new as hmac_new
     return hmac_new(secret.encode(), payload.encode(), sha256).hexdigest()
 
 

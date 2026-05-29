@@ -16,7 +16,6 @@ from fastapi.testclient import TestClient
 from aegis.api.app import create_app
 from aegis.api.settings import APISettings
 
-
 SECRET = "supersecret"
 
 

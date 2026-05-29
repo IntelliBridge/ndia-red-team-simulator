@@ -20,7 +20,6 @@ from starlette.responses import JSONResponse, Response
 
 from aegis.api.settings import APISettings
 
-
 _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 

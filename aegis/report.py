@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from collections import Counter
 from datetime import datetime, timezone
-from pathlib import Path
 
 from aegis.schema import AegisFinding
 from aegis.state import RunState

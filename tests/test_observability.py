@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 
 from aegis.api.app import create_app
 from aegis.api.settings import APISettings
-from aegis.observability import current_request_id
 
 
 class TestCorrelationId(unittest.TestCase):

@@ -12,12 +12,11 @@ The runner must:
 
 from __future__ import annotations
 
-import sys
 import unittest
-from unittest.mock import MagicMock, patch as mpatch
+from unittest.mock import MagicMock
+from unittest.mock import patch as mpatch
 
 from aegis.config import AegisConfig
-from aegis.llm.router import BudgetChecker
 from aegis.remediate import cai_runner
 from aegis.schema import AegisFinding
 

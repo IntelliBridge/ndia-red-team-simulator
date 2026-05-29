@@ -36,6 +36,7 @@ def cancel_run(
     on next heartbeat (handled in F11).
     """
     from sqlalchemy import select
+
     from aegis.db.models import Job, Run
     from aegis.db.session import get_session
 

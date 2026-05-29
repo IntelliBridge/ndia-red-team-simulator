@@ -92,8 +92,8 @@ class TestKeyRotationOverlap(unittest.TestCase):
 class TestLegacyTokenStillAccepted(unittest.TestCase):
     def test_static_hmac_legacy_path_works_during_transition(self):
         # The Phase 3 demo path: token is just the HMAC of "aegis-worker".
-        from hmac import new as hmac_new
         from hashlib import sha256
+        from hmac import new as hmac_new
         secret = "key-v1"
         legacy_sig = hmac_new(secret.encode(), b"aegis-worker", sha256).hexdigest()
         token = f"worker:{legacy_sig}"
