@@ -814,11 +814,11 @@ class TestTrivyAdapterScan(unittest.TestCase):
     def test_health_check_false(self, _w):
         self.assertFalse(self.adapter.health_check())
 
-    @patch("aegis.adapters.trivy_runner.run_trivy")
+    @patch("aegis.runners.trivy_runner.run_trivy")
     @patch("shutil.which", return_value="/usr/bin/trivy")
     def test_scan_happy_path(self, _w, mock_run_trivy):
         """TrivyAdapter delegates to trivy_runner.run_trivy; mock at that boundary."""
-        from aegis.adapters.trivy_runner import TrivyRunResult, parse_trivy_json
+        from aegis.runners.trivy_runner import TrivyRunResult, parse_trivy_json
         findings = parse_trivy_json(TRIVY_RAW, "test-run-001")
         mock_run_trivy.return_value = TrivyRunResult(
             success=True, return_code=0, findings=findings,
@@ -835,10 +835,10 @@ class TestTrivyAdapterScan(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertIsNone(result.error)
 
-    @patch("aegis.adapters.trivy_runner.run_trivy")
+    @patch("aegis.runners.trivy_runner.run_trivy")
     @patch("shutil.which", return_value=None)
     def test_scan_error_propagated(self, _w, mock_run_trivy):
-        from aegis.adapters.trivy_runner import TrivyRunResult
+        from aegis.runners.trivy_runner import TrivyRunResult
         mock_run_trivy.return_value = TrivyRunResult(
             success=False, return_code=-1, findings=[],
             raw_json_path=None, error="trivy CLI not found",
@@ -1020,10 +1020,10 @@ class TestStrixAdapterScan(unittest.TestCase):
     def test_health_check_false(self, _w):
         self.assertFalse(self.adapter.health_check())
 
-    @patch("aegis.adapters.strix_runner.run_strix")
+    @patch("aegis.runners.strix_runner.run_strix")
     @patch("shutil.which", return_value="/usr/bin/strix")
     def test_scan_happy_path(self, _w, mock_run_strix):
-        from aegis.adapters.strix_runner import StrixRunResult
+        from aegis.runners.strix_runner import StrixRunResult
         from aegis.schema import AegisFinding
         mock_finding = AegisFinding(
             id="strix-001",
@@ -1053,10 +1053,10 @@ class TestStrixAdapterScan(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertIsNone(result.error)
 
-    @patch("aegis.adapters.strix_runner.run_strix")
+    @patch("aegis.runners.strix_runner.run_strix")
     @patch("shutil.which", return_value=None)
     def test_scan_error_propagated(self, _w, mock_run_strix):
-        from aegis.adapters.strix_runner import StrixRunResult
+        from aegis.runners.strix_runner import StrixRunResult
         mock_run_strix.return_value = StrixRunResult(
             success=False, partial_success=False, return_code=-1,
             findings=[], command=[],
@@ -1068,10 +1068,10 @@ class TestStrixAdapterScan(unittest.TestCase):
         self.assertEqual(result.exit_code, -1)
         self.assertIsNotNone(result.error)
 
-    @patch("aegis.adapters.strix_runner.run_strix")
+    @patch("aegis.runners.strix_runner.run_strix")
     @patch("shutil.which", return_value="/usr/bin/strix")
     def test_scan_passes_instruction(self, _w, mock_run_strix):
-        from aegis.adapters.strix_runner import StrixRunResult
+        from aegis.runners.strix_runner import StrixRunResult
         mock_run_strix.return_value = StrixRunResult(
             success=True, partial_success=False, return_code=0,
             findings=[], command=[],

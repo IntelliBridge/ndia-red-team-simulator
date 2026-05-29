@@ -2632,7 +2632,7 @@ class TestRunDemoLivePaths(unittest.TestCase):
             cfg = self._config(td)
             with patch("aegis.targets.get_target_pack", return_value=mock_pack), \
                  patch("aegis.demo.authorize"), \
-                 patch("aegis.adapters.strix_runner.run_strix",
+                 patch("aegis.runners.strix_runner.run_strix",
                        side_effect=Exception("strix crashed"),
                        create=True), \
                  patch("aegis.demo.load_strix_events", return_value=[]), \
@@ -2802,7 +2802,7 @@ class TestVerifyDependencyFinding(unittest.TestCase):
             _write_runtime(state, mode="source",
                            last_rebuild_at="2026-01-01T00:00:00Z")
             finding = self._dep_finding()
-            with patch("aegis.adapters.trivy_runner.run_trivy", return_value=mock_trivy):
+            with patch("aegis.runners.trivy_runner.run_trivy", return_value=mock_trivy):
                 result = verify_finding(
                     finding, run_state=state, repo_path=Path(repo)
                 )
@@ -2819,7 +2819,7 @@ class TestVerifyDependencyFinding(unittest.TestCase):
             _write_runtime(state, mode="source",
                            last_rebuild_at="2026-01-01T00:00:00Z")
             finding = self._dep_finding()
-            with patch("aegis.adapters.trivy_runner.run_trivy", return_value=mock_trivy):
+            with patch("aegis.runners.trivy_runner.run_trivy", return_value=mock_trivy):
                 result = verify_finding(
                     finding, run_state=state, repo_path=Path(repo)
                 )
@@ -2844,7 +2844,7 @@ class TestVerifyDependencyFinding(unittest.TestCase):
             _write_runtime(state, mode="source",
                            last_rebuild_at="2026-01-01T00:00:00Z")
             finding = self._dep_finding(installed="4.17.10", fixed="4.17.21")
-            with patch("aegis.adapters.trivy_runner.run_trivy", return_value=mock_trivy):
+            with patch("aegis.runners.trivy_runner.run_trivy", return_value=mock_trivy):
                 result = verify_finding(
                     finding, run_state=state, repo_path=Path(repo)
                 )
@@ -2869,7 +2869,7 @@ class TestVerifyDependencyFinding(unittest.TestCase):
                            last_rebuild_at="2026-01-01T00:00:00Z")
             finding = self._dep_finding(installed="4.17.22", fixed="4.17.21",
                                         cve="CVE-2021-23337")
-            with patch("aegis.adapters.trivy_runner.run_trivy", return_value=mock_trivy):
+            with patch("aegis.runners.trivy_runner.run_trivy", return_value=mock_trivy):
                 result = verify_finding(
                     finding, run_state=state, repo_path=Path(repo)
                 )
@@ -3263,7 +3263,7 @@ class TestFinalizeDemoExceptionPaths(unittest.TestCase):
             )
             with patch("aegis.targets.get_target_pack", return_value=mock_pack), \
                  patch("aegis.demo.authorize"), \
-                 patch("aegis.adapters.strix_runner.run_strix",
+                 patch("aegis.runners.strix_runner.run_strix",
                         return_value=mock_strix_result, create=True), \
                  patch("aegis.demo.run_code_fix", return_value=mock_fix):
                 outcome = run_demo(

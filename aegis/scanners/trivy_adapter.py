@@ -1,4 +1,4 @@
-"""TrivyAdapter — wraps aegis.adapters.trivy_runner.run_trivy."""
+"""TrivyAdapter — wraps aegis.runners.trivy_runner.run_trivy."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class TrivyAdapter:
         return shutil.which("trivy") is not None
 
     def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
-        from aegis.adapters.trivy_runner import run_trivy
+        from aegis.runners.trivy_runner import run_trivy
         started = time.monotonic()
         result = run_trivy(
             options.target,

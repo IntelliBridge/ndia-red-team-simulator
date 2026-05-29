@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aegis.adapters.strix_runner import (
+from aegis.runners.strix_runner import (
     discover_strix_command,
     parse_events_lines,
     run_strix,
@@ -24,7 +24,7 @@ class TestDiscoverStrixCommand(unittest.TestCase):
         self.assertEqual(env, {})
 
     def test_falls_back_to_which(self):
-        with patch("aegis.adapters.strix_runner.shutil.which", return_value="/fake/strix"):
+        with patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
             cmd, env = discover_strix_command()
         self.assertEqual(cmd, ["/fake/strix"])
         self.assertEqual(env, {})
@@ -33,13 +33,13 @@ class TestDiscoverStrixCommand(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "src"
             src.mkdir()
-            with patch("aegis.adapters.strix_runner.shutil.which", return_value=None):
+            with patch("aegis.runners.strix_runner.shutil.which", return_value=None):
                 cmd, env = discover_strix_command(strix_path=tmp)
             self.assertEqual(cmd[1:3], ["-m", "strix"])
             self.assertEqual(env["PYTHONPATH"], str(src))
 
     def test_raises_when_nothing_found(self):
-        with patch("aegis.adapters.strix_runner.shutil.which", return_value=None):
+        with patch("aegis.runners.strix_runner.shutil.which", return_value=None):
             with self.assertRaises(FileNotFoundError):
                 discover_strix_command(strix_path="/definitely/nope")
 
@@ -115,7 +115,7 @@ class TestRunStrixDockerCheck(unittest.TestCase):
     def test_skips_when_docker_unavailable(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = RunState(tmp, "rx")
-            with patch("aegis.adapters.strix_runner.docker_available", return_value=False):
+            with patch("aegis.runners.strix_runner.docker_available", return_value=False):
                 result = run_strix("http://localhost:3000", state)
             self.assertFalse(result.success)
             self.assertIn("docker", (result.error or "").lower())
@@ -155,9 +155,9 @@ class TestRunStrixMockedSubprocess(unittest.TestCase):
                         time.sleep(0.01)
                     return self.returncode
 
-            with patch("aegis.adapters.strix_runner.docker_available", return_value=True), \
-                 patch("aegis.adapters.strix_runner.subprocess.Popen", return_value=FakeProc()), \
-                 patch("aegis.adapters.strix_runner.shutil.which", return_value="/fake/strix"):
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen", return_value=FakeProc()), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
                 result = run_strix("http://localhost:3000", state)
 
             self.assertEqual(result.return_code, 2)

@@ -27,13 +27,13 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from aegis.adapters.strix_adapter import load_strix_events
 from aegis.config import AegisConfig
 from aegis.remediate.cai_runner import run_code_fix
 from aegis.remediate.patch_workflow import (
     apply_patch,
     commit_patch,
 )
+from aegis.runners.strix_converter import load_strix_events
 from aegis.safety import authorize
 from aegis.schema import AegisFinding
 from aegis.state import RunState
@@ -160,7 +160,7 @@ def run_demo(
     # ---- Stage 2: discover ------------------------------------------------
     if live_strix:
         try:
-            from aegis.adapters.strix_runner import run_strix
+            from aegis.runners.strix_runner import run_strix
             authorize(
                 "strix.run", target_url,
                 allowlist=config.target_allowlist, run_path=state.run_path,

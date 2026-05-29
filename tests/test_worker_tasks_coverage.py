@@ -943,7 +943,7 @@ class TestVulnfixerRender(unittest.TestCase):
 
             with patch("aegis.workers.bootstrap.task_context",
                        side_effect=fake_tc), \
-                 patch("aegis.adapters.vulnfixer_adapter.export_findings",
+                 patch("aegis.runners.vulnfixer_adapter.export_findings",
                        return_value=summary):
                 # export_findings writes the file in prod; create it here
                 (run_path / "vulnfixer-export.json").write_text('{}')
@@ -976,7 +976,7 @@ class TestVulnfixerRender(unittest.TestCase):
 
             with patch("aegis.workers.bootstrap.task_context",
                        side_effect=fake_tc), \
-                 patch("aegis.adapters.vulnfixer_adapter.export_findings",
+                 patch("aegis.runners.vulnfixer_adapter.export_findings",
                        side_effect=_capture_export):
                 (run_path / "vulnfixer-export.json").write_text('{}')
                 self._exp_task().apply(args=["job-exp-002"]).get()
@@ -1000,7 +1000,7 @@ class TestVulnfixerRender(unittest.TestCase):
 
             with patch("aegis.workers.bootstrap.task_context",
                        side_effect=fake_tc), \
-                 patch("aegis.adapters.vulnfixer_adapter.export_findings",
+                 patch("aegis.runners.vulnfixer_adapter.export_findings",
                        return_value={"total": 0, "routable_to_vulnfixer": 0,
                                      "requires_code_fix": 0}):
                 (run_path / "vulnfixer-export.json").write_text('{}')

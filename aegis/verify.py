@@ -242,7 +242,7 @@ def _verify_dependency(
     the same CVE@package is reported AND the installed version is still
     below the fixed_version.
     """
-    from aegis.adapters.trivy_runner import run_trivy
+    from aegis.runners.trivy_runner import run_trivy
 
     if repo_path is None:
         return VerifyResult(

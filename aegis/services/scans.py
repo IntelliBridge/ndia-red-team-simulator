@@ -162,7 +162,7 @@ def start_scan(
             detail={"mode": "events-only"},
         )
 
-    from aegis.adapters.strix_runner import run_strix
+    from aegis.runners.strix_runner import run_strix
     result = run_strix(
         target, run_state,
         instruction=instruction,

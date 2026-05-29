@@ -196,7 +196,7 @@ class TestCliDepsStatusNotOverwritten(unittest.TestCase):
             )
             state.save_findings([dep_finding])
 
-            from aegis.adapters.trivy_runner import TrivyRunResult
+            from aegis.runners.trivy_runner import TrivyRunResult
             fake_trivy = TrivyRunResult(
                 success=True, return_code=0, findings=[dep_finding],
                 raw_json_path=None,
@@ -206,7 +206,7 @@ class TestCliDepsStatusNotOverwritten(unittest.TestCase):
                 finding_id=dep_finding_id, run="test-run-deps",
                 repo=str(repo), deps=True, apply=True,
             )
-            with patch("aegis.adapters.trivy_runner.run_trivy", return_value=fake_trivy):
+            with patch("aegis.runners.trivy_runner.run_trivy", return_value=fake_trivy):
                 cmd_fix(args, config)
 
             findings = state.load_findings()

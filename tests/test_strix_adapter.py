@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aegis.adapters.strix_adapter import convert_strix_finding, convert_strix_findings, load_strix_events
+from aegis.runners.strix_converter import convert_strix_finding, convert_strix_findings, load_strix_events
 from aegis.schema import AegisFinding, CodeLocation
 
 FIXTURES = Path(__file__).parent / "fixtures"

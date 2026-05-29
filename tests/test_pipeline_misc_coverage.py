@@ -1,6 +1,6 @@
 """Coverage-gap filler for the following modules:
 
-- aegis/adapters/strix_runner.py
+- aegis/runners/strix_runner.py
 - aegis/remediate/patch_workflow.py
 - aegis/remediate/cai_runner.py
 - aegis/log_ingest/server.py
@@ -126,33 +126,33 @@ def _fake_session_ctx(mock_sess=None):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# aegis/adapters/strix_runner.py — cover remaining branches
+# aegis/runners/strix_runner.py — cover remaining branches
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestDockerAvailable(unittest.TestCase):
     def test_returns_true_when_docker_info_succeeds(self):
-        from aegis.adapters.strix_runner import docker_available
+        from aegis.runners.strix_runner import docker_available
         result = MagicMock()
         result.returncode = 0
-        with patch("aegis.adapters.strix_runner.subprocess.run", return_value=result):
+        with patch("aegis.runners.strix_runner.subprocess.run", return_value=result):
             self.assertTrue(docker_available())
 
     def test_returns_false_when_docker_info_fails(self):
-        from aegis.adapters.strix_runner import docker_available
+        from aegis.runners.strix_runner import docker_available
         result = MagicMock()
         result.returncode = 1
-        with patch("aegis.adapters.strix_runner.subprocess.run", return_value=result):
+        with patch("aegis.runners.strix_runner.subprocess.run", return_value=result):
             self.assertFalse(docker_available())
 
     def test_returns_false_on_file_not_found(self):
-        from aegis.adapters.strix_runner import docker_available
-        with patch("aegis.adapters.strix_runner.subprocess.run",
+        from aegis.runners.strix_runner import docker_available
+        with patch("aegis.runners.strix_runner.subprocess.run",
                    side_effect=FileNotFoundError("docker not found")):
             self.assertFalse(docker_available())
 
     def test_returns_false_on_timeout(self):
-        from aegis.adapters.strix_runner import docker_available
-        with patch("aegis.adapters.strix_runner.subprocess.run",
+        from aegis.runners.strix_runner import docker_available
+        with patch("aegis.runners.strix_runner.subprocess.run",
                    side_effect=subprocess.TimeoutExpired("docker", 5)):
             self.assertFalse(docker_available())
 
@@ -160,10 +160,10 @@ class TestDockerAvailable(unittest.TestCase):
 class TestDiscoverStrixCommandEdgeCases(unittest.TestCase):
     def test_strix_path_without_src_dir_raises(self):
         """strix_path provided but src/ subdir absent → FileNotFoundError."""
-        from aegis.adapters.strix_runner import discover_strix_command
+        from aegis.runners.strix_runner import discover_strix_command
         with tempfile.TemporaryDirectory() as tmp:
             # tmp exists but has no src/ subdir
-            with patch("aegis.adapters.strix_runner.shutil.which", return_value=None):
+            with patch("aegis.runners.strix_runner.shutil.which", return_value=None):
                 with self.assertRaises(FileNotFoundError):
                     discover_strix_command(strix_path=tmp)
 
@@ -171,7 +171,7 @@ class TestDiscoverStrixCommandEdgeCases(unittest.TestCase):
 class TestParseEventsLinesEdgeCases(unittest.TestCase):
     def test_data_field_fallback_when_no_payload(self):
         """parse_events_lines falls back to event['data'] when payload is absent."""
-        from aegis.adapters.strix_runner import parse_events_lines
+        from aegis.runners.strix_runner import parse_events_lines
         line = json.dumps({
             "event_type": "finding.created",
             "data": {"id": "fallback-1", "title": "Fallback Finding"},
@@ -182,7 +182,7 @@ class TestParseEventsLinesEdgeCases(unittest.TestCase):
 
     def test_payload_without_report_key_uses_payload_itself(self):
         """When payload has no 'report' key, payload itself is used as report."""
-        from aegis.adapters.strix_runner import parse_events_lines
+        from aegis.runners.strix_runner import parse_events_lines
         line = json.dumps({
             "event_type": "finding.created",
             "payload": {"id": "direct-1", "title": "Direct Payload Finding"},
@@ -193,7 +193,7 @@ class TestParseEventsLinesEdgeCases(unittest.TestCase):
 
     def test_skips_event_with_no_id_in_report(self):
         """Events where report dict has no 'id' field are skipped."""
-        from aegis.adapters.strix_runner import parse_events_lines
+        from aegis.runners.strix_runner import parse_events_lines
         line = json.dumps({
             "event_type": "finding.created",
             "payload": {"report": {"title": "No ID here"}},
@@ -203,7 +203,7 @@ class TestParseEventsLinesEdgeCases(unittest.TestCase):
 
     def test_skips_event_with_non_dict_data(self):
         """When data is not a dict (no payload, data is a string), skip it."""
-        from aegis.adapters.strix_runner import parse_events_lines
+        from aegis.runners.strix_runner import parse_events_lines
         line = json.dumps({
             "event_type": "finding.created",
             "data": "not a dict",
@@ -215,12 +215,12 @@ class TestParseEventsLinesEdgeCases(unittest.TestCase):
 class TestRunStrixDiscoveryFailure(unittest.TestCase):
     def test_discover_failure_returns_error_result(self):
         """When discover_strix_command raises FileNotFoundError, run_strix returns error result."""
-        from aegis.adapters.strix_runner import run_strix
+        from aegis.runners.strix_runner import run_strix
         with tempfile.TemporaryDirectory() as tmp:
             from aegis.state import RunState
             state = RunState(tmp, "run-discover-fail")
-            with patch("aegis.adapters.strix_runner.docker_available", return_value=True), \
-                 patch("aegis.adapters.strix_runner.shutil.which", return_value=None):
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value=None):
                 result = run_strix("http://localhost:3000", state)
         self.assertFalse(result.success)
         self.assertFalse(result.partial_success)
@@ -229,13 +229,13 @@ class TestRunStrixDiscoveryFailure(unittest.TestCase):
 
     def test_popen_failure_returns_error_result(self):
         """When subprocess.Popen raises FileNotFoundError, run_strix returns error result."""
-        from aegis.adapters.strix_runner import run_strix
+        from aegis.runners.strix_runner import run_strix
         with tempfile.TemporaryDirectory() as tmp:
             from aegis.state import RunState
             state = RunState(tmp, "run-popen-fail")
-            with patch("aegis.adapters.strix_runner.docker_available", return_value=True), \
-                 patch("aegis.adapters.strix_runner.shutil.which", return_value="/fake/strix"), \
-                 patch("aegis.adapters.strix_runner.subprocess.Popen",
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen",
                        side_effect=FileNotFoundError("strix not found")):
                 result = run_strix("http://localhost:3000", state)
         self.assertFalse(result.success)
@@ -244,7 +244,7 @@ class TestRunStrixDiscoveryFailure(unittest.TestCase):
 
     def test_successful_run_zero_rc(self):
         """When strix exits with rc=0 and emits findings, success=True."""
-        from aegis.adapters.strix_runner import run_strix
+        from aegis.runners.strix_runner import run_strix
         with tempfile.TemporaryDirectory() as tmp:
             from aegis.state import RunState
             state = RunState(tmp, "run-success")
@@ -277,9 +277,9 @@ class TestRunStrixDiscoveryFailure(unittest.TestCase):
                         time.sleep(0.01)
                     return self.returncode
 
-            with patch("aegis.adapters.strix_runner.docker_available", return_value=True), \
-                 patch("aegis.adapters.strix_runner.subprocess.Popen", return_value=FakeProc()), \
-                 patch("aegis.adapters.strix_runner.shutil.which", return_value="/fake/strix"):
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen", return_value=FakeProc()), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
                 result = run_strix("http://localhost:3000", state)
 
         self.assertTrue(result.success)
@@ -290,7 +290,7 @@ class TestRunStrixDiscoveryFailure(unittest.TestCase):
 
     def test_instruction_added_to_cmd(self):
         """When instruction is provided, --instruction is added to command."""
-        from aegis.adapters.strix_runner import run_strix
+        from aegis.runners.strix_runner import run_strix
         with tempfile.TemporaryDirectory() as tmp:
             from aegis.state import RunState
             state = RunState(tmp, "run-instr")
@@ -314,9 +314,9 @@ class TestRunStrixDiscoveryFailure(unittest.TestCase):
                 captured["cmd"] = cmd
                 return ImmediateProc()
 
-            with patch("aegis.adapters.strix_runner.docker_available", return_value=True), \
-                 patch("aegis.adapters.strix_runner.subprocess.Popen", side_effect=fake_popen), \
-                 patch("aegis.adapters.strix_runner.shutil.which", return_value="/fake/strix"):
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen", side_effect=fake_popen), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
                 run_strix("http://localhost:3000", state,
                           instruction="focus on auth", skip_docker_check=True)
 
@@ -325,7 +325,7 @@ class TestRunStrixDiscoveryFailure(unittest.TestCase):
 
     def test_llm_env_passed_to_process(self):
         """llm_env keys are added to the subprocess environment."""
-        from aegis.adapters.strix_runner import run_strix
+        from aegis.runners.strix_runner import run_strix
         with tempfile.TemporaryDirectory() as tmp:
             from aegis.state import RunState
             state = RunState(tmp, "run-env")
@@ -349,9 +349,9 @@ class TestRunStrixDiscoveryFailure(unittest.TestCase):
                 captured_env.update(kwargs.get("env", {}))
                 return ImmediateProc()
 
-            with patch("aegis.adapters.strix_runner.docker_available", return_value=True), \
-                 patch("aegis.adapters.strix_runner.subprocess.Popen", side_effect=fake_popen), \
-                 patch("aegis.adapters.strix_runner.shutil.which", return_value="/fake/strix"):
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen", side_effect=fake_popen), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
                 run_strix("http://localhost:3000", state,
                           llm_env={"MY_API_KEY": "secret"}, skip_docker_check=True)
 
@@ -361,7 +361,7 @@ class TestRunStrixDiscoveryFailure(unittest.TestCase):
 class TestTailEventsNonExistentFile(unittest.TestCase):
     def test_returns_empty_when_file_never_appears(self):
         """tail_events handles the case where events.jsonl never exists."""
-        from aegis.adapters.strix_runner import tail_events
+        from aegis.runners.strix_runner import tail_events
         with tempfile.TemporaryDirectory() as tmp:
             events_path = Path(tmp) / "nonexistent.jsonl"
             done_flag = {"v": False}
@@ -381,7 +381,7 @@ class TestTailEventsNonExistentFile(unittest.TestCase):
 
     def test_on_finding_callback_invoked(self):
         """tail_events calls on_finding callback for each emitted finding."""
-        from aegis.adapters.strix_runner import tail_events
+        from aegis.runners.strix_runner import tail_events
         with tempfile.TemporaryDirectory() as tmp:
             events_path = Path(tmp) / "events.jsonl"
             collected = []
@@ -2751,7 +2751,7 @@ class TestStrixRunnerFinalDrainPasses(unittest.TestCase):
 
     def test_final_drain_picks_up_late_events(self):
         """Events written just before is_done()=True are picked up in drain passes."""
-        from aegis.adapters.strix_runner import tail_events
+        from aegis.runners.strix_runner import tail_events
         with tempfile.TemporaryDirectory() as tmp:
             events_path = Path(tmp) / "events.jsonl"
             done_flag = {"v": False}
@@ -2783,7 +2783,7 @@ class TestStrixRunnerFinalDrainPasses(unittest.TestCase):
 
     def test_final_drain_on_finding_called_for_late_events(self):
         """Events written between is_done() and drain passes trigger on_finding callback."""
-        from aegis.adapters.strix_runner import tail_events
+        from aegis.runners.strix_runner import tail_events
         with tempfile.TemporaryDirectory() as tmp:
             events_path = Path(tmp) / "events.jsonl"
             # Pre-write the events file so the tail loop exits quickly
@@ -2822,7 +2822,7 @@ class TestStrixRunnerTimeoutPath(unittest.TestCase):
 
     def test_timeout_terminates_process(self):
         """When the timeout expires, proc.terminate() is called and the run ends."""
-        from aegis.adapters.strix_runner import run_strix
+        from aegis.runners.strix_runner import run_strix
         with tempfile.TemporaryDirectory() as tmp:
             from aegis.state import RunState
             state = RunState(tmp, "run-timeout")
@@ -2846,11 +2846,11 @@ class TestStrixRunnerTimeoutPath(unittest.TestCase):
                         return self.returncode
                     return -1
 
-            with patch("aegis.adapters.strix_runner.docker_available", return_value=True), \
-                 patch("aegis.adapters.strix_runner.subprocess.Popen",
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen",
                        return_value=NeverFinishProc()), \
-                 patch("aegis.adapters.strix_runner.shutil.which", return_value="/fake/strix"), \
-                 patch("aegis.adapters.strix_runner.time.monotonic",
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"), \
+                 patch("aegis.runners.strix_runner.time.monotonic",
                        side_effect=[0.0, 0.0, 9999.0, 9999.0, 9999.0]):
                 run_strix("http://localhost:3000", state, timeout=1)
 
@@ -2859,7 +2859,7 @@ class TestStrixRunnerTimeoutPath(unittest.TestCase):
 
     def test_terminate_exception_is_swallowed(self):
         """If proc.terminate() raises, the exception is caught and is_done() returns True."""
-        from aegis.adapters.strix_runner import run_strix
+        from aegis.runners.strix_runner import run_strix
         with tempfile.TemporaryDirectory() as tmp:
             from aegis.state import RunState
             state = RunState(tmp, "run-term-exc")
@@ -2879,11 +2879,11 @@ class TestStrixRunnerTimeoutPath(unittest.TestCase):
                 def wait(self):
                     return -1
 
-            with patch("aegis.adapters.strix_runner.docker_available", return_value=True), \
-                 patch("aegis.adapters.strix_runner.subprocess.Popen",
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen",
                        return_value=FlakyTerminateProc()), \
-                 patch("aegis.adapters.strix_runner.shutil.which", return_value="/fake/strix"), \
-                 patch("aegis.adapters.strix_runner.time.monotonic",
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"), \
+                 patch("aegis.runners.strix_runner.time.monotonic",
                        side_effect=[0.0, 0.0, 9999.0, 9999.0, 9999.0]):
                 # Should not raise even though terminate() raises
                 result = run_strix("http://localhost:3000", state, timeout=1)

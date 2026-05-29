@@ -419,7 +419,7 @@ class TestCmdScan(unittest.TestCase):
                  patch("aegis.cli.main.Path") as mock_path_cls, \
                  patch("aegis.cli.main.json.load", return_value=fixture_data), \
                  patch("aegis.cli.main.open", create=True), \
-                 patch("aegis.adapters.strix_adapter.convert_strix_findings",
+                 patch("aegis.runners.strix_converter.convert_strix_findings",
                        return_value=[]):
                 # Make fixture appear to exist
                 mock_fixture = MagicMock()
@@ -442,7 +442,7 @@ class TestCmdScan(unittest.TestCase):
             events_path = Path(tmp) / "events.jsonl"
             events_path.write_text('{"event": "test"}\n')
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.adapters.strix_adapter.load_strix_events",
+                 patch("aegis.runners.strix_converter.load_strix_events",
                        return_value=[]) as mock_load:
                 args = self._args(events=str(events_path))
                 cmd_scan(args, config)
@@ -545,7 +545,7 @@ class TestCmdScan(unittest.TestCase):
             ]
 
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.adapters.strix_adapter.load_strix_events",
+                 patch("aegis.runners.strix_converter.load_strix_events",
                        return_value=findings):
                 events_path = Path(tmp) / "events.jsonl"
                 events_path.write_text("x")
@@ -566,7 +566,7 @@ class TestCmdScan(unittest.TestCase):
             events_file = repo / "events.jsonl"
             events_file.write_text('{"x":1}\n')
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.adapters.strix_adapter.load_strix_events",
+                 patch("aegis.runners.strix_converter.load_strix_events",
                        return_value=[]) as mock_load:
                 args = Namespace(
                     target_url="http://x.invalid",
@@ -665,7 +665,7 @@ class TestCmdExport(unittest.TestCase):
             summary = {
                 "total": 1, "routable_to_vulnfixer": 1, "requires_code_fix": 0,
             }
-            with patch("aegis.adapters.vulnfixer_adapter.export_findings",
+            with patch("aegis.runners.vulnfixer_adapter.export_findings",
                        return_value=summary) as mock_exp, \
                  patch("builtins.print"):
                 cmd_export(args, config)
@@ -677,7 +677,7 @@ class TestCmdExport(unittest.TestCase):
             state = RunState(tmp, "empty-run")
             state.save_findings([])
             args = Namespace(format="vulnfixer", run="empty-run")
-            with patch("aegis.adapters.vulnfixer_adapter.export_findings") as mock_exp:
+            with patch("aegis.runners.vulnfixer_adapter.export_findings") as mock_exp:
                 cmd_export(args, config)
                 mock_exp.assert_not_called()
 
@@ -858,7 +858,7 @@ class TestCmdFix(unittest.TestCase):
 class TestRefreshDepsFinding(unittest.TestCase):
 
     def test_trivy_fails_continues(self):
-        from aegis.adapters.trivy_runner import TrivyRunResult
+        from aegis.runners.trivy_runner import TrivyRunResult
 
         with tempfile.TemporaryDirectory() as tmp:
             finding = _make_finding(
@@ -874,14 +874,14 @@ class TestRefreshDepsFinding(unittest.TestCase):
                 raw_json_path=None, error="trivy not found",
             )
             args = Namespace(repo="/tmp/fake")
-            with patch("aegis.adapters.trivy_runner.run_trivy",
+            with patch("aegis.runners.trivy_runner.run_trivy",
                        return_value=fake_result), \
                  patch("aegis.cli.main._warn"):
                 result = _refresh_deps_findings(args, state, "CVE-2024-9999@lodash")
                 self.assertIsNotNone(result)
 
     def test_trivy_returns_wrong_type_exits(self):
-        from aegis.adapters.trivy_runner import TrivyRunResult
+        from aegis.runners.trivy_runner import TrivyRunResult
 
         with tempfile.TemporaryDirectory() as tmp:
             finding = _make_finding(
@@ -894,13 +894,13 @@ class TestRefreshDepsFinding(unittest.TestCase):
                 raw_json_path=None,
             )
             args = Namespace(repo="/tmp/fake")
-            with patch("aegis.adapters.trivy_runner.run_trivy",
+            with patch("aegis.runners.trivy_runner.run_trivy",
                        return_value=fake_result):
                 result = _refresh_deps_findings(args, state, "f-dast-001")
                 self.assertIsNone(result)
 
     def test_trivy_success_merges_findings(self):
-        from aegis.adapters.trivy_runner import TrivyRunResult
+        from aegis.runners.trivy_runner import TrivyRunResult
 
         with tempfile.TemporaryDirectory() as tmp:
             existing = _make_finding(
@@ -923,7 +923,7 @@ class TestRefreshDepsFinding(unittest.TestCase):
                 raw_json_path=None,
             )
             args = Namespace(repo="/tmp/fake")
-            with patch("aegis.adapters.trivy_runner.run_trivy",
+            with patch("aegis.runners.trivy_runner.run_trivy",
                        return_value=fake_result):
                 result = _refresh_deps_findings(args, state, "CVE-2024-0001@pkg")
                 self.assertIsNotNone(result)
@@ -1160,7 +1160,7 @@ class TestCmdPipeline(unittest.TestCase):
                  patch("aegis.cli.main.cmd_scan"), \
                  patch("aegis.state.FilesystemRunState.latest_run",
                        return_value=state), \
-                 patch("aegis.adapters.vulnfixer_adapter.export_findings",
+                 patch("aegis.runners.vulnfixer_adapter.export_findings",
                        return_value={"total": 1, "routable_to_vulnfixer": 1,
                                      "requires_code_fix": 0}), \
                  patch("aegis.services.reports.render_reports",

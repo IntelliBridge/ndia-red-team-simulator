@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aegis.adapters.trivy_runner import parse_trivy_json, run_trivy
+from aegis.runners.trivy_runner import parse_trivy_json, run_trivy
 
 _TRIVY_SAMPLE = {
     "SchemaVersion": 2,
@@ -63,7 +63,7 @@ class TestParseTrivyJson(unittest.TestCase):
         self.assertEqual(lodash.cvss, 7.5)
 
     def test_routable_to_vulnfixer(self):
-        from aegis.adapters.vulnfixer_adapter import to_vulnfixer_vulnerability
+        from aegis.runners.vulnfixer_adapter import to_vulnfixer_vulnerability
         findings = parse_trivy_json(_TRIVY_SAMPLE, "run-1")
         lodash = next(f for f in findings if "lodash" in f.id)
         export = to_vulnfixer_vulnerability(lodash)
@@ -83,8 +83,8 @@ class TestRunTrivy(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             output_dir = Path(tmp) / "out"
-            with patch("aegis.adapters.trivy_runner.shutil.which", return_value="/fake/trivy"), \
-                 patch("aegis.adapters.trivy_runner.subprocess.run") as mock_run:
+            with patch("aegis.runners.trivy_runner.shutil.which", return_value="/fake/trivy"), \
+                 patch("aegis.runners.trivy_runner.subprocess.run") as mock_run:
                 mock_run.return_value = subprocess.CompletedProcess(
                     ["trivy"], 0, stdout=json.dumps(_TRIVY_SAMPLE), stderr="",
                 )
@@ -96,8 +96,8 @@ class TestRunTrivy(unittest.TestCase):
     def test_handles_malformed_json(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            with patch("aegis.adapters.trivy_runner.shutil.which", return_value="/fake/trivy"), \
-                 patch("aegis.adapters.trivy_runner.subprocess.run") as mock_run:
+            with patch("aegis.runners.trivy_runner.shutil.which", return_value="/fake/trivy"), \
+                 patch("aegis.runners.trivy_runner.subprocess.run") as mock_run:
                 mock_run.return_value = subprocess.CompletedProcess(
                     ["trivy"], 0, stdout="not json", stderr="",
                 )

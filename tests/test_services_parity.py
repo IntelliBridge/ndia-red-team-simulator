@@ -108,7 +108,7 @@ class TestStartScanAuthorizes(unittest.TestCase):
     def test_audit_event_emitted_before_strix_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = RunState(tmp, "r3")
-            with patch("aegis.adapters.strix_runner.run_strix") as mock_strix:
+            with patch("aegis.runners.strix_runner.run_strix") as mock_strix:
                 mock_strix.return_value = type("R", (), {
                     "success": True, "partial_success": False,
                     "findings": [], "return_code": 0,

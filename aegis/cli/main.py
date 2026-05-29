@@ -188,8 +188,8 @@ def cmd_scan(args, config):
     F4: when ``--api`` / ``AEGIS_MODE=api`` is set, dispatches the scan
     via ``aegis.cli.api_client`` and returns the run handle.
     """
-    from aegis.adapters.strix_adapter import convert_strix_findings, load_strix_events
     from aegis.cli import api_client
+    from aegis.runners.strix_converter import convert_strix_findings, load_strix_events
     from aegis.services.scans import start_scan
     from aegis.state import RunState
 
@@ -314,7 +314,7 @@ def cmd_export(args, config):
     if not findings:
         return
 
-    from aegis.adapters.vulnfixer_adapter import export_findings
+    from aegis.runners.vulnfixer_adapter import export_findings
 
     output_path = state.run_path / "vulnfixer-export.json"
     summary = export_findings(findings, output_path)
@@ -430,7 +430,7 @@ def _refresh_deps_findings(args, state, finding_id):
     keeps the dep-bump service signature single-purpose (one finding in,
     one outcome out).
     """
-    from aegis.adapters.trivy_runner import run_trivy
+    from aegis.runners.trivy_runner import run_trivy
 
     _info(f"Running Trivy fs scan on {args.repo}")
     trivy_result = run_trivy(

@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable
 
-from aegis.adapters.strix_adapter import convert_strix_finding
+from aegis.runners.strix_converter import convert_strix_finding
 from aegis.schema import AegisFinding
 from aegis.state import RunState
 

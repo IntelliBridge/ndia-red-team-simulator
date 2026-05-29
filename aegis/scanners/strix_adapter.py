@@ -1,4 +1,4 @@
-"""StrixAdapter — wraps aegis.adapters.strix_runner.run_strix."""
+"""StrixAdapter — wraps aegis.runners.strix_runner.run_strix."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class StrixAdapter:
         return shutil.which("strix") is not None
 
     def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
-        from aegis.adapters.strix_runner import run_strix
+        from aegis.runners.strix_runner import run_strix
         started = time.monotonic()
         result = run_strix(
             options.target, run_state,
