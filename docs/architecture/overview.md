@@ -340,8 +340,6 @@ Live-current list:
 - Iterative agent loops with test execution.
 - Vulnerability-fixer agentic invocation.
 - Native MCP protocol.
-- Additional scanners (ZAP, CodeQL, Bandit, Grype, Checkov,
-  Trufflehog).
 - Authenticated DAST flows.
 - Worker autoscaling / multi-region DR.
 

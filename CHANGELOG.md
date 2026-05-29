@@ -4,6 +4,80 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.4.2] — OnePager gap: forensic/wireless agents + scanner breadth
+
+Narrows the gap between shipped capability and the OnePager promise on two
+axes: the seven registered-but-unwired CAI agents (forensics + mobile +
+wireless + RF) now dispatch to their real upstream agents, and eight new
+scanner adapters land. v0.4.1 and earlier untouched — this is
+execution-layer breadth only, with no API write route, Celery enqueue, or
+audit-chain change.
+
+### Added
+- Seven newly-wired CAI agents in `aegis/agents/cai/builtins.py`, each
+  dispatching through `Runner.run_sync` to its upstream `cai.agents.*`
+  agent: `memory_analysis`, `network_traffic_analyzer`,
+  `reverse_engineering` (forensic) and `android_sast_agent`,
+  `subghz_sdr_agent`, `wifi_security_tester`, `replay_attack_agent`
+  (offensive). The registry now reports **15 wired** agents, up from 8.
+- Eight scanner adapters under `aegis/scanners/`, each following the
+  self-contained subprocess + JSON-parse shape (`_convert` →
+  `AegisFinding`; graceful `exit_code=-1` on missing binary / timeout /
+  decode error; raw output persisted under `run_path/<tool>/`):
+  - `zap_adapter.py` (`dast`) — OWASP ZAP JSON report.
+  - `codeql_adapter.py` (`sast`) — `codeql database analyze` SARIF.
+  - `bandit_adapter.py` (`sast`) — `bandit -r -f json`.
+  - `grype_adapter.py` (`dependency`) — `grype -o json`.
+  - `checkov_adapter.py` (`iac`) — `checkov -o json`.
+  - `trufflehog_adapter.py` (`secret`) — `trufflehog … --json` (JSONL);
+    raw secret material is redacted, never persisted.
+  - `sonarqube_adapter.py` (`sast`) — `sonar-scanner` +
+    `GET /api/issues/search`; an unconfigured server degrades to an
+    empty, flagged `ScanResult` rather than raising.
+  - `syft_adapter.py` (`sbom`) — `syft -o cyclonedx-json`; persists a
+    CycloneDX SBOM to `run_path/syft/sbom.cyclonedx.json` and returns
+    `findings=[]` (inventory, not findings).
+- New `sbom` capability so Syft's inventory output is a first-class tool
+  without faking findings.
+- Tests (offline by construction — CAI bundle mocked, scanners parse
+  static fixtures, `health_check` exercised with the binary absent):
+  - `tests/test_agent_registry.py` — 5 cases (15 registered; the 7 new
+    agents dispatch ok; `_NOT_WIRED` empty; `cai_attr`↔`CAIBundle` field
+    parity; resilient-import degradation to `status="error"`).
+  - `tests/test_{zap,codeql,bandit,grype,checkov,trufflehog,sonarqube,syft}_adapter.py`
+    — one per adapter against a minimal real-shape fixture.
+  - `tests/test_scanners.py` — registry roster (all 12), capability
+    coverage, graceful `health_check`, dispatch-by-capability.
+
+### Changed
+- `aegis/integrations/cai_loader.py`: `CAIBundle` gains the seven
+  upstream agent fields; `load_cai` imports them in a separate
+  `try/except ImportError` so an upstream rename of a new agent cannot
+  regress the already-wired codeagent/blueteam path.
+- `aegis/scanners/registry.py`: the `Capability` Literal gains `"sbom"`.
+- `aegis/scanners/__init__.py`: eager-imports the eight new adapters so
+  they self-register on package import.
+- `tests/test_scanner_registry.py`: agent-registry assertions now
+  reflect that the forensic trio is wired; the `not_wired_in_phase_3`
+  path is retired (`_NOT_WIRED` is empty).
+- `docs/architecture/overview.md`: the "Additional scanners (ZAP …)"
+  deferred bullet is removed (now shipped); `docs/api/v1.md` lists the
+  full scanner enum.
+
+### Migration notes
+- None — additive. The new scanners need their CLIs on `PATH`
+  (SonarQube additionally needs a server via `SONAR_HOST_URL` + token in
+  `options.extra` or env); when absent each degrades through
+  `health_check` / guarded `scan` rather than raising. The offline
+  `pytest -q` path requires none of them.
+
+### Verification
+- `pytest -q` — 287 passed, 3 skipped on Python 3.12 (no Postgres /
+  Redis / Keycloak, no scanner binaries).
+- `python -c "import aegis.scanners as s; print(sorted(s.list_scanners()))"`
+  → the 12 adapters; wired-agent count → 15.
+- `mkdocs build --strict` clean (the README feeds the docs index).
+
 ## [0.4.1] — Phase 4 Observability & GitHub completion
 
 Centralised logs queryable in Loki / Elasticsearch and in-app via a
