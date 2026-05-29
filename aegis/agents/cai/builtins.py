@@ -96,17 +96,16 @@ _WIRED = [
     ("retester", "audit", "codeagent"),
     ("reporter", "audit", "blueteam_agent"),
     ("web_pentester", "offensive", "codeagent"),
+    ("memory_analysis", "forensic", "memory_analysis_agent"),
+    ("network_traffic_analyzer", "forensic", "network_security_analyzer_agent"),
+    ("reverse_engineering", "forensic", "reverse_engineering_agent"),
+    ("android_sast_agent", "offensive", "android_sast"),
+    ("subghz_sdr_agent", "offensive", "subghz_sdr_agent"),
+    ("wifi_security_tester", "offensive", "wifi_security_agent"),
+    ("replay_attack_agent", "offensive", "replay_attack_agent"),
 ]
 
-_NOT_WIRED = [
-    ("memory_analysis", "forensic"),
-    ("network_traffic_analyzer", "forensic"),
-    ("reverse_engineering", "forensic"),
-    ("android_sast_agent", "offensive"),
-    ("subghz_sdr_agent", "offensive"),
-    ("wifi_security_tester", "offensive"),
-    ("replay_attack_agent", "offensive"),
-]
+_NOT_WIRED = []
 
 
 for name, domain, cai_attr in _WIRED:

@@ -28,6 +28,13 @@ class CAIBundle:
     blueteam_agent: Any
     cai_version: str | None
     cai_path: Path
+    memory_analysis_agent: Any = None
+    network_security_analyzer_agent: Any = None
+    reverse_engineering_agent: Any = None
+    android_sast: Any = None
+    subghz_sdr_agent: Any = None
+    wifi_security_agent: Any = None
+    replay_attack_agent: Any = None
 
 
 _BUNDLE: CAIBundle | None = None
@@ -66,11 +73,42 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
     except ImportError:
         return None
 
+    # Extended agents degrade to None independently: a failure importing one
+    # NEW agent must not regress the working codeagent/blueteam path above.
+    try:
+        from cai.agents.memory_analysis_agent import memory_analysis_agent  # type: ignore
+        from cai.agents.network_traffic_analyzer import network_security_analyzer_agent  # type: ignore
+        from cai.agents.reverse_engineering_agent import reverse_engineering_agent  # type: ignore
+        from cai.agents.android_sast_agent import android_sast  # type: ignore
+        from cai.agents.subghz_sdr_agent import subghz_sdr_agent  # type: ignore
+        from cai.agents.wifi_security_tester import wifi_security_agent  # type: ignore
+        from cai.agents.replay_attack_agent import replay_attack_agent  # type: ignore
+        extended = {
+            "memory_analysis_agent": memory_analysis_agent,
+            "network_security_analyzer_agent": network_security_analyzer_agent,
+            "reverse_engineering_agent": reverse_engineering_agent,
+            "android_sast": android_sast,
+            "subghz_sdr_agent": subghz_sdr_agent,
+            "wifi_security_agent": wifi_security_agent,
+            "replay_attack_agent": replay_attack_agent,
+        }
+    except ImportError:
+        extended = {
+            "memory_analysis_agent": None,
+            "network_security_analyzer_agent": None,
+            "reverse_engineering_agent": None,
+            "android_sast": None,
+            "subghz_sdr_agent": None,
+            "wifi_security_agent": None,
+            "replay_attack_agent": None,
+        }
+
     _BUNDLE = CAIBundle(
         Runner=Runner,
         codeagent=codeagent,
         blueteam_agent=blueteam_agent,
         cai_version=_git_sha(cai_path),
         cai_path=cai_path,
+        **extended,
     )
     return _BUNDLE
