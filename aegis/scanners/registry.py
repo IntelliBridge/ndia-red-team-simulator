@@ -10,7 +10,7 @@ from aegis.schema import AegisFinding
 from aegis.state import RunState
 
 
-Capability = Literal["dast", "sast", "dependency", "iac", "secret"]
+Capability = Literal["dast", "sast", "dependency", "iac", "secret", "sbom"]
 
 
 @dataclass

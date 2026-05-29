@@ -1,0 +1,27 @@
+{
+  "total": 2,
+  "p": 1,
+  "ps": 100,
+  "issues": [
+    {
+      "key": "AY1a2b3c4d5e6f7g8h9i",
+      "rule": "python:S2076",
+      "severity": "BLOCKER",
+      "component": "demo-proj:src/app.py",
+      "project": "demo-proj",
+      "line": 42,
+      "message": "Make sure that executing this OS command is safe here.",
+      "type": "VULNERABILITY"
+    },
+    {
+      "key": "BZ9z8y7x6w5v4u3t2s1r",
+      "rule": "python:S1481",
+      "severity": "MINOR",
+      "component": "demo-proj:src/utils.py",
+      "project": "demo-proj",
+      "line": 7,
+      "message": "Remove this unused \"tmp\" local variable.",
+      "type": "CODE_SMELL"
+    }
+  ]
+}

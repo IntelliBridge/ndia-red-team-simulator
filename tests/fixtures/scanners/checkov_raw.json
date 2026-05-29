@@ -1,0 +1,24 @@
+{
+  "results": {
+    "failed_checks": [
+      {
+        "check_id": "CKV_AWS_18",
+        "check_name": "Ensure the S3 bucket has access logging enabled",
+        "file_path": "/terraform/s3.tf",
+        "file_line_range": [1, 4],
+        "resource": "aws_s3_bucket.data",
+        "severity": null,
+        "guideline": "https://docs.bridgecrew.io/docs/s3_13-enable-logging"
+      },
+      {
+        "check_id": "CKV_AWS_21",
+        "check_name": "Ensure all data stored in the S3 bucket have versioning enabled",
+        "file_path": "/terraform/s3.tf",
+        "file_line_range": [1, 4],
+        "resource": "aws_s3_bucket.data",
+        "severity": "HIGH",
+        "guideline": "https://docs.bridgecrew.io/docs/s3_16-enable-versioning"
+      }
+    ]
+  }
+}
