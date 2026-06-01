@@ -102,4 +102,66 @@ def build_kali_toolbelt(config: AegisConfig, *,
         result = client.run_tool("sqlmap", params)
         return result.__dict__
 
-    return _Toolbelt(tools=[nmap_scan, nikto_scan, sqlmap_test], client=client)
+    @function_tool
+    def gobuster_scan(target: str, wordlist: str | None = None) -> dict:
+        """Brute-force paths/dirs on a target with gobuster. Target must be in the allowlist."""
+        _check(target)
+        params = {"target": target, **({"wordlist": wordlist} if wordlist else {})}
+        result = client.run_tool("gobuster", params)
+        return result.__dict__
+
+    @function_tool
+    def dirb_scan(target: str, wordlist: str | None = None) -> dict:
+        """Scan a web target for hidden content with dirb. Target must be in the allowlist."""
+        _check(target)
+        params = {"target": target, **({"wordlist": wordlist} if wordlist else {})}
+        result = client.run_tool("dirb", params)
+        return result.__dict__
+
+    @function_tool
+    def hydra_attack(target: str, service: str, userlist: str | None = None,
+                     passlist: str | None = None) -> dict:
+        """Run a hydra credential attack against a service. Target must be in the allowlist."""
+        _check(target)
+        params = {"target": target, "service": service}
+        if userlist:
+            params["userlist"] = userlist
+        if passlist:
+            params["passlist"] = passlist
+        result = client.run_tool("hydra", params)
+        return result.__dict__
+
+    @function_tool
+    def wpscan_scan(url: str) -> dict:
+        """Scan a WordPress site with wpscan. URL must be in the allowlist."""
+        _check(url)
+        result = client.run_tool("wpscan", {"url": url})
+        return result.__dict__
+
+    @function_tool
+    def enum4linux_scan(target: str) -> dict:
+        """Enumerate SMB/Windows info on a target with enum4linux. Target must be in the allowlist."""
+        _check(target)
+        result = client.run_tool("enum4linux", {"target": target})
+        return result.__dict__
+
+    @function_tool
+    def metasploit_run(module: str, rhosts: str | None = None,
+                       options: dict | None = None) -> dict:
+        """Run a metasploit module. When rhosts is set it must be in the allowlist."""
+        if rhosts:
+            _check(rhosts)
+        params = {"module": module, **({"rhosts": rhosts} if rhosts else {}), **(options or {})}
+        result = client.run_tool("metasploit", params)
+        return result.__dict__
+
+    @function_tool
+    def john_crack(hash_file: str, wordlist: str | None = None) -> dict:
+        """Crack a local hash file with john. Operates on local files, no target check."""
+        params = {"hash_file": hash_file, **({"wordlist": wordlist} if wordlist else {})}
+        result = client.run_tool("john", params)
+        return result.__dict__
+
+    return _Toolbelt(tools=[nmap_scan, nikto_scan, sqlmap_test, gobuster_scan, dirb_scan,
+                            hydra_attack, wpscan_scan, enum4linux_scan, metasploit_run,
+                            john_crack], client=client)

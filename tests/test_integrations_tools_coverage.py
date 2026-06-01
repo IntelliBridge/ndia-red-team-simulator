@@ -808,8 +808,8 @@ class TestBuildKaliToolbelt(unittest.TestCase):
         self.assertEqual(belt.tools, [])
         self.assertIsNotNone(belt.client)
 
-    def test_returns_three_tools_when_cai_available(self):
-        """When function_tool exists, nmap/nikto/sqlmap tools are registered."""
+    def test_returns_full_toolbelt_when_cai_available(self):
+        """When function_tool exists, all 10 Kali wrappers are registered."""
         from aegis.tools.cai_tools import build_kali_toolbelt
 
         # function_tool is a pass-through decorator for testing
@@ -820,7 +820,7 @@ class TestBuildKaliToolbelt(unittest.TestCase):
                    return_value=_passthrough):
             belt = build_kali_toolbelt(self._config())
 
-        self.assertEqual(len(belt.tools), 3)
+        self.assertEqual(len(belt.tools), 10)
 
     def test_client_constructed_with_config_url(self):
         from aegis.tools.cai_tools import build_kali_toolbelt
