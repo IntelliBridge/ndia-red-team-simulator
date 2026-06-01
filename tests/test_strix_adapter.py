@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 from aegis.runners.strix_converter import convert_strix_finding, convert_strix_findings, load_strix_events
 from aegis.runners.strix_runner import StrixRunResult
-from aegis.scanners.strix_adapter import StrixAdapter
 from aegis.scanners.registry import ScanOptions
+from aegis.scanners.strix_adapter import StrixAdapter
 from aegis.schema import AegisFinding, CodeLocation
 from aegis.state import RunState
 

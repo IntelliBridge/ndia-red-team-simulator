@@ -218,7 +218,6 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
     # Broad except: AsyncOpenAI() raises without a key, so offline this degrades
     # to None (the registry tolerates an unavailable recon agent).
     try:
-        from openai import AsyncOpenAI  # type: ignore
         from cai.sdk.agents import Agent, OpenAIChatCompletionsModel  # type: ignore
         from cai.tools.reconnaissance.curl import curl  # type: ignore
         from cai.tools.reconnaissance.netcat import netcat  # type: ignore
@@ -228,6 +227,7 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
             shodan_host_info,
             shodan_search,
         )
+        from openai import AsyncOpenAI  # type: ignore
 
         recon_agent = Agent(
             name="Recon",
