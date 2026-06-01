@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "ExampleSAST",
+          "version": "1.0.0",
+          "rules": [
+            {
+              "id": "example/sql-injection",
+              "properties": {
+                "cwe": "CWE-89"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "example/sql-injection",
+          "level": "error",
+          "message": {
+            "text": "Placeholder: user-provided value flows into a SQL query."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/db.py"
+                },
+                "region": {
+                  "startLine": 42,
+                  "endLine": 45
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "example/clear-text-logging",
+          "level": "warning",
+          "message": {
+            "text": "Placeholder: sensitive data logged in clear text."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "app/auth.py"
+                },
+                "region": {
+                  "startLine": 18
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "example/weak-hash",
+          "level": "note",
+          "message": {
+            "text": "Placeholder: weak hashing algorithm used."
+          }
+        },
+        {
+          "ruleId": "example/mystery",
+          "message": {
+            "text": "Placeholder: result with no level field."
+          },
+          "locations": []
+        }
+      ]
+    }
+  ]
+}
