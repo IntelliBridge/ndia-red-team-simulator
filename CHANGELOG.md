@@ -4,6 +4,53 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.11.0] — security telemetry pipeline + design-system base primitives
+
+Two additive, file-disjoint surfaces land here — observability infra and the
+frontend component layer — neither of which touches the Python core or the
+offline test path. The collector gains a dedicated security-log pipeline that
+scrubs secrets before anything leaves the host, and `@aegis/design-system`
+gains its first batch of base UI primitives ported from the vendored shadcn
+registry. Python suite unchanged at 1253 passing, 18 skipped.
+
+### Added
+- **OTel security log pipeline** (`deploy/otel/config.yaml`). A new
+  `logs/security` pipeline ingests host/OS audit sources — `filelog`
+  (`/var/log/auth.log`, `/var/log/secure`), `journald` (sshd/sudo/kernel),
+  rfc5424 `syslog` over tcp, and the `k8sobjects` events receiver — runs them
+  through the `redaction` processor (token/password/apikey/bearer-style values
+  masked **before** batch or export) and a `filter` denoise stage, then fans
+  the result out to the existing Postgres mirror (`otlphttp/aegis-ingest`) and
+  Loki. Redaction always precedes export, so secrets never leave the collector.
+- **`@aegis/design-system` base primitives** (`project_repos/design-system/`).
+  A new `src/primitives/` directory holds six base components ported from the
+  vendored shadcn `new-york-v4` registry — `table`, `card`, `skeleton`,
+  `alert`, `input`, `textarea` — each with a Storybook story and a barrel
+  export. They populate the package's pre-declared `./primitives/*` export
+  subpath, layering shadcn base components under the existing Aegis-curated
+  domain components.
+
+### Changed
+- The collector header comment documents the security pipeline; the three
+  pre-existing pipelines (`logs/loki`, `logs/aegis-ingest`, `traces`) are
+  byte-for-byte unchanged.
+
+### Deferred
+- **`osquery` and `isolationforest`** are referenced only in a commented,
+  forward-looking block in the collector config. Neither is a standard
+  opentelemetry-collector-contrib component, so an active reference would fail
+  collector startup; they require a custom/community distro to activate.
+- **The Radix-based shadcn primitives** (`alert-dialog`, `tooltip`, `command`)
+  were **not** ported: they depend on the `radix-ui` / `cmdk` packages, which
+  are not installed and cannot be added in the offline build. Porting them is a
+  follow-up gated on adding those dependencies.
+
+### Migration
+- **No runtime or API change.** The security pipeline is deploy-only config; an
+  operator opts in by deploying the obs profile. The design-system primitives
+  are a frontend package addition with no Python or HTTP-surface impact. The
+  offline `pytest` path and `mkdocs --strict` build are unaffected.
+
 ## [0.10.0] — deeper scan surfaces: strix code-scope + real Kali tool args
 
 This release deepens two existing subprocess surfaces without changing any

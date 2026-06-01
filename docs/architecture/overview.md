@@ -117,7 +117,11 @@ flowchart TB
   without Loki up.
 - **`obs`** — adds the OTel Collector + Loki + Jaeger. Logs fan out:
   Loki for ad-hoc kibana-style queries, `aegis-log-ingest` for the
-  Postgres mirror, Jaeger for traces.
+  Postgres mirror, Jaeger for traces. A dedicated `logs/security` pipeline
+  ingests host/OS audit sources (`filelog`, `journald`, `syslog`,
+  `k8sobjects`) and runs them through the `redaction` processor — secret-like
+  values are masked **before** batch or export, so secrets never leave the
+  collector — then fans the result out to the Postgres mirror + Loki.
 - **`obs-search`** — adds Elasticsearch + Kibana on top of `obs`.
 
 For a per-service walkthrough of the compose stack, see
@@ -133,7 +137,7 @@ deployment runbook (env vars, key rotation, image build), see
 | `aegis-worker`      | Python   | Celery: scanner + CAI execution; persists `Finding.status` etc. |
 | `aegis-log-ingest`  | Python   | OTLP/Logs receiver → `application_logs` Postgres rows           |
 | `@aegis/web`        | TS/Next  | App-router UI; cookie-aware `api()` helper                     |
-| `@aegis/design-system` | TS    | Workspace package with shadcn-derived primitives + Aegis-branded compositions |
+| `@aegis/design-system` | TS    | Workspace package: shadcn base primitives in `src/primitives/` (table/card/alert/input/…) under Aegis-branded domain compositions |
 | `mcp-kali`          | (image)  | nmap / nikto / sqlmap host                                     |
 
 The Python services share `aegis/services/` so the same admission +
@@ -539,7 +543,12 @@ flowchart TD
       i2["Kali wrappers speak real<br/>mcp-kali args (gobuster/hydra/msf)"]
     end
 
-    v031 --> v040 --> v041 --> v042 --> v050 --> v051 --> v052 --> v060 --> v070 --> v080 --> v090 --> v0100
+    subgraph v0110["v0.11.0 — Security telemetry + UI primitives"]
+      j1["OTel logs/security pipeline<br/>(host audit -> redact -> mirror+Loki)"]
+      j2["design-system base primitives<br/>(shadcn table/card/alert/input/…)"]
+    end
+
+    v031 --> v040 --> v041 --> v042 --> v050 --> v051 --> v052 --> v060 --> v070 --> v080 --> v090 --> v0100 --> v0110
 ```
 
 ## What's deferred
