@@ -43,9 +43,83 @@ class CAIBundle:
     reporting_agent: Any = None
     web_pentester_agent: Any = None
     recon_agent: Any = None
+    # Count of agents the live Kali MCP server was attached to (0 offline).
+    kali_mcp_attached: int = 0
 
 
 _BUNDLE: CAIBundle | None = None
+
+# Active network-offensive specialists that should reach the live Kali MCP tool
+# belt (nmap/sqlmap/hydra/...). The read-only recon agent is deliberately
+# excluded: the belt includes active tools, and recon stays read-only.
+_KALI_MCP_AGENTS = ("bug_bounter_agent", "redteam_agent", "web_pentester_agent")
+
+
+def _attach_kali_mcp(agents: dict[str, Any], config) -> int:
+    """Attach an SSE Kali MCP server to the active offensive specialists.
+
+    Lets those agents call the live Kali tool belt at run time. Returns the
+    number of agents wired. Degrades to 0 — agents keep their default empty
+    ``mcp_servers`` list — when the URL is unset or CAI's MCP client classes
+    aren't importable, so the offline path is unaffected.
+
+    Lifecycle: the server object is attached but **not** connected here
+    (``connect()`` is async and needs a live server). The worker connects it
+    and calls ``cleanup()`` at live-run time; no offline test runs an agent
+    live, so an unconnected server is never exercised.
+    """
+    url = getattr(config, "mcp_kali_url", None)
+    if not url:
+        return 0
+    try:
+        from cai.sdk.agents.mcp import MCPServerSse  # type: ignore
+    except Exception:
+        return 0
+    try:
+        server = MCPServerSse(
+            params={"url": url}, cache_tools_list=True, name="kali-mcp",
+        )
+    except Exception:
+        return 0
+    attached = 0
+    for attr in _KALI_MCP_AGENTS:
+        agent = agents.get(attr)
+        if agent is None:
+            continue
+        try:
+            agent.mcp_servers = [server]
+            attached += 1
+        except Exception:
+            continue
+    return attached
+
+
+def load_cai_pattern(config, pattern_name: str):
+    """Resolve a CAI multi-agent pattern by name, or ``None`` when unavailable.
+
+    All ``from cai...`` imports stay funnelled through this loader so the rest
+    of the codebase never depends on CAI being importable.
+    """
+    if load_cai(config) is None:
+        return None
+    try:
+        from cai.agents.patterns import get_pattern  # type: ignore
+
+        return get_pattern(pattern_name)
+    except Exception:
+        return None
+
+
+def resolve_cai_agent(config, agent_name: str):
+    """Resolve a CAI agent by its registry name, or ``None`` when unavailable."""
+    if load_cai(config) is None:
+        return None
+    try:
+        from cai.agents import get_agent_by_name  # type: ignore
+
+        return get_agent_by_name(agent_name)
+    except Exception:
+        return None
 
 
 def _git_sha(repo: Path) -> str | None:
@@ -173,6 +247,10 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
     except Exception:
         recon_agent = None
 
+    # Wire the live Kali MCP belt onto the active offensive specialists so they
+    # can reach it when executed (post-approval). No-op offline.
+    mcp_attached = _attach_kali_mcp(specialists, config)
+
     _BUNDLE = CAIBundle(
         Runner=Runner,
         codeagent=codeagent,
@@ -180,6 +258,7 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
         cai_version=_git_sha(cai_path),
         cai_path=cai_path,
         recon_agent=recon_agent,
+        kali_mcp_attached=mcp_attached,
         **extended,
         **specialists,
     )

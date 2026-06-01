@@ -1,7 +1,8 @@
 """Pluggable CAI-agent registry."""
 
-# Register the built-in CAI adapters.
+# Register the built-in CAI adapters, then the multi-agent pattern adapters.
 from aegis.agents.cai import builtins  # noqa: F401
+from aegis.agents.cai import patterns  # noqa: F401
 from aegis.agents.registry import (
     AgentAdapter,
     AgentContext,
