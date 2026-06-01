@@ -97,6 +97,66 @@ jobs:
       - name: Scan filesystem (verified secrets only)
         run: trufflehog filesystem . --only-verified --fail --no-update
 
+  otel-config:
+    name: OTel Collector config is valid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Validate deploy/otel/config.yaml
+        run: |
+          python - <<'PY'
+          import sys
+          import yaml
+
+          with open("deploy/otel/config.yaml") as fh:
+              cfg = yaml.safe_load(fh)
+
+          sections = ("receivers", "processors", "exporters")
+          defined = {s: set((cfg.get(s) or {}).keys()) for s in sections}
+          errors = []
+
+          pipelines = ((cfg.get("service") or {}).get("pipelines")) or {}
+          if not pipelines:
+              errors.append("no service.pipelines defined")
+          for name, spec in pipelines.items():
+              spec = spec or {}
+              for s in sections:
+                  for comp in (spec.get(s) or []):
+                      if comp not in defined[s]:
+                          errors.append(
+                              f"pipeline {name!r}: {s} {comp!r} is referenced but not defined"
+                          )
+
+          # Forward-looking components (osquery receiver, isolationforest
+          # processor) are NOT standard collector-contrib parts; an active
+          # reference would fail Collector startup. They must stay commented.
+          for s, comp in (("receivers", "osquery"), ("processors", "isolationforest")):
+              if comp in defined[s]:
+                  errors.append(
+                      f"{comp!r} must stay commented-out (no standard contrib build ships it)"
+                  )
+
+          if errors:
+              print("::error::OTel Collector config validation failed")
+              for e in errors:
+                  print(f"  - {e}")
+              sys.exit(1)
+
+          print(
+              f"OTel config OK: {len(pipelines)} pipelines; "
+              f"{len(defined['receivers'])} receivers, "
+              f"{len(defined['processors'])} processors, "
+              f"{len(defined['exporters'])} exporters"
+          )
+          PY
+
   coverage:
     name: Coverage (>=90%)
     runs-on: ubuntu-latest
@@ -195,7 +255,13 @@ jobs:
       # there so both @aegis/web and @aegis/design-system are linked.
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
-      - name: Typecheck
+      # Design-system ships the shared component layer; its real source
+      # (components + primitives + index) must type-check cleanly. Stories
+      # are excluded via tsconfig.build.json (their @storybook/react types
+      # live only in the web workspace), so this gate is blocking.
+      - name: Typecheck design-system
+        run: pnpm --filter @aegis/design-system run typecheck
+      - name: Typecheck web
         run: pnpm --filter @aegis/web typecheck || true
       - name: Build
         run: pnpm --filter @aegis/web build

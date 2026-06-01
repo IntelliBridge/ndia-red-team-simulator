@@ -20,6 +20,9 @@
       "default": "./src/lib/utils.ts"
     }
   },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.build.json"
+  },
   "dependencies": {
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
