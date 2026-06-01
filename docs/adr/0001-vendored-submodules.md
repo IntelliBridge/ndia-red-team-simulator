@@ -111,6 +111,7 @@ Rules:
 | 2026-05-28 | `shadcn-ui`                        | (none)   | `360e8a1` | Initial vendoring (v0.4.0 F15).                                     |
 | 2026-05-28 | `opentelemetry-collector-contrib`  | (none)   | `d7957a2` | Initial vendoring (v0.4.1 F19).                                     |
 | 2026-05-29 | `bumblebee`                        | (none)   | `c240898` | Initial vendoring (v0.5.1) — supply-chain scanner adapter (tag v0.1.1). |
+| 2026-06-01 | `deepsec`                          | (none)   | `9e3832d` | Initial vendoring (v0.7.0) — AI code-audit scanner adapter (`code_audit`); owner PII stripped. |
 
 The other four (`cai`, `strix`, `mcp-kali-server`,
 `vulnerability-fixer`) were added in Phase 1/2; their pins live in

@@ -15,6 +15,7 @@ required.
 | `shadcn-ui`                       | https://github.com/shadcn-ui/ui                       | `360e8a19c3ee13ac78b656027462007c8bdaa6d5`  | Phase 4 v0.4.0 F15 | `@aegis/design-system` primitives generated via `pnpm dlx shadcn add` |
 | `opentelemetry-collector-contrib` | https://github.com/open-telemetry/opentelemetry-collector-contrib | `d7957a20ce54ab42a87b8f9e91eda73f7b3b48e5` | Phase 4 v0.4.1 F19 | Source-of-truth for the OTel Collector image we run under the `obs` compose profile; SLSA / fork target |
 | `bumblebee`                       | https://github.com/perplexityai/bumblebee            | `c240898`                                   | Phase 4 v0.5.1 | scanner-adapter (supply-chain) |
+| `deepsec`                         | https://github.com/vercel-labs/deepsec               | `9e3832d`                                   | Phase 4 v0.7.0 | scanner-adapter (code-audit) |
 
 ## License notes
 
@@ -26,6 +27,7 @@ required.
 - `opentelemetry-collector-contrib` — Apache-2.0 (see
   `opentelemetry-collector-contrib/LICENSE`)
 - bumblebee — Apache-2.0 (see bumblebee/LICENSE)
+- `deepsec` — Apache-2.0 (see `deepsec/LICENSE`)
 
 All upstream licenses are preserved in their cloned form.
 
