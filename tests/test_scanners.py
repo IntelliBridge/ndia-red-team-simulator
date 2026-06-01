@@ -11,16 +11,16 @@ from unittest.mock import patch
 from aegis.scanners import dispatch, get, list_scanners
 from aegis.scanners.registry import _REGISTRY, KNOWN_CAPABILITIES, ScanOptions, ScanResult, register
 
-# The 13 first-party adapters, sorted.
+# The 14 first-party adapters, sorted.
 _EXPECTED = [
-    "bandit", "bumblebee", "checkov", "codeql", "grype", "nuclei",
+    "bandit", "bumblebee", "checkov", "codeql", "deepsec", "grype", "nuclei",
     "semgrep", "sonarqube", "strix", "syft", "trivy", "trufflehog", "zap",
 ]
 _CAPABILITIES = KNOWN_CAPABILITIES  # single source of truth: the registry's set
 
 
 class TestScannerRoster(unittest.TestCase):
-    def test_all_thirteen_registered(self):
+    def test_all_fourteen_registered(self):
         names = set(list_scanners())
         self.assertTrue(set(_EXPECTED) <= names,
                         f"missing: {set(_EXPECTED) - names}")

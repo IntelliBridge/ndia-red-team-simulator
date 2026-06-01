@@ -6,6 +6,7 @@ from aegis.scanners import (  # noqa: F401
     bumblebee_adapter,
     checkov_adapter,
     codeql_adapter,
+    deepsec_adapter,
     grype_adapter,
     nuclei_adapter,
     semgrep_adapter,
