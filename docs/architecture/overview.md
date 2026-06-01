@@ -343,7 +343,10 @@ Beyond the registered scanners, the worker reaches a Kali host over MCP
 for classic offensive tooling: `nmap`, `sqlmap`, `nikto`, `hydra`,
 `gobuster`, `dirb`, `john`, `wpscan`, `enum4linux`, `metasploit`. Every
 invocation lands on the audit chain at the service boundary (see
-[Audit chain](audit-chain.md)). Counting both surfaces, Aegis ships
+[Audit chain](audit-chain.md)). Each tool carries an effect class (below):
+the `read` recon tools run at `remediator`, while the `active` ones
+(`sqlmap`, `hydra`, `metasploit`, `wpscan`) are gated behind
+`execute=true` + `approver`. Counting both surfaces, Aegis ships
 **24 tools today: 10 Kali + 14 scanner adapters**, on the way to the 35+
 OnePager target.
 
@@ -369,6 +372,43 @@ v0.6.0 the registry has a runtime dispatch path: `POST
 /v1/agents/{name}/run` admits the job (authorize → audit-before-enqueue
 → Run/Job rows → enqueue) and the `agent_run` Celery task re-authorizes
 and calls `dispatch(name)`, so every registered adapter is reachable.
+
+### The human-in-the-loop gate (effect classes)
+
+Aegis's purpose is the full loop — **scan → pentest → remediate** — with
+a human in the loop on anything that changes the world. Since v0.8.0 that
+gate is **one** abstraction, the *effect class* (`aegis/effects.py`,
+[ADR 0004](../adr/0004-unified-effect-class-gate.md)), applied at every
+seam above rather than re-invented per adapter:
+
+| Effect | Meaning | Gate |
+|--------|---------|------|
+| `read` | recon, enumeration, static analysis, SBOM, generating a diff/plan, dry-run | none beyond the target allowlist — runs freely |
+| `active` | attack / state-changing against a live system: exploitation, brute-force, an exploit module, live hardening | gated |
+| `external` | leaves the sandbox: pushing a branch, opening a PR, egress | gated |
+
+The gate is one rule: an `active` / `external` capability performs its
+irreversible step **only** when the caller explicitly opts in
+(`execute=true` / `apply=true` / `open_pr=true`) **and** holds the
+`approver` role; otherwise it returns a reviewable **proposal** (an attack
+plan, a hardening plan, or a diff) and the underlying agent/tool is never
+run. It is enforced at the **chokepoints** — `agents.registry.dispatch()`
+(covers built-ins *and* plugins), the Kali tool route, and the fix
+service — so a new adapter inherits the gate for free.
+
+**Effect is not a function of domain.** An `android_sast_agent` is
+offensive-by-domain but only reads bytecode → `read`; a `retester` is
+audit-by-domain but re-fires exploits → `active`. So effect is an explicit
+per-agent column in the wiring table, with `domain_default_effect()` as
+the fallback; an unknown domain or unlisted Kali tool defaults to `active`
+— it fails **safe** (gated), never open.
+
+**Remediation engines, all behind the same gate:** `codeagent` produces
+code-fix diffs (`patch`/`deps` strategies); `blueteam_agent` applies live
+hardening (`live` strategy, gated on `apply`); the vendored
+vulnerability-fixer drives the `agentic` strategy — propose → diff, then
+`apply` for a rollback-safe local commit, then `apply + open_pr` to let the
+engine open the **human-reviewed PR itself** (the PR review *is* the gate).
 
 ## Release map
 
@@ -451,7 +491,14 @@ flowchart TD
       e3["owner PII stripped<br/>+ AI process opt-in"]
     end
 
-    v031 --> v040 --> v041 --> v042 --> v050 --> v051 --> v052 --> v060 --> v070
+    subgraph v080["v0.8.0 — Unified human gate"]
+      g1["effect-class gate spine<br/>(read/active/external)"]
+      g2["agent + Kali tool gate<br/>(execute=true + approver)"]
+      g3["agentic remediation strategy<br/>(vuln-fixer opens the PR)"]
+      g4["multi-format finding ingestion<br/>(Snyk/Veracode/Trivy/SARIF)"]
+    end
+
+    v031 --> v040 --> v041 --> v042 --> v050 --> v051 --> v052 --> v060 --> v070 --> v080
 ```
 
 ## What's deferred
@@ -466,7 +513,6 @@ Live-current list:
 - PII / content scrubbing inside diffs and patches.
 - LLM prompt-injection / output filtering.
 - Iterative agent loops with test execution.
-- Vulnerability-fixer agentic invocation.
 - Native MCP protocol.
 - Authenticated DAST flows.
 - Worker autoscaling / multi-region DR.

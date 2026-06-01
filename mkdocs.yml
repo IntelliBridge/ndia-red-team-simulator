@@ -175,6 +175,7 @@ nav:
       - "0001 — Vendored submodules": adr/0001-vendored-submodules.md
       - "0002 — Registry seam + runners": adr/0002-registry-seam-and-runners.md
       - "0003 — Agent execution path": adr/0003-agent-execution-path.md
+      - "0004 — Unified effect-class gate": adr/0004-unified-effect-class-gate.md
   - "Changelog ↗": https://github.com/IntelliBridge/aegis/blob/main/CHANGELOG.md
   - "Contributing ↗": https://github.com/IntelliBridge/aegis/blob/main/CONTRIBUTING.md
   - Legacy:

@@ -4,6 +4,70 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.8.0] — unified human-in-the-loop gate + agentic remediation + finding ingestion
+
+Aegis's purpose is the full loop — **scan code + infra → pentest → remediate** —
+with a human in the loop on anything that changes the world. Before this release
+that gate existed only for *code fixes*. This release introduces one abstraction
+— the **effect class** — and gates on it everywhere: offensive agents, defensive
+agents, active Kali tools, and the new agentic remediation strategy all now go
+through the same propose→approve→act path. The remediation loop is completed
+here: the vendored vulnerability-fixer becomes a first-class **gated** strategy
+that can open its own human-reviewed pull request. See
+[ADR 0004](docs/adr/0004-unified-effect-class-gate.md). 1211 passing, 18 skipped.
+
+### Added
+- **Effect-class gate spine** (`aegis/effects.py`, dependency-free). Classifies
+  every capability as `read` (recon/enumeration/static analysis/diff/plan/dry-run
+  — runs freely, allowlist is the only gate), `active` (attack or state-changing
+  against a live system — gated), or `external` (leaves the sandbox: push/PR/egress
+  — gated). `requires_approval(effect)` is the single testable answer to "is this
+  gated?". `domain_default_effect()` and `kali_tool_effect()` both fail **safe** —
+  an unknown domain or unlisted tool defaults to `active` (gated, never open).
+  `build_action_plan()` produces the reviewable proposal returned in lieu of acting.
+- **Agent execution gate.** `agents.registry.dispatch()` — the single path
+  covering built-ins *and* plugins — now enforces the gate. An `active` agent
+  dispatched without `context.execute` returns
+  `AgentResult(status="pending_approval", plan=…)` and the underlying agent is
+  **never** invoked. New `Action.AGENT_EXECUTE` sits at the `approver` role
+  (mirroring `FIX_APPLY`); `AGENT_RUN` stays `remediator`. The route selects the
+  action by the `execute` flag; the worker re-authorizes
+  `agent.execute.{name}` vs `agent.run.{name}` accordingly.
+- **Kali tool gate.** `aegis/api/v1/tools.py` classifies each tool via
+  `kali_tool_effect()`. `active` tools (`sqlmap`/`hydra`/`metasploit`/`wpscan`)
+  without `execute=true` return `pending_approval`; with it they require the
+  `approver` role. `read` tools (`nmap`/`nikto`/`gobuster`/…) keep
+  `tool.invoke` at `remediator`. The generic `command` shell stays hard-blocked
+  (403) for every role.
+- **Agentic remediation strategy** (`aegis/runners/vulnfixer_runner.py`,
+  `Strategy="agentic"`). Drives the vendored vulnerability-fixer engine:
+  propose → unified diff (`pending_apply`); `apply` → local rollback-safe commit;
+  `apply + open_pr` → **the engine opens the human-reviewed PR itself** (the PR
+  review *is* the gate). In PR mode the GitHub token flows only through the
+  subprocess *environment*, never argv.
+- **Live-hardening gate.** The `live` fix strategy now gates on `apply`: a propose
+  call returns a hardening **plan** (`pending_approval`) and never invokes the
+  blue-team agent; `apply=True` runs the hardening.
+- **Multi-format finding ingestion** (`aegis/integrations/finding_ingest.py`).
+  Normalizes Snyk / Veracode / Trivy / SARIF reports into `AegisFinding`s.
+  Pure-Python, fixture-driven, fully offline.
+
+### Changed
+- `Strategy` literal in `aegis/services/fixes.py` extended with `agentic`.
+- `AgentContext` gains an `execute` flag (default `False`); `AgentResult` gains a
+  `plan` field carrying the proposal when a gated capability is not executed.
+- `list_agents()` now surfaces each agent's effect class; `builtins._WIRED` carries
+  an explicit per-agent effect column (effect is **not** a function of domain).
+
+### Migration
+- **Active agents and tools now need `execute=true` *and* the `approver` role to
+  run.** Callers that previously got an immediate exploit/hardening run now get a
+  `pending_approval` proposal instead — this is the intended behavior change. Flip
+  `execute=true` (agents/tools) or `apply=true` (fixes) to act.
+- **Agentic PR mode depends on `GITHUB_TOKEN` in the worker environment.** Absent
+  it, the agentic engine soft-degrades to a failed outcome rather than opening a
+  PR; `apply` without `open_pr` still produces a local rollback-safe commit.
+
 ## [0.7.0] — deepsec AI code-audit scanner (new `code_audit` capability)
 
 Adds [deepsec](https://github.com/vercel-labs/deepsec) (Apache-2.0, pinned at

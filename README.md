@@ -65,8 +65,8 @@ the entire trail on `aegis audit verify ✓`.
 
 ## Where Aegis is today
 
-Aegis is **operational software**, not a vision deck. The v0.7.0 tag
-shipped June 2026 with 1145 tests passing (18 skipped offline) on Python
+Aegis is **operational software**, not a vision deck. The v0.8.0 tag
+shipped June 2026 with 1211 tests passing (18 skipped offline) on Python
 3.12 and 3.13.
 
 | Capability | Status |
@@ -81,6 +81,9 @@ shipped June 2026 with 1145 tests passing (18 skipped offline) on Python
 | Scanner adapters: Strix · Trivy · Semgrep · Nuclei · ZAP · CodeQL · Bandit · Grype · Checkov · Trufflehog · SonarQube · Syft · Bumblebee · Deepsec | ✅ Shipped |
 | Kali toolbelt via MCP — nmap, sqlmap, nikto, hydra, +6 more | ✅ Shipped |
 | CAI agents: 16 wired (CodeAgent, BlueteamAgent, Recon, +13), runnable via `POST /v1/agents/{name}/run` | ✅ Shipped |
+| Unified human-in-the-loop gate (propose → approve → act) across agents, Kali tools, and remediation | ✅ Shipped |
+| Agentic remediation strategy (vuln-fixer engine) — diff by default, opens the human-reviewed PR on approval | ✅ Shipped |
+| Multi-format finding ingestion (Snyk · Veracode · Trivy · SARIF → `AegisFinding`) | ✅ Shipped |
 | Per-task LLM routing with budget caps | ✅ Shipped |
 | `@aegis/design-system` workspace + Storybook | ✅ Shipped |
 | 60+ specialized agents (full roster from the OnePager) | 🔨 Roadmap |
