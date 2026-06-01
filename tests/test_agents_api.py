@@ -184,7 +184,7 @@ class TestAgentRunTask(unittest.TestCase):
         fake_job = MagicMock()
         fake_job.detail = {"agent": "codeagent", "prompt": "p",
                            "target": None, "finding_id": None,
-                           "repo_path": None}
+                           "repo_path": None, "execute": True}
         ctx.run_state.session.get.return_value = fake_job
 
         @contextlib.contextmanager
@@ -214,6 +214,8 @@ class TestAgentRunTask(unittest.TestCase):
         self.assertEqual(d_args[1], "p")
         from aegis.agents import AgentContext
         self.assertIsInstance(d_args[2], AgentContext)
+        # The execute flag threads from job detail into the dispatch context.
+        self.assertTrue(d_args[2].execute)
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["output_len"], len("done"))

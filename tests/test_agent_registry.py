@@ -72,7 +72,8 @@ class TestAgentRegistry(unittest.TestCase):
 
     def test_corrected_slots_map_to_real_specialist_agents(self):
         """The 6 mis-wired slots resolve to named specialists, not fallbacks."""
-        wired = {name: cai_attr for name, _domain, cai_attr in builtins._WIRED}
+        wired = {name: cai_attr
+                 for name, _domain, _effect, cai_attr in builtins._WIRED}
         for slot, expected_attr in _CORRECTED.items():
             self.assertEqual(
                 wired[slot], expected_attr,
@@ -84,11 +85,13 @@ class TestAgentRegistry(unittest.TestCase):
         self.assertEqual(recon["domain"], "recon")
 
     def test_recon_and_corrected_slots_dispatch_ok(self):
+        # execute=True clears the effect-class gate so active agents actually
+        # invoke; read agents ignore the flag. This verifies slot resolution.
         bundle = _mock_bundle()
         with mpatch.object(builtins, "load_cai", return_value=bundle), \
              mpatch.object(builtins, "load_config", return_value=MagicMock()):
             for name in [*_CORRECTED, *_COMPOSED]:
-                res = dispatch(name, "x", AgentContext())
+                res = dispatch(name, "x", AgentContext(execute=True))
                 self.assertEqual(res.status, "ok", f"{name}: {res.error}")
                 self.assertEqual(res.output, "ok")
 
@@ -97,7 +100,7 @@ class TestAgentRegistry(unittest.TestCase):
         with mpatch.object(builtins, "load_cai", return_value=bundle), \
              mpatch.object(builtins, "load_config", return_value=MagicMock()):
             for name in _NEW_WIRED:
-                res = dispatch(name, "x", AgentContext())
+                res = dispatch(name, "x", AgentContext(execute=True))
                 self.assertEqual(res.status, "ok", f"{name}: {res.error}")
                 self.assertEqual(res.output, "ok")
 
@@ -113,9 +116,40 @@ class TestAgentRegistry(unittest.TestCase):
 
     def test_wired_cai_attrs_are_bundle_fields(self):
         fields = {f.name for f in dataclasses.fields(CAIBundle)}
-        for name, _domain, cai_attr in builtins._WIRED:
+        for name, _domain, _effect, cai_attr in builtins._WIRED:
             self.assertIn(cai_attr, fields,
                           f"{name!r} maps to unknown CAIBundle field {cai_attr!r}")
+
+    def test_list_agents_exposes_effect_class(self):
+        for a in list_agents():
+            self.assertIn(a["effect"], {"read", "active", "external"},
+                          f"{a['name']} has unexpected effect {a.get('effect')!r}")
+
+    def test_active_agent_without_execute_is_gated_and_never_invokes(self):
+        """An active agent without execute=True returns a proposal only.
+
+        The effect-class gate lives in dispatch(), upstream of invoke(), so the
+        underlying CAI agent (Runner.run_sync) is NEVER reached. This is the
+        human-gate guarantee: propose -> approve -> act.
+        """
+        bundle = _mock_bundle()
+        with mpatch.object(builtins, "load_cai", return_value=bundle), \
+             mpatch.object(builtins, "load_config", return_value=MagicMock()):
+            res = dispatch("red_teamer", "attack the host", AgentContext())
+        self.assertEqual(res.status, "pending_approval")
+        self.assertIsNotNone(res.plan)
+        self.assertTrue(res.plan["gated"])
+        self.assertEqual(res.plan["required_role"], "approver")
+        bundle.Runner.run_sync.assert_not_called()
+
+    def test_read_agent_without_execute_invokes_frictionlessly(self):
+        """Read-effect agents (recon/static analysis) need no execute flag."""
+        bundle = _mock_bundle()
+        with mpatch.object(builtins, "load_cai", return_value=bundle), \
+             mpatch.object(builtins, "load_config", return_value=MagicMock()):
+            res = dispatch("recon", "enumerate", AgentContext())
+        self.assertEqual(res.status, "ok")
+        self.assertEqual(res.output, "ok")
 
     def test_missing_upstream_agent_returns_error(self):
         # Simulate the upstream agent failing to import (attr is None).

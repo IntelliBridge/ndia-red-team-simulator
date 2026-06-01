@@ -34,7 +34,12 @@ def run_agent(
     if not prompt:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="prompt required")
-    check(user, Action.AGENT_RUN, project_id)
+    # ``execute`` is the human-gate flip: running an active/external agent
+    # for real needs the approver role, exactly like fix.apply. Without it
+    # the worker returns a proposal (status="pending_approval").
+    execute = bool(body.get("execute", False))
+    check(user, Action.AGENT_EXECUTE if execute else Action.AGENT_RUN,
+          project_id)
 
     config = load_config()
     try:
@@ -44,6 +49,7 @@ def run_agent(
             target=body.get("target"),
             finding_id=body.get("finding_id"),
             repo_path=body.get("repo_path"),
+            execute=execute,
             project_id=project_id, actor=f"user:{user.sub}",
             config=config,
             audit_writer=resolve_writer(config),

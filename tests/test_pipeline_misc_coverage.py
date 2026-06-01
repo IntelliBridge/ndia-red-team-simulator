@@ -2192,7 +2192,7 @@ class TestGenerateFix(unittest.TestCase):
                  patch("aegis.services.fixes.authorize"):
                 result = generate_fix(
                     run_state=state, finding=f,
-                    strategy="live", repo=None,
+                    strategy="live", repo=None, apply=True,
                     actor="cli:alice", config=_make_config(),
                     override_authorized=True,
                 )
@@ -2215,7 +2215,7 @@ class TestGenerateFix(unittest.TestCase):
                  patch("aegis.services.fixes.authorize"):
                 result = generate_fix(
                     run_state=state, finding=f,
-                    strategy="live", repo=None,
+                    strategy="live", repo=None, apply=True,
                     actor="cli:alice", config=_make_config(),
                 )
         self.assertFalse(result.success)

@@ -40,34 +40,41 @@ def create_agent_job(
     target: str | None = None,
     finding_id: str | None = None,
     repo_path: str | None = None,
+    execute: bool = False,
     override_authorized: bool = False,
     enqueue: bool = True,
 ) -> JobHandle:
-    """Admission boundary for ``agent.run``.
+    """Admission boundary for ``agent.run`` / ``agent.execute``.
 
     Order of operations (load-bearing):
 
-    1. ``authorize()`` — emits the chained ``agent.run`` row through
-       ``audit_writer``. ``target`` may be ``None`` (a code agent need
-       not point at a live target); the allowlist check tolerates that
-       exactly as the fix service does. If the check fails this raises
-       ``AuthorizationError`` *before* any DB row is created.
+    1. ``authorize()`` — emits the chained audit row through
+       ``audit_writer``. The action is ``agent.execute`` when ``execute``
+       is set (the state-changing step) and ``agent.run`` otherwise, so the
+       audit trail distinguishes a proposal from an approved action.
+       ``target`` may be ``None`` (a code agent need not point at a live
+       target); the allowlist check tolerates that exactly as the fix
+       service does. If the check fails this raises ``AuthorizationError``
+       *before* any DB row is created.
     2. Insert a fresh ``Run`` (flush — FK precedence), insert ``Job``.
     3. Enqueue the Celery task. ``celery_task_id`` is only stamped on
        the Job by the worker on pickup, so the chain row's ``ts``
        precedes the task-id assignment.
 
     A worker crash anywhere in step 3 leaves a chained audit row + a
-    ``queued`` job — never a half-state.
+    ``queued`` job — never a half-state. The RBAC role check
+    (``agent.execute`` needs ``approver``) is enforced at the route before
+    this service is called.
     """
     authorize(
-        "agent.run", target,
+        "agent.execute" if execute else "agent.run", target,
         allowlist=config.target_allowlist,
         override_authorized=override_authorized,
         actor=actor, writer=audit_writer,
         project_id=project_id,
         detail={"actor": actor, "agent": agent_name, "target": target,
-                "finding_id": finding_id, "prompt_set": bool(prompt)},
+                "finding_id": finding_id, "prompt_set": bool(prompt),
+                "execute": execute},
     )
 
     from aegis.db.models import Job, Run
@@ -88,7 +95,7 @@ def create_agent_job(
             created_by=actor,
             detail={"agent": agent_name, "prompt": prompt,
                     "target": target, "finding_id": finding_id,
-                    "repo_path": repo_path},
+                    "repo_path": repo_path, "execute": execute},
         ))
         sess.flush()
 

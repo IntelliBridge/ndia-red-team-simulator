@@ -12,6 +12,7 @@ from aegis.api.auth import CurrentUser
 class Action(str, Enum):
     SCAN_START = "scan.start"
     AGENT_RUN = "agent.run"
+    AGENT_EXECUTE = "agent.execute"
     FIX_GENERATE = "fix.generate"
     FIX_APPLY = "fix.apply"
     VERIFY_REPLAY = "verify.replay"
@@ -31,6 +32,9 @@ _ROLE_RANK = {
 _ACTION_MIN_ROLE: dict[Action, str] = {
     Action.SCAN_START: "scanner",
     Action.AGENT_RUN: "remediator",
+    # Executing an active/external agent (exploit, live hardening, PR) is the
+    # state-changing step — same bar as applying a fix.
+    Action.AGENT_EXECUTE: "approver",
     Action.FIX_GENERATE: "remediator",
     Action.FIX_APPLY: "approver",
     Action.VERIFY_REPLAY: "remediator",

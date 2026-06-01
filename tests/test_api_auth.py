@@ -73,5 +73,25 @@ class TestToolsGenericCommandRefused(unittest.TestCase):
             self.assertIn("generic shell", resp.json()["detail"])
 
 
+class TestToolsEffectGate(unittest.TestCase):
+    """Active Kali tools are human-gated: without execute=true they return a
+    reviewable proposal and never touch the target — even for an admin caller.
+    """
+
+    def test_active_tool_without_execute_returns_pending_approval(self):
+        with patch.dict(os.environ, {"AEGIS_ENV": "dev", "AEGIS_AUTH_MODE": "dev"}, clear=False):
+            client = _client()
+            resp = client.post(
+                "/v1/tools/kali/sqlmap",
+                json={"params": {"url": "http://example.test"}},
+                headers={"Authorization": "Bearer dev:admin@aegis.local"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertEqual(body["status"], "pending_approval")
+            self.assertEqual(body["effect"], "active")
+            self.assertIn("execute=true", body["message"])
+
+
 if __name__ == "__main__":
     unittest.main()

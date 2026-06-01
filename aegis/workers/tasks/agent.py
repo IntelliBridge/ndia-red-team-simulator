@@ -28,16 +28,19 @@ def agent_run(self, job_id: str) -> dict:
         agent_name = detail.get("agent")
         prompt = detail.get("prompt", "")
         target = detail.get("target")
+        execute = bool(detail.get("execute", False))
 
         # Worker-side re-check: drift in config.target_allowlist would
-        # surface here before the agent runs.
+        # surface here before the agent runs. The action name carries the
+        # execute decision so the execution-side audit row mirrors admission.
         authorize(
-            f"agent.execute.{agent_name}", target,
+            f"{'agent.execute' if execute else 'agent.run'}.{agent_name}", target,
             allowlist=config.target_allowlist,
             actor=ctx.actor, writer=ctx.audit_writer,
             run_id=ctx.run_id, project_id=ctx.project_id,
             detail={"actor": ctx.actor, "job_id": job_id,
-                    "agent": agent_name, "target": target},
+                    "agent": agent_name, "target": target,
+                    "execute": execute},
         )
         result = dispatch(
             agent_name, prompt,
@@ -46,6 +49,7 @@ def agent_run(self, job_id: str) -> dict:
                 target=target,
                 repo_path=detail.get("repo_path"),
                 actor=ctx.actor,
+                execute=execute,
             ),
         )
         return {
