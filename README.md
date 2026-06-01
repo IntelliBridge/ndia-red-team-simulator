@@ -65,8 +65,8 @@ the entire trail on `aegis audit verify ✓`.
 
 ## Where Aegis is today
 
-Aegis is **operational software**, not a vision deck. The v0.6.0 tag
-shipped June 2026 with 1115 tests passing (18 skipped offline) on Python
+Aegis is **operational software**, not a vision deck. The v0.7.0 tag
+shipped June 2026 with 1145 tests passing (18 skipped offline) on Python
 3.12 and 3.13.
 
 | Capability | Status |
@@ -78,13 +78,13 @@ shipped June 2026 with 1115 tests passing (18 skipped offline) on Python
 | Hash-chained audit log with CLI / admin verifier | ✅ Shipped |
 | GitHub PR-scoped scans with fork-restricted mode | ✅ Shipped |
 | Three-profile observability (Postgres mirror / Loki / Elasticsearch) | ✅ Shipped |
-| Scanner adapters: Strix · Trivy · Semgrep · Nuclei · ZAP · CodeQL · Bandit · Grype · Checkov · Trufflehog · SonarQube · Syft · Bumblebee | ✅ Shipped |
+| Scanner adapters: Strix · Trivy · Semgrep · Nuclei · ZAP · CodeQL · Bandit · Grype · Checkov · Trufflehog · SonarQube · Syft · Bumblebee · Deepsec | ✅ Shipped |
 | Kali toolbelt via MCP — nmap, sqlmap, nikto, hydra, +6 more | ✅ Shipped |
 | CAI agents: 16 wired (CodeAgent, BlueteamAgent, Recon, +13), runnable via `POST /v1/agents/{name}/run` | ✅ Shipped |
 | Per-task LLM routing with budget caps | ✅ Shipped |
 | `@aegis/design-system` workspace + Storybook | ✅ Shipped |
 | 60+ specialized agents (full roster from the OnePager) | 🔨 Roadmap |
-| 35+ security tools (currently 23: 10 Kali + 13 scanner adapters) | 🔨 Roadmap |
+| 35+ security tools (currently 24: 10 Kali + 14 scanner adapters) | 🔨 Roadmap |
 | Authenticated DAST flows | 🔨 Roadmap |
 | Sandbox isolation per scan (gVisor / Firecracker) | 🔨 Roadmap |
 

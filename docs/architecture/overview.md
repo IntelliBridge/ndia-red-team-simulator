@@ -311,15 +311,16 @@ either an adapter name or a capability tag.
 | `trufflehog` | `secret` | Secret scanner (raw material redacted) |
 | `syft` | `sbom` | SBOM generator (CycloneDX; inventory, not findings) |
 | `bumblebee` | `supply_chain` | Supply-chain / MCP-host exposure scanner |
+| `deepsec` | `code_audit` | AI whole-repo code auditor (owner PII stripped) |
 
-### Capabilities (7)
+### Capabilities (8)
 
 `KNOWN_CAPABILITIES` is an **open vocabulary** validated at
 registration: `dast`, `sast`, `dependency`, `iac`, `secret`, `sbom`,
-`supply_chain`. A declared capability outside the set logs a warning but
-still registers, so a third-party plugin can add its own without
-patching core. Promoting one to first-party is a one-line append — how
-`supply_chain` landed in v0.5.1.
+`supply_chain`, `code_audit`. A declared capability outside the set logs
+a warning but still registers, so a third-party plugin can add its own
+without patching core. Promoting one to first-party is a one-line append
+— how `supply_chain` landed in v0.5.1 and `code_audit` in v0.7.0.
 
 ### CAI agents (16, all wired)
 
@@ -343,7 +344,7 @@ for classic offensive tooling: `nmap`, `sqlmap`, `nikto`, `hydra`,
 `gobuster`, `dirb`, `john`, `wpscan`, `enum4linux`, `metasploit`. Every
 invocation lands on the audit chain at the service boundary (see
 [Audit chain](audit-chain.md)). Counting both surfaces, Aegis ships
-**23 tools today: 10 Kali + 13 scanner adapters**, on the way to the 35+
+**24 tools today: 10 Kali + 14 scanner adapters**, on the way to the 35+
 OnePager target.
 
 ### Capability matrix
@@ -351,12 +352,12 @@ OnePager target.
 The three seams above each reach the runtime through a different dispatch
 path. This matrix is the single view of *what exists*, *what consumes
 it*, and *where the wiring is still thin* — the map a new capability
-(e.g. a future `code_audit` adapter) slots into without diverging from
-the architecture.
+slots into without diverging from the architecture (most recently the
+`code_audit` adapter `deepsec`, added through this seam in v0.7.0).
 
 | Seam | Vocabulary | Registered | Runtime consumer | Dispatch |
 |------|-----------|-----------|------------------|----------|
-| Scanners | 7 capabilities | 13 adapters | `scan_start` Celery task | one adapter per job via `dispatch(name \| capability)`; defaults to `strix` |
+| Scanners | 8 capabilities | 14 adapters | `scan_start` Celery task | one adapter per job via `dispatch(name \| capability)`; defaults to `strix` |
 | Agents | 6 `Domain`s | 16 adapters | `agent_run` Celery task | `POST /v1/agents/{name}/run` → admission → task → `dispatch(name)`; remediation may still call `cai.Runner` directly for `codeagent` / `blueteam_agent` |
 | Kali tools | 10 named tools | 10 (over MCP) | `run_kali_tool` service | per-tool REST call, audited at the service boundary |
 
@@ -444,7 +445,13 @@ flowchart TD
       d4["Kali wrappers 3 → 10"]
     end
 
-    v031 --> v040 --> v041 --> v042 --> v050 --> v051 --> v052 --> v060
+    subgraph v070["v0.7.0 — AI code audit"]
+      e1["deepsec adapter (14th)"]
+      e2["code_audit capability"]
+      e3["owner PII stripped<br/>+ AI process opt-in"]
+    end
+
+    v031 --> v040 --> v041 --> v042 --> v050 --> v051 --> v052 --> v060 --> v070
 ```
 
 ## What's deferred

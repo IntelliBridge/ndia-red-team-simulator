@@ -4,6 +4,55 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.7.0] — deepsec AI code-audit scanner (new `code_audit` capability)
+
+Adds [deepsec](https://github.com/vercel-labs/deepsec) (Apache-2.0, pinned at
+`9e3832d`) as the 14th scanner adapter and Aegis's 8th scanner capability,
+`code_audit` — whole-repo AI SAST. Dropped through the same hardened registry
+seam as every other adapter: the offline `pytest -q` path stays green with no
+Node/pnpm and no deepsec checkout (the adapter soft-degrades via `health_check`).
+1145 passing, 18 skipped.
+
+### Added
+- **deepsec scanner adapter** (`aegis/scanners/deepsec_adapter.py`, capability
+  `code_audit`). Drives deepsec's three-stage pipeline as subprocesses — `scan`
+  (regex candidate discovery) → `process` (AI investigation) → `export --format
+  json` (a bare JSON array of findings on stdout) — and converts each
+  `ExportedFinding` to an `AegisFinding`. Severity maps
+  `CRITICAL/HIGH/HIGH_BUG/MEDIUM/BUG/LOW` → Aegis severities (`HIGH_BUG`→`high`,
+  `BUG`→`low`, unknown→`low`); `metadata.filePath`/`lineNumbers` become a
+  `CodeLocation`; `vulnSlug` and `confidence` carry through. Findings whose
+  `revalidation.verdict` is `false-positive`, `fixed`, or `duplicate` are dropped.
+- **`code_audit` capability** added to `KNOWN_CAPABILITIES`; the adapter
+  eager-registers in `aegis.scanners` alongside the other 13. Roster: 14 scanner
+  adapters covering 8 capabilities.
+- **Config knobs** (`aegis/config.py`): `deepsec_path`, `deepsec_ai_process`
+  (default `False`), `deepsec_budget_usd` (default `5.0`).
+
+### Security
+- **Owner identities are never emitted.** deepsec enriches each finding with
+  code-owner PII — `metadata.owners` (on-call/manager/contributor names, emails,
+  GitHub handles, Slack ids), a top-level `assignee` email, owning-team `labels`,
+  a `githubUrl`, and a pre-built `description` that embeds those same names and
+  emails as markdown. The adapter copies **none** of them: it synthesizes its own
+  PII-free description from the technical fields only (file, line, slug) and drops
+  `owners`/`assignee`/`labels`/`githubUrl`/deepsec's `description` entirely.
+  `evidence` is always `None`. A fixture seeded with owner PII asserts that no
+  value survives into any serialized finding. (Mirrors the bumblebee/trufflehog
+  redaction guarantee.)
+- **The paid AI stage is opt-in.** `process` runs only when
+  `deepsec_ai_process=True` **and** `deepsec_budget_usd > 0` **and** an AI Gateway
+  / model key is present in the environment. Otherwise the adapter runs `scan` +
+  `export` only (regex candidates) and never spends money.
+
+### Migration
+- deepsec is a Node/pnpm monorepo vendored as a git submodule at
+  `project_repos/deepsec`. To run the adapter the submodule must be checked out
+  and built (`pnpm install` in the deepsec workspace) with `pnpm` on `PATH`. With
+  neither present, `health_check()` returns `False` and the adapter is skipped —
+  the offline test path requires nothing. The docker-images build is the only
+  place the Node/pnpm toolchain (and any AI-stage cost) is introduced.
+
 ## [0.6.0] — Wire the agent seam end-to-end + a read-only recon agent
 
 The agent registry was wired but **orphaned**: `dispatch` existed and 15
