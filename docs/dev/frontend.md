@@ -24,7 +24,7 @@ project_repos/
   design-system/                # @aegis/design-system — shared components
     src/
       components/               # Aegis-branded compositions + .stories.tsx
-      primitives/               # generated from vendored shadcn (empty until you add)
+      primitives/               # dependency-free shadcn leaves (table/card/skeleton/alert/input/textarea)
       lib/utils.ts              # cn(...)
       index.ts                  # public surface
   shadcn-ui/                    # vendored upstream, pinned SHA (F15)
@@ -46,12 +46,21 @@ build step.
 
 ## Design-system principles
 
-- **Composed, not imported.** shadcn primitives are generated into
-  `project_repos/design-system/src/primitives/` via `pnpm dlx shadcn
-  add`, then wrapped by Aegis-branded compositions in
-  `src/components/`. The web app imports only from `@aegis/design-
-  system`'s public surface (`src/index.ts`), never from the vendored
-  upstream directly.
+- **Composed, not imported.** shadcn primitives live in
+  `project_repos/design-system/src/primitives/`, then are wrapped by
+  Aegis-branded compositions in `src/components/`. The web app imports
+  only from `@aegis/design-system`'s public surface (`src/index.ts`),
+  never from the vendored upstream directly.
+
+- **Base primitive set.** The dependency-free shadcn leaves —
+  `table`, `card`, `skeleton`, `alert`, `input`, `textarea` — are
+  ported into `src/primitives/` and re-exported from `index.ts`
+  alongside `ComponentProps<…>` type aliases (`TableProps`,
+  `CardProps`, …). Their imports are rewritten to the workspace-local
+  `../lib/utils`. Primitives that pull a runtime dependency
+  (`alert-dialog`/`tooltip` need `radix-ui`, `command` needs `cmdk`)
+  are **deferred** until those packages are added to the workspace
+  lockfile — `pnpm install --frozen-lockfile` can't fetch them in CI.
 
 - **Storybook is the spec.** Every component exported from
   `index.ts` must have a story file co-located (`*.stories.tsx`). The
@@ -157,12 +166,21 @@ without bouncing through Keycloak, and `/api/auth/signout-aegis`
 
    This drops a file under `src/primitives/`.
 
+   If the primitive pulls a runtime dependency (Radix, `cmdk`, …), add
+   that package to the workspace **first** — CI installs with
+   `--frozen-lockfile` and can't fetch anything the lockfile is missing.
+
 2. Compose the Aegis-branded wrapper under `src/components/`; export
    from `src/index.ts`. Co-locate a `*.stories.tsx` file.
 
 3. Update the table in this doc.
 
-4. Storybook: `pnpm --filter @aegis/web storybook` to preview.
+4. Type-check: `pnpm --filter @aegis/design-system run typecheck`
+   (`tsconfig.build.json`, stories excluded). This is the blocking CI
+   gate in `web-build`; the real component + primitive source must
+   compile clean.
+
+5. Storybook: `pnpm --filter @aegis/web storybook` to preview.
 
 ## Lock-file discipline (F2)
 

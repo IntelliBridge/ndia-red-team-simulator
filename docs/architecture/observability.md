@@ -241,6 +241,20 @@ Collector config lives in `deploy/otel/config.yaml`; pipelines:
 - `logs/loki` → Loki
 - `logs/aegis-ingest` → aegis-log-ingest (always)
 - `traces` → Jaeger
+- `logs/security` → aegis-log-ingest + Loki (host/OS audit sources)
+
+The first three carry the application's own OTLP signal. `logs/security`
+is a separate ingestion path for **host/OS audit telemetry** —
+`filelog` (`/var/log/auth.log`, `/var/log/secure`), `journald`
+(sshd/sudo/kernel), `rfc5424` syslog over tcp, and the `k8sobjects`
+event watcher. Its records pass through a `redaction` processor that
+**masks secret-like values (passwords, api keys, tokens, bearer/auth
+headers) before any batching or export**, then a `filter` stage that
+drops debug/health-probe noise and sub-`INFO` records. Redaction always
+runs ahead of the exporters, so scrubbed values never reach Postgres or
+Loki. The `osquery` receiver and `isolationforest` anomaly processor are
+left commented — they are not standard collector-contrib components and
+would fail Collector startup unless your distro ships them.
 
 The Elasticsearch exporter in the Collector config is commented; un-
 comment when `obs-search` is permanently in your deployment shape.
@@ -260,8 +274,13 @@ comment when `obs-search` is permanently in your deployment shape.
   unreachable, rows stay buffered up to the batch size, then drop —
   the metric counter exposes the drop rate.
 - **Sensitive data**: Aegis already runs `redact_audit_detail` on
-  audit detail before write. The log path does **not** auto-redact —
-  treat `attrs` like any other JSON field and avoid logging tokens.
+  audit detail before write. The application OTLP log path
+  (`logs/loki`, `logs/aegis-ingest`) does **not** auto-redact — treat
+  `attrs` like any other JSON field and avoid logging tokens. The
+  `logs/security` host-audit pipeline is the exception: its `redaction`
+  processor masks secret-like values before export, since host log
+  lines (e.g. a command captured in `/var/log/auth.log`) are outside
+  the app's control.
 
 For the production deployment runbook (Dockerfile, image build,
 service registration) see [`docs/ops/deploy.md`](../ops/deploy.md).

@@ -111,7 +111,7 @@ Defined in [`aegis/agents/registry.py`](https://github.com/IntelliBridge/aegis/b
 `aegis/scanners/registry.py` defines the known capability set:
 
 ```python
-KNOWN_CAPABILITIES: set[str] = {"dast", "sast", "dependency", "iac", "secret", "sbom", "supply_chain"}
+KNOWN_CAPABILITIES: set[str] = {"dast", "sast", "dependency", "iac", "secret", "sbom", "supply_chain", "code_audit"}
 ```
 
 A scanner's `capabilities` is a `set[str]` validated at `register()`:
