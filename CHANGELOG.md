@@ -4,6 +4,52 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.6.0] — Wire the agent seam end-to-end + a read-only recon agent
+
+The agent registry was wired but **orphaned**: `dispatch` existed and 15
+adapters were registered, yet no running code reached them. This release gives
+the registry a runtime path, un-fallbacks six specialist agents, composes a
+read-only recon agent (16th), and widens the agent-facing Kali toolbelt from 3
+to 10. Admission-layer + wiring only — the offline `pytest -q` path stays green
+with no Postgres/Redis/Keycloak and no scanner binaries (1115 passing, 18
+skipped).
+
+### Added
+- **Agent execution path** (F6 admission/execution split, mirroring the scan
+  path). `POST /v1/agents/{agent_name}/run` does admission only — RBAC
+  (`agent.run`, `remediator+`) → `create_agent_job(...)` emits a chained
+  `agent.run` audit row **before** the Run/Job rows and **before** Celery is
+  touched, then enqueues. The new `agent_run` Celery task does execution only:
+  re-authorize `agent.execute.{name}` against the worker-side allowlist, then
+  `dispatch(name, prompt, AgentContext(...))`. No business logic in the route;
+  no admission in the task. (`aegis/api/v1/agents.py`,
+  `aegis/services/agents.py`, `aegis/workers/tasks/agent.py`,
+  `Action.AGENT_RUN` in `aegis/api/policy.py`.) See [ADR
+  0003](docs/adr/0003-agent-execution-path.md).
+- **Read-only recon agent (16th)** composed from CAI reconnaissance tools
+  (`nmap`, `shodan_search`, `shodan_host_info`, `curl`, `netcat`, `netstat`)
+  and registered in the `recon` domain — the domain was previously empty. The
+  agent gets observation tools only; never `generic_linux_command` / `exec_code`.
+- **Agent-facing Kali toolbelt 3 → 10.** Thin typed `@function_tool` wrappers
+  for `gobuster`, `dirb`, `hydra`, `wpscan`, `enum4linux`, `metasploit`, and
+  `john`, each routed through `KaliClient` with the same allowlist enforcement
+  at the service boundary. No generic-command surface was added.
+
+### Fixed
+- **Six specialist slots no longer resolve to fallbacks.** The CAI loader now
+  imports `bug_bounter_agent`, `redteam_agent`, `dfir_agent`, `retester_agent`,
+  `reporting_agent`, and `web_pentester_agent` (degrading the whole group to
+  `None` offline), and `_WIRED` maps each slot to its real CAI agent instead of
+  a generic stand-in.
+
+### Security
+- The recon agent and the new Kali wrappers add **no** arbitrary-command
+  surface: `KaliClient.execute_command` stays gated by `allow_generic_command`
+  (default `False`), and target-bearing tools remain allowlist-checked.
+- The worker re-authorizes every agent run (`agent.execute.{name}`) rather than
+  trusting the admission-time allowlist decision, so allowlist drift surfaces
+  before the agent executes.
+
 ## [0.5.2] — Fix the bumblebee and strix scanner adapters
 
 Two shipped scanner adapters spoke interfaces their tools never exposed; both

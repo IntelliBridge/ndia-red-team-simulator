@@ -321,11 +321,11 @@ still registers, so a third-party plugin can add its own without
 patching core. Promoting one to first-party is a one-line append — how
 `supply_chain` landed in v0.5.1.
 
-### CAI agents (15, all wired)
+### CAI agents (16, all wired)
 
 Agent adapters wrap upstream `cai.agents.*` agents and dispatch by name.
 Every registered agent is **wired** (executable, not a stub), spanning
-five of the six `Domain` values:
+all six `Domain` values:
 
 | Domain | Agents |
 |--------|--------|
@@ -334,7 +334,7 @@ five of the six `Domain` values:
 | `audit` | `retester`, `reporter` |
 | `defensive` | `blueteam_agent` |
 | `remediation` | `codeagent` |
-| `recon` | *(none wired yet)* |
+| `recon` | `recon` (read-only: nmap, shodan, curl, netcat, netstat) |
 
 ### Kali toolbelt (10, via MCP)
 
@@ -357,15 +357,17 @@ the architecture.
 | Seam | Vocabulary | Registered | Runtime consumer | Dispatch |
 |------|-----------|-----------|------------------|----------|
 | Scanners | 7 capabilities | 13 adapters | `scan_start` Celery task | one adapter per job via `dispatch(name \| capability)`; defaults to `strix` |
-| Agents | 6 `Domain`s | 15 adapters | *(no registry consumer yet)* | remediation calls `cai.Runner` directly with `codeagent` / `blueteam_agent`, bypassing the registry |
+| Agents | 6 `Domain`s | 16 adapters | `agent_run` Celery task | `POST /v1/agents/{name}/run` → admission → task → `dispatch(name)`; remediation may still call `cai.Runner` directly for `codeagent` / `blueteam_agent` |
 | Kali tools | 10 named tools | 10 (over MCP) | `run_kali_tool` service | per-tool REST call, audited at the service boundary |
 
-Two interconnection facts the matrix makes explicit, both tracked as
-gaps rather than intent: scanners run **one adapter per job** (there is
+One interconnection fact the matrix still makes explicit, tracked as a
+gap rather than intent: scanners run **one adapter per job** (there is
 no capability-sweep that fans a target across every adapter claiming a
-capability), and the **agent registry has no runtime dispatch path** —
-remediation reaches CAI directly, so the registered agent adapters are
-not reachable from any running code today.
+capability). The former agent-registry gap is now **closed** — as of
+v0.6.0 the registry has a runtime dispatch path: `POST
+/v1/agents/{name}/run` admits the job (authorize → audit-before-enqueue
+→ Run/Job rows → enqueue) and the `agent_run` Celery task re-authorizes
+and calls `dispatch(name)`, so every registered adapter is reachable.
 
 ## Release map
 
@@ -430,7 +432,19 @@ flowchart TD
       b2["supply_chain capability"]
     end
 
-    v031 --> v040 --> v041 --> v042 --> v050 --> v051
+    subgraph v052["v0.5.2 — Scanner bug fixes"]
+      c1["bumblebee speaks real CLI/NDJSON"]
+      c2["strix reads strix_runs/ events<br/>+ scan_mode"]
+    end
+
+    subgraph v060["v0.6.0 — Agent seam end-to-end"]
+      d1["6 specialists un-fallbacked<br/>+ recon agent (16th)"]
+      d2["POST /agents/{name}/run<br/>(admission-only)"]
+      d3["agent_run task (execution-only)"]
+      d4["Kali wrappers 3 → 10"]
+    end
+
+    v031 --> v040 --> v041 --> v042 --> v050 --> v051 --> v052 --> v060
 ```
 
 ## What's deferred
