@@ -313,6 +313,16 @@ either an adapter name or a capability tag.
 | `bumblebee` | `supply_chain` | Supply-chain / MCP-host exposure scanner |
 | `deepsec` | `code_audit` | AI whole-repo code auditor (owner PII stripped) |
 
+The reference `strix` adapter surfaces the vendored CLI's deeper code-scan
+controls as optional `ScanOptions` fields: `targets` (a multi-target sweep
+alongside the single `target`), `instruction_file` (read in lieu of an inline
+`instruction`), and `scope_mode` (`auto | diff | full`) + `diff_base` for
+PR-diff-scoped review. White-box source review needs no flag — strix derives
+it from local-path targets. All are optional and soft-degrade; the
+single-target default path is unchanged. These knobs live on `ScanOptions`
+(programmatic / registry-dispatch callers); the HTTP `POST /v1/scans` body
+forwards only `target` + `instruction`, as it does for `scan_mode`.
+
 ### Capabilities (8)
 
 `KNOWN_CAPABILITIES` is an **open vocabulary** validated at
@@ -361,6 +371,15 @@ the `read` recon tools run at `remediator`, while the `active` ones
 `execute=true` + `approver`. Counting both surfaces, Aegis ships
 **24 tools today: 10 Kali + 14 scanner adapters**, on the way to the 35+
 OnePager target.
+
+Each wrapper sends the exact parameter keys the vendored mcp-kali server
+reads (gobuster/dirb use `url`; hydra uses `username_file`/`password_file`;
+metasploit folds `RHOSTS` into `options`) and exposes structured subcommand
+controls — gobuster `mode` (`dir | dns | vhost | fuzz`), hydra user/password
+values and list files, metasploit `module` + `options`, john `format`. Every
+value still passes the allowlist `_check`, and no wrapper exposes a freeform
+argument passthrough: the generic `command` surface stays closed (403, all
+roles).
 
 ### Capability matrix
 
@@ -510,7 +529,17 @@ flowchart TD
       g4["multi-format finding ingestion<br/>(Snyk/Veracode/Trivy/SARIF)"]
     end
 
-    v031 --> v040 --> v041 --> v042 --> v050 --> v051 --> v052 --> v060 --> v070 --> v080
+    subgraph v090["v0.9.0 — Live belt + multi-agent"]
+      h1["live Kali belt over MCP<br/>(active specialists)"]
+      h2["3 multi-agent patterns<br/>(16 → 19, no auto-swarm)"]
+    end
+
+    subgraph v0100["v0.10.0 — Deeper scan surfaces"]
+      i1["strix code-scope depth<br/>(multi-target / scope-mode / diff-base)"]
+      i2["Kali wrappers speak real<br/>mcp-kali args (gobuster/hydra/msf)"]
+    end
+
+    v031 --> v040 --> v041 --> v042 --> v050 --> v051 --> v052 --> v060 --> v070 --> v080 --> v090 --> v0100
 ```
 
 ## What's deferred

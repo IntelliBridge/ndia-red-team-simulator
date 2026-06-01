@@ -4,6 +4,56 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.10.0] — deeper scan surfaces: strix code-scope + real Kali tool args
+
+This release deepens two existing subprocess surfaces without changing any
+default behaviour. The strix adapter gains the vendored CLI's richer
+code-scan controls, and the Kali tool wrappers are corrected to speak the
+parameter shape the vendored mcp-kali server actually reads — several deep
+scans were silently no-op'ing on mismatched keys. Both are additive and
+soft-degrade; the single-target / default-arg paths are byte-identical to
+0.9.0. 1253 passing, 18 skipped.
+
+### Added
+- **Strix code-scope depth** (`aegis/runners/strix_runner.py`,
+  `aegis/scanners/strix_adapter.py`, `aegis/scanners/registry.py`). Four new
+  optional `ScanOptions` fields surface strix's deeper controls: `targets`
+  (a multi-target sweep that augments the single `target`), `instruction_file`
+  (a path read in lieu of an inline `instruction` — the two are mutually
+  exclusive, file wins), and `scope_mode` (`auto | diff | full`) + `diff_base`
+  for PR-diff-scoped code review. White-box source review needs no flag —
+  strix auto-derives it from local-path targets. A `strix_scope_mode` config
+  default mirrors the `ScanOptions` default, matching how `strix_scan_mode`
+  was introduced in 0.5.2. An out-of-range `scope_mode` falls back to `auto`.
+- **Real mcp-kali tool arguments** (`aegis/tools/cai_tools.py`). The
+  `gobuster` / `dirb` / `hydra` / `metasploit` / `john` wrappers now send the
+  exact parameter keys the vendored server reads, and expose structured
+  subcommand controls: gobuster `mode` (`dir | dns | vhost | fuzz`), hydra
+  user / password values and list files, metasploit `module` + `options`
+  (with `RHOSTS` folded in), and john `format`.
+
+### Fixed
+- **Kali deep-scan wrappers were sending keys the server ignored.** gobuster
+  and dirb sent `target` where mcp-kali reads `url`; hydra sent `userlist` /
+  `passlist` instead of `username_file` / `password_file`; metasploit put
+  `rhosts` at the top level instead of inside `options.RHOSTS`. Those scans
+  reached the server but ran with empty arguments. The wrappers now match the
+  server's request schema, and every value still passes through the
+  allowlist `_check`. **No** freeform `additional_args` passthrough was added
+  — the generic-command surface stays closed (`command` → 403, all roles).
+
+### Migration
+- **No behaviour change on the default path.** Every new strix field is
+  optional and defaults to today's behaviour; a scan that sets none of them
+  builds the identical command line as 0.9.0. The new strix knobs are
+  `ScanOptions`-level (programmatic / registry-dispatch callers); the HTTP
+  `POST /v1/scans` body is unchanged and still forwards only `target` +
+  `instruction`, exactly as it did for `scan_mode`.
+- **Kali callers that relied on the old (ignored) keys** were already
+  no-op'ing those arguments; after this fix the same calls run with the
+  arguments actually applied. Review any saved gobuster/dirb/hydra/metasploit
+  invocations against the corrected parameter names above.
+
 ## [0.9.0] — live Kali tool belt over MCP + CAI multi-agent patterns
 
 Building on the unified gate from 0.8.0, this release lets the wired offensive
