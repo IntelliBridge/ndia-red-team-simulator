@@ -322,7 +322,7 @@ a warning but still registers, so a third-party plugin can add its own
 without patching core. Promoting one to first-party is a one-line append
 — how `supply_chain` landed in v0.5.1 and `code_audit` in v0.7.0.
 
-### CAI agents (16, all wired)
+### CAI agents (16 wired + 3 multi-agent patterns)
 
 Agent adapters wrap upstream `cai.agents.*` agents and dispatch by name.
 Every registered agent is **wired** (executable, not a stub), spanning
@@ -336,6 +336,18 @@ all six `Domain` values:
 | `defensive` | `blueteam_agent` |
 | `remediation` | `codeagent` |
 | `recon` | `recon` (read-only: nmap, shodan, curl, netcat, netstat) |
+
+Beyond the 16 single agents, three **multi-agent patterns** join the
+registry as explicitly-dispatchable entries — `offsec_pattern` (a parallel
+offensive sweep) and the `redteam_swarm` / `bb_triage_swarm` handoff swarms
+— for **19** dispatchable entries in all. A pattern runs **only when
+dispatched by name**; a normal single-agent run never triggers one (no
+auto-swarm). All three are `active`-effect, so they clear the same gate as
+any offensive agent. When executed (post-approval), the active offensive
+specialists (`bug_bounter`, `red_teamer`, `web_pentester`) reach the live
+Kali tool belt over an SSE MCP connection to `config.mcp_kali_url`; the
+read-only `recon` agent is excluded by design (the belt carries active
+tools, and recon stays read-only).
 
 ### Kali toolbelt (10, via MCP)
 
@@ -361,7 +373,7 @@ slots into without diverging from the architecture (most recently the
 | Seam | Vocabulary | Registered | Runtime consumer | Dispatch |
 |------|-----------|-----------|------------------|----------|
 | Scanners | 8 capabilities | 14 adapters | `scan_start` Celery task | one adapter per job via `dispatch(name \| capability)`; defaults to `strix` |
-| Agents | 6 `Domain`s | 16 adapters | `agent_run` Celery task | `POST /v1/agents/{name}/run` → admission → task → `dispatch(name)`; remediation may still call `cai.Runner` directly for `codeagent` / `blueteam_agent` |
+| Agents | 6 `Domain`s | 19 adapters (16 agents + 3 patterns) | `agent_run` Celery task | `POST /v1/agents/{name}/run` → admission → task → `dispatch(name)`; remediation may still call `cai.Runner` directly for `codeagent` / `blueteam_agent` |
 | Kali tools | 10 named tools | 10 (over MCP) | `run_kali_tool` service | per-tool REST call, audited at the service boundary |
 
 One interconnection fact the matrix still makes explicit, tracked as a

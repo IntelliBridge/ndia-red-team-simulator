@@ -4,6 +4,52 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.9.0] — live Kali tool belt over MCP + CAI multi-agent patterns
+
+Building on the unified gate from 0.8.0, this release lets the wired offensive
+specialists reach the **live Kali tool belt at run time** over an MCP connection,
+and exposes CAI's **multi-agent patterns** as ordinary, explicitly-dispatchable
+registry entries. Both are bound by the same effect-class gate — every pattern is
+`active`, so nothing fires without `execute=true` and the `approver` role — and
+nothing auto-swarms: a pattern runs only when a caller dispatches it by name.
+1233 passing, 18 skipped.
+
+### Added
+- **CAI multi-agent patterns** (`aegis/agents/cai/patterns.py`). Three composite
+  entries join the agent registry: `offsec_pattern` (a parallel offensive sweep)
+  and the `redteam_swarm` / `bb_triage_swarm` handoff swarms. Each resolves and
+  runs its CAI agent(s) through `Runner.run_sync` — a swarm via its entry agent;
+  a parallel pattern by resolving each configured agent by name and concatenating
+  their outputs. All three are `active`-effect and flow through the same
+  `dispatch()` gate: without `execute=true` they return a `pending_approval`
+  proposal and **no** agent runs. The registry roster grows 16 → **19**.
+- **Live Kali tool belt over MCP** (`aegis/integrations/cai_loader.py`). When CAI
+  is available, `load_cai` attaches an SSE MCP server (`MCPServerSse` pointed at
+  `config.mcp_kali_url`) to the active offensive specialists — `bug_bounter`,
+  `red_teamer`, `web_pentester` — so they can call the live nmap/sqlmap/hydra/…
+  belt when executed (post-approval). The read-only `recon` agent is **deliberately
+  excluded**: the belt carries active tools and recon stays read-only. `CAIBundle`
+  gains `kali_mcp_attached` (count of specialists wired; `0` offline).
+- **Loader resolvers** `load_cai_pattern()` / `resolve_cai_agent()` funnel the
+  `cai.agents.patterns.get_pattern` / `cai.agents.get_agent_by_name` lookups
+  through the one CAI loader, so the rest of the codebase never imports CAI directly.
+
+### Changed
+- `load_cai` now attaches the Kali MCP belt to the active specialists at
+  bundle-build time. **No-op offline** — CAI isn't importable, so `load_cai`
+  returns `None` long before the attach, and the attach itself degrades to zero
+  when the MCP endpoint is unset, the client classes can't be imported, or the
+  server object can't be built.
+
+### Migration
+- **Patterns are gated exactly like offensive agents.** `dispatch("redteam_swarm",
+  …)` (or `offsec_pattern` / `bb_triage_swarm`) without `execute=true` returns a
+  `pending_approval` plan; flip `execute=true` (requires the `approver` role) to
+  actually run the pattern. Nothing auto-swarms from a normal single-agent run.
+- **The MCP attach is a live-runtime feature only.** It connects nothing offline
+  and never runs in the test path; the server object is attached but not connected
+  until a live agent run wires it up. Existing offline callers see no change.
+
 ## [0.8.0] — unified human-in-the-loop gate + agentic remediation + finding ingestion
 
 Aegis's purpose is the full loop — **scan code + infra → pentest → remediate** —
