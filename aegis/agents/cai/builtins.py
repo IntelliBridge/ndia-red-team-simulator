@@ -84,17 +84,21 @@ def _not_wired(name: str, domain: str):
     return adapter
 
 
-# Wired agents (Phase 3 surface): codeagent, blueteam_agent confirmed in CAI;
-# the remaining names match cai.agents.* attribute conventions.
+# Wired agents: each slot maps to its real CAI agent (no fallbacks). The six
+# specialist slots previously fell through to codeagent/blueteam_agent; they now
+# resolve to the named upstream agents the loader imports, and recon is composed
+# from read-only recon tools. Unavailable agents degrade to None in the loader
+# and surface as status="error" at dispatch, never a silent mis-wire.
 _WIRED = [
     ("codeagent", "remediation", "codeagent"),
     ("blueteam_agent", "defensive", "blueteam_agent"),
-    ("bug_bounter", "offensive", "codeagent"),       # CAI symbol; falls through if unavailable
-    ("red_teamer", "offensive", "codeagent"),
-    ("dfir", "forensic", "blueteam_agent"),
-    ("retester", "audit", "codeagent"),
-    ("reporter", "audit", "blueteam_agent"),
-    ("web_pentester", "offensive", "codeagent"),
+    ("bug_bounter", "offensive", "bug_bounter_agent"),
+    ("red_teamer", "offensive", "redteam_agent"),
+    ("dfir", "forensic", "dfir_agent"),
+    ("retester", "audit", "retester_agent"),
+    ("reporter", "audit", "reporting_agent"),
+    ("web_pentester", "offensive", "web_pentester_agent"),
+    ("recon", "recon", "recon_agent"),
     ("memory_analysis", "forensic", "memory_analysis_agent"),
     ("network_traffic_analyzer", "forensic", "network_security_analyzer_agent"),
     ("reverse_engineering", "forensic", "reverse_engineering_agent"),

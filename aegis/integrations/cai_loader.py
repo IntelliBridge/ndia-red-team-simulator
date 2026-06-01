@@ -13,6 +13,7 @@ failure or a soft fallback.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -35,6 +36,13 @@ class CAIBundle:
     subghz_sdr_agent: Any = None
     wifi_security_agent: Any = None
     replay_attack_agent: Any = None
+    bug_bounter_agent: Any = None
+    redteam_agent: Any = None
+    dfir_agent: Any = None
+    retester_agent: Any = None
+    reporting_agent: Any = None
+    web_pentester_agent: Any = None
+    recon_agent: Any = None
 
 
 _BUNDLE: CAIBundle | None = None
@@ -103,12 +111,76 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
             "replay_attack_agent": None,
         }
 
+    # The 6 specialist agents the one-pager names. Like ``extended``, a failure
+    # importing one degrades the whole group to None rather than regressing the
+    # core codeagent/blueteam path above.
+    try:
+        from cai.agents.bug_bounter import bug_bounter_agent  # type: ignore
+        from cai.agents.dfir import dfir_agent  # type: ignore
+        from cai.agents.red_teamer import redteam_agent  # type: ignore
+        from cai.agents.reporter import reporting_agent  # type: ignore
+        from cai.agents.retester import retester_agent  # type: ignore
+        from cai.agents.web_pentester import web_pentester_agent  # type: ignore
+        specialists = {
+            "bug_bounter_agent": bug_bounter_agent,
+            "redteam_agent": redteam_agent,
+            "dfir_agent": dfir_agent,
+            "retester_agent": retester_agent,
+            "reporting_agent": reporting_agent,
+            "web_pentester_agent": web_pentester_agent,
+        }
+    except ImportError:
+        specialists = {
+            "bug_bounter_agent": None,
+            "redteam_agent": None,
+            "dfir_agent": None,
+            "retester_agent": None,
+            "reporting_agent": None,
+            "web_pentester_agent": None,
+        }
+
+    # Compose a read-only recon agent from CAI's safe reconnaissance tools.
+    # Recon gets ONLY read/recon tools — never generic_linux_command/exec_code.
+    # Broad except: AsyncOpenAI() raises without a key, so offline this degrades
+    # to None (the registry tolerates an unavailable recon agent).
+    try:
+        from openai import AsyncOpenAI  # type: ignore
+        from cai.sdk.agents import Agent, OpenAIChatCompletionsModel  # type: ignore
+        from cai.tools.reconnaissance.curl import curl  # type: ignore
+        from cai.tools.reconnaissance.netcat import netcat  # type: ignore
+        from cai.tools.reconnaissance.netstat import netstat  # type: ignore
+        from cai.tools.reconnaissance.nmap import nmap  # type: ignore
+        from cai.tools.reconnaissance.shodan import (  # type: ignore
+            shodan_host_info,
+            shodan_search,
+        )
+
+        recon_agent = Agent(
+            name="Recon",
+            instructions=(
+                "You are a read-only reconnaissance agent. Enumerate hosts, "
+                "ports, and services using only the provided recon tools. You "
+                "never modify the target, execute arbitrary commands, or write "
+                "to disk — you observe and report findings for other agents to "
+                "act on."
+            ),
+            tools=[nmap, shodan_search, shodan_host_info, curl, netcat, netstat],
+            model=OpenAIChatCompletionsModel(
+                model=os.getenv("CAI_MODEL", "alias1"),
+                openai_client=AsyncOpenAI(),
+            ),
+        )
+    except Exception:
+        recon_agent = None
+
     _BUNDLE = CAIBundle(
         Runner=Runner,
         codeagent=codeagent,
         blueteam_agent=blueteam_agent,
         cai_version=_git_sha(cai_path),
         cai_path=cai_path,
+        recon_agent=recon_agent,
         **extended,
+        **specialists,
     )
     return _BUNDLE
