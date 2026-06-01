@@ -103,10 +103,13 @@ def build_kali_toolbelt(config: AegisConfig, *,
         return result.__dict__
 
     @function_tool
-    def gobuster_scan(target: str, wordlist: str | None = None) -> dict:
-        """Brute-force paths/dirs on a target with gobuster. Target must be in the allowlist."""
+    def gobuster_scan(target: str, mode: str = "dir", wordlist: str | None = None) -> dict:
+        """Brute-force paths/dirs/dns/vhosts on a target with gobuster. Target must be in the allowlist."""
         _check(target)
-        params = {"target": target, **({"wordlist": wordlist} if wordlist else {})}
+        # Coerce any unrecognised mode to the safe default; never forward arbitrary strings.
+        if mode not in {"dir", "dns", "vhost", "fuzz"}:
+            mode = "dir"
+        params = {"url": target, "mode": mode, **({"wordlist": wordlist} if wordlist else {})}
         result = client.run_tool("gobuster", params)
         return result.__dict__
 
@@ -114,20 +117,25 @@ def build_kali_toolbelt(config: AegisConfig, *,
     def dirb_scan(target: str, wordlist: str | None = None) -> dict:
         """Scan a web target for hidden content with dirb. Target must be in the allowlist."""
         _check(target)
-        params = {"target": target, **({"wordlist": wordlist} if wordlist else {})}
+        params = {"url": target, **({"wordlist": wordlist} if wordlist else {})}
         result = client.run_tool("dirb", params)
         return result.__dict__
 
     @function_tool
-    def hydra_attack(target: str, service: str, userlist: str | None = None,
-                     passlist: str | None = None) -> dict:
+    def hydra_attack(target: str, service: str, username: str | None = None,
+                     username_file: str | None = None, password: str | None = None,
+                     password_file: str | None = None) -> dict:
         """Run a hydra credential attack against a service. Target must be in the allowlist."""
         _check(target)
         params = {"target": target, "service": service}
-        if userlist:
-            params["userlist"] = userlist
-        if passlist:
-            params["passlist"] = passlist
+        if username:
+            params["username"] = username
+        if username_file:
+            params["username_file"] = username_file
+        if password:
+            params["password"] = password
+        if password_file:
+            params["password_file"] = password_file
         result = client.run_tool("hydra", params)
         return result.__dict__
 
@@ -149,16 +157,19 @@ def build_kali_toolbelt(config: AegisConfig, *,
     def metasploit_run(module: str, rhosts: str | None = None,
                        options: dict | None = None) -> dict:
         """Run a metasploit module. When rhosts is set it must be in the allowlist."""
+        opts = dict(options or {})
         if rhosts:
             _check(rhosts)
-        params = {"module": module, **({"rhosts": rhosts} if rhosts else {}), **(options or {})}
-        result = client.run_tool("metasploit", params)
+            opts["RHOSTS"] = rhosts
+        result = client.run_tool("metasploit", {"module": module, "options": opts})
         return result.__dict__
 
     @function_tool
-    def john_crack(hash_file: str, wordlist: str | None = None) -> dict:
+    def john_crack(hash_file: str, wordlist: str | None = None,
+                   format_type: str | None = None) -> dict:
         """Crack a local hash file with john. Operates on local files, no target check."""
-        params = {"hash_file": hash_file, **({"wordlist": wordlist} if wordlist else {})}
+        params = {"hash_file": hash_file, **({"wordlist": wordlist} if wordlist else {}),
+                  **({"format": format_type} if format_type else {})}
         result = client.run_tool("john", params)
         return result.__dict__
 
