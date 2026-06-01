@@ -34,6 +34,10 @@ class StrixAdapter:
             instruction=options.instruction,
             timeout=options.timeout or self.default_timeout,
             scan_mode=options.scan_mode,
+            targets=options.targets,
+            instruction_file=options.instruction_file,
+            scope_mode=options.scope_mode,
+            diff_base=options.diff_base,
         )
         return ScanResult(
             findings=result.findings,

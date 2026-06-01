@@ -27,6 +27,15 @@ class ScanOptions:
     instruction: str | None = None
     timeout: int = 1800
     scan_mode: str = "standard"
+    # Strix depth (v0.10.0). All optional and adapter-specific: an adapter that
+    # doesn't understand them ignores them, so the single-target default path is
+    # unchanged. ``targets`` augments ``target`` for multi-target sweeps;
+    # ``instruction_file`` is a path read in lieu of ``instruction``;
+    # ``scope_mode``/``diff_base`` control code-target diff scoping.
+    targets: list[str] | None = None
+    instruction_file: str | None = None
+    scope_mode: str = "auto"
+    diff_base: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 

@@ -260,6 +260,214 @@ class TestRunStrixMockedSubprocess(unittest.TestCase):
                 "standard",
             )
 
+    def test_multiple_targets_emit_repeated_target_flags_in_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = RunState(tmp, "rt-multi")
+
+            class FakeProc:
+                def __init__(self, *args, **kwargs):
+                    self.returncode = 0
+
+                def poll(self):
+                    return 0
+
+                def terminate(self):
+                    self.returncode = 0
+
+                def wait(self):
+                    return 0
+
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen", side_effect=FakeProc), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
+                result = run_strix(
+                    "http://primary:3000", state,
+                    targets=["./repo", "https://staging.example.com",
+                             "https://prod.example.com"],
+                )
+
+            cmd = result.command
+            # Every effective target appears as its own --target <t>, in order.
+            target_values = [cmd[i + 1] for i, tok in enumerate(cmd) if tok == "--target"]
+            self.assertEqual(
+                target_values,
+                ["./repo", "https://staging.example.com", "https://prod.example.com"],
+            )
+            # The explicit single `target` is ignored once `targets` is provided.
+            self.assertNotIn("http://primary:3000", cmd)
+
+    def test_single_target_command_unchanged_when_targets_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = RunState(tmp, "rt-single")
+
+            class FakeProc:
+                def __init__(self, *args, **kwargs):
+                    self.returncode = 0
+
+                def poll(self):
+                    return 0
+
+                def terminate(self):
+                    self.returncode = 0
+
+                def wait(self):
+                    return 0
+
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen", side_effect=FakeProc), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
+                result = run_strix("http://localhost:3000", state)
+
+            cmd = result.command
+            # Exactly one --target whose value is the single positional target,
+            # immediately followed by -n (target-arg emission unchanged).
+            self.assertEqual(cmd.count("--target"), 1)
+            idx = cmd.index("--target")
+            self.assertEqual(cmd[idx + 1], "http://localhost:3000")
+            self.assertEqual(cmd[idx + 2], "-n")
+
+    def test_instruction_file_replaces_instruction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = RunState(tmp, "rt-ifile")
+
+            class FakeProc:
+                def __init__(self, *args, **kwargs):
+                    self.returncode = 0
+
+                def poll(self):
+                    return 0
+
+                def terminate(self):
+                    self.returncode = 0
+
+                def wait(self):
+                    return 0
+
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen", side_effect=FakeProc), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
+                result = run_strix(
+                    "http://localhost:3000", state,
+                    instruction="inline text",
+                    instruction_file="/tmp/instr.md",
+                )
+
+            cmd = result.command
+            # instruction_file wins and instruction is suppressed (mutually
+            # exclusive at Strix).
+            self.assertIn("--instruction-file", cmd)
+            self.assertEqual(cmd[cmd.index("--instruction-file") + 1], "/tmp/instr.md")
+            self.assertNotIn("--instruction", cmd)
+
+    def test_scope_mode_default_is_auto(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = RunState(tmp, "rt-scope-default")
+
+            class FakeProc:
+                def __init__(self, *args, **kwargs):
+                    self.returncode = 0
+
+                def poll(self):
+                    return 0
+
+                def terminate(self):
+                    self.returncode = 0
+
+                def wait(self):
+                    return 0
+
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen", side_effect=FakeProc), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
+                result = run_strix("http://localhost:3000", state)
+
+            cmd = result.command
+            self.assertIn("--scope-mode", cmd)
+            self.assertEqual(cmd[cmd.index("--scope-mode") + 1], "auto")
+
+    def test_scope_mode_explicit_values_honored(self):
+        for mode in ("diff", "full"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                state = RunState(tmp, f"rt-scope-{mode}")
+
+                class FakeProc:
+                    def __init__(self, *args, **kwargs):
+                        self.returncode = 0
+
+                    def poll(self):
+                        return 0
+
+                    def terminate(self):
+                        self.returncode = 0
+
+                    def wait(self):
+                        return 0
+
+                with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                     patch("aegis.runners.strix_runner.subprocess.Popen", side_effect=FakeProc), \
+                     patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
+                    result = run_strix("http://localhost:3000", state, scope_mode=mode)
+
+                cmd = result.command
+                self.assertEqual(cmd[cmd.index("--scope-mode") + 1], mode)
+
+    def test_invalid_scope_mode_falls_back_to_auto(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = RunState(tmp, "rt-scope-bad")
+
+            class FakeProc:
+                def __init__(self, *args, **kwargs):
+                    self.returncode = 0
+
+                def poll(self):
+                    return 0
+
+                def terminate(self):
+                    self.returncode = 0
+
+                def wait(self):
+                    return 0
+
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen", side_effect=FakeProc), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
+                result = run_strix("http://localhost:3000", state, scope_mode="sideways")
+
+            cmd = result.command
+            self.assertEqual(cmd[cmd.index("--scope-mode") + 1], "auto")
+
+    def test_diff_base_only_emitted_when_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = RunState(tmp, "rt-diff")
+
+            class FakeProc:
+                def __init__(self, *args, **kwargs):
+                    self.returncode = 0
+
+                def poll(self):
+                    return 0
+
+                def terminate(self):
+                    self.returncode = 0
+
+                def wait(self):
+                    return 0
+
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen", side_effect=FakeProc), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
+                without = run_strix("http://localhost:3000", state)
+                with_base = run_strix(
+                    "http://localhost:3000", state, diff_base="origin/main",
+                )
+
+            self.assertNotIn("--diff-base", without.command)
+            self.assertIn("--diff-base", with_base.command)
+            self.assertEqual(
+                with_base.command[with_base.command.index("--diff-base") + 1],
+                "origin/main",
+            )
+
     def test_no_events_file_degrades_to_empty_findings(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = RunState(tmp, "rw")

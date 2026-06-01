@@ -163,6 +163,7 @@ def tail_events(
 # ---------------------------------------------------------------------------
 
 VALID_SCAN_MODES = frozenset({"quick", "standard", "deep"})
+VALID_SCOPE_MODES = frozenset({"auto", "diff", "full"})
 
 
 def discover_events_path(strix_dir: Path) -> Path | None:
@@ -197,6 +198,10 @@ def run_strix(
     instruction: str | None = None,
     timeout: int = 1800,
     scan_mode: str = "standard",
+    targets: list[str] | None = None,
+    instruction_file: str | None = None,
+    scope_mode: str = "auto",
+    diff_base: str | None = None,
     llm_env: dict[str, str] | None = None,
     strix_command: str | None = None,
     strix_path: str | None = None,
@@ -231,10 +236,26 @@ def run_strix(
 
     if scan_mode not in VALID_SCAN_MODES:
         scan_mode = "standard"
+    if scope_mode not in VALID_SCOPE_MODES:
+        scope_mode = "auto"
 
-    cmd = list(cmd_prefix) + ["--target", target, "-n", "--scan-mode", scan_mode]
-    if instruction:
+    # Strix's -t/--target is repeatable (action="append"); a single-target call
+    # (targets None/empty) emits exactly one --target, identical to before.
+    effective_targets = targets if targets else [target]
+    target_args: list[str] = []
+    for t in effective_targets:
+        target_args += ["--target", t]
+
+    cmd = list(cmd_prefix) + target_args + ["-n", "--scan-mode", scan_mode,
+                                            "--scope-mode", scope_mode]
+    # --instruction and --instruction-file are mutually exclusive at Strix
+    # (it calls parser.error if both are given); prefer the file when set.
+    if instruction_file:
+        cmd += ["--instruction-file", instruction_file]
+    elif instruction:
         cmd += ["--instruction", instruction]
+    if diff_base:
+        cmd += ["--diff-base", diff_base]
 
     env = os.environ.copy()
     env.update(env_additions)
