@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from aegis.api.settings import APISettings, load_settings
 from aegis.api.v1 import (
+    agents,
     audit,
     exports,
     findings,
@@ -85,6 +86,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(exports.router, prefix="/v1")
     app.include_router(tools.router, prefix="/v1")
     app.include_router(scans.router, prefix="/v1")
+    app.include_router(agents.router, prefix="/v1")
     app.include_router(fix.router, prefix="/v1")
     app.include_router(verify.router, prefix="/v1")
     app.include_router(targets.router, prefix="/v1")
