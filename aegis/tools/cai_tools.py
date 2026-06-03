@@ -81,7 +81,7 @@ def build_kali_toolbelt(config: AegisConfig, *,
             )
 
     @function_tool
-    def nmap_scan(target: str, scan_type: str = "-sV", ports: str | None = None) -> dict:
+    def nmap_scan(target: str, scan_type: str = "-sV", ports: str | None = None) -> dict[str, Any]:
         """Run nmap against a target. Target must be in the allowlist."""
         _check(target)
         result = client.run_tool("nmap", {"target": target, "scan_type": scan_type,
@@ -89,14 +89,14 @@ def build_kali_toolbelt(config: AegisConfig, *,
         return result.__dict__
 
     @function_tool
-    def nikto_scan(target: str) -> dict:
+    def nikto_scan(target: str) -> dict[str, Any]:
         """Run nikto against a web target. Target must be in the allowlist."""
         _check(target)
         result = client.run_tool("nikto", {"target": target})
         return result.__dict__
 
     @function_tool
-    def sqlmap_test(url: str, data: str | None = None) -> dict:
+    def sqlmap_test(url: str, data: str | None = None) -> dict[str, Any]:
         """Probe a URL with sqlmap. URL must be in the allowlist."""
         _check(url)
         params = {"url": url}
@@ -106,7 +106,7 @@ def build_kali_toolbelt(config: AegisConfig, *,
         return result.__dict__
 
     @function_tool
-    def gobuster_scan(target: str, mode: str = "dir", wordlist: str | None = None) -> dict:
+    def gobuster_scan(target: str, mode: str = "dir", wordlist: str | None = None) -> dict[str, Any]:
         """Brute-force paths/dirs/dns/vhosts on a target with gobuster. Target must be in the allowlist."""
         _check(target)
         # Coerce any unrecognised mode to the safe default; never forward arbitrary strings.
@@ -117,7 +117,7 @@ def build_kali_toolbelt(config: AegisConfig, *,
         return result.__dict__
 
     @function_tool
-    def dirb_scan(target: str, wordlist: str | None = None) -> dict:
+    def dirb_scan(target: str, wordlist: str | None = None) -> dict[str, Any]:
         """Scan a web target for hidden content with dirb. Target must be in the allowlist."""
         _check(target)
         params = {"url": target, **({"wordlist": wordlist} if wordlist else {})}
@@ -127,7 +127,7 @@ def build_kali_toolbelt(config: AegisConfig, *,
     @function_tool
     def hydra_attack(target: str, service: str, username: str | None = None,
                      username_file: str | None = None, password: str | None = None,
-                     password_file: str | None = None) -> dict:
+                     password_file: str | None = None) -> dict[str, Any]:
         """Run a hydra credential attack against a service. Target must be in the allowlist."""
         _check(target)
         params = {"target": target, "service": service}
@@ -143,14 +143,14 @@ def build_kali_toolbelt(config: AegisConfig, *,
         return result.__dict__
 
     @function_tool
-    def wpscan_scan(url: str) -> dict:
+    def wpscan_scan(url: str) -> dict[str, Any]:
         """Scan a WordPress site with wpscan. URL must be in the allowlist."""
         _check(url)
         result = client.run_tool("wpscan", {"url": url})
         return result.__dict__
 
     @function_tool
-    def enum4linux_scan(target: str) -> dict:
+    def enum4linux_scan(target: str) -> dict[str, Any]:
         """Enumerate SMB/Windows info on a target with enum4linux. Target must be in the allowlist."""
         _check(target)
         result = client.run_tool("enum4linux", {"target": target})
@@ -158,7 +158,7 @@ def build_kali_toolbelt(config: AegisConfig, *,
 
     @function_tool
     def metasploit_run(module: str, rhosts: str | None = None,
-                       options: dict | None = None) -> dict:
+                       options: dict | None = None) -> dict[str, Any]:
         """Run a metasploit module. When rhosts is set it must be in the allowlist."""
         opts = dict(options or {})
         if rhosts:
@@ -169,7 +169,7 @@ def build_kali_toolbelt(config: AegisConfig, *,
 
     @function_tool
     def john_crack(hash_file: str, wordlist: str | None = None,
-                   format_type: str | None = None) -> dict:
+                   format_type: str | None = None) -> dict[str, Any]:
         """Crack a local hash file with john. Operates on local files, no target check."""
         params = {"hash_file": hash_file, **({"wordlist": wordlist} if wordlist else {}),
                   **({"format": format_type} if format_type else {})}

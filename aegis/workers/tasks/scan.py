@@ -9,11 +9,13 @@ supplied ``PostgresAuditWriter``; the row carries the worker actor
 
 from __future__ import annotations
 
+from typing import Any
+
 from aegis.workers.celery_app import app
 
 
 @app.task(name="aegis.scan_start", bind=True, max_retries=2)
-def scan_start(self, job_id: str) -> dict:
+def scan_start(self, job_id: str) -> dict[str, Any]:
     from aegis.config import load_config
     from aegis.db.models import Job
     from aegis.safety import authorize

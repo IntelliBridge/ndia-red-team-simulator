@@ -50,7 +50,7 @@ def create_app(
     from aegis.api.auth import _verify_worker_token
     from aegis.api.settings import load_settings
 
-    cfg = settings if settings is not None else load_settings()
+    config = settings if settings is not None else load_settings()
 
     app = FastAPI(
         title="aegis-log-ingest",
@@ -71,7 +71,7 @@ def create_app(
         a key is set the host-exposed POST routes require a valid worker
         token, closing the asymmetry vs the admin-gated ``GET /v1/logs``.
         """
-        if not cfg.worker_signing_key:
+        if not config.worker_signing_key:
             return None
         header = request.headers.get("authorization", "")
         token = (
@@ -80,7 +80,7 @@ def create_app(
             else ""
         )
         principal = (
-            _verify_worker_token(token, cfg) if token.startswith("worker:") else None
+            _verify_worker_token(token, config) if token.startswith("worker:") else None
         )
         if principal is None:
             raise HTTPException(

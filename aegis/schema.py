@@ -4,7 +4,7 @@ severity/status/confidence vocabularies they are typed against."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Literal
+from typing import Any, Literal
 
 Severity = Literal["critical", "high", "medium", "low"]
 FindingType = Literal[
@@ -24,7 +24,7 @@ class CodeLocation:
     fix_before: str | None = None
     fix_after: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
@@ -80,7 +80,7 @@ class AegisFinding:
                 and self.package_name is not None
                 and self.installed_version is not None)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod

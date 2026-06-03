@@ -20,7 +20,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -41,7 +41,7 @@ class TargetRuntime:
     ready_at: str | None = None
     last_rebuild_at: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 

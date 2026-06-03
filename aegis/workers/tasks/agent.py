@@ -10,11 +10,13 @@ the worker actor and is correlated with the admission row by ``run_id``.
 
 from __future__ import annotations
 
+from typing import Any
+
 from aegis.workers.celery_app import app
 
 
 @app.task(name="aegis.agent_run", bind=True, max_retries=2)
-def agent_run(self, job_id: str) -> dict:
+def agent_run(self, job_id: str) -> dict[str, Any]:
     from aegis.agents import AgentContext, dispatch
     from aegis.config import load_config
     from aegis.db.models import Job

@@ -14,6 +14,8 @@ Returns from ``evaluate``:
 
 from __future__ import annotations
 
+from typing import Any
+
 from aegis.policy.ci_gate import CIGatePolicy, evaluate  # noqa: F401 re-export
 from aegis.workers.celery_app import app
 
@@ -21,7 +23,7 @@ __all__ = ["CIGatePolicy", "evaluate", "ci_gate"]
 
 
 @app.task(name="aegis.ci_gate", bind=True, max_retries=0)
-def ci_gate(self, job_id: str) -> dict:
+def ci_gate(self, job_id: str) -> dict[str, Any]:
     from aegis.workers.bootstrap import task_context
     with task_context(job_id) as ctx:
         findings = ctx.run_state.load_findings()

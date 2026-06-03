@@ -10,13 +10,13 @@ emits via the bootstrap-supplied writer.
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 from aegis.workers.celery_app import app
 
 
 @app.task(name="aegis.fix_generate", bind=True, max_retries=2)
-def fix_generate(self, job_id: str) -> dict:
+def fix_generate(self, job_id: str) -> dict[str, Any]:
     from aegis.config import load_config
     from aegis.db.models import Finding, FixJobDetail, Job
     from aegis.schema import AegisFinding

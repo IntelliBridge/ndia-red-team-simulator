@@ -43,7 +43,7 @@ class VerifyResult:
     notes: str = ""
     verified_at: str = ""
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -394,6 +394,10 @@ def verify_finding(
     target is a source-mode container that was rebuilt — without it,
     image mode would falsely pass when validating a code patch.
     """
+    def _done(result: VerifyResult, after: dict[str, Any] | None = None) -> VerifyResult:
+        _persist(run_state, result, None, after)
+        return result
+
     proven, reason = runtime_proves_post_patch(
         run_state, require_source_rebuild=require_source_rebuild,
     )
@@ -403,8 +407,7 @@ def verify_finding(
             strategy="unknown", evidence={"provenance": reason},
             notes=reason, verified_at=_now_iso(),
         )
-        _persist(run_state, result, None, None)
-        return result
+        return _done(result)
 
     if finding.finding_type == "dast":
         parsed = parse_curl(finding.poc_script_code or "")
@@ -428,16 +431,14 @@ def verify_finding(
                 notes=f"DAST inconclusive ({dast_note}); SAST grep fallback used",
                 verified_at=_now_iso(),
             )
-            _persist(run_state, result, None, after)
-            return result
+            return _done(result, after=after)
 
         result = VerifyResult(
             finding_id=finding.id, status=dast_status, strategy="dast_poc",
             evidence={"poc": parsed, "after": after, "provenance": reason},
             notes=dast_note, verified_at=_now_iso(),
         )
-        _persist(run_state, result, None, after)
-        return result
+        return _done(result, after=after)
 
     if finding.finding_type in ("sast", "code"):
         if repo_path is None:
@@ -447,22 +448,19 @@ def verify_finding(
                 evidence={"reason": "repo_path required for SAST verification"},
                 verified_at=_now_iso(),
             )
-            _persist(run_state, result, None, None)
-            return result
+            return _done(result)
         status, evidence = classify_sast_remediation(finding, repo_path)
         result = VerifyResult(
             finding_id=finding.id, status=status, strategy="sast_grep",
             evidence={**evidence, "provenance": reason},
             verified_at=_now_iso(),
         )
-        _persist(run_state, result, None, None)
-        return result
+        return _done(result)
 
     if finding.finding_type == "dependency":
         result = _verify_dependency(finding, run_state=run_state, repo_path=repo_path,
                                     provenance=reason)
-        _persist(run_state, result, None, None)
-        return result
+        return _done(result)
 
     result = VerifyResult(
         finding_id=finding.id, status="inconclusive",
@@ -470,5 +468,4 @@ def verify_finding(
         evidence={"reason": f"no strategy for finding_type={finding.finding_type}"},
         verified_at=_now_iso(),
     )
-    _persist(run_state, result, None, None)
-    return result
+    return _done(result)

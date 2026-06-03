@@ -6,7 +6,7 @@ import json
 import re
 from collections import Counter
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aegis.schema import AegisFinding
 
@@ -231,7 +231,7 @@ def generate_markdown_report(run_state: RunStateAPI, findings: list[AegisFinding
 # JSON report
 # ---------------------------------------------------------------------------
 
-def generate_json_report(run_state: RunStateAPI, findings: list[AegisFinding]) -> dict:
+def generate_json_report(run_state: RunStateAPI, findings: list[AegisFinding]) -> dict[str, Any]:
     """Produce a structured JSON-serialisable report dict."""
     target = _resolve_target(findings)
     severity_counts = Counter(f.severity.lower() for f in findings)
@@ -288,7 +288,7 @@ def html_escape(s: str) -> str:
              .replace(">", "&gt;"))
 
 
-def inline(s: str) -> str:
+def render_inline_markdown(s: str) -> str:
     s = html_escape(s)
     # bold **x**
     s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
@@ -353,19 +353,19 @@ def _md_to_html_min(md: str) -> str:
             flush_table()
 
         if line.startswith("# "):
-            out.append(f"<h1>{inline(line[2:])}</h1>")
+            out.append(f"<h1>{render_inline_markdown(line[2:])}</h1>")
         elif line.startswith("## "):
-            out.append(f"<h2>{inline(line[3:])}</h2>")
+            out.append(f"<h2>{render_inline_markdown(line[3:])}</h2>")
         elif line.startswith("### "):
-            out.append(f"<h3>{inline(line[4:])}</h3>")
+            out.append(f"<h3>{render_inline_markdown(line[4:])}</h3>")
         elif line.startswith("#### "):
-            out.append(f"<h4>{inline(line[5:])}</h4>")
+            out.append(f"<h4>{render_inline_markdown(line[5:])}</h4>")
         elif line.strip() == "---":
             out.append("<hr/>")
         elif line.strip() == "":
             out.append("")
         else:
-            out.append(f"<p>{inline(line)}</p>")
+            out.append(f"<p>{render_inline_markdown(line)}</p>")
     if in_table:
         flush_table()
     if in_code:

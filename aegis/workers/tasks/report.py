@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from aegis.workers.celery_app import app
 
 
 @app.task(name="aegis.report_render", bind=True, max_retries=2)
-def report_render(self, job_id: str) -> dict:
+def report_render(self, job_id: str) -> dict[str, Any]:
     from aegis.schema import AegisFinding
     from aegis.services.reports import render_reports
     from aegis.workers.bootstrap import task_context

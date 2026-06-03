@@ -18,7 +18,10 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
 
 
 @dataclass
@@ -55,7 +58,7 @@ _BUNDLE: CAIBundle | None = None
 _KALI_MCP_AGENTS = ("bug_bounter_agent", "redteam_agent", "web_pentester_agent")
 
 
-def _attach_kali_mcp(agents: dict[str, Any], config) -> int:
+def _attach_kali_mcp(agents: dict[str, Any], config: AegisConfig) -> int:
     """Attach an SSE Kali MCP server to the active offensive specialists.
 
     Lets those agents call the live Kali tool belt at run time. Returns the
@@ -94,7 +97,7 @@ def _attach_kali_mcp(agents: dict[str, Any], config) -> int:
     return attached
 
 
-def load_cai_pattern(config, pattern_name: str):
+def load_cai_pattern(config: AegisConfig, pattern_name: str) -> Any | None:
     """Resolve a CAI multi-agent pattern by name, or ``None`` when unavailable.
 
     All ``from cai...`` imports stay funnelled through this loader so the rest
@@ -110,7 +113,7 @@ def load_cai_pattern(config, pattern_name: str):
         return None
 
 
-def resolve_cai_agent(config, agent_name: str):
+def resolve_cai_agent(config: AegisConfig, agent_name: str) -> Any | None:
     """Resolve a CAI agent by its registry name, or ``None`` when unavailable."""
     if load_cai(config) is None:
         return None
@@ -133,7 +136,7 @@ def _git_sha(repo: Path) -> str | None:
         return None
 
 
-def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
+def load_cai(config: AegisConfig, *, force_reload: bool = False) -> CAIBundle | None:
     """Inject ``<config.cai_path>/src`` onto sys.path once and import CAI.
 
     Returns the bundle, or ``None`` when CAI can't be imported (caller
@@ -165,25 +168,19 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
         from cai.agents.reverse_engineering_agent import reverse_engineering_agent
         from cai.agents.subghz_sdr_agent import subghz_sdr_agent
         from cai.agents.wifi_security_tester import wifi_security_agent
-        extended = {
-            "memory_analysis_agent": memory_analysis_agent,
-            "network_security_analyzer_agent": network_security_analyzer_agent,
-            "reverse_engineering_agent": reverse_engineering_agent,
-            "android_sast": android_sast,
-            "subghz_sdr_agent": subghz_sdr_agent,
-            "wifi_security_agent": wifi_security_agent,
-            "replay_attack_agent": replay_attack_agent,
-        }
     except ImportError:
-        extended = {
-            "memory_analysis_agent": None,
-            "network_security_analyzer_agent": None,
-            "reverse_engineering_agent": None,
-            "android_sast": None,
-            "subghz_sdr_agent": None,
-            "wifi_security_agent": None,
-            "replay_attack_agent": None,
-        }
+        android_sast = memory_analysis_agent = network_security_analyzer_agent = None
+        replay_attack_agent = reverse_engineering_agent = subghz_sdr_agent = None
+        wifi_security_agent = None
+    extended = {
+        "memory_analysis_agent": memory_analysis_agent,
+        "network_security_analyzer_agent": network_security_analyzer_agent,
+        "reverse_engineering_agent": reverse_engineering_agent,
+        "android_sast": android_sast,
+        "subghz_sdr_agent": subghz_sdr_agent,
+        "wifi_security_agent": wifi_security_agent,
+        "replay_attack_agent": replay_attack_agent,
+    }
 
     # The 6 specialist agents the one-pager names. Like ``extended``, a failure
     # importing one degrades the whole group to None rather than regressing the
@@ -195,23 +192,17 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
         from cai.agents.reporter import reporting_agent
         from cai.agents.retester import retester_agent
         from cai.agents.web_pentester import web_pentester_agent
-        specialists = {
-            "bug_bounter_agent": bug_bounter_agent,
-            "redteam_agent": redteam_agent,
-            "dfir_agent": dfir_agent,
-            "retester_agent": retester_agent,
-            "reporting_agent": reporting_agent,
-            "web_pentester_agent": web_pentester_agent,
-        }
     except ImportError:
-        specialists = {
-            "bug_bounter_agent": None,
-            "redteam_agent": None,
-            "dfir_agent": None,
-            "retester_agent": None,
-            "reporting_agent": None,
-            "web_pentester_agent": None,
-        }
+        bug_bounter_agent = redteam_agent = dfir_agent = None
+        retester_agent = reporting_agent = web_pentester_agent = None
+    specialists = {
+        "bug_bounter_agent": bug_bounter_agent,
+        "redteam_agent": redteam_agent,
+        "dfir_agent": dfir_agent,
+        "retester_agent": retester_agent,
+        "reporting_agent": reporting_agent,
+        "web_pentester_agent": web_pentester_agent,
+    }
 
     # Compose a read-only recon agent from CAI's safe reconnaissance tools.
     # Recon gets ONLY read/recon tools — never generic_linux_command/exec_code.

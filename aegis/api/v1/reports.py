@@ -5,7 +5,7 @@ of the F12 project-access gate. HTML responses carry the strict
 ``default-src 'none'`` policy from
 ``aegis.api.security_headers.REPORT_CSP``; JSON / Markdown responses
 land as downloads with nosniff. The renderer itself escapes every
-interpolation (see ``aegis.report.inline``), so an injected
+interpolation (see ``aegis.report.render_inline_markdown``), so an injected
 ``<script>…</script>`` payload in finding evidence is double-defended:
 escaped before write, and would be blocked at the browser by CSP if
 it ever reached the document.

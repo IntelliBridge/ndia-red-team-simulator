@@ -121,8 +121,8 @@ class BumblebeeAdapter:
 
     def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
-        cfg = load_config()
-        catalog_dir = Path(cfg.bumblebee_path) / "threat_intel"
+        config = load_config()
+        catalog_dir = Path(config.bumblebee_path) / "threat_intel"
         command = [
             "bumblebee", "scan",
             "--root", str(target),

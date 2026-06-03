@@ -67,7 +67,7 @@ _VERACODE_SEVERITY_MAP: dict[int, Severity] = {
 _DEFAULT_SEVERITY: Severity = "low"
 
 
-def _iso_now() -> str:
+def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -106,7 +106,7 @@ def ingest_snyk(data: dict) -> list[AegisFinding]:
     doc = _coerce_dict(data)
     if doc is None:
         return []
-    now = _iso_now()
+    now = _now_iso()
     findings: list[AegisFinding] = []
     for vuln in doc.get("vulnerabilities") or []:
         if not isinstance(vuln, dict):
@@ -171,7 +171,7 @@ def ingest_veracode(data: dict) -> list[AegisFinding]:
     doc = _coerce_dict(data)
     if doc is None:
         return []
-    now = _iso_now()
+    now = _now_iso()
     findings: list[AegisFinding] = []
     for item in _veracode_findings(doc):
         if not isinstance(item, dict):
@@ -232,7 +232,7 @@ def ingest_trivy(data: dict) -> list[AegisFinding]:
     doc = _coerce_dict(data)
     if doc is None:
         return []
-    now = _iso_now()
+    now = _now_iso()
     findings: list[AegisFinding] = []
     for result in doc.get("Results") or []:
         if not isinstance(result, dict):
@@ -285,7 +285,7 @@ def ingest_sarif(data: dict) -> list[AegisFinding]:
     doc = _coerce_dict(data)
     if doc is None:
         return []
-    now = _iso_now()
+    now = _now_iso()
     run_id = doc.get("_source_run_id", "ingest")
     findings: list[AegisFinding] = []
     for run in doc.get("runs") or []:

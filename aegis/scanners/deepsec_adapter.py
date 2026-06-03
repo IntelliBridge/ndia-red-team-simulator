@@ -180,11 +180,11 @@ class DeepsecAdapter:
     default_timeout = 1800
 
     def adapter_version(self) -> str:
-        cfg = load_config()
+        config = load_config()
         try:
             out = subprocess.run(
                 ["pnpm", "deepsec", "--version"],
-                cwd=str(cfg.deepsec_path), capture_output=True,
+                cwd=str(config.deepsec_path), capture_output=True,
                 text=True, timeout=10, check=False,
             )
             return (out.stdout or "").strip() or "unknown"
@@ -192,16 +192,16 @@ class DeepsecAdapter:
             return "unknown"
 
     def health_check(self) -> bool:
-        cfg = load_config()
-        return shutil.which("pnpm") is not None and Path(cfg.deepsec_path).exists()
+        config = load_config()
+        return shutil.which("pnpm") is not None and Path(config.deepsec_path).exists()
 
     def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
-        cfg = load_config()
+        config = load_config()
         target = options.target
-        deepsec_dir = str(cfg.deepsec_path)
+        deepsec_dir = str(config.deepsec_path)
         base = ["pnpm", "deepsec"]
         scan_cmd = base + ["scan", "--root", str(target)]
-        ai_on = bool(cfg.deepsec_ai_process and cfg.deepsec_budget_usd > 0 and _has_ai_key())
+        ai_on = bool(config.deepsec_ai_process and config.deepsec_budget_usd > 0 and _has_ai_key())
         process_cmd = base + ["process", "--root", str(target)] if ai_on else None
         export_cmd = base + ["export", "--format", "json"]
         command_str = " ".join(scan_cmd) + (

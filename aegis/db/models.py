@@ -117,7 +117,7 @@ class Job(Base):
 class FixJobDetail(TypedDict):
     """Shape of ``Job.detail`` for ``fix.generate`` jobs.
 
-    The admission service (``services.fixes.request_fix``) writes the
+    The admission service (``services.fixes.create_fix_job``) writes the
     required keys. The worker (``workers.tasks.fix``) additionally reads
     the ``NotRequired`` keys, which admission never sets — so they fall
     back to ``generate_fix`` defaults. Marking them ``NotRequired`` makes
@@ -138,7 +138,7 @@ class FixJobDetail(TypedDict):
 class VerifyJobDetail(TypedDict):
     """Shape of ``Job.detail`` for ``verify.replay`` jobs.
 
-    Admission (``services.verify.request_verify``) writes only
+    Admission (``services.verify.create_verify_job``) writes only
     ``finding_id``; the worker (``workers.tasks.verify``) also reads
     ``repo_path``, which is ``NotRequired`` because admission never sets
     it (the worker defaults to the cwd).

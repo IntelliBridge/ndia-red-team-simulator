@@ -26,6 +26,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from aegis.config import AegisConfig
 from aegis.remediate.cai_runner import run_code_fix
@@ -58,7 +59,7 @@ class DemoOutcome:
     run_path: str
     stages: list[StageOutcome] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
             "run_path": self.run_path,

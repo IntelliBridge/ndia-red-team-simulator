@@ -27,7 +27,7 @@ without a cycle.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 Effect = Literal["read", "active", "external"]
 
@@ -99,7 +99,7 @@ def build_action_plan(
     effect: Effect | str,
     target: str | None,
     intent: str,
-) -> dict:
+) -> dict[str, Any]:
     """A truthful, deterministic proposal for a gated action.
 
     No live agent runs to produce this — it states what *would* run, the

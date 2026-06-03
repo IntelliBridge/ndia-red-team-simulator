@@ -99,7 +99,7 @@ class GitHubClient:
                       head_sha=data["head"]["sha"], base_ref=data["base"]["ref"])
 
     def create_check_run(self, repo: str, *, head_sha: str, name: str,
-                         conclusion: str, output: dict[str, Any]) -> dict:
+                         conclusion: str, output: dict[str, Any]) -> dict[str, Any]:
         with httpx.Client(timeout=10) as client:
             resp = client.post(
                 f"{GITHUB_API}/repos/{repo}/check-runs",

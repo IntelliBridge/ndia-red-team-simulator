@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from aegis.workers.celery_app import app
 
@@ -27,7 +27,7 @@ _STATE_MAP = {
 
 
 @app.task(name="aegis.verify_replay", bind=True, max_retries=2)
-def verify_replay(self, job_id: str) -> dict:
+def verify_replay(self, job_id: str) -> dict[str, Any]:
     from aegis.config import load_config
     from aegis.db.models import Finding, Job, VerifyJobDetail
     from aegis.schema import AegisFinding

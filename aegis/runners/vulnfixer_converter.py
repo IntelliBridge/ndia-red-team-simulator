@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from aegis.schema import AegisFinding
 
@@ -56,7 +57,7 @@ def to_vulnfixer_vulnerability(finding: AegisFinding) -> ExportResult:
     )
 
 
-def export_findings(findings: list[AegisFinding], output_path: str | Path) -> dict:
+def export_findings(findings: list[AegisFinding], output_path: str | Path) -> dict[str, Any]:
     """Export routable findings to a JSON file for vulnerability-fixer.
 
     Returns a summary dict with counts of routable vs code-fix findings.

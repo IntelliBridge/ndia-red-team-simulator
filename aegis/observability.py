@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import uuid
 from contextvars import ContextVar
-from typing import Callable
+from typing import Any, Callable
 
 _REQUEST_ID: ContextVar[str | None] = ContextVar("aegis_request_id", default=None)
 
@@ -186,7 +186,7 @@ def _make_counters():
 _METRICS: dict | None = None
 
 
-def get_metrics() -> dict:
+def get_metrics() -> dict[str, Any]:
     """Return the metrics dict, building (and registering) it on first call.
 
     Memoized so the Counter/Gauge objects register into the process-global
