@@ -70,8 +70,8 @@ class ApiClient:
     def start_scan(self, *, target: str, project_id: str = "default",
                    scanner: str = "strix", instruction: str | None = None,
                    override_authorized: bool = False) -> dict[str, Any]:
-        body = {"target": target, "project_id": project_id,
-                "scanner": scanner}
+        body: dict[str, Any] = {"target": target, "project_id": project_id,
+                                "scanner": scanner}
         if instruction is not None:
             body["instruction"] = instruction
         if override_authorized:

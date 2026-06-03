@@ -36,7 +36,7 @@ from aegis.remediate.patch_workflow import (
 from aegis.runners.strix_converter import load_strix_events
 from aegis.safety import authorize
 from aegis.schema import AegisFinding
-from aegis.state import RunState
+from aegis.state import RunState, RunStateAPI
 from aegis.verify import verify_finding
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
@@ -70,7 +70,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _persist_stage_table(run_state: RunState, outcome: DemoOutcome) -> None:
+def _persist_stage_table(run_state: RunStateAPI, outcome: DemoOutcome) -> None:
     (run_state.run_path / "stage_table.json").write_text(
         json.dumps(outcome.to_dict(), indent=2)
     )
@@ -86,7 +86,7 @@ def _pick_canonical_finding(findings: list[AegisFinding]) -> AegisFinding | None
     return sorted(findings, key=lambda f: rank.get(f.severity.lower(), 9))[0]
 
 
-def _write_fixture_runtime(run_state: RunState, target_pack_name: str,
+def _write_fixture_runtime(run_state: RunStateAPI, target_pack_name: str,
                            repo_path: Path, *, last_rebuild_at: str | None = None) -> None:
     target_dir = run_state.run_path / "target"
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -102,31 +102,22 @@ def _write_fixture_runtime(run_state: RunState, target_pack_name: str,
     }, indent=2))
 
 
-def run_demo(
+def _start_target(
+    state: RunStateAPI,
     config: AegisConfig,
-    *,
+    outcome: DemoOutcome,
     repo_path: Path,
-    live_strix: bool = False,
-    live_llm: bool = False,
-    apply: bool = False,
-    use_golden_patch: bool | None = None,
-    keep_target: bool = False,
-    target_pack_name: str = DEFAULT_TARGET_PACK,
-) -> DemoOutcome:
-    """Run the full demo lifecycle.
+    *,
+    live_strix: bool,
+    live_llm: bool,
+    target_pack_name: str,
+) -> tuple[object | None, str, bool]:
+    """Stage 1: target.up (must precede a live scan).
 
-    Defaults are deliberately safe: ``live_strix=False``, ``live_llm=False``,
-    ``apply=False``. The patch is generated and persisted, but **the repo is
-    not mutated** unless ``apply=True`` is explicitly set. Use ``--apply`` at
-    the CLI to opt into branch/commit.
+    Returns ``(target_pack, target_url, ok)``. ``target_pack`` is ``None`` in
+    fixture mode. When ``ok`` is ``False`` the stage table has already been
+    persisted and ``run_demo`` should return ``outcome`` immediately.
     """
-    state = RunState(config.output_dir)
-    outcome = DemoOutcome(run_id=state.run_id, run_path=str(state.run_path))
-
-    if use_golden_patch is None:
-        use_golden_patch = not live_llm
-
-    # ---- Stage 1: target.up (must precede a live scan) -------------------
     target_pack = None
     target_url = "http://localhost:3000"  # placeholder; overwritten if live
     if live_strix or live_llm:
@@ -146,18 +137,28 @@ def run_demo(
             ))
             if not ready:
                 _persist_stage_table(state, outcome)
-                return outcome
+                return target_pack, target_url, False
         except Exception as e:
             outcome.stages.append(StageOutcome("target.up", "live", False, f"docker failed: {e}"))
             _persist_stage_table(state, outcome)
-            return outcome
+            return target_pack, target_url, False
     else:
         _write_fixture_runtime(state, target_pack_name, repo_path)
         outcome.stages.append(StageOutcome(
             "target.up", "fixture", True, "no container — fixture-assisted run",
         ))
+    return target_pack, target_url, True
 
-    # ---- Stage 2: discover ------------------------------------------------
+
+def _discover(
+    state: RunStateAPI,
+    config: AegisConfig,
+    outcome: DemoOutcome,
+    target_url: str,
+    *,
+    live_strix: bool,
+) -> list[AegisFinding]:
+    """Stage 2: discover — run Strix live or load recorded fixture events."""
     if live_strix:
         try:
             from aegis.runners.strix_runner import run_strix
@@ -181,10 +182,26 @@ def run_demo(
             "discover", "fixture", True,
             f"loaded {len(findings)} findings from {DEFAULT_FIXTURE_EVENTS.name}",
         ))
+    return findings
 
-    state.save_findings(findings)
 
-    # ---- Stage 3: remediate ----------------------------------------------
+def _remediate(
+    state: RunStateAPI,
+    config: AegisConfig,
+    outcome: DemoOutcome,
+    target_pack: object | None,
+    findings: list[AegisFinding],
+    repo_path: Path,
+    *,
+    apply: bool,
+    use_golden_patch: bool,
+    keep_target: bool,
+) -> DemoOutcome:
+    """Stage 3: remediate — produce the patch and either dry-run or commit it.
+
+    This is the terminal stage of ``run_demo``: every path returns the final
+    ``DemoOutcome``, either short-circuiting or handing off to ``_finalize``.
+    """
     canonical = _pick_canonical_finding(findings)
     if canonical is None:
         outcome.stages.append(StageOutcome("remediate", "skipped", False, "no findings"))
@@ -270,8 +287,53 @@ def run_demo(
     )
 
 
+def run_demo(
+    config: AegisConfig,
+    *,
+    repo_path: Path,
+    live_strix: bool = False,
+    live_llm: bool = False,
+    apply: bool = False,
+    use_golden_patch: bool | None = None,
+    keep_target: bool = False,
+    target_pack_name: str = DEFAULT_TARGET_PACK,
+) -> DemoOutcome:
+    """Run the full demo lifecycle.
+
+    Defaults are deliberately safe: ``live_strix=False``, ``live_llm=False``,
+    ``apply=False``. The patch is generated and persisted, but **the repo is
+    not mutated** unless ``apply=True`` is explicitly set. Use ``--apply`` at
+    the CLI to opt into branch/commit.
+    """
+    state = RunState(config.output_dir)
+    outcome = DemoOutcome(run_id=state.run_id, run_path=str(state.run_path))
+
+    if use_golden_patch is None:
+        use_golden_patch = not live_llm
+
+    # ---- Stage 1: target.up (must precede a live scan) -------------------
+    target_pack, target_url, ok = _start_target(
+        state, config, outcome, repo_path,
+        live_strix=live_strix, live_llm=live_llm, target_pack_name=target_pack_name,
+    )
+    if not ok:
+        return outcome
+
+    # ---- Stage 2: discover ------------------------------------------------
+    findings = _discover(
+        state, config, outcome, target_url, live_strix=live_strix,
+    )
+    state.save_findings(findings)
+
+    # ---- Stage 3: remediate (terminal: rebuild→verify→report→teardown) ---
+    return _remediate(
+        state, config, outcome, target_pack, findings, repo_path,
+        apply=apply, use_golden_patch=use_golden_patch, keep_target=keep_target,
+    )
+
+
 def _finalize(
-    state: RunState,
+    state: RunStateAPI,
     outcome: DemoOutcome,
     target_pack,
     canonical: AegisFinding,
