@@ -11,10 +11,10 @@ from aegis.config import AegisConfig
 from aegis.scanners import ScanOptions
 from aegis.scanners.deepsec_adapter import (
     DeepsecAdapter,
+    _canon_severity,
     _convert,
     _extract_json_array,
     _has_ai_key,
-    _normalize_severity,
 )
 from aegis.schema import AegisFinding
 from aegis.state import RunState
@@ -173,13 +173,13 @@ class TestExtractJsonArray(unittest.TestCase):
 
 
 class TestHelpers(unittest.TestCase):
-    def test_normalize_severity(self):
-        self.assertEqual(_normalize_severity("CRITICAL"), "critical")
-        self.assertEqual(_normalize_severity("high_bug"), "high")
-        self.assertEqual(_normalize_severity("HIGH_BUG"), "high")
-        self.assertEqual(_normalize_severity("Bug"), "low")
-        self.assertEqual(_normalize_severity("???"), "low")
-        self.assertEqual(_normalize_severity(""), "low")
+    def test_canon_severity(self):
+        self.assertEqual(_canon_severity("CRITICAL"), "critical")
+        self.assertEqual(_canon_severity("high_bug"), "high")
+        self.assertEqual(_canon_severity("HIGH_BUG"), "high")
+        self.assertEqual(_canon_severity("Bug"), "low")
+        self.assertEqual(_canon_severity("???"), "low")
+        self.assertEqual(_canon_severity(""), "low")
 
     def test_has_ai_key(self):
         with mock.patch.dict(os.environ, {}, clear=True):

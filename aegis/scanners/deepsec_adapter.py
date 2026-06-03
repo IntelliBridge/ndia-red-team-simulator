@@ -69,7 +69,7 @@ _TITLE_PREFIX = re.compile(r"^\[[^\]]*\]\s*")
 _AI_KEY_ENVS = ("AI_GATEWAY_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY")
 
 
-def _normalize_severity(value: str) -> Severity:
+def _canon_severity(value: str) -> Severity:
     return _SEVERITY_MAP.get((value or "").strip().upper(), "low")
 
 
@@ -115,7 +115,7 @@ def _convert(finding: dict, run_id: str) -> AegisFinding | None:
     if verdict in _DROP_VERDICTS:
         return None
 
-    severity = _normalize_severity(finding.get("severity") or meta.get("severity") or "")
+    severity = _canon_severity(finding.get("severity") or meta.get("severity") or "")
     file_path = meta.get("filePath")
     line_numbers = [n for n in (meta.get("lineNumbers") or []) if isinstance(n, int)]
     line0 = line_numbers[0] if line_numbers else None

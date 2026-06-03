@@ -43,7 +43,7 @@ _KNOWN_SEVERITIES: dict[str, Severity] = {
 }
 
 
-def _normalize_severity(value: str) -> Severity:
+def _canon_severity(value: str) -> Severity:
     """Lowercase and pass through known severities; everything else -> 'low'.
 
     bumblebee echoes the catalog entry's severity (e.g. "critical"/"high"), but
@@ -89,7 +89,7 @@ def _convert(record: dict, run_id: str) -> AegisFinding:
     return AegisFinding(
         id=finding_id,
         title=title,
-        severity=_normalize_severity(record.get("severity", "")),
+        severity=_canon_severity(record.get("severity", "")),
         finding_type="supply_chain",
         description=description,
         source_tool="bumblebee",

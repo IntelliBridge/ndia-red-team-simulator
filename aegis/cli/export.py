@@ -19,7 +19,7 @@ def cmd_export(args, config) -> None:
     if not findings:
         return
 
-    from aegis.runners.vulnfixer_adapter import export_findings
+    from aegis.runners.vulnfixer_converter import export_findings
 
     output_path = state.run_path / "vulnfixer-export.json"
     summary = export_findings(findings, output_path)

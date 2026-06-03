@@ -1,4 +1,4 @@
-"""Adapter to export AegisFindings to vulnerability-fixer format."""
+"""Convert AegisFindings to the vulnerability-fixer export format."""
 
 from __future__ import annotations
 

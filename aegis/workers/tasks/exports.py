@@ -7,7 +7,7 @@ from aegis.workers.celery_app import app
 
 @app.task(name="aegis.vulnfixer_render", bind=True, max_retries=1)
 def vulnfixer_render(self, job_id: str) -> dict:
-    from aegis.runners.vulnfixer_adapter import export_findings
+    from aegis.runners.vulnfixer_converter import export_findings
     from aegis.schema import AegisFinding
     from aegis.workers.bootstrap import task_context
 

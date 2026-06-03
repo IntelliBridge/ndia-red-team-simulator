@@ -66,7 +66,7 @@ class DemoOutcome:
         }
 
 
-def _now() -> str:
+def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
@@ -97,7 +97,7 @@ def _write_fixture_runtime(run_state: RunStateAPI, target_pack_name: str,
         "source_ref_before": "fixture-pre",
         "source_ref_after": "fixture-post" if last_rebuild_at else "fixture-pre",
         "built_image_digest": None,
-        "started_at": _now(), "ready_at": _now(),
+        "started_at": _now_iso(), "ready_at": _now_iso(),
         "last_rebuild_at": last_rebuild_at,
     }, indent=2))
 
@@ -363,7 +363,7 @@ def _finalize(
         # provenance check in verify can pass.
         target_dir = state.run_path / "target"
         runtime_data = json.loads((target_dir / "runtime.json").read_text())
-        runtime_data["last_rebuild_at"] = _now()
+        runtime_data["last_rebuild_at"] = _now_iso()
         runtime_data["source_ref_after"] = "fixture-post"
         (target_dir / "runtime.json").write_text(json.dumps(runtime_data, indent=2))
         outcome.stages.append(StageOutcome("rebuild", "fixture", True, "no container"))

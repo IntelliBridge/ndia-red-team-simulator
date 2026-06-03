@@ -660,7 +660,7 @@ class TestCmdExport(unittest.TestCase):
             summary = {
                 "total": 1, "routable_to_vulnfixer": 1, "requires_code_fix": 0,
             }
-            with patch("aegis.runners.vulnfixer_adapter.export_findings",
+            with patch("aegis.runners.vulnfixer_converter.export_findings",
                        return_value=summary) as mock_exp, \
                  patch("builtins.print"):
                 cmd_export(args, config)
@@ -672,7 +672,7 @@ class TestCmdExport(unittest.TestCase):
             state = RunState(tmp, "empty-run")
             state.save_findings([])
             args = Namespace(format="vulnfixer", run="empty-run")
-            with patch("aegis.runners.vulnfixer_adapter.export_findings") as mock_exp:
+            with patch("aegis.runners.vulnfixer_converter.export_findings") as mock_exp:
                 cmd_export(args, config)
                 mock_exp.assert_not_called()
 
@@ -1155,7 +1155,7 @@ class TestCmdPipeline(unittest.TestCase):
                  patch("aegis.cli.main.cmd_scan"), \
                  patch("aegis.state.FilesystemRunState.latest_run",
                        return_value=state), \
-                 patch("aegis.runners.vulnfixer_adapter.export_findings",
+                 patch("aegis.runners.vulnfixer_converter.export_findings",
                        return_value={"total": 1, "routable_to_vulnfixer": 1,
                                      "requires_code_fix": 0}), \
                  patch("aegis.services.reports.render_reports",
