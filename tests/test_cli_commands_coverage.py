@@ -1874,13 +1874,18 @@ class TestMainAdditionalBranches(unittest.TestCase):
                 self.assertGreater(mock_warn.call_count, 0)
 
     def test_fix_deps_refresh_returns_none_exits_1(self):
-        """Lines 412-414: when _refresh_deps_findings returns None, exit 1."""
+        """A deps re-scan that yields no dependency finding for the id exits 1.
+
+        Drives the real ``_refresh_deps_findings`` against a mocked Trivy run:
+        the seeded finding is ``dast`` (not ``dependency``), so the helper
+        returns None and ``cmd_fix`` exits 1.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             _seed_state(tmp)
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.cli.fix._refresh_deps_findings",
-                       return_value=None), \
+                 patch("aegis.runners.trivy_runner.run_trivy",
+                       return_value=MagicMock(success=True, findings=[])), \
                  self.assertRaises(SystemExit) as ctx:
                 cmd_fix(
                     Namespace(

@@ -7,6 +7,8 @@ and verify it routes through the audited KaliClient.run_tool plus
 re-validates the target against the allowlist.
 """
 
+import sys
+import types
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -20,13 +22,29 @@ def _passthrough(fn):
     return fn
 
 
+def _fake_cai_modules():
+    """A sys.modules overlay that makes the optional CAI import succeed.
+
+    ``_maybe_import_function_tool`` does ``from cai.sdk.agents import
+    function_tool``; injecting these parent packages plus an ``agents``
+    module exposing ``function_tool`` lets the real import resolve to our
+    passthrough decorator, so the wrappers build as plain functions.
+    """
+    agents = types.ModuleType("cai.sdk.agents")
+    agents.function_tool = _passthrough
+    return {
+        "cai": types.ModuleType("cai"),
+        "cai.sdk": types.ModuleType("cai.sdk"),
+        "cai.sdk.agents": agents,
+    }
+
+
 class TestKaliToolWrappers(unittest.TestCase):
     def _config(self):
         return AegisConfig(target_allowlist=["127.0.0.1", "localhost"])
 
     def _belt(self):
-        with patch("aegis.tools.cai_tools._maybe_import_function_tool",
-                   return_value=_passthrough):
+        with patch.dict(sys.modules, _fake_cai_modules()):
             return build_kali_toolbelt(self._config())
 
     def _tool(self, belt, name):

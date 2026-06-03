@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import time
@@ -108,6 +109,80 @@ def _write_runtime(state, *, mode="source", last_rebuild_at=None,
     (td / "runtime.json").write_text(json.dumps(data))
 
 
+def _completed(stdout="", returncode=0, args=None):
+    """Build the real subprocess.CompletedProcess that subprocess.run returns.
+
+    Used to patch the actual subprocess boundary (aegis.doctor.subprocess.run /
+    aegis.targets.subprocess.run) instead of the private wrappers that call it.
+    """
+    return subprocess.CompletedProcess(
+        args=args if args is not None else [], returncode=returncode,
+        stdout=stdout, stderr="",
+    )
+
+
+def _sqlalchemy_stub(*, connect_error=None):
+    """Build a fake ``sqlalchemy`` module for patching into sys.modules.
+
+    ``aegis.doctor._check_db`` does a local ``from sqlalchemy import
+    create_engine, text``; injecting this module exercises the real DB
+    boundary. ``connect_error`` makes ``engine.connect()`` raise to drive
+    the failure branch.
+    """
+    engine = MagicMock()
+    if connect_error is not None:
+        engine.connect.side_effect = connect_error
+    else:
+        conn = MagicMock()
+        conn.__enter__ = MagicMock(return_value=conn)
+        conn.__exit__ = MagicMock(return_value=False)
+        engine.connect.return_value = conn
+    return MagicMock(create_engine=MagicMock(return_value=engine),
+                     text=MagicMock(return_value="SELECT 1"))
+
+
+def _urlopen_response(status=200):
+    """Build a context-manager urlopen response with the given .status."""
+    resp = MagicMock()
+    resp.status = status
+    resp.__enter__ = MagicMock(return_value=resp)
+    resp.__exit__ = MagicMock(return_value=False)
+    return resp
+
+
+def _doctor_urlopen(*, oidc_status=200):
+    """side_effect for ``aegis.doctor.urlopen`` covering both call sites.
+
+    ``run_doctor`` hits urlopen twice: the MCP /health probe (must fail —
+    a warn, never required) and ``_check_oidc``'s well-known document.
+    Route by URL so one patch drives both real boundary calls.
+    """
+    def _opener(url, *args, **kwargs):
+        if "openid-configuration" in url:
+            return _urlopen_response(oidc_status)
+        raise OSError("no mcp")
+    return _opener
+
+
+def _passthrough_function_tool(fn):
+    """Identity decorator standing in for cai.sdk.agents.function_tool."""
+    return fn
+
+
+def _cai_present_modules(function_tool=_passthrough_function_tool):
+    """sys.modules entries that make the real optional CAI import succeed.
+
+    ``aegis.tools.cai_tools._maybe_import_function_tool`` runs
+    ``from cai.sdk.agents import function_tool``; the parent packages must
+    resolve too, so inject all three levels.
+    """
+    return {
+        "cai": MagicMock(),
+        "cai.sdk": MagicMock(),
+        "cai.sdk.agents": MagicMock(function_tool=function_tool),
+    }
+
+
 # ===========================================================================
 # aegis/integrations/github_app.py
 # ===========================================================================
@@ -120,9 +195,31 @@ class TestGitHubClientInstallationToken(unittest.TestCase):
         from aegis.integrations.github_app import GitHubClient
         return GitHubClient(app_id="app-42", installation_id=99)
 
+    @contextmanager
     def _mock_jwt(self):
-        return patch("aegis.integrations.github_app._app_jwt",
-                     return_value="jwt-token-abc")
+        """Drive the real _app_jwt signing boundary instead of replacing it.
+
+        _app_jwt does ``from authlib.jose import jwt`` then
+        ``jwt.encode(...).decode("ascii")`` over the PEM that
+        _load_private_key reads from disk. Inject a fake authlib.jose
+        (encode -> bytes) and a real temp PEM via the env var so the
+        wrapper runs end to end. Yields the encode mock so callers can
+        assert the signing path was (not) taken — e.g. the cache short-
+        circuit, where _app_jwt is never reached and encode stays uncalled.
+        """
+        jwt_encode = MagicMock(return_value=b"jwt-token-abc")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as f:
+            f.write(b"fake-key")
+            key_path = f.name
+        try:
+            with patch.dict("sys.modules",
+                            {"authlib": MagicMock(),
+                             "authlib.jose": MagicMock(jwt=MagicMock(encode=jwt_encode))}), \
+                 patch.dict("os.environ",
+                            {"AEGIS_GITHUB_APP_PRIVATE_KEY_PATH": key_path}):
+                yield jwt_encode
+        finally:
+            Path(key_path).unlink(missing_ok=True)
 
     def _mock_resp(self, payload: dict, status: int = 200):
         """Return a mock httpx.Response."""
@@ -802,8 +899,9 @@ class TestBuildKaliToolbelt(unittest.TestCase):
     def test_returns_empty_tools_when_cai_not_installed(self):
         """When function_tool is unavailable (no CAI), tools list is empty."""
         from aegis.tools.cai_tools import build_kali_toolbelt
-        with patch("aegis.tools.cai_tools._maybe_import_function_tool",
-                   return_value=None):
+        # None in sys.modules makes `from cai.sdk.agents import ...` raise
+        # ImportError, exactly as when CAI isn't installed.
+        with patch.dict("sys.modules", {"cai.sdk.agents": None}):
             belt = build_kali_toolbelt(self._config())
         self.assertEqual(belt.tools, [])
         self.assertIsNotNone(belt.client)
@@ -812,12 +910,7 @@ class TestBuildKaliToolbelt(unittest.TestCase):
         """When function_tool exists, all 10 Kali wrappers are registered."""
         from aegis.tools.cai_tools import build_kali_toolbelt
 
-        # function_tool is a pass-through decorator for testing
-        def _passthrough(fn):
-            return fn
-
-        with patch("aegis.tools.cai_tools._maybe_import_function_tool",
-                   return_value=_passthrough):
+        with patch.dict("sys.modules", _cai_present_modules()):
             belt = build_kali_toolbelt(self._config())
 
         self.assertEqual(len(belt.tools), 10)
@@ -825,8 +918,7 @@ class TestBuildKaliToolbelt(unittest.TestCase):
     def test_client_constructed_with_config_url(self):
         from aegis.tools.cai_tools import build_kali_toolbelt
         cfg = self._config()
-        with patch("aegis.tools.cai_tools._maybe_import_function_tool",
-                   return_value=None):
+        with patch.dict("sys.modules", {"cai.sdk.agents": None}):
             belt = build_kali_toolbelt(cfg)
         self.assertEqual(belt.client.base_url, "http://127.0.0.1:5000")
 
@@ -835,8 +927,7 @@ class TestBuildKaliToolbelt(unittest.TestCase):
         from aegis.tools.cai_tools import build_kali_toolbelt
         with tempfile.TemporaryDirectory() as td:
             mock_writer = MagicMock()
-            with patch("aegis.tools.cai_tools._maybe_import_function_tool",
-                       return_value=None), \
+            with patch.dict("sys.modules", {"cai.sdk.agents": None}), \
                  patch("aegis.audit.chain.JsonlAuditWriter",
                        return_value=mock_writer):
                 belt = build_kali_toolbelt(
@@ -849,8 +940,7 @@ class TestBuildKaliToolbelt(unittest.TestCase):
         from aegis.tools.cai_tools import build_kali_toolbelt
         my_writer = MagicMock()
         with tempfile.TemporaryDirectory() as td, \
-             patch("aegis.tools.cai_tools._maybe_import_function_tool",
-                   return_value=None), \
+             patch.dict("sys.modules", {"cai.sdk.agents": None}), \
              patch("aegis.audit.chain.JsonlAuditWriter") as mock_cls:
             belt = build_kali_toolbelt(
                 self._config(),
@@ -864,11 +954,7 @@ class TestBuildKaliToolbelt(unittest.TestCase):
         from aegis.safety import AuthorizationError
         from aegis.tools.cai_tools import build_kali_toolbelt
 
-        def _passthrough(fn):
-            return fn
-
-        with patch("aegis.tools.cai_tools._maybe_import_function_tool",
-                   return_value=_passthrough):
+        with patch.dict("sys.modules", _cai_present_modules()):
             belt = build_kali_toolbelt(self._config())
 
         nmap_fn = next(t for t in belt.tools if t.__name__ == "nmap_scan")
@@ -880,11 +966,7 @@ class TestBuildKaliToolbelt(unittest.TestCase):
         from aegis.tools.cai_tools import build_kali_toolbelt
         from aegis.tools.kali_client import ToolResult
 
-        def _passthrough(fn):
-            return fn
-
-        with patch("aegis.tools.cai_tools._maybe_import_function_tool",
-                   return_value=_passthrough):
+        with patch.dict("sys.modules", _cai_present_modules()):
             belt = build_kali_toolbelt(self._config())
 
         mock_result = ToolResult(success=True, stdout="nmap ok", stderr="", return_code=0)
@@ -898,11 +980,7 @@ class TestBuildKaliToolbelt(unittest.TestCase):
         from aegis.tools.cai_tools import build_kali_toolbelt
         from aegis.tools.kali_client import ToolResult
 
-        def _passthrough(fn):
-            return fn
-
-        with patch("aegis.tools.cai_tools._maybe_import_function_tool",
-                   return_value=_passthrough):
+        with patch.dict("sys.modules", _cai_present_modules()):
             belt = build_kali_toolbelt(self._config())
 
         mock_result = ToolResult(success=True, stdout="nikto ok", stderr="", return_code=0)
@@ -916,11 +994,7 @@ class TestBuildKaliToolbelt(unittest.TestCase):
         from aegis.tools.cai_tools import build_kali_toolbelt
         from aegis.tools.kali_client import ToolResult
 
-        def _passthrough(fn):
-            return fn
-
-        with patch("aegis.tools.cai_tools._maybe_import_function_tool",
-                   return_value=_passthrough):
+        with patch.dict("sys.modules", _cai_present_modules()):
             belt = build_kali_toolbelt(self._config())
 
         mock_result = ToolResult(success=True, stdout="sqlmap ok", stderr="", return_code=0)
@@ -956,17 +1030,24 @@ class TestDoctorRunDoctor(unittest.TestCase):
 
     def _base_patches(self, *, docker=True, mcp_fail=True, env=None):
         """Return common patch/dict combos as a context manager stack."""
-        docker_ret = "Docker version 25.0.1" if docker else None
+        # docker present -> subprocess.run yields a 0-rc version line;
+        # docker missing -> the binary isn't found (FileNotFoundError).
+        run_patch = (
+            patch("aegis.doctor.subprocess.run",
+                  return_value=_completed("Docker version 25.0.1"))
+            if docker else
+            patch("aegis.doctor.subprocess.run", side_effect=FileNotFoundError)
+        )
         env = env or {}
         return (
-            patch("aegis.doctor._cmd_version", return_value=docker_ret),
+            run_patch,
             patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")),
             patch.dict("os.environ", env, clear=True),
         )
 
     def test_all_checks_pass(self):
         cfg = self._config("gemini/gemini-2.5-flash")
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
              patch.dict("os.environ", {"GOOGLE_API_KEY": "key"}, clear=True):
             ok = run_doctor_with_captured_output(cfg)
@@ -974,7 +1055,7 @@ class TestDoctorRunDoctor(unittest.TestCase):
 
     def test_docker_missing_fails(self):
         cfg = self._config("gemini/gemini-2.5-flash")
-        with patch("aegis.doctor._cmd_version", return_value=None), \
+        with patch("aegis.doctor.subprocess.run", side_effect=FileNotFoundError), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
              patch.dict("os.environ", {"GOOGLE_API_KEY": "key"}, clear=True):
             ok = run_doctor_with_captured_output(cfg)
@@ -988,7 +1069,7 @@ class TestDoctorRunDoctor(unittest.TestCase):
             model="gemini/gemini-2.5-flash",
             output_dir="/tmp",
         )
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
              patch.dict("os.environ", {"GOOGLE_API_KEY": "key"}, clear=True):
             ok = run_doctor_with_captured_output(cfg)
@@ -1002,7 +1083,7 @@ class TestDoctorRunDoctor(unittest.TestCase):
             model="gemini/gemini-2.5-flash",
             output_dir="/tmp",
         )
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
              patch.dict("os.environ", {"GOOGLE_API_KEY": "key"}, clear=True):
             ok = run_doctor_with_captured_output(cfg)
@@ -1010,7 +1091,7 @@ class TestDoctorRunDoctor(unittest.TestCase):
 
     def test_unknown_provider_warns_not_fails(self):
         cfg = self._config("llama/llama-3-70b")
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
              patch.dict("os.environ", {}, clear=True):
             # Should pass (unknown provider doesn't block)
@@ -1019,7 +1100,7 @@ class TestDoctorRunDoctor(unittest.TestCase):
 
     def test_github_token_present_passes_that_check(self):
         cfg = self._config("gemini/gemini-2.5-flash")
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
              patch.dict("os.environ", {"GOOGLE_API_KEY": "k", "GITHUB_TOKEN": "gh"}, clear=True):
             ok = run_doctor_with_captured_output(cfg)
@@ -1027,7 +1108,7 @@ class TestDoctorRunDoctor(unittest.TestCase):
 
     def test_api_mode_no_db_url_fails(self):
         cfg = self._config("gemini/gemini-2.5-flash")
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
              patch.dict("os.environ", {"GOOGLE_API_KEY": "k"}, clear=True):
             from aegis.doctor import run_doctor
@@ -1045,9 +1126,9 @@ class TestDoctorRunDoctor(unittest.TestCase):
                 "AEGIS_BLOB_BACKEND": "fs",
                 "AEGIS_BLOB_FS_PATH": str(blob_path),
             }
-            with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+            with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
                  patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
-                 patch("aegis.doctor._check_db", return_value=(True, "ok")), \
+                 patch.dict("sys.modules", {"sqlalchemy": _sqlalchemy_stub()}), \
                  patch.dict("os.environ", env, clear=True):
                 from aegis.doctor import run_doctor
                 ok = run_doctor(cfg, api_mode=True)
@@ -1060,10 +1141,10 @@ class TestDoctorRunDoctor(unittest.TestCase):
             "AEGIS_DB_URL": "postgresql://localhost/test",
             "AEGIS_BLOB_BACKEND": "s3",
         }
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
-             patch("aegis.doctor._check_db", return_value=(True, "ok")), \
-             patch("aegis.doctor._check_blob_backend", return_value=(True, "s3 ok")), \
+             patch.dict("sys.modules", {"sqlalchemy": _sqlalchemy_stub(),
+                                        "boto3": MagicMock()}), \
              patch.dict("os.environ", env, clear=True):
             from aegis.doctor import run_doctor
             ok = run_doctor(cfg, api_mode=True)
@@ -1078,11 +1159,9 @@ class TestDoctorRunDoctor(unittest.TestCase):
             "AEGIS_BLOB_FS_PATH": "/tmp",
             "AEGIS_OIDC_ISSUER": "https://accounts.example.com",
         }
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
-             patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
-             patch("aegis.doctor._check_db", return_value=(True, "ok")), \
-             patch("aegis.doctor._check_blob_backend", return_value=(True, "fs ok")), \
-             patch("aegis.doctor._check_oidc", return_value=(True, "200 ok")), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
+             patch("aegis.doctor.urlopen", side_effect=_doctor_urlopen(oidc_status=200)), \
+             patch.dict("sys.modules", {"sqlalchemy": _sqlalchemy_stub()}), \
              patch.dict("os.environ", env, clear=True):
             from aegis.doctor import run_doctor
             ok = run_doctor(cfg, api_mode=True)
@@ -1091,7 +1170,7 @@ class TestDoctorRunDoctor(unittest.TestCase):
     def test_provider_override_wins(self):
         """provider_override keyword bypasses model-string detection."""
         cfg = self._config("anthropic/claude-3")
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
              patch.dict("os.environ", {"OPENAI_API_KEY": "k"}, clear=True):
             from aegis.doctor import run_doctor
@@ -1105,7 +1184,7 @@ class TestDoctorRunDoctor(unittest.TestCase):
         mock_resp.status = 200
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", return_value=mock_resp), \
              patch.dict("os.environ", {"GOOGLE_API_KEY": "k"}, clear=True):
             from aegis.doctor import run_doctor
@@ -1775,16 +1854,17 @@ class TestObservabilityCorrelationIds(unittest.TestCase):
     def test_inject_handles_otel_exception(self):
         """Even if OTel raises, the processor returns the dict."""
         from aegis.observability import _inject_correlation_ids, set_request_id
+        # No request id in scope (public API) → request_id branch is skipped;
+        # the assertion is purely on the observable returned dict.
         set_request_id(None)
         event = {"event": "x"}
-        with patch("aegis.observability._REQUEST_ID"):
-            # Force an exception in the OTel block
-            try:
-                import opentelemetry.trace as _ot
-                with patch.object(_ot, "get_current_span", side_effect=RuntimeError):
-                    result = _inject_correlation_ids(None, None, event)
-            except ImportError:
+        # Force an exception in the OTel block
+        try:
+            import opentelemetry.trace as _ot
+            with patch.object(_ot, "get_current_span", side_effect=RuntimeError):
                 result = _inject_correlation_ids(None, None, event)
+        except ImportError:
+            result = _inject_correlation_ids(None, None, event)
         self.assertIn("event", result)
 
 
@@ -1932,8 +2012,8 @@ class TestTargetPackMethods(unittest.TestCase):
     def test_up_calls_docker_run(self):
         with tempfile.TemporaryDirectory() as td:
             pack = self._juice(run_path=Path(td))
-            with patch("aegis.targets._run") as mock_run:
-                mock_run.return_value = MagicMock(stdout="container-id-123\n")
+            with patch("aegis.targets.subprocess.run") as mock_run:
+                mock_run.return_value = _completed(stdout="container-id-123\n")
                 pack.up(image_tag="bkimminich/juice-shop:v17.3.0")
         mock_run.assert_called()
         calls_str = str(mock_run.call_args_list)
@@ -1943,7 +2023,7 @@ class TestTargetPackMethods(unittest.TestCase):
         from aegis.targets import TargetPack
         pack = TargetPack()  # base class has no image
         with self.assertRaises(ValueError):
-            with patch("aegis.targets._run"):
+            with patch("aegis.targets.subprocess.run"):
                 pack.up()
 
     def test_up_from_repo_nonexistent_raises(self):
@@ -1955,8 +2035,8 @@ class TestTargetPackMethods(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td, \
              tempfile.TemporaryDirectory() as repo_td:
             pack = self._juice(run_path=Path(td))
-            with patch("aegis.targets._run") as mock_run:
-                mock_run.return_value = MagicMock(stdout="cid\n")
+            with patch("aegis.targets.subprocess.run") as mock_run:
+                mock_run.return_value = _completed(stdout="cid\n")
                 pack.up_from_repo(repo_td)
         calls_str = str(mock_run.call_args_list)
         self.assertIn("build", calls_str)
@@ -1973,23 +2053,23 @@ class TestTargetPackMethods(unittest.TestCase):
             pack = self._juice(run_path=Path(td))
             pack.runtime.mode = "source"
             pack.runtime.image_tag = "aegis-juice-shop:local"
-            with patch("aegis.targets._run") as mock_run:
-                mock_run.return_value = MagicMock(stdout="new-cid\n")
+            with patch("aegis.targets.subprocess.run") as mock_run:
+                mock_run.return_value = _completed(stdout="new-cid\n")
                 pack.rebuild(repo_td)
         self.assertIsNotNone(pack.runtime.last_rebuild_at)
 
     def test_restart_calls_docker_restart(self):
         pack = self._juice()
-        with patch("aegis.targets._run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="")
+        with patch("aegis.targets.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout="")
             pack.restart()
         mock_run.assert_called_once()
         self.assertIn("restart", str(mock_run.call_args))
 
     def test_down_calls_docker_rm(self):
         pack = self._juice()
-        with patch("aegis.targets._run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="")
+        with patch("aegis.targets.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout="")
             pack.down()
         self.assertIn("rm", str(mock_run.call_args))
 
@@ -2029,10 +2109,10 @@ class TestTargetPackMethods(unittest.TestCase):
         self.assertTrue(result)
 
     def test_git_head_returns_none_on_error(self):
-        import subprocess
-
         from aegis.targets import _git_head
-        with patch("aegis.targets._run",
+        # A non-zero `git` exit surfaces as CalledProcessError from the
+        # check=True subprocess.run call inside _run.
+        with patch("aegis.targets.subprocess.run",
                    side_effect=subprocess.CalledProcessError(1, "git")):
             result = _git_head(Path("/tmp"))
         self.assertIsNone(result)
@@ -2060,9 +2140,10 @@ class TestTargetPackMethods(unittest.TestCase):
             pack._cleanup_silent()
 
     def test_image_digest_returns_none_on_error(self):
-        import subprocess
         pack = self._juice()
-        with patch("aegis.targets._run",
+        # `docker image inspect` exiting non-zero surfaces as
+        # CalledProcessError from the check=True subprocess.run in _run.
+        with patch("aegis.targets.subprocess.run",
                    side_effect=subprocess.CalledProcessError(1, "docker")):
             result = pack._image_digest("someimage")
         self.assertIsNone(result)
@@ -2234,51 +2315,56 @@ class TestCAILoaderBundleFields(unittest.TestCase):
 class TestAppJwt(unittest.TestCase):
     def test_app_jwt_encodes_rs256(self):
         """_app_jwt calls jwt.encode with RS256 header and correct payload."""
+        import aegis.integrations.github_app as ghm
         mock_jwt = MagicMock()
         mock_jwt.encode.return_value = b"fake.jwt.token"
 
-        with patch("aegis.integrations.github_app._load_private_key",
-                   return_value=b"fake-key"), \
-             patch.dict("sys.modules", {"authlib.jose": MagicMock(jwt=mock_jwt)}):
-            # Re-import to pick up the patched sys.modules
-            import aegis.integrations.github_app as ghm
-
-            def patched_jwt_func(app_id: str) -> str:
-                now = int(__import__("time").time())
-                header = {"alg": "RS256"}
-                payload = {"iat": now - 60, "exp": now + 540, "iss": app_id}
-                mock_jwt.encode(header, payload, b"fake-key")
-                return "fake.jwt.token"
-
-            with patch.object(ghm, "_app_jwt", side_effect=patched_jwt_func):
+        # Drive the real signing boundary (authlib.jose.jwt via sys.modules)
+        # and the real PEM read (env var -> temp file) rather than patching
+        # the private _load_private_key / _app_jwt symbols.
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as f:
+            f.write(b"fake-key")
+            key_path = f.name
+        try:
+            with patch.dict("sys.modules", {"authlib": MagicMock(),
+                                            "authlib.jose": MagicMock(jwt=mock_jwt)}), \
+                 patch.dict("os.environ",
+                            {"AEGIS_GITHUB_APP_PRIVATE_KEY_PATH": key_path}):
                 result = ghm._app_jwt("app-123")
+        finally:
+            Path(key_path).unlink(missing_ok=True)
 
         self.assertIsNotNone(result)
+        header, payload, key = mock_jwt.encode.call_args[0]
+        self.assertEqual(header, {"alg": "RS256"})
+        self.assertEqual(payload["iss"], "app-123")
+        self.assertEqual(key, b"fake-key")
 
     def test_app_jwt_with_mocked_authlib(self):
         """Cover the jwt.encode call in _app_jwt by mocking authlib.jose.jwt."""
+        import aegis.integrations.github_app as ghm
         fake_jose_jwt = MagicMock()
         fake_jose_jwt.encode.return_value = b"encoded.jwt.bytes"
         fake_authlib_jose = MagicMock(jwt=fake_jose_jwt)
 
-        # Patch at the import site
-        with patch.dict("sys.modules", {
-            "authlib": MagicMock(),
-            "authlib.jose": fake_authlib_jose,
-        }), patch("aegis.integrations.github_app._load_private_key",
-                  return_value=b"rsa-key-bytes"):
-            # Need to reload the module or directly call with the patched import
-            # Temporarily replace the function to call our patched jwt
-            import time as _time
-            now = int(_time.time())
-            result = fake_jose_jwt.encode(
-                {"alg": "RS256"},
-                {"iat": now - 60, "exp": now + 540, "iss": "app-1"},
-                b"rsa-key-bytes",
-            ).decode("ascii")
+        # Call the real _app_jwt: it reads the PEM from disk and signs via the
+        # injected authlib.jose.jwt, then .decode("ascii")s the result.
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as f:
+            f.write(b"rsa-key-bytes")
+            key_path = f.name
+        try:
+            with patch.dict("sys.modules", {
+                "authlib": MagicMock(),
+                "authlib.jose": fake_authlib_jose,
+            }), patch.dict("os.environ",
+                           {"AEGIS_GITHUB_APP_PRIVATE_KEY_PATH": key_path}):
+                result = ghm._app_jwt("app-1")
+        finally:
+            Path(key_path).unlink(missing_ok=True)
 
         self.assertEqual(result, "encoded.jwt.bytes")
         fake_jose_jwt.encode.assert_called_once()
+        self.assertEqual(fake_jose_jwt.encode.call_args[0][2], b"rsa-key-bytes")
 
 
 # ===========================================================================
@@ -2366,7 +2452,9 @@ class TestConfigureOtelWithEndpoint(unittest.TestCase):
 
     def test_inject_correlation_ids_with_valid_otel_span(self):
         """When OTel span is active and valid, injects trace/span ids."""
-        from aegis.observability import set_request_id
+        from aegis.observability import _inject_correlation_ids, set_request_id
+        # No request id in scope, set via the public API rather than touching
+        # the ContextVar; trace/span ids come from the real OTel boundary.
         set_request_id(None)
 
         fake_ctx = MagicMock()
@@ -2381,29 +2469,12 @@ class TestConfigureOtelWithEndpoint(unittest.TestCase):
         fake_trace.get_current_span.return_value = fake_span
 
         event = {"event": "test_event"}
+        # _inject_correlation_ids does `from opentelemetry import trace`
+        # internally; inject a fake opentelemetry exposing an active span so
+        # the real processor walks its trace/span-id branch.
         with patch.dict("sys.modules", {"opentelemetry": MagicMock(trace=fake_trace),
                                          "opentelemetry.trace": fake_trace}):
-            # Since _inject_correlation_ids does `from opentelemetry import trace`
-            # inside the function, patch at the right level
-            with patch("aegis.observability._REQUEST_ID") as mock_rv:
-                mock_rv.get.return_value = None
-                # Simulate OTel being available by patching the import inside fn
-                import aegis.observability as obsm
-
-                def patched_inject(logger, method, event_dict):
-                    try:
-                        ctx = fake_ctx
-                        if ctx and ctx.is_valid:
-                            if "trace_id" not in event_dict:
-                                event_dict["trace_id"] = format(ctx.trace_id, "032x")
-                            if "span_id" not in event_dict:
-                                event_dict["span_id"] = format(ctx.span_id, "016x")
-                    except Exception:
-                        pass
-                    return event_dict
-
-                with patch.object(obsm, "_inject_correlation_ids", patched_inject):
-                    result = obsm._inject_correlation_ids(None, None, event)
+            result = _inject_correlation_ids(None, None, event)
 
         self.assertIn("trace_id", result)
         self.assertIn("span_id", result)
@@ -2495,11 +2566,9 @@ class TestDoctorAdditionalBranches(unittest.TestCase):
             "AEGIS_BLOB_FS_PATH": "/tmp",
             "AEGIS_OIDC_ISSUER": "https://auth.example.com",
         }
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
-             patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
-             patch("aegis.doctor._check_db", return_value=(True, "ok")), \
-             patch("aegis.doctor._check_blob_backend", return_value=(True, "fs ok")), \
-             patch("aegis.doctor._check_oidc", return_value=(False, "404")), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
+             patch("aegis.doctor.urlopen", side_effect=_doctor_urlopen(oidc_status=404)), \
+             patch.dict("sys.modules", {"sqlalchemy": _sqlalchemy_stub()}), \
              patch("builtins.print"), \
              patch.dict("os.environ", env, clear=True):
             # OIDC warn doesn't fail the run
@@ -2526,10 +2595,9 @@ class TestDoctorAdditionalBranches(unittest.TestCase):
             "AEGIS_BLOB_BACKEND": "fs",
             "AEGIS_BLOB_FS_PATH": "/tmp",
         }
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
-             patch("aegis.doctor._check_db", return_value=(True, "ok")), \
-             patch("aegis.doctor._check_blob_backend", return_value=(True, "fs ok")), \
+             patch.dict("sys.modules", {"sqlalchemy": _sqlalchemy_stub()}), \
              patch("builtins.print"), \
              patch.dict("os.environ", env, clear=True):
             ok = run_doctor(cfg, api_mode=True)
@@ -3030,7 +3098,7 @@ class TestDoctorRemainingGaps(unittest.TestCase):
         fake_ver.__ge__ = MagicMock(return_value=False)
 
         with patch("aegis.doctor.sys") as mock_sys, \
-             patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+             patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
              patch("builtins.print"), \
              patch.dict("os.environ", {"GOOGLE_API_KEY": "k"}, clear=True):
@@ -3045,7 +3113,7 @@ class TestDoctorRemainingGaps(unittest.TestCase):
         fake_config = AegisConfig(strix_path="/tmp", cai_path="/tmp",
                                   model="gemini/gemini-2.5-flash", output_dir="/tmp")
         with patch("aegis.doctor.load_config", return_value=fake_config), \
-             patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+             patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
              patch("builtins.print"), \
              patch.dict("os.environ", {"GOOGLE_API_KEY": "k"}, clear=True):
@@ -3059,7 +3127,7 @@ class TestDoctorRemainingGaps(unittest.TestCase):
         fake_ver.minor = 11
         fake_ver.micro = 5
         fake_ver.__ge__ = MagicMock(return_value=False)  # 3.11 < 3.12
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
              patch("aegis.doctor.sys") as mock_sys, \
              patch("builtins.print"), \
@@ -3085,7 +3153,7 @@ class TestDoctorRemainingGaps(unittest.TestCase):
         from aegis.doctor import run_doctor
         cfg = AegisConfig(strix_path="/tmp", cai_path="/tmp",
                           model="openai/gpt-4o", output_dir="/tmp")
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
              patch("builtins.print"), \
              patch.dict("os.environ", {}, clear=True):
@@ -3098,17 +3166,22 @@ class TestDoctorRemainingGaps(unittest.TestCase):
         from aegis.doctor import run_doctor
         cfg = AegisConfig(strix_path="/tmp", cai_path="/tmp",
                           model="gemini/gemini-2.5-flash", output_dir="/tmp")
-        env = {
-            "GOOGLE_API_KEY": "k",
-            "AEGIS_DB_URL": "postgresql://bad/db",
-        }
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
-             patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
-             patch("aegis.doctor._check_db", return_value=(False, "connection refused")), \
-             patch("aegis.doctor._check_blob_backend", return_value=(True, "ok")), \
-             patch("builtins.print"), \
-             patch.dict("os.environ", env, clear=True):
-            ok = run_doctor(cfg, api_mode=True)
+        # DB boundary raises (engine.connect fails); blob points at a real
+        # writable temp dir so only the DB check fails the run.
+        bad_db = _sqlalchemy_stub(connect_error=OSError("connection refused"))
+        with tempfile.TemporaryDirectory() as blob_td:
+            env = {
+                "GOOGLE_API_KEY": "k",
+                "AEGIS_DB_URL": "postgresql://bad/db",
+                "AEGIS_BLOB_BACKEND": "fs",
+                "AEGIS_BLOB_FS_PATH": blob_td,
+            }
+            with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
+                 patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
+                 patch.dict("sys.modules", {"sqlalchemy": bad_db}), \
+                 patch("builtins.print"), \
+                 patch.dict("os.environ", env, clear=True):
+                ok = run_doctor(cfg, api_mode=True)
         self.assertFalse(ok)
 
     def test_api_mode_blob_fails(self):
@@ -3120,11 +3193,11 @@ class TestDoctorRemainingGaps(unittest.TestCase):
         env = {
             "GOOGLE_API_KEY": "k",
             "AEGIS_DB_URL": "postgresql://ok/db",
-            "AEGIS_BLOB_BACKEND": "gcs",  # unknown backend
+            "AEGIS_BLOB_BACKEND": "gcs",  # unknown backend → real check fails
         }
-        with patch("aegis.doctor._cmd_version", return_value="Docker 25"), \
+        with patch("aegis.doctor.subprocess.run", return_value=_completed("Docker 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")), \
-             patch("aegis.doctor._check_db", return_value=(True, "ok")), \
+             patch.dict("sys.modules", {"sqlalchemy": _sqlalchemy_stub()}), \
              patch("builtins.print"), \
              patch.dict("os.environ", env, clear=True):
             ok = run_doctor(cfg, api_mode=True)
@@ -3383,36 +3456,33 @@ class TestDemoFinalizeLine295(unittest.TestCase):
 class TestGitHubAppJwt(unittest.TestCase):
     def test_app_jwt_calls_jwt_encode_with_rs256(self):
         """Lines 43-47: _app_jwt body coverage via mocked authlib.jose.jwt."""
-        # We must inject the mock BEFORE calling _app_jwt, since it does
-        # `from authlib.jose import jwt` inside the function.
+        # _app_jwt does `from authlib.jose import jwt` and reads the PEM via
+        # _load_private_key -> Path(...).read_bytes(). Drive both real
+        # boundaries: inject authlib.jose into sys.modules and point the
+        # env var at a real key file.
+        from aegis.integrations import github_app as ghm
         fake_jwt_mod = MagicMock()
         fake_jwt_mod.encode.return_value = b"header.payload.signature"
 
-        saved_authlib_jose = sys.modules.get("authlib.jose")
-        saved_authlib = sys.modules.get("authlib")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as f:
+            f.write(b"rsa-key")
+            key_path = f.name
         try:
-            sys.modules["authlib"] = MagicMock()
-            sys.modules["authlib.jose"] = MagicMock(jwt=fake_jwt_mod)
-
-            from aegis.integrations import github_app as ghm
-            with patch.object(ghm, "_load_private_key", return_value=b"rsa-key"):
+            with patch.dict("sys.modules", {"authlib": MagicMock(),
+                                            "authlib.jose": MagicMock(jwt=fake_jwt_mod)}), \
+                 patch.dict("os.environ",
+                            {"AEGIS_GITHUB_APP_PRIVATE_KEY_PATH": key_path}):
                 result = ghm._app_jwt("my-app-123")
-
         finally:
-            if saved_authlib_jose is None:
-                sys.modules.pop("authlib.jose", None)
-            else:
-                sys.modules["authlib.jose"] = saved_authlib_jose
-            if saved_authlib is None:
-                sys.modules.pop("authlib", None)
-            else:
-                sys.modules["authlib"] = saved_authlib
+            Path(key_path).unlink(missing_ok=True)
 
         fake_jwt_mod.encode.assert_called_once()
         call_args = fake_jwt_mod.encode.call_args[0]
         self.assertEqual(call_args[0], {"alg": "RS256"})
         self.assertIn("iss", call_args[1])
         self.assertEqual(call_args[1]["iss"], "my-app-123")
+        # The PEM bytes read from disk are forwarded as the signing key.
+        self.assertEqual(call_args[2], b"rsa-key")
         self.assertEqual(result, "header.payload.signature")
 
 

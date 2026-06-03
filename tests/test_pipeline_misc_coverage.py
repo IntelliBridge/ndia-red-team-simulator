@@ -454,10 +454,10 @@ class TestRefBefore(unittest.TestCase):
 
 class TestIsRepoDirtyCalledProcessError(unittest.TestCase):
     def test_called_process_error_returns_true(self):
-        """is_repo_dirty returns True when CalledProcessError is raised by _git."""
+        """is_repo_dirty returns True when git status fails (CalledProcessError)."""
         from aegis.remediate.patch_workflow import is_repo_dirty
         with tempfile.TemporaryDirectory() as tmp, \
-             patch("aegis.remediate.patch_workflow._git",
+             patch("aegis.remediate.patch_workflow.subprocess.run",
                    side_effect=subprocess.CalledProcessError(1, ["git"])):
             result = is_repo_dirty(Path(tmp))
         self.assertTrue(result)
@@ -584,8 +584,9 @@ class TestCommitPatchNoHead(unittest.TestCase):
         finding = _make_finding()
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            # patch _ref_before to return None (no HEAD)
-            with patch("aegis.remediate.patch_workflow._ref_before", return_value=None):
+            # rev-parse HEAD fails on a repo with no HEAD → _ref_before is None
+            with patch("aegis.remediate.patch_workflow.subprocess.run",
+                       side_effect=subprocess.CalledProcessError(128, ["git"])):
                 result = commit_patch(repo, finding, "--- a/f\n+++ b/f\n")
         self.assertFalse(result.success)
         self.assertIn("no HEAD", result.error or "")
@@ -595,58 +596,40 @@ class TestCommitPatchNoHead(unittest.TestCase):
         from aegis.remediate.patch_workflow import commit_patch
         finding = _make_finding()
 
-        # Simulate the full sequence of _git calls for a successful commit
-        call_count = {"n": 0}
-
-        def fake_git(repo, args, **kwargs):
-            call_count["n"] += 1
-            result = MagicMock()
-            result.returncode = 0
-            result.stdout = "deadbeef123\n" if "rev-parse" in args else ""
-            result.stderr = ""
-            return result
+        # Mock the subprocess boundary so the real _git/_ref_before chain runs;
+        # every git invocation succeeds (rev-parse yields a hash).
+        def fake_run(argv, **kwargs):
+            stdout = "deadbeef123\n" if "rev-parse" in argv else ""
+            return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
 
         with tempfile.TemporaryDirectory() as tmp, \
-             patch("aegis.remediate.patch_workflow._git", side_effect=fake_git), \
+             patch("aegis.remediate.patch_workflow.subprocess.run",
+                   side_effect=fake_run) as mock_run, \
              patch("aegis.remediate.patch_workflow.is_repo_dirty", return_value=False):
             # diff without trailing newline — should be normalized
             commit_patch(Path(tmp), finding, "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-o\n+n")
-        # The _git calls were made (normalization happened without error)
-        self.assertGreater(call_count["n"], 0)
+        # The git calls were made (normalization happened without error)
+        self.assertGreater(mock_run.call_count, 0)
 
     def test_checkout_failure_returns_error_without_rollback(self):
         """When checkout -B fails, return error CommitResult (branch_created=False so no branch to delete)."""
         from aegis.remediate.patch_workflow import commit_patch
         finding = _make_finding()
 
-        call_count = {"n": 0}
-
-        def fake_git(repo, args, **kwargs):
-            call_count["n"] += 1
-            result = MagicMock()
-            if "checkout" in args and "-B" in args:
-                result.returncode = 1
-                result.stdout = ""
-                result.stderr = "fatal: checkout failed"
-            elif "rev-parse" in args and "HEAD" in args and "--abbrev-ref" not in args:
-                result.returncode = 0
-                result.stdout = "abc123\n"
-            elif "--abbrev-ref" in args:
-                result.returncode = 0
-                result.stdout = "main\n"
-            elif "status" in args:
-                result.returncode = 0
-                result.stdout = ""  # clean
-            else:
-                result.returncode = 0
-                result.stdout = ""
-            result.stderr = result.stderr if hasattr(result, "_stderr_set") else ""
-            return result
+        def fake_run(argv, **kwargs):
+            if "checkout" in argv and "-B" in argv:
+                return subprocess.CompletedProcess(
+                    argv, 1, stdout="", stderr="fatal: checkout failed")
+            if "rev-parse" in argv and "HEAD" in argv and "--abbrev-ref" not in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout="abc123\n", stderr="")
+            if "--abbrev-ref" in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout="main\n", stderr="")
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
         with tempfile.TemporaryDirectory() as tmp, \
-             patch("aegis.remediate.patch_workflow._git", side_effect=fake_git), \
-             patch("aegis.remediate.patch_workflow.is_repo_dirty", return_value=False), \
-             patch("aegis.remediate.patch_workflow._ref_before", return_value="abc123"):
+             patch("aegis.remediate.patch_workflow.subprocess.run",
+                   side_effect=fake_run), \
+             patch("aegis.remediate.patch_workflow.is_repo_dirty", return_value=False):
             result = commit_patch(Path(tmp), finding, "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-o\n+n\n")
         self.assertFalse(result.success)
         # Error should mention checkout
@@ -659,56 +642,29 @@ class TestCommitPatchNoHead(unittest.TestCase):
 
         git_calls = []
 
-        def fake_git(repo, args, **kwargs):
-            git_calls.append(list(args))
-            result = MagicMock()
-            result.returncode = 0
-            result.stdout = "abc123\n"
-            result.stderr = ""
-            if "checkout" in args and "-B" in args:
-                # checkout succeeds
-                pass
-            elif "apply" in args and "--check" in args:
-                # dry-run check fails → triggers rollback
-                result.returncode = 1
-                result.stderr = "patch does not apply"
-            return result
+        def fake_run(argv, **kwargs):
+            git_calls.append(list(argv))
+            if "--abbrev-ref" in argv:
+                # Simulate detached HEAD so rollback takes the --detach path.
+                return subprocess.CompletedProcess(argv, 0, stdout="HEAD\n", stderr="")
+            if "checkout" in argv and "-B" in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+            if "apply" in argv and "--check" in argv:
+                # Force rollback by failing the dry-run check.
+                return subprocess.CompletedProcess(
+                    argv, 1, stdout="", stderr="apply check failed")
+            if "checkout" in argv and "--detach" in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+            if "branch" in argv and "-D" in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+            # rev-parse HEAD (via _ref_before) and any other call.
+            return subprocess.CompletedProcess(argv, 0, stdout="abc123\n", stderr="")
 
         with tempfile.TemporaryDirectory() as tmp, \
-             patch("aegis.remediate.patch_workflow._git", side_effect=fake_git), \
-             patch("aegis.remediate.patch_workflow.is_repo_dirty", return_value=False), \
-             patch("aegis.remediate.patch_workflow._ref_before", return_value="abc123"):
-            # Simulate detached HEAD: initial_branch_run.stdout = "HEAD\n"
-            # We need abbrev-ref to return "HEAD"
-            call_idx = {"n": 0}
-
-            def fake_git_detached(repo, args, **kwargs):
-                call_idx["n"] += 1
-                git_calls.append(list(args))
-                result = MagicMock()
-                result.returncode = 0
-                result.stderr = ""
-                if "--abbrev-ref" in args:
-                    result.stdout = "HEAD\n"  # detached HEAD
-                elif "checkout" in args and "-B" in args:
-                    result.returncode = 0
-                    result.stdout = ""
-                elif "apply" in args and "--check" in args:
-                    # Force rollback by failing the check
-                    result.returncode = 1
-                    result.stderr = "apply check failed"
-                elif "checkout" in args and "--detach" in args:
-                    result.stdout = ""  # rollback detach
-                elif "branch" in args and "-D" in args:
-                    result.stdout = ""
-                else:
-                    result.stdout = "abc123\n"
-                return result
-
-            with patch("aegis.remediate.patch_workflow._git", side_effect=fake_git_detached), \
-                 patch("aegis.remediate.patch_workflow.is_repo_dirty", return_value=False), \
-                 patch("aegis.remediate.patch_workflow._ref_before", return_value="abc123"):
-                result = commit_patch(Path(tmp), finding, "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-o\n+n\n")
+             patch("aegis.remediate.patch_workflow.subprocess.run",
+                   side_effect=fake_run), \
+             patch("aegis.remediate.patch_workflow.is_repo_dirty", return_value=False):
+            result = commit_patch(Path(tmp), finding, "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-o\n+n\n")
 
         self.assertFalse(result.success)
         # Verify --detach was called (rollback took the detached-HEAD path)
@@ -1180,7 +1136,8 @@ class TestLogIngestWriterFlush(unittest.TestCase):
         )
 
     def test_flush_with_session_factory_calls_insert(self):
-        """flush() calls _insert when session_factory is configured."""
+        """flush() drains the queue through the real _insert when a session
+        factory is configured, writing one row object per queued record."""
         from aegis.log_ingest.writer import LogIngestWriter
         inserted = []
 
@@ -1197,14 +1154,18 @@ class TestLogIngestWriterFlush(unittest.TestCase):
         def fake_factory():
             return FakeSession()
 
-        with patch("aegis.log_ingest.writer.LogIngestWriter._insert") as mock_insert:
-            mock_insert.return_value = 2
+        # The real external boundary _insert touches is aegis.db.models.ApplicationLog.
+        fake_log_cls = MagicMock(side_effect=lambda **kw: MagicMock())
+        with patch.dict(sys.modules, {
+            "aegis.db.models": MagicMock(ApplicationLog=fake_log_cls)
+        }):
             writer = LogIngestWriter(session_factory=fake_factory)
             writer.append(self._make_row("a"))
             writer.append(self._make_row("b"))
             n = writer.flush()
         self.assertEqual(n, 2)
         self.assertEqual(writer.inserted_total, 2)
+        self.assertEqual(len(inserted), 2)
 
     def test_flush_empty_queue_is_noop(self):
         """flush() with empty queue returns 0 immediately."""
@@ -1263,10 +1224,11 @@ class TestLogIngestWriterFlush(unittest.TestCase):
         self.assertEqual(row.attrs, {"_truncated": True})
 
     def test_insert_uses_session_factory(self):
-        """_insert is called when flush() drains the queue with a session_factory set.
+        """flush() drains the queue through the session factory when one is set.
 
-        We patch _insert directly so we don't need real DB models, and force
-        a flush call explicitly (bypass the _should_flush heuristic).
+        We mock the DB model boundary (aegis.db.models.ApplicationLog) instead
+        of the private _insert, and force a flush explicitly (bypass the
+        _should_flush heuristic), then assert the row landed via the session.
         """
         from aegis.log_ingest.writer import LogIngestRow, LogIngestWriter
 
@@ -1281,9 +1243,12 @@ class TestLogIngestWriterFlush(unittest.TestCase):
             ts=datetime.now(timezone.utc),
             severity="info", service="svc", message="hi",
         ))
-        with patch.object(writer, "_insert", return_value=1) as mock_ins:
+        with patch.dict(sys.modules, {
+            "aegis.db.models": MagicMock(ApplicationLog=MagicMock())
+        }):
             result = writer.flush()
-        mock_ins.assert_called_once()
+        mock_sess.add_all.assert_called_once()
+        mock_sess.commit.assert_called_once()
         self.assertEqual(result, 1)
         self.assertEqual(writer.inserted_total, 1)
 
