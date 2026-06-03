@@ -35,16 +35,17 @@ def verify_replay(self, job_id: str) -> dict:
 
     config = load_config()
     with task_context(job_id) as ctx:
-        sess = ctx.run_state.session
+        sess = ctx.session
         job = sess.get(Job, job_id)
-        finding_row = sess.get(Finding, (job.detail or {}).get("finding_id"))
+        detail = (job.detail if job else {}) or {}
+        finding_row = sess.get(Finding, detail.get("finding_id"))
         if finding_row is None:
             raise RuntimeError("finding missing")
         finding = AegisFinding.from_dict(finding_row.schema_blob)
         outcome = verify(
             run_state=ctx.run_state, finding=finding,
-            repo_path=Path((job.detail or {}).get("repo_path") or ".")
-            if (job.detail or {}).get("repo_path") else None,
+            repo_path=Path(detail.get("repo_path") or ".")
+            if detail.get("repo_path") else None,
             actor=ctx.actor, config=config,
         )
 

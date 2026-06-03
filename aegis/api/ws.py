@@ -134,6 +134,7 @@ async def _enforce_upgrade_policy(websocket: WebSocket, run_id: str) -> bool:
         await websocket.close(code=1008, reason="auth required")
         return False
 
+    from aegis.api.policy import has_project_access
     from aegis.db.models import Run
     from aegis.db.session import get_session
     with get_session() as sess:
@@ -142,7 +143,7 @@ async def _enforce_upgrade_policy(websocket: WebSocket, run_id: str) -> bool:
             await websocket.close(code=1008, reason="run not found")
             return False
         project_id = run.project_id
-    if not user.is_system and project_id not in user.project_memberships:
+    if not has_project_access(user, project_id):
         await websocket.close(code=1008, reason="no project membership")
         return False
     return True
@@ -181,7 +182,7 @@ async def _redis_pubsub_iter(channel: str):
 
 
 @router.websocket("/{run_id}/events")
-async def events_ws(websocket: WebSocket, run_id: str):
+async def events_ws(websocket: WebSocket, run_id: str) -> None:
     if not await _enforce_upgrade_policy(websocket, run_id):
         return
 

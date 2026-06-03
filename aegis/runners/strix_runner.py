@@ -29,11 +29,13 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import TYPE_CHECKING, Callable, Iterable
 
 from aegis.runners.strix_converter import convert_strix_finding
 from aegis.schema import AegisFinding
-from aegis.state import RunState
+
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
 
 
 @dataclass
@@ -128,32 +130,27 @@ def tail_events(
     findings: list[AegisFinding] = []
     seen_ids: set[str] = set()
     position = 0
-    while True:
+
+    def _drain(pos: int) -> int:
         if events_path.exists():
             with open(events_path) as fh:
-                fh.seek(position)
+                fh.seek(pos)
                 new_lines = fh.readlines()
-                position = fh.tell()
+                pos = fh.tell()
             if new_lines:
                 batch = parse_events_lines(new_lines, run_id, seen_ids)
                 findings.extend(batch)
                 if on_finding:
                     for f in batch:
                         on_finding(f)
+        return pos
+
+    while True:
+        position = _drain(position)
         if is_done():
             # Drain a couple more times in case the producer flushed late.
             for _ in range(final_drain_passes):
-                if events_path.exists():
-                    with open(events_path) as fh:
-                        fh.seek(position)
-                        new_lines = fh.readlines()
-                        position = fh.tell()
-                    if new_lines:
-                        batch = parse_events_lines(new_lines, run_id, seen_ids)
-                        findings.extend(batch)
-                        if on_finding:
-                            for f in batch:
-                                on_finding(f)
+                position = _drain(position)
             return findings
         time.sleep(interval)
 
@@ -193,7 +190,7 @@ def docker_available() -> bool:
 
 def run_strix(
     target: str,
-    run_state: RunState,
+    run_state: RunStateAPI,
     *,
     instruction: str | None = None,
     timeout: int = 1800,

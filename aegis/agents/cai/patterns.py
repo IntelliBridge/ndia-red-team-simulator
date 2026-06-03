@@ -13,8 +13,15 @@ human gate (see :mod:`aegis.effects`) applies: a pattern dispatched without
 
 from __future__ import annotations
 
-from aegis.agents.registry import AgentContext, AgentResult, register
+from aegis.agents.registry import (
+    AgentContext,
+    AgentResult,
+    Domain,
+    FunctionAgentAdapter,
+    register,
+)
 from aegis.config import load_config
+from aegis.effects import Effect
 from aegis.integrations.cai_loader import (
     load_cai,
     load_cai_pattern,
@@ -85,27 +92,20 @@ def _invoke_pattern(cai_pattern_name: str, prompt: str, context: AgentContext) -
         )
 
 
-def _pattern_adapter(name: str, domain: str, effect: str, cai_pattern_name: str):
-    class _Pattern:
-        pass
-
-    adapter = _Pattern()
-    adapter.name = name
-    adapter.domain = domain
-    adapter.effect = effect
-    adapter.wired = True
-
-    def invoke(self, prompt: str, context: AgentContext) -> AgentResult:
+def _pattern_adapter(name: str, domain: Domain, effect: Effect,
+                     cai_pattern_name: str) -> FunctionAgentAdapter:
+    def invoke(prompt: str, context: AgentContext) -> AgentResult:
         return _invoke_pattern(cai_pattern_name, prompt, context)
 
-    _Pattern.invoke = invoke
-    return adapter
+    return FunctionAgentAdapter(
+        name=name, domain=domain, effect=effect, wired=True, fn=invoke,
+    )
 
 
 # All three are offensive composites → active effect → human-gated. The first
 # column is the Aegis registry name; the last is the CAI pattern name resolved
 # via ``get_pattern``.
-_PATTERNS = [
+_PATTERNS: list[tuple[str, Domain, Effect, str]] = [
     ("offsec_pattern", "offensive", "active", "offsec_pattern"),
     ("redteam_swarm", "offensive", "active", "redteam_swarm_pattern"),
     ("bb_triage_swarm", "offensive", "active", "bb_triage_swarm_pattern"),

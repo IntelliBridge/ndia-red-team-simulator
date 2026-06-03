@@ -7,11 +7,18 @@ the Run + Job DB rows and revoking the Celery task.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from aegis.config import AegisConfig
 from aegis.safety import authorize
+
+if TYPE_CHECKING:
+    from aegis.audit.chain import AuditWriter
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -26,7 +33,7 @@ def cancel_run(
     run_id: str,
     actor: str,
     config: AegisConfig,
-    audit_writer,
+    audit_writer: AuditWriter,
 ) -> CancelOutcome:
     """Admission boundary for ``run.cancel``.
 
@@ -57,6 +64,8 @@ def cancel_run(
     now = datetime.now(timezone.utc)
     with get_session() as sess:
         run = sess.get(Run, run_id)
+        if run is None:
+            raise LookupError(f"run not found: {run_id}")
         run.status = "cancelled"
         run.completed_at = now
         jobs = sess.execute(
@@ -71,7 +80,10 @@ def cancel_run(
                     from aegis.workers.celery_app import app
                     app.control.revoke(j.celery_task_id, terminate=True)
                 except Exception:
-                    pass
+                    # Broker unreachable: status flip stands; the worker
+                    # short-circuits on its next heartbeat (F11).
+                    logger.warning("celery revoke failed for task %s",
+                                   j.celery_task_id, exc_info=True)
         cancelled_count = len(jobs)
 
     return CancelOutcome(run_id=run_id, status="cancelled",

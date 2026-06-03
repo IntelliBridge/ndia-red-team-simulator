@@ -72,7 +72,7 @@ def _attach_kali_mcp(agents: dict[str, Any], config) -> int:
     if not url:
         return 0
     try:
-        from cai.sdk.agents.mcp import MCPServerSse  # type: ignore
+        from cai.sdk.agents.mcp import MCPServerSse
     except Exception:
         return 0
     try:
@@ -103,7 +103,7 @@ def load_cai_pattern(config, pattern_name: str):
     if load_cai(config) is None:
         return None
     try:
-        from cai.agents.patterns import get_pattern  # type: ignore
+        from cai.agents.patterns import get_pattern
 
         return get_pattern(pattern_name)
     except Exception:
@@ -115,7 +115,7 @@ def resolve_cai_agent(config, agent_name: str):
     if load_cai(config) is None:
         return None
     try:
-        from cai.agents import get_agent_by_name  # type: ignore
+        from cai.agents import get_agent_by_name
 
         return get_agent_by_name(agent_name)
     except Exception:
@@ -149,22 +149,22 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
         sys.path.insert(0, str(cai_src))
 
     try:
-        from cai.agents.blue_teamer import blueteam_agent  # type: ignore
-        from cai.agents.codeagent import codeagent  # type: ignore
-        from cai.sdk.agents import Runner  # type: ignore
+        from cai.agents.blue_teamer import blueteam_agent
+        from cai.agents.codeagent import codeagent
+        from cai.sdk.agents import Runner
     except ImportError:
         return None
 
     # Extended agents degrade to None independently: a failure importing one
     # NEW agent must not regress the working codeagent/blueteam path above.
     try:
-        from cai.agents.android_sast_agent import android_sast  # type: ignore
-        from cai.agents.memory_analysis_agent import memory_analysis_agent  # type: ignore
-        from cai.agents.network_traffic_analyzer import network_security_analyzer_agent  # type: ignore
-        from cai.agents.replay_attack_agent import replay_attack_agent  # type: ignore
-        from cai.agents.reverse_engineering_agent import reverse_engineering_agent  # type: ignore
-        from cai.agents.subghz_sdr_agent import subghz_sdr_agent  # type: ignore
-        from cai.agents.wifi_security_tester import wifi_security_agent  # type: ignore
+        from cai.agents.android_sast_agent import android_sast
+        from cai.agents.memory_analysis_agent import memory_analysis_agent
+        from cai.agents.network_traffic_analyzer import network_security_analyzer_agent
+        from cai.agents.replay_attack_agent import replay_attack_agent
+        from cai.agents.reverse_engineering_agent import reverse_engineering_agent
+        from cai.agents.subghz_sdr_agent import subghz_sdr_agent
+        from cai.agents.wifi_security_tester import wifi_security_agent
         extended = {
             "memory_analysis_agent": memory_analysis_agent,
             "network_security_analyzer_agent": network_security_analyzer_agent,
@@ -189,12 +189,12 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
     # importing one degrades the whole group to None rather than regressing the
     # core codeagent/blueteam path above.
     try:
-        from cai.agents.bug_bounter import bug_bounter_agent  # type: ignore
-        from cai.agents.dfir import dfir_agent  # type: ignore
-        from cai.agents.red_teamer import redteam_agent  # type: ignore
-        from cai.agents.reporter import reporting_agent  # type: ignore
-        from cai.agents.retester import retester_agent  # type: ignore
-        from cai.agents.web_pentester import web_pentester_agent  # type: ignore
+        from cai.agents.bug_bounter import bug_bounter_agent
+        from cai.agents.dfir import dfir_agent
+        from cai.agents.red_teamer import redteam_agent
+        from cai.agents.reporter import reporting_agent
+        from cai.agents.retester import retester_agent
+        from cai.agents.web_pentester import web_pentester_agent
         specialists = {
             "bug_bounter_agent": bug_bounter_agent,
             "redteam_agent": redteam_agent,
@@ -218,16 +218,16 @@ def load_cai(config, *, force_reload: bool = False) -> CAIBundle | None:
     # Broad except: AsyncOpenAI() raises without a key, so offline this degrades
     # to None (the registry tolerates an unavailable recon agent).
     try:
-        from cai.sdk.agents import Agent, OpenAIChatCompletionsModel  # type: ignore
-        from cai.tools.reconnaissance.curl import curl  # type: ignore
-        from cai.tools.reconnaissance.netcat import netcat  # type: ignore
-        from cai.tools.reconnaissance.netstat import netstat  # type: ignore
-        from cai.tools.reconnaissance.nmap import nmap  # type: ignore
-        from cai.tools.reconnaissance.shodan import (  # type: ignore
+        from cai.sdk.agents import Agent, OpenAIChatCompletionsModel
+        from cai.tools.reconnaissance.curl import curl
+        from cai.tools.reconnaissance.netcat import netcat
+        from cai.tools.reconnaissance.netstat import netstat
+        from cai.tools.reconnaissance.nmap import nmap
+        from cai.tools.reconnaissance.shodan import (
             shodan_host_info,
             shodan_search,
         )
-        from openai import AsyncOpenAI  # type: ignore
+        from openai import AsyncOpenAI
 
         recon_agent = Agent(
             name="Recon",

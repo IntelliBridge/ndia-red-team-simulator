@@ -23,9 +23,9 @@ def agent_run(self, job_id: str) -> dict:
 
     config = load_config()
     with task_context(job_id) as ctx:
-        job = ctx.run_state.session.get(Job, job_id)
+        job = ctx.session.get(Job, job_id)
         detail = (job.detail if job else {}) or {}
-        agent_name = detail.get("agent")
+        agent_name = detail["agent"]
         prompt = detail.get("prompt", "")
         target = detail.get("target")
         execute = bool(detail.get("execute", False))

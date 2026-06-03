@@ -72,7 +72,7 @@ def _ctx_factory(
     ctx.actor = actor
 
     sess = MagicMock()
-    ctx.run_state.session = sess
+    ctx.session = sess
     ctx.run_state.load_findings.return_value = findings or []
 
     # By default, session.get returns a job whose detail is job_detail.
@@ -104,11 +104,11 @@ class TestBootstrapTaskContext(unittest.TestCase):
         # Use real __enter__/__exit__ via patch.multiple approach
         patches = [
             patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.blobs.open_blob_store"),
+            patch("aegis.storage.open_blob_store"),
             patch("aegis.config.load_config"),
             patch("aegis.db.session.get_session"),
             patch("aegis.db.session.init_engine"),
-            patch("aegis.state_pg.PostgresRunState"),
+            patch("aegis.state.PostgresRunState"),
         ]
         env = {"AEGIS_DB_URL": db_url} if db_url else {}
         return patches, env
@@ -145,11 +145,11 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
         patches_list = [
             patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.blobs.open_blob_store"),
+            patch("aegis.storage.open_blob_store"),
             patch("aegis.config.load_config"),
             patch("aegis.db.session.get_session"),
             patch("aegis.db.session.init_engine"),
-            patch("aegis.state_pg.PostgresRunState"),
+            patch("aegis.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -194,11 +194,11 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
         patches_list = [
             patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.blobs.open_blob_store"),
+            patch("aegis.storage.open_blob_store"),
             patch("aegis.config.load_config"),
             patch("aegis.db.session.get_session"),
             patch("aegis.db.session.init_engine"),
-            patch("aegis.state_pg.PostgresRunState"),
+            patch("aegis.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -234,11 +234,11 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
         patches_list = [
             patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.blobs.open_blob_store"),
+            patch("aegis.storage.open_blob_store"),
             patch("aegis.config.load_config"),
             patch("aegis.db.session.get_session"),
             patch("aegis.db.session.init_engine"),
-            patch("aegis.state_pg.PostgresRunState"),
+            patch("aegis.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -267,11 +267,11 @@ class TestBootstrapTaskContext(unittest.TestCase):
     def test_missing_job_raises_runtime_error(self):
         patches_list = [
             patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.blobs.open_blob_store"),
+            patch("aegis.storage.open_blob_store"),
             patch("aegis.config.load_config"),
             patch("aegis.db.session.get_session"),
             patch("aegis.db.session.init_engine"),
-            patch("aegis.state_pg.PostgresRunState"),
+            patch("aegis.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -307,11 +307,11 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
         patches_list = [
             patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.blobs.open_blob_store"),
+            patch("aegis.storage.open_blob_store"),
             patch("aegis.config.load_config"),
             patch("aegis.db.session.get_session"),
             patch("aegis.db.session.init_engine"),
-            patch("aegis.state_pg.PostgresRunState"),
+            patch("aegis.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -352,11 +352,11 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
         patches_list = [
             patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.blobs.open_blob_store"),
+            patch("aegis.storage.open_blob_store"),
             patch("aegis.config.load_config"),
             patch("aegis.db.session.get_session"),
             patch("aegis.db.session.init_engine"),
-            patch("aegis.state_pg.PostgresRunState"),
+            patch("aegis.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -395,11 +395,11 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
         patches_list = [
             patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.blobs.open_blob_store"),
+            patch("aegis.storage.open_blob_store"),
             patch("aegis.config.load_config"),
             patch("aegis.db.session.get_session"),
             patch("aegis.db.session.init_engine"),
-            patch("aegis.state_pg.PostgresRunState"),
+            patch("aegis.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -454,7 +454,7 @@ def _make_task_ctx(
 
     sess = MagicMock()
     sess.get.return_value = job
-    ctx.run_state.session = sess
+    ctx.session = sess
     ctx.run_state.load_findings.return_value = findings or []
 
     @contextmanager
@@ -837,7 +837,7 @@ class TestParallelFix(unittest.TestCase):
         ctx, sess, job, fake_tc = _make_task_ctx(
             job_detail={"finding_id": "find-001", "repo": "/tmp/repo"},
         )
-        ctx.run_state.session = sess
+        ctx.session = sess
         sess.get.return_value = job
 
         group_result = MagicMock()
@@ -872,7 +872,7 @@ class TestParallelFix(unittest.TestCase):
         ctx, sess, job, fake_tc = _make_task_ctx(
             job_detail={"repo": "/tmp/repo"},  # no finding_id
         )
-        ctx.run_state.session = sess
+        ctx.session = sess
         sess.get.return_value = job
 
         with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc):
@@ -885,7 +885,7 @@ class TestParallelFix(unittest.TestCase):
         ctx, sess, job, fake_tc = _make_task_ctx(
             job_detail={"finding_id": "find-001", "repo": None},
         )
-        ctx.run_state.session = sess
+        ctx.session = sess
         sess.get.return_value = job
 
         added_jobs = []

@@ -38,3 +38,6 @@ node_modules/
 # Corporate proxy CA bundles — machine/org-specific, never commit.
 deploy/certs/*.pem
 deploy/certs/*.crt
+
+# desloppify local state
+.desloppify/

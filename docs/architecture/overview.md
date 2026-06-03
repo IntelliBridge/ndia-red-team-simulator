@@ -259,7 +259,8 @@ flowchart TB
     direction LR
     safety["safety.authorize<br/>emits audit"]
     chain["audit/chain.py<br/>JsonlAuditWriter,<br/>PostgresAuditWriter"]
-    state["state, state_pg<br/>RunState"]
+    state["state/<br/>RunStateAPI Protocol,<br/>filesystem + postgres,<br/>open_run_state"]
+    storage["storage/<br/>BlobStore Protocol,<br/>filesystem + s3,<br/>open_blob_store"]
     schema["schema.AegisFinding"]
     scanners["scanners/<br/>Strix, Trivy, ..."]
     remediate["remediate/<br/>cai_runner, patch_workflow"]
@@ -274,6 +275,7 @@ flowchart TB
   safety --> chain
   create --> state
   execute --> state
+  execute --> storage
   execute --> schema
   execute --> scanners
   execute --> remediate
@@ -295,7 +297,7 @@ adapters register through the entry-point groups `aegis.scanners` /
 `aegis.agents`, discovered only when `AEGIS_PLUGINS=1` (off by default,
 so the offline test path stays deterministic).
 
-### Scanner adapters (13)
+### Scanner adapters (14)
 
 Each adapter declares one or more **capabilities**; `dispatch` accepts
 either an adapter name or a capability tag.

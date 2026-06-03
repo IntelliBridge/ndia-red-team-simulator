@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from aegis.integrations.cai_loader import load_cai
 from aegis.llm.router import BudgetChecker, BudgetExceeded
@@ -21,6 +21,9 @@ from aegis.remediate.patch_workflow import (
     load_golden_patch,
 )
 from aegis.schema import AegisFinding
+
+RemediationAction = Literal["code_patch", "live_hardening"]
+RemediationSource = Literal["cai", "golden_fixture", "vulnfixer"]
 
 
 def _stringify_agent_result(result) -> str:
@@ -37,13 +40,13 @@ def _stringify_agent_result(result) -> str:
 @dataclass
 class RemediationResult:
     success: bool
-    action: str                       # "code_patch" | "live_hardening"
+    action: RemediationAction
     finding_id: str
     output: str
     error: str | None = None
     diff: str | None = None
     diff_sha256_hex: str | None = None
-    source: str = "cai"               # "cai" | "golden_fixture" | "manual"
+    source: RemediationSource = "cai"
     plan: dict[str, Any] | None = None
 
 
@@ -137,7 +140,7 @@ def _use_golden_patch(finding: AegisFinding) -> RemediationResult | None:
 def _run_cai_agent(
     *,
     task: str,
-    action: str,
+    action: RemediationAction,
     finding: AegisFinding,
     prompt: str,
     config,

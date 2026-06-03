@@ -9,14 +9,12 @@ description = "Aegis MVP glue code for security finding normalization and remedi
 requires-python = ">=3.12"
 dependencies = [
     "PyYAML>=6.0",
-    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest>=8.0",
     "pytest-cov>=4.1",
-    "responses>=0.25",
 ]
 dev = [
     "ruff>=0.5",
@@ -37,7 +35,6 @@ api = [
     "structlog>=24.1",
     "opentelemetry-sdk>=1.24",
     "opentelemetry-exporter-otlp-proto-http>=1.24",
-    "opentelemetry-instrumentation-fastapi>=0.45b0",
 ]
 worker = [
     "celery[redis]>=5.3",

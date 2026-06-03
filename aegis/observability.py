@@ -183,7 +183,21 @@ def _make_counters():
     }
 
 
-METRICS = _make_counters()
+_METRICS: dict | None = None
+
+
+def get_metrics() -> dict:
+    """Return the metrics dict, building (and registering) it on first call.
+
+    Memoized so the Counter/Gauge objects register into the process-global
+    Prometheus registry exactly once, on first real use — never at import
+    time. This mirrors the deferred init of configure_otel/create_app and
+    avoids duplicate-registration failures on re-import.
+    """
+    global _METRICS
+    if _METRICS is None:
+        _METRICS = _make_counters()
+    return _METRICS
 
 
 def metrics_handler():
@@ -199,6 +213,8 @@ def metrics_handler():
         async def _no_metrics():
             return {"detail": "prometheus_client not installed"}
         return _no_metrics
+    # Ensure the counters are registered before we serialize the registry.
+    get_metrics()
     async def metrics():
         return Response(generate_latest(REGISTRY),
                         media_type=CONTENT_TYPE_LATEST)

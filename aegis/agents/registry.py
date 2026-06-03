@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
@@ -15,6 +16,7 @@ from aegis.registry import Registry
 
 Domain = Literal["offensive", "defensive", "forensic",
                  "recon", "remediation", "audit"]
+AgentStatus = Literal["ok", "pending_approval", "not_wired", "error"]
 
 
 @dataclass
@@ -32,7 +34,7 @@ class AgentContext:
 
 @dataclass
 class AgentResult:
-    status: str                # "ok" | "pending_approval" | "not_wired" | "error"
+    status: AgentStatus
     output: str
     findings: list = field(default_factory=list)
     diff: str | None = None
@@ -48,6 +50,26 @@ class AgentAdapter(Protocol):
     wired: bool
 
     def invoke(self, prompt: str, context: AgentContext) -> AgentResult: ...
+
+
+@dataclass
+class FunctionAgentAdapter:
+    """Concrete :class:`AgentAdapter` whose ``invoke`` delegates to a callable.
+
+    Factories (the CAI built-ins and patterns) build registry entries by
+    supplying the four Protocol fields plus a two-arg ``fn``. Instances
+    structurally satisfy ``AgentAdapter``, so the wiring is type-checked —
+    unlike the prior set-attributes-on-an-empty-local-class idiom, whose
+    dynamic attributes mypy couldn't see.
+    """
+    name: str
+    domain: Domain
+    effect: Effect
+    wired: bool
+    fn: Callable[[str, AgentContext], AgentResult]
+
+    def invoke(self, prompt: str, context: AgentContext) -> AgentResult:
+        return self.fn(prompt, context)
 
 
 def adapter_effect(adapter: AgentAdapter) -> Effect:

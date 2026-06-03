@@ -24,34 +24,29 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from typing import Any
 
-from aegis.schema import AegisFinding, CodeLocation
+from aegis.scanners.severity import canon_severity
+from aegis.schema import AegisFinding, CodeLocation, Severity
 
 # --- severity maps (one per source vocabulary) -----------------------------
 
 # Snyk emits lowercase severities (critical|high|medium|low).
-_SNYK_SEVERITY_MAP = {
+_SNYK_SEVERITY_MAP: dict[str, Severity] = {
     "critical": "critical",
     "high": "high",
     "medium": "medium",
     "low": "low",
 }
 
-# Trivy / SARIF dependency-style vocab is UPPERCASE; mirror the trivy_runner /
-# grype_adapter map exactly (NEGLIGIBLE/UNKNOWN collapse to low).
-_TRIVY_SEVERITY_MAP = {
-    "CRITICAL": "critical",
-    "HIGH": "high",
-    "MEDIUM": "medium",
-    "LOW": "low",
-    "NEGLIGIBLE": "low",
-    "UNKNOWN": "low",
-}
+# Trivy dependency-style vocab is UPPERCASE; canonicalization goes through
+# :func:`aegis.scanners.severity.canon_severity` (single source of truth, shared
+# with the live trivy_runner and grype_adapter) rather than a local lookup loop.
 
 # SARIF result.level vocab; mirror codeql_adapter (error|warning|note). Note the
 # default here is "low" to honor the module-wide safe-default contract; the
 # explicit levels are exhaustive for well-formed SARIF.
-_SARIF_LEVEL_MAP = {
+_SARIF_LEVEL_MAP: dict[str, Severity] = {
     "error": "high",
     "warning": "medium",
     "note": "low",
@@ -60,7 +55,7 @@ _SARIF_LEVEL_MAP = {
 
 # Veracode severity is a 0–5 integer: 5 Very High, 4 High, 3 Medium, 2 Low,
 # 1 Very Low, 0 Informational.
-_VERACODE_SEVERITY_MAP = {
+_VERACODE_SEVERITY_MAP: dict[int, Severity] = {
     5: "critical",
     4: "high",
     3: "medium",
@@ -69,7 +64,7 @@ _VERACODE_SEVERITY_MAP = {
     0: "low",
 }
 
-_DEFAULT_SEVERITY = "low"
+_DEFAULT_SEVERITY: Severity = "low"
 
 
 def _iso_now() -> str:
@@ -248,9 +243,7 @@ def ingest_trivy(data: dict) -> list[AegisFinding]:
                 continue
             vuln_id = _str_or_none(v.get("VulnerabilityID")) or "TRIVY-UNKNOWN"
             package = _str_or_none(v.get("PkgName"))
-            severity = _TRIVY_SEVERITY_MAP.get(
-                (v.get("Severity") or "").strip().upper(), _DEFAULT_SEVERITY
-            )
+            severity = canon_severity(v.get("Severity"))
             cwe_ids = v.get("CweIDs") or []
             references = [r for r in (v.get("References") or []) if isinstance(r, str)]
             component = f"{package} ({target})" if target else (package or vuln_id)
@@ -308,7 +301,7 @@ def ingest_sarif(data: dict) -> list[AegisFinding]:
             message = _str_or_none((result.get("message") or {}).get("text")) or rule_id
 
             locations = result.get("locations") or []
-            phys = {}
+            phys: dict[str, Any] = {}
             if locations and isinstance(locations[0], dict):
                 phys = locations[0].get("physicalLocation") or {}
             uri = _str_or_none((phys.get("artifactLocation") or {}).get("uri"))

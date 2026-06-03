@@ -19,19 +19,26 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from aegis.schema import AegisFinding
-from aegis.state import RunState
+
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
+
+VerifyStatus = Literal["verified", "still_vulnerable", "inconclusive"]
+VerifyStrategy = Literal[
+    "dast_poc", "sast_grep", "dependency_rescan", "dast_poc+sast_grep", "unknown"
+]
 
 
 @dataclass
 class VerifyResult:
     finding_id: str
-    status: str                       # "verified" | "still_vulnerable" | "inconclusive"
-    strategy: str                     # "dast_poc" | "sast_grep" | "dependency_rescan" | "unknown"
+    status: VerifyStatus
+    strategy: VerifyStrategy
     evidence: dict[str, Any] = field(default_factory=dict)
     notes: str = ""
     verified_at: str = ""
@@ -45,7 +52,7 @@ class VerifyResult:
 # ---------------------------------------------------------------------------
 
 def runtime_proves_post_patch(
-    run_state: RunState,
+    run_state: RunStateAPI,
     *,
     require_source_rebuild: bool = True,
 ) -> tuple[bool, str]:
@@ -80,7 +87,7 @@ def runtime_proves_post_patch(
     if mode == "source":
         if not data.get("last_rebuild_at"):
             return False, "source mode but no rebuild recorded since startup"
-        if data.get("source_ref_after") == data.get("source_ref_before") and data.get("last_rebuild_at"):
+        if data.get("source_ref_after") == data.get("source_ref_before"):
             return True, "source mode rebuilt (same ref — likely fixture-assisted)"
         return True, "source mode rebuilt from updated ref"
 
@@ -173,7 +180,7 @@ def replay_poc(parsed: dict[str, Any], *, timeout: float = 10.0) -> dict[str, An
 _AUTH_TOKEN_MARKERS = ("authentication", "\"token\"", "bearer ", "access_token")
 
 
-def is_dast_remediated(before: dict[str, Any] | None, after: dict[str, Any]) -> tuple[str, str]:
+def classify_dast_remediation(before: dict[str, Any] | None, after: dict[str, Any]) -> tuple[VerifyStatus, str]:
     """Decide DAST verification status given before/after replay snapshots.
 
     Heuristic: success-ish before (200 with token-like body) AND post-patch
@@ -227,7 +234,7 @@ def _parse_semver(v: str | None) -> tuple[int, ...] | None:
 def _verify_dependency(
     finding: AegisFinding,
     *,
-    run_state: RunState,
+    run_state: RunStateAPI,
     repo_path: Path | None,
     provenance: str,
 ) -> VerifyResult:
@@ -321,7 +328,7 @@ def _verify_dependency(
     )
 
 
-def is_sast_remediated(finding: AegisFinding, repo_path: Path) -> tuple[str, dict[str, Any]]:
+def classify_sast_remediation(finding: AegisFinding, repo_path: Path) -> tuple[VerifyStatus, dict[str, Any]]:
     """Walk finding.code_locations[*].file and grep the original snippet."""
     if not finding.code_locations:
         return "inconclusive", {"reason": "no code_locations on finding"}
@@ -355,7 +362,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _persist(run_state: RunState, result: VerifyResult,
+def _persist(run_state: RunStateAPI, result: VerifyResult,
              before: dict[str, Any] | None, after: dict[str, Any] | None) -> Path:
     verify_dir = run_state.run_path / "verify"
     verify_dir.mkdir(parents=True, exist_ok=True)
@@ -375,7 +382,7 @@ def _persist(run_state: RunState, result: VerifyResult,
 def verify_finding(
     finding: AegisFinding,
     *,
-    run_state: RunState,
+    run_state: RunStateAPI,
     repo_path: Path | None = None,
     require_rebuilt: bool = True,
     require_source_rebuild: bool = True,
@@ -402,17 +409,17 @@ def verify_finding(
     if finding.finding_type == "dast":
         parsed = parse_curl(finding.poc_script_code or "")
         after: dict[str, Any] | None = None
-        dast_status = "inconclusive"
+        dast_status: VerifyStatus = "inconclusive"
         dast_note = "no parseable poc_script_code"
         if parsed is not None:
             after = replay_poc(parsed)
-            dast_status, dast_note = is_dast_remediated(None, after)
+            dast_status, dast_note = classify_dast_remediation(None, after)
 
         # Fall back to SAST grep when the live replay was inconclusive
         # (typical in fixture-assisted runs with no real container) and the
         # finding carries code_locations we can grep.
         if dast_status == "inconclusive" and finding.code_locations and repo_path is not None:
-            sast_status, sast_evidence = is_sast_remediated(finding, repo_path)
+            sast_status, sast_evidence = classify_sast_remediation(finding, repo_path)
             result = VerifyResult(
                 finding_id=finding.id, status=sast_status,
                 strategy="dast_poc+sast_grep",
@@ -442,7 +449,7 @@ def verify_finding(
             )
             _persist(run_state, result, None, None)
             return result
-        status, evidence = is_sast_remediated(finding, repo_path)
+        status, evidence = classify_sast_remediation(finding, repo_path)
         result = VerifyResult(
             finding_id=finding.id, status=status, strategy="sast_grep",
             evidence={**evidence, "provenance": reason},

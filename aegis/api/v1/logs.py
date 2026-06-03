@@ -94,7 +94,7 @@ def list_logs(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"invalid `since`: {exc}",
-            )
+            ) from exc
         stmt = stmt.where(ApplicationLog.ts >= ts_lower)
     if cursor is not None:
         stmt = stmt.where(ApplicationLog.id < cursor)

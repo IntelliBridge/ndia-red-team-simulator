@@ -19,7 +19,7 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from aegis.agents import AgentResult
-from aegis.audit.writers import InMemoryAuditWriter
+from aegis.audit.chain import InMemoryAuditWriter
 from aegis.config import AegisConfig
 from aegis.db.models import Base, Job, Organization, Project, Run
 from aegis.safety import AuthorizationError
@@ -185,7 +185,7 @@ class TestAgentRunTask(unittest.TestCase):
         fake_job.detail = {"agent": "codeagent", "prompt": "p",
                            "target": None, "finding_id": None,
                            "repo_path": None, "execute": True}
-        ctx.run_state.session.get.return_value = fake_job
+        ctx.session.get.return_value = fake_job
 
         @contextlib.contextmanager
         def fake_task_context(job_id):  # noqa: ARG001

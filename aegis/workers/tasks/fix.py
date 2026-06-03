@@ -23,9 +23,9 @@ def fix_generate(self, job_id: str) -> dict:
 
     config = load_config()
     with task_context(job_id) as ctx:
-        sess = ctx.run_state.session
+        sess = ctx.session
         job = sess.get(Job, job_id)
-        detail = job.detail or {}
+        detail = (job.detail if job else {}) or {}
         finding_row = sess.get(Finding, detail.get("finding_id"))
         if finding_row is None:
             raise RuntimeError(f"finding {detail.get('finding_id')} missing")

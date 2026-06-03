@@ -6,13 +6,10 @@ import os
 
 from celery import Celery
 
-_BROKER = os.environ.get("AEGIS_BROKER_URL", "redis://localhost:6379/0")
-_BACKEND = os.environ.get("AEGIS_RESULT_BACKEND", "redis://localhost:6379/1")
-
 app = Celery(
     "aegis",
-    broker=_BROKER,
-    backend=_BACKEND,
+    broker=os.environ.get("AEGIS_BROKER_URL", "redis://localhost:6379/0"),
+    backend=os.environ.get("AEGIS_RESULT_BACKEND", "redis://localhost:6379/1"),
     include=[
         "aegis.workers.tasks.scan",
         "aegis.workers.tasks.fix",

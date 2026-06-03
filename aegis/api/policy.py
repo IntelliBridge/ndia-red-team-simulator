@@ -62,6 +62,28 @@ def check(user: CurrentUser, action: Action, project_id: str) -> None:
         )
 
 
+def has_project_access(user: CurrentUser, project_id: str) -> bool:
+    """True if the user may read resources scoped to ``project_id``.
+
+    The boolean form for per-row list filtering; ``ensure_project_access``
+    is the raising form for single-resource gates. Both share this rule so
+    read authorization has one definition.
+    """
+    return user.is_system or project_id in user.project_memberships
+
+
+def accessible_project_ids(user: CurrentUser) -> list[str] | None:
+    """Project IDs the user may read, or ``None`` when unrestricted.
+
+    System principals read across all projects (``None`` = no filter).
+    Used to scope list queries to the caller's memberships so listings
+    never leak rows from projects the caller cannot access.
+    """
+    if user.is_system:
+        return None
+    return list(user.project_memberships)
+
+
 def ensure_project_access(user: CurrentUser, project_id: str) -> None:
     """403 unless the user has *any* membership on ``project_id``.
 
@@ -69,9 +91,7 @@ def ensure_project_access(user: CurrentUser, project_id: str) -> None:
     export, and WebSocket routes — any membership is sufficient for
     read; mutation routes still go through ``check()`` for role-rank.
     """
-    if user.is_system:
-        return
-    if project_id not in user.project_memberships:
+    if not has_project_access(user, project_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"user {user.email} has no membership on project {project_id}",

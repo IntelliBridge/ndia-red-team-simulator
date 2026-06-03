@@ -8,8 +8,15 @@ returns ``status='not_wired'`` instead of silently going missing.
 
 from __future__ import annotations
 
-from aegis.agents.registry import AgentContext, AgentResult, register
+from aegis.agents.registry import (
+    AgentContext,
+    AgentResult,
+    Domain,
+    FunctionAgentAdapter,
+    register,
+)
 from aegis.config import load_config
+from aegis.effects import Effect
 from aegis.integrations.cai_loader import load_cai
 
 
@@ -49,41 +56,27 @@ def _invoke_cai(agent_attr: str, prompt: str, context: AgentContext) -> AgentRes
         )
 
 
-def _wired(name: str, domain: str, effect: str, cai_attr: str):
-    class _Wired:
-        pass
-
-    adapter = _Wired()
-    adapter.name = name
-    adapter.domain = domain
-    adapter.effect = effect
-    adapter.wired = True
-
-    def invoke(self, prompt: str, context: AgentContext) -> AgentResult:
+def _wired(name: str, domain: Domain, effect: Effect,
+           cai_attr: str) -> FunctionAgentAdapter:
+    def invoke(prompt: str, context: AgentContext) -> AgentResult:
         return _invoke_cai(cai_attr, prompt, context)
 
-    _Wired.invoke = invoke
-    return adapter
+    return FunctionAgentAdapter(
+        name=name, domain=domain, effect=effect, wired=True, fn=invoke,
+    )
 
 
-def _not_wired(name: str, domain: str, effect: str):
-    class _Stub:
-        pass
-
-    adapter = _Stub()
-    adapter.name = name
-    adapter.domain = domain
-    adapter.effect = effect
-    adapter.wired = False
-
-    def invoke(self, prompt: str, context: AgentContext) -> AgentResult:
+def _not_wired(name: str, domain: Domain,
+               effect: Effect) -> FunctionAgentAdapter:
+    def invoke(prompt: str, context: AgentContext) -> AgentResult:
         return AgentResult(
             status="not_wired",
             output=f"agent {name!r} is registered but not wired",
         )
 
-    _Stub.invoke = invoke
-    return adapter
+    return FunctionAgentAdapter(
+        name=name, domain=domain, effect=effect, wired=False, fn=invoke,
+    )
 
 
 # Wired agents: each slot maps to its real CAI agent (no fallbacks). The six
@@ -97,7 +90,7 @@ def _not_wired(name: str, domain: str, effect: str):
 # by domain but only reads bytecode (read), while the re-tester is audit by
 # domain but re-fires exploits to verify a fix (active). Getting this column
 # right is what keeps an exploit or a live change from running un-approved.
-_WIRED = [
+_WIRED: list[tuple[str, Domain, Effect, str]] = [
     ("codeagent", "remediation", "read", "codeagent"),
     ("blueteam_agent", "defensive", "active", "blueteam_agent"),
     ("bug_bounter", "offensive", "active", "bug_bounter_agent"),
@@ -116,7 +109,7 @@ _WIRED = [
     ("replay_attack_agent", "offensive", "active", "replay_attack_agent"),
 ]
 
-_NOT_WIRED = []
+_NOT_WIRED: list[tuple[str, Domain, Effect]] = []
 
 
 for name, domain, effect, cai_attr in _WIRED:

@@ -22,11 +22,18 @@ not a child of an existing scan run.
 
 from __future__ import annotations
 
+import logging
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from aegis.config import AegisConfig
 from aegis.safety import authorize
 from aegis.services.scans import JobHandle
+
+if TYPE_CHECKING:
+    from aegis.audit.chain import AuditWriter
+
+logger = logging.getLogger(__name__)
 
 
 def create_agent_job(
@@ -36,7 +43,7 @@ def create_agent_job(
     project_id: str,
     actor: str,
     config: AegisConfig,
-    audit_writer,
+    audit_writer: AuditWriter,
     target: str | None = None,
     finding_id: str | None = None,
     repo_path: str | None = None,
@@ -105,6 +112,6 @@ def create_agent_job(
             agent_run.delay(job_id)
         except Exception:
             # Broker unreachable: row stays queued, picked up next start.
-            pass
+            logger.warning("enqueue failed for job %s", job_id, exc_info=True)
 
     return JobHandle(run_id=run_id, job_id=job_id)

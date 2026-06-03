@@ -5,7 +5,6 @@
 - aegis/remediate/cai_runner.py
 - aegis/log_ingest/server.py
 - aegis/log_ingest/writer.py
-- aegis/audit/writers.py
 - aegis/audit/chain.py
 - aegis/report.py
 - aegis/services/targets.py
@@ -1309,78 +1308,52 @@ class TestLogIngestWriterFlush(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# aegis/audit/writers.py — cover open_writer branches + InMemoryAuditWriter
+# aegis/audit/chain.py — resolve_writer branches + InMemoryAuditWriter
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestOpenWriterBranches(unittest.TestCase):
-    def test_offline_mode_returns_jsonl_writer(self):
-        from aegis.audit.chain import JsonlAuditWriter
-        from aegis.audit.writers import open_writer
-        with tempfile.TemporaryDirectory() as tmp:
-            writer = open_writer("offline", output_dir=tmp)
+class TestResolveWriterBranches(unittest.TestCase):
+    """``resolve_writer`` is the single audit-writer selector (the old
+    ``aegis.audit.writers.open_writer`` duplicate was folded in)."""
+
+    def _clean_env(self):
+        return {k: v for k, v in os.environ.items()
+                if k not in ("AEGIS_DB_URL", "AEGIS_TEST_AUDIT")}
+
+    def test_offline_returns_jsonl_writer(self):
+        from aegis.audit.chain import JsonlAuditWriter, resolve_writer
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.dict(os.environ, self._clean_env(), clear=True):
+            writer = resolve_writer(tmp)
         self.assertIsInstance(writer, JsonlAuditWriter)
 
-    def test_test_mode_returns_in_memory_writer(self):
-        from aegis.audit.writers import InMemoryAuditWriter, open_writer
-        writer = open_writer("test")
-        self.assertIsInstance(writer, InMemoryAuditWriter)
+    def test_config_object_output_dir(self):
+        """A config-like object with .output_dir roots the JSONL writer there."""
+        from aegis.audit.chain import JsonlAuditWriter, resolve_writer
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.dict(os.environ, self._clean_env(), clear=True):
+            writer = resolve_writer(SimpleNamespace(output_dir=tmp))
+        self.assertIsInstance(writer, JsonlAuditWriter)
+        self.assertEqual(writer.directory, Path(tmp) / "audit")
 
-    def test_unknown_mode_raises_value_error(self):
-        from aegis.audit.writers import open_writer
-        with self.assertRaises(ValueError):
-            open_writer("bogus_mode")  # type: ignore
-
-    def test_auto_mode_from_env_test(self):
-        """When AEGIS_TEST_AUDIT=memory, open_writer(None) returns InMemoryAuditWriter."""
-        from aegis.audit.writers import InMemoryAuditWriter, open_writer
+    def test_memory_env_returns_in_memory_writer(self):
+        from aegis.audit.chain import InMemoryAuditWriter, resolve_writer
         with patch.dict(os.environ, {"AEGIS_TEST_AUDIT": "memory"}, clear=False):
-            writer = open_writer()
+            writer = resolve_writer("/tmp/ignored")
         self.assertIsInstance(writer, InMemoryAuditWriter)
 
-    def test_auto_mode_offline_fallback(self):
-        """When no DB URL and no AEGIS_TEST_AUDIT, offline JsonlAuditWriter is returned."""
-        from aegis.audit.chain import JsonlAuditWriter
-        from aegis.audit.writers import open_writer
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("AEGIS_DB_URL", "AEGIS_TEST_AUDIT")}
-        env.pop("AEGIS_DB_URL", None)
-        env.pop("AEGIS_TEST_AUDIT", None)
-        with tempfile.TemporaryDirectory() as tmp, \
-             patch.dict(os.environ, env, clear=True):
-            writer = open_writer(output_dir=tmp)
-        self.assertIsInstance(writer, JsonlAuditWriter)
-
-    def test_offline_uses_env_output_dir(self):
-        """When output_dir is None, AEGIS_OUTPUT_DIR env var is consulted."""
-        from aegis.audit.chain import JsonlAuditWriter
-        from aegis.audit.writers import open_writer
-        with tempfile.TemporaryDirectory() as tmp, \
-             patch.dict(os.environ, {"AEGIS_OUTPUT_DIR": tmp}, clear=False):
-            env = {k: v for k, v in os.environ.items() if k != "AEGIS_DB_URL"}
-            with patch.dict(os.environ, env, clear=True):
-                writer = open_writer("offline")
-        self.assertIsInstance(writer, JsonlAuditWriter)
-
-    def test_api_mode_with_explicit_session_factory(self):
-        """api mode with session_factory provided returns PostgresAuditWriter."""
-        from aegis.audit.chain import PostgresAuditWriter
-        from aegis.audit.writers import open_writer
-        fake_factory = MagicMock()
-        writer = open_writer("api", session_factory=fake_factory)
-        self.assertIsInstance(writer, PostgresAuditWriter)
-
-    def test_worker_mode_with_explicit_session_factory(self):
-        """worker mode with session_factory provided returns PostgresAuditWriter."""
-        from aegis.audit.chain import PostgresAuditWriter
-        from aegis.audit.writers import open_writer
-        fake_factory = MagicMock()
-        writer = open_writer("worker", session_factory=fake_factory)
-        self.assertIsInstance(writer, PostgresAuditWriter)
+    def test_memory_env_takes_precedence_over_db_url(self):
+        """AEGIS_TEST_AUDIT=memory wins even when AEGIS_DB_URL is set."""
+        from aegis.audit.chain import InMemoryAuditWriter, resolve_writer
+        with patch.dict(os.environ,
+                        {"AEGIS_TEST_AUDIT": "memory",
+                         "AEGIS_DB_URL": "postgresql://fake/db"}, clear=False):
+            writer = resolve_writer("/tmp/ignored")
+        self.assertIsInstance(writer, InMemoryAuditWriter)
 
 
 class TestInMemoryAuditWriter(unittest.TestCase):
     def _make_writer(self):
-        from aegis.audit.writers import InMemoryAuditWriter
+        from aegis.audit.chain import InMemoryAuditWriter
         return InMemoryAuditWriter()
 
     def test_append_stores_event(self):
@@ -1767,7 +1740,7 @@ class TestReportEdgeCases(unittest.TestCase):
 
 class TestCreateTarget(unittest.TestCase):
     def _make_audit_writer(self):
-        from aegis.audit.writers import InMemoryAuditWriter
+        from aegis.audit.chain import InMemoryAuditWriter
         return InMemoryAuditWriter()
 
     def test_create_target_calls_authorize_and_db(self):
@@ -1811,7 +1784,7 @@ class TestCreateTarget(unittest.TestCase):
 
 class TestDeleteTarget(unittest.TestCase):
     def _make_audit_writer(self):
-        from aegis.audit.writers import InMemoryAuditWriter
+        from aegis.audit.chain import InMemoryAuditWriter
         return InMemoryAuditWriter()
 
     def test_delete_target_success(self):
@@ -1917,7 +1890,7 @@ class TestDeleteTarget(unittest.TestCase):
 
 class TestCreateFixJob(unittest.TestCase):
     def _make_audit_writer(self):
-        from aegis.audit.writers import InMemoryAuditWriter
+        from aegis.audit.chain import InMemoryAuditWriter
         return InMemoryAuditWriter()
 
     def test_create_fix_job_returns_job_handle(self):
@@ -2448,46 +2421,6 @@ class TestAuditChainBlankLineHandling(unittest.TestCase):
         self.assertEqual(len(events), 2)
         self.assertEqual(events[0]["seq"], 1)
         self.assertEqual(events[1]["seq"], 2)
-
-
-class TestAuditWritersAutoDetectDbUrl(unittest.TestCase):
-    """Cover the AEGIS_DB_URL auto-detect branch in open_writer() (line 51)."""
-
-    def test_auto_mode_with_db_url_returns_postgres_writer(self):
-        from aegis.audit.chain import PostgresAuditWriter
-        from aegis.audit.writers import open_writer
-        fake_get_session = MagicMock()
-        # Patch init_engine and get_session to avoid real DB connection
-        with patch("aegis.db.session.init_engine"), \
-             patch("aegis.db.session.get_session", fake_get_session), \
-             patch.dict(os.environ, {"AEGIS_DB_URL": "postgresql://fake/db"},
-                        clear=False):
-            # Clear AEGIS_TEST_AUDIT so the DB_URL branch is hit
-            env = dict(os.environ)
-            env.pop("AEGIS_TEST_AUDIT", None)
-            with patch.dict(os.environ, env, clear=True):
-                writer = open_writer()
-        self.assertIsInstance(writer, PostgresAuditWriter)
-
-    def test_api_mode_no_session_factory_calls_init_engine(self):
-        """api mode without explicit session_factory calls init_engine() + get_session."""
-        from aegis.audit.chain import PostgresAuditWriter
-        from aegis.audit.writers import open_writer
-        fake_get_session = MagicMock()
-        with patch("aegis.db.session.init_engine") as mock_init, \
-             patch("aegis.db.session.get_session", fake_get_session):
-            writer = open_writer("api")
-        mock_init.assert_called_once()
-        self.assertIsInstance(writer, PostgresAuditWriter)
-
-    def test_worker_mode_no_session_factory_calls_init_engine(self):
-        from aegis.audit.chain import PostgresAuditWriter
-        from aegis.audit.writers import open_writer
-        with patch("aegis.db.session.init_engine") as mock_init, \
-             patch("aegis.db.session.get_session", MagicMock()):
-            writer = open_writer("worker")
-        mock_init.assert_called_once()
-        self.assertIsInstance(writer, PostgresAuditWriter)
 
 
 class TestResolveWriterDbUrlBranch(unittest.TestCase):

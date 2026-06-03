@@ -301,15 +301,23 @@ Full per-release detail in [`CHANGELOG.md`](CHANGELOG.md).
 
 ```
 aegis/                  Python package — services, API, workers, audit
+  agents/               CAI agent definitions + multi-agent patterns
   api/                  FastAPI app + routes + middleware
   audit/                hash-chained audit (chain, writers, forensic)
   cli/                  argparse entry point + --api dispatch client
   db/                   SQLAlchemy models + Alembic migrations
+  integrations/         external service clients (GitHub App, …)
+  llm/                  per-task LLM routing + budget caps
   log_ingest/           OTLP/Logs → Postgres mirror service
+  migrate/              data / schema migration helpers
   policy/               CI gate policy (no Celery dependency)
   remediate/            CAI runner + patch / deps workflows
+  runners/              subprocess runners + finding converter (Strix, Trivy, vuln-fixer)
   scanners/             scanner adapters (Strix, Trivy, Semgrep, Nuclei)
   services/             admission + execution services (CLI + API + worker)
+  state/                run-state persistence (RunStateAPI Protocol, filesystem + Postgres backends, open_run_state factory)
+  storage/              pluggable blob storage (BlobStore Protocol, filesystem + S3/MinIO backends, open_blob_store factory)
+  tools/                Kali toolbelt + MCP tool wrappers
   workers/              Celery tasks + bootstrap
 
 web/                    Next.js 14 app (@aegis/web workspace package)

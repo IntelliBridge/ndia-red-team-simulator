@@ -1835,7 +1835,7 @@ class TestExportsApi(unittest.TestCase):
              patch("aegis.api.v1.exports.ensure_run_access",
                    return_value="proj-1"), \
              patch("aegis.api.v1.exports.load_config", return_value=AegisConfig()), \
-             patch("aegis.blobs.open_blob_store", return_value=fake_blob):
+             patch("aegis.storage.open_blob_store", return_value=fake_blob):
             resp = client.get("/v1/runs/run-exp1/exports/vulnfixer")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["run_id"], "run-exp1")
@@ -1864,7 +1864,7 @@ class TestExportsApi(unittest.TestCase):
                        return_value="proj-1"), \
                  patch("aegis.api.v1.exports.load_config",
                        return_value=AegisConfig(output_dir=tmp)), \
-                 patch("aegis.blobs.open_blob_store",
+                 patch("aegis.storage.open_blob_store",
                        return_value=fake_blob):
                 resp = client.get("/v1/runs/run-exp1/exports/vulnfixer")
             self.assertEqual(resp.status_code, 200)
@@ -1885,7 +1885,7 @@ class TestExportsApi(unittest.TestCase):
                        return_value="proj-1"), \
                  patch("aegis.api.v1.exports.load_config",
                        return_value=AegisConfig(output_dir=tmp)), \
-                 patch("aegis.blobs.open_blob_store",
+                 patch("aegis.storage.open_blob_store",
                        return_value=fake_blob):
                 resp = client.get("/v1/runs/run-exp1/exports/vulnfixer")
             self.assertEqual(resp.status_code, 404)
@@ -1915,7 +1915,7 @@ class TestExportsApi(unittest.TestCase):
                        return_value="proj-1"), \
                  patch("aegis.api.v1.exports.load_config",
                        return_value=AegisConfig(output_dir=tmp)), \
-                 patch("aegis.blobs.open_blob_store",
+                 patch("aegis.storage.open_blob_store",
                        return_value=fake_blob):
                 resp = client.get("/v1/runs/run-exp1/exports/vulnfixer")
             self.assertEqual(resp.status_code, 200)

@@ -14,7 +14,7 @@ from typing import Any
 
 from aegis.config import AegisConfig
 from aegis.safety import AuthorizationError, authorize
-from aegis.state import RunState
+from aegis.state import RunStateAPI
 from aegis.tools.kali_client import KaliClient, ToolResult
 
 
@@ -32,7 +32,7 @@ def run_kali_tool(
     *,
     name: str,
     params: dict[str, Any],
-    run_state: RunState,
+    run_state: RunStateAPI,
     actor: str,
     config: AegisConfig,
     override_authorized: bool = False,

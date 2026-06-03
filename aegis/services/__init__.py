@@ -13,6 +13,13 @@ Phase 4 v0.3.1 F6 split:
 Both halves live side-by-side in the same module per primitive so the
 audit row's detail and the worker's behaviour can be reasoned about
 together.
+
+Import boundary (intentional): admission services enqueue Celery tasks
+from ``aegis.workers.tasks.*`` and those tasks call back into the
+execution halves here. To break that cycle the ``from
+aegis.workers.tasks.* import …`` lines stay **function-level** inside the
+``create_*_job`` enqueue blocks — they must not be hoisted to module
+scope. See the mirror note in ``aegis.workers.tasks``.
 """
 
 from aegis.services.fixes import FixOutcome, create_fix_job, generate_fix

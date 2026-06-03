@@ -20,7 +20,14 @@ import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from aegis.audit.chain import AuditWriter
+    from aegis.state import RunStateAPI
+    from aegis.storage import BlobStore
 
 
 @dataclass
@@ -28,9 +35,10 @@ class TaskContext:
     job_id: str
     run_id: str
     project_id: str
-    run_state: object
-    audit_writer: object
-    blob_store: object
+    run_state: RunStateAPI
+    session: Session
+    audit_writer: AuditWriter
+    blob_store: BlobStore
     actor: str = "system:worker"
 
 
@@ -41,11 +49,11 @@ def _now() -> datetime:
 @contextmanager
 def task_context(job_id: str) -> Iterator[TaskContext]:
     from aegis.audit.chain import PostgresAuditWriter
-    from aegis.blobs import open_blob_store
     from aegis.config import load_config
     from aegis.db.models import Job
     from aegis.db.session import get_session, init_engine
-    from aegis.state_pg import PostgresRunState
+    from aegis.state import PostgresRunState
+    from aegis.storage import open_blob_store
 
     db_url = os.environ.get("AEGIS_DB_URL")
     if db_url:
@@ -70,7 +78,7 @@ def task_context(job_id: str) -> Iterator[TaskContext]:
         )
         ctx = TaskContext(
             job_id=job_id, run_id=run_id, project_id=project_id,
-            run_state=run_state, audit_writer=audit_writer,
+            run_state=run_state, session=sess, audit_writer=audit_writer,
             blob_store=blob_store, actor=job.created_by or "system:worker",
         )
         try:

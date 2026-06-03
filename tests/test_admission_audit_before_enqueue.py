@@ -21,7 +21,7 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from aegis.audit.writers import InMemoryAuditWriter
+from aegis.audit.chain import InMemoryAuditWriter
 from aegis.config import AegisConfig
 from aegis.db.models import Base, Finding, Organization, Project, Run
 from aegis.services.fixes import create_fix_job

@@ -23,9 +23,9 @@ def scan_start(self, job_id: str) -> dict:
 
     config = load_config()
     with task_context(job_id) as ctx:
-        job = ctx.run_state.session.get(Job, job_id)
+        job = ctx.session.get(Job, job_id)
         detail = (job.detail if job else {}) or {}
-        target = detail.get("target")
+        target = detail["target"]
         scanner = detail.get("scanner", "strix")
         instruction = detail.get("instruction")
 

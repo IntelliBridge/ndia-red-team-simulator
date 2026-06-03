@@ -79,18 +79,19 @@ def export_findings(findings: list[AegisFinding], output_path: str | Path) -> di
                 "reason": result.reason,
             })
 
+    summary: dict[str, int] = {
+        "total": len(findings),
+        "routable_to_vulnfixer": len(routable),
+        "requires_code_fix": len(code_fix_needed),
+    }
     export_data = {
         "vulnerabilities": routable,
         "code_fix_required": code_fix_needed,
-        "summary": {
-            "total": len(findings),
-            "routable_to_vulnfixer": len(routable),
-            "requires_code_fix": len(code_fix_needed),
-        }
+        "summary": summary,
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w") as f:
         json.dump(export_data, f, indent=2)
 
-    return export_data["summary"]
+    return summary

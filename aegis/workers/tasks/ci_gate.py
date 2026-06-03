@@ -26,9 +26,10 @@ def ci_gate(self, job_id: str) -> dict:
     with task_context(job_id) as ctx:
         findings = ctx.run_state.load_findings()
         from aegis.db.models import Job
-        sess = ctx.run_state.session
+        sess = ctx.session
         job = sess.get(Job, job_id)
-        policy_detail = (job.detail or {}).get("policy", {})
+        detail = (job.detail if job else {}) or {}
+        policy_detail = detail.get("policy", {})
         policy = CIGatePolicy(
             severity_threshold=policy_detail.get("severity_threshold", "high"),
             max_findings=policy_detail.get("max_findings"),

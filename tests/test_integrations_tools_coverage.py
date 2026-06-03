@@ -1375,46 +1375,46 @@ class TestParseCurl(unittest.TestCase):
 
 class TestIsDastRemediated(unittest.TestCase):
     def test_4xx_means_verified(self):
-        from aegis.verify import is_dast_remediated
+        from aegis.verify import classify_dast_remediation
         after = {"status": 403, "body_excerpt": "forbidden"}
-        status, note = is_dast_remediated(None, after)
+        status, note = classify_dast_remediation(None, after)
         self.assertEqual(status, "verified")
 
     def test_200_without_token_means_verified(self):
-        from aegis.verify import is_dast_remediated
+        from aegis.verify import classify_dast_remediation
         after = {"status": 200, "body_excerpt": "welcome"}
-        status, note = is_dast_remediated(None, after)
+        status, note = classify_dast_remediation(None, after)
         self.assertEqual(status, "verified")
 
     def test_200_with_token_means_vulnerable(self):
-        from aegis.verify import is_dast_remediated
+        from aegis.verify import classify_dast_remediation
         after = {"status": 200, "body_excerpt": 'bearer abc123 "token": "xyz"'}
-        status, note = is_dast_remediated(None, after)
+        status, note = classify_dast_remediation(None, after)
         self.assertEqual(status, "still_vulnerable")
 
     def test_none_status_means_inconclusive(self):
-        from aegis.verify import is_dast_remediated
+        from aegis.verify import classify_dast_remediation
         after = {"status": None, "error": "connection refused"}
-        status, note = is_dast_remediated(None, after)
+        status, note = classify_dast_remediation(None, after)
         self.assertEqual(status, "inconclusive")
 
     def test_unexpected_status_means_inconclusive(self):
-        from aegis.verify import is_dast_remediated
+        from aegis.verify import classify_dast_remediation
         after = {"status": 500, "body_excerpt": "server error"}
-        status, note = is_dast_remediated(None, after)
+        status, note = classify_dast_remediation(None, after)
         self.assertEqual(status, "inconclusive")
 
     def test_401_means_verified(self):
-        from aegis.verify import is_dast_remediated
+        from aegis.verify import classify_dast_remediation
         after = {"status": 401, "body_excerpt": "unauthorized"}
-        status, note = is_dast_remediated(None, after)
+        status, note = classify_dast_remediation(None, after)
         self.assertEqual(status, "verified")
 
 
 class TestIsSastRemediated(unittest.TestCase):
     def test_snippet_absent_means_verified(self):
         from aegis.schema import CodeLocation
-        from aegis.verify import is_sast_remediated
+        from aegis.verify import classify_sast_remediation
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "app.py"
             f.write_text("def safe(): pass\n")
@@ -1423,12 +1423,12 @@ class TestIsSastRemediated(unittest.TestCase):
                 snippet="vulnerable_code()", fix_before="vulnerable_code()",
             )
             finding = _finding(code_locs=[loc])
-            status, evidence = is_sast_remediated(finding, Path(td))
+            status, evidence = classify_sast_remediation(finding, Path(td))
         self.assertEqual(status, "verified")
 
     def test_snippet_present_means_vulnerable(self):
         from aegis.schema import CodeLocation
-        from aegis.verify import is_sast_remediated
+        from aegis.verify import classify_sast_remediation
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "app.py"
             f.write_text("def bad(): vulnerable_code()\n")
@@ -1437,31 +1437,31 @@ class TestIsSastRemediated(unittest.TestCase):
                 snippet="vulnerable_code()", fix_before="vulnerable_code()",
             )
             finding = _finding(code_locs=[loc])
-            status, evidence = is_sast_remediated(finding, Path(td))
+            status, evidence = classify_sast_remediation(finding, Path(td))
         self.assertEqual(status, "still_vulnerable")
 
     def test_missing_file_is_inconclusive(self):
         from aegis.schema import CodeLocation
-        from aegis.verify import is_sast_remediated
+        from aegis.verify import classify_sast_remediation
         loc = CodeLocation(
             file="missing.py", start_line=1, end_line=1,
             snippet="bad_code()", fix_before="bad_code()",
         )
         finding = _finding(code_locs=[loc])
         with tempfile.TemporaryDirectory() as td:
-            status, evidence = is_sast_remediated(finding, Path(td))
+            status, evidence = classify_sast_remediation(finding, Path(td))
         self.assertEqual(status, "inconclusive")
 
     def test_no_code_locations_is_inconclusive(self):
-        from aegis.verify import is_sast_remediated
+        from aegis.verify import classify_sast_remediation
         finding = _finding(code_locs=None)
         with tempfile.TemporaryDirectory() as td:
-            status, evidence = is_sast_remediated(finding, Path(td))
+            status, evidence = classify_sast_remediation(finding, Path(td))
         self.assertEqual(status, "inconclusive")
 
     def test_no_snippet_is_inconclusive(self):
         from aegis.schema import CodeLocation
-        from aegis.verify import is_sast_remediated
+        from aegis.verify import classify_sast_remediation
         with tempfile.TemporaryDirectory() as td:
             f = Path(td) / "app.py"
             f.write_text("content")
@@ -1470,7 +1470,7 @@ class TestIsSastRemediated(unittest.TestCase):
                 snippet=None, fix_before=None,
             )
             finding = _finding(code_locs=[loc])
-            status, evidence = is_sast_remediated(finding, Path(td))
+            status, evidence = classify_sast_remediation(finding, Path(td))
         self.assertEqual(status, "inconclusive")
 
 
@@ -1816,7 +1816,7 @@ class TestNoopCounter(unittest.TestCase):
         c.inc(5)
 
     def test_metrics_dict_has_expected_keys(self):
-        from aegis.observability import METRICS
+        from aegis.observability import get_metrics
         expected = {
             "aegis_scans_total",
             "aegis_fix_success_total",
@@ -1824,7 +1824,7 @@ class TestNoopCounter(unittest.TestCase):
             "aegis_jobs_active",
             "aegis_rate_limited_total",
         }
-        self.assertTrue(expected <= set(METRICS.keys()))
+        self.assertTrue(expected <= set(get_metrics().keys()))
 
 
 class TestRequestIdMiddleware(unittest.TestCase):

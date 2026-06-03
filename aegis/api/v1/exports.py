@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -21,12 +22,12 @@ router = APIRouter(prefix="/runs", tags=["exports"])
 
 @router.get("/{run_id}/exports/vulnfixer")
 def vulnfixer_export(run_id: str,
-                     user: CurrentUser = Depends(get_current_user)) -> dict:
+                     user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     ensure_run_access(user, run_id)
     config = load_config()
 
     try:
-        from aegis.blobs import open_blob_store
+        from aegis.storage import open_blob_store
         blob = open_blob_store(config)
         data = blob.get(f"runs/{run_id}/vulnfixer-export.json")
         return json.loads(data.decode("utf-8"))

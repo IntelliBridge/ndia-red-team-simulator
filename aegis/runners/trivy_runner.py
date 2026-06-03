@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from aegis.scanners.severity import canon_severity
 from aegis.schema import AegisFinding
 
 
@@ -26,15 +27,6 @@ class TrivyRunResult:
     findings: list[AegisFinding]
     raw_json_path: str | None
     error: str | None = None
-
-
-_SEVERITY_MAP = {
-    "CRITICAL": "critical",
-    "HIGH": "high",
-    "MEDIUM": "medium",
-    "LOW": "low",
-    "UNKNOWN": "low",
-}
 
 
 def parse_trivy_json(raw: dict, run_id: str, *, repo_path: str | None = None) -> list[AegisFinding]:
@@ -58,7 +50,7 @@ def parse_trivy_json(raw: dict, run_id: str, *, repo_path: str | None = None) ->
             findings.append(AegisFinding(
                 id=f"{v.get('VulnerabilityID', 'UNKNOWN')}@{v.get('PkgName', 'unknown')}",
                 title=v.get("Title") or v.get("VulnerabilityID") or "Dependency vulnerability",
-                severity=_SEVERITY_MAP.get((v.get("Severity") or "").upper(), "low"),
+                severity=canon_severity(v.get("Severity")),
                 finding_type="dependency",
                 description=v.get("Description") or "",
                 source_tool="trivy",
