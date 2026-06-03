@@ -20,21 +20,30 @@ mirrors trufflehog's ``evidence`` redaction guarantee.
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from aegis.config import load_config
-from aegis.scanners.registry import ScanOptions, ScanResult, register
-from aegis.schema import AegisFinding
-from aegis.state import RunState
+from aegis.scanners.registry import (
+    ScanOptions,
+    ScanResult,
+    cli_version,
+    register,
+    run_cli_scan,
+    which_available,
+)
+from aegis.schema import AegisFinding, Severity
 
-_KNOWN_SEVERITIES = {"critical", "high", "medium", "low"}
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
+
+_KNOWN_SEVERITIES: dict[str, Severity] = {
+    "critical": "critical", "high": "high", "medium": "medium", "low": "low",
+}
 
 
-def _normalize_severity(value: str) -> str:
+def _normalize_severity(value: str) -> Severity:
     """Lowercase and pass through known severities; everything else -> 'low'.
 
     bumblebee echoes the catalog entry's severity (e.g. "critical"/"high"), but
@@ -42,7 +51,7 @@ def _normalize_severity(value: str) -> str:
     to 'low' the way trivy's severity map does.
     """
     sev = (value or "").lower()
-    return sev if sev in _KNOWN_SEVERITIES else "low"
+    return _KNOWN_SEVERITIES.get(sev, "low")
 
 
 def _convert(record: dict, run_id: str) -> AegisFinding:
@@ -85,7 +94,7 @@ def _convert(record: dict, run_id: str) -> AegisFinding:
         description=description,
         source_tool="bumblebee",
         source_run_id=run_id,
-        affected_component=package_name,
+        affected_component=package_name or "",
         confidence=record.get("confidence") or "medium",
         status="open",
         created_at=now,
@@ -105,17 +114,12 @@ class BumblebeeAdapter:
     default_timeout = 600
 
     def adapter_version(self) -> str:
-        try:
-            out = subprocess.run(["bumblebee", "version"], capture_output=True,
-                                 text=True, timeout=3, check=False)
-            return (out.stdout or "").strip() or "unknown"
-        except Exception:
-            return "unknown"
+        return cli_version("bumblebee", subcommand="version")
 
     def health_check(self) -> bool:
-        return shutil.which("bumblebee") is not None
+        return which_available("bumblebee")
 
-    def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
+    def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
         cfg = load_config()
         catalog_dir = Path(cfg.bumblebee_path) / "threat_intel"
@@ -126,42 +130,27 @@ class BumblebeeAdapter:
             "--findings-only",
             "--output", "stdout",
         ]
-        command_str = " ".join(command)
-        started = time.monotonic()
-        try:
-            proc = subprocess.run(
-                command,
-                capture_output=True, text=True, timeout=options.timeout,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=command_str,
-                exit_code=-1,
-                duration_s=time.monotonic() - started,
-                error=str(exc),
-            )
-        findings: list[AegisFinding] = []
-        for line in (proc.stdout or "").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if rec.get("record_type") == "finding":
-                findings.append(_convert(rec, run_state.run_id))
-        raw_dir = Path(run_state.run_path) / "bumblebee"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        (raw_dir / "results.ndjson").write_text(proc.stdout or "")
-        return ScanResult(
-            findings=findings, adapter_name=self.name,
-            adapter_version=self.adapter_version(),
-            command_str=command_str,
-            exit_code=proc.returncode,
-            duration_s=time.monotonic() - started,
+
+        def parse(proc, run_id):
+            findings: list[AegisFinding] = []
+            for line in (proc.stdout or "").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if rec.get("record_type") == "finding":
+                    findings.append(_convert(rec, run_id))
+            return findings
+
+        return run_cli_scan(
+            self, options, run_state,
+            argv=command,
+            command_str=" ".join(command),
+            subdir="bumblebee", raw_filename="results.ndjson",
+            parse=parse, raw_empty="",
         )
 
 

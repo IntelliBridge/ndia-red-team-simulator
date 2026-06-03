@@ -3,23 +3,29 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-import time
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from aegis.scanners.registry import ScanOptions, ScanResult, register
-from aegis.schema import AegisFinding, CodeLocation
-from aegis.state import RunState
+from aegis.scanners.registry import (
+    ScanOptions,
+    ScanResult,
+    cli_version,
+    register,
+    run_cli_scan,
+    which_available,
+)
+from aegis.schema import AegisFinding, CodeLocation, Confidence, Severity
 
-_SEVERITY_MAP = {
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
+
+_SEVERITY_MAP: dict[str, Severity] = {
     "HIGH": "high",
     "MEDIUM": "medium",
     "LOW": "low",
 }
 
-_CONFIDENCE_MAP = {
+_CONFIDENCE_MAP: dict[str, Confidence] = {
     "HIGH": "high",
     "MEDIUM": "medium",
     "LOW": "low",
@@ -65,56 +71,24 @@ class BanditAdapter:
     default_timeout = 600
 
     def adapter_version(self) -> str:
-        try:
-            out = subprocess.run(["bandit", "--version"], capture_output=True,
-                                 text=True, timeout=3, check=False)
-            return ((out.stdout or "") + (out.stderr or "")).strip() or "unknown"
-        except Exception:
-            return "unknown"
+        return cli_version("bandit", merge_stderr=True)
 
     def health_check(self) -> bool:
-        return shutil.which("bandit") is not None
+        return which_available("bandit")
 
-    def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
+    def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
-        command_str = f"bandit -r -f json {target}"
-        started = time.monotonic()
-        try:
-            proc = subprocess.run(
-                ["bandit", "-r", "-f", "json", str(target)],
-                capture_output=True, text=True, timeout=options.timeout,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=command_str,
-                exit_code=-1,
-                duration_s=time.monotonic() - started,
-                error=str(exc),
-            )
-        try:
+
+        def parse(proc, run_id):
             payload = json.loads(proc.stdout or "{}")
-        except json.JSONDecodeError as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=command_str,
-                exit_code=proc.returncode,
-                duration_s=time.monotonic() - started,
-                error=f"failed to parse bandit json: {exc}",
-            )
-        findings = [_convert(r, run_state.run_id)
-                    for r in payload.get("results", [])]
-        raw_dir = Path(run_state.run_path) / "bandit"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        (raw_dir / "results.json").write_text(proc.stdout or "{}")
-        return ScanResult(
-            findings=findings, adapter_name=self.name,
-            adapter_version=self.adapter_version(),
-            command_str=command_str,
-            exit_code=proc.returncode,
-            duration_s=time.monotonic() - started,
+            return [_convert(r, run_id) for r in payload.get("results", [])]
+
+        return run_cli_scan(
+            self, options, run_state,
+            argv=["bandit", "-r", "-f", "json", str(target)],
+            command_str=f"bandit -r -f json {target}",
+            subdir="bandit", raw_filename="results.json",
+            parse=parse, parse_error_label="bandit json",
         )
 
 

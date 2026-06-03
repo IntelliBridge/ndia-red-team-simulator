@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-import time
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from aegis.scanners.registry import ScanOptions, ScanResult, register
-from aegis.schema import AegisFinding
-from aegis.state import RunState
+from aegis.scanners.registry import (
+    ScanOptions,
+    ScanResult,
+    cli_version,
+    register,
+    run_cli_scan,
+    which_available,
+)
+from aegis.schema import AegisFinding, Severity
 
-_SEVERITY_MAP = {
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
+
+_SEVERITY_MAP: dict[str, Severity] = {
     "critical": "critical", "high": "high",
     "medium": "medium", "low": "low", "info": "low",
 }
@@ -51,53 +57,35 @@ class NucleiAdapter:
     default_timeout = 900
 
     def adapter_version(self) -> str:
-        try:
-            out = subprocess.run(["nuclei", "-version"], capture_output=True,
-                                 text=True, timeout=3, check=False)
-            return ((out.stdout or "") + (out.stderr or "")).strip() or "unknown"
-        except Exception:
-            return "unknown"
+        return cli_version("nuclei", subcommand="-version", merge_stderr=True)
 
     def health_check(self) -> bool:
-        return shutil.which("nuclei") is not None
+        return which_available("nuclei")
 
-    def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
+    def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
         templates = options.extra.get("templates", "cves,vulnerabilities")
-        started = time.monotonic()
-        try:
-            proc = subprocess.run(
-                ["nuclei", "-target", target, "-jsonl", "-silent",
-                 "-t", templates],
-                capture_output=True, text=True, timeout=options.timeout,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=f"nuclei -target {target}",
-                exit_code=-1, duration_s=time.monotonic() - started,
-                error=str(exc),
-            )
-        findings: list[AegisFinding] = []
-        for line in (proc.stdout or "").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            findings.append(_convert(rec, run_state.run_id))
-        raw_dir = Path(run_state.run_path) / "nuclei"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        (raw_dir / "results.jsonl").write_text(proc.stdout or "")
-        return ScanResult(
-            findings=findings, adapter_name=self.name,
-            adapter_version=self.adapter_version(),
+
+        def parse(proc, run_id):
+            findings: list[AegisFinding] = []
+            for line in (proc.stdout or "").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                findings.append(_convert(rec, run_id))
+            return findings
+
+        return run_cli_scan(
+            self, options, run_state,
+            argv=["nuclei", "-target", target, "-jsonl", "-silent",
+                  "-t", templates],
             command_str=f"nuclei -target {target} -t {templates}",
-            exit_code=proc.returncode,
-            duration_s=time.monotonic() - started,
+            subdir="nuclei", raw_filename="results.jsonl",
+            parse=parse, raw_empty="",
         )
 
 

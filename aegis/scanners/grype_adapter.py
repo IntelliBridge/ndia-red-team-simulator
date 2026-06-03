@@ -3,24 +3,22 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-import time
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from aegis.scanners.registry import ScanOptions, ScanResult, register
+from aegis.scanners.registry import (
+    ScanOptions,
+    ScanResult,
+    cli_version,
+    register,
+    run_cli_scan,
+    which_available,
+)
+from aegis.scanners.severity import canon_severity
 from aegis.schema import AegisFinding
-from aegis.state import RunState
 
-_SEVERITY_MAP = {
-    "CRITICAL": "critical",
-    "HIGH": "high",
-    "MEDIUM": "medium",
-    "LOW": "low",
-    "NEGLIGIBLE": "low",
-    "UNKNOWN": "low",
-}
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
 
 
 def _convert(m: dict, run_id: str) -> AegisFinding:
@@ -29,7 +27,7 @@ def _convert(m: dict, run_id: str) -> AegisFinding:
     vuln_id = vuln.get("id") or "GRYPE-UNKNOWN"
     name = art.get("name") or "unknown"
     version = art.get("version")
-    severity = _SEVERITY_MAP.get((vuln.get("severity") or "").upper(), "low")
+    severity = canon_severity(vuln.get("severity"))
     fixed_versions = (vuln.get("fix") or {}).get("versions") or []
     data_source = vuln.get("dataSource")
     return AegisFinding(
@@ -59,56 +57,24 @@ class GrypeAdapter:
     default_timeout = 900
 
     def adapter_version(self) -> str:
-        try:
-            out = subprocess.run(["grype", "version"], capture_output=True,
-                                 text=True, timeout=3, check=False)
-            return (out.stdout or "").strip() or "unknown"
-        except Exception:
-            return "unknown"
+        return cli_version("grype", subcommand="version")
 
     def health_check(self) -> bool:
-        return shutil.which("grype") is not None
+        return which_available("grype")
 
-    def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
+    def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
-        command_str = f"grype -o json {target}"
-        started = time.monotonic()
-        try:
-            proc = subprocess.run(
-                ["grype", "-o", "json", str(target)],
-                capture_output=True, text=True, timeout=options.timeout,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=command_str,
-                exit_code=-1,
-                duration_s=time.monotonic() - started,
-                error=str(exc),
-            )
-        try:
+
+        def parse(proc, run_id):
             payload = json.loads(proc.stdout or "{}")
-        except json.JSONDecodeError as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=command_str,
-                exit_code=proc.returncode,
-                duration_s=time.monotonic() - started,
-                error=f"failed to parse grype json: {exc}",
-            )
-        findings = [_convert(m, run_state.run_id)
-                    for m in payload.get("matches", [])]
-        raw_dir = Path(run_state.run_path) / "grype"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        (raw_dir / "results.json").write_text(proc.stdout or "{}")
-        return ScanResult(
-            findings=findings, adapter_name=self.name,
-            adapter_version=self.adapter_version(),
-            command_str=command_str,
-            exit_code=proc.returncode,
-            duration_s=time.monotonic() - started,
+            return [_convert(m, run_id) for m in payload.get("matches", [])]
+
+        return run_cli_scan(
+            self, options, run_state,
+            argv=["grype", "-o", "json", str(target)],
+            command_str=f"grype -o json {target}",
+            subdir="grype", raw_filename="results.json",
+            parse=parse, parse_error_label="grype json",
         )
 
 

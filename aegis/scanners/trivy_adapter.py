@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import shutil
 import time
+from typing import TYPE_CHECKING
 
-from aegis.scanners.registry import ScanOptions, ScanResult, register
-from aegis.state import RunState
+from aegis.scanners.registry import ScanOptions, ScanResult, cli_version, register, which_available
+
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
 
 
 class TrivyAdapter:
@@ -15,18 +17,12 @@ class TrivyAdapter:
     default_timeout = 900
 
     def adapter_version(self) -> str:
-        try:
-            import subprocess
-            out = subprocess.run(["trivy", "--version"], capture_output=True,
-                                 text=True, timeout=3, check=False)
-            return (out.stdout or "").splitlines()[0].strip() or "unknown"
-        except Exception:
-            return "unknown"
+        return cli_version("trivy", first_line=True)
 
     def health_check(self) -> bool:
-        return shutil.which("trivy") is not None
+        return which_available("trivy")
 
-    def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
+    def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         from aegis.runners.trivy_runner import run_trivy
         started = time.monotonic()
         result = run_trivy(

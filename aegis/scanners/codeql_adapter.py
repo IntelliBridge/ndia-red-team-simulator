@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-import time
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from aegis.scanners.registry import ScanOptions, ScanResult, register
-from aegis.schema import AegisFinding, CodeLocation
-from aegis.state import RunState
+from aegis.scanners.registry import (
+    ScanOptions,
+    ScanResult,
+    cli_version,
+    register,
+    run_cli_scan,
+    which_available,
+)
+from aegis.schema import AegisFinding, CodeLocation, Severity
 
-_SEVERITY_MAP = {
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
+
+_SEVERITY_MAP: dict[str, Severity] = {
     "error": "high", "warning": "medium", "note": "low",
 }
 
@@ -62,57 +68,25 @@ class CodeqlAdapter:
     default_timeout = 3600
 
     def adapter_version(self) -> str:
-        try:
-            out = subprocess.run(["codeql", "--version"], capture_output=True,
-                                 text=True, timeout=3, check=False)
-            return (out.stdout or "").strip().splitlines()[0] \
-                if (out.stdout or "").strip() else "unknown"
-        except Exception:
-            return "unknown"
+        return cli_version("codeql", first_line=True)
 
     def health_check(self) -> bool:
-        return shutil.which("codeql") is not None
+        return which_available("codeql")
 
-    def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
+    def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
-        command_str = f"codeql database analyze --format=sarif-latest {target}"
-        started = time.monotonic()
-        try:
-            proc = subprocess.run(
-                ["codeql", "database", "analyze", "--format=sarif-latest",
-                 target],
-                capture_output=True, text=True, timeout=options.timeout,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=command_str,
-                exit_code=-1, duration_s=time.monotonic() - started,
-                error=str(exc),
-            )
-        try:
+
+        def parse(proc, run_id):
             payload = json.loads(proc.stdout or "{}")
-        except json.JSONDecodeError as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=command_str,
-                exit_code=proc.returncode,
-                duration_s=time.monotonic() - started,
-                error=f"failed to parse codeql sarif: {exc}",
-            )
-        findings = [_convert(r, run_state.run_id)
-                    for r in _extract_results(payload)]
-        raw_dir = Path(run_state.run_path) / "codeql"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        (raw_dir / "results.sarif").write_text(proc.stdout or "{}")
-        return ScanResult(
-            findings=findings, adapter_name=self.name,
-            adapter_version=self.adapter_version(),
-            command_str=command_str,
-            exit_code=proc.returncode,
-            duration_s=time.monotonic() - started,
+            return [_convert(r, run_id) for r in _extract_results(payload)]
+
+        return run_cli_scan(
+            self, options, run_state,
+            argv=["codeql", "database", "analyze", "--format=sarif-latest",
+                  target],
+            command_str=f"codeql database analyze --format=sarif-latest {target}",
+            subdir="codeql", raw_filename="results.sarif",
+            parse=parse, parse_error_label="codeql sarif",
         )
 
 

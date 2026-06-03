@@ -3,17 +3,23 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-import time
 from datetime import datetime, timezone
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from aegis.scanners.registry import ScanOptions, ScanResult, register
-from aegis.schema import AegisFinding
-from aegis.state import RunState
+from aegis.scanners.registry import (
+    ScanOptions,
+    ScanResult,
+    cli_version,
+    register,
+    run_cli_scan,
+    which_available,
+)
+from aegis.schema import AegisFinding, Severity
 
-_SEVERITY_MAP = {
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
+
+_SEVERITY_MAP: dict[str, Severity] = {
     "3": "high", "2": "medium", "1": "low", "0": "low",
 }
 
@@ -56,56 +62,24 @@ class ZapAdapter:
     default_timeout = 1800
 
     def adapter_version(self) -> str:
-        try:
-            out = subprocess.run(["zap-cli", "--version"], capture_output=True,
-                                 text=True, timeout=3, check=False)
-            return ((out.stdout or "") + (out.stderr or "")).strip() or "unknown"
-        except Exception:
-            return "unknown"
+        return cli_version("zap-cli", merge_stderr=True)
 
     def health_check(self) -> bool:
-        return (shutil.which("zap-cli") is not None
-                or shutil.which("zap.sh") is not None)
+        return which_available("zap-cli", "zap.sh")
 
-    def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
+    def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
-        command_str = f"zap-cli report -o - -f json {target}"
-        started = time.monotonic()
-        try:
-            proc = subprocess.run(
-                ["zap-cli", "report", "-o", "-", "-f", "json", target],
-                capture_output=True, text=True, timeout=options.timeout,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=command_str,
-                exit_code=-1, duration_s=time.monotonic() - started,
-                error=str(exc),
-            )
-        try:
+
+        def parse(proc, run_id):
             payload = json.loads(proc.stdout or "{}")
-        except json.JSONDecodeError as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=command_str,
-                exit_code=proc.returncode,
-                duration_s=time.monotonic() - started,
-                error=f"failed to parse zap json: {exc}",
-            )
-        findings = [_convert(a, run_state.run_id)
-                    for a in _extract_alerts(payload)]
-        raw_dir = Path(run_state.run_path) / "zap"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        (raw_dir / "report.json").write_text(proc.stdout or "{}")
-        return ScanResult(
-            findings=findings, adapter_name=self.name,
-            adapter_version=self.adapter_version(),
-            command_str=command_str,
-            exit_code=proc.returncode,
-            duration_s=time.monotonic() - started,
+            return [_convert(a, run_id) for a in _extract_alerts(payload)]
+
+        return run_cli_scan(
+            self, options, run_state,
+            argv=["zap-cli", "report", "-o", "-", "-f", "json", target],
+            command_str=f"zap-cli report -o - -f json {target}",
+            subdir="zap", raw_filename="report.json",
+            parse=parse, parse_error_label="zap json",
         )
 
 

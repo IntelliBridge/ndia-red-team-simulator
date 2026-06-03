@@ -35,16 +35,19 @@ import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from aegis.config import load_config
 from aegis.scanners.registry import ScanOptions, ScanResult, register
-from aegis.schema import AegisFinding, CodeLocation
-from aegis.state import RunState
+from aegis.schema import AegisFinding, CodeLocation, Confidence, Severity
+
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
 
 # deepsec Severity union (packages/core/src/types.ts) → Aegis severity.
 # HIGH_BUG is a high-severity code-quality bug; BUG is a plain bug. We map the
 # bug classes conservatively (high / low) and pass real vuln severities through.
-_SEVERITY_MAP = {
+_SEVERITY_MAP: dict[str, Severity] = {
     "CRITICAL": "critical",
     "HIGH": "high",
     "HIGH_BUG": "high",
@@ -58,7 +61,7 @@ _SEVERITY_MAP = {
 # primary finding, so surfacing it would double-count.
 _DROP_VERDICTS = {"false-positive", "fixed", "duplicate"}
 
-_CONFIDENCE = {"high", "medium", "low"}
+_CONFIDENCE_MAP: dict[str, Confidence] = {"high": "high", "medium": "medium", "low": "low"}
 
 # export prefixes each title with "[SEVERITY] "; we track severity separately.
 _TITLE_PREFIX = re.compile(r"^\[[^\]]*\]\s*")
@@ -66,7 +69,7 @@ _TITLE_PREFIX = re.compile(r"^\[[^\]]*\]\s*")
 _AI_KEY_ENVS = ("AI_GATEWAY_API_KEY", "ANTHROPIC_AUTH_TOKEN", "OPENAI_API_KEY")
 
 
-def _normalize_severity(value: str) -> str:
+def _normalize_severity(value: str) -> Severity:
     return _SEVERITY_MAP.get((value or "").strip().upper(), "low")
 
 
@@ -125,7 +128,7 @@ def _convert(finding: dict, run_id: str) -> AegisFinding | None:
     )
 
     conf = (meta.get("confidence") or "").lower()
-    confidence = conf if conf in _CONFIDENCE else "medium"
+    confidence = _CONFIDENCE_MAP.get(conf, "medium")
 
     finding_id = (
         f"deepsec:{vuln_slug or 'finding'}:{file_path or '?'}:{line0 if line0 is not None else '?'}"
@@ -192,7 +195,7 @@ class DeepsecAdapter:
         cfg = load_config()
         return shutil.which("pnpm") is not None and Path(cfg.deepsec_path).exists()
 
-    def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
+    def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         cfg = load_config()
         target = options.target
         deepsec_dir = str(cfg.deepsec_path)

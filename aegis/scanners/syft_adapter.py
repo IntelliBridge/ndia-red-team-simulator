@@ -7,13 +7,19 @@ run path.
 
 from __future__ import annotations
 
-import shutil
-import subprocess
-import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from aegis.scanners.registry import ScanOptions, ScanResult, register
-from aegis.state import RunState
+from aegis.scanners.registry import (
+    ScanOptions,
+    ScanResult,
+    cli_version,
+    register,
+    run_cli_scan,
+    which_available,
+)
+
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
 
 
 def _summarize_sbom(doc: dict) -> int:
@@ -26,42 +32,25 @@ class SyftAdapter:
     default_timeout = 600
 
     def adapter_version(self) -> str:
-        try:
-            out = subprocess.run(["syft", "version"], capture_output=True,
-                                 text=True, timeout=3, check=False)
-            return (out.stdout or "").strip() or "unknown"
-        except Exception:
-            return "unknown"
+        return cli_version("syft", subcommand="version")
 
     def health_check(self) -> bool:
-        return shutil.which("syft") is not None
+        return which_available("syft")
 
-    def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
+    def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
-        command_str = f"syft {target} -o cyclonedx-json"
-        started = time.monotonic()
-        try:
-            proc = subprocess.run(
-                ["syft", str(target), "-o", "cyclonedx-json"],
-                capture_output=True, text=True, timeout=options.timeout,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=command_str,
-                exit_code=-1, duration_s=time.monotonic() - started,
-                error=str(exc),
-            )
-        raw_dir = Path(run_state.run_path) / "syft"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        (raw_dir / "sbom.cyclonedx.json").write_text(proc.stdout or "{}")
-        return ScanResult(
-            findings=[], adapter_name=self.name,
-            adapter_version=self.adapter_version(),
-            command_str=command_str,
-            exit_code=proc.returncode,
-            duration_s=time.monotonic() - started,
+
+        # Syft yields an SBOM artifact, not findings: the parse step always
+        # returns [] and the raw CycloneDX document is persisted by the runner.
+        def parse(proc, run_id):
+            return []
+
+        return run_cli_scan(
+            self, options, run_state,
+            argv=["syft", str(target), "-o", "cyclonedx-json"],
+            command_str=f"syft {target} -o cyclonedx-json",
+            subdir="syft", raw_filename="sbom.cyclonedx.json",
+            parse=parse,
         )
 
 
