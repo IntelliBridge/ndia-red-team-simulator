@@ -6,7 +6,7 @@ import hashlib
 import os
 from typing import Iterator
 
-from aegis.blobs import BlobRef
+from aegis.storage.blobs import BlobRef
 
 
 class S3BlobStore:

@@ -1,6 +1,6 @@
 """Aegis run state persistence (filesystem backend).
 
-Phase 3 introduces ``aegis.state_facade.RunStateAPI`` as the shared Protocol;
+Phase 3 introduces ``aegis.state.RunStateAPI`` as the shared Protocol;
 ``FilesystemRunState`` here implements it. The historical name ``RunState``
 remains as a back-compat alias so all Phase 2 imports keep working.
 """
@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from aegis.state_facade import ArtifactRef
+from aegis.state.facade import ArtifactRef
 
 
 class FilesystemRunState:
@@ -24,6 +24,13 @@ class FilesystemRunState:
         self.run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:6]
         self.run_path = self.output_dir / "runs" / self.run_id
         self.run_path.mkdir(parents=True, exist_ok=True)
+
+    def close(self) -> None:
+        """No-op: the filesystem backend holds no session to release.
+
+        Present so callers can release any ``RunStateAPI`` uniformly without
+        special-casing the backend (the Postgres backend overrides this).
+        """
 
     @property
     def findings_path(self) -> Path:

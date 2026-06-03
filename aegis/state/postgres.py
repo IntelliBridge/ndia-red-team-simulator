@@ -7,6 +7,7 @@ layer is the only place audit events are written (Phase 3 M2).
 from __future__ import annotations
 
 import hashlib
+from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -15,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from aegis.db.models import Artifact, Finding, RemediationAttempt, Run
-from aegis.state_facade import ArtifactRef
+from aegis.state.facade import ArtifactRef
 
 
 def _now() -> datetime:
@@ -37,8 +38,12 @@ class PostgresRunState:
         self.run_path = Path(output_dir) / "runs" / run_id
         self.run_path.mkdir(parents=True, exist_ok=True)
         self.created_by = created_by
+        # Set by ``open_run_state`` when it hands us a session it entered on
+        # our behalf; ``close()`` then exits it (commit + release). Stays None
+        # when the caller owns the session (e.g. the worker's ``with`` block).
+        self._session_ctx: AbstractContextManager[Session] | None = None
         if blob_store is None:
-            from aegis.blobs import FilesystemBlobStore
+            from aegis.storage import FilesystemBlobStore
             blob_store = FilesystemBlobStore(Path(output_dir) / "blobs")
         self.blob_store = blob_store
 
@@ -49,6 +54,17 @@ class PostgresRunState:
                 status="running", created_by=created_by, stage_table={},
             ))
             session.flush()
+
+    def close(self) -> None:
+        """Release a session this state owns (commit + close).
+
+        Only the ``open_run_state`` factory path stashes a session context
+        for us to own; the worker's ``with get_session()`` block owns its own
+        session, leaves ``_session_ctx`` None, and this is a no-op there.
+        """
+        ctx, self._session_ctx = self._session_ctx, None
+        if ctx is not None:
+            ctx.__exit__(None, None, None)
 
     # ---- Phase 2 path properties (still useful for offline interop) -------
 

@@ -1,7 +1,7 @@
 """``RunStateAPI`` — the shared interface every state backend implements.
 
 Phase 2's ``aegis.state.RunState`` is filesystem-only. Phase 3 introduces a
-Postgres backend (``aegis.state_pg.PostgresRunState``) so the API and the
+Postgres backend (``aegis.state.PostgresRunState``) so the API and the
 workers can use the same persistence layer the CLI uses offline. Both
 backends satisfy this Protocol.
 
@@ -15,7 +15,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from aegis.schema import AegisFinding
 
 
 @dataclass(frozen=True)
@@ -44,16 +47,20 @@ class RunStateAPI(Protocol):
     @property
     def report_path(self) -> Path: ...
 
-    def save_findings(self, findings: list) -> None: ...
+    def save_findings(self, findings: list[AegisFinding]) -> None: ...
 
-    def load_findings(self) -> list[dict]: ...
+    def load_findings(self) -> list[dict[str, Any]]: ...
 
-    def save_artifact(self, name: str, content) -> Path: ...
+    def save_artifact(self, name: str, content: bytes | str) -> Path: ...
 
     def append_remediation_log(self, finding_id: str, action: str,
                                result: str, success: bool) -> None: ...
 
     def update_finding_status(self, finding_id: str, status: str) -> None: ...
 
-    def record_artifact(self, name: str, content,
+    def record_artifact(self, name: str, content: bytes | str,
                         content_type: str = "application/octet-stream") -> ArtifactRef: ...
+
+    def close(self) -> None:
+        """Release any backend resource (e.g. a factory-owned DB session)."""
+        ...

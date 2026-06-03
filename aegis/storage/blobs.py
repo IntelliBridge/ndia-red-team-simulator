@@ -86,7 +86,7 @@ def open_blob_store(config_or_url=None) -> BlobStore:
     backend = os.environ.get("AEGIS_BLOB_BACKEND", "fs")
     if backend == "s3":
         try:
-            from aegis.blobs_s3 import S3BlobStore  # added in M9
+            from aegis.storage.s3 import S3BlobStore  # added in M9
             return S3BlobStore.from_env()
         except ImportError as exc:  # pragma: no cover
             raise RuntimeError(

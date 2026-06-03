@@ -8,15 +8,19 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from aegis.config import AegisConfig
+
+if TYPE_CHECKING:
+    from aegis.state.facade import RunStateAPI
 
 
 def open_run_state(config: AegisConfig, *,
                    run_id: str | None = None,
                    project_id: str | None = None,
-                   created_by: str | None = None):
+                   created_by: str | None = None) -> RunStateAPI:
     """Return the active ``RunStateAPI`` implementation.
 
     Filesystem path is the offline default. Postgres path requires
@@ -24,7 +28,7 @@ def open_run_state(config: AegisConfig, *,
     """
     db_url = os.environ.get("AEGIS_DB_URL")
     if not db_url:
-        from aegis.state import FilesystemRunState
+        from aegis.state.filesystem import FilesystemRunState
         return FilesystemRunState(config.output_dir, run_id=run_id)
 
     from aegis.db.session import get_session, init_engine
@@ -37,13 +41,13 @@ def open_run_state(config: AegisConfig, *,
     session_ctx = get_session()
     sess = session_ctx.__enter__()
     try:
-        from aegis.state_pg import PostgresRunState
+        from aegis.state.postgres import PostgresRunState
         state = PostgresRunState(
             sess, run_id=rid, project_id=pid,
             output_dir=config.output_dir, created_by=created_by,
         )
-        # Caller is responsible for the session lifetime; expose a close()
-        # helper so worker bootstrap can release it cleanly.
+        # We entered the session on the caller's behalf; hand it to the state
+        # so ``state.close()`` releases it cleanly (commit + close).
         state._session_ctx = session_ctx
         return state
     except Exception:
