@@ -2438,8 +2438,9 @@ class TestResolveWriterDbUrlBranch(unittest.TestCase):
 
 
 class TestPostgresAuditWriter(unittest.TestCase):
-    """Cover PostgresAuditWriter.append / read_chain / iter_chain_ids / _chain_id
-    using a fully-mocked SQLAlchemy session (no real DB required).
+    """Cover PostgresAuditWriter.append / read_chain / iter_chain_ids plus the
+    shared module-level _chain_id helper, using a fully-mocked SQLAlchemy
+    session (no real DB required).
     """
 
     def _make_writer(self):
@@ -2475,19 +2476,16 @@ class TestPostgresAuditWriter(unittest.TestCase):
         return chain_head_cls, chain_head_instance, ae_model_cls, select_mock
 
     def test_chain_id_run(self):
-        from aegis.audit.chain import PostgresAuditWriter
-        writer = PostgresAuditWriter(session_factory=MagicMock())
-        self.assertEqual(writer._chain_id(None, "r1"), "run:r1")
+        from aegis.audit.chain import _chain_id
+        self.assertEqual(_chain_id(None, "r1"), "run:r1")
 
     def test_chain_id_project(self):
-        from aegis.audit.chain import PostgresAuditWriter
-        writer = PostgresAuditWriter(session_factory=MagicMock())
-        self.assertEqual(writer._chain_id("proj-1", None), "project:proj-1")
+        from aegis.audit.chain import _chain_id
+        self.assertEqual(_chain_id("proj-1", None), "project:proj-1")
 
     def test_chain_id_system(self):
-        from aegis.audit.chain import PostgresAuditWriter
-        writer = PostgresAuditWriter(session_factory=MagicMock())
-        self.assertEqual(writer._chain_id(None, None), "system")
+        from aegis.audit.chain import _chain_id
+        self.assertEqual(_chain_id(None, None), "system")
 
     def test_append_new_head(self):
         """append() with no existing head creates a new AuditChainHead row."""

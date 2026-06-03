@@ -78,6 +78,17 @@ def compute_hash(prev_hash_hex: str | None, record: dict[str, Any]) -> str:
     return digest
 
 
+def _chain_id(project_id: str | None, run_id: str | None) -> str:
+    """Resolve an event's hash-chain id: per run, else per project, else the
+    install-wide ``system`` chain. Shared by every writer backend so the
+    keying can't drift between them."""
+    if run_id:
+        return f"run:{run_id}"
+    if project_id:
+        return f"project:{project_id}"
+    return "system"
+
+
 # ----------------------------------------------------------------------------
 # Writer Protocol + backends
 # ----------------------------------------------------------------------------
@@ -120,13 +131,6 @@ class JsonlAuditWriter:
         self._locks: dict[str, threading.Lock] = {}
         self._global_lock = threading.Lock()
 
-    def _chain_id(self, project_id: str | None, run_id: str | None) -> str:
-        if run_id:
-            return f"run:{run_id}"
-        if project_id:
-            return f"project:{project_id}"
-        return "system"
-
     def _path(self, chain_id: str) -> Path:
         if self._single_file is not None:
             return self.directory / self._single_file
@@ -160,7 +164,7 @@ class JsonlAuditWriter:
                detail: dict[str, Any],
                run_id: str | None = None,
                project_id: str | None = None) -> AuditEvent:
-        chain_id = self._chain_id(project_id, run_id)
+        chain_id = _chain_id(project_id, run_id)
         redacted_detail = redact_audit_detail(detail or {})
         with self._lock(chain_id):
             prev_seq, prev_hash = self._last(chain_id)
@@ -216,13 +220,6 @@ class PostgresAuditWriter:
         # session_factory: callable returning a context manager that yields a Session.
         self.session_factory = session_factory
 
-    def _chain_id(self, project_id: str | None, run_id: str | None) -> str:
-        if run_id:
-            return f"run:{run_id}"
-        if project_id:
-            return f"project:{project_id}"
-        return "system"
-
     def append(self, *, action: str, actor: str, target: str | None,
                allowlist_check: str, override: bool, success: bool,
                detail: dict[str, Any],
@@ -233,7 +230,7 @@ class PostgresAuditWriter:
         from aegis.db.models import AuditChainHead
         from aegis.db.models import AuditEvent as AEModel
 
-        chain_id = self._chain_id(project_id, run_id)
+        chain_id = _chain_id(project_id, run_id)
         redacted_detail = redact_audit_detail(detail or {})
 
         with self.session_factory() as sess:
@@ -381,19 +378,12 @@ class InMemoryAuditWriter:
         self.events: list[AuditEvent] = []
         self._chains: dict[str, list[dict[str, Any]]] = {}
 
-    def _chain_id(self, project_id: str | None, run_id: str | None) -> str:
-        if run_id:
-            return f"run:{run_id}"
-        if project_id:
-            return f"project:{project_id}"
-        return "system"
-
     def append(self, *, action: str, actor: str, target: str | None,
                allowlist_check: str, override: bool, success: bool,
                detail: dict[str, Any],
                run_id: str | None = None,
                project_id: str | None = None) -> AuditEvent:
-        chain_id = self._chain_id(project_id, run_id)
+        chain_id = _chain_id(project_id, run_id)
         seq = len(self._chains.get(chain_id, [])) + 1
         event = AuditEvent(
             chain_id=chain_id, seq=seq,
