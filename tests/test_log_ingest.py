@@ -17,6 +17,8 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient
 
+from aegis.api.auth import issue_worker_token
+from aegis.api.settings import APISettings
 from aegis.log_ingest.server import create_app
 from aegis.log_ingest.writer import (
     LogIngestRow,
@@ -168,6 +170,102 @@ class TestMetricsAndHealth(unittest.TestCase):
         resp = client.get("/health")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["status"], "ok")
+
+
+class TestWriteSurfaceAuth(unittest.TestCase):
+    """The host-exposed write routes require a worker token once a signing
+    key is configured; with no key the service stays open (offline profile).
+    """
+
+    @staticmethod
+    def _enforced_settings() -> APISettings:
+        return APISettings(
+            env="prod", auth_mode="oidc",
+            worker_signing_key="key-v1",
+            worker_signing_key_previous=None,
+            worker_signing_key_version=1,
+            worker_key_overlap_seconds=300,
+            worker_token_ttl_seconds=300,
+        )
+
+    @staticmethod
+    def _record() -> dict:
+        return {
+            "ts": "2026-05-28T12:00:00+00:00", "severity": "info",
+            "service": "api", "message": "hi", "actor": "user:alice",
+        }
+
+    def test_ingest_without_token_is_401_when_key_set(self):
+        writer = LogIngestWriter()
+        client = TestClient(create_app(writer, self._enforced_settings()))
+        resp = client.post("/ingest", json={"records": [self._record()]})
+        self.assertEqual(resp.status_code, 401)
+        self.assertEqual(writer.buffered(), 0)
+
+    def test_ingest_with_invalid_token_is_401(self):
+        writer = LogIngestWriter()
+        client = TestClient(create_app(writer, self._enforced_settings()))
+        resp = client.post(
+            "/ingest",
+            headers={"Authorization": "Bearer worker:v1.w1.9999999999.bad"},
+            json={"records": [self._record()]},
+        )
+        self.assertEqual(resp.status_code, 401)
+
+    def test_ingest_with_valid_token_stamps_provenance(self):
+        settings = self._enforced_settings()
+        token = issue_worker_token("w1", settings=settings)
+        writer = LogIngestWriter()
+        client = TestClient(create_app(writer, settings))
+        resp = client.post(
+            "/ingest",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"records": [self._record()]},
+        )
+        self.assertEqual(resp.status_code, 202)
+        row = writer._queue[0]
+        # Relayed multi-tenant actor is preserved (not clobbered)...
+        self.assertEqual(row.actor, "user:alice")
+        # ...and the authenticated shipper is recorded as provenance.
+        self.assertEqual(row.attrs["_ingested_by"], "service:worker:w1")
+
+    def test_otlp_with_valid_token_stamps_provenance(self):
+        settings = self._enforced_settings()
+        token = issue_worker_token("w1", settings=settings)
+        writer = LogIngestWriter()
+        client = TestClient(create_app(writer, settings))
+        resp = client.post(
+            "/v1/logs",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"resourceLogs": [{
+                "resource": {"attributes": [
+                    {"key": "service.name",
+                     "value": {"stringValue": "aegis-worker"}}]},
+                "scopeLogs": [{"logRecords": [{
+                    "timeUnixNano": "1717248000000000000",
+                    "severityText": "INFO",
+                    "body": {"stringValue": "hi"},
+                    "attributes": [
+                        {"key": "run_id",
+                         "value": {"stringValue": "run-xyz"}}],
+                }]}],
+            }]},
+        )
+        self.assertEqual(resp.status_code, 202)
+        row = writer._queue[0]
+        self.assertEqual(row.run_id, "run-xyz")  # relayed attribution kept
+        self.assertEqual(row.attrs["_ingested_by"], "service:worker:w1")
+
+    def test_no_key_leaves_write_surface_open(self):
+        # Graceful degradation: no signing key → offline/local profile,
+        # writes accepted without a token and no provenance stamped.
+        writer = LogIngestWriter()
+        settings = APISettings(env="dev", auth_mode="dev",
+                               worker_signing_key=None)
+        client = TestClient(create_app(writer, settings))
+        resp = client.post("/ingest", json={"records": [self._record()]})
+        self.assertEqual(resp.status_code, 202)
+        self.assertNotIn("_ingested_by", writer._queue[0].attrs)
 
 
 if __name__ == "__main__":
