@@ -213,23 +213,22 @@ def run_strix(
     # placeholder only labels the pre-run error returns (no events exist yet).
     events_path: Path | None = None
 
-    if not skip_docker_check and not docker_available():
+    def _err(msg: str, command: list[str] | None = None) -> StrixRunResult:
         return StrixRunResult(
             success=False, partial_success=False, return_code=-1,
-            command=[], log_path=str(log_path), events_path=str(strix_dir),
-            error="docker is not available — start Docker Desktop or the daemon",
+            command=command or [], log_path=str(log_path), events_path=str(strix_dir),
+            error=msg,
         )
+
+    if not skip_docker_check and not docker_available():
+        return _err("docker is not available — start Docker Desktop or the daemon")
 
     try:
         cmd_prefix, env_additions = discover_strix_command(
             strix_command=strix_command, strix_path=strix_path,
         )
     except FileNotFoundError as exc:
-        return StrixRunResult(
-            success=False, partial_success=False, return_code=-1,
-            command=[], log_path=str(log_path), events_path=str(strix_dir),
-            error=str(exc),
-        )
+        return _err(str(exc))
 
     if scan_mode not in VALID_SCAN_MODES:
         scan_mode = "standard"
@@ -275,11 +274,7 @@ def run_strix(
         )
     except FileNotFoundError as exc:
         log_fh.close()
-        return StrixRunResult(
-            success=False, partial_success=False, return_code=-1,
-            command=cmd, log_path=str(log_path), events_path=str(strix_dir),
-            error=f"failed to launch strix: {exc}",
-        )
+        return _err(f"failed to launch strix: {exc}", command=cmd)
 
     started = time.monotonic()
 

@@ -82,16 +82,19 @@ def create_fix_job(
                 "open_pr": open_pr, "repo": repo},
     )
 
-    from aegis.db.models import Job
+    from aegis.db.models import FixJobDetail, Job
     from aegis.db.session import get_session
 
     job_id = f"job-{uuid4().hex[:12]}"
+    detail: FixJobDetail = {
+        "finding_id": finding_id, "strategy": strategy,
+        "apply": apply, "open_pr": open_pr, "repo": repo,
+    }
     with get_session() as sess:
         sess.add(Job(
             id=job_id, run_id=run_id, project_id=project_id,
             type="fix.generate", status="queued", created_by=actor,
-            detail={"finding_id": finding_id, "strategy": strategy,
-                    "apply": apply, "open_pr": open_pr, "repo": repo},
+            detail=dict(detail),
         ))
         sess.flush()
 

@@ -46,15 +46,16 @@ def create_verify_job(
         detail={"actor": actor, "finding_id": finding_id},
     )
 
-    from aegis.db.models import Job
+    from aegis.db.models import Job, VerifyJobDetail
     from aegis.db.session import get_session
 
     job_id = f"job-{uuid4().hex[:12]}"
+    detail: VerifyJobDetail = {"finding_id": finding_id}
     with get_session() as sess:
         sess.add(Job(
             id=job_id, run_id=run_id, project_id=project_id,
             type="verify.replay", status="queued", created_by=actor,
-            detail={"finding_id": finding_id},
+            detail=dict(detail),
         ))
         sess.flush()
 

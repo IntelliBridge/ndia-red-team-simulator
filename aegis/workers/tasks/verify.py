@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 from aegis.workers.celery_app import app
 
@@ -28,7 +29,7 @@ _STATE_MAP = {
 @app.task(name="aegis.verify_replay", bind=True, max_retries=2)
 def verify_replay(self, job_id: str) -> dict:
     from aegis.config import load_config
-    from aegis.db.models import Finding, Job
+    from aegis.db.models import Finding, Job, VerifyJobDetail
     from aegis.schema import AegisFinding
     from aegis.services.verify import verify
     from aegis.workers.bootstrap import task_context
@@ -37,7 +38,7 @@ def verify_replay(self, job_id: str) -> dict:
     with task_context(job_id) as ctx:
         sess = ctx.session
         job = sess.get(Job, job_id)
-        detail = (job.detail if job else {}) or {}
+        detail = cast(VerifyJobDetail, (job.detail if job else {}) or {})
         finding_row = sess.get(Finding, detail.get("finding_id"))
         if finding_row is None:
             raise RuntimeError("finding missing")

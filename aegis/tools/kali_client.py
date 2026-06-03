@@ -138,7 +138,22 @@ class KaliClient:
     def run_tool(self, tool_name: str, params: dict) -> ToolResult:
         """Run a named Kali tool with parameters.
 
-        Validates tool name and target before execution.
+        Two failure surfaces, deliberately asymmetric:
+
+        - **Unknown tool** → returns ``ToolResult(success=False)`` (does
+          not raise). An unrecognised tool name is a caller/programming
+          error, surfaced as a failed result the caller can branch on.
+        - **Disallowed target** → audits an allowlist ``"fail"`` row and
+          then **raises** ``AuthorizationError``. A target outside the
+          allowlist is a security-boundary violation that must halt the
+          call loudly, never be swallowed into a result a caller might
+          ignore. Direct callers (the named-tool helpers below, CAI
+          agents) rely on this propagating; ``services.tools`` gates the
+          same target via ``authorize()`` before reaching here, so for
+          that path the raise is belt-and-suspenders.
+
+        On success the tool is POSTed to the Kali server and its
+        ``ToolResult`` is returned (with a per-call audit row either way).
         """
         if tool_name not in self.ALLOWED_TOOLS:
             result = ToolResult(

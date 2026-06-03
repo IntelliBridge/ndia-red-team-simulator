@@ -81,10 +81,7 @@ class AegisFinding:
                 and self.installed_version is not None)
 
     def to_dict(self) -> dict:
-        d = {}
-        for k, v in asdict(self).items():
-            d[k] = v
-        return d
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> AegisFinding:
