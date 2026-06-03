@@ -12,11 +12,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aegis.config import AegisConfig
 from aegis.safety import AuthorizationError, is_target_allowed
 from aegis.tools.kali_client import KaliClient
+
+if TYPE_CHECKING:
+    from aegis.audit.chain import AuditWriter
 
 
 @dataclass
@@ -37,7 +40,7 @@ def _maybe_import_function_tool():
 def build_kali_toolbelt(config: AegisConfig, *,
                        run_path: Path | None = None,
                        caller: str = "cai_tool",
-                       audit_writer=None,
+                       audit_writer: AuditWriter | None = None,
                        run_id: str | None = None,
                        project_id: str | None = None) -> _Toolbelt:
     """Construct the CAI toolbelt.

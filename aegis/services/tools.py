@@ -10,12 +10,15 @@ hash-chained audit. Phase 4 v0.3.1 F8 retired the side-channel
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aegis.config import AegisConfig
 from aegis.safety import AuthorizationError, authorize
 from aegis.state import RunStateAPI
 from aegis.tools.kali_client import KaliClient, ToolResult
+
+if TYPE_CHECKING:
+    from aegis.audit.chain import AuditWriter
 
 
 @dataclass
@@ -37,7 +40,7 @@ def run_kali_tool(
     config: AegisConfig,
     override_authorized: bool = False,
     client: KaliClient | None = None,
-    audit_writer=None,
+    audit_writer: AuditWriter | None = None,
     run_id: str | None = None,
     project_id: str | None = None,
 ) -> ToolOutcome:

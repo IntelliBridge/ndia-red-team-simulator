@@ -11,9 +11,13 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from aegis.state.facade import ArtifactRef
+
+if TYPE_CHECKING:
+    from aegis.schema import Status
 
 
 class FilesystemRunState:
@@ -86,7 +90,7 @@ class FilesystemRunState:
         with open(self.remediation_log_path, "w") as fh:
             json.dump(log, fh, indent=2)
 
-    def update_finding_status(self, finding_id: str, status: str) -> None:
+    def update_finding_status(self, finding_id: str, status: Status) -> None:
         """Update the status of a specific finding."""
         findings = self.load_findings()
         for f in findings:

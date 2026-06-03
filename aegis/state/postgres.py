@@ -10,6 +10,7 @@ import hashlib
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -17,6 +18,9 @@ from sqlalchemy.orm import Session
 
 from aegis.db.models import Artifact, Finding, RemediationAttempt, Run
 from aegis.state.facade import ArtifactRef
+
+if TYPE_CHECKING:
+    from aegis.schema import Status
 
 
 def _now() -> datetime:
@@ -127,7 +131,7 @@ class PostgresRunState:
         # UUID stays internal.
         return [r.schema_blob for r in rows]
 
-    def update_finding_status(self, finding_id: str, status: str) -> None:
+    def update_finding_status(self, finding_id: str, status: Status) -> None:
         """Update finding status. ``finding_id`` accepts either the internal
         UUID or the upstream ``scanner_finding_id`` for this run."""
         row = self.session.get(Finding, finding_id)

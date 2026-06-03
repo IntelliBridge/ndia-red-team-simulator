@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from aegis.schema import AegisFinding
+    from aegis.schema import AegisFinding, Status
 
 
 @dataclass(frozen=True)
@@ -56,7 +56,7 @@ class RunStateAPI(Protocol):
     def append_remediation_log(self, finding_id: str, action: str,
                                result: str, success: bool) -> None: ...
 
-    def update_finding_status(self, finding_id: str, status: str) -> None: ...
+    def update_finding_status(self, finding_id: str, status: Status) -> None: ...
 
     def record_artifact(self, name: str, content: bytes | str,
                         content_type: str = "application/octet-stream") -> ArtifactRef: ...

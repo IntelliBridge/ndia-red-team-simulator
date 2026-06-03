@@ -13,9 +13,13 @@ import json
 import time
 import urllib.request
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from aegis.audit.forensic import tool_detail
 from aegis.safety import AuthorizationError, is_target_allowed
+
+if TYPE_CHECKING:
+    from aegis.audit.chain import AuditWriter
 
 
 @dataclass
@@ -46,7 +50,7 @@ class KaliClient:
                  allow_generic_command: bool = False,
                  timeout: int = 180,
                  caller: str = "cli",
-                 audit_writer=None,
+                 audit_writer: AuditWriter | None = None,
                  run_id: str | None = None,
                  project_id: str | None = None):
         self.base_url = base_url.rstrip("/")
