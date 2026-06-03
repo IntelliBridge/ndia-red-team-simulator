@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import aegis.cli.main as _main
+from aegis.cli import _console
 
 
 def cmd_init(_args, _config) -> None:
     """Create a default aegis.yaml in the current directory."""
     target = _main.Path("aegis.yaml")
     if target.exists():
-        _main._warn("aegis.yaml already exists — skipping.")
+        _console._warn("aegis.yaml already exists — skipping.")
         return
 
     import dataclasses
@@ -31,4 +32,4 @@ def cmd_init(_args, _config) -> None:
     lines.append("")
 
     target.write_text("\n".join(lines))
-    _main._info(f"Created {target.resolve()}")
+    _console._info(f"Created {target.resolve()}")

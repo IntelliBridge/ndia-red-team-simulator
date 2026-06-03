@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-import aegis.cli.main as _main
+from aegis.cli import _console
 
 
 def cmd_targets(args, config) -> None:
@@ -30,14 +30,14 @@ def cmd_targets(args, config) -> None:
             detail={"pack": pack_name, "repo": args.repo, "port": args.port},
         )
         if args.repo:
-            _main._info(f"Building {pack_name} from {args.repo} and starting on {pack.runtime.url}")
+            _console._info(f"Building {pack_name} from {args.repo} and starting on {pack.runtime.url}")
             runtime = pack.up_from_repo(args.repo)
         else:
-            _main._info(f"Starting {pack_name} from pinned image on {pack.runtime.url}")
+            _console._info(f"Starting {pack_name} from pinned image on {pack.runtime.url}")
             runtime = pack.up(image_tag=getattr(config, "juice_shop_image_tag", None)
                               if pack_name == "juice-shop" else None)
         ready = pack.wait_ready(timeout=args.timeout)
-        _main._info(f"Container ready: {ready} ({runtime.url})")
+        _console._info(f"Container ready: {ready} ({runtime.url})")
         return
 
     if action == "down":
@@ -49,8 +49,8 @@ def cmd_targets(args, config) -> None:
             detail={"pack": pack_name, "container_name": pack.container_name},
         )
         pack.down()
-        _main._info(f"Stopped {pack.container_name}")
+        _console._info(f"Stopped {pack.container_name}")
         return
 
-    _main._err(f"Unknown targets action: {action}")
+    _console._err(f"Unknown targets action: {action}")
     sys.exit(1)

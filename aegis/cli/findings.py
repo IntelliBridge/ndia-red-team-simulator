@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-import aegis.cli.main as _main
+from aegis.cli import _console, _runstate
 
 
 def cmd_findings(args, config) -> None:
     """Display findings as a table."""
-    state = _main._resolve_run_state(config, args.run)
+    state = _runstate._resolve_run_state(config, args.run)
     findings = state.load_findings()
 
     if not findings:
-        _main._warn("No findings in this run.")
+        _console._warn("No findings in this run.")
         return
 
-    _main._info(f"Run: {state.run_id}  ({len(findings)} finding(s))")
+    _console._info(f"Run: {state.run_id}  ({len(findings)} finding(s))")
     print()
 
     # Table header
@@ -26,7 +26,7 @@ def cmd_findings(args, config) -> None:
     for f in findings:
         sev_raw = f.get("severity", "unknown")
         # For colored severity we need to account for ANSI escape width
-        sev_display = _main._colored_severity(sev_raw)
+        sev_display = _console._colored_severity(sev_raw)
         title = f.get("title", "")
         if len(title) > 45:
             title = title[:42] + "..."

@@ -12,76 +12,17 @@ import json  # noqa: F401  (re-exported for test patch target aegis.cli.main.jso
 import sys
 from pathlib import Path  # noqa: F401  (re-exported for test patch target aegis.cli.main.Path)
 
+# Console output (ANSI colours + ``[*]``/``[!]`` writers) lives in a dedicated
+# peer module now; ``main()`` and every per-command module call through it so
+# there is one place to patch console I/O. Run-state resolution likewise moved
+# to ``aegis.cli._runstate``.
+from aegis.cli import _console
+
 # ``json``, ``Path`` and ``open`` are referenced by the per-command sibling
 # modules via this module (e.g. ``aegis.cli.main.open``) so that the existing
 # tests can monkeypatch them at ``aegis.cli.main``. ``open`` is the builtin,
 # re-bound here only to expose it as a real, importable module attribute.
 open = open  # noqa: A001  (intentional builtin re-export for the scan fixture loader)
-
-# ---------------------------------------------------------------------------
-# ANSI helpers
-# ---------------------------------------------------------------------------
-_RED = "\033[31m"
-_YELLOW = "\033[33m"
-_BLUE = "\033[34m"
-_GREEN = "\033[32m"
-_BOLD = "\033[1m"
-_RESET = "\033[0m"
-
-_SEVERITY_COLOR = {
-    "critical": _RED,
-    "high": _YELLOW,
-    "medium": _BLUE,
-    "low": "",
-}
-
-
-def _colored_severity(sev: str) -> str:
-    color = _SEVERITY_COLOR.get(sev.lower(), "")
-    if color:
-        return f"{color}{sev.upper()}{_RESET}"
-    return sev.upper()
-
-
-def _info(msg: str) -> None:
-    print(f"{_GREEN}[*]{_RESET} {msg}")
-
-
-def _warn(msg: str) -> None:
-    print(f"{_YELLOW}[!]{_RESET} {msg}")
-
-
-def _err(msg: str) -> None:
-    print(f"{_RED}[!]{_RESET} {msg}", file=sys.stderr)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _resolve_run_state(config, run_id: str | None = None):
-    """Return a RunState for the given (or latest) run, or exit with error."""
-    from aegis.state import RunState
-
-    if run_id:
-        return RunState(config.output_dir, run_id)
-
-    state = RunState.latest_run(config.output_dir)
-    if state is None:
-        _err("No runs found. Run 'aegis scan' first.")
-        sys.exit(1)
-    return state
-
-
-def _load_findings_objects(state):
-    """Load findings from state and convert to AegisFinding objects."""
-    from aegis.schema import AegisFinding
-
-    raw = state.load_findings()
-    if not raw:
-        _warn("No findings in this run.")
-        return []
-    return [AegisFinding.from_dict(f) for f in raw]
 
 
 # ---------------------------------------------------------------------------
@@ -301,19 +242,13 @@ def build_parser() -> argparse.ArgumentParser:
 # re-imported here so that ``aegis.cli.main.cmd_<name>`` keeps resolving for
 # external importers (``aegis.cli.__init__``), for ``cmd_pipeline``'s
 # in-namespace lookups, and for tests that import or monkeypatch the commands
-# (and the ``fix`` helpers) at ``aegis.cli.main``. The sibling modules only
-# touch the helpers on this module at call time, so importing them here — after
-# the helpers are defined — is safe.
+# at ``aegis.cli.main``.
 # ---------------------------------------------------------------------------
 from aegis.cli.demo import cmd_demo  # noqa: E402
 from aegis.cli.doctor import cmd_doctor  # noqa: E402
 from aegis.cli.export import cmd_export  # noqa: E402
 from aegis.cli.findings import cmd_findings  # noqa: E402
-from aegis.cli.fix import (  # noqa: E402
-    _refresh_deps_findings,  # noqa: F401  (re-exported for tests/monkeypatch)
-    _report_fix_outcomes,  # noqa: F401  (re-exported for tests/monkeypatch)
-    cmd_fix,
-)
+from aegis.cli.fix import cmd_fix  # noqa: E402
 from aegis.cli.init import cmd_init  # noqa: E402
 from aegis.cli.pipeline import cmd_pipeline  # noqa: E402
 from aegis.cli.report import cmd_report  # noqa: E402
@@ -350,7 +285,7 @@ def _cmd_audit_dispatch(args, config):
     if args.audit_action == "verify":
         cmd_audit_verify(args, config)
     else:
-        _err(f"Unknown audit action: {args.audit_action}")
+        _console._err(f"Unknown audit action: {args.audit_action}")
         sys.exit(2)
 
 
@@ -393,20 +328,20 @@ def main(argv: list[str] | None = None) -> None:
         # user notices the conflict.
         for mutating in ("apply", "push", "open_pr"):
             if getattr(args, mutating, False):
-                _err(f"--dry-run cannot be combined with --{mutating.replace('_','-')}")
+                _console._err(f"--dry-run cannot be combined with --{mutating.replace('_','-')}")
                 sys.exit(2)
         # Refuse any subcommand that mutates Docker state.
         if args.command == "targets":
             action = getattr(args, "targets_action", None)
             if action in ("up", "down", "rebuild"):
-                _err(f"--dry-run cannot be combined with `targets {action}` "
-                     f"(would mutate Docker state)")
+                _console._err(f"--dry-run cannot be combined with `targets {action}` "
+                              f"(would mutate Docker state)")
                 sys.exit(2)
         # demo without --apply is read-only; demo --apply was already caught
         # above. Other mutating subcommands should add a similar gate.
 
     if getattr(args, "global_verbose", False):
-        _info(f"config={args.config or '<auto>'}")
+        _console._info(f"config={args.config or '<auto>'}")
 
     from aegis.config import load_config
 
@@ -414,7 +349,7 @@ def main(argv: list[str] | None = None) -> None:
 
     handler = _COMMANDS.get(args.command)
     if handler is None:
-        _err(f"Unknown command: {args.command}")
+        _console._err(f"Unknown command: {args.command}")
         sys.exit(1)
 
     handler(args, config)

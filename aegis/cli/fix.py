@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-import aegis.cli.main as _main
+from aegis.cli import _console, _runstate
 from aegis.schema import AegisFinding
 
 
@@ -21,11 +21,11 @@ def _cmd_fix_api(args, _config):
             repo=getattr(args, "repo", None),
         )
     except api_client.ApiError as exc:
-        _main._err(f"fix rejected by API: {exc}")
+        _console._err(f"fix rejected by API: {exc}")
         sys.exit(1)
-    _main._info(f"Job ID: {result.get('job_id')}")
+    _console._info(f"Job ID: {result.get('job_id')}")
     if result.get("run_id"):
-        _main._info(f"Run ID: {result['run_id']}")
+        _console._info(f"Run ID: {result['run_id']}")
 
 
 def cmd_fix(args, config) -> None:
@@ -49,27 +49,27 @@ def cmd_fix(args, config) -> None:
     from aegis.services.fixes import generate_fix
 
     finding_id = args.finding_id
-    state = _main._resolve_run_state(config, args.run)
-    findings = _main._load_findings_objects(state)
+    state = _runstate._resolve_run_state(config, args.run)
+    findings = _runstate._load_findings_objects(state)
 
     target_finding = next((f for f in findings if f.id == finding_id), None)
     if target_finding is None:
-        _main._err(f"Finding '{finding_id}' not found in run {state.run_id}.")
+        _console._err(f"Finding '{finding_id}' not found in run {state.run_id}.")
         sys.exit(1)
 
-    _main._info(f"Finding: {target_finding.id} — {target_finding.title}")
-    _main._info(f"Severity: {_main._colored_severity(target_finding.severity)}")
+    _console._info(f"Finding: {target_finding.id} — {target_finding.title}")
+    _console._info(f"Severity: {_console._colored_severity(target_finding.severity)}")
 
     if args.rollback:
         ref_before = getattr(args, "ref_before", None)
         if not ref_before:
-            _main._err("--rollback requires --ref-before <commit-hash>")
+            _console._err("--rollback requires --ref-before <commit-hash>")
             sys.exit(1)
         if not args.repo:
-            _main._err("--rollback requires --repo")
+            _console._err("--rollback requires --repo")
             sys.exit(1)
         ok = rollback(args.repo, ref_before)
-        _main._info("Rollback complete." if ok else "Rollback failed.")
+        _console._info("Rollback complete." if ok else "Rollback failed.")
         sys.exit(0 if ok else 1)
 
     if not args.patch and not args.live and not args.deps:
@@ -85,9 +85,9 @@ def cmd_fix(args, config) -> None:
 
     if args.patch:
         if args.use_golden_patch:
-            _main._info(f"Using golden patch fixture for {finding_id}")
+            _console._info(f"Using golden patch fixture for {finding_id}")
         else:
-            _main._info(f"Invoking CAI CodeAgent to generate patch for {finding_id}")
+            _console._info(f"Invoking CAI CodeAgent to generate patch for {finding_id}")
         outcomes.append(generate_fix(
             run_state=state, finding=target_finding, strategy="patch",
             repo=args.repo, apply=args.apply, open_pr=args.open_pr,
@@ -97,7 +97,7 @@ def cmd_fix(args, config) -> None:
         ))
 
     if args.live:
-        _main._info(f"Invoking CAI BlueteamAgent to harden target for {finding_id}")
+        _console._info(f"Invoking CAI BlueteamAgent to harden target for {finding_id}")
         outcomes.append(generate_fix(
             run_state=state, finding=target_finding, strategy="live",
             repo=args.repo, apply=False, open_pr=False, branch=None,
@@ -108,9 +108,9 @@ def cmd_fix(args, config) -> None:
 
     if args.deps:
         if not args.repo:
-            _main._err("--deps requires --repo")
+            _console._err("--deps requires --repo")
             sys.exit(1)
-        dep_finding = _main._refresh_deps_findings(args, state, finding_id)
+        dep_finding = _refresh_deps_findings(args, state, finding_id)
         if dep_finding is None:
             sys.exit(1)
         outcomes.append(generate_fix(
@@ -121,7 +121,7 @@ def cmd_fix(args, config) -> None:
             actor="cli:fix", config=config,
         ))
 
-    _main._report_fix_outcomes(state, finding_id, outcomes, args.deps)
+    _report_fix_outcomes(state, finding_id, outcomes, args.deps)
 
 
 def _refresh_deps_findings(args, state, finding_id):
@@ -133,26 +133,26 @@ def _refresh_deps_findings(args, state, finding_id):
     """
     from aegis.runners.trivy_runner import run_trivy
 
-    _main._info(f"Running Trivy fs scan on {args.repo}")
+    _console._info(f"Running Trivy fs scan on {args.repo}")
     trivy_result = run_trivy(
         args.repo, run_id=state.run_id,
         output_dir=state.run_path / "trivy",
     )
     if not trivy_result.success:
-        _main._warn(f"Trivy run failed: {trivy_result.error}")
+        _console._warn(f"Trivy run failed: {trivy_result.error}")
     else:
         existing = [AegisFinding.from_dict(f) for f in state.load_findings()]
         by_id = {f.id: f for f in existing}
         for tf in trivy_result.findings:
             by_id[tf.id] = tf
         state.save_findings(list(by_id.values()))
-        _main._info(f"Trivy: {len(trivy_result.findings)} dependency finding(s); "
+        _console._info(f"Trivy: {len(trivy_result.findings)} dependency finding(s); "
                     f"run now has {len(by_id)} total")
 
     all_findings = [AegisFinding.from_dict(f) for f in state.load_findings()]
     dep_finding = next((f for f in all_findings if f.id == finding_id), None)
     if dep_finding is None or dep_finding.finding_type != "dependency":
-        _main._err(f"--deps requires a dependency finding id; "
+        _console._err(f"--deps requires a dependency finding id; "
                    f"'{finding_id}' is missing or wrong type")
         return None
     return dep_finding
@@ -167,25 +167,25 @@ def _report_fix_outcomes(state, finding_id, outcomes, ran_deps: bool) -> None:
             # status on the deps finding itself.
             state.update_finding_status(outcome.finding_id, outcome.status)
             if outcome.diff_path:
-                _main._info(f"Bump diff written to {outcome.diff_path}")
+                _console._info(f"Bump diff written to {outcome.diff_path}")
             if outcome.commit_hash:
-                _main._info(f"Bump committed on branch {outcome.branch} ({outcome.commit_hash})")
+                _console._info(f"Bump committed on branch {outcome.branch} ({outcome.commit_hash})")
             if outcome.pr_url:
-                _main._info(f"PR: {outcome.pr_url}")
+                _console._info(f"PR: {outcome.pr_url}")
             if not outcome.success and outcome.error:
-                _main._warn(f"deps: {outcome.error}")
+                _console._warn(f"deps: {outcome.error}")
             continue
 
         if outcome.diff_path:
-            _main._info(f"Patch written to {outcome.diff_path}")
+            _console._info(f"Patch written to {outcome.diff_path}")
         if outcome.commit_hash:
-            _main._info(f"Committed on branch {outcome.branch} ({outcome.commit_hash})")
+            _console._info(f"Committed on branch {outcome.branch} ({outcome.commit_hash})")
         if outcome.pr_url:
-            _main._info(f"PR opened: {outcome.pr_url}")
+            _console._info(f"PR opened: {outcome.pr_url}")
         if outcome.status == "pending_apply" and not outcome.commit_hash:
-            _main._info("Dry-run OK — patch applies cleanly. Pass --apply to commit.")
+            _console._info("Dry-run OK — patch applies cleanly. Pass --apply to commit.")
         if not outcome.success and outcome.error:
-            _main._warn(f"{outcome.strategy}: {outcome.error}")
+            _console._warn(f"{outcome.strategy}: {outcome.error}")
         candidates.append(outcome.status)
 
     if candidates:

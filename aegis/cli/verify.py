@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import aegis.cli.main as _main
+from aegis.cli import _console, _runstate
 
 
 def _cmd_verify_api(args, _config):
@@ -15,9 +15,9 @@ def _cmd_verify_api(args, _config):
     try:
         result = client.verify(finding_id=args.finding_id)
     except api_client.ApiError as exc:
-        _main._err(f"verify rejected by API: {exc}")
+        _console._err(f"verify rejected by API: {exc}")
         sys.exit(1)
-    _main._info(f"Job ID: {result.get('job_id')}")
+    _console._info(f"Job ID: {result.get('job_id')}")
 
 
 def cmd_verify(args, config) -> None:
@@ -32,11 +32,11 @@ def cmd_verify(args, config) -> None:
 
     from aegis.services.verify import verify as verify_svc
 
-    state = _main._resolve_run_state(config, args.run)
-    findings = _main._load_findings_objects(state)
+    state = _runstate._resolve_run_state(config, args.run)
+    findings = _runstate._load_findings_objects(state)
     target = next((f for f in findings if f.id == args.finding_id), None)
     if target is None:
-        _main._err(f"Finding '{args.finding_id}' not found in run {state.run_id}.")
+        _console._err(f"Finding '{args.finding_id}' not found in run {state.run_id}.")
         sys.exit(1)
 
     repo_path = Path(args.repo) if args.repo else None
@@ -50,15 +50,15 @@ def cmd_verify(args, config) -> None:
     )
 
     status_color = {
-        "verified": _main._GREEN,
-        "still_vulnerable": _main._RED,
-        "inconclusive": _main._YELLOW,
+        "verified": _console._GREEN,
+        "still_vulnerable": _console._RED,
+        "inconclusive": _console._YELLOW,
     }.get(result.status, "")
     print()
-    print(f"{_main._BOLD}Verification result{_main._RESET}")
+    print(f"{_console._BOLD}Verification result{_console._RESET}")
     print(f"  Finding:  {result.finding_id}")
     print(f"  Strategy: {result.strategy}")
-    print(f"  Status:   {status_color}{result.status}{_main._RESET}")
+    print(f"  Status:   {status_color}{result.status}{_console._RESET}")
     if result.notes:
         print(f"  Notes:    {result.notes}")
     print(f"  Saved to: {state.run_path / 'verify' / (result.finding_id + '.json')}")
