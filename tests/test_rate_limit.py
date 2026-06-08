@@ -30,6 +30,14 @@ from __future__ import annotations
 
 import unittest
 
+import pytest
+
+# Needs the ``api`` extra (FastAPI + Starlette's httpx-backed TestClient); the
+# lightweight ``unit`` job installs only [test,dev], so skip there. The
+# coverage / api-integration jobs install the extra and run this suite.
+pytest.importorskip("fastapi")
+pytest.importorskip("httpx")
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
