@@ -141,11 +141,14 @@ registered.
 | `aegis/runners/strix_runner.py` | Subprocess **runner** — discovers + launches the Strix CLI, tails `events.jsonl`. | No |
 | `aegis/runners/trivy_runner.py` | Subprocess **runner** for Trivy. | No |
 | `aegis/runners/strix_converter.py` | **Converter** — turns raw Strix events into `AegisFinding`s (`convert_strix_finding`). | No |
-| `aegis/runners/vulnfixer_adapter.py` | **Exporter** — maps an `AegisFinding` to the vulnerability-fixer payload. | No |
+| `aegis/runners/vulnfixer_converter.py` | **Exporter** — maps an `AegisFinding` to the vulnerability-fixer payload. | No |
+| `aegis/runners/vulnfixer_runner.py` | **Runner** — drives the vendored vulnerability-fixer engine for the agentic remediation strategy. | No |
 
 !!! note "Why the rename"
     The package `aegis/adapters/` was renamed to `aegis/runners/`, and
-    `strix_adapter.py` within it became `strix_converter.py`. The old
+    its finding-converter members were renamed with it
+    (`strix_adapter.py` → `strix_converter.py`,
+    `vulnfixer_adapter.py` → `vulnfixer_converter.py`). The old
     name collided with the genuinely registered
     `aegis/scanners/strix_adapter.py`. The new name says what the
     module is: a runner package whose Strix member is a *converter*, not

@@ -91,9 +91,9 @@ shipped June 2026 with 1253 tests passing (18 skipped offline) on Python
 | Authenticated DAST flows | 🔨 Roadmap |
 | Sandbox isolation per scan (gVisor / Firecracker) | 🔨 Roadmap |
 
-See [`CHANGELOG.md`](CHANGELOG.md) for the per-release detail and
-[`docs/architecture/overview.md`](docs/architecture/overview.md) §
-"What's deferred" for the full roadmap list.
+See [`CHANGELOG.md`](CHANGELOG.md) for per-release detail and the
+consolidated [`docs/roadmap.md`](docs/roadmap.md) for the full
+forward-looking roadmap.
 
 ---
 
@@ -160,8 +160,9 @@ access — set `AEGIS_TOKEN=dev:<email>` and run `aegis --api <cmd>`.
 ### Tests
 
 ```bash
-pytest -q                                              # 237 + 3 skipped
+pytest -q                                              # 1288 passed, 20 skipped offline
 AEGIS_E2E=1 AEGIS_DISABLE_LLM=1 pytest -q tests/e2e/   # deterministic E2E
+pnpm --filter @aegis/web test                          # web unit suite (vitest)
 pnpm --filter @aegis/web storybook                     # design-system stories
 ```
 
@@ -223,6 +224,8 @@ path, the OTel pipeline — lives in
 | [`aliasrobotics/cai`](https://github.com/aliasrobotics/cai) | Multi-domain agent framework — red + blue + DFIR agents, 300+ LLM model routing via litellm | MIT |
 | [`kalilinux/mcp-kali-server`](https://gitlab.com/kalilinux/packages/mcp-kali-server) | Tool execution layer — Kali Linux arsenal (nmap, Metasploit, sqlmap, hydra, …) over an MCP-style HTTP API | MIT |
 | [`OpenHands/vulnerability-fixer`](https://github.com/OpenHands/vulnerability-fixer) | Remediation harness — common-schema parsing, AI fix generation, auto-PR | MIT |
+| [`perplexityai/bumblebee`](https://github.com/perplexityai/bumblebee) | Supply-chain / MCP-host exposure scanner (NDJSON) — `supply_chain` capability | Apache-2.0 |
+| [`vercel-labs/deepsec`](https://github.com/vercel-labs/deepsec) | AI whole-repo code audit (SAST) — `code_audit` capability | Apache-2.0 |
 | [`shadcn-ui/ui`](https://github.com/shadcn-ui/ui) | Design-system primitive registry — generated into `@aegis/design-system` via `pnpm dlx shadcn add` | MIT |
 | [`opentelemetry-collector-contrib`](https://github.com/open-telemetry/opentelemetry-collector-contrib) | Observability fan-out (Loki + Jaeger + Postgres mirror via `aegis-log-ingest`) | Apache-2.0 |
 
@@ -265,6 +268,7 @@ Pushes to `main` deploy to GitHub Pages via
 
 | Topic | Doc |
 |---|---|
+| Roadmap (forward-looking work) | [`docs/roadmap.md`](docs/roadmap.md) |
 | System architecture (mermaid diagrams) | [`docs/architecture/overview.md`](docs/architecture/overview.md) |
 | Auth — cookie / bearer / WS / worker SA | [`docs/architecture/auth.md`](docs/architecture/auth.md) |
 | Hash-chained audit log | [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md) |
@@ -277,7 +281,7 @@ Pushes to `main` deploy to GitHub Pages via
 | Fork-PR safety policy | [`docs/security/fork-prs.md`](docs/security/fork-prs.md) |
 | Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
 | Vendored upstreams (pinned SHAs) | [`project_repos/AEGIS_VENDORED.md`](project_repos/AEGIS_VENDORED.md) |
-| ADRs | [`docs/adr/0001-vendored-submodules.md`](docs/adr/0001-vendored-submodules.md) |
+| ADRs — vendoring · registry seam · agent execution · effect-class gate | [`0001`](docs/adr/0001-vendored-submodules.md) · [`0002`](docs/adr/0002-registry-seam-and-runners.md) · [`0003`](docs/adr/0003-agent-execution-path.md) · [`0004`](docs/adr/0004-unified-effect-class-gate.md) |
 
 Legacy planning docs and phase-3 snapshots live under
 [`docs/architecture/legacy/`](docs/architecture/legacy/README.md) —
@@ -292,6 +296,16 @@ kept for history, not for orientation.
 | Phase 4 v0.3.1 | Stabilization (audit, admission, project access) | `v0.3.1` |
 | Phase 4 v0.4.0 | Identity & UX (NextAuth, CSRF, CSP, design system) | `v0.4.0` |
 | Phase 4 v0.4.1 | Observability + GitHub PR scoping | `v0.4.1` |
+| Phase 4 v0.4.2 | Forensic/wireless agents + 8 scanner adapters | `v0.4.2` |
+| v0.5.0 | Hardened registry seam (plugin discovery, open capabilities) | `v0.5.0` |
+| v0.5.1 | Bumblebee supply-chain scanner | `v0.5.1` |
+| v0.5.2 | Corrected Bumblebee + Strix adapters; `scan_mode` | `v0.5.2` |
+| v0.6.0 | Agent execution path wired + read-only recon agent; toolbelt 3→10 | `v0.6.0` |
+| v0.7.0 | Deepsec AI code-audit scanner (`code_audit`) | `v0.7.0` |
+| v0.8.0 | Unified human-in-the-loop gate + agentic remediation + finding ingestion | `v0.8.0` |
+| v0.9.0 | Live Kali tool belt over MCP + CAI multi-agent patterns | `v0.9.0` |
+| v0.10.0 | Strix code-scope depth + real Kali tool args | `v0.10.0` |
+| v0.11.0 | OTel security-log pipeline + design-system base primitives | `v0.11.0` |
 
 Full per-release detail in [`CHANGELOG.md`](CHANGELOG.md).
 
@@ -313,7 +327,7 @@ aegis/                  Python package — services, API, workers, audit
   policy/               CI gate policy (no Celery dependency)
   remediate/            CAI runner + patch / deps workflows
   runners/              subprocess runners + finding converter (Strix, Trivy, vuln-fixer)
-  scanners/             scanner adapters (Strix, Trivy, Semgrep, Nuclei)
+  scanners/             14 scanner adapters (Strix · Trivy · Semgrep · Nuclei · ZAP · CodeQL · Bandit · Grype · Checkov · Trufflehog · SonarQube · Syft · Bumblebee · Deepsec)
   services/             admission + execution services (CLI + API + worker)
   state/                run-state persistence (RunStateAPI Protocol, filesystem + Postgres backends, open_run_state factory)
   storage/              pluggable blob storage (BlobStore Protocol, filesystem + S3/MinIO backends, open_blob_store factory)
@@ -328,6 +342,7 @@ web/                    Next.js 14 app (@aegis/web workspace package)
 
 project_repos/          Vendored upstreams pinned at SHAs
   cai, strix, mcp-kali-server, vulnerability-fixer
+  bumblebee, deepsec    scanner upstreams (supply_chain, code_audit)
   shadcn-ui, opentelemetry-collector-contrib
   design-system/        @aegis/design-system workspace package
 

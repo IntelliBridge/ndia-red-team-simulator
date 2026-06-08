@@ -64,8 +64,9 @@ build step.
 
 - **Storybook is the spec.** Every component exported from
   `index.ts` must have a story file co-located (`*.stories.tsx`). The
-  CI test-runner gate is off for v0.4.0 (incremental rollout) but
-  flips on after the second batch of components lands.
+  CI `web-build` job now enforces a blocking `@aegis/design-system`
+  typecheck plus the `@aegis/web` vitest suite, so the component layer
+  must type-check and pass tests on every PR.
 
 - **CSP-friendly.** No inline scripts in components. CSS-only badges
   and visual states pair with the v0.4.0 F14d report CSP that
@@ -101,7 +102,7 @@ a story; every page in the web app uses at least one of them:
 | `StageTimeline`   | runs detail (driven by the WS event stream)       |
 | `EvidenceDiff`    | findings detail (when a patch is generated)       |
 | `RoleGated`       | findings detail (Apply Patch / Verify buttons)    |
-| `ToastList`       | (reserved for v0.4.2 follow-on)                   |
+| `ToastList`       | global transient notifications                    |
 
 Each component carries `forwardRef`-free signatures and accepts
 `className` for last-wins Tailwind merging via the `cn()` helper.
@@ -194,7 +195,7 @@ pnpm --filter @aegis/design-system add <pkg>
 git add web/pnpm-lock.yaml web/package.json …/package.json
 ```
 
-## What's deferred (v0.4.2+)
+## What's deferred
 
 - Dark mode.
 - Audit chain visualisation page.

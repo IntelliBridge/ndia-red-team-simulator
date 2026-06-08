@@ -119,9 +119,11 @@ flowchart TB
   Loki for ad-hoc kibana-style queries, `aegis-log-ingest` for the
   Postgres mirror, Jaeger for traces. A dedicated `logs/security` pipeline
   ingests host/OS audit sources (`filelog`, `journald`, `syslog`,
-  `k8sobjects`) and runs them through the `redaction` processor — secret-like
-  values are masked **before** batch or export, so secrets never leave the
-  collector — then fans the result out to the Postgres mirror + Loki.
+  `k8sobjects`) and runs them through two redaction stages — the `redaction`
+  processor masks secret-like attribute values and a `transform/redact_body`
+  processor scrubs secrets from the raw log body — **before** batch or export,
+  so secrets never leave the collector, then fans the result out to the
+  Postgres mirror + Loki.
 - **`obs-search`** — adds Elasticsearch + Kibana on top of `obs`.
 
 For a per-service walkthrough of the compose stack, see
@@ -555,8 +557,9 @@ flowchart TD
 
 ## What's deferred
 
-The Phase-4 plan called out items intentionally pushed past v0.4.1.
-Live-current list:
+See the consolidated [Roadmap](../roadmap.md) for the full
+forward-looking list organized by milestone. The Phase-4 plan called
+out items intentionally pushed past v0.4.1. Live-current list:
 
 - Cross-org row-level multi-tenancy.
 - Per-tenant cost dashboards / chargeback.

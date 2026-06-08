@@ -1,4 +1,4 @@
-# Fork PR safety (Aegis v0.4.1)
+# Fork PR safety
 
 GitHub Actions and PR-scoped scanners face a recurring threat: a fork's
 PR carries arbitrary code that the build / scanner / fix loop will

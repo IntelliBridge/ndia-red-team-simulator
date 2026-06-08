@@ -155,6 +155,7 @@ watch:
 
 nav:
   - Home: index.md
+  - Roadmap: roadmap.md
   - Architecture:
       - Overview: architecture/overview.md
       - Auth: architecture/auth.md

@@ -188,7 +188,7 @@ the pnpm workspace at the same root path.
    ```bash
    AEGIS_DB_URL=… alembic -c aegis/db/alembic.ini upgrade head
    ```
-   Through v0.4.1 the head is `0003_application_logs`.
+   The current migration head is `0003_application_logs`.
 2. **Blob store**: create the bucket; grant the api + worker IAM the
    read/write needed.
 3. **Keycloak**: realm + client per `deploy/keycloak/realm-export.json`.
@@ -221,7 +221,7 @@ public key. A rotation is a controlled bump of both.
 Day 0:  generate new keypair (v2)
 Day 0:  set AEGIS_API_SESSION_KEY_ID=aegis-api-session-v2 + new
         public key on the API (still accepts v1 via the JWKS-style
-        helper; v0.5 will add explicit dual-public-key acceptance).
+        helper; explicit dual-public-key acceptance is not yet shipped).
 Day 0:  set new private key on the web side. NextAuth callbacks now
         mint v2 cookies.
 Day 0 + TTL window:
@@ -229,9 +229,9 @@ Day 0 + TTL window:
 Day 0 + TTL window: drop the v1 public key.
 ```
 
-For v0.4.1 the API still verifies against a single public key; the
-graceful rotation pattern lands in v0.5. Until then, plan for a
-~15-minute window of fresh sign-ins during the cutover.
+The API still verifies against a single public key; graceful dual-key
+rotation is not yet shipped. Until then, plan for a ~15-minute window
+of fresh sign-ins during the cutover.
 
 ### Worker SA key (FW)
 

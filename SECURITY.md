@@ -4,10 +4,10 @@
 
 | Version           | Supported                          |
 |-------------------|------------------------------------|
-| 0.4.x (Phase 4)   | yes                                |
-| 0.3.x (Phase 3)   | yes — security fixes only          |
-| 0.2.x (Phase 2)   | yes — security fixes only          |
-| < 0.2             | no                                 |
+| 0.11.x (current)  | yes                                |
+| 0.5.x – 0.10.x    | yes — security fixes only          |
+| 0.3.x – 0.4.x     | yes — security fixes only          |
+| < 0.3             | no                                 |
 
 ## Reporting a vulnerability
 
@@ -26,7 +26,7 @@ We will acknowledge within 3 business days and aim for triage within
 10 business days. Coordinated disclosure preferred; we will credit
 reporters who request it.
 
-## Hardening posture (current — v0.4.1)
+## Hardening posture (current — v0.11.0)
 
 ### Auth + authorization
 
@@ -121,14 +121,15 @@ See [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md).
   documented and intentional.
 - Submodule vulnerabilities. Report those to the respective upstream
   projects (`cai`, `strix`, `mcp-kali-server`, `vulnerability-fixer`,
-  `shadcn-ui`, `opentelemetry-collector-contrib`).
+  `bumblebee`, `deepsec`, `shadcn-ui`,
+  `opentelemetry-collector-contrib`).
 - DoS / resource exhaustion against the offline CLI when supplied a
   malicious finding fixture (the CLI is single-process; trust the
   fixture source).
 - Cost / budget exhaustion via LLM-routed agents — see the
   `BudgetChecker` hook in `aegis/llm/router.py`.
 
-## Known gaps (tracked, not shipping in v0.4.1)
+## Known gaps (tracked, not shipping in v0.11.0)
 
 - Database-side append-only enforcement on `audit_events` (Postgres
   `pg_audit` + role separation). Today, a privileged DB operator
