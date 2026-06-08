@@ -73,8 +73,8 @@ crashed jobs stay `running` indefinitely.
 **LLM budget caps.** Per-project daily spend caps come from
 `Project.daily_llm_budget_cents` (unset = unlimited). The fix path records
 `llm_usage` rows and `route()` blocks once the day's spend reaches the cap.
-(Note: cost accounting is pending a model→price table — until then usage rows
-carry token counts but `cost_cents=0`, so the cap does not yet bind.)
+Per-call cost is computed from a researched per-model price table
+(`aegis/llm/pricing.py`), with litellm's price map as a fallback.
 
 ---
 

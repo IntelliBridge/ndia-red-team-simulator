@@ -71,9 +71,9 @@ surfaces; the offline `pytest` path and `mkdocs --strict` build stay green.
   (default 3600s) as `failed` — the complement to the redelivery guard.
 - **LLM budget enforcement.** A `DbBudgetChecker` reads
   `Project.daily_llm_budget_cents`, subtracts the day's `llm_usage`, and
-  `route()` blocks when exhausted; the fix path now records usage rows.
-  (Per-call token counts are captured; cost accounting awaits a model
-  pricing table — until then `cost_cents` is 0, so the gate is inert.)
+  `route()` blocks when exhausted; the fix path records usage rows with
+  per-call cost from a researched per-model price table
+  (`aegis/llm/pricing.py`), with litellm's price map as a fallback.
 
 ### Removed
 - **`GET /v1/findings/by-scanner-id`** (deprecated since v0.3.1) — use

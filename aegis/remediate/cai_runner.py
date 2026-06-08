@@ -178,13 +178,14 @@ def _record_usage(
     try:
         from aegis.db.models import LLMUsage
         from aegis.db.session import get_session
+        from aegis.llm.pricing import cost_cents
 
         prompt_tokens, completion_tokens = _usage_from_result(result)
         with get_session() as sess:
             sess.add(LLMUsage(
                 project_id=project_id, run_id=run_id, model=model, task=task,
                 prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                cost_cents=0,
+                cost_cents=cost_cents(model, prompt_tokens, completion_tokens),
             ))
     except Exception:  # noqa: BLE001 - usage logging is strictly best-effort
         logger.warning("LLMUsage logging failed for project %s task %s",

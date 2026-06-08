@@ -19,11 +19,10 @@ priority order.
 The highest-leverage milestone: the scaffolding already exists in the codebase,
 so these are completions rather than greenfield builds.
 
-> **Status:** implemented on the `feat/finish-the-seams` branch (pending merge)
-> — see the Changelog `[Unreleased]` section. The one piece still open is **LLM
-> budget cost accounting**: the enforcement path (cap read + daily usage sum +
-> `route()` gate) is wired and records per-call token counts, but `cost_cents`
-> stays 0 until a model→price table populates it, so the cap is inert until then.
+> **Status:** implemented on the `feat/finish-the-seams` branch (PR #3, pending
+> merge) — see the Changelog `[Unreleased]` section. Budget enforcement is
+> complete: per-call cost is computed from a researched per-model price table
+> (`aegis/llm/pricing.py`, litellm fallback), so the daily cap binds.
 
 | Item | What's left | Where it's scaffolded |
 |---|---|---|
