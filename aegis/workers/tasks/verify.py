@@ -36,6 +36,8 @@ def verify_replay(self, job_id: str) -> dict[str, Any]:
 
     config = load_config()
     with task_context(job_id) as ctx:
+        if ctx.skip or ctx.run_state is None:
+            return {"job_id": job_id, "skipped": True}
         sess = ctx.session
         job = sess.get(Job, job_id)
         detail = cast(VerifyJobDetail, (job.detail if job else {}) or {})

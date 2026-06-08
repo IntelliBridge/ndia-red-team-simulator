@@ -7,6 +7,7 @@ layer is the only place audit events are written (Phase 3 M2).
 from __future__ import annotations
 
 import hashlib
+import logging
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,8 @@ from aegis.state.facade import ArtifactRef
 
 if TYPE_CHECKING:
     from aegis.schema import Status
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -131,18 +134,29 @@ class PostgresRunState:
         # UUID stays internal.
         return [r.schema_blob for r in rows]
 
-    def update_finding_status(self, finding_id: str, status: Status) -> None:
-        """Update finding status. ``finding_id`` accepts either the internal
-        UUID or the upstream ``scanner_finding_id`` for this run."""
+    def _resolve_finding(self, finding_id: str) -> Finding | None:
+        """Resolve a finding by internal UUID, falling back to the upstream
+        ``scanner_finding_id`` within this run.
+
+        Callers hand us either the DB UUID or the scanner id (e.g.
+        ``bumblebee:CVE-…``); ``Finding.id`` is the internal UUID, so the
+        scanner id never matches a primary key and must be looked up by its
+        per-run ``scanner_finding_id``.
+        """
         row = self.session.get(Finding, finding_id)
         if row is None:
-            # Fall back to looking up by scanner_finding_id within this run.
             row = self.session.execute(
                 select(Finding).where(
                     Finding.run_id == self.run_id,
                     Finding.scanner_finding_id == finding_id,
                 )
             ).scalar_one_or_none()
+        return row
+
+    def update_finding_status(self, finding_id: str, status: Status) -> None:
+        """Update finding status. ``finding_id`` accepts either the internal
+        UUID or the upstream ``scanner_finding_id`` for this run."""
+        row = self._resolve_finding(finding_id)
         if row is not None:
             row.status = status
             row.schema_blob = {**row.schema_blob, "status": status,
@@ -184,8 +198,18 @@ class PostgresRunState:
 
     def append_remediation_log(self, finding_id: str, action: str,
                                result: str, success: bool) -> None:
+        # ``RemediationAttempt.finding_id`` is a FK to ``findings.id`` (the
+        # internal UUID), but callers pass the scanner id. Resolve to the row
+        # UUID first, mirroring ``update_finding_status``.
+        row = self._resolve_finding(finding_id)
+        if row is None:
+            logger.warning(
+                "append_remediation_log: finding %r not found in run %s; "
+                "skipping remediation log row", finding_id, self.run_id,
+            )
+            return
         self.session.add(RemediationAttempt(
-            finding_id=finding_id, project_id=self.project_id,
+            finding_id=row.id, project_id=self.project_id,
             action=action, success=success,
             detail={"result": result},
         ))

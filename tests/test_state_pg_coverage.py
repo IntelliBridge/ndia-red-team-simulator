@@ -171,6 +171,42 @@ class TestPostgresRunState(unittest.TestCase):
         self.assertEqual(rows[0].action, "patch.commit")
         self.assertTrue(rows[0].success)
 
+    def test_append_remediation_log_by_scanner_id_resolves_uuid(self):
+        # Callers pass the scanner id (e.g. ``bumblebee:CVE-1``), but
+        # RemediationAttempt.finding_id is a FK to findings.id (the UUID). The
+        # scanner id must resolve to the row UUID first, or the insert fails the
+        # FK constraint (the H1 bug).
+        from sqlalchemy import select
+
+        from aegis.db.models import Finding, RemediationAttempt
+        st = self._state()
+        st.save_findings([_finding("bumblebee:CVE-1")])
+        row = self.sess.execute(
+            select(Finding).where(Finding.scanner_finding_id == "bumblebee:CVE-1")
+        ).scalar_one()
+
+        st.append_remediation_log("bumblebee:CVE-1", "agentic_fix", "done", True)
+
+        attempts = self.sess.execute(
+            select(RemediationAttempt).where(
+                RemediationAttempt.project_id == self.project_id)
+        ).scalars().all()
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0].finding_id, row.id)
+        self.assertNotEqual(row.id, "bumblebee:CVE-1")
+
+    def test_append_remediation_log_unknown_finding_is_noop(self):
+        from sqlalchemy import select
+
+        from aegis.db.models import RemediationAttempt
+        st = self._state()
+        st.append_remediation_log("does-not-exist", "x", "y", False)
+        rows = self.sess.execute(
+            select(RemediationAttempt).where(
+                RemediationAttempt.project_id == self.project_id)
+        ).scalars().all()
+        self.assertEqual(rows, [])
+
 
 @unittest.skipUnless(AEGIS_DB, "needs Postgres (AEGIS_DB_URL)")
 class TestStateFactory(unittest.TestCase):

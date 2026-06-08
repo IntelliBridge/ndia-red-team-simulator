@@ -242,6 +242,27 @@ class TestDeepsecAdapter(unittest.TestCase):
             # Owner PII never reaches the persisted findings either.
             self.assertNotIn(_PII_MARKER, json.dumps([f.to_dict() for f in result.findings]))
 
+    def test_scan_persisted_artifact_is_pii_sanitized(self):
+        # M2: the raw deepsec export embeds owner identities (owners/assignee/
+        # labels/githubUrl/description); the persisted artifact must carry only
+        # the sanitized copy, never the raw stdout.
+        with tempfile.TemporaryDirectory() as td:
+            rs = RunState(output_dir=td)
+            opts = ScanOptions(target=td, timeout=5)
+            with mock.patch("aegis.scanners.deepsec_adapter.load_config", return_value=AegisConfig()), \
+                 mock.patch("aegis.scanners.deepsec_adapter.subprocess.run", side_effect=_fake_run):
+                DeepsecAdapter().scan(rs, opts)
+            text = (Path(rs.run_path) / "deepsec" / "export.json").read_text()
+
+        self.assertNotIn(_PII_MARKER, text)
+        for name in _OWNER_NAMES:
+            self.assertNotIn(name, text)
+        for key in ("owners", "assignee", "labels", "githubUrl", "description"):
+            self.assertNotIn(f'"{key}"', text)
+        # Still valid JSON retaining the technical fields (slug/file/line).
+        data = json.loads(text)
+        self.assertTrue(any(item.get("metadata", {}).get("vulnSlug") for item in data))
+
     def test_scan_runs_ai_process_only_when_enabled(self):
         with tempfile.TemporaryDirectory() as td:
             rs = RunState(output_dir=td)

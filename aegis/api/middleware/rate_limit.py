@@ -95,10 +95,15 @@ def rate_limit_middleware(user_per_min: int = 30,
         if not _is_throttled(request.method, request.url.path):
             return await call_next(request)
 
-        user_bucket = _bucket(f"u:{_principal_key(request, settings)}",
-                              user_per_min, user_per_min)
+        principal = _principal_key(request, settings)
+        user_bucket = _bucket(f"u:{principal}", user_per_min, user_per_min)
+        # The project comes from a client-supplied query param, so a global
+        # ``p:{project}`` key would let any caller drain another tenant's shared
+        # bucket by passing ``?project=<victim>`` (cross-tenant DoS). Scope the
+        # key by principal too: a per-(principal, project) cap that a client
+        # can't turn against projects it doesn't own.
         project_id = request.query_params.get("project") or "default"
-        project_bucket = _bucket(f"p:{project_id}",
+        project_bucket = _bucket(f"p:{principal}:{project_id}",
                                  project_per_min, project_per_min)
         if not user_bucket.take():
             return JSONResponse(

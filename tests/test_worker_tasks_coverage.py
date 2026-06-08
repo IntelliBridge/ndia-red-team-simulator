@@ -67,6 +67,7 @@ def _ctx_factory(
 ):
     """Return a mock TaskContext and a mock session wired to it."""
     ctx = MagicMock()
+    ctx.skip = False
     ctx.run_id = run_id
     ctx.project_id = project_id
     ctx.actor = actor
@@ -139,6 +140,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
     def test_success_marks_job_running_then_succeeded(self):
         job = MagicMock()
+        job.status = "queued"
         job.run_id = "run-001"
         job.project_id = "proj-001"
         job.created_by = "user:alice"
@@ -186,8 +188,56 @@ class TestBootstrapTaskContext(unittest.TestCase):
             for p in patches_list:
                 p.stop()
 
+    def test_non_queued_job_is_skipped_without_status_change(self):
+        # H2: a cancelled/redelivered job must not re-run. task_context yields
+        # skip=True, leaves the row status untouched, and never builds the
+        # run-state backend (no side effects, no offensive work re-fired).
+        job = MagicMock()
+        job.status = "cancelled"
+        job.run_id = "run-007"
+        job.project_id = "proj-001"
+        job.created_by = "user:alice"
+
+        patches_list = [
+            patch("aegis.audit.chain.PostgresAuditWriter"),
+            patch("aegis.storage.open_blob_store"),
+            patch("aegis.config.load_config"),
+            patch("aegis.db.session.get_session"),
+            patch("aegis.db.session.init_engine"),
+            patch("aegis.state.PostgresRunState"),
+        ]
+        mocks = [p.start() for p in patches_list]
+        try:
+            _, _, mock_cfg, mock_sess_cm, _, mock_state = mocks
+            mock_cfg.return_value = MagicMock(output_dir="/tmp")
+            sess = MagicMock()
+            sess.get.return_value = job
+
+            @contextmanager
+            def fake_session():
+                yield sess
+
+            mock_sess_cm.side_effect = fake_session
+
+            with patch.dict(os.environ, {"AEGIS_DB_URL": "sqlite://"}):
+                import importlib
+
+                import aegis.workers.bootstrap as boot
+                importlib.reload(boot)
+
+                with boot.task_context("job-007") as ctx:
+                    self.assertTrue(ctx.skip)
+
+            # Status untouched and the DB-backed run-state was never built.
+            self.assertEqual(job.status, "cancelled")
+            mock_state.assert_not_called()
+        finally:
+            for p in patches_list:
+                p.stop()
+
     def test_actor_comes_from_job_created_by(self):
         job = MagicMock()
+        job.status = "queued"
         job.run_id = "run-002"
         job.project_id = "proj-001"
         job.created_by = "user:bob"
@@ -228,6 +278,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
     def test_actor_defaults_to_system_worker_when_created_by_is_none(self):
         job = MagicMock()
+        job.status = "queued"
         job.run_id = "run-003"
         job.project_id = "proj-001"
         job.created_by = None  # trigger the default
@@ -301,6 +352,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
     def test_exception_inside_context_marks_job_failed_and_reraises(self):
         job = MagicMock()
+        job.status = "queued"
         job.run_id = "run-004"
         job.project_id = "proj-001"
         job.created_by = "user:alice"
@@ -346,6 +398,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
     def test_no_init_engine_when_db_url_not_set(self):
         """AEGIS_DB_URL absent → init_engine must NOT be called."""
         job = MagicMock()
+        job.status = "queued"
         job.run_id = "run-005"
         job.project_id = "proj-001"
         job.created_by = "user:alice"
@@ -389,6 +442,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
     def test_context_bundle_fields_are_populated(self):
         job = MagicMock()
+        job.status = "queued"
         job.run_id = "run-006"
         job.project_id = "proj-006"
         job.created_by = "user:carol"
@@ -445,6 +499,7 @@ def _make_task_ctx(
     actor: str = "user:alice",
 ):
     ctx = MagicMock()
+    ctx.skip = False
     ctx.run_id = run_id
     ctx.project_id = project_id
     ctx.actor = actor
@@ -522,6 +577,30 @@ class TestScanStart(unittest.TestCase):
         auth_args = mock_auth.call_args
         self.assertIn("scan.execute.trivy", auth_args[0])
         self.assertEqual(auth_args[0][1], "192.168.1.1")
+        # No override in detail -> worker re-check defaults to False.
+        self.assertIs(auth_args.kwargs.get("override_authorized", False), False)
+
+    def test_override_authorized_threaded_from_detail_to_worker_authorize(self):
+        # M1: a target authorized at admission only via the explicit override
+        # must stay authorized through the worker re-check (else the job fails
+        # despite a valid admission decision).
+        ctx, sess, job, fake_tc = _make_task_ctx(
+            job_detail={"target": "10.0.0.9", "scanner": "trivy",
+                        "instruction": None, "override_authorized": True},
+        )
+        disp_result = MagicMock()
+        disp_result.findings = []
+        disp_result.exit_code = 0
+
+        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("aegis.config.load_config") as mock_cfg, \
+             patch("aegis.safety.authorize") as mock_auth, \
+             patch("aegis.scanners.dispatch", return_value=disp_result), \
+             patch("aegis.scanners.registry.ScanOptions"):
+            mock_cfg.return_value = MagicMock(target_allowlist=[])  # off-allowlist
+            self._scan_task().apply(args=["job-scan-ovr"]).get()
+
+        self.assertIs(mock_auth.call_args.kwargs["override_authorized"], True)
 
     def test_findings_saved_on_run_state(self):
         ctx, sess, job, fake_tc = _make_task_ctx(

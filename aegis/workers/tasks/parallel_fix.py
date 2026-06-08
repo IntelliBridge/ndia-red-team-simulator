@@ -21,6 +21,8 @@ def parallel_fix(self, job_id: str) -> dict[str, Any]:
     from aegis.workers.tasks.fix import fix_generate
 
     with task_context(job_id) as ctx:
+        if ctx.skip:
+            return {"job_id": job_id, "skipped": True}
         parent = ctx.session.get(Job, job_id)
         parent_detail = (parent.detail if parent else {}) or {}
         repo = parent_detail.get("repo")

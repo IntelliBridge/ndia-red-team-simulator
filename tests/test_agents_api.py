@@ -177,6 +177,7 @@ class TestAgentRunTask(unittest.TestCase):
         from aegis.workers.tasks.agent import agent_run
 
         ctx = MagicMock()
+        ctx.skip = False
         ctx.actor = "service:worker"
         ctx.run_id = "run-1"
         ctx.project_id = "proj-1"
@@ -219,6 +220,57 @@ class TestAgentRunTask(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["output_len"], len("done"))
+
+    def test_override_authorized_threads_into_worker_authorize(self):
+        # M1: the override the caller set at admission must reach the worker's
+        # re-authorize, or an off-allowlist (but authorized) target fails here.
+        from aegis.workers.tasks.agent import agent_run
+
+        ctx = MagicMock()
+        ctx.skip = False
+        ctx.actor = "service:worker"
+        ctx.run_id = "run-2"
+        ctx.project_id = "proj-1"
+        ctx.audit_writer = MagicMock()
+        fake_job = MagicMock()
+        fake_job.detail = {"agent": "recon", "prompt": "p",
+                           "target": "10.0.0.9", "finding_id": None,
+                           "repo_path": None, "execute": False,
+                           "override_authorized": True}
+        ctx.session.get.return_value = fake_job
+
+        @contextlib.contextmanager
+        def fake_task_context(job_id):  # noqa: ARG001
+            yield ctx
+
+        with patch("aegis.workers.bootstrap.task_context", fake_task_context), \
+             patch("aegis.safety.authorize") as authorize, \
+             patch("aegis.agents.dispatch") as dispatch:
+            dispatch.return_value = AgentResult(status="ok", output="x")
+            agent_run.run("job-2")
+
+        self.assertIs(authorize.call_args.kwargs["override_authorized"], True)
+
+    def test_skipped_job_does_not_authorize_or_dispatch(self):
+        # H2: a redelivered/cancelled job (ctx.skip) must short-circuit — no
+        # re-authorize, no dispatch, no agent execution.
+        from aegis.workers.tasks.agent import agent_run
+
+        ctx = MagicMock()
+        ctx.skip = True
+
+        @contextlib.contextmanager
+        def fake_task_context(job_id):  # noqa: ARG001
+            yield ctx
+
+        with patch("aegis.workers.bootstrap.task_context", fake_task_context), \
+             patch("aegis.safety.authorize") as authorize, \
+             patch("aegis.agents.dispatch") as dispatch:
+            result = agent_run.run("job-skip")
+
+        self.assertEqual(authorize.call_count, 0)
+        self.assertEqual(dispatch.call_count, 0)
+        self.assertTrue(result.get("skipped"))
 
 
 class TestAgentRoute(unittest.TestCase):

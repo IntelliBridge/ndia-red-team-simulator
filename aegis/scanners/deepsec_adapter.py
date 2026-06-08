@@ -102,6 +102,23 @@ def _extract_json_array(stdout: str) -> list:
         return []
 
 
+# deepsec enriches findings with code-owner identities; these keys (top-level
+# and nested under ``metadata``) carry PII and must never be persisted — not in
+# the AegisFinding and not in the raw artifact. See the module docstring.
+_PII_TOP_KEYS = frozenset({"assignee", "labels", "description", "githubUrl"})
+_PII_META_KEYS = frozenset({"owners"})
+
+
+def _sanitize_for_artifact(item: dict) -> dict:
+    """Strip code-owner PII from a raw deepsec finding before it is written to
+    disk, mirroring the field-level redaction ``_convert`` applies."""
+    clean = {k: v for k, v in item.items() if k not in _PII_TOP_KEYS}
+    meta = clean.get("metadata")
+    if isinstance(meta, dict):
+        clean["metadata"] = {k: v for k, v in meta.items() if k not in _PII_META_KEYS}
+    return clean
+
+
 def _convert(finding: dict, run_id: str) -> AegisFinding | None:
     """Map one deepsec ``ExportedFinding`` to an ``AegisFinding``.
 
@@ -237,9 +254,16 @@ class DeepsecAdapter:
             if converted is not None:
                 findings.append(converted)
 
+        # Persist a PII-sanitized copy of the export (never the raw stdout,
+        # which embeds owner identities/emails in the metadata + description).
         raw_dir = Path(run_state.run_path) / "deepsec"
         raw_dir.mkdir(parents=True, exist_ok=True)
-        (raw_dir / "export.json").write_text(export.stdout or "")
+        sanitized = [
+            _sanitize_for_artifact(item)
+            for item in _extract_json_array(export.stdout)
+            if isinstance(item, dict)
+        ]
+        (raw_dir / "export.json").write_text(json.dumps(sanitized, indent=2))
 
         return ScanResult(
             findings=findings, adapter_name=self.name,

@@ -102,7 +102,8 @@ def create_agent_job(
             created_by=actor,
             detail={"agent": agent_name, "prompt": prompt,
                     "target": target, "finding_id": finding_id,
-                    "repo_path": repo_path, "execute": execute},
+                    "repo_path": repo_path, "execute": execute,
+                    "override_authorized": override_authorized},
         ))
         sess.flush()
 

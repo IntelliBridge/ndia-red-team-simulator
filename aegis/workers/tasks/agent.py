@@ -25,12 +25,18 @@ def agent_run(self, job_id: str) -> dict[str, Any]:
 
     config = load_config()
     with task_context(job_id) as ctx:
+        if ctx.skip:
+            return {"job_id": job_id, "skipped": True}
         job = ctx.session.get(Job, job_id)
         detail = (job.detail if job else {}) or {}
         agent_name = detail["agent"]
         prompt = detail.get("prompt", "")
         target = detail.get("target")
         execute = bool(detail.get("execute", False))
+        # Carried from admission: an off-allowlist target the caller explicitly
+        # authorized must stay authorized through the worker re-check, or the
+        # job would fail here despite a valid admission decision.
+        override_authorized = bool(detail.get("override_authorized", False))
 
         # Worker-side re-check: drift in config.target_allowlist would
         # surface here before the agent runs. The action name carries the
@@ -38,6 +44,7 @@ def agent_run(self, job_id: str) -> dict[str, Any]:
         authorize(
             f"{'agent.execute' if execute else 'agent.run'}.{agent_name}", target,
             allowlist=config.target_allowlist,
+            override_authorized=override_authorized,
             actor=ctx.actor, writer=ctx.audit_writer,
             run_id=ctx.run_id, project_id=ctx.project_id,
             detail={"actor": ctx.actor, "job_id": job_id,

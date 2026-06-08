@@ -14,6 +14,8 @@ def vulnfixer_render(self, job_id: str) -> dict[str, Any]:
     from aegis.workers.bootstrap import task_context
 
     with task_context(job_id) as ctx:
+        if ctx.skip or ctx.run_state is None:
+            return {"job_id": job_id, "skipped": True}
         raw = ctx.run_state.load_findings()
         findings = [AegisFinding.from_dict(f) for f in raw]
         out_path = ctx.run_state.run_path / "vulnfixer-export.json"

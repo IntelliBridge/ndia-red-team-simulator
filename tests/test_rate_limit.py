@@ -193,6 +193,39 @@ class RateLimitScopeTest(unittest.TestCase):
         self.assertEqual(
             client.post("/v1/agents/scout/run").status_code, 429)
 
+    def test_project_bucket_is_scoped_by_principal(self) -> None:
+        # M3: ?project is client-supplied, so a bare ``p:{project}`` key would
+        # let any caller drain another tenant's bucket. The key must embed the
+        # principal. Pin the project cap low so it is the gate (not the user).
+        settings = APISettings(
+            env="dev", auth_mode="dev",
+            cors_origins=["http://localhost:3000"],
+            rate_limit_per_user_per_min=10_000,
+            rate_limit_per_project_per_min=2,
+        )
+        app = FastAPI()
+        app.middleware("http")(rl.rate_limit_middleware(
+            user_per_min=settings.rate_limit_per_user_per_min,
+            project_per_min=settings.rate_limit_per_project_per_min,
+        ))
+        app.add_api_route("/v1/scans", lambda: {"ok": True}, methods=["POST"])
+        client = TestClient(app, raise_server_exceptions=False)
+
+        for _ in range(2):
+            self.assertNotEqual(
+                client.post("/v1/scans?project=victim").status_code, 429)
+        self.assertEqual(
+            client.post("/v1/scans?project=victim").status_code, 429)
+
+        project_keys = [k for k in rl._BUCKETS if k.startswith("p:")]
+        self.assertTrue(project_keys)
+        # The spoofable bare key is never used; the real key embeds the principal.
+        self.assertNotIn("p:victim", rl._BUCKETS)
+        self.assertTrue(
+            any(k.endswith(":victim") and k != "p:victim" for k in project_keys),
+            f"project bucket not principal-scoped: {project_keys}",
+        )
+
     def test_webhook_path_is_excluded(self) -> None:
         client = TestClient(self._app_with("/v1/webhooks/github"),
                             raise_server_exceptions=False)

@@ -3,18 +3,26 @@
 Each task function takes ``job_id``; this module wraps that into a context
 manager that:
 
-1. Loads the ``Job`` row, sets ``status='running'``, ``started_at=now``.
-2. Yields a context bundle (session, run state, audit writer, blob store,
+1. Loads the ``Job`` row. If it is not ``status='queued'`` (e.g. it was
+   cancelled, already ran, or is a redelivery of a job that died mid-run),
+   yields a context with ``skip=True`` and does nothing else — the task body
+   must early-return on ``ctx.skip``. This is the cancellation / at-least-once
+   redelivery guard (``task_acks_late=True``); without it a revoked or crashed
+   task would re-execute and re-fire offensive work.
+2. Otherwise sets ``status='running'``, ``started_at=now``.
+3. Yields a context bundle (session, run state, audit writer, blob store,
    actor) to the task body.
-3. On success: marks ``status='succeeded'``, ``completed_at=now``.
-4. On exception: marks ``status='failed'`` with the error captured.
+4. On success: marks ``status='succeeded'``, ``completed_at=now``.
+5. On exception: marks ``status='failed'`` with the error captured.
 
-If the worker dies mid-task, the reaper (a periodic Celery beat job)
-marks long-running rows past a TTL as ``failed``.
+NOTE: a job that crashes mid-run is left ``running`` and is NOT retried (the
+guard skips its redelivery, fail-closed). A periodic reaper to mark stale
+``running`` rows ``failed`` past a TTL is not yet implemented.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import traceback
 from contextlib import contextmanager
@@ -29,17 +37,22 @@ if TYPE_CHECKING:
     from aegis.state import RunStateAPI
     from aegis.storage import BlobStore
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class TaskContext:
     job_id: str
     run_id: str
     project_id: str
-    run_state: RunStateAPI
     session: Session
-    audit_writer: AuditWriter
     blob_store: BlobStore
+    run_state: RunStateAPI | None = None
+    audit_writer: AuditWriter | None = None
     actor: str = "system:worker"
+    # Set when the job was not in a runnable ('queued') state — the task body
+    # must early-return without doing any work. See ``task_context``.
+    skip: bool = False
 
 
 def _now() -> datetime:
@@ -65,6 +78,25 @@ def task_context(job_id: str) -> Iterator[TaskContext]:
         job = sess.get(Job, job_id)
         if job is None:
             raise RuntimeError(f"job {job_id} not found")
+
+        # Redelivery / cancellation guard. ``task_acks_late=True`` means a task
+        # whose worker was revoked (``cancel_run``) or died mid-run can be
+        # redelivered by the broker. Only a freshly-``queued`` job is runnable;
+        # re-running a ``cancelled``/terminal/already-``running`` job would
+        # re-fire offensive work and clobber its status. Skip without touching
+        # the row (the task body checks ``ctx.skip`` and returns early).
+        if job.status != "queued":
+            logger.info(
+                "task_context: job %s is %r (not 'queued'); skipping execution",
+                job_id, job.status,
+            )
+            yield TaskContext(
+                job_id=job_id, run_id=job.run_id, project_id=job.project_id,
+                session=sess, blob_store=blob_store,
+                actor=job.created_by or "system:worker", skip=True,
+            )
+            return
+
         job.status = "running"
         job.started_at = _now()
         sess.flush()

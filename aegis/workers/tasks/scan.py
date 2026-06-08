@@ -25,11 +25,16 @@ def scan_start(self, job_id: str) -> dict[str, Any]:
 
     config = load_config()
     with task_context(job_id) as ctx:
+        if ctx.skip or ctx.run_state is None:
+            return {"job_id": job_id, "skipped": True}
         job = ctx.session.get(Job, job_id)
         detail = (job.detail if job else {}) or {}
         target = detail["target"]
         scanner = detail.get("scanner", "strix")
         instruction = detail.get("instruction")
+        # Carried from admission: an off-allowlist target the caller explicitly
+        # authorized must stay authorized through the worker re-check.
+        override_authorized = bool(detail.get("override_authorized", False))
 
         # Worker-side re-check: do not trust the admission allowlist
         # decision blindly. Any drift in config.target_allowlist would
@@ -37,6 +42,7 @@ def scan_start(self, job_id: str) -> dict[str, Any]:
         authorize(
             f"scan.execute.{scanner}", target,
             allowlist=config.target_allowlist,
+            override_authorized=override_authorized,
             actor=ctx.actor, writer=ctx.audit_writer,
             run_id=ctx.run_id, project_id=ctx.project_id,
             detail={"actor": ctx.actor, "job_id": job_id,

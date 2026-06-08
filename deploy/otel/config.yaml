@@ -12,9 +12,11 @@
 #
 # Security pipeline (logs/security): host/OS audit sources — filelog
 # (auth.log/secure), journald (sshd/sudo/kernel), and rfc5424 syslog over
-# tcp — are scrubbed by `redaction` (secret-like attributes dropped BEFORE
-# any export), denoised by `filter`, then fanned out to the Postgres mirror
-# (otlphttp/aegis-ingest) and Loki. Redaction always runs before batch/export.
+# tcp — are scrubbed in two stages BEFORE any export: `redaction` masks
+# secret-like attribute values, and `transform/redact_body` scrubs secrets
+# from the raw log `body` (where host log lines actually land). Then `filter`
+# denoises and the records fan out to the Postgres mirror
+# (otlphttp/aegis-ingest) and Loki. Both redaction stages run before batch/export.
 
 receivers:
   otlp:
@@ -86,6 +88,25 @@ processors:
       - '(?i)bearer\s+[A-Za-z0-9._\-]+'
     summary: debug
 
+  # Body-level secret scrubbing (logs/security pipeline). `redaction` above
+  # only masks attribute VALUES; raw host log lines land in the record `body`
+  # (filelog/journald/syslog put the line there — see filelog's
+  # `parse_from: body`). A password typed at a prompt, an `Authorization:`
+  # header an app logged, or a token on a sudo command line would otherwise
+  # reach Loki + the Postgres mirror unredacted. RE2 (Go) patterns mirror
+  # `redaction.blocked_values`. error_mode: ignore so a non-string body is a
+  # no-op rather than a pipeline error.
+  transform/redact_body:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - 'replace_pattern(body, "(?i)(password|passwd|pwd)\\s*[:=]\\s*\\S+", "***REDACTED***")'
+          - 'replace_pattern(body, "(?i)(api[_-]?key|apikey|secret|token)\\s*[:=]\\s*\\S+", "***REDACTED***")'
+          - 'replace_pattern(body, "(?i)authorization\\s*:\\s*.+", "***REDACTED***")'
+          - 'replace_pattern(body, "(?i)bearer\\s+[A-Za-z0-9._+/=-]+", "***REDACTED***")'
+          - 'replace_pattern(body, "AKIA[0-9A-Z]{16}", "***REDACTED***")'
+
   # Denoise: keep security-relevant logs, drop obvious noise. OTTL
   # conditions are OR'd; a record is dropped if any condition matches.
   filter:
@@ -141,10 +162,10 @@ service:
       receivers: [otlp]
       processors: [memory_limiter, batch]
       exporters: [otlp/jaeger]
-    # Host/OS audit sources -> redact secrets -> denoise -> Postgres mirror + Loki.
+    # Host/OS audit sources -> redact attrs + body -> denoise -> Postgres mirror + Loki.
     logs/security:
       receivers: [filelog, journald, syslog, k8sobjects]
-      processors: [memory_limiter, redaction, filter, batch]
+      processors: [memory_limiter, redaction, transform/redact_body, filter, batch]
       exporters: [otlphttp/aegis-ingest, loki]
   telemetry:
     logs:

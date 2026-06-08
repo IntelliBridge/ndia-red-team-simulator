@@ -130,7 +130,8 @@ def create_scan_job(
             type="scan.start", status="queued",
             created_by=actor,
             detail={"target": target, "scanner": scanner,
-                    "instruction": instruction},
+                    "instruction": instruction,
+                    "override_authorized": override_authorized},
         ))
         sess.flush()
 

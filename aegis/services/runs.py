@@ -39,8 +39,9 @@ def cancel_run(
 
     Order: audit row first, then mutate Run + Job rows and best-effort
     revoke the Celery tasks. If revoke fails the row is still marked
-    cancelled — the worker will see the status flip and short-circuit
-    on next heartbeat (handled in F11).
+    cancelled — ``task_context`` skips any job whose status is no longer
+    ``queued``, so a redelivered/late-starting task short-circuits instead
+    of re-running.
     """
     from sqlalchemy import select
 
