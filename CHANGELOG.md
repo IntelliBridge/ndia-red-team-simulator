@@ -6,6 +6,8 @@ SemVer.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-06-08 — finish the seams: multi-scanner dispatch, budget caps, API sunsets
+
 Post-0.11.0 hardening, the **"finish the seams"** milestone, and tooling
 work. Completes scaffolded-but-unfinished seams (multi-scanner dispatch,
 the job reaper, budget enforcement) and removes two long-deprecated API

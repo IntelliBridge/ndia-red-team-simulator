@@ -5,33 +5,27 @@ Where Aegis is heading. This is the forward-looking complement to the
 (which records what has shipped). Items here are **directional, not dated** —
 priorities shift; nothing below is a commitment to a release.
 
-**Current release:** v0.11.0 (Python 3.12 / 3.13).
+**Current release:** v0.12.0 (Python 3.12 / 3.13).
 
-How to read it: the **Now / Next** milestone is the immediate focus — work that
-is already half-built in code (reserved parameters, no-op hooks, deprecations
-that outlived their target). The later sections are grouped by theme, roughly in
-priority order.
+How to read it: **Now / Next** is the immediate focus; the later sections are
+grouped by theme, roughly in priority order.
 
 ---
 
-## Now / Next — "Finish the seams"
+## Recently shipped — "Finish the seams" (v0.12.0)
 
-The highest-leverage milestone: the scaffolding already exists in the codebase,
-so these are completions rather than greenfield builds.
+Closed in v0.12.0 (see the [Changelog](https://github.com/IntelliBridge/aegis/blob/main/CHANGELOG.md)):
+multi-scanner dispatch so all 14 adapters run through the registry (M6); removal
+of the two overdue v0.5 API sunsets (`by-scanner-id`, WebSocket `?token=`);
+`override_authorized` on the async fix API; the stale-job reaper; LLM budget
+enforcement with a per-model price table; and four review-surfaced cleanups.
 
-> **Status:** implemented on the `feat/finish-the-seams` branch (PR #3, pending
-> merge) — see the Changelog `[Unreleased]` section. Budget enforcement is
-> complete: per-call cost is computed from a researched per-model price table
-> (`aegis/llm/pricing.py`, litellm fallback), so the daily cap binds.
+## Now / Next
 
-| Item | What's left | Where it's scaffolded |
-|---|---|---|
-| **Multi-scanner dispatch (M6)** | The worker task already dispatches by scanner name through the registry, but the synchronous service path (`run_scan`) and the CLI still hard-code Strix. Route all 14 adapters through one dispatch path so the platform's full scanner roster is reachable everywhere. | `aegis/services/scans.py` (`scanner` reserved for M6), `aegis/scanners/registry.py` (`dispatch`), `aegis/workers/tasks/scan.py` |
-| **v0.5 API sunsets (overdue)** | Remove the deprecated `GET /v1/findings/by-scanner-id` and the legacy WebSocket `?token=` query-param auth. Both were slated for v0.5 and have been carried to v0.11.0. | `aegis/api/v1/findings_by_scanner_id.py`, `aegis/api/ws.py` |
-| **LLM budget enforcement** | The `BudgetChecker` hook is a no-op until the real `llm_usage`-table check is wired — per-project / per-org cost caps. | `aegis/llm/router.py` |
-| **Stale-job reaper** | A periodic Celery-beat job that marks jobs stuck `running` past a TTL as `failed`. Referenced in docstrings; not implemented. (The cancel/redelivery guard in `task_context` is the complementary half and already exists.) | `aegis/workers/bootstrap.py` |
-| **`override_authorized` in the async fix API** | The flag threads through the agent and scan async paths and the synchronous CLI fix path, but the async `POST /v1/findings/{id}/fix` never exposes it. Add it to `FixBody` → `create_fix_job` → worker so off-allowlist remediation is possible via the API. | `aegis/api/v1/fix.py`, `aegis/services/fixes.py`, `aegis/workers/tasks/fix.py` |
-| **Review-surfaced cleanups** | Four low-severity items deferred from the v0.5.2→v0.11.0 review: gate `open_pr` at approver role (defense-in-depth), make `record_artifact` idempotent on the Postgres backend, honor per-adapter `default_timeout`, and filter by `chain_id` in single-file audit mode. | `aegis/api/v1/fix.py`, `aegis/state/postgres.py`, `aegis/scanners/registry.py`, `aegis/audit/chain.py` |
+With the seams closed, the next focus is **capability breadth** and
+**security / compliance hardening** (below). The highest-leverage candidates:
+broadening the agent/tool roster toward the OnePager promise, authenticated DAST
+flows, and DB-side append-only audit enforcement (`pg_audit` + role separation).
 
 ## Capability breadth
 

@@ -4,8 +4,8 @@
 
 | Version           | Supported                          |
 |-------------------|------------------------------------|
-| 0.11.x (current)  | yes                                |
-| 0.5.x – 0.10.x    | yes — security fixes only          |
+| 0.12.x (current)  | yes                                |
+| 0.5.x – 0.11.x    | yes — security fixes only          |
 | 0.3.x – 0.4.x     | yes — security fixes only          |
 | < 0.3             | no                                 |
 
@@ -26,7 +26,7 @@ We will acknowledge within 3 business days and aim for triage within
 10 business days. Coordinated disclosure preferred; we will credit
 reporters who request it.
 
-## Hardening posture (current — v0.11.0)
+## Hardening posture (current — v0.12.0)
 
 ### Auth + authorization
 
@@ -129,7 +129,7 @@ See [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md).
 - Cost / budget exhaustion via LLM-routed agents — see the
   `BudgetChecker` hook in `aegis/llm/router.py`.
 
-## Known gaps (tracked, not shipping in v0.11.0)
+## Known gaps (tracked, not shipping in v0.12.0)
 
 - Database-side append-only enforcement on `audit_events` (Postgres
   `pg_audit` + role separation). Today, a privileged DB operator

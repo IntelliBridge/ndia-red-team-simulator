@@ -65,8 +65,8 @@ the entire trail on `aegis audit verify ✓`.
 
 ## Where Aegis is today
 
-Aegis is **operational software**, not a vision deck. The v0.11.0 tag
-shipped June 2026 with 1253 tests passing (18 skipped offline) on Python
+Aegis is **operational software**, not a vision deck. The v0.12.0 tag
+shipped June 2026 with 1329 tests passing (21 skipped offline) on Python
 3.12 and 3.13.
 
 | Capability | Status |
@@ -306,6 +306,7 @@ kept for history, not for orientation.
 | v0.9.0 | Live Kali tool belt over MCP + CAI multi-agent patterns | `v0.9.0` |
 | v0.10.0 | Strix code-scope depth + real Kali tool args | `v0.10.0` |
 | v0.11.0 | OTel security-log pipeline + design-system base primitives | `v0.11.0` |
+| v0.12.0 | Finish the seams: multi-scanner dispatch, budget caps, API sunsets | `v0.12.0` |
 
 Full per-release detail in [`CHANGELOG.md`](CHANGELOG.md).
 
