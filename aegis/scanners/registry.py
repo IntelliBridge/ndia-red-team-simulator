@@ -29,11 +29,14 @@ KNOWN_CAPABILITIES: set[str] = {
 Capability = str  # back-compat alias; validated against KNOWN_CAPABILITIES at register()
 
 
+_DEFAULT_TIMEOUT = 1800
+
+
 @dataclass
 class ScanOptions:
     target: str
     instruction: str | None = None
-    timeout: int = 1800
+    timeout: int = _DEFAULT_TIMEOUT
     scan_mode: str = "standard"
     # Strix depth (v0.10.0). All optional and adapter-specific: an adapter that
     # doesn't understand them ignores them, so the single-target default path is
@@ -97,9 +100,13 @@ def run_cli_scan(
     """
     version = adapter.adapter_version()
     started = time.monotonic()
+    # ``ScanOptions.timeout`` defaults to the registry sentinel; when the caller
+    # never overrode it, honour the adapter's declared ``default_timeout``.
+    timeout = (adapter.default_timeout if options.timeout == _DEFAULT_TIMEOUT
+               else options.timeout)
     try:
         proc = subprocess.run(
-            argv, capture_output=True, text=True, timeout=options.timeout,
+            argv, capture_output=True, text=True, timeout=timeout,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
         return ScanResult(

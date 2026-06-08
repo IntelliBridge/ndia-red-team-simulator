@@ -13,10 +13,6 @@ Phase 4 v0.4.0 F14c hardens the upgrade path:
   resolves it.
 - Failures close with close code ``1008`` (policy violation) and a
   short reason string.
-
-The legacy ``?token=…`` query-parameter fallback ships out in v0.5.
-For now it is still accepted so existing tests / dev tools work,
-but it is **not** recommended for production traffic.
 """
 
 from __future__ import annotations
@@ -69,7 +65,6 @@ async def _resolve_user_for_ws(websocket: WebSocket, settings):
     1. ``Sec-WebSocket-Protocol: aegis.bearer.<token>`` (programmatic).
     2. ``Authorization: Bearer …`` header (works for some clients).
     3. ``aegis_api_session`` cookie (browser path, F14a).
-    4. ``?token=…`` query parameter (legacy; removed in v0.5).
     """
     from aegis.api.auth import _resolve_from_cookie, _resolve_from_token
 
@@ -91,13 +86,6 @@ async def _resolve_user_for_ws(websocket: WebSocket, settings):
     if cookie_value:
         try:
             return _resolve_from_cookie(cookie_value, settings)
-        except Exception:
-            return None
-
-    legacy_token = websocket.query_params.get("token", "")
-    if legacy_token:
-        try:
-            return _resolve_from_token(legacy_token, settings)
         except Exception:
             return None
 

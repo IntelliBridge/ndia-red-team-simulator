@@ -918,23 +918,6 @@ class TestWsResolveUser(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.email, "admin@test")
         self.assertEqual(result.project_memberships["proj-1"], "admin")
 
-    async def test_resolve_via_legacy_query_param(self):
-        # Legacy ?token= path carries a real dev token through the genuine
-        # token resolver.
-        from aegis.api.ws import _resolve_user_for_ws
-
-        ws = MagicMock()
-        ws.headers.get.return_value = ""
-        ws.cookies.get.return_value = None
-        ws.query_params.get.side_effect = lambda k, default="": (
-            "dev:alice@test" if k == "token" else ""
-        )
-
-        settings = APISettings(env="dev", auth_mode="dev")
-        result = await _resolve_user_for_ws(ws, settings)
-        self.assertIsNotNone(result)
-        self.assertEqual(result.sub, "dev:alice@test")
-
     async def test_resolve_no_credentials_returns_none(self):
         from aegis.api.ws import _resolve_user_for_ws
 
@@ -974,7 +957,7 @@ class TestWsResolveUser(unittest.IsolatedAsyncioTestCase):
 # ===========================================================================
 
 class TestWsResolveUserExceptionPaths(unittest.IsolatedAsyncioTestCase):
-    """Cover lines 87-88, 94-95, 101-102 in ws.py (exception → None)."""
+    """Cover the bearer-header and cookie exception → None branches in ws.py."""
 
     async def test_bearer_header_exception_returns_none(self):
         """Exception in bearer header path returns None (line 87-88).
@@ -1019,26 +1002,6 @@ class TestWsResolveUserExceptionPaths(unittest.IsolatedAsyncioTestCase):
         with patch("aegis.api.session_cookie.verify_session_cookie",
                    side_effect=SessionCookieError("bad cookie")):
             result = await _resolve_user_for_ws(ws, settings)
-        self.assertIsNone(result)
-
-    async def test_legacy_query_param_exception_returns_none(self):
-        """Exception in legacy ?token= path returns None (lines 101-102).
-
-        A non-dev legacy token reaches the real JWT verifier, which raises
-        (OIDC unconfigured); the helper swallows it. Genuine failure boundary
-        rather than a private-resolver patch.
-        """
-        from aegis.api.ws import _resolve_user_for_ws
-
-        ws = MagicMock()
-        ws.headers.get.return_value = ""
-        ws.cookies.get.return_value = None
-        ws.query_params.get.side_effect = lambda k, default="": (
-            "badlegacytoken" if k == "token" else ""
-        )
-
-        settings = APISettings(env="dev", auth_mode="dev", oidc_jwks_url=None)
-        result = await _resolve_user_for_ws(ws, settings)
         self.assertIsNone(result)
 
 

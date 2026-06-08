@@ -59,7 +59,8 @@ def cmd_scan(args, config) -> None:
     if getattr(args, "use_strix", False):
         _console._info("Launching Strix as a subprocess (this may take a while)")
         outcome = start_scan(
-            run_state=state, target=target_url, scanner="strix",
+            run_state=state, target=target_url,
+            scanner=getattr(args, "scanner", "strix"),
             instruction=getattr(args, "instruction", None),
             timeout=getattr(args, "timeout", 1800),
             actor="cli:scan",

@@ -63,6 +63,19 @@ The four Aegis services (`aegis-api`, `aegis-worker`,
 in this repo. The data-plane services are the standard upstream
 images.
 
+**Scheduled cleanup (`celery beat`).** Run one `celery -A aegis.workers.celery_app
+beat` process alongside the workers. It drives the periodic `aegis.reap_stale_jobs`
+task (every 5 min) that marks jobs stuck `running` past
+`job_max_runtime_seconds` (default 3600s, set via `aegis.yaml`) as `failed` —
+the complement to the worker's redelivery guard. Without a `beat` process,
+crashed jobs stay `running` indefinitely.
+
+**LLM budget caps.** Per-project daily spend caps come from
+`Project.daily_llm_budget_cents` (unset = unlimited). The fix path records
+`llm_usage` rows and `route()` blocks once the day's spend reaches the cap.
+Per-call cost is computed from a researched per-model price table
+(`aegis/llm/pricing.py`), with litellm's price map as a fallback.
+
 ---
 
 ## Required env vars

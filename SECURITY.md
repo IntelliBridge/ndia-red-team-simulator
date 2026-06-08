@@ -54,7 +54,7 @@ See [`docs/architecture/auth.md`](docs/architecture/auth.md).
   origin list (`AEGIS_CORS_ORIGINS` + `AEGIS_WEB_ORIGIN`); methods +
   headers are enumerated.
 - WebSocket upgrades validate `Origin` and resolve auth from
-  subprotocol → header → cookie → legacy query token; policy
+  subprotocol → header → cookie; policy
   failures close with `1008`.
 
 ### HTML report XSS defence

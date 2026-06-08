@@ -22,6 +22,7 @@ class FixBody(BaseModel):
     apply: bool = False
     open_pr: bool = False
     repo: str | None = None
+    override_authorized: bool = False
 
 
 @router.post("/{finding_id}/fix")
@@ -44,7 +45,8 @@ def fix(finding_id: str,
 
     strategy = body.strategy
     apply = bool(body.apply)
-    check(user, Action.FIX_APPLY if apply else Action.FIX_GENERATE,
+    check(user,
+          Action.FIX_APPLY if (apply or bool(body.open_pr)) else Action.FIX_GENERATE,
           project_id)
 
     config = load_config()
@@ -57,6 +59,7 @@ def fix(finding_id: str,
             finding_id=finding_id, strategy=strategy,  # type: ignore[arg-type]
             apply=apply, open_pr=bool(body.open_pr),
             repo=body.repo,
+            override_authorized=bool(body.override_authorized),
             project_id=project_id, run_id=run_id,
             actor=f"user:{user.sub}",
             config=config,

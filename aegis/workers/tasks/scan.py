@@ -48,8 +48,14 @@ def scan_start(self, job_id: str) -> dict[str, Any]:
             detail={"actor": ctx.actor, "job_id": job_id,
                     "scanner": scanner, "target": target},
         )
-        result = dispatch(scanner, ctx.run_state,
-                          ScanOptions(target=target, instruction=instruction))
+        opts: dict[str, Any] = {"target": target, "instruction": instruction}
+        if detail.get("timeout") is not None:
+            opts["timeout"] = detail["timeout"]
+        if detail.get("scan_mode") is not None:
+            opts["scan_mode"] = detail["scan_mode"]
+        if detail.get("scope_mode") is not None:
+            opts["scope_mode"] = detail["scope_mode"]
+        result = dispatch(scanner, ctx.run_state, ScanOptions(**opts))
         ctx.run_state.save_findings(result.findings)
         return {
             "run_id": ctx.run_id, "scanner": scanner,

@@ -77,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--demo", action="store_true", help="Use bundled demo finding fixture")
     p_scan.add_argument("--use-strix", dest="use_strix", action="store_true",
                         help="Invoke Strix as a subprocess against the target URL")
+    p_scan.add_argument("--scanner", default="strix",
+                        help="Registered scanner adapter to dispatch (default: strix)")
     p_scan.add_argument("--instruction", default=None,
                         help="Free-text scope/rules-of-engagement instruction for Strix")
     p_scan.add_argument("--timeout", type=int, default=1800,

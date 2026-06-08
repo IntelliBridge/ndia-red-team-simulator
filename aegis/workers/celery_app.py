@@ -18,6 +18,7 @@ app = Celery(
         "aegis.workers.tasks.exports",
         "aegis.workers.tasks.ci_gate",
         "aegis.workers.tasks.parallel_fix",
+        "aegis.workers.tasks.reaper",
     ],
 )
 
@@ -28,3 +29,13 @@ app.conf.task_default_retry_delay = 10
 app.conf.task_default_max_retries = 3
 app.conf.task_soft_time_limit = 1800
 app.conf.task_time_limit = 2100
+
+# Periodic stale-job reaper: a crashed task is left status="running"
+# forever (the redelivery guard never re-runs it), so beat sweeps every
+# 5 minutes and flips jobs past their TTL to "failed".
+app.conf.beat_schedule = {
+    "reap-stale-jobs": {
+        "task": "aegis.reap_stale_jobs",
+        "schedule": 300.0,
+    },
+}

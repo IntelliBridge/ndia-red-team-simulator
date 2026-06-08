@@ -182,22 +182,41 @@ def start_scan(
             detail={"mode": "events-only"},
         )
 
-    from aegis.runners.strix_runner import run_strix
-    result = run_strix(
-        target, run_state,
-        instruction=instruction,
-        timeout=timeout,
-        strix_command=getattr(config, "strix_command", None),
-        strix_path=config.strix_path,
+    if scanner == "strix":
+        from aegis.runners.strix_runner import run_strix
+        result = run_strix(
+            target, run_state,
+            instruction=instruction,
+            timeout=timeout,
+            strix_command=getattr(config, "strix_command", None),
+            strix_path=config.strix_path,
+        )
+        run_state.save_findings(result.findings)
+        return ScanOutcome(
+            success=result.success,
+            partial_success=result.partial_success,
+            findings=result.findings,
+            scanner=scanner,
+            return_code=result.return_code,
+            error=result.error,
+            detail={"command": result.command, "log_path": result.log_path,
+                    "events_path": result.events_path},
+        )
+
+    from aegis.scanners import ScanOptions, dispatch
+    scan_result = dispatch(
+        scanner, run_state,
+        ScanOptions(target=target, instruction=instruction, timeout=timeout),
     )
-    run_state.save_findings(result.findings)
+    run_state.save_findings(scan_result.findings)
     return ScanOutcome(
-        success=result.success,
-        partial_success=result.partial_success,
-        findings=result.findings,
+        success=(scan_result.exit_code == 0 and not scan_result.error),
+        partial_success=bool(scan_result.findings) and scan_result.exit_code not in (0, None),
+        findings=scan_result.findings,
         scanner=scanner,
-        return_code=result.return_code,
-        error=result.error,
-        detail={"command": result.command, "log_path": result.log_path,
-                "events_path": result.events_path},
+        return_code=scan_result.exit_code,
+        error=scan_result.error,
+        detail={"command": scan_result.command_str,
+                "adapter_version": scan_result.adapter_version,
+                "duration_s": scan_result.duration_s},
     )

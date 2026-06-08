@@ -57,6 +57,7 @@ def create_fix_job(
     apply: bool = False,
     open_pr: bool = False,
     repo: str | None = None,
+    override_authorized: bool = False,
     project_id: str,
     run_id: str,
     actor: str,
@@ -89,6 +90,7 @@ def create_fix_job(
     detail: FixJobDetail = {
         "finding_id": finding_id, "strategy": strategy,
         "apply": apply, "open_pr": open_pr, "repo": repo,
+        "override_authorized": override_authorized,
     }
     with get_session() as sess:
         sess.add(Job(
@@ -123,6 +125,22 @@ class FixOutcome:
     status: FixStatus = "open"   # finding status after the operation
     error: str | None = None
     detail: dict[str, Any] = field(default_factory=dict)
+
+
+def _budget_for(run_state: RunStateAPI) -> tuple[str | None, Any | None]:
+    """Resolve ``(project_id, budget_checker)`` for the active run state.
+
+    Only the DB-backed run state (``PostgresRunState``) carries a
+    ``project_id``; the offline filesystem path does not. We gate the
+    ``DbBudgetChecker`` on that attribute so the offline / CLI path stays a
+    true no-op (no DB import, no session) and ``route()`` keeps its
+    ``budget_checker=None`` short-circuit.
+    """
+    project_id = getattr(run_state, "project_id", None)
+    if not project_id:
+        return None, None
+    from aegis.llm.budget import DbBudgetChecker
+    return project_id, DbBudgetChecker()
 
 
 def _write_diff(run_state: RunStateAPI, finding_id: str, diff: str) -> Path:
@@ -293,8 +311,11 @@ def _generate_patch_fix(
     config: AegisConfig,
     gh_client,
 ) -> FixOutcome:
+    project_id, budget_checker = _budget_for(run_state)
     result = run_code_fix(finding, repo_path=repo,
-                          use_golden_patch=use_golden_patch)
+                          use_golden_patch=use_golden_patch,
+                          project_id=project_id, run_id=run_state.run_id,
+                          budget_checker=budget_checker)
     if not result.success or not result.diff:
         return FixOutcome(
             success=False, strategy="patch",
@@ -382,7 +403,10 @@ def _generate_live_fix(
         override_authorized=override_authorized,
         detail={"actor": actor, "finding_id": finding.id},
     )
-    result = run_live_hardening(finding)
+    project_id, budget_checker = _budget_for(run_state)
+    result = run_live_hardening(finding, project_id=project_id,
+                                run_id=run_state.run_id,
+                                budget_checker=budget_checker)
     return FixOutcome(
         success=result.success, strategy="live",
         finding_id=finding.id,

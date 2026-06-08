@@ -12,7 +12,6 @@ from aegis.api.v1 import (
     audit,
     exports,
     findings,
-    findings_by_scanner_id,
     fix,
     health,
     logs,
@@ -81,7 +80,6 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(health.router, prefix="")
     app.include_router(runs.router, prefix="/v1")
     app.include_router(runs_cancel.router, prefix="/v1")
-    app.include_router(findings_by_scanner_id.router, prefix="/v1")  # before findings/{id}
     app.include_router(findings.router, prefix="/v1")
     app.include_router(audit.router, prefix="/v1")
     app.include_router(reports.router, prefix="/v1")

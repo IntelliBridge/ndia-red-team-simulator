@@ -6,9 +6,10 @@ SemVer.
 
 ## [Unreleased]
 
-Post-0.11.0 hardening, refactor, and tooling work on the release-arc
-branch. No new user-facing capability and no API/schema change; the
-offline `pytest` path and `mkdocs --strict` build stay green.
+Post-0.11.0 hardening, the **"finish the seams"** milestone, and tooling
+work. Completes scaffolded-but-unfinished seams (multi-scanner dispatch,
+the job reaper, budget enforcement) and removes two long-deprecated API
+surfaces; the offline `pytest` path and `mkdocs --strict` build stay green.
 
 ### Fixed
 - **Unit CI matrix unblocked.** `aegis.state` no longer eagerly imports
@@ -22,6 +23,12 @@ offline `pytest` path and `mkdocs --strict` build stay green.
   revoked or crashed task never re-executes; `override_authorized` now
   threads from admission into the worker re-authorization on the agent
   and scan paths.
+- **`record_artifact` is idempotent on the Postgres backend** — re-recording
+  identical content (same `run_id`/`kind`/`sha256`) returns the existing
+  ref instead of raising `IntegrityError` on the unique constraint.
+- **Single-file audit mode filters by `chain_id`** — `_last`/`read_chain`
+  no longer mix interleaved chains in one `audit.jsonl`, so per-chain
+  `seq`/`prev_hash` continuity holds.
 
 ### Security
 - **OTel security pipeline** gains a `transform/redact_body` processor so
@@ -41,11 +48,39 @@ offline `pytest` path and `mkdocs --strict` build stay green.
   `from aegis.state import …` / `from aegis.storage import …` imports
   unchanged); the CLI was split into per-subcommand modules and the audit
   writers consolidated.
+- **Per-adapter `default_timeout` now applies.** `run_cli_scan` falls back
+  to the adapter's declared `default_timeout` (e.g. codeql 3600s, semgrep
+  600s) when the caller didn't override it, instead of the flat 1800s.
+- **Opening a fix PR requires the `approver` role.** `POST
+  /v1/findings/{id}/fix` with `open_pr=true` is now gated like `apply`
+  (was `remediator`).
 
 ### Added
 - A web unit suite (`vitest`) for `@aegis/web`, plus CI gates that
   validate the OTel collector config and enforce a blocking
   `@aegis/design-system` typecheck.
+- **Multi-scanner dispatch (M6).** The synchronous scan service, the API,
+  and the CLI route all 14 registered scanner adapters through the
+  registry (`dispatch`), not just Strix; `POST /v1/scans` rejects an
+  unknown `scanner` with HTTP 400 and the CLI gains `--scanner`.
+- **`override_authorized` on the async fix API.** `FixBody` carries the
+  flag through `create_fix_job` → worker → `generate_fix`, so an
+  off-allowlist target authorized at admission stays authorized.
+- **Stale-job reaper.** A Celery-beat task (`aegis.reap_stale_jobs`, every
+  5 min) marks jobs stuck `running` past `job_max_runtime_seconds`
+  (default 3600s) as `failed` — the complement to the redelivery guard.
+- **LLM budget enforcement.** A `DbBudgetChecker` reads
+  `Project.daily_llm_budget_cents`, subtracts the day's `llm_usage`, and
+  `route()` blocks when exhausted; the fix path records usage rows with
+  per-call cost from a researched per-model price table
+  (`aegis/llm/pricing.py`), with litellm's price map as a fallback.
+
+### Removed
+- **`GET /v1/findings/by-scanner-id`** (deprecated since v0.3.1) — use
+  `GET /v1/findings?run=<run>` or `GET /v1/findings/{uuid}`.
+- **WebSocket `?token=<token>` query-param auth** — use the
+  `aegis.bearer.<token>` subprotocol, the `Authorization` header, or the
+  session cookie.
 
 ## [0.11.0] — security telemetry pipeline + design-system base primitives
 
