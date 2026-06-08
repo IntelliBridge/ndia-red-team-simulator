@@ -6,9 +6,12 @@
 
 import { type ReactNode } from "react";
 
+export const ROLES = ["scanner", "remediator", "approver", "admin"] as const;
+export type Role = (typeof ROLES)[number];
+
 export interface RoleGatedProps {
   /** Role this action requires on the given project. */
-  minRole: "scanner" | "remediator" | "approver" | "admin";
+  minRole: Role;
   /** The caller's role on the project, or undefined when no membership. */
   callerRole: string | undefined;
   /** Children shown when the caller's role meets/exceeds minRole. */
@@ -17,7 +20,9 @@ export interface RoleGatedProps {
   fallback?: ReactNode;
 }
 
-const RANK = { scanner: 1, remediator: 2, approver: 3, admin: 4 } as const;
+const RANK: Record<Role, number> = Object.fromEntries(
+  ROLES.map((r, i) => [r, i + 1]),
+) as Record<Role, number>;
 
 function rankOf(role: string | undefined): number {
   if (!role) return 0;

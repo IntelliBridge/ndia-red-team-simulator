@@ -262,7 +262,9 @@ jobs:
       - name: Typecheck design-system
         run: pnpm --filter @aegis/design-system run typecheck
       - name: Typecheck web
-        run: pnpm --filter @aegis/web typecheck || true
+        run: pnpm --filter @aegis/web typecheck
+      - name: Test web (vitest)
+        run: pnpm --filter @aegis/web test
       - name: Build
         run: pnpm --filter @aegis/web build
 

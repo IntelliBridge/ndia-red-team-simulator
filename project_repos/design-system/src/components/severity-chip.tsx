@@ -25,7 +25,7 @@ const TONES: Record<Severity, string> = {
 };
 
 export interface SeverityChipProps extends HTMLAttributes<HTMLSpanElement> {
-  level: string;
+  level: Severity | (string & {});
 }
 
 export function SeverityChip({

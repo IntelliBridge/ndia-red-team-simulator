@@ -19,25 +19,29 @@ export default function LoginPage() {
   };
 
   return (
-    <div>
-      <h1>Sign in</h1>
-      <p style={{ marginBottom: "1rem" }}>
+    <div className="space-y-4">
+      <h1 className="text-2xl font-semibold">Sign in</h1>
+      <p className="mb-4">
         The stack is running in dev auth mode. Pick the admin email to
         continue as; the API rejects this token whenever{" "}
         <code>AEGIS_ENV=prod</code>.
       </p>
-      <label style={{ display: "block", marginBottom: "0.75rem" }}>
+      <label className="mb-3 block">
         Email{" "}
         <input
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          style={{ width: "320px" }}
+          className="w-80 rounded-md border border-slate-200 px-3 py-1.5 text-sm"
         />
       </label>
-      <button className="primary" disabled={busy} onClick={devLogin}>
+      <button
+        className="rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+        disabled={busy}
+        onClick={devLogin}
+      >
         Continue as dev admin
       </button>
-      <p style={{ marginTop: "1.5rem", color: "#5a5a5a" }}>
+      <p className="mt-6 text-slate-500">
         Keycloak / OIDC is also live at{" "}
         <code>http://localhost:8080/realms/aegis</code> — wire the NextAuth
         provider config under{" "}

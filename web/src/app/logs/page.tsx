@@ -1,11 +1,12 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 
 import { api } from "@/lib/api";
-import { requireAuth } from "@/lib/auth";
+import { useRequireAuth } from "@/hooks/useRequireAuth";
+import { buildLogsQuery } from "./query";
 
 interface LogRow {
   id: number;
@@ -38,28 +39,40 @@ const SEV_TONE: Record<string, string> = {
   fatal: "text-red-900",
 };
 
+function LogTableRow({ row }: { row: LogRow }) {
+  return (
+    <tr className="border-t border-slate-100">
+      <td className="px-2 py-1 font-mono text-slate-500">
+        {new Date(row.ts).toLocaleTimeString()}
+      </td>
+      <td
+        className={`px-2 py-1 font-mono uppercase ${
+          SEV_TONE[row.severity] ?? "text-slate-700"
+        }`}
+      >
+        {row.severity}
+      </td>
+      <td className="px-2 py-1">{row.service}</td>
+      <td className="px-2 py-1 font-mono">{row.message}</td>
+      <td className="px-2 py-1 font-mono text-slate-500">{row.run_id ?? "—"}</td>
+      <td className="px-2 py-1 font-mono text-slate-500">
+        {row.request_id ?? "—"}
+      </td>
+    </tr>
+  );
+}
+
 // Next.js 14 requires useSearchParams() to live inside a Suspense
 // boundary so the page can prerender (CSR-bailout). LogsView reads
 // the params; the default export wraps it.
 function LogsView() {
-  const router = useRouter();
   const params = useSearchParams();
-  const [authed, setAuthed] = useState(false);
-  useEffect(() => {
-    if (requireAuth(router)) setAuthed(true);
-  }, [router]);
+  const authed = useRequireAuth();
 
   const runFilter = params.get("run") ?? "";
-  const severityFilter = params.get("severity") ?? "";
-  const serviceFilter = params.get("service") ?? "";
-
-  const qs = new URLSearchParams();
-  if (runFilter) qs.set("run", runFilter);
-  if (severityFilter) qs.set("severity", severityFilter);
-  if (serviceFilter) qs.set("service", serviceFilter);
 
   const { data, error, isLoading } = useSWR<LogsResponse>(
-    authed ? `/v1/logs?${qs.toString()}` : null,
+    authed ? `/v1/logs?${buildLogsQuery(params)}` : null,
     fetcher,
   );
 
@@ -107,26 +120,7 @@ function LogsView() {
               </tr>
             )}
             {rows.map((r) => (
-              <tr key={r.id} className="border-t border-slate-100">
-                <td className="px-2 py-1 font-mono text-slate-500">
-                  {new Date(r.ts).toLocaleTimeString()}
-                </td>
-                <td
-                  className={`px-2 py-1 font-mono uppercase ${
-                    SEV_TONE[r.severity] ?? "text-slate-700"
-                  }`}
-                >
-                  {r.severity}
-                </td>
-                <td className="px-2 py-1">{r.service}</td>
-                <td className="px-2 py-1 font-mono">{r.message}</td>
-                <td className="px-2 py-1 font-mono text-slate-500">
-                  {r.run_id ?? "—"}
-                </td>
-                <td className="px-2 py-1 font-mono text-slate-500">
-                  {r.request_id ?? "—"}
-                </td>
-              </tr>
+              <LogTableRow key={r.id} row={r} />
             ))}
           </tbody>
         </table>

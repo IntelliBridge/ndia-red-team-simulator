@@ -21,7 +21,7 @@ const TONES: Record<RunStatus, string> = {
 };
 
 export interface RunStatusBadgeProps extends HTMLAttributes<HTMLSpanElement> {
-  status: string;
+  status: RunStatus | (string & {});
 }
 
 export function RunStatusBadge({
@@ -29,8 +29,7 @@ export function RunStatusBadge({
   className,
   ...rest
 }: RunStatusBadgeProps) {
-  const tone =
-    TONES[(status.toLowerCase() as RunStatus)] ?? "bg-slate-100 text-slate-700";
+  const tone = TONES[(status.toLowerCase() as RunStatus)] ?? TONES.queued;
   return (
     <span
       className={cn(

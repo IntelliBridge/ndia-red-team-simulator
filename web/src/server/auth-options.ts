@@ -60,7 +60,7 @@ export const authOptions: NextAuthOptions = {
             {},
         });
         const csrf = newCsrfToken();
-        const maxAge = sessionTtlSeconds();
+        const maxAge = sessionTtlSeconds;
         const c = cookies();
         c.set(sessionCookieName, jwt, {
           httpOnly: true,

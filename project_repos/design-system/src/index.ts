@@ -10,7 +10,7 @@ export { EvidenceDiff, type EvidenceDiffProps }
   from "./components/evidence-diff";
 export { FindingCard, type FindingCardProps }
   from "./components/finding-card";
-export { RoleGated, type RoleGatedProps }
+export { RoleGated, ROLES, type RoleGatedProps, type Role }
   from "./components/role-gated";
 export { RunStatusBadge, type RunStatusBadgeProps, type RunStatus }
   from "./components/run-status-badge";

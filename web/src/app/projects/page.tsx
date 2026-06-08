@@ -1,17 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-
-import { requireAuth } from "@/lib/auth";
+import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
 
 export default function ProjectsPage() {
-  const router = useRouter();
-  const [authed, setAuthed] = useState(false);
-  useEffect(() => {
-    if (requireAuth(router)) setAuthed(true);
-  }, [router]);
+  const authed = useRequireAuth();
   const { projects, isLoading, error } = useRoles();
 
   if (!authed) return <p className="text-slate-500">Redirecting to sign in…</p>;

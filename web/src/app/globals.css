@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 /* Bare minimum styles; Phase 4 brings real design. */
 * { box-sizing: border-box; }
 body {
@@ -11,8 +15,6 @@ body {
 .aegis-header a { color: #fff; margin-right: 1rem; text-decoration: none; }
 .aegis-brand { font-weight: 800; letter-spacing: 0.04em; }
 .aegis-main { padding: 1.5rem; max-width: 1080px; margin: 0 auto; }
-.table { width: 100%; border-collapse: collapse; }
-.table th, .table td { border: 1px solid #ddd; padding: 0.4rem 0.75rem; text-align: left; }
 .sev-critical { color: #b00020; font-weight: 700; }
 .sev-high { color: #c25e00; font-weight: 700; }
 .sev-medium { color: #b08900; }
@@ -21,8 +23,3 @@ body {
 .badge-verified { background: #d4f1de; color: #0a7f33; }
 .badge-still_vulnerable { background: #fbd5d5; color: #b00020; }
 .badge-inconclusive { background: #fdeec1; color: #8a6d00; }
-button.primary {
-  background: #1a1a2e; color: white; border: none; padding: 0.5rem 1rem;
-  border-radius: 4px; cursor: pointer;
-}
-button.primary:disabled { opacity: 0.5; cursor: not-allowed; }

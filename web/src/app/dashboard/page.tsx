@@ -1,21 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 
 import { RunStatusBadge } from "@aegis/design-system";
 import { api, type Run } from "@/lib/api";
-import { getEmail, logout, requireAuth } from "@/lib/auth";
+import { getEmail, logout } from "@/lib/auth";
+import { useRequireAuth } from "@/hooks/useRequireAuth";
 
 const fetcher = (path: string) => api<{ runs: Run[]; count: number }>(path);
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [authed, setAuthed] = useState(false);
-  useEffect(() => {
-    if (requireAuth(router)) setAuthed(true);
-  }, [router]);
+  const authed = useRequireAuth();
 
   const { data, error, isLoading } = useSWR(authed ? "/v1/runs" : null, fetcher);
 
