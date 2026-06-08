@@ -33,7 +33,7 @@ system + Storybook conventions.
 ## Run the test suite
 
 ```bash
-pytest -q                                          # default 237 + 3 skipped
+pytest -q                                          # default ~1288 passing, 20 skipped offline
 pytest -m "not slow"                                # excludes long-running
 pytest -m "integration" tests/integration/         # integration suite (Postgres / Redis required)
 AEGIS_E2E=1 AEGIS_DISABLE_LLM=1 pytest -q tests/e2e/   # deterministic E2E
@@ -55,7 +55,7 @@ The Phase 2 offline path is sacred — every PR must keep
 
 ## Code style
 
-- Python 3.12, type hints expected on public APIs.
+- Python 3.12 / 3.13, type hints expected on public APIs.
 - `ruff check aegis tests` — non-blocking but encouraged.
 - Tests use `unittest`; fixtures via `unittest.mock`.
 - Frontend: TypeScript strict mode; Tailwind via `cn()` from

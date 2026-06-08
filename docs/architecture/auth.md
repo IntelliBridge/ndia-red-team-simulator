@@ -214,9 +214,9 @@ flowchart TB
   projectAccess -- yes --> stream["stream Redis pubsub frames"]
 ```
 
-The legacy `?token=…` query parameter is still accepted for one
-release cut while existing dev tools migrate; it's slated for removal
-in v0.5.
+The legacy `?token=…` query parameter is still accepted for backward
+compatibility while dev tools migrate; it is deprecated and slated for
+removal in a future release.
 
 ---
 

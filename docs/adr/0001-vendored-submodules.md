@@ -1,16 +1,18 @@
 # ADR 0001 — Vendored upstream submodules with pinned SHAs
 
 - **Status:** Accepted
-- **Date:** 2026-05-28 (refreshed for v0.4.1)
+- **Date:** 2026-05-28 (refreshed for v0.11.0)
 - **Scope:** every project under `project_repos/`
 
 ## Context
 
-Aegis depends on six upstream projects that are themselves under
+Aegis depends on eight upstream projects that are themselves under
 active development:
 
 - `cai`, `strix`, `mcp-kali-server`, `vulnerability-fixer` — the
   scanner / agent / fixer surfaces.
+- `bumblebee`, `deepsec` — additional scanner adapters (supply-chain
+  exposure and AI code-audit, added in v0.5.1 / v0.7.0).
 - `shadcn-ui` — the UI primitive registry the design system reads
   from at component-generation time.
 - `opentelemetry-collector-contrib` — the source-of-truth fork for
@@ -98,11 +100,11 @@ Rules:
 ## Out of scope
 
 - A fully reproducible build (Nix / SLSA Level 3 attestations) is
-  beyond v0.4.1. The vendoring policy here is necessary but not
-  sufficient.
+  beyond the current scope. The vendoring policy here is necessary but
+  not sufficient.
 - Mirroring submodules onto an internal Git host for air-gapped
   deploys is a deployment concern (an `AEGIS_OFFLINE_VENDOR_HOST`
-  env knob lands in v0.5 if/when there's demand).
+  env knob would land if/when there's demand).
 
 ## Bumps log
 

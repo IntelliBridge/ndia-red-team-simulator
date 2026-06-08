@@ -4,6 +4,49 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [Unreleased]
+
+Post-0.11.0 hardening, refactor, and tooling work on the release-arc
+branch. No new user-facing capability and no API/schema change; the
+offline `pytest` path and `mkdocs --strict` build stay green.
+
+### Fixed
+- **Unit CI matrix unblocked.** `aegis.state` no longer eagerly imports
+  the Postgres backend (PEP 562 lazy `PostgresRunState`), so
+  `from aegis.state import RunState` — the filesystem default — works
+  without the `api`/`worker` extras installed.
+- **Postgres / worker correctness.** `append_remediation_log` resolves a
+  scanner finding id to the internal row UUID before the FK insert
+  (previously raised `IntegrityError`); `task_context` skips cancelled or
+  redelivered jobs (an at-least-once guard under `task_acks_late`) so a
+  revoked or crashed task never re-executes; `override_authorized` now
+  threads from admission into the worker re-authorization on the agent
+  and scan paths.
+
+### Security
+- **OTel security pipeline** gains a `transform/redact_body` processor so
+  secrets in the raw host-log *body* (`filelog`/`journald`/`syslog`) are
+  scrubbed — the `redaction` processor only masked attribute values —
+  before export to Loki and the Postgres mirror.
+- **Rate limiting**: the per-project token bucket is keyed by principal so
+  a client-supplied `?project` can't drain another tenant's bucket;
+  log-ingest endpoints require a valid worker token when a signing key is
+  configured.
+- **deepsec** persists a PII-sanitized export artifact instead of the raw
+  CLI stdout (owner identities never reach disk).
+
+### Changed
+- Run-state and blob-storage internals refactored into the
+  `aegis/state/` and `aegis/storage/` packages (public
+  `from aegis.state import …` / `from aegis.storage import …` imports
+  unchanged); the CLI was split into per-subcommand modules and the audit
+  writers consolidated.
+
+### Added
+- A web unit suite (`vitest`) for `@aegis/web`, plus CI gates that
+  validate the OTel collector config and enforce a blocking
+  `@aegis/design-system` typecheck.
+
 ## [0.11.0] — security telemetry pipeline + design-system base primitives
 
 Two additive, file-disjoint surfaces land here — observability infra and the

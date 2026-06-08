@@ -225,7 +225,7 @@ What the chain does **not** defend against:
 - A privileged operator with write access to both `audit_events` and
   the API config can re-sign a chain end-to-end. The defence there is
   database-side append-only enforcement (configurable via PG's
-  `pg_audit` + role separation; out of scope for v0.4.1).
+  `pg_audit` + role separation; still a tracked gap — see SECURITY.md).
 - Replay of an external HTTP call. Webhook delivery IDs get the 10-min
   TTL replay-prevention set in `github_webhooks._check_replay`.
 
