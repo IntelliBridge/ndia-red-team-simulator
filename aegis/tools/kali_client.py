@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import json
 import time
-import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from aegis.audit.forensic import tool_detail
 from aegis.safety import AuthorizationError, is_target_allowed
+
+if TYPE_CHECKING:
+    from aegis.audit.chain import AuditWriter
 
 
 @dataclass
@@ -47,7 +50,7 @@ class KaliClient:
                  allow_generic_command: bool = False,
                  timeout: int = 180,
                  caller: str = "cli",
-                 audit_writer=None,
+                 audit_writer: AuditWriter | None = None,
                  run_id: str | None = None,
                  project_id: str | None = None):
         self.base_url = base_url.rstrip("/")
@@ -117,11 +120,6 @@ class KaliClient:
                     return_code=result.get("return_code", 0),
                     timed_out=result.get("timed_out", False),
                 )
-        except urllib.error.URLError as e:
-            return ToolResult(
-                success=False, stdout="", stderr=str(e),
-                return_code=-1,
-            )
         except Exception as e:
             return ToolResult(
                 success=False, stdout="", stderr=str(e),
@@ -144,7 +142,22 @@ class KaliClient:
     def run_tool(self, tool_name: str, params: dict) -> ToolResult:
         """Run a named Kali tool with parameters.
 
-        Validates tool name and target before execution.
+        Two failure surfaces, deliberately asymmetric:
+
+        - **Unknown tool** → returns ``ToolResult(success=False)`` (does
+          not raise). An unrecognised tool name is a caller/programming
+          error, surfaced as a failed result the caller can branch on.
+        - **Disallowed target** → audits an allowlist ``"fail"`` row and
+          then **raises** ``AuthorizationError``. A target outside the
+          allowlist is a security-boundary violation that must halt the
+          call loudly, never be swallowed into a result a caller might
+          ignore. Direct callers (the named-tool helpers below, CAI
+          agents) rely on this propagating; ``services.tools`` gates the
+          same target via ``authorize()`` before reaching here, so for
+          that path the raise is belt-and-suspenders.
+
+        On success the tool is POSTed to the Kali server and its
+        ``ToolResult`` is returned (with a per-call audit row either way).
         """
         if tool_name not in self.ALLOWED_TOOLS:
             result = ToolResult(
@@ -173,27 +186,28 @@ class KaliClient:
         self._audit(tool_name, params, allowlist_check, result, duration_ms)
         return result
 
+    # The named-tool helpers below are thin parameter builders over
+    # ``run_tool``; routing through it (rather than calling ``_post``
+    # directly) is what gives them the same allowlist gate *and* the
+    # forensic audit row on both invocation and authorization denial.
     def nmap(self, target: str, scan_type: str = "-sV", ports: str | None = None, **kwargs) -> ToolResult:
-        self._check_target_allowed(target)
         params = {"target": target, "scan_type": scan_type}
         if ports:
             params["ports"] = ports
         params.update(kwargs)
-        return self._post("/api/tools/nmap", params)
+        return self.run_tool("nmap", params)
 
     def nikto(self, target: str, **kwargs) -> ToolResult:
-        self._check_target_allowed(target)
         params = {"target": target}
         params.update(kwargs)
-        return self._post("/api/tools/nikto", params)
+        return self.run_tool("nikto", params)
 
     def sqlmap(self, url: str, data: str | None = None, **kwargs) -> ToolResult:
-        self._check_target_allowed(url)
         params = {"url": url}
         if data:
             params["data"] = data
         params.update(kwargs)
-        return self._post("/api/tools/sqlmap", params)
+        return self.run_tool("sqlmap", params)
 
     def execute_command(self, command: str) -> ToolResult:
         """Execute an arbitrary command. DISABLED by default.

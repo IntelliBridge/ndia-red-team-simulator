@@ -117,7 +117,11 @@ flowchart TB
   without Loki up.
 - **`obs`** — adds the OTel Collector + Loki + Jaeger. Logs fan out:
   Loki for ad-hoc kibana-style queries, `aegis-log-ingest` for the
-  Postgres mirror, Jaeger for traces.
+  Postgres mirror, Jaeger for traces. A dedicated `logs/security` pipeline
+  ingests host/OS audit sources (`filelog`, `journald`, `syslog`,
+  `k8sobjects`) and runs them through the `redaction` processor — secret-like
+  values are masked **before** batch or export, so secrets never leave the
+  collector — then fans the result out to the Postgres mirror + Loki.
 - **`obs-search`** — adds Elasticsearch + Kibana on top of `obs`.
 
 For a per-service walkthrough of the compose stack, see
@@ -133,7 +137,7 @@ deployment runbook (env vars, key rotation, image build), see
 | `aegis-worker`      | Python   | Celery: scanner + CAI execution; persists `Finding.status` etc. |
 | `aegis-log-ingest`  | Python   | OTLP/Logs receiver → `application_logs` Postgres rows           |
 | `@aegis/web`        | TS/Next  | App-router UI; cookie-aware `api()` helper                     |
-| `@aegis/design-system` | TS    | Workspace package with shadcn-derived primitives + Aegis-branded compositions |
+| `@aegis/design-system` | TS    | Workspace package: shadcn base primitives in `src/primitives/` (table/card/alert/input/…) under Aegis-branded domain compositions |
 | `mcp-kali`          | (image)  | nmap / nikto / sqlmap host                                     |
 
 The Python services share `aegis/services/` so the same admission +
@@ -255,7 +259,8 @@ flowchart TB
     direction LR
     safety["safety.authorize<br/>emits audit"]
     chain["audit/chain.py<br/>JsonlAuditWriter,<br/>PostgresAuditWriter"]
-    state["state, state_pg<br/>RunState"]
+    state["state/<br/>RunStateAPI Protocol,<br/>filesystem + postgres,<br/>open_run_state"]
+    storage["storage/<br/>BlobStore Protocol,<br/>filesystem + s3,<br/>open_blob_store"]
     schema["schema.AegisFinding"]
     scanners["scanners/<br/>Strix, Trivy, ..."]
     remediate["remediate/<br/>cai_runner, patch_workflow"]
@@ -270,6 +275,7 @@ flowchart TB
   safety --> chain
   create --> state
   execute --> state
+  execute --> storage
   execute --> schema
   execute --> scanners
   execute --> remediate
@@ -291,7 +297,7 @@ adapters register through the entry-point groups `aegis.scanners` /
 `aegis.agents`, discovered only when `AEGIS_PLUGINS=1` (off by default,
 so the offline test path stays deterministic).
 
-### Scanner adapters (13)
+### Scanner adapters (14)
 
 Each adapter declares one or more **capabilities**; `dispatch` accepts
 either an adapter name or a capability tag.
@@ -311,21 +317,32 @@ either an adapter name or a capability tag.
 | `trufflehog` | `secret` | Secret scanner (raw material redacted) |
 | `syft` | `sbom` | SBOM generator (CycloneDX; inventory, not findings) |
 | `bumblebee` | `supply_chain` | Supply-chain / MCP-host exposure scanner |
+| `deepsec` | `code_audit` | AI whole-repo code auditor (owner PII stripped) |
 
-### Capabilities (7)
+The reference `strix` adapter surfaces the vendored CLI's deeper code-scan
+controls as optional `ScanOptions` fields: `targets` (a multi-target sweep
+alongside the single `target`), `instruction_file` (read in lieu of an inline
+`instruction`), and `scope_mode` (`auto | diff | full`) + `diff_base` for
+PR-diff-scoped review. White-box source review needs no flag — strix derives
+it from local-path targets. All are optional and soft-degrade; the
+single-target default path is unchanged. These knobs live on `ScanOptions`
+(programmatic / registry-dispatch callers); the HTTP `POST /v1/scans` body
+forwards only `target` + `instruction`, as it does for `scan_mode`.
+
+### Capabilities (8)
 
 `KNOWN_CAPABILITIES` is an **open vocabulary** validated at
 registration: `dast`, `sast`, `dependency`, `iac`, `secret`, `sbom`,
-`supply_chain`. A declared capability outside the set logs a warning but
-still registers, so a third-party plugin can add its own without
-patching core. Promoting one to first-party is a one-line append — how
-`supply_chain` landed in v0.5.1.
+`supply_chain`, `code_audit`. A declared capability outside the set logs
+a warning but still registers, so a third-party plugin can add its own
+without patching core. Promoting one to first-party is a one-line append
+— how `supply_chain` landed in v0.5.1 and `code_audit` in v0.7.0.
 
-### CAI agents (15, all wired)
+### CAI agents (16 wired + 3 multi-agent patterns)
 
 Agent adapters wrap upstream `cai.agents.*` agents and dispatch by name.
 Every registered agent is **wired** (executable, not a stub), spanning
-five of the six `Domain` values:
+all six `Domain` values:
 
 | Domain | Agents |
 |--------|--------|
@@ -334,7 +351,19 @@ five of the six `Domain` values:
 | `audit` | `retester`, `reporter` |
 | `defensive` | `blueteam_agent` |
 | `remediation` | `codeagent` |
-| `recon` | *(none wired yet)* |
+| `recon` | `recon` (read-only: nmap, shodan, curl, netcat, netstat) |
+
+Beyond the 16 single agents, three **multi-agent patterns** join the
+registry as explicitly-dispatchable entries — `offsec_pattern` (a parallel
+offensive sweep) and the `redteam_swarm` / `bb_triage_swarm` handoff swarms
+— for **19** dispatchable entries in all. A pattern runs **only when
+dispatched by name**; a normal single-agent run never triggers one (no
+auto-swarm). All three are `active`-effect, so they clear the same gate as
+any offensive agent. When executed (post-approval), the active offensive
+specialists (`bug_bounter`, `red_teamer`, `web_pentester`) reach the live
+Kali tool belt over an SSE MCP connection to `config.mcp_kali_url`; the
+read-only `recon` agent is excluded by design (the belt carries active
+tools, and recon stays read-only).
 
 ### Kali toolbelt (10, via MCP)
 
@@ -342,9 +371,81 @@ Beyond the registered scanners, the worker reaches a Kali host over MCP
 for classic offensive tooling: `nmap`, `sqlmap`, `nikto`, `hydra`,
 `gobuster`, `dirb`, `john`, `wpscan`, `enum4linux`, `metasploit`. Every
 invocation lands on the audit chain at the service boundary (see
-[Audit chain](audit-chain.md)). Counting both surfaces, Aegis ships
-**23 tools today: 10 Kali + 13 scanner adapters**, on the way to the 35+
+[Audit chain](audit-chain.md)). Each tool carries an effect class (below):
+the `read` recon tools run at `remediator`, while the `active` ones
+(`sqlmap`, `hydra`, `metasploit`, `wpscan`) are gated behind
+`execute=true` + `approver`. Counting both surfaces, Aegis ships
+**24 tools today: 10 Kali + 14 scanner adapters**, on the way to the 35+
 OnePager target.
+
+Each wrapper sends the exact parameter keys the vendored mcp-kali server
+reads (gobuster/dirb use `url`; hydra uses `username_file`/`password_file`;
+metasploit folds `RHOSTS` into `options`) and exposes structured subcommand
+controls — gobuster `mode` (`dir | dns | vhost | fuzz`), hydra user/password
+values and list files, metasploit `module` + `options`, john `format`. Every
+value still passes the allowlist `_check`, and no wrapper exposes a freeform
+argument passthrough: the generic `command` surface stays closed (403, all
+roles).
+
+### Capability matrix
+
+The three seams above each reach the runtime through a different dispatch
+path. This matrix is the single view of *what exists*, *what consumes
+it*, and *where the wiring is still thin* — the map a new capability
+slots into without diverging from the architecture (most recently the
+`code_audit` adapter `deepsec`, added through this seam in v0.7.0).
+
+| Seam | Vocabulary | Registered | Runtime consumer | Dispatch |
+|------|-----------|-----------|------------------|----------|
+| Scanners | 8 capabilities | 14 adapters | `scan_start` Celery task | one adapter per job via `dispatch(name \| capability)`; defaults to `strix` |
+| Agents | 6 `Domain`s | 19 adapters (16 agents + 3 patterns) | `agent_run` Celery task | `POST /v1/agents/{name}/run` → admission → task → `dispatch(name)`; remediation may still call `cai.Runner` directly for `codeagent` / `blueteam_agent` |
+| Kali tools | 10 named tools | 10 (over MCP) | `run_kali_tool` service | per-tool REST call, audited at the service boundary |
+
+One interconnection fact the matrix still makes explicit, tracked as a
+gap rather than intent: scanners run **one adapter per job** (there is
+no capability-sweep that fans a target across every adapter claiming a
+capability). The former agent-registry gap is now **closed** — as of
+v0.6.0 the registry has a runtime dispatch path: `POST
+/v1/agents/{name}/run` admits the job (authorize → audit-before-enqueue
+→ Run/Job rows → enqueue) and the `agent_run` Celery task re-authorizes
+and calls `dispatch(name)`, so every registered adapter is reachable.
+
+### The human-in-the-loop gate (effect classes)
+
+Aegis's purpose is the full loop — **scan → pentest → remediate** — with
+a human in the loop on anything that changes the world. Since v0.8.0 that
+gate is **one** abstraction, the *effect class* (`aegis/effects.py`,
+[ADR 0004](../adr/0004-unified-effect-class-gate.md)), applied at every
+seam above rather than re-invented per adapter:
+
+| Effect | Meaning | Gate |
+|--------|---------|------|
+| `read` | recon, enumeration, static analysis, SBOM, generating a diff/plan, dry-run | none beyond the target allowlist — runs freely |
+| `active` | attack / state-changing against a live system: exploitation, brute-force, an exploit module, live hardening | gated |
+| `external` | leaves the sandbox: pushing a branch, opening a PR, egress | gated |
+
+The gate is one rule: an `active` / `external` capability performs its
+irreversible step **only** when the caller explicitly opts in
+(`execute=true` / `apply=true` / `open_pr=true`) **and** holds the
+`approver` role; otherwise it returns a reviewable **proposal** (an attack
+plan, a hardening plan, or a diff) and the underlying agent/tool is never
+run. It is enforced at the **chokepoints** — `agents.registry.dispatch()`
+(covers built-ins *and* plugins), the Kali tool route, and the fix
+service — so a new adapter inherits the gate for free.
+
+**Effect is not a function of domain.** An `android_sast_agent` is
+offensive-by-domain but only reads bytecode → `read`; a `retester` is
+audit-by-domain but re-fires exploits → `active`. So effect is an explicit
+per-agent column in the wiring table, with `domain_default_effect()` as
+the fallback; an unknown domain or unlisted Kali tool defaults to `active`
+— it fails **safe** (gated), never open.
+
+**Remediation engines, all behind the same gate:** `codeagent` produces
+code-fix diffs (`patch`/`deps` strategies); `blueteam_agent` applies live
+hardening (`live` strategy, gated on `apply`); the vendored
+vulnerability-fixer drives the `agentic` strategy — propose → diff, then
+`apply` for a rollback-safe local commit, then `apply + open_pr` to let the
+engine open the **human-reviewed PR itself** (the PR review *is* the gate).
 
 ## Release map
 
@@ -409,7 +510,47 @@ flowchart TD
       b2["supply_chain capability"]
     end
 
-    v031 --> v040 --> v041 --> v042 --> v050 --> v051
+    subgraph v052["v0.5.2 — Scanner bug fixes"]
+      c1["bumblebee speaks real CLI/NDJSON"]
+      c2["strix reads strix_runs/ events<br/>+ scan_mode"]
+    end
+
+    subgraph v060["v0.6.0 — Agent seam end-to-end"]
+      d1["6 specialists un-fallbacked<br/>+ recon agent (16th)"]
+      d2["POST /agents/{name}/run<br/>(admission-only)"]
+      d3["agent_run task (execution-only)"]
+      d4["Kali wrappers 3 → 10"]
+    end
+
+    subgraph v070["v0.7.0 — AI code audit"]
+      e1["deepsec adapter (14th)"]
+      e2["code_audit capability"]
+      e3["owner PII stripped<br/>+ AI process opt-in"]
+    end
+
+    subgraph v080["v0.8.0 — Unified human gate"]
+      g1["effect-class gate spine<br/>(read/active/external)"]
+      g2["agent + Kali tool gate<br/>(execute=true + approver)"]
+      g3["agentic remediation strategy<br/>(vuln-fixer opens the PR)"]
+      g4["multi-format finding ingestion<br/>(Snyk/Veracode/Trivy/SARIF)"]
+    end
+
+    subgraph v090["v0.9.0 — Live belt + multi-agent"]
+      h1["live Kali belt over MCP<br/>(active specialists)"]
+      h2["3 multi-agent patterns<br/>(16 → 19, no auto-swarm)"]
+    end
+
+    subgraph v0100["v0.10.0 — Deeper scan surfaces"]
+      i1["strix code-scope depth<br/>(multi-target / scope-mode / diff-base)"]
+      i2["Kali wrappers speak real<br/>mcp-kali args (gobuster/hydra/msf)"]
+    end
+
+    subgraph v0110["v0.11.0 — Security telemetry + UI primitives"]
+      j1["OTel logs/security pipeline<br/>(host audit -> redact -> mirror+Loki)"]
+      j2["design-system base primitives<br/>(shadcn table/card/alert/input/…)"]
+    end
+
+    v031 --> v040 --> v041 --> v042 --> v050 --> v051 --> v052 --> v060 --> v070 --> v080 --> v090 --> v0100 --> v0110
 ```
 
 ## What's deferred
@@ -424,7 +565,6 @@ Live-current list:
 - PII / content scrubbing inside diffs and patches.
 - LLM prompt-injection / output filtering.
 - Iterative agent loops with test execution.
-- Vulnerability-fixer agentic invocation.
 - Native MCP protocol.
 - Authenticated DAST flows.
 - Worker autoscaling / multi-region DR.

@@ -10,22 +10,26 @@ emits via the bootstrap-supplied writer.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from aegis.workers.celery_app import app
 
 
 @app.task(name="aegis.fix_generate", bind=True, max_retries=2)
-def fix_generate(self, job_id: str) -> dict:
+def fix_generate(self, job_id: str) -> dict[str, Any]:
     from aegis.config import load_config
-    from aegis.db.models import Finding, Job
+    from aegis.db.models import Finding, FixJobDetail, Job
     from aegis.schema import AegisFinding
-    from aegis.services.fixes import generate_fix
+    from aegis.services.fixes import Strategy, generate_fix
     from aegis.workers.bootstrap import task_context
 
     config = load_config()
     with task_context(job_id) as ctx:
-        sess = ctx.run_state.session
+        if ctx.skip or ctx.run_state is None:
+            return {"job_id": job_id, "skipped": True}
+        sess = ctx.session
         job = sess.get(Job, job_id)
-        detail = job.detail or {}
+        detail = cast(FixJobDetail, (job.detail if job else {}) or {})
         finding_row = sess.get(Finding, detail.get("finding_id"))
         if finding_row is None:
             raise RuntimeError(f"finding {detail.get('finding_id')} missing")
@@ -33,7 +37,7 @@ def fix_generate(self, job_id: str) -> dict:
 
         outcome = generate_fix(
             run_state=ctx.run_state, finding=finding,
-            strategy=detail.get("strategy", "patch"),
+            strategy=cast(Strategy, detail.get("strategy", "patch")),
             repo=detail.get("repo"),
             apply=bool(detail.get("apply", False)),
             open_pr=bool(detail.get("open_pr", False)),

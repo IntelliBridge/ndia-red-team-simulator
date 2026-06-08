@@ -1,0 +1,118 @@
+[
+  {
+    "title": "[CRITICAL] Command injection in deploy script",
+    "severity": "CRITICAL",
+    "description": "Command injection found by on-call engineer Dave Owner (dave.owner@pii-leak.test). Escalate to manager Erin Boss (erin.boss@pii-leak.test) or ping Slack pii-leak-slack-dave.",
+    "assignee": "dave.owner@pii-leak.test",
+    "labels": ["owning-team-pii-leak", "sev:critical"],
+    "githubUrl": "https://github.com/pii-leak-org/repo/blob/main/scripts/deploy.sh#L10",
+    "metadata": {
+      "filePath": "scripts/deploy.sh",
+      "lineNumbers": [10, 11],
+      "vulnSlug": "command-injection",
+      "confidence": "high",
+      "severity": "CRITICAL",
+      "revalidation": {"verdict": "confirmed"},
+      "owners": {
+        "oncall": {"name": "Dave Owner", "email": "dave.owner@pii-leak.test", "github": "pii-leak-gh-dave", "slack": "pii-leak-slack-dave"},
+        "manager": {"name": "Erin Boss", "email": "erin.boss@pii-leak.test"}
+      }
+    }
+  },
+  {
+    "title": "[HIGH] SQL injection in user lookup",
+    "severity": "HIGH",
+    "description": "SQL injection reported by Jane Owner (jane.owner@pii-leak.test). Contributor Carol Coder (carol.coder@pii-leak.test) last touched this file.",
+    "assignee": "jane.owner@pii-leak.test",
+    "labels": ["owning-team-pii-leak"],
+    "githubUrl": "https://github.com/pii-leak-org/repo/blob/main/src/db/users.ts#L42",
+    "metadata": {
+      "filePath": "src/db/users.ts",
+      "lineNumbers": [42, 43, 44],
+      "vulnSlug": "sql-injection",
+      "confidence": "high",
+      "severity": "HIGH",
+      "revalidation": {"verdict": "confirmed"},
+      "owners": {
+        "oncall": {"name": "Jane Owner", "email": "jane.owner@pii-leak.test", "github": "pii-leak-gh-jane", "slack": "pii-leak-slack-jane"},
+        "contributors": [{"name": "Carol Coder", "email": "carol.coder@pii-leak.test", "github": "pii-leak-gh-carol"}]
+      }
+    }
+  },
+  {
+    "title": "[HIGH_BUG] Unhandled promise rejection crashes worker",
+    "severity": "HIGH_BUG",
+    "metadata": {
+      "filePath": "src/api/handler.ts",
+      "lineNumbers": [88],
+      "vulnSlug": "unhandled-rejection",
+      "confidence": "low",
+      "severity": "HIGH_BUG",
+      "revalidation": {"verdict": "confirmed"}
+    }
+  },
+  {
+    "title": "[MEDIUM] Server-side request forgery in webhook fetch",
+    "severity": "MEDIUM",
+    "metadata": {
+      "filePath": "src/web/webhook.ts",
+      "lineNumbers": [120, 121],
+      "vulnSlug": "ssrf",
+      "confidence": "medium",
+      "revalidation": {"verdict": "confirmed"}
+    }
+  },
+  {
+    "title": "[BUG] Off-by-one in pagination offset",
+    "severity": "BUG",
+    "metadata": {
+      "filePath": "src/util/paginate.ts",
+      "lineNumbers": [5],
+      "vulnSlug": "logic-bug",
+      "confidence": "medium",
+      "revalidation": {"verdict": "confirmed"}
+    }
+  },
+  {
+    "title": "[LOW] Weak hash (md5) used for content addressing",
+    "severity": "LOW",
+    "metadata": {
+      "vulnSlug": "weak-hash",
+      "confidence": "medium",
+      "revalidation": {"verdict": "confirmed"}
+    }
+  },
+  {
+    "title": "[MEDIUM] Reflected XSS candidate",
+    "severity": "MEDIUM",
+    "metadata": {
+      "filePath": "src/web/render.ts",
+      "lineNumbers": [22],
+      "vulnSlug": "xss",
+      "confidence": "low",
+      "revalidation": {"verdict": "false-positive"}
+    }
+  },
+  {
+    "title": "[HIGH] SQL injection in user lookup (duplicate)",
+    "severity": "HIGH",
+    "metadata": {
+      "filePath": "src/db/users.ts",
+      "lineNumbers": [42],
+      "vulnSlug": "sql-injection",
+      "confidence": "high",
+      "revalidation": {"verdict": "duplicate"}
+    }
+  },
+  {
+    "title": "[MEDIUM] XXE in legacy XML parser",
+    "severity": "MEDIUM",
+    "metadata": {
+      "filePath": "src/legacy/xml.ts",
+      "lineNumbers": [60],
+      "vulnSlug": "xxe",
+      "confidence": "medium",
+      "revalidation": {"verdict": "fixed"}
+    }
+  }
+]

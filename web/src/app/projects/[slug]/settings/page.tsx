@@ -1,12 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import useSWR from "swr";
 
 import { RoleGated } from "@aegis/design-system";
 import { api } from "@/lib/api";
-import { requireAuth } from "@/lib/auth";
+import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
 
 interface MembershipResponse {
@@ -26,11 +25,7 @@ export default function ProjectSettingsPage({
 }: {
   params: { slug: string };
 }) {
-  const router = useRouter();
-  const [authed, setAuthed] = useState(false);
-  useEffect(() => {
-    if (requireAuth(router)) setAuthed(true);
-  }, [router]);
+  const authed = useRequireAuth();
 
   const { data, error, isLoading, mutate } = useSWR(
     authed ? `/v1/projects/${params.slug}/membership` : null,

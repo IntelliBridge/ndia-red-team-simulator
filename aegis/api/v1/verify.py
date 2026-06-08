@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from aegis.api.auth import CurrentUser, get_current_user
@@ -15,7 +17,8 @@ router = APIRouter(prefix="/findings", tags=["verify"])
 
 
 @router.post("/{finding_id}/verify")
-def verify(finding_id: str, user: CurrentUser = Depends(get_current_user)):
+def verify(finding_id: str,
+           user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """F6 admission entry — looks up the finding, runs RBAC, then
     delegates to ``services.verify.create_verify_job``.
     """
@@ -41,5 +44,5 @@ def verify(finding_id: str, user: CurrentUser = Depends(get_current_user)):
         )
     except AuthorizationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail=str(exc))
-    return {"job_id": handle.job_id}
+                            detail=str(exc)) from exc
+    return handle.to_response()

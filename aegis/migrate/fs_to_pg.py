@@ -12,6 +12,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 
@@ -25,7 +26,7 @@ class MigrationSummary:
     skipped_duplicates: int = 0
     failures: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -50,7 +51,6 @@ def _import_run(sess, run_dir: Path, project_id: str,
                 summary: MigrationSummary, blob_store, dry_run: bool) -> None:
     from aegis.db.models import (
         Artifact,
-        AuditEvent,
         Finding,
         RemediationAttempt,
         Run,
@@ -133,82 +133,83 @@ def _import_run(sess, run_dir: Path, project_id: str,
             summary.artifacts_imported += 1
 
     # Audit log re-anchor
-    audit_path = run_dir / "audit.jsonl"
-    if audit_path.exists():
-        chain_id = f"run:{run_id}"
-        seq = 0
-        prev_hash: bytes | None = None
-        from aegis.audit.chain import compute_hash
-
-        # Head marker
-        seq += 1
-        marker_record = {
-            "chain_id": chain_id, "seq": seq,
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "actor": "migrate:fs_to_pg",
-            "action": "audit.reanchored",
-            "target": None, "allowlist_check": "n/a",
-            "override": False, "success": True,
-            "detail": {"source": str(audit_path)},
-            "schema_version": 1, "prev_hash": None,
-            "run_id": run_id, "project_id": project_id,
-        }
-        marker_hash = compute_hash(None, marker_record)
-        if not dry_run:
-            sess.add(AuditEvent(
-                chain_id=chain_id, seq=seq,
-                project_id=project_id, run_id=run_id,
-                actor="migrate:fs_to_pg", action="audit.reanchored",
-                target=None, allowlist_check="n/a", override=False,
-                success=True, detail={"source": str(audit_path)},
-                schema_version=1, prev_hash=None,
-                this_hash=bytes.fromhex(marker_hash),
-            ))
-        prev_hash = bytes.fromhex(marker_hash)
-        summary.audit_events_reanchored += 1
-
-        # Replay legacy records as chained events
-        for line in audit_path.read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                old = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            seq += 1
-            prev_hex = prev_hash.hex() if prev_hash else None
-            record = {
-                "chain_id": chain_id, "seq": seq,
-                "ts": old.get("ts") or datetime.now(timezone.utc).isoformat(),
-                "actor": old.get("actor") or "legacy",
-                "action": old.get("action") or "unknown",
-                "target": old.get("target"),
-                "allowlist_check": old.get("allowlist_check", "n/a"),
-                "override": bool(old.get("override", False)),
-                "success": bool(old.get("success", True)),
-                "detail": old.get("detail", {}),
-                "schema_version": 1, "prev_hash": prev_hex,
-                "run_id": run_id, "project_id": project_id,
-            }
-            new_hash = compute_hash(prev_hex, record)
-            if not dry_run:
-                sess.add(AuditEvent(
-                    chain_id=chain_id, seq=seq,
-                    project_id=project_id, run_id=run_id,
-                    actor=record["actor"], action=record["action"],
-                    target=record["target"],
-                    allowlist_check=record["allowlist_check"],
-                    override=record["override"], success=record["success"],
-                    detail=record["detail"],
-                    schema_version=1, prev_hash=prev_hash,
-                    this_hash=bytes.fromhex(new_hash),
-                ))
-            prev_hash = bytes.fromhex(new_hash)
-            summary.audit_events_reanchored += 1
+    _reanchor_audit(sess, run_dir, run_id, project_id, summary, dry_run)
 
     if not dry_run:
         sess.flush()
+
+
+def _reanchor_audit(sess, run_dir: Path, run_id: str, project_id: str,
+                    summary: MigrationSummary, dry_run: bool) -> None:
+    """Re-anchor the legacy flat ``audit.jsonl`` as a fresh chain.
+
+    Builds one canonical ``record`` dict per event, hashes it, then
+    derives the ``AuditEvent`` row from that *same* record (mirroring
+    ``JsonlAuditWriter.append`` in ``aegis.audit.chain``) so the field
+    set is listed exactly once. ``dry_run`` skips the inserts but still
+    advances the chain + counters identically.
+    """
+    audit_path = run_dir / "audit.jsonl"
+    if not audit_path.exists():
+        return
+
+    from aegis.audit.chain import compute_hash
+    from aegis.db.models import AuditEvent
+
+    columns = AuditEvent.__table__.columns.keys()
+
+    def _emit(record: dict, prev_bytes: bytes | None) -> bytes:
+        prev_hex = record["prev_hash"]
+        this_hash = bytes.fromhex(compute_hash(prev_hex, record))
+        if not dry_run:
+            fields = {k: v for k, v in record.items() if k in columns}
+            fields["prev_hash"] = prev_bytes
+            fields["this_hash"] = this_hash
+            sess.add(AuditEvent(**fields))
+        summary.audit_events_reanchored += 1
+        return this_hash
+
+    chain_id = f"run:{run_id}"
+    seq = 1
+    # Head marker
+    marker_record = {
+        "chain_id": chain_id, "seq": seq,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "actor": "migrate:fs_to_pg",
+        "action": "audit.reanchored",
+        "target": None, "allowlist_check": "n/a",
+        "override": False, "success": True,
+        "detail": {"source": str(audit_path)},
+        "schema_version": 1, "prev_hash": None,
+        "run_id": run_id, "project_id": project_id,
+    }
+    prev_hash = _emit(marker_record, None)
+
+    # Replay legacy records as chained events
+    for line in audit_path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            old = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        seq += 1
+        prev_hex = prev_hash.hex() if prev_hash else None
+        record = {
+            "chain_id": chain_id, "seq": seq,
+            "ts": old.get("ts") or datetime.now(timezone.utc).isoformat(),
+            "actor": old.get("actor") or "legacy",
+            "action": old.get("action") or "unknown",
+            "target": old.get("target"),
+            "allowlist_check": old.get("allowlist_check", "n/a"),
+            "override": bool(old.get("override", False)),
+            "success": bool(old.get("success", True)),
+            "detail": old.get("detail", {}),
+            "schema_version": 1, "prev_hash": prev_hex,
+            "run_id": run_id, "project_id": project_id,
+        }
+        prev_hash = _emit(record, prev_hash)
 
 
 def migrate(*, source_dir: str | Path,
@@ -223,8 +224,8 @@ def migrate(*, source_dir: str | Path,
         summary.failures.append(f"no runs dir at {runs_dir}")
         return summary
 
-    from aegis.blobs import open_blob_store
     from aegis.db.session import get_session, init_engine
+    from aegis.storage import open_blob_store
 
     if db_url:
         init_engine(db_url)

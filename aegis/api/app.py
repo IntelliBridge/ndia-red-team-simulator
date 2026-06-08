@@ -5,8 +5,10 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from aegis import __version__
 from aegis.api.settings import APISettings, load_settings
 from aegis.api.v1 import (
+    agents,
     audit,
     exports,
     findings,
@@ -30,7 +32,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
 
     app = FastAPI(
         title="Aegis API",
-        version="0.3.0-dev",
+        version=__version__,
         docs_url=None if settings.is_prod else "/docs",
         redoc_url=None if settings.is_prod else "/redoc",
     )
@@ -61,6 +63,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.middleware("http")(rate_limit_middleware(
         user_per_min=settings.rate_limit_per_user_per_min,
         project_per_min=settings.rate_limit_per_project_per_min,
+        settings=settings,
     ))
 
     # Correlation-id propagation + OTel + Prometheus.
@@ -85,6 +88,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(exports.router, prefix="/v1")
     app.include_router(tools.router, prefix="/v1")
     app.include_router(scans.router, prefix="/v1")
+    app.include_router(agents.router, prefix="/v1")
     app.include_router(fix.router, prefix="/v1")
     app.include_router(verify.router, prefix="/v1")
     app.include_router(targets.router, prefix="/v1")

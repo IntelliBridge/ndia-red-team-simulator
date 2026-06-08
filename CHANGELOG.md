@@ -4,6 +4,338 @@ All notable changes to Aegis are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 SemVer.
 
+## [0.11.0] — security telemetry pipeline + design-system base primitives
+
+Two additive, file-disjoint surfaces land here — observability infra and the
+frontend component layer — neither of which touches the Python core or the
+offline test path. The collector gains a dedicated security-log pipeline that
+scrubs secrets before anything leaves the host, and `@aegis/design-system`
+gains its first batch of base UI primitives ported from the vendored shadcn
+registry. Python suite unchanged at 1253 passing, 18 skipped.
+
+### Added
+- **OTel security log pipeline** (`deploy/otel/config.yaml`). A new
+  `logs/security` pipeline ingests host/OS audit sources — `filelog`
+  (`/var/log/auth.log`, `/var/log/secure`), `journald` (sshd/sudo/kernel),
+  rfc5424 `syslog` over tcp, and the `k8sobjects` events receiver — runs them
+  through the `redaction` processor (token/password/apikey/bearer-style values
+  masked **before** batch or export) and a `filter` denoise stage, then fans
+  the result out to the existing Postgres mirror (`otlphttp/aegis-ingest`) and
+  Loki. Redaction always precedes export, so secrets never leave the collector.
+- **`@aegis/design-system` base primitives** (`project_repos/design-system/`).
+  A new `src/primitives/` directory holds six base components ported from the
+  vendored shadcn `new-york-v4` registry — `table`, `card`, `skeleton`,
+  `alert`, `input`, `textarea` — each with a Storybook story and a barrel
+  export. They populate the package's pre-declared `./primitives/*` export
+  subpath, layering shadcn base components under the existing Aegis-curated
+  domain components.
+
+### Changed
+- The collector header comment documents the security pipeline; the three
+  pre-existing pipelines (`logs/loki`, `logs/aegis-ingest`, `traces`) are
+  byte-for-byte unchanged.
+
+### Deferred
+- **`osquery` and `isolationforest`** are referenced only in a commented,
+  forward-looking block in the collector config. Neither is a standard
+  opentelemetry-collector-contrib component, so an active reference would fail
+  collector startup; they require a custom/community distro to activate.
+- **The Radix-based shadcn primitives** (`alert-dialog`, `tooltip`, `command`)
+  were **not** ported: they depend on the `radix-ui` / `cmdk` packages, which
+  are not installed and cannot be added in the offline build. Porting them is a
+  follow-up gated on adding those dependencies.
+
+### Migration
+- **No runtime or API change.** The security pipeline is deploy-only config; an
+  operator opts in by deploying the obs profile. The design-system primitives
+  are a frontend package addition with no Python or HTTP-surface impact. The
+  offline `pytest` path and `mkdocs --strict` build are unaffected.
+
+## [0.10.0] — deeper scan surfaces: strix code-scope + real Kali tool args
+
+This release deepens two existing subprocess surfaces without changing any
+default behaviour. The strix adapter gains the vendored CLI's richer
+code-scan controls, and the Kali tool wrappers are corrected to speak the
+parameter shape the vendored mcp-kali server actually reads — several deep
+scans were silently no-op'ing on mismatched keys. Both are additive and
+soft-degrade; the single-target / default-arg paths are byte-identical to
+0.9.0. 1253 passing, 18 skipped.
+
+### Added
+- **Strix code-scope depth** (`aegis/runners/strix_runner.py`,
+  `aegis/scanners/strix_adapter.py`, `aegis/scanners/registry.py`). Four new
+  optional `ScanOptions` fields surface strix's deeper controls: `targets`
+  (a multi-target sweep that augments the single `target`), `instruction_file`
+  (a path read in lieu of an inline `instruction` — the two are mutually
+  exclusive, file wins), and `scope_mode` (`auto | diff | full`) + `diff_base`
+  for PR-diff-scoped code review. White-box source review needs no flag —
+  strix auto-derives it from local-path targets. A `strix_scope_mode` config
+  default mirrors the `ScanOptions` default, matching how `strix_scan_mode`
+  was introduced in 0.5.2. An out-of-range `scope_mode` falls back to `auto`.
+- **Real mcp-kali tool arguments** (`aegis/tools/cai_tools.py`). The
+  `gobuster` / `dirb` / `hydra` / `metasploit` / `john` wrappers now send the
+  exact parameter keys the vendored server reads, and expose structured
+  subcommand controls: gobuster `mode` (`dir | dns | vhost | fuzz`), hydra
+  user / password values and list files, metasploit `module` + `options`
+  (with `RHOSTS` folded in), and john `format`.
+
+### Fixed
+- **Kali deep-scan wrappers were sending keys the server ignored.** gobuster
+  and dirb sent `target` where mcp-kali reads `url`; hydra sent `userlist` /
+  `passlist` instead of `username_file` / `password_file`; metasploit put
+  `rhosts` at the top level instead of inside `options.RHOSTS`. Those scans
+  reached the server but ran with empty arguments. The wrappers now match the
+  server's request schema, and every value still passes through the
+  allowlist `_check`. **No** freeform `additional_args` passthrough was added
+  — the generic-command surface stays closed (`command` → 403, all roles).
+
+### Migration
+- **No behaviour change on the default path.** Every new strix field is
+  optional and defaults to today's behaviour; a scan that sets none of them
+  builds the identical command line as 0.9.0. The new strix knobs are
+  `ScanOptions`-level (programmatic / registry-dispatch callers); the HTTP
+  `POST /v1/scans` body is unchanged and still forwards only `target` +
+  `instruction`, exactly as it did for `scan_mode`.
+- **Kali callers that relied on the old (ignored) keys** were already
+  no-op'ing those arguments; after this fix the same calls run with the
+  arguments actually applied. Review any saved gobuster/dirb/hydra/metasploit
+  invocations against the corrected parameter names above.
+
+## [0.9.0] — live Kali tool belt over MCP + CAI multi-agent patterns
+
+Building on the unified gate from 0.8.0, this release lets the wired offensive
+specialists reach the **live Kali tool belt at run time** over an MCP connection,
+and exposes CAI's **multi-agent patterns** as ordinary, explicitly-dispatchable
+registry entries. Both are bound by the same effect-class gate — every pattern is
+`active`, so nothing fires without `execute=true` and the `approver` role — and
+nothing auto-swarms: a pattern runs only when a caller dispatches it by name.
+1233 passing, 18 skipped.
+
+### Added
+- **CAI multi-agent patterns** (`aegis/agents/cai/patterns.py`). Three composite
+  entries join the agent registry: `offsec_pattern` (a parallel offensive sweep)
+  and the `redteam_swarm` / `bb_triage_swarm` handoff swarms. Each resolves and
+  runs its CAI agent(s) through `Runner.run_sync` — a swarm via its entry agent;
+  a parallel pattern by resolving each configured agent by name and concatenating
+  their outputs. All three are `active`-effect and flow through the same
+  `dispatch()` gate: without `execute=true` they return a `pending_approval`
+  proposal and **no** agent runs. The registry roster grows 16 → **19**.
+- **Live Kali tool belt over MCP** (`aegis/integrations/cai_loader.py`). When CAI
+  is available, `load_cai` attaches an SSE MCP server (`MCPServerSse` pointed at
+  `config.mcp_kali_url`) to the active offensive specialists — `bug_bounter`,
+  `red_teamer`, `web_pentester` — so they can call the live nmap/sqlmap/hydra/…
+  belt when executed (post-approval). The read-only `recon` agent is **deliberately
+  excluded**: the belt carries active tools and recon stays read-only. `CAIBundle`
+  gains `kali_mcp_attached` (count of specialists wired; `0` offline).
+- **Loader resolvers** `load_cai_pattern()` / `resolve_cai_agent()` funnel the
+  `cai.agents.patterns.get_pattern` / `cai.agents.get_agent_by_name` lookups
+  through the one CAI loader, so the rest of the codebase never imports CAI directly.
+
+### Changed
+- `load_cai` now attaches the Kali MCP belt to the active specialists at
+  bundle-build time. **No-op offline** — CAI isn't importable, so `load_cai`
+  returns `None` long before the attach, and the attach itself degrades to zero
+  when the MCP endpoint is unset, the client classes can't be imported, or the
+  server object can't be built.
+
+### Migration
+- **Patterns are gated exactly like offensive agents.** `dispatch("redteam_swarm",
+  …)` (or `offsec_pattern` / `bb_triage_swarm`) without `execute=true` returns a
+  `pending_approval` plan; flip `execute=true` (requires the `approver` role) to
+  actually run the pattern. Nothing auto-swarms from a normal single-agent run.
+- **The MCP attach is a live-runtime feature only.** It connects nothing offline
+  and never runs in the test path; the server object is attached but not connected
+  until a live agent run wires it up. Existing offline callers see no change.
+
+## [0.8.0] — unified human-in-the-loop gate + agentic remediation + finding ingestion
+
+Aegis's purpose is the full loop — **scan code + infra → pentest → remediate** —
+with a human in the loop on anything that changes the world. Before this release
+that gate existed only for *code fixes*. This release introduces one abstraction
+— the **effect class** — and gates on it everywhere: offensive agents, defensive
+agents, active Kali tools, and the new agentic remediation strategy all now go
+through the same propose→approve→act path. The remediation loop is completed
+here: the vendored vulnerability-fixer becomes a first-class **gated** strategy
+that can open its own human-reviewed pull request. See
+[ADR 0004](docs/adr/0004-unified-effect-class-gate.md). 1211 passing, 18 skipped.
+
+### Added
+- **Effect-class gate spine** (`aegis/effects.py`, dependency-free). Classifies
+  every capability as `read` (recon/enumeration/static analysis/diff/plan/dry-run
+  — runs freely, allowlist is the only gate), `active` (attack or state-changing
+  against a live system — gated), or `external` (leaves the sandbox: push/PR/egress
+  — gated). `requires_approval(effect)` is the single testable answer to "is this
+  gated?". `domain_default_effect()` and `kali_tool_effect()` both fail **safe** —
+  an unknown domain or unlisted tool defaults to `active` (gated, never open).
+  `build_action_plan()` produces the reviewable proposal returned in lieu of acting.
+- **Agent execution gate.** `agents.registry.dispatch()` — the single path
+  covering built-ins *and* plugins — now enforces the gate. An `active` agent
+  dispatched without `context.execute` returns
+  `AgentResult(status="pending_approval", plan=…)` and the underlying agent is
+  **never** invoked. New `Action.AGENT_EXECUTE` sits at the `approver` role
+  (mirroring `FIX_APPLY`); `AGENT_RUN` stays `remediator`. The route selects the
+  action by the `execute` flag; the worker re-authorizes
+  `agent.execute.{name}` vs `agent.run.{name}` accordingly.
+- **Kali tool gate.** `aegis/api/v1/tools.py` classifies each tool via
+  `kali_tool_effect()`. `active` tools (`sqlmap`/`hydra`/`metasploit`/`wpscan`)
+  without `execute=true` return `pending_approval`; with it they require the
+  `approver` role. `read` tools (`nmap`/`nikto`/`gobuster`/…) keep
+  `tool.invoke` at `remediator`. The generic `command` shell stays hard-blocked
+  (403) for every role.
+- **Agentic remediation strategy** (`aegis/runners/vulnfixer_runner.py`,
+  `Strategy="agentic"`). Drives the vendored vulnerability-fixer engine:
+  propose → unified diff (`pending_apply`); `apply` → local rollback-safe commit;
+  `apply + open_pr` → **the engine opens the human-reviewed PR itself** (the PR
+  review *is* the gate). In PR mode the GitHub token flows only through the
+  subprocess *environment*, never argv.
+- **Live-hardening gate.** The `live` fix strategy now gates on `apply`: a propose
+  call returns a hardening **plan** (`pending_approval`) and never invokes the
+  blue-team agent; `apply=True` runs the hardening.
+- **Multi-format finding ingestion** (`aegis/integrations/finding_ingest.py`).
+  Normalizes Snyk / Veracode / Trivy / SARIF reports into `AegisFinding`s.
+  Pure-Python, fixture-driven, fully offline.
+
+### Changed
+- `Strategy` literal in `aegis/services/fixes.py` extended with `agentic`.
+- `AgentContext` gains an `execute` flag (default `False`); `AgentResult` gains a
+  `plan` field carrying the proposal when a gated capability is not executed.
+- `list_agents()` now surfaces each agent's effect class; `builtins._WIRED` carries
+  an explicit per-agent effect column (effect is **not** a function of domain).
+
+### Migration
+- **Active agents and tools now need `execute=true` *and* the `approver` role to
+  run.** Callers that previously got an immediate exploit/hardening run now get a
+  `pending_approval` proposal instead — this is the intended behavior change. Flip
+  `execute=true` (agents/tools) or `apply=true` (fixes) to act.
+- **Agentic PR mode depends on `GITHUB_TOKEN` in the worker environment.** Absent
+  it, the agentic engine soft-degrades to a failed outcome rather than opening a
+  PR; `apply` without `open_pr` still produces a local rollback-safe commit.
+
+## [0.7.0] — deepsec AI code-audit scanner (new `code_audit` capability)
+
+Adds [deepsec](https://github.com/vercel-labs/deepsec) (Apache-2.0, pinned at
+`9e3832d`) as the 14th scanner adapter and Aegis's 8th scanner capability,
+`code_audit` — whole-repo AI SAST. Dropped through the same hardened registry
+seam as every other adapter: the offline `pytest -q` path stays green with no
+Node/pnpm and no deepsec checkout (the adapter soft-degrades via `health_check`).
+1145 passing, 18 skipped.
+
+### Added
+- **deepsec scanner adapter** (`aegis/scanners/deepsec_adapter.py`, capability
+  `code_audit`). Drives deepsec's three-stage pipeline as subprocesses — `scan`
+  (regex candidate discovery) → `process` (AI investigation) → `export --format
+  json` (a bare JSON array of findings on stdout) — and converts each
+  `ExportedFinding` to an `AegisFinding`. Severity maps
+  `CRITICAL/HIGH/HIGH_BUG/MEDIUM/BUG/LOW` → Aegis severities (`HIGH_BUG`→`high`,
+  `BUG`→`low`, unknown→`low`); `metadata.filePath`/`lineNumbers` become a
+  `CodeLocation`; `vulnSlug` and `confidence` carry through. Findings whose
+  `revalidation.verdict` is `false-positive`, `fixed`, or `duplicate` are dropped.
+- **`code_audit` capability** added to `KNOWN_CAPABILITIES`; the adapter
+  eager-registers in `aegis.scanners` alongside the other 13. Roster: 14 scanner
+  adapters covering 8 capabilities.
+- **Config knobs** (`aegis/config.py`): `deepsec_path`, `deepsec_ai_process`
+  (default `False`), `deepsec_budget_usd` (default `5.0`).
+
+### Security
+- **Owner identities are never emitted.** deepsec enriches each finding with
+  code-owner PII — `metadata.owners` (on-call/manager/contributor names, emails,
+  GitHub handles, Slack ids), a top-level `assignee` email, owning-team `labels`,
+  a `githubUrl`, and a pre-built `description` that embeds those same names and
+  emails as markdown. The adapter copies **none** of them: it synthesizes its own
+  PII-free description from the technical fields only (file, line, slug) and drops
+  `owners`/`assignee`/`labels`/`githubUrl`/deepsec's `description` entirely.
+  `evidence` is always `None`. A fixture seeded with owner PII asserts that no
+  value survives into any serialized finding. (Mirrors the bumblebee/trufflehog
+  redaction guarantee.)
+- **The paid AI stage is opt-in.** `process` runs only when
+  `deepsec_ai_process=True` **and** `deepsec_budget_usd > 0` **and** an AI Gateway
+  / model key is present in the environment. Otherwise the adapter runs `scan` +
+  `export` only (regex candidates) and never spends money.
+
+### Migration
+- deepsec is a Node/pnpm monorepo vendored as a git submodule at
+  `project_repos/deepsec`. To run the adapter the submodule must be checked out
+  and built (`pnpm install` in the deepsec workspace) with `pnpm` on `PATH`. With
+  neither present, `health_check()` returns `False` and the adapter is skipped —
+  the offline test path requires nothing. The docker-images build is the only
+  place the Node/pnpm toolchain (and any AI-stage cost) is introduced.
+
+## [0.6.0] — Wire the agent seam end-to-end + a read-only recon agent
+
+The agent registry was wired but **orphaned**: `dispatch` existed and 15
+adapters were registered, yet no running code reached them. This release gives
+the registry a runtime path, un-fallbacks six specialist agents, composes a
+read-only recon agent (16th), and widens the agent-facing Kali toolbelt from 3
+to 10. Admission-layer + wiring only — the offline `pytest -q` path stays green
+with no Postgres/Redis/Keycloak and no scanner binaries (1115 passing, 18
+skipped).
+
+### Added
+- **Agent execution path** (F6 admission/execution split, mirroring the scan
+  path). `POST /v1/agents/{agent_name}/run` does admission only — RBAC
+  (`agent.run`, `remediator+`) → `create_agent_job(...)` emits a chained
+  `agent.run` audit row **before** the Run/Job rows and **before** Celery is
+  touched, then enqueues. The new `agent_run` Celery task does execution only:
+  re-authorize `agent.execute.{name}` against the worker-side allowlist, then
+  `dispatch(name, prompt, AgentContext(...))`. No business logic in the route;
+  no admission in the task. (`aegis/api/v1/agents.py`,
+  `aegis/services/agents.py`, `aegis/workers/tasks/agent.py`,
+  `Action.AGENT_RUN` in `aegis/api/policy.py`.) See [ADR
+  0003](docs/adr/0003-agent-execution-path.md).
+- **Read-only recon agent (16th)** composed from CAI reconnaissance tools
+  (`nmap`, `shodan_search`, `shodan_host_info`, `curl`, `netcat`, `netstat`)
+  and registered in the `recon` domain — the domain was previously empty. The
+  agent gets observation tools only; never `generic_linux_command` / `exec_code`.
+- **Agent-facing Kali toolbelt 3 → 10.** Thin typed `@function_tool` wrappers
+  for `gobuster`, `dirb`, `hydra`, `wpscan`, `enum4linux`, `metasploit`, and
+  `john`, each routed through `KaliClient` with the same allowlist enforcement
+  at the service boundary. No generic-command surface was added.
+
+### Fixed
+- **Six specialist slots no longer resolve to fallbacks.** The CAI loader now
+  imports `bug_bounter_agent`, `redteam_agent`, `dfir_agent`, `retester_agent`,
+  `reporting_agent`, and `web_pentester_agent` (degrading the whole group to
+  `None` offline), and `_WIRED` maps each slot to its real CAI agent instead of
+  a generic stand-in.
+
+### Security
+- The recon agent and the new Kali wrappers add **no** arbitrary-command
+  surface: `KaliClient.execute_command` stays gated by `allow_generic_command`
+  (default `False`), and target-bearing tools remain allowlist-checked.
+- The worker re-authorizes every agent run (`agent.execute.{name}`) rather than
+  trusting the admission-time allowlist decision, so allowlist drift surfaces
+  before the agent executes.
+
+## [0.5.2] — Fix the bumblebee and strix scanner adapters
+
+Two shipped scanner adapters spoke interfaces their tools never exposed; both
+are corrected against the vendored source. Execution-layer only — the offline
+`pytest -q` path stays green with no scanner binaries (1091 passing, 18 skipped).
+
+### Fixed
+- **bumblebee adapter** now invokes the real CLI (`bumblebee scan --root
+  <target> --exposure-catalog <dir> --findings-only --output stdout`) and
+  parses the real NDJSON schema: records are discriminated by `record_type`
+  (was a non-existent `type` field), and `finding` records map their real
+  fields (`record_id`, `catalog_id`/`catalog_name`, `severity`, `package_name`,
+  `version`, `confidence`). The previous invented `--target`/`--format ndjson`
+  flags and `type` filter produced zero findings on real output. The exposure
+  catalog defaults to the vendored `threat_intel/*.json`.
+- **strix runner** drops the non-existent `--output-dir` flag, runs strix with
+  `cwd` set to the per-run directory, and discovers strix's real event stream
+  at `strix_runs/*/events.jsonl` (newest by mtime) instead of a fixed path
+  strix never wrote.
+
+### Added
+- `ScanOptions.scan_mode` (+ `AegisConfig.strix_scan_mode`, default
+  `"standard"`) threads strix's `-m/--scan-mode` (quick|standard|deep), so scans
+  are no longer hard-pinned to strix's `deep` default.
+
+### Security
+- The rewritten bumblebee adapter keeps the credential-never-leaked guarantee:
+  only known-safe fields are surfaced and `evidence` stays `None`. The fixture
+  uses placeholder catalog ids and no secret-like strings.
+
 ## [0.5.1] — Bumblebee supply-chain scanner via the hardened seam
 
 The first tool added through the v0.5.0 registry seam. Adding the

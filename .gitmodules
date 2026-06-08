@@ -19,3 +19,6 @@
 [submodule "project_repos/bumblebee"]
 	path = project_repos/bumblebee
 	url = https://github.com/perplexityai/bumblebee.git
+[submodule "project_repos/deepsec"]
+	path = project_repos/deepsec
+	url = https://github.com/vercel-labs/deepsec.git

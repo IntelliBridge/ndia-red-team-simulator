@@ -191,18 +191,20 @@ class TestCommitPatch(unittest.TestCase):
             initial_branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
             initial_commit = _git(repo, "rev-parse", "HEAD").strip()
 
-            real_git = __import__("aegis.remediate.patch_workflow", fromlist=["_git"])._git
+            real_run = subprocess.run
 
-            def flaky_git(repo_arg, args, **kwargs):
-                # Inject failure only on the actual commit step
-                if len(args) >= 4 and args[0] == "-c" and "commit" in args:
+            def flaky_run(argv, **kwargs):
+                # Inject failure only on the actual `git commit` invocation;
+                # every other git call runs for real against the temp repo.
+                if "commit" in argv:
                     return subprocess.CompletedProcess(
-                        ["git", "commit"], 1, stdout="",
+                        argv, 1, stdout="",
                         stderr="simulated commit failure",
                     )
-                return real_git(repo_arg, args, **kwargs)
+                return real_run(argv, **kwargs)
 
-            with mpatch("aegis.remediate.patch_workflow._git", side_effect=flaky_git):
+            with mpatch("aegis.remediate.patch_workflow.subprocess.run",
+                        side_effect=flaky_run):
                 result = commit_patch(repo, self._finding(), GOLDEN_DIFF)
 
             self.assertFalse(result.success)

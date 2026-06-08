@@ -1,21 +1,30 @@
 """Central authorization gate, target allowlist, and audit emission.
 
-Phase 4 v0.3.1 F7: the flat ``_append_audit`` helper is gone. Every audit
-event goes through an ``AuditWriter`` (``aegis.audit.chain``) — the chain
-is now the only backend. When ``authorize()`` is called without an
-explicit ``writer`` but with a ``run_path``, the safety layer constructs
-the offline ``JsonlAuditWriter`` on demand; this is the migration shim
-that F3 (CLI-through-services) + F6 (admission services) will retire by
-threading an explicit writer at every call site. After F6, calling
-``authorize()`` with neither ``writer`` nor ``run_path`` will raise.
+Every audit event goes through an ``AuditWriter`` (``aegis.audit.chain``)
+— the chain is the only backend; the flat ``_append_audit`` helper is
+gone. ``authorize()`` resolves its writer one of two ways:
+
+- **Explicit** (``writer=``): request-scoped callers — the admission
+  services and worker tasks — pass the writer ``resolve_writer`` selected
+  (Postgres or JSONL). Every API write route takes this path.
+- **run_path-derived** (``run_path=``): offline / execution-half callers
+  (the CLI, the demo, ``start_scan`` / ``generate_fix`` / ``verify``)
+  pass the run directory; the safety layer opens a single-file
+  ``JsonlAuditWriter`` at ``<run_path>/audit.jsonl``.
+
+Passing neither is a programmer error and raises ``ValueError`` — there
+is no silent no-op audit path.
 """
 
 from __future__ import annotations
 
 import ipaddress
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from aegis.audit.chain import AuditWriter
 
 
 class AuthorizationError(Exception):
@@ -54,40 +63,23 @@ def is_loopback(target: str) -> bool:
         return False
 
 
-def _resolve_writer(writer, run_path: Path | None):
+def _resolve_writer(writer: AuditWriter | None, run_path: Path | None) -> AuditWriter:
     """Return an ``AuditWriter`` for ``authorize()``.
 
-    Explicit ``writer`` always wins. Otherwise, when ``run_path`` is
-    supplied we construct a ``JsonlAuditWriter`` in single-file mode at
-    ``<run_path>/audit.jsonl`` — matching the Phase 2 / Phase 3 location
-    so existing callers (CLI, demo, tests) keep finding the chain where
-    they expect it. F3 + F6 will move every call site to pass an
-    explicit writer; this fallback goes away in v0.3.1's release-gate
-    cleanup.
-
-    When neither ``writer`` nor ``run_path`` is supplied, ``authorize()``
-    returns to a NO-OP path — preserved so tests that don't care about
-    audit don't break. Removed after F3+F6.
+    Explicit ``writer`` wins. Otherwise a ``run_path`` yields a single-file
+    ``JsonlAuditWriter`` at ``<run_path>/audit.jsonl`` — the location
+    offline callers (CLI, demo, tests) expect. Passing neither is a
+    programmer error: there is no silent no-op audit destination.
     """
     if writer is not None:
         return writer
     if run_path is None:
-        return _NullWriter()
+        raise ValueError(
+            "authorize() requires an audit destination: pass an explicit "
+            "writer= (request-scoped callers) or run_path= (offline callers)."
+        )
     from aegis.audit.chain import JsonlAuditWriter
     return JsonlAuditWriter(run_path, single_file="audit.jsonl")
-
-
-class _NullWriter:
-    """No-op writer used when no audit destination is configured. The
-    Phase 4 plan removes the no-writer path after F3+F6; until then,
-    keeping it ensures tests that call ``authorize()`` without setting
-    up a writer don't silently break."""
-    def append(self, **kwargs) -> None:  # noqa: D401 — match Protocol
-        return None
-    def read_chain(self, chain_id: str):
-        return iter(())
-    def iter_chain_ids(self):
-        return iter(())
 
 
 def authorize(
@@ -99,15 +91,16 @@ def authorize(
     override_authorized: bool = False,
     detail: dict[str, Any] | None = None,
     actor: str | None = None,
-    writer=None,
+    writer: AuditWriter | None = None,
     run_id: str | None = None,
     project_id: str | None = None,
 ) -> None:
     """Authorize an active operation and emit a single audit event.
 
-    Resolution: ``writer`` if supplied; else a ``JsonlAuditWriter`` rooted
-    at ``run_path.parent.parent/audit`` if ``run_path`` is supplied; else
-    a null writer (Phase 4 transitional — to be removed by F3+F6).
+    Resolution: ``writer`` if supplied; else a single-file
+    ``JsonlAuditWriter`` at ``<run_path>/audit.jsonl`` if ``run_path`` is
+    supplied; passing neither raises ``ValueError`` (see
+    ``_resolve_writer``).
 
     The audit event always goes through the ``AuditWriter`` Protocol —
     the legacy ``_append_audit`` flat-JSONL helper is gone.

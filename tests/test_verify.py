@@ -7,8 +7,8 @@ from unittest.mock import patch
 from aegis.schema import AegisFinding, CodeLocation
 from aegis.state import RunState
 from aegis.verify import (
-    is_dast_remediated,
-    is_sast_remediated,
+    classify_dast_remediation,
+    classify_sast_remediation,
     parse_curl,
     runtime_proves_post_patch,
     verify_finding,
@@ -79,23 +79,23 @@ class TestParseCurl(unittest.TestCase):
 
 class TestDastDecision(unittest.TestCase):
     def test_4xx_status_is_verified(self):
-        status, _ = is_dast_remediated(None, {"status": 401, "body_excerpt": ""})
+        status, _ = classify_dast_remediation(None, {"status": 401, "body_excerpt": ""})
         self.assertEqual(status, "verified")
 
     def test_200_with_token_still_vulnerable(self):
-        status, _ = is_dast_remediated(
+        status, _ = classify_dast_remediation(
             None, {"status": 200, "body_excerpt": "{\"authentication\":{\"token\":\"abc\"}}"}
         )
         self.assertEqual(status, "still_vulnerable")
 
     def test_200_without_token_verified(self):
-        status, _ = is_dast_remediated(
+        status, _ = classify_dast_remediation(
             None, {"status": 200, "body_excerpt": "ok"}
         )
         self.assertEqual(status, "verified")
 
     def test_error_inconclusive(self):
-        status, _ = is_dast_remediated(None, {"status": None, "error": "conn refused"})
+        status, _ = classify_dast_remediation(None, {"status": None, "error": "conn refused"})
         self.assertEqual(status, "inconclusive")
 
 
@@ -152,7 +152,7 @@ class TestSastGrep(unittest.TestCase):
                     snippet="raw_sql_query", fix_before="raw_sql_query",
                 )],
             )
-            status, _ = is_sast_remediated(f, repo)
+            status, _ = classify_sast_remediation(f, repo)
             self.assertEqual(status, "verified")
 
     def test_present_snippet_still_vulnerable(self):
@@ -167,7 +167,7 @@ class TestSastGrep(unittest.TestCase):
                     snippet="raw_sql_query", fix_before="raw_sql_query",
                 )],
             )
-            status, _ = is_sast_remediated(f, repo)
+            status, _ = classify_sast_remediation(f, repo)
             self.assertEqual(status, "still_vulnerable")
 
 

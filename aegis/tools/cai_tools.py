@@ -12,11 +12,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aegis.config import AegisConfig
 from aegis.safety import AuthorizationError, is_target_allowed
 from aegis.tools.kali_client import KaliClient
+
+if TYPE_CHECKING:
+    from aegis.audit.chain import AuditWriter
 
 
 @dataclass
@@ -28,7 +31,7 @@ class _Toolbelt:
 def _maybe_import_function_tool():
     """Return cai.sdk.agents.function_tool if available, else None."""
     try:
-        from cai.sdk.agents import function_tool  # type: ignore
+        from cai.sdk.agents import function_tool
         return function_tool
     except ImportError:
         return None
@@ -37,7 +40,7 @@ def _maybe_import_function_tool():
 def build_kali_toolbelt(config: AegisConfig, *,
                        run_path: Path | None = None,
                        caller: str = "cai_tool",
-                       audit_writer=None,
+                       audit_writer: AuditWriter | None = None,
                        run_id: str | None = None,
                        project_id: str | None = None) -> _Toolbelt:
     """Construct the CAI toolbelt.
@@ -78,7 +81,7 @@ def build_kali_toolbelt(config: AegisConfig, *,
             )
 
     @function_tool
-    def nmap_scan(target: str, scan_type: str = "-sV", ports: str | None = None) -> dict:
+    def nmap_scan(target: str, scan_type: str = "-sV", ports: str | None = None) -> dict[str, Any]:
         """Run nmap against a target. Target must be in the allowlist."""
         _check(target)
         result = client.run_tool("nmap", {"target": target, "scan_type": scan_type,
@@ -86,14 +89,14 @@ def build_kali_toolbelt(config: AegisConfig, *,
         return result.__dict__
 
     @function_tool
-    def nikto_scan(target: str) -> dict:
+    def nikto_scan(target: str) -> dict[str, Any]:
         """Run nikto against a web target. Target must be in the allowlist."""
         _check(target)
         result = client.run_tool("nikto", {"target": target})
         return result.__dict__
 
     @function_tool
-    def sqlmap_test(url: str, data: str | None = None) -> dict:
+    def sqlmap_test(url: str, data: str | None = None) -> dict[str, Any]:
         """Probe a URL with sqlmap. URL must be in the allowlist."""
         _check(url)
         params = {"url": url}
@@ -102,4 +105,77 @@ def build_kali_toolbelt(config: AegisConfig, *,
         result = client.run_tool("sqlmap", params)
         return result.__dict__
 
-    return _Toolbelt(tools=[nmap_scan, nikto_scan, sqlmap_test], client=client)
+    @function_tool
+    def gobuster_scan(target: str, mode: str = "dir", wordlist: str | None = None) -> dict[str, Any]:
+        """Brute-force paths/dirs/dns/vhosts on a target with gobuster. Target must be in the allowlist."""
+        _check(target)
+        # Coerce any unrecognised mode to the safe default; never forward arbitrary strings.
+        if mode not in {"dir", "dns", "vhost", "fuzz"}:
+            mode = "dir"
+        params = {"url": target, "mode": mode, **({"wordlist": wordlist} if wordlist else {})}
+        result = client.run_tool("gobuster", params)
+        return result.__dict__
+
+    @function_tool
+    def dirb_scan(target: str, wordlist: str | None = None) -> dict[str, Any]:
+        """Scan a web target for hidden content with dirb. Target must be in the allowlist."""
+        _check(target)
+        params = {"url": target, **({"wordlist": wordlist} if wordlist else {})}
+        result = client.run_tool("dirb", params)
+        return result.__dict__
+
+    @function_tool
+    def hydra_attack(target: str, service: str, username: str | None = None,
+                     username_file: str | None = None, password: str | None = None,
+                     password_file: str | None = None) -> dict[str, Any]:
+        """Run a hydra credential attack against a service. Target must be in the allowlist."""
+        _check(target)
+        params = {"target": target, "service": service}
+        if username:
+            params["username"] = username
+        if username_file:
+            params["username_file"] = username_file
+        if password:
+            params["password"] = password
+        if password_file:
+            params["password_file"] = password_file
+        result = client.run_tool("hydra", params)
+        return result.__dict__
+
+    @function_tool
+    def wpscan_scan(url: str) -> dict[str, Any]:
+        """Scan a WordPress site with wpscan. URL must be in the allowlist."""
+        _check(url)
+        result = client.run_tool("wpscan", {"url": url})
+        return result.__dict__
+
+    @function_tool
+    def enum4linux_scan(target: str) -> dict[str, Any]:
+        """Enumerate SMB/Windows info on a target with enum4linux. Target must be in the allowlist."""
+        _check(target)
+        result = client.run_tool("enum4linux", {"target": target})
+        return result.__dict__
+
+    @function_tool
+    def metasploit_run(module: str, rhosts: str | None = None,
+                       options: dict | None = None) -> dict[str, Any]:
+        """Run a metasploit module. When rhosts is set it must be in the allowlist."""
+        opts = dict(options or {})
+        if rhosts:
+            _check(rhosts)
+            opts["RHOSTS"] = rhosts
+        result = client.run_tool("metasploit", {"module": module, "options": opts})
+        return result.__dict__
+
+    @function_tool
+    def john_crack(hash_file: str, wordlist: str | None = None,
+                   format_type: str | None = None) -> dict[str, Any]:
+        """Crack a local hash file with john. Operates on local files, no target check."""
+        params = {"hash_file": hash_file, **({"wordlist": wordlist} if wordlist else {}),
+                  **({"format": format_type} if format_type else {})}
+        result = client.run_tool("john", params)
+        return result.__dict__
+
+    return _Toolbelt(tools=[nmap_scan, nikto_scan, sqlmap_test, gobuster_scan, dirb_scan,
+                            hydra_attack, wpscan_scan, enum4linux_scan, metasploit_run,
+                            john_crack], client=client)

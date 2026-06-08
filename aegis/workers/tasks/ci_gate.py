@@ -14,6 +14,8 @@ Returns from ``evaluate``:
 
 from __future__ import annotations
 
+from typing import Any
+
 from aegis.policy.ci_gate import CIGatePolicy, evaluate  # noqa: F401 re-export
 from aegis.workers.celery_app import app
 
@@ -21,14 +23,17 @@ __all__ = ["CIGatePolicy", "evaluate", "ci_gate"]
 
 
 @app.task(name="aegis.ci_gate", bind=True, max_retries=0)
-def ci_gate(self, job_id: str) -> dict:
+def ci_gate(self, job_id: str) -> dict[str, Any]:
     from aegis.workers.bootstrap import task_context
     with task_context(job_id) as ctx:
+        if ctx.skip or ctx.run_state is None:
+            return {"job_id": job_id, "skipped": True}
         findings = ctx.run_state.load_findings()
         from aegis.db.models import Job
-        sess = ctx.run_state.session
+        sess = ctx.session
         job = sess.get(Job, job_id)
-        policy_detail = (job.detail or {}).get("policy", {})
+        detail = (job.detail if job else {}) or {}
+        policy_detail = detail.get("policy", {})
         policy = CIGatePolicy(
             severity_threshold=policy_detail.get("severity_threshold", "high"),
             max_findings=policy_detail.get("max_findings"),

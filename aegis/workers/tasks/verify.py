@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 
 from aegis.workers.celery_app import app
 
@@ -26,25 +27,28 @@ _STATE_MAP = {
 
 
 @app.task(name="aegis.verify_replay", bind=True, max_retries=2)
-def verify_replay(self, job_id: str) -> dict:
+def verify_replay(self, job_id: str) -> dict[str, Any]:
     from aegis.config import load_config
-    from aegis.db.models import Finding, Job
+    from aegis.db.models import Finding, Job, VerifyJobDetail
     from aegis.schema import AegisFinding
     from aegis.services.verify import verify
     from aegis.workers.bootstrap import task_context
 
     config = load_config()
     with task_context(job_id) as ctx:
-        sess = ctx.run_state.session
+        if ctx.skip or ctx.run_state is None:
+            return {"job_id": job_id, "skipped": True}
+        sess = ctx.session
         job = sess.get(Job, job_id)
-        finding_row = sess.get(Finding, (job.detail or {}).get("finding_id"))
+        detail = cast(VerifyJobDetail, (job.detail if job else {}) or {})
+        finding_row = sess.get(Finding, detail.get("finding_id"))
         if finding_row is None:
             raise RuntimeError("finding missing")
         finding = AegisFinding.from_dict(finding_row.schema_blob)
         outcome = verify(
             run_state=ctx.run_state, finding=finding,
-            repo_path=Path((job.detail or {}).get("repo_path") or ".")
-            if (job.detail or {}).get("repo_path") else None,
+            repo_path=Path(detail.get("repo_path") or ".")
+            if detail.get("repo_path") else None,
             actor=ctx.actor, config=config,
         )
 

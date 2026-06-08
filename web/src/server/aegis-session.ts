@@ -58,7 +58,7 @@ export const sessionCookieName =
   process.env.AEGIS_API_SESSION_COOKIE ?? "aegis_api_session";
 export const csrfCookieName = process.env.AEGIS_CSRF_COOKIE ?? "aegis_csrf";
 
-/** Returns the seconds-from-now expiry for both cookies. */
-export function sessionTtlSeconds(): number {
-  return Number(process.env.AEGIS_API_SESSION_TTL_SECONDS ?? "900");
-}
+/** Seconds-from-now expiry for both cookies. */
+export const sessionTtlSeconds = Number(
+  process.env.AEGIS_API_SESSION_TTL_SECONDS ?? "900",
+);

@@ -5,7 +5,7 @@ of the F12 project-access gate. HTML responses carry the strict
 ``default-src 'none'`` policy from
 ``aegis.api.security_headers.REPORT_CSP``; JSON / Markdown responses
 land as downloads with nosniff. The renderer itself escapes every
-interpolation (see ``aegis.report.inline``), so an injected
+interpolation (see ``aegis.report.render_inline_markdown``), so an injected
 ``<script>…</script>`` payload in finding evidence is double-defended:
 escaped before write, and would be blocked at the browser by CSP if
 it ever reached the document.
@@ -47,7 +47,7 @@ def _report_headers(run_id: str, ext: str) -> dict[str, str]:
 
 @router.get("/{run_id}/report.{ext}")
 def get_report(run_id: str, ext: str,
-               user: CurrentUser = Depends(get_current_user)):
+               user: CurrentUser = Depends(get_current_user)) -> Response:
     if ext not in _CONTENT_TYPES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="ext must be one of md|json|html")
@@ -61,7 +61,7 @@ def get_report(run_id: str, ext: str,
     # callers still have the filesystem path; the worker writes both
     # destinations when a blob backend is wired in.
     try:
-        from aegis.blobs import open_blob_store
+        from aegis.storage import open_blob_store
         blob = open_blob_store(config)
         data = blob.get(_blob_key(run_id, ext))
         return Response(content=data, media_type=_CONTENT_TYPES[ext],

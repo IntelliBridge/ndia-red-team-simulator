@@ -1,7 +1,7 @@
 """Postgres-backed state + fs->pg migration coverage.
 
-These exercise the real Postgres paths (``aegis.state_pg``,
-``aegis.state_factory``, ``aegis.migrate.fs_to_pg``) and so are guarded by
+These exercise the real Postgres paths (``aegis.state.postgres``,
+``aegis.state.factory``, ``aegis.migrate.fs_to_pg``) and so are guarded by
 ``AEGIS_DB_URL``: they run in the CI coverage job (which brings up Postgres)
 and skip on the offline unit path, keeping ``pytest -q`` green with no DB.
 
@@ -63,7 +63,7 @@ class TestPostgresRunState(unittest.TestCase):
         self.sess.flush()
 
     def _state(self, run_id: str | None = None):
-        from aegis.state_pg import PostgresRunState
+        from aegis.state import PostgresRunState
         return PostgresRunState(
             self.sess, run_id=run_id or ("run-" + uuid4().hex[:8]),
             project_id=self.project_id, output_dir=self.tmp,
@@ -171,6 +171,42 @@ class TestPostgresRunState(unittest.TestCase):
         self.assertEqual(rows[0].action, "patch.commit")
         self.assertTrue(rows[0].success)
 
+    def test_append_remediation_log_by_scanner_id_resolves_uuid(self):
+        # Callers pass the scanner id (e.g. ``bumblebee:CVE-1``), but
+        # RemediationAttempt.finding_id is a FK to findings.id (the UUID). The
+        # scanner id must resolve to the row UUID first, or the insert fails the
+        # FK constraint (the H1 bug).
+        from sqlalchemy import select
+
+        from aegis.db.models import Finding, RemediationAttempt
+        st = self._state()
+        st.save_findings([_finding("bumblebee:CVE-1")])
+        row = self.sess.execute(
+            select(Finding).where(Finding.scanner_finding_id == "bumblebee:CVE-1")
+        ).scalar_one()
+
+        st.append_remediation_log("bumblebee:CVE-1", "agentic_fix", "done", True)
+
+        attempts = self.sess.execute(
+            select(RemediationAttempt).where(
+                RemediationAttempt.project_id == self.project_id)
+        ).scalars().all()
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0].finding_id, row.id)
+        self.assertNotEqual(row.id, "bumblebee:CVE-1")
+
+    def test_append_remediation_log_unknown_finding_is_noop(self):
+        from sqlalchemy import select
+
+        from aegis.db.models import RemediationAttempt
+        st = self._state()
+        st.append_remediation_log("does-not-exist", "x", "y", False)
+        rows = self.sess.execute(
+            select(RemediationAttempt).where(
+                RemediationAttempt.project_id == self.project_id)
+        ).scalars().all()
+        self.assertEqual(rows, [])
+
 
 @unittest.skipUnless(AEGIS_DB, "needs Postgres (AEGIS_DB_URL)")
 class TestStateFactory(unittest.TestCase):
@@ -182,8 +218,7 @@ class TestStateFactory(unittest.TestCase):
         from aegis.config import AegisConfig
         from aegis.db import session as sess_mod
         from aegis.db.models import Organization, Project
-        from aegis.state_factory import open_run_state
-        from aegis.state_pg import PostgresRunState
+        from aegis.state import PostgresRunState, open_run_state
         # open_run_state does not create the project, so commit one first.
         sess_mod.init_engine(AEGIS_DB)
         oid = "org-" + uuid4().hex[:8]
@@ -198,23 +233,22 @@ class TestStateFactory(unittest.TestCase):
         self.assertIsInstance(state, PostgresRunState)
         # The factory generates a run id when none is passed.
         self.assertTrue(state.run_id)
-        # Caller owns the session; release it.
-        self.addCleanup(state._session_ctx.__exit__, None, None, None)
+        # Caller owns the session; release it via the public helper.
+        self.addCleanup(state.close)
 
     def test_open_run_state_releases_session_on_init_failure(self):
         from aegis.config import AegisConfig
-        from aegis.state_factory import open_run_state
+        from aegis.state import open_run_state
         cfg = AegisConfig(output_dir=self.tmp)
         with patch.dict(os.environ, {"AEGIS_DB_URL": AEGIS_DB}), \
-                patch("aegis.state_pg.PostgresRunState",
+                patch("aegis.state.postgres.PostgresRunState",
                       side_effect=RuntimeError("boom")):
             with self.assertRaises(RuntimeError):
                 open_run_state(cfg, project_id="default")
 
     def test_open_run_state_filesystem_branch(self):
         from aegis.config import AegisConfig
-        from aegis.state import FilesystemRunState
-        from aegis.state_factory import open_run_state
+        from aegis.state import FilesystemRunState, open_run_state
         cfg = AegisConfig(output_dir=self.tmp)
         env = {k: v for k, v in os.environ.items() if k != "AEGIS_DB_URL"}
         with patch.dict(os.environ, env, clear=True):

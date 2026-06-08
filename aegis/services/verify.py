@@ -8,17 +8,23 @@ and worker stay green in v0.3.1.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from aegis.config import AegisConfig
 from aegis.safety import authorize
 from aegis.schema import AegisFinding
 from aegis.services.scans import JobHandle
-from aegis.state import RunState
-from aegis.verify import verify_finding
+from aegis.verify import VerifyStatus, VerifyStrategy, verify_finding
+
+if TYPE_CHECKING:
+    from aegis.audit.chain import AuditWriter
+    from aegis.state import RunStateAPI
+
+logger = logging.getLogger(__name__)
 
 
 def create_verify_job(
@@ -28,7 +34,7 @@ def create_verify_job(
     run_id: str,
     actor: str,
     config: AegisConfig,
-    audit_writer,
+    audit_writer: AuditWriter,
     enqueue: bool = True,
 ) -> JobHandle:
     """Admission boundary for ``verify.replay``."""
@@ -40,15 +46,16 @@ def create_verify_job(
         detail={"actor": actor, "finding_id": finding_id},
     )
 
-    from aegis.db.models import Job
+    from aegis.db.models import Job, VerifyJobDetail
     from aegis.db.session import get_session
 
     job_id = f"job-{uuid4().hex[:12]}"
+    detail: VerifyJobDetail = {"finding_id": finding_id}
     with get_session() as sess:
         sess.add(Job(
             id=job_id, run_id=run_id, project_id=project_id,
             type="verify.replay", status="queued", created_by=actor,
-            detail={"finding_id": finding_id},
+            detail=dict(detail),
         ))
         sess.flush()
 
@@ -57,7 +64,8 @@ def create_verify_job(
             from aegis.workers.tasks.verify import verify_replay
             verify_replay.delay(job_id)
         except Exception:
-            pass
+            # Broker unreachable: row stays queued, picked up next start.
+            logger.warning("enqueue failed for job %s", job_id, exc_info=True)
 
     return JobHandle(run_id=run_id, job_id=job_id)
 
@@ -65,15 +73,15 @@ def create_verify_job(
 @dataclass
 class VerifyOutcome:
     finding_id: str
-    status: str         # "verified" | "still_vulnerable" | "inconclusive"
-    strategy: str
+    status: VerifyStatus
+    strategy: VerifyStrategy
     evidence: dict[str, Any]
     notes: str
 
 
 def verify(
     *,
-    run_state: RunState,
+    run_state: RunStateAPI,
     finding: AegisFinding,
     repo_path: Path | None,
     require_rebuilt: bool = True,

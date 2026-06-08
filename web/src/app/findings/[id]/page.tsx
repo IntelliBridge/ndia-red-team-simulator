@@ -1,22 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState } from "react";
 import useSWR from "swr";
 
 import { FindingCard, RoleGated } from "@aegis/design-system";
 import { api, type Finding } from "@/lib/api";
-import { requireAuth } from "@/lib/auth";
+import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
 
 const fetcher = (path: string) => api<Finding>(path);
 
 export default function FindingPage({ params }: { params: { id: string } }) {
-  const router = useRouter();
-  const [authed, setAuthed] = useState(false);
-  useEffect(() => {
-    if (requireAuth(router)) setAuthed(true);
-  }, [router]);
+  const authed = useRequireAuth();
 
   const { data, error, isLoading, mutate } = useSWR(
     authed ? `/v1/findings/${params.id}` : null,
@@ -35,12 +30,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
       </p>
     );
 
-  const blob = data.schema_blob as {
-    title?: string;
-    description?: string;
-    cve?: string;
-    target?: string;
-  };
+  const blob = data.schema_blob;
 
   const callerRole = roles[data.project_id];
 

@@ -16,15 +16,10 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from aegis.cli._console import _colored_severity, _err, _info, _warn
+from aegis.cli._runstate import _load_findings_objects, _resolve_run_state
+from aegis.cli.fix import _refresh_deps_findings, _report_fix_outcomes
 from aegis.cli.main import (
-    _colored_severity,
-    _err,
-    _info,
-    _load_findings_objects,
-    _refresh_deps_findings,
-    _report_fix_outcomes,
-    _resolve_run_state,
-    _warn,
     build_parser,
     cmd_export,
     cmd_findings,
@@ -313,7 +308,7 @@ class TestMainInit(unittest.TestCase):
             with patch("aegis.cli.main.Path",
                        side_effect=lambda p: Path(tmp) / p if p == "aegis.yaml" else Path(p)), \
                  patch("aegis.config.load_config", return_value=AegisConfig(output_dir=tmp)), \
-                 patch("aegis.cli.main._warn") as mock_warn:
+                 patch("aegis.cli._console._warn") as mock_warn:
                 main(["init"])
                 mock_warn.assert_called()
 
@@ -325,7 +320,7 @@ class TestMainGlobalVerbose(unittest.TestCase):
             config = _make_config(tmp)
             _seed_state(tmp)
             with patch("aegis.config.load_config", return_value=config), \
-                 patch("aegis.cli.main._info") as mock_info, \
+                 patch("aegis.cli._console._info") as mock_info, \
                  patch("aegis.cli.main.cmd_findings"):
                 main(["--verbose", "findings"])
                 # _info should have been called with config= in the message
@@ -405,7 +400,7 @@ class TestCmdScan(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.cli.main._warn") as mock_warn:
+                 patch("aegis.cli._console._warn") as mock_warn:
                 cmd_scan(self._args(), config)
                 # "No Strix findings" warning
                 calls = [str(c) for c in mock_warn.call_args_list]
@@ -452,7 +447,7 @@ class TestCmdScan(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.cli.main._warn") as mock_warn:
+                 patch("aegis.cli._console._warn") as mock_warn:
                 args = self._args(events=str(Path(tmp) / "nonexistent.jsonl"))
                 cmd_scan(args, config)
                 calls = [str(c) for c in mock_warn.call_args_list]
@@ -483,7 +478,7 @@ class TestCmdScan(unittest.TestCase):
             outcome.return_code = 1
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
                  patch("aegis.services.scans.start_scan", return_value=outcome), \
-                 patch("aegis.cli.main._warn") as mock_warn:
+                 patch("aegis.cli._console._warn") as mock_warn:
                 args = self._args(use_strix=True)
                 cmd_scan(args, config)
                 calls = [str(c) for c in mock_warn.call_args_list]
@@ -500,7 +495,7 @@ class TestCmdScan(unittest.TestCase):
             outcome.error = "strix exploded"
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
                  patch("aegis.services.scans.start_scan", return_value=outcome), \
-                 patch("aegis.cli.main._err") as mock_err:
+                 patch("aegis.cli._console._err") as mock_err:
                 args = self._args(use_strix=True)
                 cmd_scan(args, config)
                 calls = [str(c) for c in mock_err.call_args_list]
@@ -582,7 +577,7 @@ class TestCmdScan(unittest.TestCase):
             config = _make_config(tmp)
             with patch("aegis.cli.api_client.is_api_mode", return_value=True), \
                  patch("aegis.cli.api_client.build_client") as mock_bc, \
-                 patch("aegis.cli.main._info") as mock_info:
+                 patch("aegis.cli._console._info") as mock_info:
                 mock_client = MagicMock()
                 mock_client.start_scan.return_value = {
                     "run_id": "r1", "job_id": "j1",
@@ -616,7 +611,7 @@ class TestCmdFindings(unittest.TestCase):
             state = RunState(tmp, "empty-run")
             state.save_findings([])
             args = Namespace(run="empty-run")
-            with patch("aegis.cli.main._warn") as mock_warn:
+            with patch("aegis.cli._console._warn") as mock_warn:
                 cmd_findings(args, config)
                 mock_warn.assert_called()
 
@@ -665,7 +660,7 @@ class TestCmdExport(unittest.TestCase):
             summary = {
                 "total": 1, "routable_to_vulnfixer": 1, "requires_code_fix": 0,
             }
-            with patch("aegis.runners.vulnfixer_adapter.export_findings",
+            with patch("aegis.runners.vulnfixer_converter.export_findings",
                        return_value=summary) as mock_exp, \
                  patch("builtins.print"):
                 cmd_export(args, config)
@@ -677,7 +672,7 @@ class TestCmdExport(unittest.TestCase):
             state = RunState(tmp, "empty-run")
             state.save_findings([])
             args = Namespace(format="vulnfixer", run="empty-run")
-            with patch("aegis.runners.vulnfixer_adapter.export_findings") as mock_exp:
+            with patch("aegis.runners.vulnfixer_converter.export_findings") as mock_exp:
                 cmd_export(args, config)
                 mock_exp.assert_not_called()
 
@@ -753,7 +748,7 @@ class TestCmdFix(unittest.TestCase):
             outcome.error = None
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
                  patch("aegis.services.fixes.generate_fix", return_value=outcome), \
-                 patch("aegis.cli.main._info") as mock_info:
+                 patch("aegis.cli._console._info") as mock_info:
                 cmd_fix(self._fix_args(patch=True, use_golden_patch=True), config)
                 calls = " ".join(str(c) for c in mock_info.call_args_list)
                 self.assertIn("golden patch", calls.lower())
@@ -876,7 +871,7 @@ class TestRefreshDepsFinding(unittest.TestCase):
             args = Namespace(repo="/tmp/fake")
             with patch("aegis.runners.trivy_runner.run_trivy",
                        return_value=fake_result), \
-                 patch("aegis.cli.main._warn"):
+                 patch("aegis.cli._console._warn"):
                 result = _refresh_deps_findings(args, state, "CVE-2024-9999@lodash")
                 self.assertIsNotNone(result)
 
@@ -1000,7 +995,7 @@ class TestReportFixOutcomes(unittest.TestCase):
                 branch="aegis/fix/x",
                 pr_url="https://github.com/pr/99",
             )
-            with patch("aegis.cli.main._info") as mock_info:
+            with patch("aegis.cli._console._info") as mock_info:
                 _report_fix_outcomes(state, "test-finding-001", [outcome], False)
                 calls = " ".join(str(c) for c in mock_info.call_args_list)
                 self.assertIn("PR opened", calls)
@@ -1160,7 +1155,7 @@ class TestCmdPipeline(unittest.TestCase):
                  patch("aegis.cli.main.cmd_scan"), \
                  patch("aegis.state.FilesystemRunState.latest_run",
                        return_value=state), \
-                 patch("aegis.runners.vulnfixer_adapter.export_findings",
+                 patch("aegis.runners.vulnfixer_converter.export_findings",
                        return_value={"total": 1, "routable_to_vulnfixer": 1,
                                      "requires_code_fix": 0}), \
                  patch("aegis.services.reports.render_reports",
@@ -1839,7 +1834,7 @@ class TestMainAdditionalBranches(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.cli.main._warn") as mock_warn:
+                 patch("aegis.cli._console._warn") as mock_warn:
                 # Make the fixture Path.exists() return False
                 real_path_cls = Path
 
@@ -1879,13 +1874,18 @@ class TestMainAdditionalBranches(unittest.TestCase):
                 self.assertGreater(mock_warn.call_count, 0)
 
     def test_fix_deps_refresh_returns_none_exits_1(self):
-        """Lines 412-414: when _refresh_deps_findings returns None, exit 1."""
+        """A deps re-scan that yields no dependency finding for the id exits 1.
+
+        Drives the real ``_refresh_deps_findings`` against a mocked Trivy run:
+        the seeded finding is ``dast`` (not ``dependency``), so the helper
+        returns None and ``cmd_fix`` exits 1.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             _seed_state(tmp)
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.cli.main._refresh_deps_findings",
-                       return_value=None), \
+                 patch("aegis.runners.trivy_runner.run_trivy",
+                       return_value=MagicMock(success=True, findings=[])), \
                  self.assertRaises(SystemExit) as ctx:
                 cmd_fix(
                     Namespace(
@@ -1913,7 +1913,7 @@ class TestMainAdditionalBranches(unittest.TestCase):
             outcome.commit_hash = None
             outcome.pr_url = None
             outcome.finding_id = "test-finding-001"
-            with patch("aegis.cli.main._warn") as mock_warn:
+            with patch("aegis.cli._console._warn") as mock_warn:
                 _report_fix_outcomes(state, "test-finding-001", [outcome], True)
                 calls = " ".join(str(c) for c in mock_warn.call_args_list)
                 self.assertIn("bump failed", calls)
@@ -1931,7 +1931,7 @@ class TestMainAdditionalBranches(unittest.TestCase):
             outcome.commit_hash = None
             outcome.pr_url = None
             outcome.finding_id = "test-finding-001"
-            with patch("aegis.cli.main._info") as mock_info:
+            with patch("aegis.cli._console._info") as mock_info:
                 _report_fix_outcomes(state, "test-finding-001", [outcome], True)
                 calls = " ".join(str(c) for c in mock_info.call_args_list)
                 self.assertIn("Bump diff", calls)
@@ -1980,7 +1980,7 @@ class TestMainAdditionalBranches(unittest.TestCase):
         """Lines: fix api path with run_id absent from response."""
         with patch("aegis.cli.api_client.is_api_mode", return_value=True), \
              patch("aegis.cli.api_client.build_client") as mock_bc, \
-             patch("aegis.cli.main._info") as mock_info:
+             patch("aegis.cli._console._info") as mock_info:
             mock_client = MagicMock()
             mock_client.fix.return_value = {"job_id": "j1"}  # no run_id
             mock_bc.return_value = mock_client
@@ -2010,7 +2010,7 @@ class TestMainAdditionalBranches(unittest.TestCase):
             outcome.diff_path = None
             outcome.commit_hash = None
             outcome.pr_url = None
-            with patch("aegis.cli.main._warn") as mock_warn:
+            with patch("aegis.cli._console._warn") as mock_warn:
                 _report_fix_outcomes(state, "test-finding-001", [outcome], False)
                 calls = " ".join(str(c) for c in mock_warn.call_args_list)
                 self.assertIn("CAI timeout", calls)
@@ -2027,7 +2027,7 @@ class TestMainAdditionalBranches(unittest.TestCase):
             outcome.diff_path = None
             outcome.commit_hash = None
             outcome.pr_url = None
-            with patch("aegis.cli.main._info") as mock_info:
+            with patch("aegis.cli._console._info") as mock_info:
                 _report_fix_outcomes(state, "test-finding-001", [outcome], False)
                 calls = " ".join(str(c) for c in mock_info.call_args_list)
                 self.assertIn("Dry-run OK", calls)

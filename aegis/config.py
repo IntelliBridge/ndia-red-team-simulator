@@ -26,6 +26,16 @@ class AegisConfig:
     enable_pr: bool = False
     juice_shop_image_tag: str = "bkimminich/juice-shop:v17.3.0"
     strix_command: str | None = None
+    strix_scan_mode: str = "standard"
+    # Strix code-scope default (v0.10.0): auto | diff | full. `auto` lets Strix
+    # pick PR diff-scope in CI/headless runs; per-scan ScanOptions can override.
+    strix_scope_mode: str = "auto"
+    deepsec_path: str = "./project_repos/deepsec"
+    # The AI "process" stage is opt-in and costs money: it only runs when
+    # this flag is set AND an AI Gateway / model key is in the environment
+    # AND the budget cap below is > 0. Default off keeps `scan` regex-only.
+    deepsec_ai_process: bool = False
+    deepsec_budget_usd: float = 5.0
 
 
 def load_config(path: str | None = None) -> AegisConfig:

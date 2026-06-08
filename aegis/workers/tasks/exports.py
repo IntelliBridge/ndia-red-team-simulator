@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from aegis.workers.celery_app import app
 
 
 @app.task(name="aegis.vulnfixer_render", bind=True, max_retries=1)
-def vulnfixer_render(self, job_id: str) -> dict:
-    from aegis.runners.vulnfixer_adapter import export_findings
+def vulnfixer_render(self, job_id: str) -> dict[str, Any]:
+    from aegis.runners.vulnfixer_converter import export_findings
     from aegis.schema import AegisFinding
     from aegis.workers.bootstrap import task_context
 
     with task_context(job_id) as ctx:
+        if ctx.skip or ctx.run_state is None:
+            return {"job_id": job_id, "skipped": True}
         raw = ctx.run_state.load_findings()
         findings = [AegisFinding.from_dict(f) for f in raw]
         out_path = ctx.run_state.run_path / "vulnfixer-export.json"

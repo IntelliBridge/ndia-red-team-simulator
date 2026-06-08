@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import useSWR from "swr";
 
 import {
@@ -9,8 +8,8 @@ import {
   StageTimeline,
   type StageEntry,
 } from "@aegis/design-system";
-import { api, type Finding } from "@/lib/api";
-import { requireAuth } from "@/lib/auth";
+import { api, apiBase, apiWsBase, type Finding } from "@/lib/api";
+import { useRequireAuth } from "@/hooks/useRequireAuth";
 
 const fetcher = (path: string) =>
   api<{ findings: Finding[]; count: number }>(path);
@@ -23,11 +22,7 @@ const VALIDATION_TONES: Record<string, string> = {
 };
 
 export default function RunPage({ params }: { params: { id: string } }) {
-  const router = useRouter();
-  const [authed, setAuthed] = useState(false);
-  useEffect(() => {
-    if (requireAuth(router)) setAuthed(true);
-  }, [router]);
+  const authed = useRequireAuth();
 
   const { data, error, isLoading } = useSWR(
     authed ? `/v1/findings?run=${params.id}` : null,
@@ -37,9 +32,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
 
   useEffect(() => {
     if (!authed) return;
-    const base = process.env.NEXT_PUBLIC_AEGIS_API_URL ?? "http://localhost:8000";
-    const wsUrl =
-      base.replace(/^http/, "ws") + `/v1/runs/${params.id}/events`;
+    const wsUrl = `${apiWsBase}/v1/runs/${params.id}/events`;
     const ws = new WebSocket(wsUrl);
     ws.onmessage = (msg) => {
       try {
@@ -71,13 +64,12 @@ export default function RunPage({ params }: { params: { id: string } }) {
       </p>
     );
 
-  const reportBase = process.env.NEXT_PUBLIC_AEGIS_API_URL ?? "";
   return (
     <div className="space-y-8">
       <header className="flex items-center justify-between">
         <h1 className="font-mono text-xl">{params.id}</h1>
         <a
-          href={`${reportBase}/v1/runs/${params.id}/report.html`}
+          href={`${apiBase}/v1/runs/${params.id}/report.html`}
           target="_blank"
           rel="noreferrer"
           className="text-sm text-sky-700 underline"
@@ -116,7 +108,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             </thead>
             <tbody>
               {(data?.findings ?? []).map((f) => {
-                const blob = f.schema_blob as { title?: string };
+                const blob = f.schema_blob;
                 const tone =
                   VALIDATION_TONES[f.validation_state] ??
                   "bg-slate-100 text-slate-500";

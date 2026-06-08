@@ -13,6 +13,9 @@
 
 const BASE = process.env.NEXT_PUBLIC_AEGIS_API_URL ?? "http://localhost:8000";
 
+export const apiBase = BASE;
+export const apiWsBase = BASE.replace(/^http/, "ws");
+
 const SESSION_COOKIE =
   process.env.NEXT_PUBLIC_AEGIS_API_SESSION_COOKIE ?? "aegis_api_session";
 const CSRF_COOKIE =
@@ -27,14 +30,7 @@ function _bearerFromStorage(): string | undefined {
   return localStorage.getItem("aegis_token") ?? undefined;
 }
 
-function _hasSessionCookie(): boolean {
-  if (typeof document === "undefined") return false;
-  return document.cookie
-    .split(";")
-    .some((c) => c.trim().startsWith(`${SESSION_COOKIE}=`));
-}
-
-function _readCookie(name: string): string | undefined {
+export function readCookie(name: string): string | undefined {
   if (typeof document === "undefined") return undefined;
   for (const c of document.cookie.split(";")) {
     const trimmed = c.trim();
@@ -43,6 +39,10 @@ function _readCookie(name: string): string | undefined {
     }
   }
   return undefined;
+}
+
+export function hasCookie(name: string): boolean {
+  return readCookie(name) !== undefined;
 }
 
 function _newRequestId(): string {
@@ -79,8 +79,8 @@ export async function api<T>(
   }
 
   // CSRF: cookie-authed mutations must echo the cookie via the header.
-  if (!bearer && MUTATING.has(method) && _hasSessionCookie()) {
-    const csrf = _readCookie(CSRF_COOKIE);
+  if (!bearer && MUTATING.has(method) && hasCookie(SESSION_COOKIE)) {
+    const csrf = readCookie(CSRF_COOKIE);
     if (csrf) headers[CSRF_HEADER] = csrf;
   }
 
@@ -94,7 +94,12 @@ export async function api<T>(
     throw new ApiError(resp.status, await resp.text());
   }
   const text = await resp.text();
-  return (text ? JSON.parse(text) : {}) as T;
+  if (!text) return {} as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError(resp.status, text);
+  }
 }
 
 export type Run = {
@@ -107,6 +112,13 @@ export type Run = {
   created_by: string | null;
 };
 
+export type FindingSchemaBlob = {
+  title?: string;
+  description?: string;
+  cve?: string;
+  target?: string;
+};
+
 export type Finding = {
   id: string;
   run_id: string;
@@ -116,7 +128,7 @@ export type Finding = {
   source_tool: string | null;
   validation_state: string;
   dedup_key: string | null;
-  schema_blob: Record<string, unknown>;
+  schema_blob: FindingSchemaBlob;
 };
 
 export type ProjectMembership = {

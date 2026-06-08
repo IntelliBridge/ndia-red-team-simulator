@@ -2,6 +2,8 @@
 
 "use client";
 
+import { hasCookie } from "./api";
+
 export function getToken(): string | undefined {
   if (typeof window === "undefined") return undefined;
   return localStorage.getItem("aegis_token") ?? undefined;
@@ -21,14 +23,6 @@ export function logout(): void {
   void fetch("/api/auth/signout-aegis", { method: "POST" }).catch(() => {});
 }
 
-function _hasCsrfCookie(): boolean {
-  if (typeof document === "undefined") return false;
-  const name = process.env.NEXT_PUBLIC_AEGIS_CSRF_COOKIE ?? "aegis_csrf";
-  return document.cookie
-    .split(";")
-    .some((c) => c.trim().startsWith(`${name}=`));
-}
-
 /**
  * Bounce to /login when no token is present. Returns the token (or undefined
  * during the brief server-render pass; the redirect fires on hydration).
@@ -41,7 +35,7 @@ function _hasCsrfCookie(): boolean {
 export function requireAuth(router: { push: (path: string) => void }): string | undefined {
   const token = getToken();
   if (token) return token;
-  if (_hasCsrfCookie()) return "(cookie)";
+  if (hasCookie(process.env.NEXT_PUBLIC_AEGIS_CSRF_COOKIE ?? "aegis_csrf")) return "(cookie)";
   if (typeof window !== "undefined") {
     router.push("/login");
   }

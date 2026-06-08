@@ -13,7 +13,7 @@ import {
   sessionCookieName,
 } from "@/server/aegis-session";
 
-export async function POST() {
+export function POST() {
   const c = cookies();
   c.set(sessionCookieName, "", { path: "/", maxAge: 0 });
   c.set(csrfCookieName, "", { path: "/", maxAge: 0 });

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import shutil
 import time
+from typing import TYPE_CHECKING
 
-from aegis.scanners.registry import ScanOptions, ScanResult, register
-from aegis.state import RunState
+from aegis.scanners.registry import ScanOptions, ScanResult, cli_version, register, which_available
+
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
 
 
 class StrixAdapter:
@@ -15,24 +17,23 @@ class StrixAdapter:
     default_timeout = 1800
 
     def adapter_version(self) -> str:
-        try:
-            import subprocess
-            out = subprocess.run(["strix", "--version"], capture_output=True,
-                                 text=True, timeout=3, check=False)
-            return (out.stdout or "").strip() or "unknown"
-        except Exception:
-            return "unknown"
+        return cli_version("strix")
 
     def health_check(self) -> bool:
-        return shutil.which("strix") is not None
+        return which_available("strix")
 
-    def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
+    def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         from aegis.runners.strix_runner import run_strix
         started = time.monotonic()
         result = run_strix(
             options.target, run_state,
             instruction=options.instruction,
             timeout=options.timeout or self.default_timeout,
+            scan_mode=options.scan_mode,
+            targets=options.targets,
+            instruction_file=options.instruction_file,
+            scope_mode=options.scope_mode,
+            diff_base=options.diff_base,
         )
         return ScanResult(
             findings=result.findings,

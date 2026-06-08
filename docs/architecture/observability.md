@@ -241,6 +241,22 @@ Collector config lives in `deploy/otel/config.yaml`; pipelines:
 - `logs/loki` → Loki
 - `logs/aegis-ingest` → aegis-log-ingest (always)
 - `traces` → Jaeger
+- `logs/security` → aegis-log-ingest + Loki (host/OS audit sources)
+
+The first three carry the application's own OTLP signal. `logs/security`
+is a separate ingestion path for **host/OS audit telemetry** —
+`filelog` (`/var/log/auth.log`, `/var/log/secure`), `journald`
+(sshd/sudo/kernel), `rfc5424` syslog over tcp, and the `k8sobjects`
+event watcher. Its records pass through **two** redaction stages before
+any batching or export: a `redaction` processor that masks secret-like
+attribute **values**, followed by a `transform/redact_body` processor
+that scrubs the same secret patterns (passwords, api keys, tokens,
+bearer/auth headers, AWS keys) from the raw log **body** — where host
+log lines actually land. Then a `filter` stage drops debug/health-probe
+noise and sub-`INFO` records. Both redaction stages run ahead of the
+exporters, so scrubbed values never reach Postgres or Loki. The `osquery` receiver and `isolationforest` anomaly processor are
+left commented — they are not standard collector-contrib components and
+would fail Collector startup unless your distro ships them.
 
 The Elasticsearch exporter in the Collector config is commented; un-
 comment when `obs-search` is permanently in your deployment shape.
@@ -260,8 +276,14 @@ comment when `obs-search` is permanently in your deployment shape.
   unreachable, rows stay buffered up to the batch size, then drop —
   the metric counter exposes the drop rate.
 - **Sensitive data**: Aegis already runs `redact_audit_detail` on
-  audit detail before write. The log path does **not** auto-redact —
-  treat `attrs` like any other JSON field and avoid logging tokens.
+  audit detail before write. The application OTLP log path
+  (`logs/loki`, `logs/aegis-ingest`) does **not** auto-redact — treat
+  `attrs` like any other JSON field and avoid logging tokens. The
+  `logs/security` host-audit pipeline is the exception: a `redaction`
+  processor masks secret-like attribute values and a
+  `transform/redact_body` processor scrubs secrets from the raw log body
+  before export, since host log lines (e.g. a password or token captured
+  in `/var/log/auth.log`) are outside the app's control.
 
 For the production deployment runbook (Dockerfile, image build,
 service registration) see [`docs/ops/deploy.md`](../ops/deploy.md).

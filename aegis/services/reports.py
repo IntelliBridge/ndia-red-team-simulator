@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from aegis.schema import AegisFinding
-from aegis.state import RunState
+
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
 
 
 @dataclass
@@ -17,7 +20,7 @@ class ReportOutcome:
 
 def render_reports(
     *,
-    run_state: RunState,
+    run_state: RunStateAPI,
     findings: list[AegisFinding],
     html: bool = True,
 ) -> ReportOutcome:

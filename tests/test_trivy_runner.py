@@ -63,7 +63,7 @@ class TestParseTrivyJson(unittest.TestCase):
         self.assertEqual(lodash.cvss, 7.5)
 
     def test_routable_to_vulnfixer(self):
-        from aegis.runners.vulnfixer_adapter import to_vulnfixer_vulnerability
+        from aegis.runners.vulnfixer_converter import to_vulnfixer_vulnerability
         findings = parse_trivy_json(_TRIVY_SAMPLE, "run-1")
         lodash = next(f for f in findings if "lodash" in f.id)
         export = to_vulnfixer_vulnerability(lodash)

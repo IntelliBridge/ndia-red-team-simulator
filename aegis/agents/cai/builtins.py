@@ -8,8 +8,15 @@ returns ``status='not_wired'`` instead of silently going missing.
 
 from __future__ import annotations
 
-from aegis.agents.registry import AgentContext, AgentResult, register
+from aegis.agents.registry import (
+    AgentContext,
+    AgentResult,
+    Domain,
+    FunctionAgentAdapter,
+    register,
+)
 from aegis.config import load_config
+from aegis.effects import Effect
 from aegis.integrations.cai_loader import load_cai
 
 
@@ -49,66 +56,64 @@ def _invoke_cai(agent_attr: str, prompt: str, context: AgentContext) -> AgentRes
         )
 
 
-def _wired(name: str, domain: str, cai_attr: str):
-    class _Wired:
-        pass
-
-    adapter = _Wired()
-    adapter.name = name
-    adapter.domain = domain
-    adapter.wired = True
-
-    def invoke(self, prompt: str, context: AgentContext) -> AgentResult:
+def _wired(name: str, domain: Domain, effect: Effect,
+           cai_attr: str) -> FunctionAgentAdapter:
+    def invoke(prompt: str, context: AgentContext) -> AgentResult:
         return _invoke_cai(cai_attr, prompt, context)
 
-    _Wired.invoke = invoke
-    return adapter
+    return FunctionAgentAdapter(
+        name=name, domain=domain, effect=effect, wired=True, fn=invoke,
+    )
 
 
-def _not_wired(name: str, domain: str):
-    class _Stub:
-        pass
-
-    adapter = _Stub()
-    adapter.name = name
-    adapter.domain = domain
-    adapter.wired = False
-
-    def invoke(self, prompt: str, context: AgentContext) -> AgentResult:
+def _not_wired(name: str, domain: Domain,
+               effect: Effect) -> FunctionAgentAdapter:
+    def invoke(prompt: str, context: AgentContext) -> AgentResult:
         return AgentResult(
             status="not_wired",
             output=f"agent {name!r} is registered but not wired",
         )
 
-    _Stub.invoke = invoke
-    return adapter
+    return FunctionAgentAdapter(
+        name=name, domain=domain, effect=effect, wired=False, fn=invoke,
+    )
 
 
-# Wired agents (Phase 3 surface): codeagent, blueteam_agent confirmed in CAI;
-# the remaining names match cai.agents.* attribute conventions.
-_WIRED = [
-    ("codeagent", "remediation", "codeagent"),
-    ("blueteam_agent", "defensive", "blueteam_agent"),
-    ("bug_bounter", "offensive", "codeagent"),       # CAI symbol; falls through if unavailable
-    ("red_teamer", "offensive", "codeagent"),
-    ("dfir", "forensic", "blueteam_agent"),
-    ("retester", "audit", "codeagent"),
-    ("reporter", "audit", "blueteam_agent"),
-    ("web_pentester", "offensive", "codeagent"),
-    ("memory_analysis", "forensic", "memory_analysis_agent"),
-    ("network_traffic_analyzer", "forensic", "network_security_analyzer_agent"),
-    ("reverse_engineering", "forensic", "reverse_engineering_agent"),
-    ("android_sast_agent", "offensive", "android_sast"),
-    ("subghz_sdr_agent", "offensive", "subghz_sdr_agent"),
-    ("wifi_security_tester", "offensive", "wifi_security_agent"),
-    ("replay_attack_agent", "offensive", "replay_attack_agent"),
+# Wired agents: each slot maps to its real CAI agent (no fallbacks). The six
+# specialist slots previously fell through to codeagent/blueteam_agent; they now
+# resolve to the named upstream agents the loader imports, and recon is composed
+# from read-only recon tools. Unavailable agents degrade to None in the loader
+# and surface as status="error" at dispatch, never a silent mis-wire.
+#
+# The 3rd column is the *effect class* (aegis.effects) that drives the human
+# gate. It is not a function of the domain: an android-SAST agent is offensive
+# by domain but only reads bytecode (read), while the re-tester is audit by
+# domain but re-fires exploits to verify a fix (active). Getting this column
+# right is what keeps an exploit or a live change from running un-approved.
+_WIRED: list[tuple[str, Domain, Effect, str]] = [
+    ("codeagent", "remediation", "read", "codeagent"),
+    ("blueteam_agent", "defensive", "active", "blueteam_agent"),
+    ("bug_bounter", "offensive", "active", "bug_bounter_agent"),
+    ("red_teamer", "offensive", "active", "redteam_agent"),
+    ("dfir", "forensic", "read", "dfir_agent"),
+    ("retester", "audit", "active", "retester_agent"),
+    ("reporter", "audit", "read", "reporting_agent"),
+    ("web_pentester", "offensive", "active", "web_pentester_agent"),
+    ("recon", "recon", "read", "recon_agent"),
+    ("memory_analysis", "forensic", "read", "memory_analysis_agent"),
+    ("network_traffic_analyzer", "forensic", "read", "network_security_analyzer_agent"),
+    ("reverse_engineering", "forensic", "read", "reverse_engineering_agent"),
+    ("android_sast_agent", "offensive", "read", "android_sast"),
+    ("subghz_sdr_agent", "offensive", "active", "subghz_sdr_agent"),
+    ("wifi_security_tester", "offensive", "active", "wifi_security_agent"),
+    ("replay_attack_agent", "offensive", "active", "replay_attack_agent"),
 ]
 
-_NOT_WIRED = []
+_NOT_WIRED: list[tuple[str, Domain, Effect]] = []
 
 
-for name, domain, cai_attr in _WIRED:
-    register(_wired(name, domain, cai_attr))
+for name, domain, effect, cai_attr in _WIRED:
+    register(_wired(name, domain, effect, cai_attr))
 
-for name, domain in _NOT_WIRED:
-    register(_not_wired(name, domain))
+for name, domain, effect in _NOT_WIRED:
+    register(_not_wired(name, domain, effect))

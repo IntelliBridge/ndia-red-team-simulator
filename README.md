@@ -65,8 +65,8 @@ the entire trail on `aegis audit verify ✓`.
 
 ## Where Aegis is today
 
-Aegis is **operational software**, not a vision deck. The v0.5.1 tag
-shipped May 2026 with 1086 tests passing (18 skipped offline) on Python
+Aegis is **operational software**, not a vision deck. The v0.11.0 tag
+shipped June 2026 with 1253 tests passing (18 skipped offline) on Python
 3.12 and 3.13.
 
 | Capability | Status |
@@ -77,14 +77,17 @@ shipped May 2026 with 1086 tests passing (18 skipped offline) on Python
 | CSRF double-submit, CSP-hardened HTML reports, WS Origin gate | ✅ Shipped |
 | Hash-chained audit log with CLI / admin verifier | ✅ Shipped |
 | GitHub PR-scoped scans with fork-restricted mode | ✅ Shipped |
-| Three-profile observability (Postgres mirror / Loki / Elasticsearch) | ✅ Shipped |
-| Scanner adapters: Strix · Trivy · Semgrep · Nuclei · ZAP · CodeQL · Bandit · Grype · Checkov · Trufflehog · SonarQube · Syft · Bumblebee | ✅ Shipped |
+| Three-profile observability (Postgres mirror / Loki / Elasticsearch) + OTel security-log pipeline (host audit sources, secrets redacted before export) | ✅ Shipped |
+| Scanner adapters: Strix · Trivy · Semgrep · Nuclei · ZAP · CodeQL · Bandit · Grype · Checkov · Trufflehog · SonarQube · Syft · Bumblebee · Deepsec | ✅ Shipped |
 | Kali toolbelt via MCP — nmap, sqlmap, nikto, hydra, +6 more | ✅ Shipped |
-| CAI agents: 15 wired (CodeAgent, BlueteamAgent, +13) | ✅ Shipped |
+| CAI agents: 16 wired + 3 multi-agent patterns (offsec / redteam-swarm / bb-triage), runnable via `POST /v1/agents/{name}/run`; active specialists reach the live Kali belt over MCP | ✅ Shipped |
+| Unified human-in-the-loop gate (propose → approve → act) across agents, Kali tools, and remediation | ✅ Shipped |
+| Agentic remediation strategy (vuln-fixer engine) — diff by default, opens the human-reviewed PR on approval | ✅ Shipped |
+| Multi-format finding ingestion (Snyk · Veracode · Trivy · SARIF → `AegisFinding`) | ✅ Shipped |
 | Per-task LLM routing with budget caps | ✅ Shipped |
-| `@aegis/design-system` workspace + Storybook | ✅ Shipped |
+| `@aegis/design-system` workspace + Storybook — curated domain components over ported shadcn base primitives (table / card / alert / input / …) | ✅ Shipped |
 | 60+ specialized agents (full roster from the OnePager) | 🔨 Roadmap |
-| 35+ security tools (currently 23: 10 Kali + 13 scanner adapters) | 🔨 Roadmap |
+| 35+ security tools (currently 24: 10 Kali + 14 scanner adapters) | 🔨 Roadmap |
 | Authenticated DAST flows | 🔨 Roadmap |
 | Sandbox isolation per scan (gVisor / Firecracker) | 🔨 Roadmap |
 
@@ -298,15 +301,23 @@ Full per-release detail in [`CHANGELOG.md`](CHANGELOG.md).
 
 ```
 aegis/                  Python package — services, API, workers, audit
+  agents/               CAI agent definitions + multi-agent patterns
   api/                  FastAPI app + routes + middleware
   audit/                hash-chained audit (chain, writers, forensic)
   cli/                  argparse entry point + --api dispatch client
   db/                   SQLAlchemy models + Alembic migrations
+  integrations/         external service clients (GitHub App, …)
+  llm/                  per-task LLM routing + budget caps
   log_ingest/           OTLP/Logs → Postgres mirror service
+  migrate/              data / schema migration helpers
   policy/               CI gate policy (no Celery dependency)
   remediate/            CAI runner + patch / deps workflows
+  runners/              subprocess runners + finding converter (Strix, Trivy, vuln-fixer)
   scanners/             scanner adapters (Strix, Trivy, Semgrep, Nuclei)
   services/             admission + execution services (CLI + API + worker)
+  state/                run-state persistence (RunStateAPI Protocol, filesystem + Postgres backends, open_run_state factory)
+  storage/              pluggable blob storage (BlobStore Protocol, filesystem + S3/MinIO backends, open_blob_store factory)
+  tools/                Kali toolbelt + MCP tool wrappers
   workers/              Celery tasks + bootstrap
 
 web/                    Next.js 14 app (@aegis/web workspace package)

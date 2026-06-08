@@ -78,6 +78,17 @@ def compute_hash(prev_hash_hex: str | None, record: dict[str, Any]) -> str:
     return digest
 
 
+def _chain_id(project_id: str | None, run_id: str | None) -> str:
+    """Resolve an event's hash-chain id: per run, else per project, else the
+    install-wide ``system`` chain. Shared by every writer backend so the
+    keying can't drift between them."""
+    if run_id:
+        return f"run:{run_id}"
+    if project_id:
+        return f"project:{project_id}"
+    return "system"
+
+
 # ----------------------------------------------------------------------------
 # Writer Protocol + backends
 # ----------------------------------------------------------------------------
@@ -91,6 +102,8 @@ class AuditWriter(Protocol):
                project_id: str | None = None) -> AuditEvent: ...
 
     def read_chain(self, chain_id: str) -> Iterable[dict[str, Any]]: ...
+
+    def iter_chain_ids(self) -> Iterator[str]: ...
 
 
 class JsonlAuditWriter:
@@ -117,13 +130,6 @@ class JsonlAuditWriter:
         self._single_file = single_file
         self._locks: dict[str, threading.Lock] = {}
         self._global_lock = threading.Lock()
-
-    def _chain_id(self, project_id: str | None, run_id: str | None) -> str:
-        if run_id:
-            return f"run:{run_id}"
-        if project_id:
-            return f"project:{project_id}"
-        return "system"
 
     def _path(self, chain_id: str) -> Path:
         if self._single_file is not None:
@@ -158,7 +164,7 @@ class JsonlAuditWriter:
                detail: dict[str, Any],
                run_id: str | None = None,
                project_id: str | None = None) -> AuditEvent:
-        chain_id = self._chain_id(project_id, run_id)
+        chain_id = _chain_id(project_id, run_id)
         redacted_detail = redact_audit_detail(detail or {})
         with self._lock(chain_id):
             prev_seq, prev_hash = self._last(chain_id)
@@ -214,13 +220,6 @@ class PostgresAuditWriter:
         # session_factory: callable returning a context manager that yields a Session.
         self.session_factory = session_factory
 
-    def _chain_id(self, project_id: str | None, run_id: str | None) -> str:
-        if run_id:
-            return f"run:{run_id}"
-        if project_id:
-            return f"project:{project_id}"
-        return "system"
-
     def append(self, *, action: str, actor: str, target: str | None,
                allowlist_check: str, override: bool, success: bool,
                detail: dict[str, Any],
@@ -231,7 +230,7 @@ class PostgresAuditWriter:
         from aegis.db.models import AuditChainHead
         from aegis.db.models import AuditEvent as AEModel
 
-        chain_id = self._chain_id(project_id, run_id)
+        chain_id = _chain_id(project_id, run_id)
         redacted_detail = redact_audit_detail(detail or {})
 
         with self.session_factory() as sess:
@@ -365,6 +364,47 @@ def verify_chain(events: Iterable[dict[str, Any]]) -> VerificationResult:
 
 
 # ----------------------------------------------------------------------------
+# In-memory writer (tests)
+# ----------------------------------------------------------------------------
+
+
+class InMemoryAuditWriter:
+    """Test-only writer that collects events into ``self.events`` for
+    assertions. Implements the ``AuditWriter`` Protocol; ``resolve_writer``
+    selects it when ``AEGIS_TEST_AUDIT=memory``.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[AuditEvent] = []
+        self._chains: dict[str, list[dict[str, Any]]] = {}
+
+    def append(self, *, action: str, actor: str, target: str | None,
+               allowlist_check: str, override: bool, success: bool,
+               detail: dict[str, Any],
+               run_id: str | None = None,
+               project_id: str | None = None) -> AuditEvent:
+        chain_id = _chain_id(project_id, run_id)
+        seq = len(self._chains.get(chain_id, [])) + 1
+        event = AuditEvent(
+            chain_id=chain_id, seq=seq,
+            ts=datetime.now(timezone.utc).isoformat(),
+            actor=actor, action=action, target=target,
+            allowlist_check=allowlist_check, override=override,
+            success=success, detail=dict(detail or {}),
+            run_id=run_id, project_id=project_id,
+        )
+        self.events.append(event)
+        self._chains.setdefault(chain_id, []).append(event.to_record())
+        return event
+
+    def read_chain(self, chain_id: str) -> Iterator[dict[str, Any]]:
+        return iter(self._chains.get(chain_id, []))
+
+    def iter_chain_ids(self) -> Iterator[str]:
+        return iter(self._chains.keys())
+
+
+# ----------------------------------------------------------------------------
 # Writer resolution
 # ----------------------------------------------------------------------------
 
@@ -372,10 +412,22 @@ def verify_chain(events: Iterable[dict[str, Any]]) -> VerificationResult:
 def resolve_writer(config_or_dir) -> AuditWriter:
     """Pick the writer based on environment / config.
 
-    When ``AEGIS_DB_URL`` is set, returns ``PostgresAuditWriter`` over the
-    initialised session factory. Otherwise returns ``JsonlAuditWriter``
-    rooted at ``<output_dir>/audit/``.
+    Resolution order:
+
+    - ``AEGIS_TEST_AUDIT=memory`` → ``InMemoryAuditWriter`` (test seam).
+    - ``AEGIS_DB_URL`` set → ``PostgresAuditWriter`` over the initialised
+      session factory.
+    - otherwise → ``JsonlAuditWriter`` rooted at ``<output_dir>/audit/``,
+      where ``output_dir`` is ``config_or_dir.output_dir`` (a config
+      object) or ``config_or_dir`` itself (a path).
+
+    This is the single audit-writer selector — the duplicate
+    ``aegis.audit.writers.open_writer`` was folded in here during the F7
+    cleanup. Request-scoped callers pass the result to
+    ``authorize(writer=…)``.
     """
+    if os.environ.get("AEGIS_TEST_AUDIT") == "memory":
+        return InMemoryAuditWriter()
     db_url = os.environ.get("AEGIS_DB_URL")
     if db_url:
         from aegis.db.session import get_session, init_engine

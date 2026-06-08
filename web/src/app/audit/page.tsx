@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import useSWR from "swr";
 
 import { AuditChainBadge } from "@aegis/design-system";
 import { api } from "@/lib/api";
-import { requireAuth } from "@/lib/auth";
+import { useRequireAuth } from "@/hooks/useRequireAuth";
 
 interface ChainStatus {
   chain_id: string;
@@ -22,11 +20,7 @@ interface VerifyResponse {
 const fetcher = (path: string) => api<VerifyResponse>(path);
 
 export default function AuditPage() {
-  const router = useRouter();
-  const [authed, setAuthed] = useState(false);
-  useEffect(() => {
-    if (requireAuth(router)) setAuthed(true);
-  }, [router]);
+  const authed = useRequireAuth();
 
   // The /v1/audit/verify endpoint walks every chain the writer knows.
   // Admin-only; non-admins get 403 from the API.

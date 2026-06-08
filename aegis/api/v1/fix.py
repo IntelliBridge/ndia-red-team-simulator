@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 
 from aegis.api.auth import CurrentUser, get_current_user
 from aegis.api.policy import Action, check
@@ -14,10 +17,17 @@ from aegis.services.fixes import create_fix_job
 router = APIRouter(prefix="/findings", tags=["fix"])
 
 
+class FixBody(BaseModel):
+    strategy: str = "patch"
+    apply: bool = False
+    open_pr: bool = False
+    repo: str | None = None
+
+
 @router.post("/{finding_id}/fix")
 def fix(finding_id: str,
-        body: dict = Body(default_factory=dict),
-        user: CurrentUser = Depends(get_current_user)):
+        body: FixBody = FixBody(),
+        user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """F6 admission entry — looks up the finding, runs RBAC, then
     delegates to ``services.fixes.create_fix_job``.
     """
@@ -32,17 +42,21 @@ def fix(finding_id: str,
         project_id = finding.project_id
         run_id = finding.run_id
 
-    strategy = body.get("strategy", "patch")
-    apply = bool(body.get("apply", False))
+    strategy = body.strategy
+    apply = bool(body.apply)
     check(user, Action.FIX_APPLY if apply else Action.FIX_GENERATE,
           project_id)
 
     config = load_config()
     try:
         handle = create_fix_job(
-            finding_id=finding_id, strategy=strategy,
-            apply=apply, open_pr=bool(body.get("open_pr", False)),
-            repo=body.get("repo"),
+            # ``strategy`` is a free-form ``str`` here (any value accepted,
+            # exactly as the previous raw-dict body did); the service maps
+            # unknown strategies to an error outcome at runtime rather than
+            # rejecting them, so we don't narrow to the ``Strategy`` Literal.
+            finding_id=finding_id, strategy=strategy,  # type: ignore[arg-type]
+            apply=apply, open_pr=bool(body.open_pr),
+            repo=body.repo,
             project_id=project_id, run_id=run_id,
             actor=f"user:{user.sub}",
             config=config,
@@ -50,6 +64,6 @@ def fix(finding_id: str,
         )
     except AuthorizationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail=str(exc))
+                            detail=str(exc)) from exc
 
-    return {"job_id": handle.job_id, "run_id": handle.run_id}
+    return handle.to_response()

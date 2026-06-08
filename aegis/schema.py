@@ -1,6 +1,17 @@
+"""Aegis domain schema: ``AegisFinding``, ``CodeLocation``, and the shared
+severity/status/confidence vocabularies they are typed against."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from typing import Any, Literal
+
+Severity = Literal["critical", "high", "medium", "low"]
+FindingType = Literal[
+    "dependency", "sast", "dast", "runtime", "config", "code", "code_audit", "supply_chain"
+]
+Status = Literal["open", "fixing", "fixed", "failed", "false_positive"]
+Confidence = Literal["high", "medium", "low"]
 
 
 @dataclass
@@ -13,7 +24,7 @@ class CodeLocation:
     fix_before: str | None = None
     fix_after: str | None = None
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
@@ -26,14 +37,14 @@ class AegisFinding:
     # Required fields
     id: str
     title: str
-    severity: str                    # critical|high|medium|low
-    finding_type: str                # dependency|sast|dast|runtime|config
+    severity: Severity
+    finding_type: FindingType
     description: str
     source_tool: str                 # strix|cai|manual
     source_run_id: str
     affected_component: str          # package name, endpoint, file path
-    confidence: str                  # high|medium|low
-    status: str                      # open|fixing|fixed|failed|false_positive
+    confidence: Confidence
+    status: Status
     created_at: str                  # ISO 8601
     updated_at: str                  # ISO 8601
 
@@ -69,11 +80,8 @@ class AegisFinding:
                 and self.package_name is not None
                 and self.installed_version is not None)
 
-    def to_dict(self) -> dict:
-        d = {}
-        for k, v in asdict(self).items():
-            d[k] = v
-        return d
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> AegisFinding:

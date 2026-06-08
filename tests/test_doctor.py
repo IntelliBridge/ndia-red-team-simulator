@@ -1,3 +1,4 @@
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -35,28 +36,36 @@ class TestDoctorProviderAware(unittest.TestCase):
     def test_gemini_requires_gemini_key_only(self):
         cfg = self._config("gemini/gemini-2.5-flash")
         with patch.dict("os.environ", {"GOOGLE_API_KEY": "x"}, clear=True), \
-             patch("aegis.doctor._cmd_version", return_value="Docker version 25"), \
+             patch("aegis.doctor.subprocess.run",
+                   return_value=subprocess.CompletedProcess(
+                       args=[], returncode=0, stdout="Docker version 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")):
             self.assertTrue(run_doctor(cfg))
 
     def test_openai_does_not_require_gemini_key(self):
         cfg = self._config("openai/gpt-4o")
         with patch.dict("os.environ", {"OPENAI_API_KEY": "x"}, clear=True), \
-             patch("aegis.doctor._cmd_version", return_value="Docker version 25"), \
+             patch("aegis.doctor.subprocess.run",
+                   return_value=subprocess.CompletedProcess(
+                       args=[], returncode=0, stdout="Docker version 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")):
             self.assertTrue(run_doctor(cfg))
 
     def test_openai_fails_without_openai_key(self):
         cfg = self._config("openai/gpt-4o")
         with patch.dict("os.environ", {}, clear=True), \
-             patch("aegis.doctor._cmd_version", return_value="Docker version 25"), \
+             patch("aegis.doctor.subprocess.run",
+                   return_value=subprocess.CompletedProcess(
+                       args=[], returncode=0, stdout="Docker version 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")):
             self.assertFalse(run_doctor(cfg))
 
     def test_anthropic_requires_anthropic_key(self):
         cfg = self._config("anthropic/claude-3-5-sonnet")
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "x"}, clear=True), \
-             patch("aegis.doctor._cmd_version", return_value="Docker version 25"), \
+             patch("aegis.doctor.subprocess.run",
+                   return_value=subprocess.CompletedProcess(
+                       args=[], returncode=0, stdout="Docker version 25")), \
              patch("aegis.doctor.urlopen", side_effect=OSError("no mcp")):
             self.assertTrue(run_doctor(cfg))
 

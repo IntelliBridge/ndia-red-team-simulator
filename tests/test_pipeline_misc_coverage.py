@@ -5,7 +5,6 @@
 - aegis/remediate/cai_runner.py
 - aegis/log_ingest/server.py
 - aegis/log_ingest/writer.py
-- aegis/audit/writers.py
 - aegis/audit/chain.py
 - aegis/report.py
 - aegis/services/targets.py
@@ -248,7 +247,9 @@ class TestRunStrixDiscoveryFailure(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             from aegis.state import RunState
             state = RunState(tmp, "run-success")
-            events_path = state.run_path / "strix" / "events.jsonl"
+            # Strix writes events under strix_runs/<auto-name>/events.jsonl,
+            # relative to its cwd (the runner sets cwd=strix_dir).
+            events_path = state.run_path / "strix" / "strix_runs" / "auto" / "events.jsonl"
             events_path.parent.mkdir(parents=True, exist_ok=True)
 
             class FakeProc:
@@ -453,10 +454,10 @@ class TestRefBefore(unittest.TestCase):
 
 class TestIsRepoDirtyCalledProcessError(unittest.TestCase):
     def test_called_process_error_returns_true(self):
-        """is_repo_dirty returns True when CalledProcessError is raised by _git."""
+        """is_repo_dirty returns True when git status fails (CalledProcessError)."""
         from aegis.remediate.patch_workflow import is_repo_dirty
         with tempfile.TemporaryDirectory() as tmp, \
-             patch("aegis.remediate.patch_workflow._git",
+             patch("aegis.remediate.patch_workflow.subprocess.run",
                    side_effect=subprocess.CalledProcessError(1, ["git"])):
             result = is_repo_dirty(Path(tmp))
         self.assertTrue(result)
@@ -583,8 +584,9 @@ class TestCommitPatchNoHead(unittest.TestCase):
         finding = _make_finding()
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
-            # patch _ref_before to return None (no HEAD)
-            with patch("aegis.remediate.patch_workflow._ref_before", return_value=None):
+            # rev-parse HEAD fails on a repo with no HEAD → _ref_before is None
+            with patch("aegis.remediate.patch_workflow.subprocess.run",
+                       side_effect=subprocess.CalledProcessError(128, ["git"])):
                 result = commit_patch(repo, finding, "--- a/f\n+++ b/f\n")
         self.assertFalse(result.success)
         self.assertIn("no HEAD", result.error or "")
@@ -594,58 +596,40 @@ class TestCommitPatchNoHead(unittest.TestCase):
         from aegis.remediate.patch_workflow import commit_patch
         finding = _make_finding()
 
-        # Simulate the full sequence of _git calls for a successful commit
-        call_count = {"n": 0}
-
-        def fake_git(repo, args, **kwargs):
-            call_count["n"] += 1
-            result = MagicMock()
-            result.returncode = 0
-            result.stdout = "deadbeef123\n" if "rev-parse" in args else ""
-            result.stderr = ""
-            return result
+        # Mock the subprocess boundary so the real _git/_ref_before chain runs;
+        # every git invocation succeeds (rev-parse yields a hash).
+        def fake_run(argv, **kwargs):
+            stdout = "deadbeef123\n" if "rev-parse" in argv else ""
+            return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
 
         with tempfile.TemporaryDirectory() as tmp, \
-             patch("aegis.remediate.patch_workflow._git", side_effect=fake_git), \
+             patch("aegis.remediate.patch_workflow.subprocess.run",
+                   side_effect=fake_run) as mock_run, \
              patch("aegis.remediate.patch_workflow.is_repo_dirty", return_value=False):
             # diff without trailing newline — should be normalized
             commit_patch(Path(tmp), finding, "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-o\n+n")
-        # The _git calls were made (normalization happened without error)
-        self.assertGreater(call_count["n"], 0)
+        # The git calls were made (normalization happened without error)
+        self.assertGreater(mock_run.call_count, 0)
 
     def test_checkout_failure_returns_error_without_rollback(self):
         """When checkout -B fails, return error CommitResult (branch_created=False so no branch to delete)."""
         from aegis.remediate.patch_workflow import commit_patch
         finding = _make_finding()
 
-        call_count = {"n": 0}
-
-        def fake_git(repo, args, **kwargs):
-            call_count["n"] += 1
-            result = MagicMock()
-            if "checkout" in args and "-B" in args:
-                result.returncode = 1
-                result.stdout = ""
-                result.stderr = "fatal: checkout failed"
-            elif "rev-parse" in args and "HEAD" in args and "--abbrev-ref" not in args:
-                result.returncode = 0
-                result.stdout = "abc123\n"
-            elif "--abbrev-ref" in args:
-                result.returncode = 0
-                result.stdout = "main\n"
-            elif "status" in args:
-                result.returncode = 0
-                result.stdout = ""  # clean
-            else:
-                result.returncode = 0
-                result.stdout = ""
-            result.stderr = result.stderr if hasattr(result, "_stderr_set") else ""
-            return result
+        def fake_run(argv, **kwargs):
+            if "checkout" in argv and "-B" in argv:
+                return subprocess.CompletedProcess(
+                    argv, 1, stdout="", stderr="fatal: checkout failed")
+            if "rev-parse" in argv and "HEAD" in argv and "--abbrev-ref" not in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout="abc123\n", stderr="")
+            if "--abbrev-ref" in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout="main\n", stderr="")
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
         with tempfile.TemporaryDirectory() as tmp, \
-             patch("aegis.remediate.patch_workflow._git", side_effect=fake_git), \
-             patch("aegis.remediate.patch_workflow.is_repo_dirty", return_value=False), \
-             patch("aegis.remediate.patch_workflow._ref_before", return_value="abc123"):
+             patch("aegis.remediate.patch_workflow.subprocess.run",
+                   side_effect=fake_run), \
+             patch("aegis.remediate.patch_workflow.is_repo_dirty", return_value=False):
             result = commit_patch(Path(tmp), finding, "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-o\n+n\n")
         self.assertFalse(result.success)
         # Error should mention checkout
@@ -658,56 +642,29 @@ class TestCommitPatchNoHead(unittest.TestCase):
 
         git_calls = []
 
-        def fake_git(repo, args, **kwargs):
-            git_calls.append(list(args))
-            result = MagicMock()
-            result.returncode = 0
-            result.stdout = "abc123\n"
-            result.stderr = ""
-            if "checkout" in args and "-B" in args:
-                # checkout succeeds
-                pass
-            elif "apply" in args and "--check" in args:
-                # dry-run check fails → triggers rollback
-                result.returncode = 1
-                result.stderr = "patch does not apply"
-            return result
+        def fake_run(argv, **kwargs):
+            git_calls.append(list(argv))
+            if "--abbrev-ref" in argv:
+                # Simulate detached HEAD so rollback takes the --detach path.
+                return subprocess.CompletedProcess(argv, 0, stdout="HEAD\n", stderr="")
+            if "checkout" in argv and "-B" in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+            if "apply" in argv and "--check" in argv:
+                # Force rollback by failing the dry-run check.
+                return subprocess.CompletedProcess(
+                    argv, 1, stdout="", stderr="apply check failed")
+            if "checkout" in argv and "--detach" in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+            if "branch" in argv and "-D" in argv:
+                return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+            # rev-parse HEAD (via _ref_before) and any other call.
+            return subprocess.CompletedProcess(argv, 0, stdout="abc123\n", stderr="")
 
         with tempfile.TemporaryDirectory() as tmp, \
-             patch("aegis.remediate.patch_workflow._git", side_effect=fake_git), \
-             patch("aegis.remediate.patch_workflow.is_repo_dirty", return_value=False), \
-             patch("aegis.remediate.patch_workflow._ref_before", return_value="abc123"):
-            # Simulate detached HEAD: initial_branch_run.stdout = "HEAD\n"
-            # We need abbrev-ref to return "HEAD"
-            call_idx = {"n": 0}
-
-            def fake_git_detached(repo, args, **kwargs):
-                call_idx["n"] += 1
-                git_calls.append(list(args))
-                result = MagicMock()
-                result.returncode = 0
-                result.stderr = ""
-                if "--abbrev-ref" in args:
-                    result.stdout = "HEAD\n"  # detached HEAD
-                elif "checkout" in args and "-B" in args:
-                    result.returncode = 0
-                    result.stdout = ""
-                elif "apply" in args and "--check" in args:
-                    # Force rollback by failing the check
-                    result.returncode = 1
-                    result.stderr = "apply check failed"
-                elif "checkout" in args and "--detach" in args:
-                    result.stdout = ""  # rollback detach
-                elif "branch" in args and "-D" in args:
-                    result.stdout = ""
-                else:
-                    result.stdout = "abc123\n"
-                return result
-
-            with patch("aegis.remediate.patch_workflow._git", side_effect=fake_git_detached), \
-                 patch("aegis.remediate.patch_workflow.is_repo_dirty", return_value=False), \
-                 patch("aegis.remediate.patch_workflow._ref_before", return_value="abc123"):
-                result = commit_patch(Path(tmp), finding, "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-o\n+n\n")
+             patch("aegis.remediate.patch_workflow.subprocess.run",
+                   side_effect=fake_run), \
+             patch("aegis.remediate.patch_workflow.is_repo_dirty", return_value=False):
+            result = commit_patch(Path(tmp), finding, "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-o\n+n\n")
 
         self.assertFalse(result.success)
         # Verify --detach was called (rollback took the detached-HEAD path)
@@ -1179,7 +1136,8 @@ class TestLogIngestWriterFlush(unittest.TestCase):
         )
 
     def test_flush_with_session_factory_calls_insert(self):
-        """flush() calls _insert when session_factory is configured."""
+        """flush() drains the queue through the real _insert when a session
+        factory is configured, writing one row object per queued record."""
         from aegis.log_ingest.writer import LogIngestWriter
         inserted = []
 
@@ -1196,14 +1154,18 @@ class TestLogIngestWriterFlush(unittest.TestCase):
         def fake_factory():
             return FakeSession()
 
-        with patch("aegis.log_ingest.writer.LogIngestWriter._insert") as mock_insert:
-            mock_insert.return_value = 2
+        # The real external boundary _insert touches is aegis.db.models.ApplicationLog.
+        fake_log_cls = MagicMock(side_effect=lambda **kw: MagicMock())
+        with patch.dict(sys.modules, {
+            "aegis.db.models": MagicMock(ApplicationLog=fake_log_cls)
+        }):
             writer = LogIngestWriter(session_factory=fake_factory)
             writer.append(self._make_row("a"))
             writer.append(self._make_row("b"))
             n = writer.flush()
         self.assertEqual(n, 2)
         self.assertEqual(writer.inserted_total, 2)
+        self.assertEqual(len(inserted), 2)
 
     def test_flush_empty_queue_is_noop(self):
         """flush() with empty queue returns 0 immediately."""
@@ -1262,10 +1224,11 @@ class TestLogIngestWriterFlush(unittest.TestCase):
         self.assertEqual(row.attrs, {"_truncated": True})
 
     def test_insert_uses_session_factory(self):
-        """_insert is called when flush() drains the queue with a session_factory set.
+        """flush() drains the queue through the session factory when one is set.
 
-        We patch _insert directly so we don't need real DB models, and force
-        a flush call explicitly (bypass the _should_flush heuristic).
+        We mock the DB model boundary (aegis.db.models.ApplicationLog) instead
+        of the private _insert, and force a flush explicitly (bypass the
+        _should_flush heuristic), then assert the row landed via the session.
         """
         from aegis.log_ingest.writer import LogIngestRow, LogIngestWriter
 
@@ -1280,9 +1243,12 @@ class TestLogIngestWriterFlush(unittest.TestCase):
             ts=datetime.now(timezone.utc),
             severity="info", service="svc", message="hi",
         ))
-        with patch.object(writer, "_insert", return_value=1) as mock_ins:
+        with patch.dict(sys.modules, {
+            "aegis.db.models": MagicMock(ApplicationLog=MagicMock())
+        }):
             result = writer.flush()
-        mock_ins.assert_called_once()
+        mock_sess.add_all.assert_called_once()
+        mock_sess.commit.assert_called_once()
         self.assertEqual(result, 1)
         self.assertEqual(writer.inserted_total, 1)
 
@@ -1307,78 +1273,52 @@ class TestLogIngestWriterFlush(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# aegis/audit/writers.py — cover open_writer branches + InMemoryAuditWriter
+# aegis/audit/chain.py — resolve_writer branches + InMemoryAuditWriter
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestOpenWriterBranches(unittest.TestCase):
-    def test_offline_mode_returns_jsonl_writer(self):
-        from aegis.audit.chain import JsonlAuditWriter
-        from aegis.audit.writers import open_writer
-        with tempfile.TemporaryDirectory() as tmp:
-            writer = open_writer("offline", output_dir=tmp)
+class TestResolveWriterBranches(unittest.TestCase):
+    """``resolve_writer`` is the single audit-writer selector (the old
+    ``aegis.audit.writers.open_writer`` duplicate was folded in)."""
+
+    def _clean_env(self):
+        return {k: v for k, v in os.environ.items()
+                if k not in ("AEGIS_DB_URL", "AEGIS_TEST_AUDIT")}
+
+    def test_offline_returns_jsonl_writer(self):
+        from aegis.audit.chain import JsonlAuditWriter, resolve_writer
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.dict(os.environ, self._clean_env(), clear=True):
+            writer = resolve_writer(tmp)
         self.assertIsInstance(writer, JsonlAuditWriter)
 
-    def test_test_mode_returns_in_memory_writer(self):
-        from aegis.audit.writers import InMemoryAuditWriter, open_writer
-        writer = open_writer("test")
-        self.assertIsInstance(writer, InMemoryAuditWriter)
+    def test_config_object_output_dir(self):
+        """A config-like object with .output_dir roots the JSONL writer there."""
+        from aegis.audit.chain import JsonlAuditWriter, resolve_writer
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.dict(os.environ, self._clean_env(), clear=True):
+            writer = resolve_writer(SimpleNamespace(output_dir=tmp))
+        self.assertIsInstance(writer, JsonlAuditWriter)
+        self.assertEqual(writer.directory, Path(tmp) / "audit")
 
-    def test_unknown_mode_raises_value_error(self):
-        from aegis.audit.writers import open_writer
-        with self.assertRaises(ValueError):
-            open_writer("bogus_mode")  # type: ignore
-
-    def test_auto_mode_from_env_test(self):
-        """When AEGIS_TEST_AUDIT=memory, open_writer(None) returns InMemoryAuditWriter."""
-        from aegis.audit.writers import InMemoryAuditWriter, open_writer
+    def test_memory_env_returns_in_memory_writer(self):
+        from aegis.audit.chain import InMemoryAuditWriter, resolve_writer
         with patch.dict(os.environ, {"AEGIS_TEST_AUDIT": "memory"}, clear=False):
-            writer = open_writer()
+            writer = resolve_writer("/tmp/ignored")
         self.assertIsInstance(writer, InMemoryAuditWriter)
 
-    def test_auto_mode_offline_fallback(self):
-        """When no DB URL and no AEGIS_TEST_AUDIT, offline JsonlAuditWriter is returned."""
-        from aegis.audit.chain import JsonlAuditWriter
-        from aegis.audit.writers import open_writer
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("AEGIS_DB_URL", "AEGIS_TEST_AUDIT")}
-        env.pop("AEGIS_DB_URL", None)
-        env.pop("AEGIS_TEST_AUDIT", None)
-        with tempfile.TemporaryDirectory() as tmp, \
-             patch.dict(os.environ, env, clear=True):
-            writer = open_writer(output_dir=tmp)
-        self.assertIsInstance(writer, JsonlAuditWriter)
-
-    def test_offline_uses_env_output_dir(self):
-        """When output_dir is None, AEGIS_OUTPUT_DIR env var is consulted."""
-        from aegis.audit.chain import JsonlAuditWriter
-        from aegis.audit.writers import open_writer
-        with tempfile.TemporaryDirectory() as tmp, \
-             patch.dict(os.environ, {"AEGIS_OUTPUT_DIR": tmp}, clear=False):
-            env = {k: v for k, v in os.environ.items() if k != "AEGIS_DB_URL"}
-            with patch.dict(os.environ, env, clear=True):
-                writer = open_writer("offline")
-        self.assertIsInstance(writer, JsonlAuditWriter)
-
-    def test_api_mode_with_explicit_session_factory(self):
-        """api mode with session_factory provided returns PostgresAuditWriter."""
-        from aegis.audit.chain import PostgresAuditWriter
-        from aegis.audit.writers import open_writer
-        fake_factory = MagicMock()
-        writer = open_writer("api", session_factory=fake_factory)
-        self.assertIsInstance(writer, PostgresAuditWriter)
-
-    def test_worker_mode_with_explicit_session_factory(self):
-        """worker mode with session_factory provided returns PostgresAuditWriter."""
-        from aegis.audit.chain import PostgresAuditWriter
-        from aegis.audit.writers import open_writer
-        fake_factory = MagicMock()
-        writer = open_writer("worker", session_factory=fake_factory)
-        self.assertIsInstance(writer, PostgresAuditWriter)
+    def test_memory_env_takes_precedence_over_db_url(self):
+        """AEGIS_TEST_AUDIT=memory wins even when AEGIS_DB_URL is set."""
+        from aegis.audit.chain import InMemoryAuditWriter, resolve_writer
+        with patch.dict(os.environ,
+                        {"AEGIS_TEST_AUDIT": "memory",
+                         "AEGIS_DB_URL": "postgresql://fake/db"}, clear=False):
+            writer = resolve_writer("/tmp/ignored")
+        self.assertIsInstance(writer, InMemoryAuditWriter)
 
 
 class TestInMemoryAuditWriter(unittest.TestCase):
     def _make_writer(self):
-        from aegis.audit.writers import InMemoryAuditWriter
+        from aegis.audit.chain import InMemoryAuditWriter
         return InMemoryAuditWriter()
 
     def test_append_stores_event(self):
@@ -1765,7 +1705,7 @@ class TestReportEdgeCases(unittest.TestCase):
 
 class TestCreateTarget(unittest.TestCase):
     def _make_audit_writer(self):
-        from aegis.audit.writers import InMemoryAuditWriter
+        from aegis.audit.chain import InMemoryAuditWriter
         return InMemoryAuditWriter()
 
     def test_create_target_calls_authorize_and_db(self):
@@ -1809,7 +1749,7 @@ class TestCreateTarget(unittest.TestCase):
 
 class TestDeleteTarget(unittest.TestCase):
     def _make_audit_writer(self):
-        from aegis.audit.writers import InMemoryAuditWriter
+        from aegis.audit.chain import InMemoryAuditWriter
         return InMemoryAuditWriter()
 
     def test_delete_target_success(self):
@@ -1915,7 +1855,7 @@ class TestDeleteTarget(unittest.TestCase):
 
 class TestCreateFixJob(unittest.TestCase):
     def _make_audit_writer(self):
-        from aegis.audit.writers import InMemoryAuditWriter
+        from aegis.audit.chain import InMemoryAuditWriter
         return InMemoryAuditWriter()
 
     def test_create_fix_job_returns_job_handle(self):
@@ -2190,7 +2130,7 @@ class TestGenerateFix(unittest.TestCase):
                  patch("aegis.services.fixes.authorize"):
                 result = generate_fix(
                     run_state=state, finding=f,
-                    strategy="live", repo=None,
+                    strategy="live", repo=None, apply=True,
                     actor="cli:alice", config=_make_config(),
                     override_authorized=True,
                 )
@@ -2213,7 +2153,7 @@ class TestGenerateFix(unittest.TestCase):
                  patch("aegis.services.fixes.authorize"):
                 result = generate_fix(
                     run_state=state, finding=f,
-                    strategy="live", repo=None,
+                    strategy="live", repo=None, apply=True,
                     actor="cli:alice", config=_make_config(),
                 )
         self.assertFalse(result.success)
@@ -2448,46 +2388,6 @@ class TestAuditChainBlankLineHandling(unittest.TestCase):
         self.assertEqual(events[1]["seq"], 2)
 
 
-class TestAuditWritersAutoDetectDbUrl(unittest.TestCase):
-    """Cover the AEGIS_DB_URL auto-detect branch in open_writer() (line 51)."""
-
-    def test_auto_mode_with_db_url_returns_postgres_writer(self):
-        from aegis.audit.chain import PostgresAuditWriter
-        from aegis.audit.writers import open_writer
-        fake_get_session = MagicMock()
-        # Patch init_engine and get_session to avoid real DB connection
-        with patch("aegis.db.session.init_engine"), \
-             patch("aegis.db.session.get_session", fake_get_session), \
-             patch.dict(os.environ, {"AEGIS_DB_URL": "postgresql://fake/db"},
-                        clear=False):
-            # Clear AEGIS_TEST_AUDIT so the DB_URL branch is hit
-            env = dict(os.environ)
-            env.pop("AEGIS_TEST_AUDIT", None)
-            with patch.dict(os.environ, env, clear=True):
-                writer = open_writer()
-        self.assertIsInstance(writer, PostgresAuditWriter)
-
-    def test_api_mode_no_session_factory_calls_init_engine(self):
-        """api mode without explicit session_factory calls init_engine() + get_session."""
-        from aegis.audit.chain import PostgresAuditWriter
-        from aegis.audit.writers import open_writer
-        fake_get_session = MagicMock()
-        with patch("aegis.db.session.init_engine") as mock_init, \
-             patch("aegis.db.session.get_session", fake_get_session):
-            writer = open_writer("api")
-        mock_init.assert_called_once()
-        self.assertIsInstance(writer, PostgresAuditWriter)
-
-    def test_worker_mode_no_session_factory_calls_init_engine(self):
-        from aegis.audit.chain import PostgresAuditWriter
-        from aegis.audit.writers import open_writer
-        with patch("aegis.db.session.init_engine") as mock_init, \
-             patch("aegis.db.session.get_session", MagicMock()):
-            writer = open_writer("worker")
-        mock_init.assert_called_once()
-        self.assertIsInstance(writer, PostgresAuditWriter)
-
-
 class TestResolveWriterDbUrlBranch(unittest.TestCase):
     """Cover resolve_writer when AEGIS_DB_URL is set (lines 381-383)."""
 
@@ -2503,8 +2403,9 @@ class TestResolveWriterDbUrlBranch(unittest.TestCase):
 
 
 class TestPostgresAuditWriter(unittest.TestCase):
-    """Cover PostgresAuditWriter.append / read_chain / iter_chain_ids / _chain_id
-    using a fully-mocked SQLAlchemy session (no real DB required).
+    """Cover PostgresAuditWriter.append / read_chain / iter_chain_ids plus the
+    shared module-level _chain_id helper, using a fully-mocked SQLAlchemy
+    session (no real DB required).
     """
 
     def _make_writer(self):
@@ -2540,19 +2441,16 @@ class TestPostgresAuditWriter(unittest.TestCase):
         return chain_head_cls, chain_head_instance, ae_model_cls, select_mock
 
     def test_chain_id_run(self):
-        from aegis.audit.chain import PostgresAuditWriter
-        writer = PostgresAuditWriter(session_factory=MagicMock())
-        self.assertEqual(writer._chain_id(None, "r1"), "run:r1")
+        from aegis.audit.chain import _chain_id
+        self.assertEqual(_chain_id(None, "r1"), "run:r1")
 
     def test_chain_id_project(self):
-        from aegis.audit.chain import PostgresAuditWriter
-        writer = PostgresAuditWriter(session_factory=MagicMock())
-        self.assertEqual(writer._chain_id("proj-1", None), "project:proj-1")
+        from aegis.audit.chain import _chain_id
+        self.assertEqual(_chain_id("proj-1", None), "project:proj-1")
 
     def test_chain_id_system(self):
-        from aegis.audit.chain import PostgresAuditWriter
-        writer = PostgresAuditWriter(session_factory=MagicMock())
-        self.assertEqual(writer._chain_id(None, None), "system")
+        from aegis.audit.chain import _chain_id
+        self.assertEqual(_chain_id(None, None), "system")
 
     def test_append_new_head(self):
         """append() with no existing head creates a new AuditChainHead row."""

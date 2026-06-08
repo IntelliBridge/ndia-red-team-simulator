@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
 
 from aegis.schema import AegisFinding
-from aegis.state import RunState
+
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
 
 _SEVERITY_ORDER = ["critical", "high", "medium", "low"]
 
@@ -28,7 +32,7 @@ def _resolve_target(findings: list[AegisFinding]) -> str:
     return "Unknown"
 
 
-def _load_remediation_log(run_state: RunState) -> list[dict] | None:
+def _load_remediation_log(run_state: RunStateAPI) -> list[dict] | None:
     """Load remediation log if it exists, otherwise return None."""
     path = run_state.remediation_log_path
     if not path.exists():
@@ -38,7 +42,7 @@ def _load_remediation_log(run_state: RunState) -> list[dict] | None:
     return data if data else None
 
 
-def _load_stage_table(run_state: RunState) -> list[dict] | None:
+def _load_stage_table(run_state: RunStateAPI) -> list[dict] | None:
     path = run_state.run_path / "stage_table.json"
     if not path.exists():
         return None
@@ -46,7 +50,7 @@ def _load_stage_table(run_state: RunState) -> list[dict] | None:
     return data.get("stages") or None
 
 
-def _load_verify_results(run_state: RunState) -> dict[str, dict]:
+def _load_verify_results(run_state: RunStateAPI) -> dict[str, dict]:
     verify_dir = run_state.run_path / "verify"
     if not verify_dir.exists():
         return {}
@@ -56,7 +60,7 @@ def _load_verify_results(run_state: RunState) -> dict[str, dict]:
     return out
 
 
-def _load_evidence(run_state: RunState, finding_id: str) -> dict[str, dict] | None:
+def _load_evidence(run_state: RunStateAPI, finding_id: str) -> dict[str, dict] | None:
     evidence_dir = run_state.run_path / "artifacts" / "evidence" / finding_id
     if not evidence_dir.exists():
         return None
@@ -72,7 +76,7 @@ def _load_evidence(run_state: RunState, finding_id: str) -> dict[str, dict] | No
 # Markdown report
 # ---------------------------------------------------------------------------
 
-def generate_markdown_report(run_state: RunState, findings: list[AegisFinding]) -> str:
+def generate_markdown_report(run_state: RunStateAPI, findings: list[AegisFinding]) -> str:
     """Produce a full markdown security assessment report."""
     target = _resolve_target(findings)
     date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -227,7 +231,7 @@ def generate_markdown_report(run_state: RunState, findings: list[AegisFinding]) 
 # JSON report
 # ---------------------------------------------------------------------------
 
-def generate_json_report(run_state: RunState, findings: list[AegisFinding]) -> dict:
+def generate_json_report(run_state: RunStateAPI, findings: list[AegisFinding]) -> dict[str, Any]:
     """Produce a structured JSON-serialisable report dict."""
     target = _resolve_target(findings)
     severity_counts = Counter(f.severity.lower() for f in findings)
@@ -279,6 +283,20 @@ hr { border: none; border-top: 1px dashed #ccc; margin: 1.5rem 0; }
 """
 
 
+def html_escape(s: str) -> str:
+    return (s.replace("&", "&amp;").replace("<", "&lt;")
+             .replace(">", "&gt;"))
+
+
+def render_inline_markdown(s: str) -> str:
+    s = html_escape(s)
+    # bold **x**
+    s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+    # inline code `x`
+    s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+    return s
+
+
 def _md_to_html_min(md: str) -> str:
     """Minimal Markdown → HTML so we don't introduce a heavy dependency.
 
@@ -306,20 +324,6 @@ def _md_to_html_min(md: str) -> str:
         table_rows = []
         in_table = False
 
-    def html_escape(s: str) -> str:
-        return (s.replace("&", "&amp;").replace("<", "&lt;")
-                 .replace(">", "&gt;"))
-
-    def inline(s: str) -> str:
-        s = html_escape(s)
-        # bold **x**
-        s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
-        # inline code `x`
-        s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
-        return s
-
-    import re
-
     for raw in md.splitlines():
         line = raw.rstrip()
         if line.startswith("```"):
@@ -339,7 +343,7 @@ def _md_to_html_min(md: str) -> str:
             if not in_table:
                 in_table = True
                 table_rows = []
-            cells = [c for c in line.strip("|").split("|")]
+            cells = line.strip("|").split("|")
             # skip the markdown separator row like |---|---|
             if all(set(c.strip()) <= set("-:") for c in cells):
                 continue
@@ -349,19 +353,19 @@ def _md_to_html_min(md: str) -> str:
             flush_table()
 
         if line.startswith("# "):
-            out.append(f"<h1>{inline(line[2:])}</h1>")
+            out.append(f"<h1>{render_inline_markdown(line[2:])}</h1>")
         elif line.startswith("## "):
-            out.append(f"<h2>{inline(line[3:])}</h2>")
+            out.append(f"<h2>{render_inline_markdown(line[3:])}</h2>")
         elif line.startswith("### "):
-            out.append(f"<h3>{inline(line[4:])}</h3>")
+            out.append(f"<h3>{render_inline_markdown(line[4:])}</h3>")
         elif line.startswith("#### "):
-            out.append(f"<h4>{inline(line[5:])}</h4>")
+            out.append(f"<h4>{render_inline_markdown(line[5:])}</h4>")
         elif line.strip() == "---":
             out.append("<hr/>")
         elif line.strip() == "":
             out.append("")
         else:
-            out.append(f"<p>{inline(line)}</p>")
+            out.append(f"<p>{render_inline_markdown(line)}</p>")
     if in_table:
         flush_table()
     if in_code:
@@ -369,7 +373,7 @@ def _md_to_html_min(md: str) -> str:
     return "\n".join(out)
 
 
-def generate_html_report(run_state: RunState, findings: list[AegisFinding]) -> str:
+def generate_html_report(run_state: RunStateAPI, findings: list[AegisFinding]) -> str:
     md = generate_markdown_report(run_state, findings)
     body = _md_to_html_min(md)
     return (
@@ -379,7 +383,7 @@ def generate_html_report(run_state: RunState, findings: list[AegisFinding]) -> s
     )
 
 
-def save_reports(run_state: RunState, findings: list[AegisFinding],
+def save_reports(run_state: RunStateAPI, findings: list[AegisFinding],
                  *, html: bool = True) -> tuple[str, str]:
     """Generate and persist markdown + JSON (+ optional HTML) reports.
 
@@ -395,13 +399,7 @@ def save_reports(run_state: RunState, findings: list[AegisFinding],
     json_path.write_text(json.dumps(json_content, indent=2))
 
     if html:
-        html_content = (
-            "<!doctype html><html><head><meta charset=\"utf-8\">"
-            f"<title>Aegis Report — {run_state.run_id}</title>"
-            f"<style>{_HTML_CSS}</style></head><body>"
-            f"{_md_to_html_min(md_content)}"
-            "</body></html>"
-        )
+        html_content = generate_html_report(run_state, findings)
         (run_state.run_path / "report.html").write_text(html_content)
 
     return str(md_path), str(json_path)

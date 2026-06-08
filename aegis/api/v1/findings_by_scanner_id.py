@@ -16,6 +16,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
 from aegis.api.auth import CurrentUser, get_current_user
+from aegis.api.policy import ensure_project_access
+from aegis.api.v1.findings import _finding_to_dict
 
 router = APIRouter(prefix="/findings", tags=["findings"])
 
@@ -43,17 +45,5 @@ def lookup_by_scanner_id(
                 detail=(f"no finding with scanner_finding_id={scanner_id!r} "
                         f"on run {run!r}"),
             )
-        if (row.project_id not in user.project_memberships
-                and not user.is_system):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                                detail="no access to this project")
-        return {
-            "id": row.id,
-            "scanner_finding_id": row.scanner_finding_id,
-            "run_id": row.run_id,
-            "project_id": row.project_id,
-            "severity": row.severity,
-            "status": row.status,
-            "validation_state": row.validation_state,
-            "schema_blob": row.schema_blob,
-        }
+        ensure_project_access(user, row.project_id)
+        return _finding_to_dict(row, scanner_finding_id=True)

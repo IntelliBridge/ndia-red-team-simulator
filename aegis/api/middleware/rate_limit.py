@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from fastapi import Request
+
+    from aegis.api.settings import APISettings
 
 
 class _Bucket:
@@ -39,29 +44,66 @@ def _bucket(key: str, capacity: int, refill_per_min: int) -> _Bucket:
         return _BUCKETS[key]
 
 
-def rate_limit_middleware(user_per_min: int = 30,
-                          project_per_min: int = 120) -> Callable:
-    """Return an ASGI middleware closure."""
-    from fastapi import Request
-    from fastapi.responses import JSONResponse
+# Throttle every mutating request under ``/v1`` except a small
+# liveness/ingress allowlist. Gating on method + prefix (rather than a
+# hand-maintained list of write paths) keeps new write routes throttled by
+# default instead of silently un-limited as routes are added.
+_THROTTLED_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_THROTTLE_EXCLUDE = ("/v1/health", "/v1/webhooks/")
 
-    write_paths = (
-        "/v1/scans", "/v1/findings/", "/v1/runs/", "/v1/targets",
-        "/v1/tools/",
+
+def _is_throttled(method: str, path: str) -> bool:
+    return (
+        method in _THROTTLED_METHODS
+        and path.startswith("/v1")
+        and not path.startswith(_THROTTLE_EXCLUDE)
     )
 
+
+def _principal_key(request: "Request", settings: "APISettings | None") -> str:
+    """Bucket key identifying the caller.
+
+    Resolves the caller to its authenticated subject the same way the
+    route handlers do (bearer token, then session cookie); unauthenticated
+    or unresolvable callers fall back to their client IP. Keying off the
+    verified principal closes the spoof where any client could set an
+    arbitrary ``X-Aegis-User`` header to dodge or poison a bucket.
+    """
+    if settings is not None:
+        from aegis.api.auth import _resolve_from_cookie, _resolve_from_token
+        try:
+            auth = request.headers.get("authorization")
+            if auth and auth.lower().startswith("bearer "):
+                token = auth.split(" ", 1)[1].strip()
+                return f"sub:{_resolve_from_token(token, settings).sub}"
+            cookie = request.cookies.get(settings.api_session_cookie_name)
+            if cookie:
+                return f"sub:{_resolve_from_cookie(cookie, settings).sub}"
+        except Exception:
+            pass
+    client = request.client
+    return f"ip:{client.host if client else 'unknown'}"
+
+
+def rate_limit_middleware(user_per_min: int = 30,
+                          project_per_min: int = 120,
+                          settings: "APISettings | None" = None) -> Callable:
+    """Return an ASGI middleware closure."""
+    from fastapi.responses import JSONResponse
+
     async def middleware(request: "Request", call_next):
-        if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
-            return await call_next(request)
-        path = request.url.path
-        if not any(path.startswith(p) for p in write_paths):
+        if not _is_throttled(request.method, request.url.path):
             return await call_next(request)
 
-        user_id = request.headers.get("X-Aegis-User", "anonymous")
+        principal = _principal_key(request, settings)
+        user_bucket = _bucket(f"u:{principal}", user_per_min, user_per_min)
+        # The project comes from a client-supplied query param, so a global
+        # ``p:{project}`` key would let any caller drain another tenant's shared
+        # bucket by passing ``?project=<victim>`` (cross-tenant DoS). Scope the
+        # key by principal too: a per-(principal, project) cap that a client
+        # can't turn against projects it doesn't own.
         project_id = request.query_params.get("project") or "default"
-
-        user_bucket = _bucket(f"u:{user_id}", user_per_min, user_per_min)
-        project_bucket = _bucket(f"p:{project_id}",
+        project_bucket = _bucket(f"p:{principal}:{project_id}",
                                  project_per_min, project_per_min)
         if not user_bucket.take():
             return JSONResponse(

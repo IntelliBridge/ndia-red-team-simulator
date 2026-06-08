@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 
 from aegis.api.auth import CurrentUser, get_current_user
 from aegis.api.policy import Action, check
@@ -14,11 +17,19 @@ from aegis.services.scans import create_scan_job
 router = APIRouter(prefix="/scans", tags=["scans"])
 
 
+class StartScanBody(BaseModel):
+    project_id: str | None = None
+    target: str | None = None
+    scanner: str = "strix"
+    instruction: str | None = None
+    override_authorized: bool = False
+
+
 @router.post("")
 def start(
-    body: dict = Body(default_factory=dict),
+    body: StartScanBody = StartScanBody(),
     user: CurrentUser = Depends(get_current_user),
-):
+) -> dict[str, Any]:
     """F6 admission entry — RBAC → ``create_scan_job`` → return JobHandle.
 
     The admission service emits the ``scan.start`` audit row *before*
@@ -26,9 +37,9 @@ def start(
     so a worker crash mid-enqueue can never produce a row without a
     matching chain event.
     """
-    project_id = body.get("project_id") or "default"
-    target = body.get("target")
-    scanner = body.get("scanner", "strix")
+    project_id = body.project_id or "default"
+    target = body.target
+    scanner = body.scanner
     if not target:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="target required")
@@ -39,16 +50,13 @@ def start(
         handle = create_scan_job(
             target=target, scanner=scanner,
             project_id=project_id, actor=f"user:{user.sub}",
-            instruction=body.get("instruction"),
+            instruction=body.instruction,
             config=config,
             audit_writer=resolve_writer(config),
-            override_authorized=bool(body.get("override_authorized", False)),
+            override_authorized=bool(body.override_authorized),
         )
     except AuthorizationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail=str(exc))
+                            detail=str(exc)) from exc
 
-    return {
-        "run_id": handle.run_id, "job_id": handle.job_id,
-        "status_url": f"/v1/runs/{handle.run_id}",
-    }
+    return handle.to_response()

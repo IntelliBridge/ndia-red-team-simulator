@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
-import time
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
-from aegis.scanners.registry import ScanOptions, ScanResult, register
-from aegis.schema import AegisFinding, CodeLocation
-from aegis.state import RunState
+from aegis.scanners.registry import (
+    ScanOptions,
+    ScanResult,
+    cli_version,
+    register,
+    run_cli_scan,
+    which_available,
+)
+from aegis.schema import AegisFinding, CodeLocation, Severity
 
-_SEVERITY_MAP = {
+if TYPE_CHECKING:
+    from aegis.state import RunStateAPI
+
+_SEVERITY_MAP: dict[str, Severity] = {
     "ERROR": "critical",
     "WARNING": "high",
     "INFO": "low",
@@ -61,58 +68,26 @@ class SemgrepAdapter:
     default_timeout = 600
 
     def adapter_version(self) -> str:
-        try:
-            out = subprocess.run(["semgrep", "--version"], capture_output=True,
-                                 text=True, timeout=3, check=False)
-            return (out.stdout or "").strip() or "unknown"
-        except Exception:
-            return "unknown"
+        return cli_version("semgrep")
 
     def health_check(self) -> bool:
-        return shutil.which("semgrep") is not None
+        return which_available("semgrep")
 
-    def scan(self, run_state: RunState, options: ScanOptions) -> ScanResult:
-        from pathlib import Path
+    def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         repo = options.target
         rules = options.extra.get("rules", "auto")
-        started = time.monotonic()
-        try:
-            proc = subprocess.run(
-                ["semgrep", "--json", "--quiet", f"--config={rules}", str(repo)],
-                capture_output=True, text=True, timeout=options.timeout,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=f"semgrep --json --config={rules} {repo}",
-                exit_code=-1,
-                duration_s=time.monotonic() - started,
-                error=str(exc),
-            )
-        try:
+
+        def parse(proc, run_id):
             payload = json.loads(proc.stdout or "{}")
-        except json.JSONDecodeError as exc:
-            return ScanResult(
-                findings=[], adapter_name=self.name,
-                adapter_version=self.adapter_version(),
-                command_str=f"semgrep --json --config={rules} {repo}",
-                exit_code=proc.returncode,
-                duration_s=time.monotonic() - started,
-                error=f"failed to parse semgrep json: {exc}",
-            )
-        findings = [_convert(r, run_state.run_id)
-                    for r in payload.get("results", [])]
+            return [_convert(r, run_id) for r in payload.get("results", [])]
+
         # Persist the raw payload for forensic / re-parse use.
-        raw_dir = Path(run_state.run_path) / "semgrep"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        (raw_dir / "results.json").write_text(proc.stdout or "{}")
-        return ScanResult(
-            findings=findings, adapter_name=self.name,
-            adapter_version=self.adapter_version(),
+        return run_cli_scan(
+            self, options, run_state,
+            argv=["semgrep", "--json", "--quiet", f"--config={rules}", str(repo)],
             command_str=f"semgrep --json --config={rules} {repo}",
-            exit_code=proc.returncode,
-            duration_s=time.monotonic() - started,
+            subdir="semgrep", raw_filename="results.json",
+            parse=parse, parse_error_label="semgrep json",
         )
 
 

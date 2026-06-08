@@ -17,7 +17,7 @@ at. A gRPC adapter can layer on later without changing the writer.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import PlainTextResponse
@@ -29,6 +29,10 @@ from aegis.log_ingest.writer import (
     ts_from_unix_nano,
 )
 
+if TYPE_CHECKING:
+    from aegis.api.auth import CurrentUser
+    from aegis.api.settings import APISettings
+
 
 def _build_session_factory():
     db_url = os.environ.get("AEGIS_DB_URL")
@@ -39,7 +43,15 @@ def _build_session_factory():
     return get_session
 
 
-def create_app(writer: LogIngestWriter | None = None) -> FastAPI:
+def create_app(
+    writer: LogIngestWriter | None = None,
+    settings: APISettings | None = None,
+) -> FastAPI:
+    from aegis.api.auth import _verify_worker_token
+    from aegis.api.settings import load_settings
+
+    config = settings if settings is not None else load_settings()
+
     app = FastAPI(
         title="aegis-log-ingest",
         version="0.4.1-dev",
@@ -49,6 +61,33 @@ def create_app(writer: LogIngestWriter | None = None) -> FastAPI:
     if writer is None:
         writer = LogIngestWriter(session_factory=_build_session_factory())
     app.state.writer = writer
+
+    def _authenticate(request: Request) -> CurrentUser | None:
+        """Verify the worker token guarding the write surface.
+
+        Enforced only when a worker signing key is configured, mirroring
+        the API's graceful-degradation posture (``aegis.api.auth``): with
+        no key the service stays open for the offline/local profile; once
+        a key is set the host-exposed POST routes require a valid worker
+        token, closing the asymmetry vs the admin-gated ``GET /v1/logs``.
+        """
+        if not config.worker_signing_key:
+            return None
+        header = request.headers.get("authorization", "")
+        token = (
+            header.split(" ", 1)[1].strip()
+            if header.lower().startswith("bearer ")
+            else ""
+        )
+        principal = (
+            _verify_worker_token(token, config) if token.startswith("worker:") else None
+        )
+        if principal is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="valid worker token required",
+            )
+        return principal
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -83,6 +122,7 @@ def create_app(writer: LogIngestWriter | None = None) -> FastAPI:
         Body shape: ``{"records": [{"ts": "...", "severity": "...",
         "service": "...", "message": "...", "attrs": {...}}, ...]}``.
         """
+        principal = _authenticate(request)
         payload = await request.json()
         records = payload.get("records") if isinstance(payload, dict) else None
         if not isinstance(records, list):
@@ -90,7 +130,7 @@ def create_app(writer: LogIngestWriter | None = None) -> FastAPI:
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="expected {'records': [...]}",
             )
-        rows = [_row_from_native(r) for r in records]
+        rows = [_row_from_native(r, principal=principal) for r in records]
         writer.append_many(rows)
         return {"accepted": len(rows), "buffered": writer.buffered()}
 
@@ -111,8 +151,9 @@ def create_app(writer: LogIngestWriter | None = None) -> FastAPI:
                          "spanId": "..."}
                       ] } ] } ] }
         """
+        principal = _authenticate(request)
         payload = await request.json()
-        rows = _rows_from_otlp(payload)
+        rows = _rows_from_otlp(payload, principal=principal)
         writer.append_many(rows)
         return {"accepted": len(rows), "buffered": writer.buffered()}
 
@@ -126,7 +167,24 @@ def create_app(writer: LogIngestWriter | None = None) -> FastAPI:
 # ----- payload adapters ----------------------------------------------------
 
 
-def _row_from_native(record: dict[str, Any]) -> LogIngestRow:
+def _stamp_provenance(
+    attrs: dict[str, Any], principal: CurrentUser | None
+) -> dict[str, Any]:
+    """Record the authenticated shipper as tamper-evident provenance.
+
+    The write surface relays multi-tenant logs, so per-row ``actor`` /
+    ``run_id`` stay as the producer set them; the verified principal is
+    recorded separately under ``_ingested_by`` so a body-supplied ``actor``
+    can always be checked against who actually authenticated the batch.
+    """
+    if principal is None:
+        return attrs
+    return {**attrs, "_ingested_by": principal.sub}
+
+
+def _row_from_native(
+    record: dict[str, Any], *, principal: CurrentUser | None = None
+) -> LogIngestRow:
     from datetime import datetime, timezone
 
     ts_raw = record.get("ts")
@@ -148,7 +206,7 @@ def _row_from_native(record: dict[str, Any]) -> LogIngestRow:
         request_id=record.get("request_id"),
         trace_id=record.get("trace_id"),
         span_id=record.get("span_id"),
-        attrs=record.get("attrs", {}) or {},
+        attrs=_stamp_provenance(record.get("attrs", {}) or {}, principal),
     )
 
 
@@ -157,27 +215,23 @@ def _kv_list_to_dict(kvs: list[dict[str, Any]] | None) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for kv in kvs or []:
         key = kv.get("key")
-        value = kv.get("value", {})
-        # OTLP value union: stringValue, intValue, boolValue, doubleValue,
-        # arrayValue, kvlistValue, bytesValue. Pull the first that's set.
-        if "stringValue" in value:
-            out[key] = value["stringValue"]
-        elif "intValue" in value:
-            out[key] = int(value["intValue"])
-        elif "boolValue" in value:
-            out[key] = bool(value["boolValue"])
-        elif "doubleValue" in value:
-            out[key] = float(value["doubleValue"])
-        elif "kvlistValue" in value:
-            out[key] = _kv_list_to_dict(value["kvlistValue"].get("values"))
-        elif "arrayValue" in value:
-            out[key] = [_kv_value(v) for v in value["arrayValue"].get("values", [])]
-        else:
-            out[key] = None
+        if not isinstance(key, str):
+            # OTLP KeyValue.key is spec'd as a string; a missing/non-string
+            # key can't be a JSON attr key, so drop the malformed entry.
+            continue
+        out[key] = _kv_value(kv.get("value", {}))
     return out
 
 
 def _kv_value(value: dict[str, Any]) -> Any:
+    """Decode a single OTLP ``AnyValue`` to a plain Python value.
+
+    OTLP value union: stringValue, intValue, boolValue, doubleValue,
+    arrayValue, kvlistValue, bytesValue. Returns the first that's set, or
+    None for an empty / unrecognized value. This is the single decoder both
+    the attribute-map and array-element paths share, so nested kvlist/array
+    values decode identically wherever they appear.
+    """
     if "stringValue" in value:
         return value["stringValue"]
     if "intValue" in value:
@@ -186,10 +240,16 @@ def _kv_value(value: dict[str, Any]) -> Any:
         return bool(value["boolValue"])
     if "doubleValue" in value:
         return float(value["doubleValue"])
+    if "kvlistValue" in value:
+        return _kv_list_to_dict(value["kvlistValue"].get("values"))
+    if "arrayValue" in value:
+        return [_kv_value(v) for v in value["arrayValue"].get("values", [])]
     return None
 
 
-def _rows_from_otlp(payload: dict[str, Any]) -> list[LogIngestRow]:
+def _rows_from_otlp(
+    payload: dict[str, Any], *, principal: CurrentUser | None = None
+) -> list[LogIngestRow]:
     rows: list[LogIngestRow] = []
     for rl in payload.get("resourceLogs", []) or []:
         resource_attrs = _kv_list_to_dict(
@@ -226,7 +286,7 @@ def _rows_from_otlp(payload: dict[str, Any]) -> list[LogIngestRow]:
                         request_id=_str_or_none(attrs.pop("request_id", None)),
                         trace_id=_str_or_none(lr.get("traceId")),
                         span_id=_str_or_none(lr.get("spanId")),
-                        attrs=attrs,
+                        attrs=_stamp_provenance(attrs, principal),
                     )
                 )
     return rows

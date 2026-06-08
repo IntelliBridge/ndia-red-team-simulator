@@ -11,6 +11,7 @@ deprecation cycle.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import NotRequired, TypedDict
 
 from sqlalchemy import (
     Boolean,
@@ -111,6 +112,40 @@ class Job(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
     detail: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class FixJobDetail(TypedDict):
+    """Shape of ``Job.detail`` for ``fix.generate`` jobs.
+
+    The admission service (``services.fixes.create_fix_job``) writes the
+    required keys. The worker (``workers.tasks.fix``) additionally reads
+    the ``NotRequired`` keys, which admission never sets — so they fall
+    back to ``generate_fix`` defaults. Marking them ``NotRequired`` makes
+    that read-without-write seam explicit instead of silently drifting.
+    """
+
+    finding_id: str
+    strategy: str
+    apply: bool
+    open_pr: bool
+    repo: str | None
+    branch: NotRequired[str | None]
+    allow_dirty: NotRequired[bool]
+    push: NotRequired[bool]
+    use_golden_patch: NotRequired[bool]
+
+
+class VerifyJobDetail(TypedDict):
+    """Shape of ``Job.detail`` for ``verify.replay`` jobs.
+
+    Admission (``services.verify.create_verify_job``) writes only
+    ``finding_id``; the worker (``workers.tasks.verify``) also reads
+    ``repo_path``, which is ``NotRequired`` because admission never sets
+    it (the worker defaults to the cwd).
+    """
+
+    finding_id: str
+    repo_path: NotRequired[str | None]
 
 
 class Finding(Base):

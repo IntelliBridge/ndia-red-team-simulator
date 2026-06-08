@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aegis — EO Alignment Brief — Agile Defense</title>
+<style>
+  @page { size: letter; margin: 0; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Brockmann', -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    color: #002554;
+    line-height: 1.45;
+    font-size: 10.5pt;
+    max-width: 8.5in;
+    margin: 0 auto;
+    background: #fff;
+  }
+
+  .banner {
+    background: linear-gradient(135deg, #051435 0%, #002554 60%, #002554 100%);
+    color: #ffffff;
+    padding: 16px 48px 22px;
+  }
+  .title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .logo { height: 32px; }
+  .product-name {
+    font-size: 34pt;
+    font-weight: 700;
+    letter-spacing: 2px;
+    line-height: 1.1;
+  }
+  .product-name span { color: #D23C3A; }
+  .doc-kicker {
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 2.5px;
+    color: #FAAE5B;
+    font-weight: 700;
+    margin-top: 2px;
+  }
+  .tagline {
+    font-size: 11.5pt;
+    font-weight: 400;
+    color: #ADB8BF;
+    margin-top: 5px;
+  }
+  .badge {
+    background: rgba(210, 60, 58, 0.15);
+    border: 1px solid rgba(210, 60, 58, 0.5);
+    border-radius: 6px;
+    padding: 10px 16px;
+    text-align: center;
+    flex-shrink: 0;
+    margin-top: 4px;
+  }
+  .badge-label {
+    font-size: 7pt;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #ADB8BF;
+  }
+  .badge-value {
+    font-size: 10pt;
+    font-weight: 700;
+    color: #D23C3A;
+  }
+  .value-prop {
+    font-size: 9.5pt;
+    color: #ADB8BF;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    padding-top: 10px;
+    line-height: 1.55;
+  }
+  .value-prop em {
+    color: #fff;
+    font-style: normal;
+    font-weight: 600;
+  }
+
+  .content { padding: 20px 48px 12px; }
+
+  .section-title {
+    font-size: 8.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 2.5px;
+    color: #002554;
+    margin-bottom: 8px;
+    padding-bottom: 3px;
+    border-bottom: 2.5px solid #D23C3A;
+    display: inline-block;
+  }
+
+  .intro {
+    font-size: 9pt;
+    color: #52687C;
+    line-height: 1.55;
+    margin-bottom: 18px;
+  }
+  .intro strong { color: #002554; }
+
+  /* Alignment cards */
+  .align-wrapper { margin-bottom: 18px; }
+  .align-card {
+    background: #f5f7fa;
+    border-left: 3px solid #D23C3A;
+    border-radius: 0 6px 6px 0;
+    padding: 10px 14px;
+    margin-bottom: 10px;
+  }
+  .align-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 5px;
+  }
+  .align-num {
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    background: #002554;
+    color: #fff;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10pt;
+    font-weight: 700;
+  }
+  .align-eo {
+    font-size: 9pt;
+    font-weight: 700;
+    color: #002554;
+  }
+  .align-eo span {
+    display: block;
+    font-size: 6.5pt;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #2288C8;
+    font-weight: 700;
+    margin-bottom: 1px;
+  }
+  .align-body {
+    font-size: 8pt;
+    color: #52687C;
+    line-height: 1.45;
+    padding-left: 32px;
+  }
+  .align-body strong { color: #002554; }
+  .align-proof {
+    font-size: 7pt;
+    color: #ADB8BF;
+    padding-left: 32px;
+    margin-top: 4px;
+  }
+  .align-proof b { color: #52687C; font-weight: 700; }
+
+  /* Capabilities map */
+  .cap-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 14px;
+    margin-bottom: 18px;
+  }
+  .cap-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+  }
+  .cap-check {
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+    background: #D23C3A;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 2px;
+    color: #fff;
+    font-size: 8px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .cap-text {
+    font-size: 8pt;
+    color: #52687C;
+    line-height: 1.4;
+  }
+  .cap-text strong { color: #002554; }
+
+  /* Scope note */
+  .scope {
+    background: #fff8ef;
+    border: 1px solid #FAAE5B;
+    border-radius: 6px;
+    padding: 9px 14px;
+    margin-bottom: 18px;
+  }
+  .scope strong {
+    color: #c48a2a;
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .scope p {
+    font-size: 8pt;
+    color: #52687C;
+    line-height: 1.45;
+    margin-top: 3px;
+  }
+
+  /* How-we-deliver sub-block inside a directive card */
+  .deliver {
+    font-size: 7.5pt;
+    color: #52687C;
+    line-height: 1.4;
+    padding-left: 32px;
+    margin-top: 5px;
+  }
+  .deliver .lbl {
+    font-weight: 700;
+    color: #2288C8;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-size: 6.5pt;
+  }
+  .deliver .extra .lbl { color: #c48a2a; }
+
+  /* Full detection surface */
+  .surface { margin-bottom: 18px; }
+  .surface-grid {
+    border: 1px solid #ADB8BF;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .surface-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px;
+    border-bottom: 1px solid #e0e5eb;
+  }
+  .surface-row:last-child { border-bottom: none; }
+  .surface-row:nth-child(even) { background: #f5f7fa; }
+  .surface-tag {
+    font-size: 6pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #fff;
+    background: #002554;
+    border-radius: 3px;
+    padding: 3px 7px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    width: 96px;
+    text-align: center;
+  }
+  .surface-tag.red { background: #D23C3A; }
+  .surface-tag.blue { background: #2288C8; }
+  .surface-tag.gold { background: #c48a2a; }
+  .surface-tools {
+    font-size: 7.5pt;
+    color: #52687C;
+    line-height: 1.35;
+  }
+  .surface-tools strong { color: #002554; }
+
+  .bottom-row {
+    display: flex;
+    gap: 18px;
+  }
+  .audience { flex: 1.1; }
+  .audience ul { list-style: none; }
+  .audience li {
+    font-size: 8pt;
+    color: #52687C;
+    padding: 3px 0 3px 12px;
+    position: relative;
+    line-height: 1.4;
+  }
+  .audience li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 9px;
+    width: 5px;
+    height: 5px;
+    background: #D23C3A;
+    border-radius: 50%;
+  }
+  .audience li strong { color: #002554; }
+
+  .cta {
+    flex: 0.9;
+    background: linear-gradient(135deg, #051435, #002554);
+    border-radius: 8px;
+    padding: 12px 16px;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .cta strong {
+    font-size: 9.5pt;
+    display: block;
+    margin-bottom: 5px;
+  }
+  .cta p {
+    font-size: 8pt;
+    color: #ADB8BF;
+    line-height: 1.45;
+    margin-bottom: 8px;
+  }
+  .cta-btn {
+    display: inline-block;
+    background: #D23C3A;
+    color: #fff;
+    font-size: 8.5pt;
+    font-weight: 700;
+    padding: 6px 20px;
+    border-radius: 5px;
+    text-decoration: none;
+    letter-spacing: 0.5px;
+    align-self: flex-start;
+  }
+
+  .footer {
+    text-align: center;
+    padding: 8px 48px;
+    font-size: 7pt;
+    color: #ADB8BF;
+    border-top: 1px solid #e0e5eb;
+  }
+  .footer-tagline {
+    color: #D23C3A;
+    font-weight: 600;
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+
+<!-- BANNER -->
+<div class="banner">
+    <div class="title-row">
+      <div>
+        <div class="product-name">AEGIS<span>.</span></div>
+        <div class="doc-kicker">Executive Order Alignment Brief</div>
+      </div>
+      <img class="logo" src="data:image/png;base64,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" alt="Agile Defense">
+    </div>
+    <div class="tagline">Shipping AI security capabilities, aligned to the June 2026 AI Innovation &amp; Security EO.</div>
+  <div class="value-prop">
+    The June 2026 Executive Order on <em>Promoting Advanced AI Innovation and Security</em> directs federal cyber defenders toward <em>AI-enabled defensive tools</em> and <em>advanced AI vulnerability detection</em>. <em>Aegis</em> already delivers the capabilities the Order rewards &mdash; <em>code &amp; dependency scanning</em>, <em>AI-driven remediation</em>, and <em>autonomous blue-team hardening</em> &mdash; on a tamper-evident audit trail. The pillars below are backed by code shipping today, not roadmap.
+  </div>
+</div>
+
+<!-- CONTENT -->
+<div class="content">
+
+  <!-- EO directive -> how we deliver -->
+  <div class="section-title">EO Directives &mdash; How Aegis Delivers</div>
+  <div class="intro">
+    The Order directs federal cyber defenders toward AI-enabled defensive tooling, advanced AI vulnerability detection, and coordinated scanning-to-patch workflows. For each directive below: <strong>what the EO calls for</strong>, <strong>how Aegis accomplishes it today</strong>, and the <strong>extra platform capability</strong> that deepens the answer.
+  </div>
+
+  <div class="align-wrapper">
+
+    <div class="align-card">
+      <div class="align-head">
+        <div class="align-num">1</div>
+        <div class="align-eo"><span>EO &mdash; CISA Guidance, 30 Days</span>Field AI-enabled defensive tools for federal cyber defense</div>
+      </div>
+      <div class="align-body">
+        Aegis is a deployable, AI-enabled defensive platform &mdash; one loop from autonomous discovery through blue-team hardening, not a single point tool.
+      </div>
+      <div class="deliver"><span class="lbl">How we deliver &rarr;</span> A <strong>24-tool detection surface</strong> (14 scanner adapters + 10 Kali tools over MCP) feeds <strong>16 wired AI agents</strong> spanning offensive, defensive, forensic, recon, and remediation domains, under a unified propose &rarr; approve &rarr; act gate.</div>
+      <div class="deliver extra"><span class="lbl">Extra &rarr;</span> The <code>BlueteamAgent</code> applies runtime hardening against live targets; 3 multi-agent patterns (offsec, redteam-swarm, bb-triage) coordinate parallel red/blue operations.</div>
+    </div>
+
+    <div class="align-card">
+      <div class="align-head">
+        <div class="align-num">2</div>
+        <div class="align-eo"><span>EO &mdash; Federal Grants, 60 Days</span>Advance AI vulnerability detection beyond signatures</div>
+      </div>
+      <div class="align-body">
+        Aegis pairs AI reasoning with classic tooling so detection finds what pattern-matching misses &mdash; and proves it. Only findings backed by a working proof-of-concept reach the report.
+      </div>
+      <div class="deliver"><span class="lbl">How we deliver &rarr;</span> <strong>deepsec</strong> runs AI whole-repo code-audit; <strong>Strix</strong> drives autonomous DAST; the CAI red-team swarm reaches live targets over the Kali belt. PoC validation gates every reported finding.</div>
+      <div class="deliver extra"><span class="lbl">Extra &rarr;</span> Per-task LLM routing with budget caps across 300+ models &mdash; best model per job, no vendor lock-in, cost controlled by design (deepsec&rsquo;s paid AI stage is opt-in).</div>
+    </div>
+
+    <div class="align-card">
+      <div class="align-head">
+        <div class="align-num">3</div>
+        <div class="align-eo"><span>EO &mdash; AI Cybersecurity Clearinghouse, 30&ndash;60 Days</span>Coordinate vulnerability scanning &amp; patch distribution</div>
+      </div>
+      <div class="align-body">
+        Aegis is a clearinghouse-ready node: it normalizes findings from any source and distributes the fix as a reviewed pull request &mdash; closing the loop the clearinghouse is meant to coordinate.
+      </div>
+      <div class="deliver"><span class="lbl">How we deliver &rarr;</span> Multi-format ingest (Snyk &middot; Veracode &middot; Trivy &middot; SARIF) &rarr; unified <code>AegisFinding</code>; the CAI <code>CodeAgent</code> + vuln-fixer engine open a human-reviewed PR on a deterministic branch with auto-rollback, then replay the PoC to verify the fix.</div>
+      <div class="deliver extra"><span class="lbl">Extra &rarr;</span> GitHub PR-scoped scans with fork-restricted mode; CI/CD-native headless runs with exit-code gating for pipeline enforcement.</div>
+    </div>
+
+    <div class="align-card">
+      <div class="align-head">
+        <div class="align-num">4</div>
+        <div class="align-eo"><span>EO &mdash; Security &amp; Accountability Posture</span>Authorized, auditable use of advanced AI capability</div>
+      </div>
+      <div class="align-body">
+        Aegis answers &ldquo;what ran, against what target, on whose authority&rdquo; &mdash; the federal-grade differentiator that turns capability into trustworthy capability.
+      </div>
+      <div class="deliver"><span class="lbl">How we deliver &rarr;</span> Every action &mdash; first scan to merged PR &mdash; is RBAC-checked server-side and recorded on a hash-chained audit log with a CLI / admin verifier (<code>aegis audit verify</code>).</div>
+      <div class="deliver extra"><span class="lbl">Extra &rarr;</span> In-tree DISA STIG checklist tooling, CSP-hardened &amp; nosniff-served reports, and an OTel security-log pipeline (secrets redacted before export) for ATO evidence.</div>
+    </div>
+
+  </div>
+
+  <!-- Full detection surface -->
+  <div style="page-break-before: always;"></div>
+  <div class="surface">
+    <div class="section-title">The Full Detection Surface</div>
+    <div class="arch-desc" style="font-size:9pt;color:#52687C;margin-bottom:8px;line-height:1.5;">14 scanner adapters across 8 capability classes, plus a 10-tool Kali belt over MCP &mdash; 24 integrated tools feeding one normalized finding model. This breadth is the platform&rsquo;s robustness: code, dependencies, supply chain, secrets, infrastructure, macOS/Linux developer endpoints, and live targets, all in one loop.</div>
+    <div class="surface-grid">
+      <div class="surface-row">
+        <span class="surface-tag">SAST</span>
+        <span class="surface-tools"><strong>Bandit</strong>, <strong>Semgrep</strong>, <strong>CodeQL</strong>, <strong>SonarQube</strong> &mdash; static source analysis across languages</span>
+      </div>
+      <div class="surface-row">
+        <span class="surface-tag red">AI Code-Audit</span>
+        <span class="surface-tools"><strong>deepsec</strong> &mdash; AI whole-repo vulnerability reasoning with code-owner enrichment</span>
+      </div>
+      <div class="surface-row">
+        <span class="surface-tag">IaC</span>
+        <span class="surface-tools"><strong>Checkov</strong> &mdash; infrastructure-as-code misconfiguration scanning</span>
+      </div>
+      <div class="surface-row">
+        <span class="surface-tag blue">Dependency / SCA</span>
+        <span class="surface-tools"><strong>Trivy</strong>, <strong>Grype</strong> &mdash; software composition &amp; container image vulnerabilities</span>
+      </div>
+      <div class="surface-row">
+        <span class="surface-tag blue">SBOM</span>
+        <span class="surface-tools"><strong>Syft</strong> &mdash; CycloneDX software bill-of-materials generation</span>
+      </div>
+      <div class="surface-row">
+        <span class="surface-tag gold">Endpoint / Supply Chain</span>
+        <span class="surface-tools"><strong>Bumblebee</strong> &mdash; read-only macOS/Linux developer-endpoint inventory; matches advisories to packages &amp; extensions present on dev machines</span>
+      </div>
+      <div class="surface-row">
+        <span class="surface-tag gold">Secrets</span>
+        <span class="surface-tools"><strong>Trufflehog</strong> &mdash; verified credential &amp; secret detection</span>
+      </div>
+      <div class="surface-row">
+        <span class="surface-tag red">DAST</span>
+        <span class="surface-tools"><strong>Strix</strong> (autonomous), <strong>ZAP</strong>, <strong>Nuclei</strong> &mdash; runtime application testing with PoC validation</span>
+      </div>
+      <div class="surface-row">
+        <span class="surface-tag red">Kali Belt &times;10</span>
+        <span class="surface-tools"><strong>nmap</strong>, gobuster, dirb, nikto, <strong>sqlmap</strong>, <strong>metasploit</strong>, <strong>hydra</strong>, john, wpscan, enum4linux &mdash; offensive ops over MCP, human-gated</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trust & accountability -->
+  <div class="section-title">Trust &amp; Accountability</div>
+  <div class="cap-grid">
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>PoC-Validated Findings</strong> &mdash; only findings backed by a working proof-of-concept reach the report; no severity-by-guesswork</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Tamper-Evident Audit Chain</strong> &mdash; hash-chained log proving who ran what, against which target, on whose authority</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Authorization Gates</strong> &mdash; server-side RBAC + human-in-the-loop propose &rarr; approve &rarr; act on every active action</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Compliance-Ready</strong> &mdash; in-tree DISA STIG checklist tooling and CSP-hardened, nosniff-served reports for ATO evidence</div>
+    </div>
+  </div>
+
+  <!-- Scope note -->
+  <div class="scope">
+    <strong>Honest Scope</strong>
+    <p>Aegis is a vulnerability detection and remediation platform &mdash; <strong>not</strong> a frontier-model cyber-capability benchmark. The EO&rsquo;s NSA-led &ldquo;classified benchmarking of covered frontier models&rdquo; evaluates model <em>capabilities</em>, a distinct program. Aegis&rsquo;s red-team agent swarm and Kali toolbelt could <em>feed</em> such an evaluation harness, but we do not position Aegis as the benchmark itself.</p>
+  </div>
+
+  <!-- Bottom Row -->
+  <div class="bottom-row">
+    <div class="audience">
+      <div class="section-title">Recommended Next Steps</div>
+      <ul>
+        <li><strong>Lead with detection + remediation.</strong> Position Aegis to CISA / federal sponsors in the EO&rsquo;s own language: &ldquo;AI vulnerability detection and automated patch distribution.&rdquo;</li>
+        <li><strong>Foreground the audit chain.</strong> The accountability trail is the contractor-grade differentiator &mdash; map it to ATO and the EO&rsquo;s security posture.</li>
+        <li><strong>Offer a clearinghouse pilot.</strong> Demonstrate ingest &rarr; PR distribution as a working node for the proposed scanning/patch coordination function.</li>
+      </ul>
+    </div>
+    <div class="cta">
+      <strong>Operational Today.</strong>
+      <p>Aegis is Agile Defense&rsquo;s full-lifecycle AI security platform &mdash; aligned, by capability not promise, to the AI Innovation &amp; Security EO. From finding to verified fix, on a provable trail.</p>
+      <span class="cta-btn">Request a Briefing &#8594;</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- Footer -->
+<div class="footer">
+  &copy; 2026 Agile Defense, Inc. &nbsp;&bull;&nbsp; 11600 Sunrise Valley Dr, Suite #440, Reston, VA 20191 &nbsp;&bull;&nbsp; AgileDefense.com &nbsp;&bull;&nbsp; <span class="footer-tagline">Always Evolving</span> &nbsp;&bull;&nbsp; Alignment brief &mdash; EO of June 2026, Promoting Advanced AI Innovation and Security
+</div>
+
+</body>
+</html>

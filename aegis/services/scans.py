@@ -20,14 +20,20 @@ it to ``execute_scan_job`` and wire the worker task body to call it.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from aegis.config import AegisConfig
 from aegis.safety import authorize
 from aegis.schema import AegisFinding
-from aegis.state import RunState
+
+if TYPE_CHECKING:
+    from aegis.audit.chain import AuditWriter
+    from aegis.state import RunStateAPI
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -54,6 +60,19 @@ class JobHandle:
     run_id: str
     job_id: str
 
+    def to_response(self) -> dict[str, str]:
+        """The admission JSON every job endpoint returns.
+
+        One shared shape across scan / agent / fix / verify so clients get
+        the same ``run_id`` + ``job_id`` + pollable ``status_url`` regardless
+        of which admission route they hit.
+        """
+        return {
+            "run_id": self.run_id,
+            "job_id": self.job_id,
+            "status_url": f"/v1/runs/{self.run_id}",
+        }
+
 
 def create_scan_job(
     *,
@@ -64,7 +83,7 @@ def create_scan_job(
     instruction: str | None = None,
     config: AegisConfig,
     allowlist: list[str] | None = None,
-    audit_writer,
+    audit_writer: AuditWriter,
     override_authorized: bool = False,
     enqueue: bool = True,
 ) -> JobHandle:
@@ -111,7 +130,8 @@ def create_scan_job(
             type="scan.start", status="queued",
             created_by=actor,
             detail={"target": target, "scanner": scanner,
-                    "instruction": instruction},
+                    "instruction": instruction,
+                    "override_authorized": override_authorized},
         ))
         sess.flush()
 
@@ -121,14 +141,14 @@ def create_scan_job(
             scan_start.delay(job_id)
         except Exception:
             # Broker unreachable: row stays queued, picked up next start.
-            pass
+            logger.warning("enqueue failed for job %s", job_id, exc_info=True)
 
     return JobHandle(run_id=run_id, job_id=job_id)
 
 
 def start_scan(
     *,
-    run_state: RunState,
+    run_state: RunStateAPI,
     target: str,
     scanner: str = "strix",
     instruction: str | None = None,

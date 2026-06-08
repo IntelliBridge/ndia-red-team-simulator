@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from aegis.api.auth import CurrentUser, get_current_user
@@ -15,7 +17,8 @@ router = APIRouter(prefix="/runs", tags=["runs"])
 
 
 @router.post("/{run_id}/cancel")
-def cancel(run_id: str, user: CurrentUser = Depends(get_current_user)):
+def cancel(run_id: str,
+           user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """F6 admission entry — RBAC then delegate to ``services.runs.cancel_run``."""
     from aegis.db.models import Run
     from aegis.db.session import get_session
@@ -37,9 +40,9 @@ def cancel(run_id: str, user: CurrentUser = Depends(get_current_user)):
         )
     except AuthorizationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail=str(exc))
-    except LookupError:
+                            detail=str(exc)) from exc
+    except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
-                            detail="run not found")
+                            detail="run not found") from exc
     return {"run_id": outcome.run_id, "status": outcome.status,
             "jobs_cancelled": outcome.jobs_cancelled}

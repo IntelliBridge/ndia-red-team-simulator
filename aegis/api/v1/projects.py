@@ -16,7 +16,10 @@ Endpoints:
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 
 from aegis.api.auth import CurrentUser, get_current_user
 from aegis.api.policy import Action, check, ensure_project_access
@@ -24,7 +27,15 @@ from aegis.api.policy import Action, check, ensure_project_access
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-def _project_to_dict(project, *, role: str | None = None) -> dict:
+class UpdateSettingsBody(BaseModel):
+    # ``Any`` (not ``int | None``) is deliberate: the handler does its own
+    # non-negative-int validation and returns 400 on bad input. A typed
+    # ``int`` field would let Pydantic reject bad values as 422 first,
+    # changing the existing error contract.
+    daily_llm_budget_cents: Any = None
+
+
+def _project_to_dict(project, *, role: str | None = None) -> dict[str, Any]:
     out = {
         "id": project.id, "slug": project.slug, "name": project.name,
         "org_id": project.org_id,
@@ -36,7 +47,7 @@ def _project_to_dict(project, *, role: str | None = None) -> dict:
 
 
 @router.get("")
-def list_projects(user: CurrentUser = Depends(get_current_user)) -> dict:
+def list_projects(user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """Return the caller's projects with per-project role.
 
     System callers (workers) get the whole list with ``role="system"``.
@@ -50,17 +61,18 @@ def list_projects(user: CurrentUser = Depends(get_current_user)) -> dict:
     with get_session() as sess:
         if user.is_system:
             projects = sess.execute(select(Project)).scalars().all()
-            return {"projects": [_project_to_dict(p, role="system")
-                                  for p in projects]}
+            sys_out = [_project_to_dict(p, role="system") for p in projects]
+            return {"projects": sys_out, "count": len(sys_out)}
 
         db_user = sess.execute(
             select(User).where(User.sub == user.sub)
         ).scalar_one_or_none()
         if db_user is None:
-            return {"projects": [_project_to_dict(
+            fallback_out = [_project_to_dict(
                 Project(id=pid, slug=pid, name=pid, org_id="org-default"),
                 role=role,
-            ) for pid, role in user.project_memberships.items()]}
+            ) for pid, role in user.project_memberships.items()]
+            return {"projects": fallback_out, "count": len(fallback_out)}
 
         rows = sess.execute(
             select(Project, ProjectMembership.role)
@@ -70,7 +82,7 @@ def list_projects(user: CurrentUser = Depends(get_current_user)) -> dict:
         ).all()
         for project, role in rows:
             out.append(_project_to_dict(project, role=role))
-    return {"projects": out}
+    return {"projects": out, "count": len(out)}
 
 
 def _resolve_project_by_slug(sess, slug: str):
@@ -88,7 +100,7 @@ def _resolve_project_by_slug(sess, slug: str):
 
 @router.get("/{slug}/membership")
 def list_membership(slug: str,
-                    user: CurrentUser = Depends(get_current_user)) -> dict:
+                    user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """Return all (user, role) pairs on the project.
 
     Any member of the project can read; non-members get 403.
@@ -108,20 +120,22 @@ def list_membership(slug: str,
                   ProjectMembership.user_id == User.id)
             .where(ProjectMembership.project_id == project.id)
         ).all()
+        members = [
+            {"sub": sub, "email": email,
+             "display_name": dn or "", "role": role}
+            for (sub, email, dn, role) in rows
+        ]
         return {
             "project": _project_to_dict(project),
-            "members": [
-                {"sub": sub, "email": email,
-                 "display_name": dn or "", "role": role}
-                for (sub, email, dn, role) in rows
-            ],
+            "members": members,
+            "count": len(members),
         }
 
 
 @router.put("/{slug}/settings")
 def update_settings(slug: str,
-                    body: dict = Body(default_factory=dict),
-                    user: CurrentUser = Depends(get_current_user)) -> dict:
+                    body: UpdateSettingsBody = UpdateSettingsBody(),
+                    user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """Update project-level settings. Admin-only on the project."""
     from aegis.db.session import get_session
 
@@ -132,8 +146,8 @@ def update_settings(slug: str,
         # The settings surface is intentionally small in v0.3.1: only
         # the LLM budget knob. v0.4.0+ may add CI gate policy, default
         # scanner, etc. — additive only, validated per-field.
-        if "daily_llm_budget_cents" in body:
-            v = body["daily_llm_budget_cents"]
+        if "daily_llm_budget_cents" in body.model_fields_set:
+            v = body.daily_llm_budget_cents
             if v is not None and (not isinstance(v, int) or v < 0):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,

@@ -41,7 +41,7 @@ export async function POST() {
       projectMemberships: memberships,
     });
     const csrf = newCsrfToken();
-    const maxAge = sessionTtlSeconds();
+    const maxAge = sessionTtlSeconds;
     const c = cookies();
     c.set(sessionCookieName, jwt, {
       httpOnly: true,
