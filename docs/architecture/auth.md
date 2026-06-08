@@ -206,7 +206,7 @@ flowchart TB
   hasSubproto -- no  --> bareAccept["accept"]
 
   echoSub --> hasUser{"user resolved?"}
-  bareAccept --> resolveOther["try Authorization header<br/>then cookie<br/>then legacy query token"]
+  bareAccept --> resolveOther["try Authorization header<br/>then cookie"]
   resolveOther --> hasUser
   hasUser -- no --> close2["close 1008<br/>auth required"]
   hasUser -- yes --> projectAccess{"user has membership<br/>on run.project_id?"}
@@ -214,9 +214,9 @@ flowchart TB
   projectAccess -- yes --> stream["stream Redis pubsub frames"]
 ```
 
-The legacy `?token=…` query parameter is still accepted for backward
-compatibility while dev tools migrate; it is deprecated and slated for
-removal in a future release.
+The legacy `?token=…` query-parameter fallback has been removed; WebSocket
+clients authenticate via the `aegis.bearer.<token>` subprotocol, the
+`Authorization` header, or the session cookie.
 
 ---
 

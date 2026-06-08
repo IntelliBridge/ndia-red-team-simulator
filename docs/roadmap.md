@@ -19,6 +19,12 @@ priority order.
 The highest-leverage milestone: the scaffolding already exists in the codebase,
 so these are completions rather than greenfield builds.
 
+> **Status:** implemented on the `feat/finish-the-seams` branch (pending merge)
+> — see the Changelog `[Unreleased]` section. The one piece still open is **LLM
+> budget cost accounting**: the enforcement path (cap read + daily usage sum +
+> `route()` gate) is wired and records per-call token counts, but `cost_cents`
+> stays 0 until a model→price table populates it, so the cap is inert until then.
+
 | Item | What's left | Where it's scaffolded |
 |---|---|---|
 | **Multi-scanner dispatch (M6)** | The worker task already dispatches by scanner name through the registry, but the synchronous service path (`run_scan`) and the CLI still hard-code Strix. Route all 14 adapters through one dispatch path so the platform's full scanner roster is reachable everywhere. | `aegis/services/scans.py` (`scanner` reserved for M6), `aegis/scanners/registry.py` (`dispatch`), `aegis/workers/tasks/scan.py` |

@@ -154,6 +154,23 @@ class TestPostgresRunState(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].kind, "report")
 
+    def test_record_artifact_is_idempotent_for_identical_content(self):
+        # The (run_id, kind, sha256) UNIQUE constraint means re-recording the
+        # same content must not raise; it returns the existing row's ref.
+        from sqlalchemy import select
+
+        from aegis.db.models import Artifact
+        st = self._state()
+        ref1 = st.record_artifact("report", "abc", content_type="text/plain")
+        ref2 = st.record_artifact("report", "abc", content_type="text/plain")
+        self.assertEqual(ref1.sha256, ref2.sha256)
+        self.assertEqual(ref1.location, ref2.location)
+        self.assertEqual(ref1.size_bytes, ref2.size_bytes)
+        rows = self.sess.execute(
+            select(Artifact).where(Artifact.run_id == st.run_id)
+        ).scalars().all()
+        self.assertEqual(len(rows), 1)
+
     def test_append_remediation_log(self):
         from sqlalchemy import select
 

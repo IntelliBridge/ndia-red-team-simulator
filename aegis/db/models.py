@@ -133,6 +133,7 @@ class FixJobDetail(TypedDict):
     allow_dirty: NotRequired[bool]
     push: NotRequired[bool]
     use_golden_patch: NotRequired[bool]
+    override_authorized: NotRequired[bool]
 
 
 class VerifyJobDetail(TypedDict):

@@ -8,6 +8,7 @@ overrides and budget caps land before we touch the runner.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -21,6 +22,8 @@ from aegis.remediate.patch_workflow import (
     load_golden_patch,
 )
 from aegis.schema import AegisFinding
+
+logger = logging.getLogger(__name__)
 
 RemediationAction = Literal["code_patch", "live_hardening"]
 RemediationSource = Literal["cai", "golden_fixture", "vulnfixer"]
@@ -137,6 +140,57 @@ def _use_golden_patch(finding: AegisFinding) -> RemediationResult | None:
     )
 
 
+def _usage_from_result(result) -> tuple[int, int]:
+    """Best-effort ``(prompt_tokens, completion_tokens)`` from a CAI result.
+
+    The CAI ``RunResult`` exposes per-call token usage on
+    ``raw_responses[].usage`` (``input_tokens`` / ``output_tokens``); we sum
+    across the run. Cost is not carried on the result object (CAI tracks it on
+    a separate global tracker), so we never fabricate it — the caller records
+    ``cost_cents=0``. Any shape mismatch degrades to ``(0, 0)``.
+    """
+    prompt_tokens = completion_tokens = 0
+    for resp in getattr(result, "raw_responses", None) or []:
+        usage = getattr(resp, "usage", None)
+        if usage is None:
+            continue
+        prompt_tokens += int(getattr(usage, "input_tokens", 0) or 0)
+        completion_tokens += int(getattr(usage, "output_tokens", 0) or 0)
+    return prompt_tokens, completion_tokens
+
+
+def _record_usage(
+    *,
+    project_id: str | None,
+    run_id: str | None,
+    model: str,
+    task: str,
+    result,
+) -> None:
+    """Best-effort insert of an ``LLMUsage`` row after a routed CAI call.
+
+    Never raises: usage logging must not be able to fail a remediation. A
+    missing ``project_id`` (offline / filesystem path) is a no-op, so this
+    stays DB-free unless a DB-backed run actually drove the agent.
+    """
+    if not project_id:
+        return
+    try:
+        from aegis.db.models import LLMUsage
+        from aegis.db.session import get_session
+
+        prompt_tokens, completion_tokens = _usage_from_result(result)
+        with get_session() as sess:
+            sess.add(LLMUsage(
+                project_id=project_id, run_id=run_id, model=model, task=task,
+                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                cost_cents=0,
+            ))
+    except Exception:  # noqa: BLE001 - usage logging is strictly best-effort
+        logger.warning("LLMUsage logging failed for project %s task %s",
+                       project_id, task, exc_info=True)
+
+
 def _run_cai_agent(
     *,
     task: str,
@@ -146,6 +200,7 @@ def _run_cai_agent(
     config,
     project_id: str | None,
     budget_checker: BudgetChecker | None,
+    run_id: str | None = None,
     extra_context: dict[str, Any] | None = None,
 ) -> RemediationResult:
     """Shared CAI invocation path used by ``run_code_fix`` and
@@ -196,6 +251,9 @@ def _run_cai_agent(
             output=prompt, error=str(exc), source="cai",
         )
 
+    _record_usage(project_id=project_id, run_id=run_id,
+                  model=spec.model, task=task, result=result)
+
     output = _stringify_agent_result(result)
     if action == "code_patch":
         diff = extract_unified_diff(output)
@@ -224,6 +282,7 @@ def run_code_fix(
     use_golden_patch: bool = False,
     config=None,
     project_id: str | None = None,
+    run_id: str | None = None,
     budget_checker: BudgetChecker | None = None,
 ) -> RemediationResult:
     """Invoke CAI CodeAgent to generate a code patch.
@@ -246,7 +305,7 @@ def run_code_fix(
         task="patch", action="code_patch",
         finding=finding,
         prompt=build_code_fix_prompt(finding),
-        config=config, project_id=project_id,
+        config=config, project_id=project_id, run_id=run_id,
         budget_checker=budget_checker,
         extra_context={"repo_path": repo_path} if repo_path else None,
     )
@@ -257,6 +316,7 @@ def run_live_hardening(
     *,
     config=None,
     project_id: str | None = None,
+    run_id: str | None = None,
     budget_checker: BudgetChecker | None = None,
 ) -> RemediationResult:
     """Invoke CAI BlueteamAgent for live system hardening (plan-only by default)."""
@@ -267,6 +327,6 @@ def run_live_hardening(
         task="harden", action="live_hardening",
         finding=finding,
         prompt=build_hardening_prompt(finding),
-        config=config, project_id=project_id,
+        config=config, project_id=project_id, run_id=run_id,
         budget_checker=budget_checker,
     )

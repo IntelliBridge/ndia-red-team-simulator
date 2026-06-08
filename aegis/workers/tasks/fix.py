@@ -45,6 +45,7 @@ def fix_generate(self, job_id: str) -> dict[str, Any]:
             allow_dirty=bool(detail.get("allow_dirty", False)),
             push=bool(detail.get("push", True)),
             use_golden_patch=bool(detail.get("use_golden_patch", False)),
+            override_authorized=bool(detail.get("override_authorized", False)),
             actor=ctx.actor, config=config,
         )
 

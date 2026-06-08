@@ -43,6 +43,10 @@ def start(
     if not target:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="target required")
+    from aegis.scanners import list_scanners
+    if scanner not in list_scanners():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"unknown scanner: {scanner}")
     check(user, Action.SCAN_START, project_id)
 
     config = load_config()

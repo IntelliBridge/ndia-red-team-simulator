@@ -36,6 +36,10 @@ class AegisConfig:
     # AND the budget cap below is > 0. Default off keeps `scan` regex-only.
     deepsec_ai_process: bool = False
     deepsec_budget_usd: float = 5.0
+    # Stale-job reaper: a job left ``status="running"`` longer than this many
+    # seconds is presumed crashed (the redelivery guard never re-runs it) and
+    # is flipped to ``failed`` by ``aegis.reap_stale_jobs`` on the beat schedule.
+    job_max_runtime_seconds: int = 3600
 
 
 def load_config(path: str | None = None) -> AegisConfig:

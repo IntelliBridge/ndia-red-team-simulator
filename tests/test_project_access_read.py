@@ -128,9 +128,10 @@ class TestProjectAccessRead(unittest.TestCase):
     def test_ws_closes_1008_for_unauthorised_project(self):
         """WS upgrade succeeds, then closes 1008 when user has no membership.
 
-        The token path uses dev:<email>, which the dev auth resolver maps
-        to ``project_memberships={"default": "admin"}`` — that user has
-        no membership on ``proj-a``, so the upgrade should reject.
+        The bearer subprotocol carries dev:<email>, which the dev auth
+        resolver maps to ``project_memberships={"default": "admin"}`` —
+        that user has no membership on ``proj-a``, so the upgrade should
+        reject.
         """
         from starlette.websockets import WebSocketDisconnect
 
@@ -142,7 +143,8 @@ class TestProjectAccessRead(unittest.TestCase):
                         clear=False):
             with self.assertRaises(WebSocketDisconnect) as cm:
                 with client.websocket_connect(
-                        "/v1/runs/run-a/events?token=dev:outsider@x.com") as ws:
+                        "/v1/runs/run-a/events",
+                        subprotocols=["aegis.bearer.dev:outsider@x.com"]) as ws:
                     # Receiving a message forces the test client to surface
                     # the server-side close.
                     ws.receive_json()

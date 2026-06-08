@@ -183,6 +183,21 @@ class PostgresRunState:
         digest = hashlib.sha256(data).hexdigest()
         key = f"{self.project_id}/{self.run_id}/{name}/{digest}"
         ref = self.blob_store.put(key, data, content_type=content_type)
+        # (run_id, kind, sha256) is uniquely constrained; re-recording
+        # identical content returns the existing row instead of colliding.
+        existing = self.session.execute(
+            select(Artifact).where(
+                Artifact.run_id == self.run_id,
+                Artifact.kind == name,
+                Artifact.sha256 == digest,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return ArtifactRef(
+                sha256=existing.sha256, location=existing.location,
+                size_bytes=existing.size_bytes,
+                content_type=existing.content_type,
+            )
         self.session.add(Artifact(
             id=str(uuid4()), run_id=self.run_id, project_id=self.project_id,
             kind=name, sha256=digest, location=ref.location,

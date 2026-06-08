@@ -155,6 +155,10 @@ class JsonlAuditWriter:
             if not line:
                 continue
             rec = json.loads(line)
+            # Single-file mode interleaves chains in one file; skip foreign
+            # ones so each chain keeps its own seq/prev_hash continuity.
+            if self._single_file is not None and rec.get("chain_id") != chain_id:
+                continue
             last_seq = rec["seq"]
             last_hash = rec["this_hash"]
         return last_seq, last_hash
@@ -196,11 +200,16 @@ class JsonlAuditWriter:
         path = self._path(chain_id)
         if not path.exists():
             return iter(())
+        single_file = self._single_file is not None
         def _iter() -> Iterator[dict[str, Any]]:
             for line in path.read_text().splitlines():
                 line = line.strip()
-                if line:
-                    yield json.loads(line)
+                if not line:
+                    continue
+                rec = json.loads(line)
+                if single_file and rec.get("chain_id") != chain_id:
+                    continue
+                yield rec
         return _iter()
 
     def iter_chain_ids(self) -> Iterator[str]:
