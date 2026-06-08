@@ -22,14 +22,26 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# (input_per_mtok_usd, output_per_mtok_usd). Ordered most-specific family first
-# because matching is substring-based (e.g. ``gpt-4.1`` ⊂ ``gpt-4.1-mini``).
+# (input_per_mtok_usd, output_per_mtok_usd), standard-context rates. Ordered
+# most-specific family first because matching is substring-based (e.g.
+# ``gpt-5`` ⊂ ``gpt-5.5``; ``gpt-4.1`` ⊂ ``gpt-4.1-mini``). o-series reasoning
+# models (o3/o4-*) are intentionally left to the litellm fallback — their
+# identifiers are too short to family-match here without collisions.
 _PRICES_PER_MTOK: list[tuple[str, tuple[float, float]]] = [
+    # Google Gemini — 3.x current, 2.5 legacy (the config default is 2.5-flash)
+    ("gemini-3.5-flash", (1.50, 9.00)),
+    ("gemini-3.1-pro", (2.00, 12.00)),
+    ("gemini-3-pro", (2.00, 12.00)),
     ("gemini-2.5-flash", (0.30, 2.50)),
     ("gemini-2.5-pro", (1.25, 10.00)),
+    # Anthropic Claude 4.x
     ("claude-opus", (5.00, 25.00)),
     ("claude-sonnet", (3.00, 15.00)),
     ("claude-haiku", (1.00, 5.00)),
+    # OpenAI — GPT-5.x current, GPT-4.x legacy (5.5/5.4 before 5; mini before base)
+    ("gpt-5.5", (5.00, 30.00)),
+    ("gpt-5.4", (2.50, 15.00)),
+    ("gpt-5", (1.25, 10.00)),
     ("gpt-4.1-mini", (0.40, 1.60)),
     ("gpt-4.1", (2.00, 8.00)),
     ("gpt-4o-mini", (0.15, 0.60)),

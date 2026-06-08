@@ -20,10 +20,22 @@ class TestCostCents(unittest.TestCase):
         self.assertEqual(cost_cents("openai/gpt-4.1", 1_000_000, 1_000_000), 1000)
         self.assertEqual(cost_cents("openai/gpt-4o", 1_000_000, 1_000_000), 1250)
 
-    def test_mini_families_not_shadowed_by_base(self):
-        # The more-specific mini families must win over gpt-4.1 / gpt-4o.
+    def test_latest_families(self):
+        # Current-generation Gemini 3.x and OpenAI GPT-5.x.
+        self.assertEqual(cost_cents("gemini/gemini-3.5-flash", 1_000_000, 1_000_000), 1050)
+        self.assertEqual(cost_cents("gemini/gemini-3.1-pro", 1_000_000, 1_000_000), 1400)
+        self.assertEqual(cost_cents("gemini/gemini-3-pro", 1_000_000, 1_000_000), 1400)
+        self.assertEqual(cost_cents("openai/gpt-5.5", 1_000_000, 1_000_000), 3500)
+        self.assertEqual(cost_cents("openai/gpt-5.4", 1_000_000, 1_000_000), 1750)
+        self.assertEqual(cost_cents("openai/gpt-5", 1_000_000, 1_000_000), 1125)
+
+    def test_mini_and_point_releases_not_shadowed_by_base(self):
+        # The more-specific families must win over their substring bases.
         self.assertEqual(cost_cents("openai/gpt-4.1-mini", 1_000_000, 1_000_000), 200)
         self.assertEqual(cost_cents("openai/gpt-4o-mini", 1_000_000, 1_000_000), 75)
+        # gpt-5.5 / gpt-5.4 must not be priced as the cheaper gpt-5.
+        self.assertNotEqual(cost_cents("openai/gpt-5.5", 1_000_000, 1_000_000),
+                            cost_cents("openai/gpt-5", 1_000_000, 1_000_000))
 
     def test_prefix_suffix_and_case_normalized(self):
         self.assertEqual(cost_cents("gemini-2.5-flash", 500_000, 0), 15)          # 0.5M * $0.30
