@@ -6,6 +6,24 @@ SemVer.
 
 ## [Unreleased]
 
+### Security
+- **DB-side append-only audit log (migration `0004`).** `audit_events` is now
+  insert-only *at the database*: a row-immutability trigger `RAISE EXCEPTION`s
+  on `UPDATE`/`DELETE`/`TRUNCATE` for everyone — table owner and superuser
+  included — so a privileged operator can no longer rewrite rows and re-sign a
+  chain end to end (the gap `verify_chain` could detect but not prevent).
+  `audit_chain_heads` stays mutable so appends still update the head pointer.
+- **Least-privilege role separation (guarded).** The migration grants the
+  runtime `aegis_app` role only `INSERT, SELECT` on `audit_events` (full DML
+  elsewhere) and reserves DDL for `aegis_owner`; Alembic connects via the new
+  optional `AEGIS_DB_OWNER_URL`. The role/grant steps no-op when the roles are
+  absent, so CI and single-role dev are unaffected.
+- **pgaudit logging (guarded).** Out-of-band logging of DDL + role/GRANT
+  changes records any attempt to disable the controls above; `CREATE EXTENSION`
+  and `pgaudit.log` are guarded on availability and skip cleanly where the
+  extension isn't loaded. New `deploy/Dockerfile.postgres` ships a
+  pgaudit-enabled Postgres for the compose stack.
+
 ## [0.12.0] — 2026-06-08 — finish the seams: multi-scanner dispatch, budget caps, API sunsets
 
 Post-0.11.0 hardening, the **"finish the seams"** milestone, and tooling

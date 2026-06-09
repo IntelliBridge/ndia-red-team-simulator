@@ -78,8 +78,15 @@ See [`docs/architecture/auth.md`](docs/architecture/auth.md).
   touched. Worker crashes can't produce a half-state.
 - Tool invocations land forensic detail (digests + blob refs) — raw
   scanner stdout / stderr never appears in audit rows.
+- **Append-only at the database** (migration `0004`): a row-immutability
+  trigger `RAISE EXCEPTION`s on `UPDATE`/`DELETE`/`TRUNCATE` of
+  `audit_events` for everyone (owner + superuser included), so the chain
+  can't be re-signed by editing rows. The runtime `aegis_app` role is
+  granted only `INSERT, SELECT` on it; DDL (dropping the trigger) needs the
+  separate `aegis_owner` role, and `pgaudit` logs such changes out-of-band.
 
-See [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md).
+See [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md)
+and [`docs/ops/deploy.md`](docs/ops/deploy.md) for role provisioning.
 
 ### Patch workflow
 
@@ -131,9 +138,6 @@ See [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md).
 
 ## Known gaps (tracked, not shipping in v0.12.0)
 
-- Database-side append-only enforcement on `audit_events` (Postgres
-  `pg_audit` + role separation). Today, a privileged DB operator
-  could re-sign a chain end to end.
 - PII / content scrubbing inside diffs and patches.
 - LLM prompt-injection / output filtering guards.
 - Sandbox isolation per scan (gVisor / Firecracker).

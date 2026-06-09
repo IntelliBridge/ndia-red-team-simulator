@@ -219,13 +219,19 @@ carries only the descriptor.
 | Append succeeded but Celery enqueue failed (worker crash) | Chain has the event, job stays `queued`. Reapeable, never a half-state.    |
 | Raw scanner output exfiltrates secrets via audit rows | Forensic detail carries digests + blob refs only; raw bytes stay out.            |
 | Multi-megabyte audit rows                             | Detail capped at 64 KiB; oversize attrs spill to the blob store with a logged warning. |
+| Privileged operator re-signs a chain end-to-end       | `audit_events` is append-only **at the database**: a `BEFORE UPDATE OR DELETE`/`TRUNCATE` trigger `RAISE EXCEPTION`s for everyone (owner + superuser included). Re-signing needs `DROP TRIGGER`/owner DDL, which only `aegis_owner` holds and pgaudit logs. (Migration `0004`.) |
 
 What the chain does **not** defend against:
 
-- A privileged operator with write access to both `audit_events` and
-  the API config can re-sign a chain end-to-end. The defence there is
-  database-side append-only enforcement (configurable via PG's
-  `pg_audit` + role separation; still a tracked gap — see SECURITY.md).
+- Database-side append-only enforcement is now in place (migration
+  `0004`): a row-immutability trigger blocks `UPDATE`/`DELETE`/`TRUNCATE`
+  on `audit_events` even for the table owner, the runtime `aegis_app` role
+  is granted only `INSERT, SELECT` on it, and `pgaudit` logs DDL +
+  role/GRANT changes out-of-band. The residual surface is narrow: only a
+  holder of `aegis_owner` (DDL) can `DROP`/`DISABLE` the trigger or set
+  `session_replication_role = replica`, and any such action is itself
+  pgaudit-logged. Cryptographic verification (`verify_chain`) stays as a
+  layered detection control. See SECURITY.md and `docs/ops/deploy.md`.
 - Replay of an external HTTP call. Webhook delivery IDs get the 10-min
   TTL replay-prevention set in `github_webhooks._check_replay`.
 
