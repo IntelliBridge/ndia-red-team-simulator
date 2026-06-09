@@ -15,8 +15,10 @@ import os
 import unittest
 from uuid import uuid4
 
-from sqlalchemy import text
-from sqlalchemy.exc import DBAPIError
+# NB: sqlalchemy / aegis.db imports are deferred into the methods below. The
+# offline unit CI job installs without the api/worker extras (no sqlalchemy),
+# and a module-level import would fail at *collection* time — the class-level
+# skipUnless only guards execution. Mirror tests/test_state_pg_coverage.py.
 
 AEGIS_DB = os.environ.get("AEGIS_DB_URL")
 
@@ -59,6 +61,8 @@ class TestAuditAppendOnly(unittest.TestCase):
 
     def _raw(self, sql: str):
         """Run a raw statement in its own session; roll back afterward."""
+        from sqlalchemy import text
+
         sess = self.sess_mod.Session()
         try:
             sess.execute(text(sql))
@@ -68,6 +72,8 @@ class TestAuditAppendOnly(unittest.TestCase):
             sess.close()
 
     def test_update_delete_truncate_blocked_append_and_verify_ok(self):
+        from sqlalchemy.exc import DBAPIError
+
         from aegis.audit.chain import verify_chain
 
         ev = self._append("scan.start")
