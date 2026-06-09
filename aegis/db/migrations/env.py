@@ -18,10 +18,19 @@ target_metadata = Base.metadata
 
 
 def _db_url() -> str:
-    url = os.environ.get("AEGIS_DB_URL") or config.get_main_option("sqlalchemy.url")
+    # Migrations run DDL + GRANTs, so they connect as the schema owner when
+    # role separation is deployed (AEGIS_DB_OWNER_URL); the runtime app uses
+    # the restricted AEGIS_DB_URL. When the owner URL is unset (CI, local
+    # single-role dev) this falls back to AEGIS_DB_URL — unchanged behavior.
+    url = (
+        os.environ.get("AEGIS_DB_OWNER_URL")
+        or os.environ.get("AEGIS_DB_URL")
+        or config.get_main_option("sqlalchemy.url")
+    )
     if not url:
         raise RuntimeError(
-            "AEGIS_DB_URL not set and sqlalchemy.url missing in alembic.ini"
+            "neither AEGIS_DB_OWNER_URL nor AEGIS_DB_URL is set and "
+            "sqlalchemy.url is missing in alembic.ini"
         )
     return url
 

@@ -2,7 +2,13 @@ version: "3.9"
 
 services:
   postgres:
-    image: postgres:16
+    # Custom image adds pgaudit (out-of-band logging of DDL + role/GRANT
+    # changes) on top of postgres:16; preload + log classes set via the
+    # image CMD. See deploy/Dockerfile.postgres and migration 0004.
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.postgres
+    image: aegis-postgres:dev
     environment:
       POSTGRES_USER: aegis
       POSTGRES_PASSWORD: aegis

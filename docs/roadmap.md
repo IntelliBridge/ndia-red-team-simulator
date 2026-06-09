@@ -22,10 +22,12 @@ enforcement with a per-model price table; and four review-surfaced cleanups.
 
 ## Now / Next
 
-With the seams closed, the next focus is **capability breadth** and
-**security / compliance hardening** (below). The highest-leverage candidates:
-broadening the agent/tool roster toward the OnePager promise, authenticated DAST
-flows, and DB-side append-only audit enforcement (`pg_audit` + role separation).
+With the seams closed — and DB-side append-only audit enforcement now landed
+(row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
+see `SECURITY.md` and `docs/ops/deploy.md`) — the next focus is **capability
+breadth** and the remaining **security / compliance hardening** (below). The
+highest-leverage candidates: broadening the agent/tool roster toward the
+OnePager promise, and authenticated DAST flows.
 
 ## Capability breadth
 
@@ -39,9 +41,10 @@ Closing the gap to the OnePager promise.
 
 ## Security, audit & compliance
 
-- **DB-side append-only audit enforcement** — Postgres `pg_audit` + role
-  separation. Today a privileged DB operator could re-sign a chain end to end
-  (tracked in `SECURITY.md`).
+- ~~**DB-side append-only audit enforcement** — Postgres pgaudit + role
+  separation.~~ **Shipped** (migration `0004`): row-immutability trigger blocks
+  `UPDATE`/`DELETE`/`TRUNCATE` on `audit_events`, `aegis_app`/`aegis_owner` role
+  split, pgaudit logging. See `SECURITY.md` § "Audit chain".
 - **WORM / tamper-evident audit storage.**
 - **PII / content scrubbing inside diffs and patches.**
 - **LLM prompt-injection / output filtering.**

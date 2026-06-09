@@ -138,7 +138,8 @@ secret.
 
 | Var                          | Where           | Value                                                  |
 |------------------------------|-----------------|--------------------------------------------------------|
-| `AEGIS_DB_URL`               | api, worker, log-ingest | `postgresql+psycopg://user:pass@host:5432/aegis`  |
+| `AEGIS_DB_URL`               | api, worker, log-ingest | Restricted **app** role DSN: `postgresql+psycopg://aegis_app:pass@host:5432/aegis` |
+| `AEGIS_DB_OWNER_URL`         | migrations only | **Owner** role DSN used to run Alembic (DDL + GRANTs): `postgresql+psycopg://aegis_owner:pass@host:5432/aegis`. Optional — falls back to `AEGIS_DB_URL` for single-role/dev. |
 | `AEGIS_BROKER_URL`           | api, worker     | `redis://host:6379/0`                                  |
 | `AEGIS_RESULT_BACKEND`       | worker          | `redis://host:6379/1`                                  |
 | `AEGIS_BLOB_BACKEND`         | api, worker     | `s3`                                                   |
@@ -186,22 +187,53 @@ docker build -t aegis-web -f deploy/Dockerfile.web .
 
 # Kali (only if you're hosting the scanner; usually external)
 docker build -t aegis-kali -f deploy/Dockerfile.kali .
+
+# Postgres with pgaudit (or use a managed PG with pgaudit enabled)
+docker build -t aegis-postgres -f deploy/Dockerfile.postgres .
 ```
 
-All four Dockerfiles install from the repo root, so the build context
-must be the repo root (`docker build … .`). The web image consumes
-the pnpm workspace at the same root path.
+All Dockerfiles install from the repo root, so the build context must
+be the repo root (`docker build … .`). The web image consumes the pnpm
+workspace at the same root path.
 
 ---
 
 ## First-deploy checklist
 
-1. **Database**: provision Postgres, apply Alembic migrations end to
-   end:
-   ```bash
-   AEGIS_DB_URL=… alembic -c aegis/db/alembic.ini upgrade head
+1. **Database**: provision Postgres with two roles so the audit log is
+   append-only at the DB (migration `0004`). The owner holds DDL; the app
+   role the api/worker connect as cannot `UPDATE`/`DELETE` `audit_events`:
+   ```sql
+   CREATE ROLE aegis_owner LOGIN PASSWORD '…';          -- owns the schema, runs migrations
+   CREATE ROLE aegis_app   LOGIN PASSWORD '…';           -- restricted runtime role
+   ALTER DATABASE aegis OWNER TO aegis_owner;
+   GRANT aegis_app TO aegis_owner;                        -- so the owner can hand out grants
    ```
-   The current migration head is `0003_application_logs`.
+   Apply migrations **as the owner** (the migration also issues the
+   guarded `REVOKE`/`GRANT`s and `CREATE EXTENSION pgaudit`):
+   ```bash
+   AEGIS_DB_OWNER_URL=postgresql+psycopg://aegis_owner:…@host:5432/aegis \
+     alembic -c alembic.ini upgrade head
+   ```
+   Then point the runtime `AEGIS_DB_URL` at `aegis_app`. The current
+   migration head is `0004_audit_append_only`. Single-role/dev may skip the
+   roles entirely — the migration's role/grant steps no-op when the roles
+   are absent, and Alembic falls back to `AEGIS_DB_URL`.
+
+   **pgaudit** (out-of-band logging of DDL + role/GRANT changes, so disabling
+   the controls is recorded) needs the extension preloaded *before*
+   `CREATE EXTENSION` can succeed — a server-level setting that can't live in
+   a migration transaction. Run Postgres from `deploy/Dockerfile.postgres`
+   (installs `postgresql-16-pgaudit`, sets `shared_preload_libraries=pgaudit`
+   and `pgaudit.log='ddl, role'`), or on a managed/self-hosted server set the
+   equivalent and reload:
+   ```sql
+   ALTER SYSTEM SET shared_preload_libraries = 'pgaudit';   -- needs a restart
+   ALTER SYSTEM SET pgaudit.log = 'ddl, role';              -- SELECT pg_reload_conf();
+   ```
+   Migration `0004` additionally sets `pgaudit.log` per-role (`ALTER ROLE`).
+   Where pgaudit is unavailable (e.g. stock image) the migration logs a
+   notice and skips it; the trigger-based append-only guarantee still holds.
 2. **Blob store**: create the bucket; grant the api + worker IAM the
    read/write needed.
 3. **Keycloak**: realm + client per `deploy/keycloak/realm-export.json`.
@@ -276,6 +308,21 @@ for the process lifetime. After a Keycloak signing key rotation:
 - Aegis worker: same.
 
 NextAuth refreshes JWKS on demand and doesn't need a restart.
+
+### Database role passwords (`aegis_app` / `aegis_owner`)
+
+Rotate the role passwords on your normal secret cadence:
+
+```
+aegis_app:    ALTER ROLE aegis_app PASSWORD '…';  then update AEGIS_DB_URL
+              on api + worker + log-ingest and rolling-restart.
+aegis_owner:  ALTER ROLE aegis_owner PASSWORD '…'; update AEGIS_DB_OWNER_URL
+              wherever migrations run (CI/CD secret, ops shell).
+```
+
+Do **not** run the app as `aegis_owner` to "simplify" — that hands the
+runtime the privileges (DDL, `DROP TRIGGER`) that the split exists to
+withhold. The owner role is only for migrations.
 
 ---
 
