@@ -24,12 +24,14 @@ enforcement with a per-model price table; and four review-surfaced cleanups.
 
 With the seams closed — DB-side append-only audit enforcement landed
 (row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
-see `SECURITY.md` and `docs/ops/deploy.md`), and the plugin entry-point seam now
+see `SECURITY.md` and `docs/ops/deploy.md`), the plugin entry-point seam now
 a documented, validated, allowlist-gated **scanner-adapter marketplace** (see
-[Extending Aegis](dev/extending.md)) — the next focus is the remaining
-**capability breadth** and **security / compliance hardening** (below). The
-highest-leverage candidates: broadening the agent/tool roster toward the
-OnePager promise, and authenticated DAST flows.
+[Extending Aegis](dev/extending.md)), and **supply-chain integrity** mostly
+shipped (keyless cosign image signing + SBOM + SLSA-3 provenance, and opt-in
+signed plugins; see [Supply-chain integrity](security/supply-chain.md)) — the
+next focus is the remaining **capability breadth** and **security / compliance
+hardening** (below). The highest-leverage candidates: broadening the agent/tool
+roster toward the OnePager promise, and authenticated DAST flows.
 
 ## Capability breadth
 
@@ -55,8 +57,16 @@ Closing the gap to the OnePager promise.
 - **WORM / tamper-evident audit storage.**
 - **PII / content scrubbing inside diffs and patches.**
 - **LLM prompt-injection / output filtering.**
-- **Supply-chain integrity** — sigstore image signing, signed plugin
-  entry points, SLSA-3 / Nix reproducible builds.
+- ~~**Supply-chain integrity** — sigstore image signing, signed plugin entry
+  points, SLSA-3 provenance.~~ **Shipped**: release images are keyless
+  cosign-signed by digest with a CycloneDX SBOM + SLSA-3 provenance
+  attestation (`.github/workflows/release-sign.yml`, on `v*` tags), and
+  third-party plugins support opt-in Ed25519 signature enforcement
+  (`AEGIS_PLUGINS_REQUIRE_SIGNATURE` + trusted keys, `aegis plugins sign`).
+  See [Supply-chain integrity](security/supply-chain.md) and `SECURITY.md`.
+    - **Nix reproducible builds** — bit-for-bit reproducible builds so the
+      published image can be independently rebuilt and compared. Still
+      deferred.
 - **Per-scan sandbox isolation** (gVisor / Firecracker).
 - **SOC 2 / ISO 27001 / FedRAMP evidence pack.**
 

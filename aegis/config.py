@@ -40,6 +40,16 @@ class AegisConfig:
     # seconds is presumed crashed (the redelivery guard never re-runs it) and
     # is flipped to ``failed`` by ``aegis.reap_stale_jobs`` on the beat schedule.
     job_max_runtime_seconds: int = 3600
+    # Supply-chain: optional Ed25519 signature enforcement for third-party
+    # marketplace plugins. Off by default → the entry-point loader is unchanged.
+    # When enabled (env ``AEGIS_PLUGINS_REQUIRE_SIGNATURE=1`` or this flag), only
+    # plugins whose distribution carries a valid signature from a trusted key are
+    # registered. ``plugins_trusted_keys`` / ``plugins_sig_dir`` mirror the
+    # ``AEGIS_PLUGINS_TRUSTED_KEYS`` / ``AEGIS_PLUGINS_SIG_DIR`` env vars (the
+    # verifier reads env directly; these fields keep the contract discoverable).
+    plugins_require_signature: bool = False
+    plugins_trusted_keys: str | None = None
+    plugins_sig_dir: str | None = None
 
 
 def load_config(path: str | None = None) -> AegisConfig:

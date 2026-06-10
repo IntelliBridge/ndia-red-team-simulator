@@ -194,6 +194,20 @@ def build_parser() -> argparse.ArgumentParser:
         "list", help="List discovered third-party plugins (AEGIS_PLUGINS=1)")
     p_plugins_list.add_argument("--json", action="store_true",
                                 help="Emit the discovery report as a JSON array")
+    p_plugins_sign = plugins_sub.add_parser(
+        "sign",
+        help="Sign a plugin distribution with an Ed25519 key (produces a .sig)")
+    p_plugins_sign.add_argument("--dist", required=True,
+                                help="Distribution name to sign (e.g. aegis-plugin-example)")
+    p_plugins_sign.add_argument("--version", default=None,
+                                help="Distribution version (omit for unversioned)")
+    p_plugins_sign.add_argument("--entry-point", dest="entry_point", required=True,
+                                help="Entry point GROUP:NAME whose factory is signed "
+                                     "(e.g. aegis.scanners:example)")
+    p_plugins_sign.add_argument("--key", required=True,
+                                help="Path to the Ed25519 private key PEM")
+    p_plugins_sign.add_argument("--out", default=None,
+                                help="Output directory for the .sig (default: cwd)")
 
     # migrate (Phase 3 M11 — surface lands now, impl in M11)
     p_migrate = sub.add_parser("migrate", help="Move filesystem run data into Postgres (M11)")

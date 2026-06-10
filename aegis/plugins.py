@@ -28,6 +28,11 @@ class PluginInfo:
     ``"rejected"`` (failed to load or non-conformant — never registered), or
     ``"skipped"`` (excluded by ``AEGIS_PLUGINS_ALLOW``). ``detail`` carries the
     reason for rejected/skipped rows and is ``""`` for loaded ones.
+
+    ``signature`` is the verifying key_id (sha256 of the trusted public key)
+    when optional signature enforcement is enabled and the plugin's signature
+    verified, else ``None`` (enforcement off, or no/invalid signature). It
+    defaults to ``None`` so the dataclass stays backward-compatible.
     """
 
     name: str
@@ -37,6 +42,7 @@ class PluginInfo:
     version: str | None
     status: str          # "loaded" | "rejected" | "skipped"
     detail: str
+    signature: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -57,8 +63,16 @@ def discover_all() -> list[PluginInfo]:
     # subsystems (and their eager built-in registration) until discovery runs.
     from aegis.agents.registry import _agent_registry
     from aegis.scanners.registry import _scanner_registry
+    from aegis.supply_chain.signing import load_plugin_verifier
+
+    # Same supply-chain gate as the eager loader: when enforcement is on the
+    # report reflects which plugins would be rejected for a missing/invalid
+    # signature (and surfaces the verifying key_id on the loaded rows).
+    verifier = load_plugin_verifier()
 
     results: list[PluginInfo] = []
-    results.extend(_scanner_registry.scan_entry_points("aegis.scanners", register=False))
-    results.extend(_agent_registry.scan_entry_points("aegis.agents", register=False))
+    results.extend(_scanner_registry.scan_entry_points(
+        "aegis.scanners", register=False, verifier=verifier))
+    results.extend(_agent_registry.scan_entry_points(
+        "aegis.agents", register=False, verifier=verifier))
     return results

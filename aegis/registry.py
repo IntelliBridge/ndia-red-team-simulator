@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Callable, Generic, Iterator, Protocol, TypeVar
 
 if TYPE_CHECKING:
     from aegis.plugins import PluginInfo
+    from aegis.supply_chain.signing import PluginVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,13 @@ class Registry(Generic[T]):
 
     # -- discovery ---------------------------------------------------------
 
-    def scan_entry_points(self, group: str, *, register: bool) -> Iterator[PluginInfo]:
+    def scan_entry_points(
+        self,
+        group: str,
+        *,
+        register: bool,
+        verifier: PluginVerifier | None = None,
+    ) -> Iterator[PluginInfo]:
         """Walk ``group``'s entry points once, yielding a PluginInfo per item.
 
         This is the single shared discovery path. ``register=True`` (the eager
@@ -112,6 +119,14 @@ class Registry(Generic[T]):
         are applied identically, and any per-plugin failure is captured as a
         ``rejected`` record rather than propagated — one bad plugin can never
         break the others or crash import.
+
+        ``verifier`` is the optional supply-chain gate. When supplied (i.e.
+        ``AEGIS_PLUGINS_REQUIRE_SIGNATURE`` enforcement is on), a conformant
+        plugin's distribution signature is verified *before* registration: an
+        unsigned/invalid plugin yields a ``rejected`` record (with the reason)
+        and is NOT registered, while a verified one carries the matching
+        ``signature`` key_id on its ``loaded`` row. When ``verifier`` is ``None``
+        the behaviour is unchanged (no signature check).
 
         Caller is responsible for the ``AEGIS_PLUGINS=1`` gate; this method
         assumes discovery is enabled.
@@ -134,11 +149,12 @@ class Registry(Generic[T]):
         for ep in eps:
             dist_name, version = _dist_meta(ep)
 
-            def _info(name: str, status: str, detail: str) -> PluginInfo:
+            def _info(name: str, status: str, detail: str,
+                      signature: str | None = None) -> PluginInfo:
                 return PluginInfo(
                     name=name, kind=self._kind, group=group,
                     distribution=dist_name, version=version,
-                    status=status, detail=detail,
+                    status=status, detail=detail, signature=signature,
                 )
 
             if allow is not None and (dist_name is None or dist_name not in allow):
@@ -159,6 +175,17 @@ class Registry(Generic[T]):
                 yield _info(ep.name, "rejected", reason)
                 continue
 
+            # Supply-chain gate: a configured verifier must approve the
+            # distribution's signature before we register the code that runs.
+            signature: str | None = None
+            if verifier is not None:
+                result = verifier.verify(dist_name or ep.name, version, factory)
+                if not result.verified:
+                    yield _info(ep.name, "rejected",
+                                f"signature rejected: {result.reason}")
+                    continue
+                signature = result.key_id
+
             # Conformant: prefer the adapter's own ``name`` in the report.
             if register:
                 try:
@@ -167,7 +194,7 @@ class Registry(Generic[T]):
                     yield _info(item.name, "rejected",
                                 f"registration failed: {exc}")
                     continue
-            yield _info(item.name, "loaded", "")
+            yield _info(item.name, "loaded", "", signature=signature)
 
     def _conformance_error(self, item: object) -> str | None:
         """Return a concise reason string if ``item`` is non-conformant, else None."""
@@ -183,11 +210,16 @@ class Registry(Generic[T]):
 
         Side-effect-only: drains :meth:`scan_entry_points` with registration
         enabled. Kept as the eager-load entry point the subsystem ``__init__``
-        modules call at import time.
+        modules call at import time. When optional signature enforcement is on
+        (``AEGIS_PLUGINS_REQUIRE_SIGNATURE``), a verifier is wired in so unsigned
+        plugins are rejected here too.
         """
         if os.environ.get("AEGIS_PLUGINS") != "1":
             return
-        for info in self.scan_entry_points(group, register=True):
+        from aegis.supply_chain.signing import load_plugin_verifier
+
+        verifier = load_plugin_verifier()
+        for info in self.scan_entry_points(group, register=True, verifier=verifier):
             if info.status == "rejected":
                 logger.warning(
                     "rejected %s plugin %r: %s", self._kind, info.name, info.detail,
