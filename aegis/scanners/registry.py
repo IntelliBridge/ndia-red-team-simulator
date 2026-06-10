@@ -10,7 +10,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from aegis.registry import Registry
 from aegis.schema import AegisFinding
@@ -181,6 +181,7 @@ def which_available(*executables: str) -> bool:
     return any(shutil.which(exe) is not None for exe in executables)
 
 
+@runtime_checkable
 class ScannerAdapter(Protocol):
     name: str
     capabilities: set[str]
@@ -200,7 +201,9 @@ def _validate(adapter: ScannerAdapter) -> None:
         )
 
 
-_scanner_registry: Registry[ScannerAdapter] = Registry("scanner", validate=_validate)
+_scanner_registry: Registry[ScannerAdapter] = Registry(
+    "scanner", validate=_validate, protocol=ScannerAdapter,
+)
 # Historical public handle: callers and tests pop/iterate this dict directly,
 # so it must stay the live backing store (same object as the registry's).
 _REGISTRY: dict[str, ScannerAdapter] = _scanner_registry._items

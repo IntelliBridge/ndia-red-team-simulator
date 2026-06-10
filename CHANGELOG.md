@@ -6,7 +6,33 @@ SemVer.
 
 ## [Unreleased]
 
+### Added
+- **Community scanner-adapter marketplace.** The `aegis.scanners` /
+  `aegis.agents` entry-point seam is now a documented, supported plugin
+  marketplace: a third-party distribution ships an adapter via a zero-arg
+  factory entry point and an operator enables it with `AEGIS_PLUGINS=1` (on the
+  API, worker, and CLI) — no edit to `aegis`. Discovery now **validates** each
+  plugin against its Protocol: a factory that raises, an object missing `scan`,
+  or an empty `name` is **rejected and skipped** without crashing discovery or
+  affecting other plugins. A new **`aegis plugins list`** subcommand prints a
+  table (name, kind, distribution, version, status `loaded|rejected|skipped`,
+  detail) — `--json` for scripting; with discovery off it prints a hint to set
+  `AEGIS_PLUGINS=1`. A reference plugin lives at
+  `examples/aegis-plugin-example/`. See the
+  [Extending Aegis](docs/dev/extending.md) docs § "Third-party plugins
+  (marketplace)".
+
 ### Security
+- **Third-party plugin allowlist (`AEGIS_PLUGINS_ALLOW`).** Loading a plugin
+  runs its code **in-process** in the API and worker, so the marketplace ships
+  with a security gate: `AEGIS_PLUGINS_ALLOW` is a comma-separated list of
+  trusted **distribution** names — when set, only plugins from those
+  distributions load and all others are skipped; when unset (with
+  `AEGIS_PLUGINS=1`) all discovered plugins load and a warning is logged that an
+  unpinned set is active. Protocol-conformance validation rejects a malformed or
+  raising plugin before it can register. Cryptographic signature verification of
+  plugin distributions is planned (tying into the supply-chain signing roadmap);
+  until then the allowlist plus a pinned lockfile is the gate.
 - **DB-side append-only audit log (migration `0004`).** `audit_events` is now
   insert-only *at the database*: a row-immutability trigger `RAISE EXCEPTION`s
   on `UPDATE`/`DELETE`/`TRUNCATE` for everyone — table owner and superuser

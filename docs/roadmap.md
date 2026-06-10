@@ -22,10 +22,12 @@ enforcement with a per-model price table; and four review-surfaced cleanups.
 
 ## Now / Next
 
-With the seams closed — and DB-side append-only audit enforcement now landed
+With the seams closed — DB-side append-only audit enforcement landed
 (row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
-see `SECURITY.md` and `docs/ops/deploy.md`) — the next focus is **capability
-breadth** and the remaining **security / compliance hardening** (below). The
+see `SECURITY.md` and `docs/ops/deploy.md`), and the plugin entry-point seam now
+a documented, validated, allowlist-gated **scanner-adapter marketplace** (see
+[Extending Aegis](dev/extending.md)) — the next focus is the remaining
+**capability breadth** and **security / compliance hardening** (below). The
 highest-leverage candidates: broadening the agent/tool roster toward the
 OnePager promise, and authenticated DAST flows.
 
@@ -36,8 +38,13 @@ Closing the gap to the OnePager promise.
 - **60+ specialized agents** (16 wired + 3 multi-agent patterns today).
 - **35+ security tools** (24 today: 10 Kali + 14 scanner adapters).
 - **Authenticated DAST flows.**
-- **Community scanner-adapter marketplace** (third-party adapters via the plugin
-  entry-point seam).
+- ~~**Community scanner-adapter marketplace** — third-party adapters via the
+  plugin entry-point seam.~~ **Shipped**: the `aegis.scanners` / `aegis.agents`
+  entry-point seam is now a documented marketplace — Protocol-conformance
+  validation (a bad plugin is rejected, never fatal), the `AEGIS_PLUGINS_ALLOW`
+  distribution allowlist, an `aegis plugins list [--json]` inspector, and a
+  reference plugin at `examples/aegis-plugin-example/`. See
+  [Extending Aegis](dev/extending.md) § "Third-party plugins (marketplace)".
 
 ## Security, audit & compliance
 

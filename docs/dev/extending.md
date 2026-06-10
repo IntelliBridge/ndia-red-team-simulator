@@ -28,40 +28,10 @@ two steps: write `aegis/scanners/<tool>_adapter.py` ending in
 
 ### Third-party (entry points)
 
-A downstream package registers a plugin by declaring an entry point in
-its own `pyproject.toml` — no change to the `aegis` package:
-
-```toml
-[project.entry-points."aegis.scanners"]
-my_scanner = "my_pkg.my_module:MyScannerAdapter"
-
-[project.entry-points."aegis.agents"]
-my_agent = "my_pkg.my_module:MyAgentAdapter"
-```
-
-The entry-point **value must be a zero-arg callable** (a class works,
-since calling it with no arguments constructs an instance). Aegis calls
-`factory()` and registers the result, which must expose a `.name`
-attribute (and otherwise satisfy the relevant adapter Protocol — see
-below). The groups are `aegis.scanners` and `aegis.agents`.
-
-!!! warning "Discovery is opt-in: `AEGIS_PLUGINS=1`"
-    Entry-point discovery only runs when the environment variable
-    `AEGIS_PLUGINS=1` is set. It is **off by default**.
-
-    This is deliberate: the offline test path must stay deterministic.
-    `pytest` runs without `AEGIS_PLUGINS`, so a third-party plugin
-    installed in the same environment can never perturb the built-in
-    registry during tests. The seam is wired in
-    `Registry.maybe_load_entry_points`, which returns immediately unless
-    the flag is `"1"`; a plugin whose `factory()` raises is logged and
-    skipped, never propagated.
-
-Each subsystem exposes a no-arg wrapper —
-`aegis.scanners.maybe_load_entry_points()` and
-`aegis.agents.maybe_load_entry_points()` — that the package `__init__`
-calls **after** the built-ins are imported, so first-party adapters are
-always present and plugins layer on top.
+See [Third-party plugins (marketplace)](#third-party-plugins-marketplace)
+below for the full authoring guide: the entry-point contract, a
+copy-pasteable example plugin, enabling discovery, the security
+allowlist, conformance validation, and the inspection CLI.
 
 ## The adapter surface
 
@@ -123,6 +93,197 @@ A scanner's `capabilities` is a `set[str]` validated at `register()`:
 
 To promote a capability to first-party (so it no longer warns), it's a
 **one-line append** to `KNOWN_CAPABILITIES`.
+
+## Third-party plugins (marketplace)
+
+The entry-point seam is Aegis's **community scanner-adapter marketplace**:
+a downstream package ships a scanner (or agent) adapter, declares an entry
+point, and an Aegis operator installs and enables it with **no edit to the
+`aegis` package**. Discovery is opt-in, validated, and gated behind an
+allowlist — the three controls below let an operator run third-party
+adapters without surrendering the deterministic offline path or running
+arbitrary code unconditionally.
+
+A complete, installable reference plugin lives at
+[`examples/aegis-plugin-example/`](https://github.com/IntelliBridge/aegis/tree/main/examples/aegis-plugin-example)
+— copy it as your starting point.
+
+### The entry-point contract
+
+A plugin declares an entry point in its own `pyproject.toml`. The
+**group** selects the registry (`aegis.scanners` or `aegis.agents`); the
+**value** is a module path to a **zero-arg factory callable** that returns
+the adapter instance:
+
+```toml
+# In the plugin's own pyproject.toml — nothing in aegis changes.
+[project.entry-points."aegis.scanners"]
+myscanner = "my_pkg:create_scanner"
+
+[project.entry-points."aegis.agents"]
+myagent = "my_pkg:create_agent"
+```
+
+Aegis imports the value, calls `create_scanner()` with **no arguments**,
+and registers the returned object. A class works too (calling it with no
+args constructs an instance), but a factory function keeps construction
+explicit. The returned object must satisfy the relevant Protocol —
+[`ScannerAdapter`](#scanneradapter) or [`AgentAdapter`](#agentadapter)
+above.
+
+### A minimal conformant scanner plugin
+
+The factory returns any object with the `ScannerAdapter` surface. Here is
+a complete, copy-pasteable `my_pkg/__init__.py` that mirrors the Protocol
+exactly:
+
+```python
+"""my_pkg — a minimal third-party Aegis scanner adapter."""
+from aegis.scanners.registry import ScanOptions, ScanResult
+
+
+class MyScanner:
+    name = "myscanner"
+    capabilities = {"dast"}        # from the known set; unknown is allowed (warns)
+    default_timeout = 600          # seconds; used when the caller doesn't override
+
+    def adapter_version(self) -> str:
+        return "1.0.0"
+
+    def health_check(self) -> bool:
+        return True                # e.g. shutil.which("mytool") is not None
+
+    def scan(self, run_state, options: ScanOptions) -> ScanResult:
+        # Run your tool against options.target, convert its output to
+        # AegisFinding objects, and return them in a ScanResult.
+        return ScanResult(
+            findings=[],
+            adapter_name=self.name,
+            adapter_version=self.adapter_version(),
+            command_str=f"mytool {options.target}",
+        )
+
+
+def create_scanner() -> MyScanner:   # the zero-arg factory the entry point names
+    return MyScanner()
+```
+
+For a real conversion pattern — building `AegisFinding`s from tool output
+and the `run_cli_scan` subprocess helper — read the in-tree
+[`grype_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/grype_adapter.py),
+the simplest registered adapter.
+
+### Enabling discovery: `AEGIS_PLUGINS=1`
+
+Third-party discovery is **off by default**. Built-in adapters always
+load; third-party ones load **only** when `AEGIS_PLUGINS=1` is set.
+
+!!! warning "Set `AEGIS_PLUGINS=1` on every process that needs the plugin"
+    Discovery is per-process. To use a third-party adapter end to end,
+    set `AEGIS_PLUGINS=1` in the environment of **all three**:
+
+    - the **API** (so `POST /v1/scans` accepts the adapter's name),
+    - the **worker** (so the scan actually dispatches to it), and
+    - the **CLI** (so `aegis scan --scanner …` and `aegis plugins list`
+      see it).
+
+    A common failure mode is enabling it on the API but not the worker:
+    admission accepts the scan, then the worker — running without the
+    flag — can't find the adapter.
+
+This gate is deliberate. The offline test path must stay deterministic:
+`pytest` runs without `AEGIS_PLUGINS`, so a plugin installed in the same
+environment can never perturb the built-in registry during tests. The
+seam is wired in `Registry.maybe_load_entry_points`, which returns
+immediately unless the flag is `"1"`. Each subsystem exposes a no-arg
+wrapper — `aegis.scanners.maybe_load_entry_points()` and
+`aegis.agents.maybe_load_entry_points()` — that the package `__init__`
+calls **after** the built-ins are imported, so first-party adapters are
+always present and plugins layer on top.
+
+### Security: the `AEGIS_PLUGINS_ALLOW` allowlist
+
+!!! danger "Loading a plugin runs its code in your process"
+    A discovered plugin's factory and `scan`/`invoke` methods execute
+    **in-process** inside the API and worker — same privileges, same
+    secrets, same network. Treat installing an Aegis plugin as installing
+    any other dependency: only enable distributions you trust.
+
+`AEGIS_PLUGINS_ALLOW` is a comma-separated list of **distribution** names
+(the installed package/project name, not the entry-point name) that acts
+as an allowlist:
+
+```bash
+# Only load plugins from these two distributions; skip everything else.
+export AEGIS_PLUGINS=1
+export AEGIS_PLUGINS_ALLOW="aegis-plugin-example,acme-scanners"
+```
+
+- **Allowlist set** — only plugins whose providing distribution is named
+  in the list load. Every other discovered plugin is **skipped** (status
+  `skipped` in `aegis plugins list`), even though discovery is on.
+- **Allowlist unset** (with `AEGIS_PLUGINS=1`) — **all** discovered
+  plugins load, and Aegis **logs a warning** that an unpinned plugin set
+  is active. This is convenient for development but not recommended for
+  production: pin the distributions you trust.
+
+Treat the allowlist as a production control. Combined with pinning plugin
+versions in your lockfile, it bounds exactly which third-party code runs.
+
+!!! note "Future hardening — signed plugins"
+    Signature verification of plugin distributions is planned, tying into
+    the broader [supply-chain integrity](../roadmap.md) work (sigstore
+    image signing, signed entry points, SLSA provenance). Until then, the
+    allowlist plus a pinned lockfile is the gate; there is no cryptographic
+    verification of plugin authorship yet.
+
+### Validation: a bad plugin is rejected, never fatal
+
+Each discovered plugin is validated against its Protocol before it joins
+the registry. A plugin is **rejected and skipped** — without crashing
+discovery or affecting any other plugin or built-in — when:
+
+- its factory **raises** on construction,
+- the returned object **doesn't satisfy the Protocol** (e.g. missing
+  `scan`, or no `name`), or
+- its `name` is **empty**.
+
+A rejection is logged and surfaces as status `rejected` in `aegis plugins
+list` (with the reason in the detail column). One broken plugin can never
+take down discovery or sideline a healthy one.
+
+### Inspecting plugins: `aegis plugins list`
+
+`aegis plugins list` prints what discovery found — built-in and
+third-party alike — so an operator can confirm a plugin loaded (or see why
+it didn't) without reading logs:
+
+```text
+$ AEGIS_PLUGINS=1 aegis plugins list
+NAME         KIND      DISTRIBUTION           VERSION  STATUS    DETAIL
+myscanner    scanner   aegis-plugin-example   1.0.0    loaded
+acme-dast    scanner   acme-scanners          2.3.0    skipped   not in AEGIS_PLUGINS_ALLOW
+brokenone    scanner   broken-pkg             —        rejected  factory raised: ValueError
+```
+
+| Column | Meaning |
+|--------|---------|
+| `name` | The adapter's registry key (entry-point name). |
+| `kind` | `scanner` or `agent`. |
+| `distribution` | The installed distribution that provides the plugin. |
+| `version` | The distribution version. |
+| `status` | `loaded` (registered), `rejected` (failed validation), or `skipped` (not in the allowlist). |
+| `detail` | Reason for a non-`loaded` status. |
+
+Add `--json` to emit the same data as a JSON array for scripting:
+
+```bash
+AEGIS_PLUGINS=1 aegis plugins list --json
+```
+
+With discovery **disabled**, `aegis plugins list` prints a hint to set
+`AEGIS_PLUGINS=1` rather than an empty table, so the off-by-default
+behaviour is never mistaken for "no plugins installed."
 
 ## Runners vs. converters vs. registered adapters
 

@@ -297,7 +297,12 @@ security tool and emit `AegisFinding`s; **agent adapters** wrap a CAI
 agent. First-party adapters register eagerly at import; third-party
 adapters register through the entry-point groups `aegis.scanners` /
 `aegis.agents`, discovered only when `AEGIS_PLUGINS=1` (off by default,
-so the offline test path stays deterministic).
+so the offline test path stays deterministic). This seam is the
+**scanner-adapter marketplace**: discovered plugins are validated against
+their Protocol (a bad one is rejected, never fatal) and gated by the
+`AEGIS_PLUGINS_ALLOW` distribution allowlist; `aegis plugins list` shows
+what loaded. See [Extending Aegis](../dev/extending.md) §
+"Third-party plugins (marketplace)".
 
 ### Scanner adapters (14)
 
