@@ -22,12 +22,14 @@ enforcement with a per-model price table; and four review-surfaced cleanups.
 
 ## Now / Next
 
-With the seams closed — and DB-side append-only audit enforcement now landed
+With the seams closed — DB-side append-only audit enforcement landed
 (row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
-see `SECURITY.md` and `docs/ops/deploy.md`) — the next focus is **capability
-breadth** and the remaining **security / compliance hardening** (below). The
-highest-leverage candidates: broadening the agent/tool roster toward the
-OnePager promise, and authenticated DAST flows.
+see `SECURITY.md` and `docs/ops/deploy.md`), and authenticated DAST flows now
+shipped (encrypted auth-profile store + ZAP/Nuclei auth injection; see
+`docs/ops/authenticated-dast.md`) — the next focus is **capability breadth**
+and the remaining **security / compliance hardening** (below). The
+highest-leverage candidate: broadening the agent/tool roster toward the
+OnePager promise.
 
 ## Capability breadth
 
@@ -35,7 +37,11 @@ Closing the gap to the OnePager promise.
 
 - **60+ specialized agents** (16 wired + 3 multi-agent patterns today).
 - **35+ security tools** (24 today: 10 Kali + 14 scanner adapters).
-- **Authenticated DAST flows.**
+- ~~**Authenticated DAST flows.**~~ **Shipped** (migration `0005`):
+  encrypted auth-profile store (form / bearer / header / cookie kinds),
+  admin-gated `/v1/auth-profiles` API + web page, `auth_profile_id` on
+  `POST /v1/scans`, ZAP/Nuclei header injection with secret redaction.
+  See `docs/ops/authenticated-dast.md`.
 - **Community scanner-adapter marketplace** (third-party adapters via the plugin
   entry-point seam).
 

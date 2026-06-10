@@ -569,7 +569,6 @@ out items intentionally pushed past v0.4.1. Live-current list:
 - LLM prompt-injection / output filtering.
 - Iterative agent loops with test execution.
 - Native MCP protocol.
-- Authenticated DAST flows.
 - Worker autoscaling / multi-region DR.
 
 The CHANGELOG entry for each release also enumerates its deferred

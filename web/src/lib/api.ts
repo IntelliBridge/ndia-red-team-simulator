@@ -139,3 +139,72 @@ export type ProjectMembership = {
   daily_llm_budget_cents: number | null;
   role: string;
 };
+
+// --- DAST authentication profiles (feat/authenticated-dast) ---
+//
+// Secrets are write-only: POST accepts `secret`, but GET never returns
+// it — `config` is the non-secret portion only.
+
+export type AuthProfileKind = "form" | "bearer" | "header" | "cookie";
+
+export type AuthProfile = {
+  id: string;
+  project_id: string;
+  name: string;
+  kind: AuthProfileKind;
+  config: Record<string, string>;
+  created_at: string;
+};
+
+export async function listAuthProfiles(
+  projectId: string,
+): Promise<AuthProfile[]> {
+  // Tolerate both wire shapes: a bare array (the documented contract)
+  // and the `{auth_profiles: [...]}` envelope the API also emits.
+  const out = await api<AuthProfile[] | { auth_profiles?: AuthProfile[] }>(
+    `/v1/auth-profiles?project=${encodeURIComponent(projectId)}`,
+  );
+  return Array.isArray(out) ? out : out.auth_profiles ?? [];
+}
+
+export type CreateAuthProfileRequest = {
+  project_id: string;
+  name: string;
+  kind: AuthProfileKind;
+  config: Record<string, string>;
+  secret: string;
+};
+
+export function createAuthProfile(
+  req: CreateAuthProfileRequest,
+): Promise<AuthProfile> {
+  return api<AuthProfile>("/v1/auth-profiles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}
+
+export function deleteAuthProfile(id: string): Promise<void> {
+  return api<void>(`/v1/auth-profiles/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+export type StartScanRequest = {
+  target: string;
+  scanner: string;
+  project_id: string;
+  /** Optional DAST auth profile to scan as an authenticated user. */
+  auth_profile_id?: string;
+};
+
+export function startScan(req: StartScanRequest): Promise<{ run_id: string }> {
+  // JSON.stringify drops undefined keys, so an unset auth_profile_id
+  // never reaches the wire.
+  return api<{ run_id: string }>("/v1/scans", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(req),
+  });
+}

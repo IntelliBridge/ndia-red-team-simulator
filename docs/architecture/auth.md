@@ -241,6 +241,7 @@ has a rank; each action requires a minimum rank.
 | `tool.invoke`     | `remediator` |
 | `fix.apply`       | `approver`   |
 | `target.manage`   | `admin`      |
+| `auth_profile.manage` | `admin`  |
 | `audit.verify`    | `admin`      |
 
 System callers (workers via `is_system=True`) bypass the check —

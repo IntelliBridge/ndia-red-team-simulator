@@ -164,6 +164,12 @@ secret.
 | `AEGIS_GITHUB_APP_ID`              | api, worker | Installation app id                               |
 | `AEGIS_GITHUB_PRIVATE_KEY`         | api, worker | App private key (PEM)                             |
 
+### Authenticated DAST (optional)
+
+| Var                          | Where       | Notes                                                                 |
+|------------------------------|-------------|-----------------------------------------------------------------------|
+| `AEGIS_AUTH_PROFILES_KEY`    | api, worker | Fernet key encrypting auth-profile secrets at rest. Required only when using authenticated DAST — see [`authenticated-dast.md`](authenticated-dast.md). |
+
 ### Observability
 
 | Var                                | Where               | Notes                                                       |
@@ -216,7 +222,7 @@ workspace at the same root path.
      alembic -c alembic.ini upgrade head
    ```
    Then point the runtime `AEGIS_DB_URL` at `aegis_app`. The current
-   migration head is `0004_audit_append_only`. Single-role/dev may skip the
+   migration head is `0005_auth_profiles`. Single-role/dev may skip the
    roles entirely — the migration's role/grant steps no-op when the roles
    are absent, and Alembic falls back to `AEGIS_DB_URL`.
 

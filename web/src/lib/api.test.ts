@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api } from "./api";
+import {
+  ApiError,
+  api,
+  createAuthProfile,
+  deleteAuthProfile,
+  listAuthProfiles,
+  startScan,
+} from "./api";
 
 const fetchMock = vi.fn();
 
@@ -107,5 +114,100 @@ describe("api() request shaping", () => {
   it("returns {} for an empty response body", async () => {
     fetchMock.mockResolvedValue(ok(""));
     expect(await api("/v1/empty")).toEqual({});
+  });
+});
+
+describe("auth profile + scan helpers", () => {
+  it("listAuthProfiles GETs /v1/auth-profiles scoped to the project", async () => {
+    const profiles = [
+      {
+        id: "ap-1",
+        project_id: "p one",
+        name: "Staging",
+        kind: "form",
+        config: { login_url: "https://t.example/login" },
+        created_at: "2026-06-01T00:00:00Z",
+      },
+    ];
+    fetchMock.mockResolvedValue(ok(JSON.stringify(profiles)));
+    const out = await listAuthProfiles("p one");
+    expect(lastUrl()).toBe("http://localhost:8000/v1/auth-profiles?project=p%20one");
+    expect((lastInit().method ?? "GET").toUpperCase()).toBe("GET");
+    expect(out).toEqual(profiles);
+  });
+
+  it("listAuthProfiles unwraps the {auth_profiles: [...]} envelope shape", async () => {
+    const profiles = [{ id: "ap-2", name: "Env" }];
+    fetchMock.mockResolvedValue(
+      ok(JSON.stringify({ auth_profiles: profiles, count: 1 })),
+    );
+    expect(await listAuthProfiles("p1")).toEqual(profiles);
+  });
+
+  it("createAuthProfile POSTs the full body including the write-only secret", async () => {
+    fetchMock.mockResolvedValue(ok("{}"));
+    await createAuthProfile({
+      project_id: "p1",
+      name: "API key",
+      kind: "header",
+      config: { header_name: "X-Api-Key" },
+      secret: "shh",
+    });
+    expect(lastUrl()).toBe("http://localhost:8000/v1/auth-profiles");
+    const init = lastInit();
+    expect(init.method).toBe("POST");
+    expect(headerOf(init, "Content-Type")).toBe("application/json");
+    expect(init.body).toBe(
+      JSON.stringify({
+        project_id: "p1",
+        name: "API key",
+        kind: "header",
+        config: { header_name: "X-Api-Key" },
+        secret: "shh",
+      }),
+    );
+  });
+
+  it("deleteAuthProfile DELETEs /v1/auth-profiles/{id}", async () => {
+    fetchMock.mockResolvedValue(ok(""));
+    await deleteAuthProfile("ap-9");
+    expect(lastUrl()).toBe("http://localhost:8000/v1/auth-profiles/ap-9");
+    expect(lastInit().method).toBe("DELETE");
+  });
+
+  it("startScan includes auth_profile_id when provided", async () => {
+    fetchMock.mockResolvedValue(ok(JSON.stringify({ run_id: "r1" })));
+    await startScan({
+      target: "https://t.example",
+      scanner: "zap",
+      project_id: "p1",
+      auth_profile_id: "ap-1",
+    });
+    expect(lastUrl()).toBe("http://localhost:8000/v1/scans");
+    expect(lastInit().body).toBe(
+      JSON.stringify({
+        target: "https://t.example",
+        scanner: "zap",
+        project_id: "p1",
+        auth_profile_id: "ap-1",
+      }),
+    );
+  });
+
+  it("startScan omits auth_profile_id from the wire body when unset", async () => {
+    fetchMock.mockResolvedValue(ok(JSON.stringify({ run_id: "r2" })));
+    const out = await startScan({
+      target: "https://t.example",
+      scanner: "trivy",
+      project_id: "p1",
+    });
+    expect(out).toEqual({ run_id: "r2" });
+    expect(lastInit().body).toBe(
+      JSON.stringify({
+        target: "https://t.example",
+        scanner: "trivy",
+        project_id: "p1",
+      }),
+    );
   });
 });

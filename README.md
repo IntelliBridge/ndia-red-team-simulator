@@ -79,6 +79,7 @@ shipped June 2026 with 1329 tests passing (21 skipped offline) on Python
 | GitHub PR-scoped scans with fork-restricted mode | ✅ Shipped |
 | Three-profile observability (Postgres mirror / Loki / Elasticsearch) + OTel security-log pipeline (host audit sources, secrets redacted before export) | ✅ Shipped |
 | Scanner adapters: Strix · Trivy · Semgrep · Nuclei · ZAP · CodeQL · Bandit · Grype · Checkov · Trufflehog · SonarQube · Syft · Bumblebee · Deepsec | ✅ Shipped |
+| Authenticated DAST flows — encrypted auth profiles (form / bearer / header / cookie) injected into ZAP + Nuclei scans, secrets redacted everywhere | ✅ Shipped |
 | Kali toolbelt via MCP — nmap, sqlmap, nikto, hydra, +6 more | ✅ Shipped |
 | CAI agents: 16 wired + 3 multi-agent patterns (offsec / redteam-swarm / bb-triage), runnable via `POST /v1/agents/{name}/run`; active specialists reach the live Kali belt over MCP | ✅ Shipped |
 | Unified human-in-the-loop gate (propose → approve → act) across agents, Kali tools, and remediation | ✅ Shipped |
@@ -88,7 +89,6 @@ shipped June 2026 with 1329 tests passing (21 skipped offline) on Python
 | `@aegis/design-system` workspace + Storybook — curated domain components over ported shadcn base primitives (table / card / alert / input / …) | ✅ Shipped |
 | 60+ specialized agents (full roster from the OnePager) | 🔨 Roadmap |
 | 35+ security tools (currently 24: 10 Kali + 14 scanner adapters) | 🔨 Roadmap |
-| Authenticated DAST flows | 🔨 Roadmap |
 | Sandbox isolation per scan (gVisor / Firecracker) | 🔨 Roadmap |
 
 See [`CHANGELOG.md`](CHANGELOG.md) for per-release detail and the
