@@ -449,6 +449,49 @@ vulnerability-fixer drives the `agentic` strategy — propose → diff, then
 `apply` for a rollback-safe local commit, then `apply + open_pr` to let the
 engine open the **human-reviewed PR itself** (the PR review *is* the gate).
 
+## LLM guardrails
+
+The effect-class gate decides *whether* a model-driven action runs; the LLM
+guardrails govern *what crosses the LLM trust boundary* in either direction.
+Two layers live in `aegis/llm/guardrails.py`, applied at the points where
+untrusted text reaches a model and where model output leaves the platform.
+Both are config-gated and fail **safe** (default on; on any guardrail error
+the input is treated as unsafe), and every log line / raised error is
+secret-free — a block never echoes the offending text or a matched secret.
+
+| Layer | What it does | Where |
+|-------|--------------|-------|
+| **Secret scrubbing** | Runs generated diffs/patches and LLM outputs through the audit redactor's secret/token regex (`aegis/audit/redact.py`), replacing matches with `***REDACTED***` | the canonical diff in `extract_unified_diff` (so the persisted `.diff`, PR body, and remediation log all inherit it) + the remediation/agent output chokepoints |
+| **Prompt-injection detection** | Scores untrusted input for injection — tiered risk (`none`/`low`/`medium`/`high`) with categories (`instruction_override`, `role_switch`, `exfiltration`, …); at/above the block threshold the input is rejected | finding title/description/remediation-steps/PoC/code-snippets + agent prompts, scored **before** the model call |
+
+**Trust boundaries / hook points.** Scanner-derived findings, PR diffs, and
+caller prompts are all *untrusted input*; model-authored diffs and responses
+are *untrusted output*. The guardrails are wired at three chokepoints so a
+new caller inherits them for free:
+
+- **Remediation LLM boundary** — `aegis/remediate/cai_runner.py` (input
+  detection + output filter on the fix path).
+- **Diff extraction** — `aegis/remediate/patch_workflow.py`
+  (`extract_unified_diff` scrubs the canonical diff once, upstream of every
+  consumer).
+- **Agent API boundary** — `aegis/agents/cai/builtins.py` /
+  `patterns.py` (prompt detection before dispatch).
+
+A blocked input surfaces as a clean, secret-free error: a **failed
+`FixOutcome`** in the fix flow, a **blocked `AgentResult`** in the agent
+flow — never a half-run against a poisoned prompt.
+
+**Config knobs (env vars).** All default on; the master switch turns the
+whole layer off for debugging only.
+
+| Var | Default | Effect |
+|-----|---------|--------|
+| `AEGIS_LLM_GUARDRAILS` | on | Master switch for both layers |
+| `AEGIS_LLM_SCRUB_DIFF` | on | Secret-scrub generated diffs/patches |
+| `AEGIS_LLM_DETECT_INJECTION` | on | Prompt-injection detection on untrusted input |
+| `AEGIS_LLM_FILTER_OUTPUT` | on | Secret-scrub LLM output |
+| `AEGIS_LLM_INJECTION_BLOCK_RISK` | `high` | Block threshold; `off` = detect-and-log only |
+
 ## Release map
 
 ```mermaid
@@ -565,8 +608,6 @@ out items intentionally pushed past v0.4.1. Live-current list:
 - Per-tenant cost dashboards / chargeback.
 - Sandbox isolation per scan (gVisor / Firecracker).
 - SOC 2 / ISO 27001 / FedRAMP evidence pack.
-- PII / content scrubbing inside diffs and patches.
-- LLM prompt-injection / output filtering.
 - Iterative agent loops with test execution.
 - Native MCP protocol.
 - Authenticated DAST flows.

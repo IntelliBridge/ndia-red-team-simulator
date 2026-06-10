@@ -23,6 +23,28 @@ SemVer.
   and `pgaudit.log` are guarded on availability and skip cleanly where the
   extension isn't loaded. New `deploy/Dockerfile.postgres` ships a
   pgaudit-enabled Postgres for the compose stack.
+- **LLM guardrails — diff/output secret scrubbing.** A new
+  `aegis/llm/guardrails.py` reuses the audit redactor's secret/token regex
+  (`aegis/audit/redact.py`) to scrub generated diffs/patches and LLM outputs,
+  replacing matches with `***REDACTED***`. Scrubbing runs on the *canonical*
+  unified diff (`extract_unified_diff` in `aegis/remediate/patch_workflow.py`),
+  so every downstream consumer — the persisted `.diff`, the PR body, and the
+  remediation log — inherits the scrub, plus an output filter at the
+  remediation + agent chokepoints.
+- **LLM guardrails — prompt-injection detection.** Untrusted finding fields
+  (title / description / remediation steps / PoC / code snippets) and agent
+  prompts are scored for injection before reaching the model — tiered risk
+  (`none`/`low`/`medium`/`high`) with categories (`instruction_override`,
+  `role_switch`, `exfiltration`, …). At/above a configurable threshold the
+  input is blocked, surfacing a clean, secret-free error: a failed
+  `FixOutcome` in the fix flow, a blocked `AgentResult` in the agent flow.
+  Wired at three chokepoints — `aegis/remediate/cai_runner.py`,
+  `aegis/remediate/patch_workflow.py`, and `aegis/agents/cai/builtins.py` /
+  `patterns.py`. Both layers fail safe and never log the offending text or a
+  matched secret. New env vars: `AEGIS_LLM_GUARDRAILS` (master, default on),
+  `AEGIS_LLM_SCRUB_DIFF`, `AEGIS_LLM_DETECT_INJECTION`,
+  `AEGIS_LLM_FILTER_OUTPUT` (all default on), and
+  `AEGIS_LLM_INJECTION_BLOCK_RISK` (default `high`; `off` = detect-and-log).
 
 ## [0.12.0] — 2026-06-08 — finish the seams: multi-scanner dispatch, budget caps, API sunsets
 

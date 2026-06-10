@@ -18,11 +18,17 @@ from aegis.agents.registry import (
 from aegis.config import load_config
 from aegis.effects import Effect
 from aegis.integrations.cai_loader import load_cai
+from aegis.llm.guardrails import GuardrailViolation, guard_input, guard_output
 
 
 def _invoke_cai(agent_attr: str, prompt: str, context: AgentContext) -> AgentResult:
     """Run a named CAI agent through ``Runner.run_sync``."""
-    bundle = load_cai(load_config())
+    config = load_config()
+    try:
+        guard_input(prompt, config=config)
+    except GuardrailViolation as exc:
+        return AgentResult(status="error", output="", error=str(exc))
+    bundle = load_cai(config)
     if bundle is None:
         return AgentResult(
             status="error", output="",
@@ -46,7 +52,7 @@ def _invoke_cai(agent_attr: str, prompt: str, context: AgentContext) -> AgentRes
         )
         output = getattr(result, "final_output", None) or str(result)
         return AgentResult(
-            status="ok", output=str(output),
+            status="ok", output=guard_output(str(output), config=config),
             agent_version=bundle.cai_version,
         )
     except Exception as exc:  # pragma: no cover — CAI may not be installed

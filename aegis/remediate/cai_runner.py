@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from aegis.integrations.cai_loader import load_cai
+from aegis.llm.guardrails import guard_input, guard_output
 from aegis.llm.router import BudgetChecker, BudgetExceeded
 from aegis.llm.router import route as route_model
 from aegis.remediate.patch_workflow import (
@@ -223,6 +224,12 @@ def _run_cai_agent(
             source="cai",
         )
 
+    # Prompt-injection guard on the untrusted finding-derived prompt, *before*
+    # any agent infrastructure loads. A GuardrailViolation propagates to the
+    # fix service, which turns it into a clean, secret-free FixOutcome error
+    # (the agent is never run).
+    guard_input(prompt, config=config)
+
     bundle = load_cai(config)
     if bundle is None:
         return RemediationResult(
@@ -255,7 +262,9 @@ def _run_cai_agent(
     _record_usage(project_id=project_id, run_id=run_id,
                   model=spec.model, task=task, result=result)
 
-    output = _stringify_agent_result(result)
+    # Output-side secret scrub before the result reaches diff extraction /
+    # persistence / reporting.
+    output = guard_output(_stringify_agent_result(result), config=config)
     if action == "code_patch":
         diff = extract_unified_diff(output)
         if diff is None:
