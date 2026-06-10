@@ -6,6 +6,8 @@ import os
 
 from celery import Celery
 
+from aegis.storage.worm import worm_export_interval
+
 app = Celery(
     "aegis",
     broker=os.environ.get("AEGIS_BROKER_URL", "redis://localhost:6379/0"),
@@ -19,6 +21,7 @@ app = Celery(
         "aegis.workers.tasks.ci_gate",
         "aegis.workers.tasks.parallel_fix",
         "aegis.workers.tasks.reaper",
+        "aegis.workers.tasks.worm_export",
     ],
 )
 
@@ -37,5 +40,12 @@ app.conf.beat_schedule = {
     "reap-stale-jobs": {
         "task": "aegis.reap_stale_jobs",
         "schedule": 300.0,
+    },
+    # Periodic WORM export of the audit chains to the Object-Lock bucket.
+    # The task self-gates on AEGIS_WORM_EXPORT, so this entry is harmless
+    # when WORM is disabled; the interval honours AEGIS_WORM_INTERVAL.
+    "export-chains-to-worm": {
+        "task": "aegis.export_chains_to_worm",
+        "schedule": float(worm_export_interval()),
     },
 }

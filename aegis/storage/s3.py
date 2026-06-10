@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from datetime import datetime
 from typing import Iterator
 
 from aegis.storage.blobs import BlobRef
@@ -18,6 +19,14 @@ class S3BlobStore:
       - AEGIS_S3_REGION        e.g. us-east-1
       - AEGIS_S3_ACCESS_KEY_ID
       - AEGIS_S3_SECRET_ACCESS_KEY
+
+    Object Lock note: ``put`` accepts optional ``retain_until`` +
+    ``lock_mode`` kwargs to apply WORM (Write-Once-Read-Many) retention.
+    These only take effect when the **bucket was created with Object Lock
+    enabled** (``ObjectLockEnabledForBucket=True`` at create time; it can't
+    be turned on afterward). The WORM archive (``aegis.storage.worm``)
+    points an ``S3BlobStore`` at such a bucket so an archived audit chain
+    can't be altered or deleted before its retention expires.
     """
 
     def __init__(self, *, bucket: str, endpoint_url: str | None = None,
@@ -58,15 +67,29 @@ class S3BlobStore:
             return False
 
     def put(self, key: str, content: bytes | str, *,
-            content_type: str = "application/octet-stream") -> BlobRef:
+            content_type: str = "application/octet-stream",
+            retain_until: datetime | None = None,
+            lock_mode: str | None = None) -> BlobRef:
+        """Store ``content`` content-addressed under ``key``.
+
+        ``retain_until`` + ``lock_mode`` apply S3 Object Lock retention to
+        the written object (``lock_mode`` is "GOVERNANCE" or "COMPLIANCE").
+        Both must be set together; the target bucket must have Object Lock
+        enabled at creation time. Existing call sites that omit these kwargs
+        are unchanged.
+        """
         data = content.encode("utf-8") if isinstance(content, str) else content
         digest = hashlib.sha256(data).hexdigest()
         s3_key = f"{key}/{digest}"
         if not self._exists(s3_key):
-            self.client.put_object(
-                Bucket=self.bucket, Key=s3_key, Body=data,
-                ContentType=content_type,
-            )
+            put_kwargs: dict = {
+                "Bucket": self.bucket, "Key": s3_key, "Body": data,
+                "ContentType": content_type,
+            }
+            if retain_until is not None and lock_mode is not None:
+                put_kwargs["ObjectLockMode"] = lock_mode
+                put_kwargs["ObjectLockRetainUntilDate"] = retain_until
+            self.client.put_object(**put_kwargs)
         return BlobRef(
             sha256=digest,
             location=f"s3://{self.bucket}/{s3_key}",

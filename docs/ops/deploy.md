@@ -147,6 +147,21 @@ secret.
 | `AEGIS_S3_BUCKET`            | api, worker     | Default `aegis`                                        |
 | `AEGIS_S3_ACCESS_KEY_ID` / `…SECRET_ACCESS_KEY` | api, worker | Bucket credentials                       |
 
+### WORM audit archive
+
+Off-DB tamper-resistant export of the audit chain (see the
+[WORM audit archive runbook](#worm-audit-archive-runbook) below). All
+default off / safe; the export beat task self-gates on `AEGIS_WORM_EXPORT`.
+S3 endpoint + credentials reuse the `AEGIS_S3_*` vars above.
+
+| Var                          | Where  | Value                                                                |
+|------------------------------|--------|----------------------------------------------------------------------|
+| `AEGIS_WORM_EXPORT`          | worker | Enable the export (default off `0`). Set `1` to turn WORM on.        |
+| `AEGIS_WORM_BUCKET`          | worker | Object-Lock bucket name (default `aegis-worm`).                      |
+| `AEGIS_WORM_RETENTION_DAYS`  | worker | Object Lock retention in days (default `2555` ≈ 7y).                 |
+| `AEGIS_WORM_LOCK_MODE`       | worker | `COMPLIANCE` (default) or `GOVERNANCE`.                              |
+| `AEGIS_WORM_INTERVAL`        | worker | Beat export interval, seconds (default `86400` = daily).            |
+
 ### CORS / Network
 
 | Var                          | Where | Value                                              |
@@ -252,6 +267,77 @@ workspace at the same root path.
    aegis --api scan https://target/health   # should refuse with 403 unless allowlisted
    ```
 9. **Audit verify**: `aegis audit verify --all` — should print ✓.
+
+---
+
+## WORM audit archive runbook
+
+The audit chain is append-only at the database and hash-verifiable
+(migration `0004`); WORM export adds the third layer — an immutable off-DB
+copy. Each chain is exported to an S3 / MinIO bucket with **Object Lock**,
+so an attacker who fully owns the database (or the bucket credentials)
+still can't alter or delete the sealed copy before its retention expires.
+See [`docs/architecture/audit-chain.md`](../architecture/audit-chain.md)
+§ "WORM archival (Object Lock)" for the object layout and re-verification.
+
+### 1. Create the Object-Lock bucket
+
+Object Lock is a **bucket-creation-time** property — it cannot be enabled on
+an existing bucket. Provision the WORM bucket separately from the main
+`AEGIS_S3_BUCKET`.
+
+MinIO (via `mc`):
+
+```bash
+mc mb --with-lock myalias/aegis-worm
+```
+
+AWS S3: create the bucket with Object Lock enabled (the console's "Object
+Lock" toggle at create time, or `aws s3api create-bucket
+--object-lock-enabled-for-bucket`). Aegis sets retention **per object** on
+each put, so a bucket-level default retention is optional; if you set one,
+make it ≤ `AEGIS_WORM_RETENTION_DAYS`.
+
+Grant the worker IAM the `s3:PutObject` + `s3:PutObjectRetention` +
+`s3:GetObject` / `s3:ListBucket` it needs on the WORM bucket.
+
+### 2. Enable the daily export
+
+Set the env (worker side) and turn the flag on:
+
+```bash
+AEGIS_WORM_EXPORT=1
+AEGIS_WORM_BUCKET=aegis-worm
+AEGIS_WORM_RETENTION_DAYS=2555      # ≈ 7 years; match your compliance regime
+AEGIS_WORM_LOCK_MODE=COMPLIANCE
+AEGIS_WORM_INTERVAL=86400           # seconds; daily
+```
+
+The `aegis.export_chains_to_worm` beat task is already registered in
+`celery beat` (interval = `AEGIS_WORM_INTERVAL`). It **self-gates**: with
+`AEGIS_WORM_EXPORT` unset/off it no-ops on every tick, so leaving the task
+scheduled costs nothing until you opt in. Each run emits an
+`audit.worm_export` event (summary counts only) back onto the chain.
+
+### 3. Export on demand
+
+```bash
+aegis audit export --all                 # every chain, now
+aegis audit export --chain run:run-abc   # one chain
+```
+
+Re-exporting an unchanged chain is a no-op (the object key is derived from
+the chain head + content sha). A broken chain is still archived but flagged
+`verified=false` in its manifest.
+
+### Retention is immutable until expiry
+
+Pick `AEGIS_WORM_RETENTION_DAYS` to match your compliance regime — once an
+object is written, its retention **cannot be shortened**. In `COMPLIANCE`
+mode that holds even for the account root; `GOVERNANCE` mode allows a
+specially-privileged principal to lift retention (use it only if your
+regime permits operator override). Storage costs accrue for the full
+retention window, so size the regime deliberately.
 
 ---
 

@@ -153,6 +153,103 @@ knows where to look.
 
 ---
 
+## WORM archival (Object Lock)
+
+Tamper-resistance of the audit chain is a **three-layer** model. The first
+two live in (or next to) the live database; the third moves a copy
+off-DB into immutable object storage:
+
+1. **DB append-only trigger** (migration `0004`). `audit_events` is
+   insert-only *at the database*: a `BEFORE UPDATE OR DELETE OR TRUNCATE`
+   trigger `RAISE EXCEPTION`s for everyone — table owner and superuser
+   included. A privileged operator can't quietly rewrite a row.
+2. **Cryptographic hash-chain verification** (`verify_chain`, above). Even
+   if the trigger were dropped (which needs `aegis_owner` DDL, itself
+   pgaudit-logged), re-signing a chain end-to-end is detectable: every
+   downstream `this_hash` would have to be recomputed and the
+   `audit_chain_heads` pointer rewritten in lockstep.
+3. **Off-DB WORM export with Object Lock retention.** Each chain is
+   exported to an S3 / MinIO bucket created with **Object Lock** in
+   `COMPLIANCE` mode. Once written, the archived copy can't be overwritten
+   or deleted until its retention period expires — not by an attacker who
+   owns the database, and not by one who owns the bucket credentials (in
+   `COMPLIANCE` mode, not even by root). This is what makes the chain
+   tamper-*resistant* off-DB, not merely tamper-*evident*.
+
+`aegis/storage/worm.py` holds `WormArchive`, which wraps the S3 blob store
+pointed at the WORM bucket.
+
+### Export object layout
+
+`archive_chain(chain_id, events, *, verified=…)` writes two objects per
+chain head under a stable, content-derived key prefix
+`audit/{chain_id}/{head_seq}-{sha8}`:
+
+- **`…{head_seq}-{sha8}.jsonl`** — the chain's events as canonical JSONL,
+  one event per line, serialized with the same `sort_keys` / compact
+  separators as the chain's `canonical_json` but **including** `this_hash`,
+  so the file round-trips straight back into `verify_chain`.
+- **`…{head_seq}-{sha8}.manifest.json`** — a manifest carrying
+  `chain_id`, `event_count`, `head_seq`, `head_hash`, `verified`,
+  `exported_at`, `retention_until`, `lock_mode`, and `jsonl_sha256`.
+
+`sha8` is the first 8 hex chars of the JSONL's sha256. Both objects are put
+with the bucket's Object Lock retention (`retain_until` =
+now + `AEGIS_WORM_RETENTION_DAYS`).
+
+### Idempotency
+
+The key is derived from the head sequence **and** the content sha, so
+re-exporting an unchanged chain resolves to the same key and is a no-op —
+`archive_chain` probes for the existing object and returns `None`. A chain
+whose contents changed at the same `head_seq` (e.g. a tampered re-export)
+gets a different `sha8` and lands as a distinct object, leaving the
+original in place under Object Lock.
+
+### Running an export
+
+A broken chain is still archived (so the evidence is preserved) but its
+manifest records `verified: false` and the chain id lands in
+`ExportSummary.broken_chains`.
+
+- **Daily beat task.** `aegis.export_chains_to_worm`
+  (`aegis/workers/tasks/worm_export.py`) is registered in
+  `celery beat` at interval `AEGIS_WORM_INTERVAL` (default 86400s / daily).
+  It **self-gates**: when `AEGIS_WORM_EXPORT` is off it early-returns
+  `{"status": "disabled"}`, so a deployment without WORM configured no-ops
+  on every tick. Each successful run emits an `audit.worm_export` event
+  (summary counts only — no creds, no event contents) back onto the chain.
+- **On-demand CLI.** `aegis audit export` archives chains immediately:
+
+  ```bash
+  aegis audit export --all                 # every chain
+  aegis audit export --chain run:run-abc   # one chain
+  aegis audit export --all --no-verify     # skip the pre-archive verify
+  ```
+
+  With WORM disabled or misconfigured the command prints an actionable
+  message and exits non-zero.
+
+### Re-verifying an archived chain
+
+The archive is self-describing. To prove a stored chain is intact, download
+the JSONL object and feed it back through the verifier:
+
+```python
+import json
+from aegis.audit.chain import verify_chain
+
+events = [json.loads(line) for line in jsonl_bytes.decode().splitlines()]
+result = verify_chain(events)        # walks seq / prev_hash / this_hash
+assert result.verified
+```
+
+Because the JSONL preserves `this_hash`, the recomputation is byte-identical
+to the live `aegis audit verify` walk; the manifest's `jsonl_sha256` lets you
+confirm the downloaded bytes match what was sealed.
+
+---
+
 ## What lands on the chain
 
 | Action prefix       | Emitted by                                                  |
@@ -170,6 +267,7 @@ knows where to look.
 | `github.open_pr`    | CLI / service when opening a PR via the GitHub App          |
 | `logs.queried`      | `GET /v1/logs` (audit-the-auditors)                         |
 | `audit.verify`      | the verifier itself                                         |
+| `audit.worm_export` | the WORM export beat task / CLI on each run                 |
 
 A new action type only needs to thread `authorize()` correctly — the
 chain backend handles serialisation, hash linking, and persistence.
@@ -220,18 +318,20 @@ carries only the descriptor.
 | Raw scanner output exfiltrates secrets via audit rows | Forensic detail carries digests + blob refs only; raw bytes stay out.            |
 | Multi-megabyte audit rows                             | Detail capped at 64 KiB; oversize attrs spill to the blob store with a logged warning. |
 | Privileged operator re-signs a chain end-to-end       | `audit_events` is append-only **at the database**: a `BEFORE UPDATE OR DELETE`/`TRUNCATE` trigger `RAISE EXCEPTION`s for everyone (owner + superuser included). Re-signing needs `DROP TRIGGER`/owner DDL, which only `aegis_owner` holds and pgaudit logs. (Migration `0004`.) |
+| Attacker with full DB control rewrites *and* re-signs the chain | Chains are exported off-DB to an Object-Lock bucket (`COMPLIANCE` mode). The sealed copy can't be overwritten or deleted before its retention expires; download the JSONL and re-run `verify_chain` to compare against the live DB. (WORM archival, above.) |
 
-What the chain does **not** defend against:
+The off-DB tamper-resistance the chain used to lack is now in place — see
+**WORM archival (Object Lock)** above. The residual surfaces are narrow:
 
-- Database-side append-only enforcement is now in place (migration
-  `0004`): a row-immutability trigger blocks `UPDATE`/`DELETE`/`TRUNCATE`
-  on `audit_events` even for the table owner, the runtime `aegis_app` role
-  is granted only `INSERT, SELECT` on it, and `pgaudit` logs DDL +
-  role/GRANT changes out-of-band. The residual surface is narrow: only a
-  holder of `aegis_owner` (DDL) can `DROP`/`DISABLE` the trigger or set
-  `session_replication_role = replica`, and any such action is itself
-  pgaudit-logged. Cryptographic verification (`verify_chain`) stays as a
-  layered detection control. See SECURITY.md and `docs/ops/deploy.md`.
+- Database-side append-only enforcement (migration `0004`): a
+  row-immutability trigger blocks `UPDATE`/`DELETE`/`TRUNCATE` on
+  `audit_events` even for the table owner, the runtime `aegis_app` role is
+  granted only `INSERT, SELECT` on it, and `pgaudit` logs DDL + role/GRANT
+  changes out-of-band. Only a holder of `aegis_owner` (DDL) can
+  `DROP`/`DISABLE` the trigger or set `session_replication_role = replica`,
+  and any such action is itself pgaudit-logged. Cryptographic verification
+  (`verify_chain`) and the WORM archive stay as layered controls. See
+  SECURITY.md and `docs/ops/deploy.md`.
 - Replay of an external HTTP call. Webhook delivery IDs get the 10-min
   TTL replay-prevention set in `github_webhooks._check_replay`.
 

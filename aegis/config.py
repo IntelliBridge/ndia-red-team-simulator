@@ -40,6 +40,17 @@ class AegisConfig:
     # seconds is presumed crashed (the redelivery guard never re-runs it) and
     # is flipped to ``failed`` by ``aegis.reap_stale_jobs`` on the beat schedule.
     job_max_runtime_seconds: int = 3600
+    # WORM (Write-Once-Read-Many) audit export. These mirror the AEGIS_WORM_*
+    # env vars (read at runtime by aegis.storage.worm; S3 creds resolve from
+    # AEGIS_S3_* like S3BlobStore) and are surfaced here purely for
+    # discoverability/documentation — the storage client does NOT read them
+    # off the config object. The target bucket must have Object Lock enabled
+    # at creation for retention to take effect.
+    worm_export_enabled: bool = False
+    worm_bucket: str = "aegis-worm"
+    worm_retention_days: int = 2555
+    worm_lock_mode: str = "COMPLIANCE"
+    worm_export_interval_seconds: int = 86400
 
 
 def load_config(path: str | None = None) -> AegisConfig:

@@ -22,12 +22,13 @@ enforcement with a per-model price table; and four review-surfaced cleanups.
 
 ## Now / Next
 
-With the seams closed — and DB-side append-only audit enforcement now landed
-(row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
-see `SECURITY.md` and `docs/ops/deploy.md`) — the next focus is **capability
-breadth** and the remaining **security / compliance hardening** (below). The
-highest-leverage candidates: broadening the agent/tool roster toward the
-OnePager promise, and authenticated DAST flows.
+With the seams closed — and the audit log now hardened end-to-end (DB-side
+append-only enforcement: row-immutability trigger + `aegis_app`/`aegis_owner`
+role separation + pgaudit; **plus** off-DB WORM/Object-Lock export for
+tamper-resistant retention; see `SECURITY.md` and `docs/ops/deploy.md`) — the
+next focus is **capability breadth** and the remaining **security / compliance
+hardening** (below). The highest-leverage candidates: broadening the agent/tool
+roster toward the OnePager promise, and authenticated DAST flows.
 
 ## Capability breadth
 
@@ -45,7 +46,13 @@ Closing the gap to the OnePager promise.
   separation.~~ **Shipped** (migration `0004`): row-immutability trigger blocks
   `UPDATE`/`DELETE`/`TRUNCATE` on `audit_events`, `aegis_app`/`aegis_owner` role
   split, pgaudit logging. See `SECURITY.md` § "Audit chain".
-- **WORM / tamper-evident audit storage.**
+- ~~**WORM / tamper-evident audit storage**~~ **Shipped**: audit chains
+  export off-DB to an S3/MinIO **Object Lock** bucket (`COMPLIANCE` mode)
+  via `WormArchive` — a daily `celery beat` task (self-gated on
+  `AEGIS_WORM_EXPORT`) plus on-demand `aegis audit export`. The sealed copy
+  survives a full DB compromise; re-verify by downloading the JSONL into
+  `verify_chain`. See `docs/architecture/audit-chain.md` § "WORM archival"
+  and `docs/ops/deploy.md`.
 - **PII / content scrubbing inside diffs and patches.**
 - **LLM prompt-injection / output filtering.**
 - **Supply-chain integrity** — sigstore image signing, signed plugin
