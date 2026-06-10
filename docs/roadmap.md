@@ -22,10 +22,12 @@ enforcement with a per-model price table; and four review-surfaced cleanups.
 
 ## Now / Next
 
-With the seams closed — and DB-side append-only audit enforcement now landed
+With the seams closed — DB-side append-only audit enforcement now landed
 (row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
-see `SECURITY.md` and `docs/ops/deploy.md`) — the next focus is **capability
-breadth** and the remaining **security / compliance hardening** (below). The
+see `SECURITY.md` and `docs/ops/deploy.md`), and the role gate now a pluggable
+`PolicyEngine` (static default + opt-in OPA / Cedar) — the next focus is
+**capability breadth** and the remaining **security / compliance hardening**
+(below). The
 highest-leverage candidates: broadening the agent/tool roster toward the
 OnePager promise, and authenticated DAST flows.
 
@@ -60,7 +62,13 @@ Closing the gap to the OnePager promise.
 - **Worker autoscaling / multi-region DR.**
 - **Celery → Temporal** queue migration (migration shape documented; deferred).
 - **Production Helm / k8s manifests** (kind scaffolding only today).
-- **OPA / Cedar policy engine** (static rule table today).
+- ~~**OPA / Cedar policy engine** (static rule table today).~~ **Shipped**:
+  the route-level role gate is now a pluggable `PolicyEngine`
+  (`aegis/policy/engine.py`). `static` stays the default and is
+  behaviour-identical; opt into `opa` or `cedar` via `AEGIS_POLICY_ENGINE`
+  to delegate to an external decision point (fail-closed). Example policies
+  ship at `deploy/opa/` and `deploy/cedar/`. See `docs/architecture/auth.md`
+  § "Policy engine".
 - **HA Keycloak / IdP hardening.**
 - **Native MCP protocol** (mcp-kali consumed over REST today).
 - **`AEGIS_OFFLINE_VENDOR_HOST`** — air-gapped vendor mirror for submodules.

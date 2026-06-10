@@ -39,6 +39,10 @@ reporters who request it.
   restart.
 - Every protected route runs `aegis.api.policy.check` server-side;
   the web `<RoleGated>` component is **UX only**.
+- The role-gate decision is **pluggable** (`AEGIS_POLICY_ENGINE`):
+  the default `static` engine is the built-in role-rank table, while
+  `opa` / `cedar` delegate to an external policy service. External
+  engines **fail closed** — any error or timeout denies.
 - Project-access enforced on read endpoints (reports / exports /
   WebSocket) via `ensure_project_access` /
   `ensure_run_access`.

@@ -156,6 +156,20 @@ secret.
 | `AEGIS_RL_USER_PER_MIN`      | api   | Per-user rate limit (default `30`)                  |
 | `AEGIS_RL_PROJECT_PER_MIN`   | api   | Per-project rate limit (default `120`)              |
 
+### Policy engine (optional)
+
+The route-level role gate is pluggable (see
+[`auth.md`](../architecture/auth.md) § "Policy engine"). Unset, it stays
+on the built-in static rule table. Set these only to delegate to an
+external decision point; see the runbook below.
+
+| Var                          | Where         | Value                                                  |
+|------------------------------|---------------|--------------------------------------------------------|
+| `AEGIS_POLICY_ENGINE`        | api, worker   | `static` (default) \| `opa` \| `cedar`                  |
+| `AEGIS_OPA_URL`              | api, worker   | OPA base URL (default `http://localhost:8181`)          |
+| `AEGIS_OPA_PATH`             | api, worker   | OPA data path (default `/v1/data/aegis/authz`)          |
+| `AEGIS_CEDAR_URL`            | api, worker   | cedar-agent base URL (default `http://localhost:8180`)  |
+
 ### GitHub App (F23)
 
 | Var                                | Where    | Value                                                |
@@ -340,6 +354,49 @@ If you see any chain marked `BROKEN at seq=N`, that's a structural
 issue — likely a manual database mutation, a partial restore, or a
 clock-skew issue on the writer. The verifier reports the first broken
 event; reconcile from there.
+
+---
+
+## External policy engine (optional)
+
+By default the role gate uses the built-in static rule table — no extra
+service. To delegate the role-rank decision to OPA or Cedar instead,
+stand up the decision point, load the example policy (which replicates
+the static table, so it's a behaviour-identical drop-in), and point the
+API + worker at it via `AEGIS_POLICY_ENGINE`. Both external engines
+**fail closed**: if the engine is unreachable, slow, or returns a bad
+answer, the gate denies (`403`) — so a misconfigured sidecar locks the
+platform down, it never opens it up.
+
+**OPA.** Bring up the bundled `opa` service (it lives under a non-default
+`policy` compose profile, so a plain `docker compose up` never starts it):
+
+```bash
+docker compose --profile policy up opa
+# or, without compose, run OPA directly over the example policy dir:
+opa run --server --addr 0.0.0.0:8181 deploy/opa/
+```
+
+The example policy ships at `deploy/opa/aegis-authz.rego` (package
+`aegis.authz`); the compose service mounts `deploy/opa/` read-only. Then
+point Aegis at it on the API + worker:
+
+```bash
+export AEGIS_POLICY_ENGINE=opa
+export AEGIS_OPA_URL=http://opa:8181        # http://localhost:8181 outside compose
+export AEGIS_OPA_PATH=/v1/data/aegis/authz  # default
+```
+
+**Cedar.** Cedar runs as a `cedar-agent` sidecar (not bundled in the
+compose stack) loaded with `deploy/cedar/aegis-policy.cedar` plus the
+schema/entity notes in `deploy/cedar/aegis-entities.md`. The agent host
+resolves the caller's role for the request's project before evaluation.
+Point Aegis at it:
+
+```bash
+export AEGIS_POLICY_ENGINE=cedar
+export AEGIS_CEDAR_URL=http://cedar-agent:8180
+```
 
 ---
 
