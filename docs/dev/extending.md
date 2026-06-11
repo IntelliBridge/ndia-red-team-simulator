@@ -106,6 +106,89 @@ Defined in [`aegis/agents/registry.py`](https://github.com/IntelliBridge/aegis/b
 `target`, `repo_path`, `actor`, `extra`) and returns an `AgentResult`
 (`status`, `output`, `findings`, `diff`, `agent_version`, `error`).
 
+Each agent also declares an **effect** (`read` / `active` / `external`) — see
+"The tool catalog and effect classification" below — which drives the unified
+human-in-the-loop gate in `aegis/effects.py`. Effect is a per-agent property,
+not a function of domain.
+
+## Authoring a native specialist agent
+
+Beyond wrapping an agent CAI already ships, you can **compose** a brand-new
+specialist from the vendored CAI tool catalog. The pattern lives in
+[`aegis/agents/cai/authored.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/cai/authored.py):
+each specialist is a declarative `AuthoredSpec` (a scoped system prompt +
+a toolbelt + a `domain` and `effect`), turned into a `FunctionAgentAdapter`
+and `register()`ed at import. Adding one is a single list entry:
+
+```python
+AuthoredSpec(
+    name="my_specialist",          # Aegis registry key (dispatch by name)
+    cai_name="MySpecialist",       # the CAI Agent's own name
+    domain="recon",                # one of the six Domain values
+    effect="external",             # read / active / external — drives the gate
+    instructions=_ROE + "You are a … specialist. …",  # substantive prompt
+    tool_imports=[                 # (module_path, attribute) pairs, lazy-resolved
+        ("cai.tools.reconnaissance", "shodan_search"),
+        ("cai.tools.reconnaissance", "curl"),
+    ],
+    use_osint=True,                # append the Camoufox OSINT search tool
+),
+```
+
+Three properties make this safe:
+
+- **Registration is import-safe.** Specs are plain data; the adapter
+  registers `wired=True` at import **without** importing CAI. CAI only
+  matters at invocation.
+- **Invocation degrades, never raises.** `invoke` loads CAI through the
+  central loader; a `None` bundle (submodule missing / offline) surfaces
+  `status="error"`. The CAI `Agent` is built lazily and cached, resolving
+  each `tool_imports` entry defensively — a tool whose import fails is
+  **skipped, not fatal** — and any runtime failure becomes `status="error"`.
+- **OSINT search** is wired by setting `use_osint=True`, which appends the
+  tool returned by
+  [`build_osint_search_tool()`](https://github.com/IntelliBridge/aegis/blob/main/aegis/tools/osint_search.py)
+  — the platform's web-search tool (Camoufox + DuckDuckGo, used in place of a
+  Google/SerpAPI search). It returns `None` when CAI isn't importable, and
+  `None` is filtered out of the toolbelt.
+
+The 12 shipped specialists (`cloud_recon`, `osint_collector`, `threat_intel`,
+`api_security_tester`, `web_surface_mapper`, `ssl_tls_auditor`,
+`dns_enumerator`, `secrets_hunter`, `iac_auditor`, `container_security`,
+`crypto_analyst`, `log_triage`) are the reference implementations.
+
+To wire an *existing* CAI agent instead of composing a new one, add a tuple to
+`_WIRED` in [`aegis/agents/cai/builtins.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/cai/builtins.py)
+with `by_name=True`; it resolves generically by its upstream registry key via
+`resolve_cai_agent` (CAI's `get_agent_by_name`), so no per-agent `CAIBundle`
+field is needed.
+
+## The tool catalog and effect classification
+
+[`aegis/tools/catalog.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/tools/catalog.py)
+(`TOOL_CATALOG` / `list_tools()`) is the single, honest registry of every tool
+the platform can expose to agents — **42 today** across four `source`s:
+`kali` (10, the mcp-kali allowlist), `scanner` (14 registered adapters),
+`cai` (17 vendored `@function_tool`s, namespaced `cai_*`), and `osint` (1, the
+Camoufox web search). The module is import-light, so it lists what the platform
+*can* expose independent of whether the optional CAI / Camoufox stacks are
+installed.
+
+Each `ToolSpec` carries an **effect** that is **authoritative in the catalog**:
+`aegis.effects.tool_effect()` consults it (falling back to the Kali map), so
+the catalog and the gate never drift. Classify conservatively:
+
+| Effect | Use for | Gate |
+|--------|---------|------|
+| `read` | enumeration, analysis, third-party-free observation | none beyond the target allowlist |
+| `active` | command execution or active probing of a live target | `execute=true` + `approver` |
+| `external` | reaches a third party (Shodan API, web search, egress) | `execute=true` + `approver` |
+
+An unclassified name fails **safe** to `active` — never silently treated as
+harmless. To add a `cai` tool, append a `_CaiEntry` (catalog name, bare CAI
+name, category, effect, description); the bare name is recorded in
+`CAI_TOOL_NAMES` for toolbelt wiring.
+
 ## Capabilities are an open vocabulary
 
 `aegis/scanners/registry.py` defines the known capability set:

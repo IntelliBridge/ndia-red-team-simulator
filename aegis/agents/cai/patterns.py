@@ -102,13 +102,21 @@ def _pattern_adapter(name: str, domain: Domain, effect: Effect,
     )
 
 
-# All three are offensive composites → active effect → human-gated. The first
-# column is the Aegis registry name; the last is the CAI pattern name resolved
-# via ``get_pattern``.
+# Every composite runs live offensive tooling (a red-team attack and/or a bug
+# bounty swarm), so all are offensive → active → human-gated. The first column
+# is the Aegis registry name; the last is the CAI pattern name resolved via
+# ``get_pattern``. The two red/blue patterns coordinate a red-team attack
+# alongside a blue-team responder; classified offensive/active because the
+# red-team half fires live exploitation that the gate must cover.
 _PATTERNS: list[tuple[str, Domain, Effect, str]] = [
     ("offsec_pattern", "offensive", "active", "offsec_pattern"),
     ("redteam_swarm", "offensive", "active", "redteam_swarm_pattern"),
     ("bb_triage_swarm", "offensive", "active", "bb_triage_swarm_pattern"),
+    # Red/blue parallel patterns (keyed in CAI by their dict ``name`` field).
+    ("red_blue_shared_context", "offensive", "active",
+     "blue_team_red_team_shared_context"),
+    ("red_blue_split_context", "offensive", "active",
+     "blue_team_red_team_split_context"),
 ]
 
 

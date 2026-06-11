@@ -51,6 +51,13 @@ docs = [
     "mkdocs-material>=9.5",
     "pymdown-extensions>=10.7",
 ]
+osint = [
+    # Anti-detect browser + article extraction for live web OSINT search.
+    # Heavy (Camoufox fetches a patched Firefox via `camoufox fetch`), so this
+    # is opt-in; the osint_search tool degrades to a clear error when absent.
+    "camoufox>=0.4",
+    "trafilatura>=1.0",
+]
 
 [project.scripts]
 aegis = "aegis.cli:main"
