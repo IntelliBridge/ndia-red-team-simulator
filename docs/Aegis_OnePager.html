@@ -399,7 +399,7 @@
     </div>
     <div class="tagline">Discover. Exploit. Remediate. Harden.</div>
   <div class="value-prop">
-    <em>Aegis</em> is a full-lifecycle AI security platform that goes beyond finding vulnerabilities to <em>automatically fixing them</em>. Today it discovers, validates, exploits, remediates, and hardens &mdash; closing the loop from pentest report to merged pull request &mdash; with <em>16 AI agents wired</em> and scaling toward 60+ specialized agents.
+    <em>Aegis</em> is a full-lifecycle AI security platform that goes beyond finding vulnerabilities to <em>automatically fixing them</em>. Today it discovers, validates, exploits, remediates, and hardens &mdash; closing the loop from pentest report to merged pull request &mdash; with <em>~36 AI agents wired</em> across 5 multi-agent patterns, multi-tenant and supply-chain hardened, and scaling toward 60+ specialized agents.
   </div>
 </div>
 
@@ -455,7 +455,7 @@
         <div class="arch-icon">&#9889;</div>
         <div class="arch-label">
           <strong>Tool Execution Layer</strong>
-          <span>Kali Linux via MCP &bull; nmap &bull; Metasploit &bull; sqlmap &bull; hydra &bull; Nuclei &bull; Semgrep &bull; 24 tools today, scaling toward 35+</span>
+          <span>Kali Linux via MCP &bull; nmap &bull; Metasploit &bull; sqlmap &bull; hydra &bull; Nuclei &bull; Semgrep &bull; Camoufox OSINT search &bull; 42 integrated tools today</span>
         </div>
       </div>
       <div class="arch-layer arch-layer-5">
@@ -481,7 +481,7 @@
     </div>
     <div class="cap-item">
       <div class="cap-check">&#10003;</div>
-      <div class="cap-text"><strong>60+ Specialized Agents</strong> &mdash; Roadmap target spanning offensive, defensive, and remediation domains; 16 wired today</div>
+      <div class="cap-text"><strong>~36 Agents Wired Today</strong> &mdash; CAI specialists plus 12 Aegis-native agents (cloud recon, OSINT, threat intel, API/web/SSL/DNS, secrets, IaC, container, crypto, log triage) across 5 multi-agent patterns; 60+ on the roadmap</div>
     </div>
     <div class="cap-item">
       <div class="cap-check">&#10003;</div>
@@ -497,11 +497,55 @@
     </div>
     <div class="cap-item">
       <div class="cap-check">&#10003;</div>
-      <div class="cap-text"><strong>Professional Tooling</strong> &mdash; Full Kali arsenal via MCP, plus Nuclei, Semgrep, Trivy, and Trufflehog &mdash; 14 scanner adapters in all</div>
+      <div class="cap-text"><strong>Professional Tooling</strong> &mdash; 42 integrated tools: 10 Kali via MCP, 14 scanner adapters, 17 CAI function-tools, plus Camoufox anti-detect OSINT search</div>
     </div>
     <div class="cap-item">
       <div class="cap-check">&#10003;</div>
-      <div class="cap-text"><strong>Multi-Domain Coverage</strong> &mdash; Web apps, network, IoT/OT, wireless, DFIR, and incident response</div>
+      <div class="cap-text"><strong>Multi-Domain Coverage</strong> &mdash; Web apps, network, IoT/OT, wireless, DFIR, cloud, and incident response</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Authenticated DAST</strong> &mdash; Encrypted auth profiles inject credentials into ZAP and Nuclei to test behind the login wall</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Cross-Org Multi-Tenancy</strong> &mdash; Postgres Row-Level Security tenant isolation, per-tenant cost dashboards / chargeback, and per-tenant LLM model routing</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Tamper-Evident Audit</strong> &mdash; Append-only hash-chained audit log, plus WORM export to S3 Object Lock</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Supply-Chain Integrity</strong> &mdash; Ed25519-signed plugins; keyless cosign-signed, SBOM- and SLSA-provenance-attested release images</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>LLM Guardrails</strong> &mdash; Secret / PII scrubbing of diffs and outputs, with prompt-injection detection and blocking</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Pluggable Authorization</strong> &mdash; Fail-closed policy engine with a static default plus OPA / Cedar backends</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Modern Frontend</strong> &mdash; Full UI parity (cancel / delete, agent &amp; tool consoles, report export), dark mode, Cmd-K command palette, audit-chain visualization</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Ticketing &amp; Ownership</strong> &mdash; Bidirectional Jira / ServiceNow / Linear sync, DNS-TXT / GitHub-repo target ownership verification, release-train-aware fix PRs</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Compliance Evidence Pack</strong> &mdash; <code>aegis evidence-pack</code> bundles the audit export with a SOC 2 / ISO 27001 / FedRAMP controls crosswalk</div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Scanner-Adapter Marketplace</strong> &mdash; Validated entry-point plugins discoverable via <code>aegis plugins</code></div>
+    </div>
+    <div class="cap-item">
+      <div class="cap-check">&#10003;</div>
+      <div class="cap-text"><strong>Hardened Deployment</strong> &mdash; Production Helm chart with hardened pods, optional gVisor sandbox RuntimeClass, HA Keycloak, and air-gapped vendor mirror</div>
     </div>
   </div>
 
@@ -536,9 +580,9 @@
 
   <!-- Metrics -->
   <div class="metrics">
-    <div class="metric"><span class="metric-val">16</span><span class="metric-label">AI Agents Wired</span></div>
+    <div class="metric"><span class="metric-val">~36</span><span class="metric-label">AI Agents Wired</span></div>
     <div class="metric"><span class="metric-val">14</span><span class="metric-label">Scanner Adapters</span></div>
-    <div class="metric"><span class="metric-val">24</span><span class="metric-label">Security Tools</span></div>
+    <div class="metric"><span class="metric-val">42</span><span class="metric-label">Security Tools</span></div>
     <div class="metric"><span class="metric-val">300+</span><span class="metric-label">LLM Models</span></div>
     <div class="metric"><span class="metric-val">0</span><span class="metric-label">False Positives</span></div>
   </div>
@@ -559,7 +603,7 @@
         <div class="repo-role red">Agents</div>
         <div class="repo-info">
           <div class="repo-name"><a href="https://github.com/aliasrobotics/cai" target="_blank">aliasrobotics/cai</a> <span class="repo-license">MIT</span></div>
-          <div class="repo-desc">16 wired CAI agents across five security domains.</div>
+          <div class="repo-desc">24 wired CAI agents plus 12 Aegis-native specialists across security domains.</div>
         </div>
       </div>
       <div class="repo-card">
