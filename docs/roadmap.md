@@ -22,12 +22,16 @@ enforcement with a per-model price table; and four review-surfaced cleanups.
 
 ## Now / Next
 
-With the seams closed — and DB-side append-only audit enforcement now landed
+With the seams closed — DB-side append-only audit enforcement
 (row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
-see `SECURITY.md` and `docs/ops/deploy.md`) — the next focus is **capability
-breadth** and the remaining **security / compliance hardening** (below). The
-highest-leverage candidates: broadening the agent/tool roster toward the
-OnePager promise, and authenticated DAST flows.
+see `SECURITY.md` and `docs/ops/deploy.md`) and the **production infra
+hardening** now landed (a hardened Helm chart, gVisor sandbox isolation, HA
+Keycloak, an air-gapped vendor mirror, and a compliance evidence pack — see
+[Kubernetes (Helm)](ops/kubernetes.md) and
+[Compliance evidence pack](ops/compliance-evidence.md)) — the next focus is
+**capability breadth**: broadening the agent/tool roster toward the OnePager
+promise, authenticated DAST flows, and the remaining deferred infra item, the
+**native MCP protocol** (mcp-kali is consumed over REST today).
 
 ## Capability breadth
 
@@ -50,8 +54,13 @@ Closing the gap to the OnePager promise.
 - **LLM prompt-injection / output filtering.**
 - **Supply-chain integrity** — sigstore image signing, signed plugin
   entry points, SLSA-3 / Nix reproducible builds.
-- **Per-scan sandbox isolation** (gVisor / Firecracker).
-- **SOC 2 / ISO 27001 / FedRAMP evidence pack.**
+- **Per-scan sandbox isolation** (gVisor / Firecracker). *(gVisor
+  `RuntimeClass` shipped — see "Scale, multi-tenancy & infra".)*
+- ~~**SOC 2 / ISO 27001 / FedRAMP evidence pack.**~~ **Shipped**:
+  `aegis evidence-pack --out DIR` bundles per-chain audit JSONL +
+  verification verdicts, a controls crosswalk (partials flagged), a
+  secret-free system summary, and a hashed manifest. See
+  [`docs/ops/compliance-evidence.md`](ops/compliance-evidence.md).
 
 ## Scale, multi-tenancy & infra
 
@@ -59,11 +68,27 @@ Closing the gap to the OnePager promise.
 - **Per-tenant cost dashboards / chargeback**; per-tenant LLM model routing.
 - **Worker autoscaling / multi-region DR.**
 - **Celery → Temporal** queue migration (migration shape documented; deferred).
-- **Production Helm / k8s manifests** (kind scaffolding only today).
+- ~~**Production Helm / k8s manifests** (kind scaffolding only today).~~
+  **Shipped**: `deploy/helm/aegis/` deploys the full stack with hardened
+  pod specs (non-root, dropped caps, seccomp, resource limits,
+  liveness/readiness probes); optional deps gated by `*.enabled`; a
+  `helm-lint` CI job runs `helm lint` + `helm template`. See
+  [`docs/ops/kubernetes.md`](ops/kubernetes.md).
 - **OPA / Cedar policy engine** (static rule table today).
-- **HA Keycloak / IdP hardening.**
+- ~~**Per-scan sandbox isolation** (gVisor / Firecracker).~~ **Shipped
+  (gVisor)**: a `runsc` `RuntimeClass` gated by `sandbox.enabled`, wired
+  onto the untrusted worker + kali pods (gVisor must be installed on the
+  nodes). Firecracker is still out.
+- ~~**HA Keycloak / IdP hardening.**~~ **Shipped**: `keycloak.replicas`
+  (default 2), with the shared-DB + distributed-cache requirement for
+  real HA documented in-chart and in
+  [`docs/ops/kubernetes.md`](ops/kubernetes.md).
 - **Native MCP protocol** (mcp-kali consumed over REST today).
-- **`AEGIS_OFFLINE_VENDOR_HOST`** — air-gapped vendor mirror for submodules.
+- ~~**`AEGIS_OFFLINE_VENDOR_HOST`** — air-gapped vendor mirror for
+  submodules.~~ **Shipped**: `scripts/vendor-submodules.sh` rewrites the
+  submodule URLs to an internal mirror (`aegis/vendor.py` rewrite rules);
+  surfaced in `aegis doctor`. See
+  [`docs/ops/deploy.md`](ops/deploy.md#air-gapped-offline-vendor-mirror).
 
 ## Integrations & workflow
 

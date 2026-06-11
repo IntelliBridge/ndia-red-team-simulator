@@ -563,8 +563,9 @@ out items intentionally pushed past v0.4.1. Live-current list:
 
 - Cross-org row-level multi-tenancy.
 - Per-tenant cost dashboards / chargeback.
-- Sandbox isolation per scan (gVisor / Firecracker).
-- SOC 2 / ISO 27001 / FedRAMP evidence pack.
+- Firecracker microVM sandbox per scan (the gVisor `RuntimeClass`
+  sandbox for the worker / kali pods has shipped — see the Helm chart and
+  [`ops/kubernetes.md`](../ops/kubernetes.md)).
 - PII / content scrubbing inside diffs and patches.
 - LLM prompt-injection / output filtering.
 - Iterative agent loops with test execution.

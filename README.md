@@ -86,10 +86,13 @@ shipped June 2026 with 1329 tests passing (21 skipped offline) on Python
 | Multi-format finding ingestion (Snyk · Veracode · Trivy · SARIF → `AegisFinding`) | ✅ Shipped |
 | Per-task LLM routing with budget caps | ✅ Shipped |
 | `@aegis/design-system` workspace + Storybook — curated domain components over ported shadcn base primitives (table / card / alert / input / …) | ✅ Shipped |
+| Production Helm chart — hardened pod specs (non-root / dropped caps / seccomp), `*.enabled` dep toggles, gVisor sandbox, HA Keycloak | ✅ Shipped |
+| Air-gapped vendor mirror (`AEGIS_OFFLINE_VENDOR_HOST`) for offline submodule fetches | ✅ Shipped |
+| SOC 2 / ISO 27001 / FedRAMP compliance evidence pack (`aegis evidence-pack`) | ✅ Shipped |
 | 60+ specialized agents (full roster from the OnePager) | 🔨 Roadmap |
 | 35+ security tools (currently 24: 10 Kali + 14 scanner adapters) | 🔨 Roadmap |
 | Authenticated DAST flows | 🔨 Roadmap |
-| Sandbox isolation per scan (gVisor / Firecracker) | 🔨 Roadmap |
+| Per-scan sandbox isolation — Firecracker microVM (gVisor `RuntimeClass` shipped) | 🔨 Roadmap |
 
 See [`CHANGELOG.md`](CHANGELOG.md) for per-release detail and the
 consolidated [`docs/roadmap.md`](docs/roadmap.md) for the full
