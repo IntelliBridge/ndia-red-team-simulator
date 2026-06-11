@@ -22,12 +22,13 @@ enforcement with a per-model price table; and four review-surfaced cleanups.
 
 ## Now / Next
 
-With the seams closed — and DB-side append-only audit enforcement now landed
-(row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
-see `SECURITY.md` and `docs/ops/deploy.md`) — the next focus is **capability
-breadth** and the remaining **security / compliance hardening** (below). The
-highest-leverage candidates: broadening the agent/tool roster toward the
-OnePager promise, and authenticated DAST flows.
+With the seams closed — and DB-side append-only audit enforcement (row-immutability
+trigger + `aegis_app`/`aegis_owner` role separation + pgaudit) and cross-org
+row-level multi-tenancy (Postgres RLS `FORCE` on the tenant tables + per-tenant
+cost/routing) now landed; see `SECURITY.md` and `docs/ops/deploy.md` — the next
+focus is **capability breadth** and the remaining **security / compliance
+hardening** (below). The highest-leverage candidates: broadening the agent/tool
+roster toward the OnePager promise, and authenticated DAST flows.
 
 ## Capability breadth
 
@@ -55,8 +56,18 @@ Closing the gap to the OnePager promise.
 
 ## Scale, multi-tenancy & infra
 
-- **Cross-org row-level multi-tenancy.**
-- **Per-tenant cost dashboards / chargeback**; per-tenant LLM model routing.
+- ~~**Cross-org row-level multi-tenancy.**~~ **Shipped** (migration `0005`):
+  Postgres RLS with `FORCE ROW LEVEL SECURITY` on `projects` + the eight
+  project-scoped tables (denormalized `org_id` + `BEFORE INSERT` trigger),
+  filtered by the per-request `app.current_tenants` GUC — defense-in-depth
+  behind the app-layer project checks. See
+  [`architecture/multi-tenancy.md`](architecture/multi-tenancy.md) and
+  `SECURITY.md` § "Multi-tenancy".
+- ~~**Per-tenant cost dashboards / chargeback**; per-tenant LLM model
+  routing.~~ **Shipped** (migration `0006`): `organizations.monthly_llm_budget_cents`
+  (enforced alongside the project daily cap) + `llm_model_overrides`
+  per-tenant routing; `GET /v1/orgs/{org_id}/cost` and a web **/cost**
+  dashboard.
 - **Worker autoscaling / multi-region DR.**
 - **Celery → Temporal** queue migration (migration shape documented; deferred).
 - **Production Helm / k8s manifests** (kind scaffolding only today).

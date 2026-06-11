@@ -1,6 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api } from "./api";
+import {
+  ApiError,
+  api,
+  centsToUsd,
+  getOrgCost,
+  resolveOrgId,
+  type ProjectMembership,
+} from "./api";
 
 const fetchMock = vi.fn();
 
@@ -107,5 +114,51 @@ describe("api() request shaping", () => {
   it("returns {} for an empty response body", async () => {
     fetchMock.mockResolvedValue(ok(""));
     expect(await api("/v1/empty")).toEqual({});
+  });
+});
+
+describe("centsToUsd", () => {
+  it("formats whole and fractional dollars", () => {
+    expect(centsToUsd(0)).toBe("$0.00");
+    expect(centsToUsd(500)).toBe("$5.00");
+    expect(centsToUsd(12345)).toBe("$123.45");
+  });
+
+  it("groups thousands and renders negatives", () => {
+    expect(centsToUsd(123456789)).toBe("$1,234,567.89");
+    expect(centsToUsd(-2000)).toBe("-$20.00");
+  });
+});
+
+describe("resolveOrgId", () => {
+  const p = (org_id: string): ProjectMembership => ({
+    id: "p",
+    slug: "p",
+    name: "P",
+    org_id,
+    daily_llm_budget_cents: null,
+    role: "viewer",
+  });
+
+  it("takes the first project's org_id", () => {
+    expect(resolveOrgId([p("org-a"), p("org-b")])).toBe("org-a");
+  });
+
+  it("falls back to 'default' when there are no projects", () => {
+    expect(resolveOrgId([])).toBe("default");
+  });
+});
+
+describe("getOrgCost", () => {
+  it("requests the org cost endpoint with an encoded id and days", async () => {
+    fetchMock.mockResolvedValue(ok(JSON.stringify({ org_id: "o", total_cents: 0 })));
+    await getOrgCost("o rg/1", 7);
+    expect(lastUrl()).toBe("http://localhost:8000/v1/orgs/o%20rg%2F1/cost?days=7");
+  });
+
+  it("defaults to a 30-day window", async () => {
+    fetchMock.mockResolvedValue(ok(JSON.stringify({ org_id: "o" })));
+    await getOrgCost("o");
+    expect(lastUrl()).toBe("http://localhost:8000/v1/orgs/o/cost?days=30");
   });
 });

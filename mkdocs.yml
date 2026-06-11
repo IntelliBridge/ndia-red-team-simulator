@@ -160,6 +160,7 @@ nav:
       - Overview: architecture/overview.md
       - Auth: architecture/auth.md
       - Audit chain: architecture/audit-chain.md
+      - Multi-tenancy: architecture/multi-tenancy.md
       - Observability: architecture/observability.md
   - API reference: api/v1.md
   - Operations:

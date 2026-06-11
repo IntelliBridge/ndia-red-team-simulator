@@ -88,6 +88,24 @@ See [`docs/architecture/auth.md`](docs/architecture/auth.md).
 See [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md)
 and [`docs/ops/deploy.md`](docs/ops/deploy.md) for role provisioning.
 
+### Multi-tenancy / data isolation
+
+- The tenant is the **Organization**; every project belongs to one org.
+- **Layered isolation.** The app layer scopes reads to the caller's
+  project memberships (`ensure_project_access` / `ensure_run_access`); the
+  database layer adds **Postgres Row-Level Security** keyed on `org_id` as
+  **defense-in-depth**, so a forgotten `WHERE` clause can't leak rows
+  across orgs.
+- **`FORCE` on the tenant tables** (migration `0005`): `projects` and the
+  eight project-scoped tables (denormalized `org_id` + `BEFORE INSERT`
+  trigger) run with `ENABLE` + `FORCE ROW LEVEL SECURITY`, so the policy
+  binds even the table owner / superuser. A per-request GUC
+  `app.current_tenants` carries the caller's org ids; an empty/unset GUC
+  is the system / worker path (full access). RLS enforcement is exercised
+  in the Postgres CI jobs.
+
+See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
+
 ### Patch workflow
 
 - Patches generated in a temporary branch with automatic rollback on

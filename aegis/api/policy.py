@@ -98,6 +98,48 @@ def ensure_project_access(user: CurrentUser, project_id: str) -> None:
         )
 
 
+def has_org_access(user: CurrentUser, org_id: str) -> bool:
+    """True if the user may read resources scoped to ``org_id``.
+
+    Org-tier mirror of ``has_project_access``: a system principal always
+    passes; otherwise the caller must be a member of at least one project that
+    belongs to ``org_id``. Membership lives in ``project_memberships`` (keyed by
+    project id), so the project→org mapping is resolved from the DB.
+
+    Degrades safely without a DB / on lookup error: returns ``False`` (no
+    access) rather than raising, so a missing session can't open the gate.
+    """
+    if user.is_system:
+        return True
+    project_ids = list(user.project_memberships)
+    if not project_ids:
+        return False
+    try:
+        from sqlalchemy import select
+
+        from aegis.db.models import Project
+        from aegis.db.session import get_session
+        with get_session() as sess:
+            match = sess.execute(
+                select(Project.id)
+                .where(Project.org_id == org_id,
+                       Project.id.in_(project_ids))
+                .limit(1)
+            ).first()
+        return match is not None
+    except Exception:
+        return False
+
+
+def ensure_org_access(user: CurrentUser, org_id: str) -> None:
+    """403 unless the user has access to ``org_id`` (see ``has_org_access``)."""
+    if not has_org_access(user, org_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"user {user.email} has no access to organization {org_id}",
+        )
+
+
 def ensure_run_access(user: CurrentUser, run_id: str) -> str:
     """Resolve the run's project, then enforce membership.
 

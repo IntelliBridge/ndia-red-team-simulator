@@ -561,8 +561,6 @@ See the consolidated [Roadmap](../roadmap.md) for the full
 forward-looking list organized by milestone. The Phase-4 plan called
 out items intentionally pushed past v0.4.1. Live-current list:
 
-- Cross-org row-level multi-tenancy.
-- Per-tenant cost dashboards / chargeback.
 - Sandbox isolation per scan (gVisor / Firecracker).
 - SOC 2 / ISO 27001 / FedRAMP evidence pack.
 - PII / content scrubbing inside diffs and patches.
