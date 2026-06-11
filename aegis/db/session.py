@@ -11,6 +11,7 @@ which is the worker / migration path. The GUC is only set on Postgres —
 from __future__ import annotations
 
 import contextvars
+import logging
 import os
 from contextlib import contextmanager
 from typing import Iterator
@@ -20,8 +21,13 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session as _Session
 from sqlalchemy.orm import sessionmaker
 
+logger = logging.getLogger(__name__)
+
 _ENGINE: Engine | None = None
 Session: sessionmaker | None = None
+
+# One-time guard for the "RLS is bypassed by superusers" warning below.
+_rls_bypass_warned = False
 
 # Request/worker-scoped list of org ids the caller may see. ``None`` (the
 # default) means system / full access — the GUC is set to '' so RLS lets every
@@ -86,6 +92,24 @@ def _apply_tenant_guc(sess: _Session) -> None:
         text("SELECT set_config('app.current_tenants', :v, true)"),
         {"v": value},
     )
+    # Defense-in-depth alarm: a Postgres *superuser* bypasses RLS unconditionally
+    # (FORCE only binds the table owner), so org isolation silently degrades to a
+    # no-op if the app connects as one. Production must use the restricted
+    # ``aegis_app`` role (migration 0004 + deploy runbook). Warn once, only when a
+    # real tenant scope is in effect, so dev/superuser setups still function.
+    global _rls_bypass_warned
+    if tenants and not _rls_bypass_warned:
+        _rls_bypass_warned = True
+        try:
+            is_super = sess.execute(text("SHOW is_superuser")).scalar()
+        except Exception:  # pragma: no cover - defensive
+            is_super = None
+        if str(is_super).lower() == "on":
+            logger.warning(
+                "DB role is a superuser; Postgres RLS tenant isolation is "
+                "BYPASSED. Connect as the non-superuser aegis_app role in "
+                "production (see the multi-tenancy / deploy docs)."
+            )
 
 
 @contextmanager

@@ -69,7 +69,7 @@ policy `aegis_tenant_isolation`:
 
 ```sql
 ALTER TABLE <t> ENABLE ROW LEVEL SECURITY;
-ALTER TABLE <t> FORCE  ROW LEVEL SECURITY;   -- binds the owner / superuser too
+ALTER TABLE <t> FORCE  ROW LEVEL SECURITY;   -- also binds the table OWNER
 
 CREATE POLICY aegis_tenant_isolation ON <t>
   USING (
@@ -88,10 +88,20 @@ comma-separated list of org ids the caller may see:
   `ANY()`.
 - **Otherwise** the row's `org_id` must appear in the list.
 
-`FORCE` is load-bearing. Without it, the table owner (and a superuser)
-bypasses policies — which would make the Postgres CI test a no-op. With
-`FORCE`, even a superuser connection is bound by the policy, so the
-isolation is real and the CI test exercises it.
+`FORCE` makes the table **owner** subject to the policy (`ENABLE` alone exempts
+the owner). `ENABLE` already binds ordinary roles.
+
+!!! danger "RLS requires a non-superuser DB role"
+    A Postgres **superuser bypasses RLS unconditionally** — `FORCE` does **not**
+    bind superusers, only the table owner. So org isolation only enforces when
+    the application connects as a **non-superuser** role. Production must point
+    `AEGIS_DB_URL` at the restricted **`aegis_app`** role (provisioned in
+    migration `0004` + the [deploy runbook](../ops/deploy.md)); the dev
+    docker-compose uses the `aegis` superuser for convenience, where RLS is a
+    no-op. `aegis.db.session` logs a one-time **warning** when it detects a
+    superuser connection with a tenant scope in effect. The Postgres-gated
+    `tests/test_tenant_rls.py` therefore `SET ROLE`s to a dedicated
+    non-superuser role to exercise the policies faithfully.
 
 !!! note "Why `organizations` itself isn't in the RLS set"
     `organizations` is the tenant *root*, not a project-scoped table, so

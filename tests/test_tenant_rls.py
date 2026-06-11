@@ -8,11 +8,19 @@ Two test surfaces:
   carry the new ``org_id`` column on every scoped table. This keeps coverage of
   the session seam + models on the DB-less CI job.
 * ``TestTenantRLS`` — Postgres-gated (mirrors ``tests/test_audit_append_only``
-  and ``tests/test_state_pg_coverage``): the policies + FORCE RLS only exist
-  once ``alembic upgrade head`` has run against a real Postgres, so these run in
-  the CI coverage / api-integration jobs and skip on the offline path. Because
-  the migration uses ``FORCE``, the policies bind even the CI superuser test
-  connection — so a tenant-scoped query genuinely cannot see another org's rows.
+  and ``tests/test_state_pg_coverage``): the policies only exist once
+  ``alembic upgrade head`` has run against a real Postgres, so these run in the
+  CI coverage / api-integration jobs and skip on the offline path.
+
+  IMPORTANT — RLS and superusers: a Postgres **superuser always bypasses RLS**,
+  even with ``FORCE ROW LEVEL SECURITY`` (FORCE only subjects the table *owner*,
+  not superusers). The CI/dev Postgres connects as the ``aegis`` superuser, so to
+  exercise the policies faithfully these tests ``SET ROLE`` to a dedicated
+  NON-superuser, non-owner role (``aegis_rls_test``) before the tenant-scoped
+  queries — which is exactly the production posture: the app must connect as the
+  restricted ``aegis_app`` role (see migration 0004 + the deploy runbook) or RLS
+  is a no-op. The GUC set by ``get_session`` survives ``SET ROLE`` within the
+  same transaction.
 
 NB: sqlalchemy / aegis.db imports are deferred into methods. The offline unit
 job installs without the api/worker extras (no sqlalchemy), and a module-level
@@ -24,6 +32,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from contextlib import contextmanager
 from uuid import uuid4
 
 AEGIS_DB = os.environ.get("AEGIS_DB_URL")
@@ -122,6 +131,8 @@ class TestTenantRLS(unittest.TestCase):
         self.Finding = Finding
         self.Run = Run
 
+        self._ensure_rls_role()
+
         suffix = uuid4().hex[:8]
         self.org_a = "org-a-" + suffix
         self.org_b = "org-b-" + suffix
@@ -152,6 +163,40 @@ class TestTenantRLS(unittest.TestCase):
                 project_id=self.proj_b, schema_blob={"id": "s-b"},
                 severity="high"))
 
+    # A non-superuser, non-owner role so RLS actually binds (superusers bypass
+    # it). Mirrors the production posture where the app runs as ``aegis_app``.
+    _RLS_ROLE = "aegis_rls_test"
+
+    def _ensure_rls_role(self):
+        from sqlalchemy import text
+        with self.sess_mod.get_session() as s:  # system scope; runs as owner
+            s.execute(text(
+                "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles "
+                f"WHERE rolname = '{self._RLS_ROLE}') THEN "
+                f"CREATE ROLE {self._RLS_ROLE} NOLOGIN; END IF; END $$;"))
+            s.execute(text(f"GRANT USAGE ON SCHEMA public TO {self._RLS_ROLE}"))
+            s.execute(text(
+                "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES "
+                f"IN SCHEMA public TO {self._RLS_ROLE}"))
+            s.execute(text(
+                "GRANT USAGE, SELECT ON ALL SEQUENCES "
+                f"IN SCHEMA public TO {self._RLS_ROLE}"))
+
+    @contextmanager
+    def _scoped_session(self, org_ids):
+        """A session scoped to ``org_ids`` AND running as the non-superuser
+        role, so the RLS policies are actually enforced."""
+        from sqlalchemy import text
+        tok = self.sess_mod.set_current_tenants(org_ids)
+        try:
+            with self.sess_mod.get_session() as s:
+                # get_session has already set app.current_tenants for this tx;
+                # drop to the restricted role so RLS binds.
+                s.execute(text(f"SET ROLE {self._RLS_ROLE}"))
+                yield s
+        finally:
+            self.sess_mod.reset_current_tenants(tok)
+
     def test_trigger_backfills_org_id_from_project(self):
         # Inserted with org_id NULL above; the BEFORE INSERT trigger sets it.
         with self.sess_mod.get_session() as s:  # system scope
@@ -165,21 +210,17 @@ class TestTenantRLS(unittest.TestCase):
     def test_tenant_scope_hides_other_orgs_rows(self):
         from sqlalchemy import select
 
-        # Scope to org_b: only org_b findings/runs are visible. This proves
-        # FORCE RLS binds even the superuser test connection.
-        tok = self.sess_mod.set_current_tenants([self.org_b])
-        try:
-            with self.sess_mod.get_session() as s:
-                find_ids = set(s.execute(
-                    select(self.Finding.id).where(
-                        self.Finding.id.in_([self.find_a, self.find_b]))
-                ).scalars().all())
-                run_ids = set(s.execute(
-                    select(self.Run.id).where(
-                        self.Run.id.in_([self.run_a, self.run_b]))
-                ).scalars().all())
-        finally:
-            self.sess_mod.reset_current_tenants(tok)
+        # Scope to org_b (as the non-superuser role): only org_b findings/runs
+        # are visible — the RLS policy filters org_a out at the database.
+        with self._scoped_session([self.org_b]) as s:
+            find_ids = set(s.execute(
+                select(self.Finding.id).where(
+                    self.Finding.id.in_([self.find_a, self.find_b]))
+            ).scalars().all())
+            run_ids = set(s.execute(
+                select(self.Run.id).where(
+                    self.Run.id.in_([self.run_a, self.run_b]))
+            ).scalars().all())
         self.assertEqual(find_ids, {self.find_b})
         self.assertEqual(run_ids, {self.run_b})
 
@@ -200,33 +241,26 @@ class TestTenantRLS(unittest.TestCase):
     def test_cross_tenant_write_rejected_by_with_check(self):
         from sqlalchemy.exc import DBAPIError
 
-        # Scoped to org_b, try to insert a finding into project_a (org_a). The
-        # trigger sets org_id = org_a, which violates the WITH CHECK predicate
-        # for the org_b scope -> the write is rejected.
-        tok = self.sess_mod.set_current_tenants([self.org_b])
-        try:
-            with self.assertRaises(DBAPIError):
-                with self.sess_mod.get_session() as s:
-                    s.add(self.Finding(
-                        id="x-" + uuid4().hex[:8], scanner_finding_id="x",
-                        run_id=self.run_a, project_id=self.proj_a,
-                        schema_blob={"id": "x"}, severity="low"))
-                    s.flush()
-        finally:
-            self.sess_mod.reset_current_tenants(tok)
+        # Scoped to org_b (non-superuser role), try to insert a finding into
+        # project_a (org_a). The trigger sets org_id = org_a, which violates the
+        # WITH CHECK predicate for the org_b scope -> the write is rejected.
+        with self.assertRaises(DBAPIError):
+            with self._scoped_session([self.org_b]) as s:
+                s.add(self.Finding(
+                    id="x-" + uuid4().hex[:8], scanner_finding_id="x",
+                    run_id=self.run_a, project_id=self.proj_a,
+                    schema_blob={"id": "x"}, severity="low"))
+                s.flush()
 
     def test_insert_within_scope_is_allowed(self):
-        # Same-org write under the matching scope succeeds (positive control).
+        # Same-org write under the matching scope succeeds (positive control,
+        # as the non-superuser role so the WITH CHECK predicate is enforced).
         new_id = "ok-" + uuid4().hex[:8]
-        tok = self.sess_mod.set_current_tenants([self.org_b])
-        try:
-            with self.sess_mod.get_session() as s:
-                s.add(self.Finding(
-                    id=new_id, scanner_finding_id="ok", run_id=self.run_b,
-                    project_id=self.proj_b, schema_blob={"id": "ok"},
-                    severity="low"))
-        finally:
-            self.sess_mod.reset_current_tenants(tok)
+        with self._scoped_session([self.org_b]) as s:
+            s.add(self.Finding(
+                id=new_id, scanner_finding_id="ok", run_id=self.run_b,
+                project_id=self.proj_b, schema_blob={"id": "ok"},
+                severity="low"))
         with self.sess_mod.get_session() as s:  # system: confirm it persisted
             row = s.get(self.Finding, new_id)
             self.assertIsNotNone(row)
