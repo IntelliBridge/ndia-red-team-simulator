@@ -20,6 +20,7 @@ class Action(str, Enum):
     AUDIT_VERIFY = "audit.verify"
     RUN_CANCEL = "run.cancel"
     TOOL_INVOKE = "tool.invoke"
+    TICKET_SYNC = "ticket.sync"
 
 
 _ROLE_RANK = {
@@ -42,6 +43,9 @@ _ACTION_MIN_ROLE: dict[Action, str] = {
     Action.AUDIT_VERIFY: "admin",
     Action.RUN_CANCEL: "remediator",
     Action.TOOL_INVOKE: "remediator",
+    # Pushing a finding to an external tracker is a remediation-workflow
+    # action — same bar as fix.generate / verify.replay.
+    Action.TICKET_SYNC: "remediator",
 }
 
 

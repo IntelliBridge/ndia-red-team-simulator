@@ -22,12 +22,16 @@ enforcement with a per-model price table; and four review-surfaced cleanups.
 
 ## Now / Next
 
-With the seams closed — and DB-side append-only audit enforcement now landed
+With the seams closed — DB-side append-only audit enforcement landed
 (row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
-see `SECURITY.md` and `docs/ops/deploy.md`) — the next focus is **capability
+see `SECURITY.md` and `docs/ops/deploy.md`), and the workflow integrations now
+shipped (bidirectional Jira / ServiceNow / Linear ticket sync, cloud-target
+ownership verification, and backport / release-train awareness for fix PRs; see
+[Integrations](integrations/index.md)) — the next focus is **capability
 breadth** and the remaining **security / compliance hardening** (below). The
 highest-leverage candidates: broadening the agent/tool roster toward the
-OnePager promise, and authenticated DAST flows.
+OnePager promise, authenticated DAST flows, and closing the last integrations
+sub-item, iterative agent loops with test execution.
 
 ## Capability breadth
 
@@ -67,10 +71,25 @@ Closing the gap to the OnePager promise.
 
 ## Integrations & workflow
 
-- **Bidirectional Jira / ServiceNow / Linear sync.**
-- **Cloud-target ownership verification** (DNS TXT / GitHub repo linkage).
-- **Backport / release-train awareness** for generated fix PRs.
-- **Iterative agent loops with test execution.**
+- ~~**Bidirectional Jira / ServiceNow / Linear sync.**~~ **Shipped**
+  (migration `0005`): a pluggable `TicketProvider` (env-selected via
+  `AEGIS_TICKET_PROVIDER`, default `none`) pushes a finding to the tracker
+  and pulls status back; `FindingTicket` records the external id/url/status
+  per `(finding, provider)`. See
+  [Integrations](integrations/index.md#bidirectional-ticket-sync).
+- ~~**Cloud-target ownership verification** (DNS TXT / GitHub repo
+  linkage).~~ **Shipped**: a target's `verified` flag now requires proof of
+  control — a per-target DNS TXT token (`url`) or GitHub App installation
+  linkage (`github_repo`). See
+  [Integrations](integrations/index.md#cloud-target-ownership-verification).
+- ~~**Backport / release-train awareness** for generated fix PRs.~~
+  **Shipped**: `select_base_branch()` resolves a fix-PR base from a
+  release-train map (`AEGIS_RELEASE_TRAINS`); default `main`, all existing
+  callers unchanged. See
+  [Integrations](integrations/index.md#backport-release-train-awareness).
+- **Iterative agent loops with test execution.** *(Still pending —* the
+  remaining sub-item of this line: run the generated patch through the
+  project's tests and loop the agent on failures.*)*
 
 ## Frontend
 

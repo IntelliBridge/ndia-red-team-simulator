@@ -162,6 +162,7 @@ nav:
       - Audit chain: architecture/audit-chain.md
       - Observability: architecture/observability.md
   - API reference: api/v1.md
+  - Integrations: integrations/index.md
   - Operations:
       - Production deployment: ops/deploy.md
   - Development:

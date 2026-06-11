@@ -6,6 +6,37 @@ SemVer.
 
 ## [Unreleased]
 
+### Added
+- **Bidirectional ticket sync (migration `0005_finding_tickets`).** A
+  pluggable `TicketProvider` (`aegis/integrations/ticket_provider.py`) pushes
+  a finding into Jira / ServiceNow / Linear and pulls its status back. The
+  backend is env-selected via `AEGIS_TICKET_PROVIDER=none|jira|servicenow|linear`
+  (default `none` is a no-op — nothing reaches a tracker until an operator sets
+  it *and* the matching creds, all read from the environment). A new
+  `FindingTicket` table records `provider`/`external_id`/`url`/`status` per
+  `(finding, provider)` — no credential stored. Endpoints (under the findings
+  router): `POST /v1/findings/{id}/ticket` (sync, idempotent upsert, `201`/`200`),
+  `GET /v1/findings/{id}/tickets` (list), and
+  `POST /v1/findings/{id}/tickets/{ticket_id}/refresh` (pull status). Sync /
+  refresh are `remediator+`-gated and emit a secret-free `ticket.sync` audit
+  event; sync returns `409` when no provider is configured.
+- **Cloud-target ownership verification.** A target's `verified` flag now
+  requires proof of control (`aegis/services/target_verify.py`): `url` targets
+  publish a deterministic per-target DNS TXT token
+  (`aegis-site-verification=<sha256(project:value:secret)[:32]>`, salted by
+  `AEGIS_VERIFY_SECRET`); `github_repo` targets are proven by GitHub App
+  installation repo linkage; `image` targets are unsupported. Endpoints:
+  `GET /v1/targets/{id}/verification` (the TXT name/value or linkage
+  instructions, project-member read) and `POST /v1/targets/{id}/verify`
+  (`admin`/`TARGET_MANAGE`; `200 {verified,method,detail}` on success, `422`
+  until ownership is proven). Emits a secret-free `target.verify` audit event.
+  `dnspython` added to the `api` extra for DNS resolution.
+- **Backport / release-train awareness for fix PRs.** `select_base_branch()`
+  (`aegis/remediate/patch_workflow.py`) resolves a generated fix PR's base
+  branch from a release-train map (`AEGIS_RELEASE_TRAINS`, JSON or
+  `name=branch,…`), wired into `open_pull_request()` via an optional
+  `base_hint`. Default `main`; every existing caller is unchanged.
+
 ### Security
 - **DB-side append-only audit log (migration `0004`).** `audit_events` is now
   insert-only *at the database*: a row-immutability trigger `RAISE EXCEPTION`s
