@@ -16,13 +16,18 @@ Endpoints:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from aegis.api.auth import CurrentUser, get_current_user
 from aegis.api.policy import Action, check, ensure_project_access
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from aegis.db.models import Project
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -35,7 +40,7 @@ class UpdateSettingsBody(BaseModel):
     daily_llm_budget_cents: Any = None
 
 
-def _project_to_dict(project, *, role: str | None = None) -> dict[str, Any]:
+def _project_to_dict(project: Project, *, role: str | None = None) -> dict[str, Any]:
     out = {
         "id": project.id, "slug": project.slug, "name": project.name,
         "org_id": project.org_id,
@@ -85,7 +90,7 @@ def list_projects(user: CurrentUser = Depends(get_current_user)) -> dict[str, An
     return {"projects": out, "count": len(out)}
 
 
-def _resolve_project_by_slug(sess, slug: str):
+def _resolve_project_by_slug(sess: Session, slug: str) -> Project:
     from sqlalchemy import select
 
     from aegis.db.models import Project

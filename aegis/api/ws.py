@@ -20,9 +20,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.concurrency import run_in_threadpool
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from aegis.api.auth import CurrentUser
+    from aegis.api.settings import APISettings
 
 router = APIRouter(prefix="/runs", tags=["ws"])
 
@@ -30,7 +37,7 @@ router = APIRouter(prefix="/runs", tags=["ws"])
 _BEARER_SUBPROTOCOL_PREFIX = "aegis.bearer."
 
 
-def _origin_allowed(origin: str, settings) -> bool:
+def _origin_allowed(origin: str, settings: APISettings) -> bool:
     """Return True iff ``origin`` is in the configured CORS allowlist.
 
     Empty origin is allowed so non-browser clients (CLI, CI, recorded
@@ -59,7 +66,9 @@ def _extract_bearer_subprotocol(websocket: WebSocket) -> tuple[str | None, str |
     return (None, None)
 
 
-async def _resolve_user_for_ws(websocket: WebSocket, settings):
+async def _resolve_user_for_ws(
+    websocket: WebSocket, settings: APISettings
+) -> CurrentUser | None:
     """Resolve a CurrentUser from the WS upgrade request.
 
     Resolution order:
@@ -151,7 +160,7 @@ async def _enforce_upgrade_policy(websocket: WebSocket, run_id: str) -> bool:
     return True
 
 
-async def _redis_pubsub_iter(channel: str):
+async def _redis_pubsub_iter(channel: str) -> AsyncIterator[dict[str, Any]]:
     """Yield messages from Redis pub/sub; falls back to a no-op loop when
     Redis isn't configured (dev convenience)."""
     url = os.environ.get("AEGIS_BROKER_URL")

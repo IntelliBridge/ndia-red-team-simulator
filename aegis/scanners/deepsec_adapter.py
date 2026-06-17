@@ -261,7 +261,7 @@ class DeepsecAdapter:
 
         started = time.monotonic()
 
-        def _run(cmd):
+        def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
             return subprocess.run(
                 cmd, cwd=deepsec_dir, capture_output=True,
                 text=True, timeout=options.timeout,

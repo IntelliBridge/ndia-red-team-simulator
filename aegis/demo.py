@@ -26,7 +26,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aegis.config import AegisConfig
 from aegis.remediate.cai_runner import run_code_fix
@@ -39,6 +39,9 @@ from aegis.safety import authorize
 from aegis.schema import AegisFinding
 from aegis.state import RunState, RunStateAPI
 from aegis.verify import verify_finding
+
+if TYPE_CHECKING:
+    from aegis.targets import TargetPack
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
 DEFAULT_FIXTURE_EVENTS = FIXTURES_DIR / "strix_events_juice_shop.jsonl"
@@ -112,7 +115,7 @@ def _start_target(
     live_strix: bool,
     live_llm: bool,
     target_pack_name: str,
-) -> tuple[object | None, str, bool]:
+) -> tuple[TargetPack | None, str, bool]:
     """Stage 1: target.up (must precede a live scan).
 
     Returns ``(target_pack, target_url, ok)``. ``target_pack`` is ``None`` in
@@ -190,7 +193,7 @@ def _remediate(
     state: RunStateAPI,
     config: AegisConfig,
     outcome: DemoOutcome,
-    target_pack: object | None,
+    target_pack: TargetPack | None,
     findings: list[AegisFinding],
     repo_path: Path,
     *,
@@ -336,7 +339,7 @@ def run_demo(
 def _finalize(
     state: RunStateAPI,
     outcome: DemoOutcome,
-    target_pack,
+    target_pack: TargetPack | None,
     canonical: AegisFinding,
     repo_path: Path,
     *,

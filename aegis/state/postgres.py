@@ -22,6 +22,7 @@ from aegis.state.facade import ArtifactRef
 
 if TYPE_CHECKING:
     from aegis.schema import Status
+    from aegis.storage import BlobStore
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,8 @@ class PostgresRunState:
 
     def __init__(self, session: Session, *, run_id: str,
                  project_id: str, output_dir: str | Path,
-                 blob_store=None, created_by: str | None = None):
+                 blob_store: BlobStore | None = None,
+                 created_by: str | None = None):
         self.session = session
         self.run_id = run_id
         self.project_id = project_id
@@ -166,7 +168,7 @@ class PostgresRunState:
 
     # ---- Artifacts --------------------------------------------------------
 
-    def save_artifact(self, name: str, content) -> Path:
+    def save_artifact(self, name: str, content: str | bytes) -> Path:
         """Phase 2-style artifact write under run_path/artifacts/. Kept for
         backwards compatibility; ``record_artifact`` is the canonical path
         in Phase 3."""
@@ -177,7 +179,7 @@ class PostgresRunState:
             fh.write(content)
         return artifact_file
 
-    def record_artifact(self, name: str, content,
+    def record_artifact(self, name: str, content: str | bytes,
                         content_type: str = "application/octet-stream") -> ArtifactRef:
         data = content.encode("utf-8") if isinstance(content, str) else content
         digest = hashlib.sha256(data).hexdigest()

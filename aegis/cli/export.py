@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 
 from aegis.cli import _console, _runstate
+from aegis.config import AegisConfig
 
 
-def cmd_export(args, config) -> None:
+def cmd_export(args: argparse.Namespace, config: AegisConfig) -> None:
     """Export findings to vulnerability-fixer format."""
     if args.format != "vulnfixer":
         _console._err(f"Unsupported export format: {args.format}")

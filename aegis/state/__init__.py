@@ -17,7 +17,7 @@ importing it here would break the offline/base install (and the lightweight
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aegis.state.facade import ArtifactRef, RunStateAPI
 from aegis.state.factory import open_run_state
@@ -36,7 +36,7 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     if name == "PostgresRunState":
         from aegis.state.postgres import PostgresRunState
 

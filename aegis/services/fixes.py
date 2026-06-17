@@ -261,7 +261,7 @@ def generate_fix(
     actor: str,
     config: AegisConfig,
     override_authorized: bool = False,
-    gh_client=None,
+    gh_client: Any = None,
 ) -> FixOutcome:
     """Generate (and optionally commit / PR) a remediation for ``finding``."""
 
@@ -309,7 +309,7 @@ def _generate_patch_fix(
     use_golden_patch: bool,
     actor: str,
     config: AegisConfig,
-    gh_client,
+    gh_client: Any,
 ) -> FixOutcome:
     project_id, budget_checker = _budget_for(run_state)
     result = run_code_fix(finding, repo_path=repo,
@@ -526,7 +526,7 @@ def _generate_deps_fix(
     push: bool,
     actor: str,
     config: AegisConfig,
-    gh_client,
+    gh_client: Any,
 ) -> FixOutcome:
     if repo is None:
         return FixOutcome(success=False, strategy="deps",

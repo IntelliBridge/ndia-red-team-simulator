@@ -13,6 +13,8 @@ human gate (see :mod:`aegis.effects`) applies: a pattern dispatched without
 
 from __future__ import annotations
 
+from typing import Any
+
 from aegis.agents.registry import (
     AgentContext,
     AgentResult,
@@ -23,13 +25,15 @@ from aegis.agents.registry import (
 from aegis.config import load_config
 from aegis.effects import Effect
 from aegis.integrations.cai_loader import (
+    CAIBundle,
     load_cai,
     load_cai_pattern,
     resolve_cai_agent,
 )
 
 
-def _run_agent(bundle, agent, prompt: str, cai_context: dict) -> str:
+def _run_agent(bundle: CAIBundle, agent: Any, prompt: str,
+               cai_context: dict[str, Any]) -> str:
     result = bundle.Runner.run_sync(
         starting_agent=agent, input=prompt, context=cai_context,
     )
