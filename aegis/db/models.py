@@ -223,6 +223,32 @@ class Finding(Base):
     )
 
 
+class FindingTicket(Base):
+    """External-tracker ticket synced from a finding (Jira/ServiceNow/Linear).
+
+    One row per ``(finding_id, provider)``: re-syncing the same finding to
+    the same provider upserts this row rather than creating duplicates. The
+    ``external_id`` is the tracker's own identifier (Jira key, ServiceNow
+    sys_id, Linear issue id); ``status`` is refreshed from the tracker on a
+    bidirectional pull. No secret/credential is ever stored here.
+    """
+    __tablename__ = "finding_tickets"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)  # UUID
+    finding_id: Mapped[str] = mapped_column(
+        ForeignKey("findings.id"), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    url: Mapped[str | None] = mapped_column(String(1024))
+    status: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    __table_args__ = (
+        UniqueConstraint("finding_id", "provider",
+                         name="uq_finding_tickets_finding_provider"),
+    )
+
+
 class LLMUsage(Base):
     __tablename__ = "llm_usage"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

@@ -86,6 +86,9 @@ shipped June 2026 with 1329 tests passing (21 skipped offline) on Python
 | Unified human-in-the-loop gate (propose → approve → act) across agents, Kali tools, and remediation | ✅ Shipped |
 | Agentic remediation strategy (vuln-fixer engine) — diff by default, opens the human-reviewed PR on approval | ✅ Shipped |
 | Multi-format finding ingestion (Snyk · Veracode · Trivy · SARIF → `AegisFinding`) | ✅ Shipped |
+| Bidirectional ticket sync — Jira / ServiceNow / Linear (default-off, env-selected) | ✅ Shipped |
+| Cloud-target ownership verification (DNS TXT / GitHub repo linkage) gating `verified` | ✅ Shipped |
+| Backport / release-train awareness for generated fix PRs | ✅ Shipped |
 | Per-task LLM routing with budget caps | ✅ Shipped |
 | Cross-org multi-tenancy — Postgres RLS (`FORCE`) on tenant tables, per-tenant monthly budget + LLM routing, `/cost` chargeback dashboard | ✅ Shipped |
 | `@aegis/design-system` workspace + Storybook — curated domain components over ported shadcn base primitives (table / card / alert / input / …) | ✅ Shipped |
@@ -276,6 +279,7 @@ Pushes to `main` deploy to GitHub Pages via
 | Hash-chained audit log | [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md) |
 | Logs, traces, metrics pipeline | [`docs/architecture/observability.md`](docs/architecture/observability.md) |
 | `/v1/*` HTTP API reference | [`docs/api/v1.md`](docs/api/v1.md) |
+| Integrations (ticket sync · ownership verification · backports) | [`docs/integrations/index.md`](docs/integrations/index.md) |
 | Production deployment runbook | [`docs/ops/deploy.md`](docs/ops/deploy.md) |
 | Local development stack | [`docs/dev/local-stack.md`](docs/dev/local-stack.md) |
 | Frontend (workspace, design system, Storybook) | [`docs/dev/frontend.md`](docs/dev/frontend.md) |

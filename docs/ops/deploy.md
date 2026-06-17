@@ -134,6 +134,21 @@ spend (see the [API reference](../api/v1.md#orgs-cost)).
 by the policy), so a regression that drops or weakens the isolation fails
 CI rather than shipping silently.
 
+**Enabling a ticket provider.** Set `AEGIS_TICKET_PROVIDER` to `jira`,
+`servicenow`, or `linear` on the api **and** worker, plus the matching
+creds (table below). Migration `0008_finding_tickets` must be applied
+first. Smoke-test with `POST /v1/findings/{id}/ticket` (needs
+`remediator+`): a `201` returns the external id and URL; a `409` means the
+provider is still `none` or its creds are missing. Leave it unset and
+nothing reaches a tracker.
+
+**Verifying a target.** Register the target, then `GET
+/v1/targets/{id}/verification` for the proof to publish — a DNS TXT record
+(`url` kind) or a GitHub App installation (`github_repo` kind). Publish it,
+then `POST /v1/targets/{id}/verify` (`admin`): `200 {verified:true,…}` on
+success, `422` until the proof resolves. Set a strong `AEGIS_VERIFY_SECRET`
+in prod so the per-target TXT token can't be forged.
+
 ---
 
 ## Required env vars
@@ -249,6 +264,25 @@ external decision point; see the runbook below.
 | `OTEL_EXPORTER_OTLP_ENDPOINT`      | api, worker         | Activates the OTel SDK. Without it, logs go to stdout only. |
 | `OTEL_RESOURCE_ATTRIBUTES`         | api, worker         | `service.name=...` etc.                                     |
 | `AEGIS_LOG_INGEST_URL`             | api, worker         | Default path that bypasses the Collector (default profile)  |
+
+### Integrations (ticket sync, target verification, backports)
+
+All optional and **default-off**. See
+[Integrations](../integrations/index.md) for the full behaviour.
+
+| Var                              | Where       | Notes                                                                                          |
+|----------------------------------|-------------|------------------------------------------------------------------------------------------------|
+| `AEGIS_TICKET_PROVIDER`          | api, worker | `none` \| `jira` \| `servicenow` \| `linear`. Default `none` = no-op (nothing reaches a tracker). |
+| `AEGIS_JIRA_URL` / `…_USER` / `…_TOKEN` / `…_PROJECT_KEY` | api, worker | Jira Cloud/Server creds (Basic auth + issue project). Required when provider = `jira`.          |
+| `AEGIS_SERVICENOW_INSTANCE` / `…_TOKEN` | api, worker | ServiceNow instance URL + OAuth bearer. Required when provider = `servicenow`.            |
+| `AEGIS_LINEAR_API_KEY` / `…_TEAM_ID` | api, worker | Linear API key + team. Required when provider = `linear`.                                  |
+| `AEGIS_VERIFY_SECRET`            | api, worker | Server-side salt mixed into the per-target DNS TXT token so it can't be forged. A dev default is used when unset — **set a strong value in prod**. Never logged. |
+| `AEGIS_RELEASE_TRAINS`           | api, worker | Release-train → branch map for fix-PR base selection. JSON (`{"2024.1":"release/2024.1"}`) or `name=branch,…`. Unset = every fix PR targets `main`. |
+
+The ticket creds and `AEGIS_VERIFY_SECRET` are read from the environment
+only — never from an API body, never persisted to a row, never written to
+an audit detail. DNS verification needs `dnspython` (shipped in the `api`
+extra).
 
 ### Third-party plugin signatures
 

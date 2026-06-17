@@ -33,15 +33,18 @@ documented, validated, allowlist-gated **scanner-adapter marketplace** (see
 shipped (keyless cosign image signing + SBOM + SLSA-3 provenance, and opt-in
 signed plugins; see [Supply-chain integrity](security/supply-chain.md)),
 **authenticated DAST flows** (encrypted auth-profile store + ZAP/Nuclei auth
-injection; see `docs/ops/authenticated-dast.md`), and **cross-org row-level
+injection; see `docs/ops/authenticated-dast.md`), **cross-org row-level
 multi-tenancy** (Postgres RLS `FORCE` on the tenant tables + per-tenant
-cost/routing; see [`multi-tenancy.md`](architecture/multi-tenancy.md)) all
+cost/routing; see [`multi-tenancy.md`](architecture/multi-tenancy.md)), and the
+**workflow integrations** (bidirectional Jira / ServiceNow / Linear ticket
+sync, cloud-target ownership verification, and backport / release-train
+awareness for fix PRs; see [Integrations](integrations/index.md)) all
 landed — the focus has been **capability breadth** and the remaining
 **security / compliance hardening** (below). On breadth, the tool roster has
 now reached the 35+ target (42 effect-classified tools) and the agent roster
 has grown to 36 wired agents + 5 multi-agent patterns — substantial progress
-toward the 60+ OnePager target. The next highest-leverage candidate:
-continuing toward 60+ agents.
+toward the 60+ OnePager target. The next highest-leverage candidates:
+continuing toward 60+ agents, and iterative agent loops with test execution.
 
 ## Capability breadth
 
@@ -131,10 +134,25 @@ Closing the gap to the OnePager promise.
 
 ## Integrations & workflow
 
-- **Bidirectional Jira / ServiceNow / Linear sync.**
-- **Cloud-target ownership verification** (DNS TXT / GitHub repo linkage).
-- **Backport / release-train awareness** for generated fix PRs.
-- **Iterative agent loops with test execution.**
+- ~~**Bidirectional Jira / ServiceNow / Linear sync.**~~ **Shipped**
+  (migration `0005`): a pluggable `TicketProvider` (env-selected via
+  `AEGIS_TICKET_PROVIDER`, default `none`) pushes a finding to the tracker
+  and pulls status back; `FindingTicket` records the external id/url/status
+  per `(finding, provider)`. See
+  [Integrations](integrations/index.md#bidirectional-ticket-sync).
+- ~~**Cloud-target ownership verification** (DNS TXT / GitHub repo
+  linkage).~~ **Shipped**: a target's `verified` flag now requires proof of
+  control — a per-target DNS TXT token (`url`) or GitHub App installation
+  linkage (`github_repo`). See
+  [Integrations](integrations/index.md#cloud-target-ownership-verification).
+- ~~**Backport / release-train awareness** for generated fix PRs.~~
+  **Shipped**: `select_base_branch()` resolves a fix-PR base from a
+  release-train map (`AEGIS_RELEASE_TRAINS`); default `main`, all existing
+  callers unchanged. See
+  [Integrations](integrations/index.md#backport-release-train-awareness).
+- **Iterative agent loops with test execution.** *(Still pending —* the
+  remaining sub-item of this line: run the generated patch through the
+  project's tests and loop the agent on failures.*)*
 
 ## Frontend
 

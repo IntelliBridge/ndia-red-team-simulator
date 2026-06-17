@@ -125,6 +125,19 @@ See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
   audit event with `override=true` so it shows up forensically.
 - CIDR ranges supported (`aegis.safety.is_target_allowed`).
 
+### Target ownership verification
+
+- A target's `verified` flag is set only after the operator proves
+  control: `url` targets must publish a deterministic per-target DNS
+  TXT token (`aegis-site-verification=…`, salted by
+  `AEGIS_VERIFY_SECRET` so it can't be forged for a host the operator
+  doesn't own); `github_repo` targets must be reachable through the
+  configured GitHub App installation; `image` targets are unsupported.
+- `POST /v1/targets/{id}/verify` runs the check (`admin`) and emits a
+  secret-free `target.verify` audit event (kind + method + matched
+  bool); a failed proof returns `422` and leaves `verified` untouched.
+- See [Integrations](docs/integrations/index.md#cloud-target-ownership-verification).
+
 ### Fork-PR safety
 
 - Webhook payloads from GitHub trigger `PRScope` admission. Fork PRs
@@ -191,6 +204,12 @@ env knobs.
   [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Rotation runbook" and
   [`docs/ops/authenticated-dast.md`](docs/ops/authenticated-dast.md)
   § "Key rotation".
+- Integration secrets — the ticket-provider credentials
+  (`AEGIS_JIRA_*` / `AEGIS_SERVICENOW_*` / `AEGIS_LINEAR_*`) and the
+  target-verification salt `AEGIS_VERIFY_SECRET` — are env-configured
+  only. They are never accepted in an API body, persisted to a row, or
+  written to an audit detail; provider HTTP errors are wrapped to carry
+  only the provider name + status code, never the body or auth header.
 
 ### Supply-chain integrity
 

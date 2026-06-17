@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -10,7 +12,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from aegis.config import AegisConfig
     from aegis.schema import AegisFinding
+
+DEFAULT_BASE_BRANCH = "main"
 
 _FENCE_RE = re.compile(
     r"```(?:diff|patch)\s*\n(.*?)```", re.DOTALL | re.IGNORECASE
@@ -249,19 +254,84 @@ def rollback(repo_path: Path | str, ref_before: str) -> bool:
         return False
 
 
+def _parse_release_trains(raw: str | None) -> dict[str, str]:
+    """Parse a release-train mapping from JSON or ``name=branch,...`` form.
+
+    Accepts either a JSON object (``{"2024.1": "release/2024.1"}``) or the
+    compact ``name=branch,name=branch`` form. Malformed input yields an empty
+    map (so resolution falls back to the default base) rather than raising.
+    """
+    if not raw:
+        return {}
+    raw = raw.strip()
+    if raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+        return {str(k): str(v) for k, v in parsed.items()} if isinstance(parsed, dict) else {}
+    mapping: dict[str, str] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair or "=" not in pair:
+            continue
+        name, branch = pair.split("=", 1)
+        name, branch = name.strip(), branch.strip()
+        if name and branch:
+            mapping[name] = branch
+    return mapping
+
+
+def select_base_branch(
+    target_branch_hint: str | None = None, *, config: AegisConfig | None = None
+) -> str:
+    """Resolve the base branch a fix PR should target.
+
+    Looks the ``target_branch_hint`` up in a release-train mapping sourced from
+    (in order) the ``AEGIS_RELEASE_TRAINS`` env var or ``config.release_trains``
+    — JSON or ``name=branch,...``. A hint that matches a train name returns its
+    branch. A hint already shaped like a branch (matches a mapping *value*, or
+    no mapping is configured) is used verbatim. An unknown hint or no hint at
+    all falls back to ``DEFAULT_BASE_BRANCH`` (``"main"``) — keeping every
+    current caller unchanged. Pure: no git/gh involved.
+    """
+    raw = os.environ.get("AEGIS_RELEASE_TRAINS")
+    if raw is None and config is not None:
+        raw = getattr(config, "release_trains", None)
+    mapping = _parse_release_trains(raw)
+
+    if not target_branch_hint:
+        return DEFAULT_BASE_BRANCH
+    if target_branch_hint in mapping:
+        return mapping[target_branch_hint]
+    # Allow passing a concrete branch that is already a known train target.
+    if target_branch_hint in mapping.values():
+        return target_branch_hint
+    return DEFAULT_BASE_BRANCH
+
+
 def open_pull_request(
     repo_path: Path | str,
     branch: str,
     *,
     title: str,
     body: str,
-    base: str = "main",
+    base: str = DEFAULT_BASE_BRANCH,
+    base_hint: str | None = None,
+    config: AegisConfig | None = None,
     push: bool = True,
 ) -> tuple[bool, str]:
     """Push the branch and create a PR via the gh CLI.
 
     Returns (success, pr_url_or_error). Requires gh to be authenticated.
+
+    Backport awareness (additive): when ``base_hint`` is supplied it is
+    resolved through ``select_base_branch`` (release-train mapping) and
+    overrides ``base``. Callers that pass no hint keep the historical
+    ``base="main"`` behaviour unchanged.
     """
+    if base_hint is not None:
+        base = select_base_branch(base_hint, config=config)
     repo = Path(repo_path)
     if push:
         push_result = subprocess.run(
