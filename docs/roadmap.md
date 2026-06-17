@@ -23,8 +23,9 @@ enforcement with a per-model price table; and four review-surfaced cleanups.
 ## Now / Next
 
 With the seams closed — DB-side append-only audit enforcement
-(row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
-see `SECURITY.md` and `docs/ops/deploy.md`), the LLM guardrail layers
+(row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit,
+plus off-DB WORM/Object-Lock export for tamper-resistant retention; see
+`SECURITY.md` and `docs/ops/deploy.md`), the LLM guardrail layers
 (diff/output secret scrubbing + prompt-injection detection; see
 `SECURITY.md` § "LLM guardrails"), the plugin entry-point seam now a
 documented, validated, allowlist-gated **scanner-adapter marketplace** (see
@@ -80,7 +81,13 @@ Closing the gap to the OnePager promise.
   separation.~~ **Shipped** (migration `0004`): row-immutability trigger blocks
   `UPDATE`/`DELETE`/`TRUNCATE` on `audit_events`, `aegis_app`/`aegis_owner` role
   split, pgaudit logging. See `SECURITY.md` § "Audit chain".
-- **WORM / tamper-evident audit storage.**
+- ~~**WORM / tamper-evident audit storage**~~ **Shipped**: audit chains
+  export off-DB to an S3/MinIO **Object Lock** bucket (`COMPLIANCE` mode)
+  via `WormArchive` — a daily `celery beat` task (self-gated on
+  `AEGIS_WORM_EXPORT`) plus on-demand `aegis audit export`. The sealed copy
+  survives a full DB compromise; re-verify by downloading the JSONL into
+  `verify_chain`. See `docs/architecture/audit-chain.md` § "WORM archival"
+  and `docs/ops/deploy.md`.
 - ~~**PII / content scrubbing inside diffs and patches.**~~ **Shipped**:
   the canonical unified diff (in `extract_unified_diff`) and LLM outputs are
   scrubbed through the audit redactor's secret/token regex (`***REDACTED***`),

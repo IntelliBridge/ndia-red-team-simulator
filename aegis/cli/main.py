@@ -190,6 +190,15 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="Verify a specific project's chain")
     p_audit_verify.add_argument("--all", action="store_true",
                                 help="Verify every chain known to the writer")
+    p_audit_export = audit_sub.add_parser(
+        "export", help="Export audit chains to the WORM (Object-Lock) bucket")
+    p_audit_export.add_argument("--all", action="store_true",
+                                help="Export every chain known to the writer (default)")
+    p_audit_export.add_argument("--chain", default=None,
+                                help="Export a single chain by id (e.g. run:<id>, "
+                                     "project:<id>, or system)")
+    p_audit_export.add_argument("--no-verify", dest="no_verify", action="store_true",
+                                help="Skip hash-chain verification before archiving")
 
     # plugins (community adapter marketplace)
     p_plugins = sub.add_parser("plugins", help="Inspect community scanner/agent adapters")
@@ -309,9 +318,11 @@ def _cmd_status_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
 
 
 def _cmd_audit_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
-    from aegis.cli.audit import cmd_audit_verify
+    from aegis.cli.audit import cmd_audit_export, cmd_audit_verify
     if args.audit_action == "verify":
         cmd_audit_verify(args, config)
+    elif args.audit_action == "export":
+        cmd_audit_export(args, config)
     else:
         _console._err(f"Unknown audit action: {args.audit_action}")
         sys.exit(2)

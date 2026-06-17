@@ -45,3 +45,66 @@ def cmd_audit_verify(args: argparse.Namespace, config: AegisConfig) -> None:
             any_broken = True
             print(f"{_RED}✗{_RESET} chain {chain_id!r}: broken at seq={result.broken_at} ({result.reason})")
     sys.exit(1 if any_broken else 0)
+
+
+def cmd_audit_export(args: argparse.Namespace, config: AegisConfig) -> None:
+    """Export audit chains to the WORM (Object-Lock) bucket on demand.
+
+    ``--all`` exports every chain; ``--chain CHAIN_ID`` exports one.
+    ``--no-verify`` skips the hash-chain verification before archiving
+    (chains are still archived, just not flagged). When WORM is disabled or
+    misconfigured we print an actionable message and exit non-zero.
+    """
+    from aegis.audit.chain import resolve_writer, verify_chain
+    from aegis.storage.worm import WormArchive, worm_export_enabled
+
+    if not worm_export_enabled():
+        print(f"{_RED}✗{_RESET} WORM export is disabled. Set AEGIS_WORM_EXPORT=1 "
+              f"and the AEGIS_WORM_*/AEGIS_S3_* env (bucket must have Object "
+              f"Lock enabled) to enable tamper-evident archival.")
+        sys.exit(1)
+
+    try:
+        archive = WormArchive.from_env()
+    except Exception as exc:  # noqa: BLE001 - surface the misconfig actionably
+        print(f"{_RED}✗{_RESET} could not initialise WORM archive: {exc}")
+        sys.exit(1)
+
+    writer = resolve_writer(config)
+    verify = not getattr(args, "no_verify", False)
+
+    if getattr(args, "chain", None):
+        chain_id = args.chain
+        events = list(writer.read_chain(chain_id))
+        if not events:
+            print(f"{_YELLOW}~{_RESET} chain {chain_id!r}: no events; nothing to export")
+            sys.exit(0)
+        verified = True
+        broken: list[str] = []
+        if verify:
+            result = verify_chain(events)
+            verified = result.verified
+            if not verified:
+                broken.append(chain_id)
+        ref = archive.archive_chain(chain_id, events, verified=verified)
+        if ref is None:
+            print(f"{_YELLOW}~{_RESET} chain {chain_id!r}: already archived (no-op)")
+        else:
+            print(f"{_GREEN}✓{_RESET} chain {chain_id!r}: archived "
+                  f"{len(events)} events ({ref.size_bytes} bytes) -> {ref.location}")
+        if broken:
+            print(f"{_RED}!{_RESET} chain {chain_id!r} failed verification "
+                  f"(archived anyway, flagged verified=False)")
+        sys.exit(0)
+
+    # Default / --all: export every chain.
+    summary = archive.export_all(writer, verify=verify)
+    print(f"{_GREEN}✓{_RESET} WORM export to bucket {archive.bucket!r}:")
+    print(f"    chains: {summary.chains_total} total, "
+          f"{summary.chains_archived} archived, {summary.chains_skipped} skipped")
+    print(f"    objects written: {summary.objects_written}  "
+          f"bytes: {summary.bytes_written}")
+    if summary.broken_chains:
+        print(f"{_RED}!{_RESET} broken chains archived (flagged verified=False): "
+              f"{', '.join(summary.broken_chains)}")
+    sys.exit(0)

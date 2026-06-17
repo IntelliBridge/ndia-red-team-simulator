@@ -200,6 +200,11 @@ all stay green.
   and `pgaudit.log` are guarded on availability and skip cleanly where the
   extension isn't loaded. New `deploy/Dockerfile.postgres` ships a
   pgaudit-enabled Postgres for the compose stack.
+- **WORM (Object Lock) audit export.** Audit chains can now be exported off-DB
+  to an S3 / MinIO bucket with **Object Lock** retention, so the archived copy
+  survives a full database (or bucket-credential) compromise — the third layer
+  on top of the DB append-only trigger and `verify_chain`. In `COMPLIANCE`
+  mode the retention can't be shortened even by the account root.
 - **LLM guardrails — diff/output secret scrubbing.** A new
   `aegis/llm/guardrails.py` reuses the audit redactor's secret/token regex
   (`aegis/audit/redact.py`) to scrub generated diffs/patches and LLM outputs,
@@ -224,6 +229,25 @@ all stay green.
   `AEGIS_LLM_INJECTION_BLOCK_RISK` (default `high`; `off` = detect-and-log).
 
 ### Added
+- **WORM audit archive** (`aegis/storage/worm.py`). `WormArchive` writes each
+  chain as canonical JSONL + a `manifest.json` (chain_id, event_count,
+  head_seq, head_hash, verified, exported_at, retention_until, lock_mode,
+  jsonl_sha256) under a content-derived key, idempotent on re-export; the JSONL
+  round-trips back into `verify_chain` for off-DB re-verification.
+  `aegis/storage/s3.py` `put()` gained `retain_until` + `lock_mode`
+  ("GOVERNANCE" | "COMPLIANCE") to apply Object Lock.
+- **`aegis audit export`** (`[--all | --chain CHAIN_ID] [--no-verify]`) — CLI
+  for on-demand archival.
+- **Daily WORM export beat task** `aegis.export_chains_to_worm`
+  (`aegis/workers/tasks/worm_export.py`), registered in `celery beat` at
+  `AEGIS_WORM_INTERVAL`. It self-gates to a no-op when `AEGIS_WORM_EXPORT` is
+  off and emits an `audit.worm_export` event on each run.
+- New env vars: `AEGIS_WORM_EXPORT` (enable, default off), `AEGIS_WORM_BUCKET`
+  (default `aegis-worm`), `AEGIS_WORM_RETENTION_DAYS` (default 2555 ≈ 7y),
+  `AEGIS_WORM_LOCK_MODE` (default `COMPLIANCE`), `AEGIS_WORM_INTERVAL` (default
+  86400). S3 endpoint / credentials reuse the `AEGIS_S3_*` vars. **The WORM
+  bucket must be created with Object Lock enabled** (a create-time property:
+  MinIO `mc mb --with-lock`, or AWS S3 with Object Lock enabled).
 - **Live run events.** The worker publishes job transitions
   (`running`/`succeeded`/`failed`) to the Redis channel `run:{run_id}:events`
   (`aegis/workers/events.py`); the existing WS endpoint `/v1/runs/{run_id}/events`

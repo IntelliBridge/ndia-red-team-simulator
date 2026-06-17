@@ -16,6 +16,7 @@ dependencies = [
 test = [
     "pytest>=8.0",
     "pytest-cov>=4.1",
+    "moto>=5.0",
 ]
 dev = [
     "ruff>=0.5",

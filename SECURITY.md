@@ -88,9 +88,18 @@ See [`docs/architecture/auth.md`](docs/architecture/auth.md).
   can't be re-signed by editing rows. The runtime `aegis_app` role is
   granted only `INSERT, SELECT` on it; DDL (dropping the trigger) needs the
   separate `aegis_owner` role, and `pgaudit` logs such changes out-of-band.
+- **WORM / Object-Lock archival** (`aegis/storage/worm.py`): chains export
+  off-DB to an S3 / MinIO bucket with **Object Lock** (`COMPLIANCE` mode,
+  default 7-year retention) — a daily `celery beat` task (self-gated on
+  `AEGIS_WORM_EXPORT`) plus on-demand `aegis audit export`. The sealed copy
+  can't be overwritten or deleted before retention expires, even by an
+  attacker who owns the database or the bucket credentials, so the chain is
+  tamper-*resistant* off-DB and not merely tamper-*evident*. Re-verify by
+  downloading the archived JSONL into `verify_chain`.
 
 See [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md)
-and [`docs/ops/deploy.md`](docs/ops/deploy.md) for role provisioning.
+and [`docs/ops/deploy.md`](docs/ops/deploy.md) for role provisioning and the
+WORM bucket runbook.
 
 ### Multi-tenancy / data isolation
 
