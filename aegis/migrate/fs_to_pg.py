@@ -12,8 +12,13 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from aegis.storage.blobs import BlobStore
 
 
 @dataclass
@@ -34,7 +39,7 @@ def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def _ensure_project(sess, project_id: str) -> None:
+def _ensure_project(sess: Session, project_id: str) -> None:
     from aegis.db.models import Organization, Project
     if sess.get(Project, project_id) is not None:
         return
@@ -47,8 +52,9 @@ def _ensure_project(sess, project_id: str) -> None:
     sess.flush()
 
 
-def _import_run(sess, run_dir: Path, project_id: str,
-                summary: MigrationSummary, blob_store, dry_run: bool) -> None:
+def _import_run(sess: Session, run_dir: Path, project_id: str,
+                summary: MigrationSummary, blob_store: BlobStore,
+                dry_run: bool) -> None:
     from aegis.db.models import (
         Artifact,
         Finding,
@@ -82,7 +88,7 @@ def _import_run(sess, run_dir: Path, project_id: str,
     if findings_path.exists():
         for f in json.loads(findings_path.read_text()):
             fid = f.get("id")
-            if not fid or sess.get(Finding, fid):
+            if not fid or sess.get(Finding, fid) is not None:
                 summary.skipped_duplicates += 1
                 continue
             if not dry_run:
@@ -139,7 +145,7 @@ def _import_run(sess, run_dir: Path, project_id: str,
         sess.flush()
 
 
-def _reanchor_audit(sess, run_dir: Path, run_id: str, project_id: str,
+def _reanchor_audit(sess: Session, run_dir: Path, run_id: str, project_id: str,
                     summary: MigrationSummary, dry_run: bool) -> None:
     """Re-anchor the legacy flat ``audit.jsonl`` as a fresh chain.
 

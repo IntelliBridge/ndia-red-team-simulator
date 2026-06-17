@@ -49,19 +49,26 @@ _ACTION_MIN_ROLE: dict[Action, str] = {
 
 
 def check(user: CurrentUser, action: Action, project_id: str) -> None:
-    if user.is_system:
-        return
-    role = user.project_memberships.get(project_id)
-    if not role:
+    """Role-gate ``action`` on ``project_id`` for ``user`` (raise 403 on deny).
+
+    The decision is delegated to the configured :class:`PolicyEngine`
+    (``AEGIS_POLICY_ENGINE``): the default :class:`StaticPolicyEngine`
+    reproduces the historical role-rank table exactly (see ``_ROLE_RANK``
+    / ``_ACTION_MIN_ROLE`` below), while ``opa`` / ``cedar`` delegate to an
+    external policy service. A deny raises the same ``HTTPException(403)``
+    as before, carrying the engine's ``reason`` as the detail. All call
+    sites are unchanged.
+    """
+    from aegis.policy.engine import build_request, resolve_policy_engine
+
+    req = build_request(user, action.value, project_id)
+    decision = resolve_policy_engine().evaluate(req)
+    if not decision.allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"user {user.email} has no membership on project {project_id}",
-        )
-    required = _ACTION_MIN_ROLE[action]
-    if _ROLE_RANK.get(role, 0) < _ROLE_RANK[required]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"role '{role}' cannot perform '{action.value}' on project {project_id}",
+            detail=decision.reason or (
+                f"role check failed for '{action.value}' on project {project_id}"
+            ),
         )
 
 
@@ -117,6 +124,6 @@ def ensure_run_access(user: CurrentUser, run_id: str) -> str:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="run not found",
             )
-        project_id = run.project_id
+        project_id: str = run.project_id
     ensure_project_access(user, project_id)
     return project_id

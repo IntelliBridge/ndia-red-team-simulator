@@ -30,6 +30,16 @@ function _bearerFromStorage(): string | undefined {
   return localStorage.getItem("aegis_token") ?? undefined;
 }
 
+/**
+ * The bearer token a programmatic caller has stashed in localStorage, or
+ * undefined for the cookie (browser) path. Exposed so non-fetch transports
+ * (e.g. the WebSocket subprotocol channel) can mirror the same auth choice
+ * the `api()` helper makes.
+ */
+export function bearerToken(): string | undefined {
+  return _bearerFromStorage();
+}
+
 export function readCookie(name: string): string | undefined {
   if (typeof document === "undefined") return undefined;
   for (const c of document.cookie.split(";")) {

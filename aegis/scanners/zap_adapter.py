@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -95,7 +96,8 @@ class ZapAdapter:
             command_str = (f"ZAP_AUTH_HEADER={header_name} "
                            f"ZAP_AUTH_HEADER_VALUE={REDACTED} {command_str}")
 
-        def parse(proc, run_id):
+        def parse(proc: subprocess.CompletedProcess[str],
+                  run_id: str) -> list[AegisFinding]:
             payload = json.loads(proc.stdout or "{}")
             return [_convert(a, run_id) for a in _extract_alerts(payload)]
 

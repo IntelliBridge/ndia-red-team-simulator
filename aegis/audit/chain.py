@@ -23,9 +23,16 @@ import threading
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Protocol
 
 from aegis.audit.redact import redact_audit_detail
+
+if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+
+    from sqlalchemy.orm import Session
+
+    from aegis.config import AegisConfig
 
 SCHEMA_VERSION = 1
 
@@ -225,7 +232,9 @@ class PostgresAuditWriter:
     ``audit_events`` catch any concurrent fork.
     """
 
-    def __init__(self, session_factory):
+    def __init__(
+        self, session_factory: Callable[[], AbstractContextManager[Session]]
+    ) -> None:
         # session_factory: callable returning a context manager that yields a Session.
         self.session_factory = session_factory
 
@@ -418,7 +427,7 @@ class InMemoryAuditWriter:
 # ----------------------------------------------------------------------------
 
 
-def resolve_writer(config_or_dir) -> AuditWriter:
+def resolve_writer(config_or_dir: AegisConfig | str | Path) -> AuditWriter:
     """Pick the writer based on environment / config.
 
     Resolution order:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -13,6 +13,9 @@ from aegis.audit.chain import resolve_writer
 from aegis.config import load_config
 from aegis.safety import AuthorizationError
 from aegis.services.fixes import create_fix_job
+
+if TYPE_CHECKING:
+    from aegis.services.fixes import Strategy
 
 router = APIRouter(prefix="/findings", tags=["fix"])
 
@@ -55,8 +58,9 @@ def fix(finding_id: str,
             # ``strategy`` is a free-form ``str`` here (any value accepted,
             # exactly as the previous raw-dict body did); the service maps
             # unknown strategies to an error outcome at runtime rather than
-            # rejecting them, so we don't narrow to the ``Strategy`` Literal.
-            finding_id=finding_id, strategy=strategy,  # type: ignore[arg-type]
+            # rejecting them. Cast at the boundary so the type-checker is
+            # satisfied without narrowing/validating the runtime value.
+            finding_id=finding_id, strategy=cast("Strategy", strategy),
             apply=apply, open_pr=bool(body.open_pr),
             repo=body.repo,
             override_authorized=bool(body.override_authorized),

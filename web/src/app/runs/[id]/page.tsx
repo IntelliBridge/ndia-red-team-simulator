@@ -10,9 +10,15 @@ import {
 } from "@aegis/design-system";
 import { api, apiBase, apiWsBase, type Finding } from "@/lib/api";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
+import { useRunEvents } from "@/hooks/useRunEvents";
 
 const fetcher = (path: string) =>
   api<{ findings: Finding[]; count: number }>(path);
+
+// Live job-lifecycle events (useRunEvents) drive freshness; this poll is the
+// fallback for when the WebSocket can't connect. Kept slow on purpose so it's
+// a safety net rather than the primary update path.
+const FALLBACK_POLL_MS = 30_000;
 
 const VALIDATION_TONES: Record<string, string> = {
   poc_passed: "bg-emerald-100 text-emerald-900",
@@ -24,11 +30,18 @@ const VALIDATION_TONES: Record<string, string> = {
 export default function RunPage({ params }: { params: { id: string } }) {
   const authed = useRequireAuth();
 
-  const { data, error, isLoading } = useSWR(
+  const { data, error, isLoading, mutate } = useSWR(
     authed ? `/v1/findings?run=${params.id}` : null,
     fetcher,
+    { refreshInterval: FALLBACK_POLL_MS },
   );
   const [stages, setStages] = useState<StageEntry[]>([]);
+
+  // Hybrid liveness: each job transition revalidates the findings query so the
+  // view tracks the run without leaning on the slow fallback poll above.
+  useRunEvents(authed ? params.id : null, () => {
+    void mutate();
+  });
 
   useEffect(() => {
     if (!authed) return;

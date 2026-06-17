@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from aegis.registry import Registry
 from aegis.schema import AegisFinding
@@ -51,6 +51,21 @@ class ScanOptions:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
+class RunnerResult(Protocol):
+    """Duck-typed shape of a runner result consumed by :meth:`ScanResult.from_runner`.
+
+    Both ``aegis.runners.strix_runner.StrixRunResult`` and
+    ``aegis.runners.trivy_runner.TrivyRunResult`` satisfy this without the
+    scanner layer importing the runner layer (which would invert the dependency:
+    runners must never import the scanner registry). ``command`` is optional —
+    ``TrivyRunResult`` has no command list, so the trivy adapter passes an
+    explicit ``command_str`` instead.
+    """
+    findings: list[AegisFinding]
+    return_code: int
+    error: str | None
+
+
 @dataclass
 class ScanResult:
     findings: list[AegisFinding]
@@ -61,6 +76,39 @@ class ScanResult:
     exit_code: int = 0
     duration_s: float = 0.0
     error: str | None = None
+
+    @classmethod
+    def from_runner(
+        cls,
+        result: RunnerResult,
+        *,
+        adapter_name: str,
+        adapter_version: str,
+        duration_s: float,
+        command_str: str | None = None,
+    ) -> ScanResult:
+        """Wrap a duck-typed runner result (Strix/Trivy) into a ``ScanResult``.
+
+        Collapses the verbatim re-wrap both delegating adapters performed:
+        ``findings``/``error`` pass straight through, ``exit_code`` is
+        ``result.return_code or 0`` (a non-zero rc is preserved; the strix
+        adapter already coalesced ``None``→0 and trivy's rc is always an int, so
+        this is byte-for-byte identical for both). ``command_str`` defaults to
+        ``" ".join(result.command or [])`` — the strix form — but accepts an
+        explicit override for runners with no ``command`` attribute (trivy passes
+        the literal ``"trivy fs"``).
+        """
+        if command_str is None:
+            command_str = " ".join(getattr(result, "command", None) or [])
+        return cls(
+            findings=result.findings,
+            adapter_name=adapter_name,
+            adapter_version=adapter_version,
+            command_str=command_str,
+            exit_code=result.return_code or 0,
+            duration_s=duration_s,
+            error=result.error,
+        )
 
 
 def run_cli_scan(
@@ -152,6 +200,77 @@ def run_cli_scan(
     )
 
 
+def run_cli_scan_jsonl(
+    adapter: ScannerAdapter,
+    options: ScanOptions,
+    run_state: RunStateAPI,
+    *,
+    argv: list[str],
+    command_str: str,
+    convert: Callable[[dict[str, Any], str], AegisFinding | None],
+    subdir: str | None = None,
+    raw_filename: str | None = None,
+) -> ScanResult:
+    """Run a line-oriented (JSONL/NDJSON) CLI scanner and assemble its ``ScanResult``.
+
+    The line-oriented sibling of :func:`run_cli_scan`. It shares the same
+    subprocess invocation, ``default_timeout`` honouring, the
+    ``TimeoutExpired``/``FileNotFoundError`` error envelope, raw-payload
+    persistence, and success-result assembly, but parses stdout **one line at a
+    time** and is tolerant of malformed lines: a line that is not valid JSON is
+    silently skipped (the verbatim per-adapter behaviour) rather than failing the
+    whole scan, so there is no JSON-parse error envelope. Each adapter supplies:
+
+    * ``argv`` / ``command_str`` — as in :func:`run_cli_scan`.
+    * ``convert`` — callback ``(record, run_id) -> AegisFinding | None`` invoked
+      once per parsed JSON object. Returning ``None`` filters that line out (e.g.
+      bumblebee keeps only ``record_type == "finding"`` records).
+    * ``subdir`` / ``raw_filename`` — where under ``run_state.run_path`` the raw
+      stdout is persisted; empty stdout writes the empty string (the JSONL
+      placeholder). Leave both ``None`` to persist nothing.
+    """
+    version = adapter.adapter_version()
+    started = time.monotonic()
+    timeout = (adapter.default_timeout if options.timeout == _DEFAULT_TIMEOUT
+               else options.timeout)
+    try:
+        proc = subprocess.run(
+            argv, capture_output=True, text=True, timeout=timeout,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        return ScanResult(
+            findings=[], adapter_name=adapter.name,
+            adapter_version=version,
+            command_str=command_str,
+            exit_code=-1,
+            duration_s=time.monotonic() - started,
+            error=str(exc),
+        )
+    findings: list[AegisFinding] = []
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        finding = convert(rec, run_state.run_id)
+        if finding is not None:
+            findings.append(finding)
+    if subdir is not None and raw_filename is not None:
+        raw_dir = Path(run_state.run_path) / subdir
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        (raw_dir / raw_filename).write_text(proc.stdout or "")
+    return ScanResult(
+        findings=findings, adapter_name=adapter.name,
+        adapter_version=version,
+        command_str=command_str,
+        exit_code=proc.returncode,
+        duration_s=time.monotonic() - started,
+    )
+
+
 def cli_version(
     executable: str,
     *,
@@ -192,6 +311,7 @@ def which_available(*executables: str) -> bool:
     return any(shutil.which(exe) is not None for exe in executables)
 
 
+@runtime_checkable
 class ScannerAdapter(Protocol):
     name: str
     capabilities: set[str]
@@ -211,7 +331,9 @@ def _validate(adapter: ScannerAdapter) -> None:
         )
 
 
-_scanner_registry: Registry[ScannerAdapter] = Registry("scanner", validate=_validate)
+_scanner_registry: Registry[ScannerAdapter] = Registry(
+    "scanner", validate=_validate, protocol=ScannerAdapter,
+)
 # Historical public handle: callers and tests pop/iterate this dict directly,
 # so it must stay the live backing store (same object as the registry's).
 _REGISTRY: dict[str, ScannerAdapter] = _scanner_registry._items

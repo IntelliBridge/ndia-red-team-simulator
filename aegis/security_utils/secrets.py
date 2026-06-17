@@ -54,7 +54,8 @@ def encrypt_secret(plaintext: str, *, config: AegisConfig | None = None) -> byte
 
     Raises ``AuthProfilesKeyError`` if the key is unset or invalid.
     """
-    return _fernet(config).encrypt(plaintext.encode("utf-8"))
+    token: bytes = _fernet(config).encrypt(plaintext.encode("utf-8"))
+    return token
 
 
 def decrypt_secret(token: bytes, *, config: AegisConfig | None = None) -> str:
@@ -64,4 +65,5 @@ def decrypt_secret(token: bytes, *, config: AegisConfig | None = None) -> str:
     ``cryptography.fernet.InvalidToken`` if the token was not produced by
     the configured key (e.g. after an unmanaged key rotation).
     """
-    return _fernet(config).decrypt(token).decode("utf-8")
+    plaintext: str = _fernet(config).decrypt(token).decode("utf-8")
+    return plaintext

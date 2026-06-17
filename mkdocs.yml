@@ -172,6 +172,7 @@ nav:
       - Editing the docs: dev/docs.md
   - Security:
       - Fork-PR safety: security/fork-prs.md
+      - Supply-chain integrity: security/supply-chain.md
       - "Policy (SECURITY.md)": https://github.com/IntelliBridge/aegis/blob/main/SECURITY.md
   - ADRs:
       - "0001 — Vendored submodules": adr/0001-vendored-submodules.md

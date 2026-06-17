@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -12,7 +11,7 @@ from aegis.scanners.registry import (
     ScanResult,
     cli_version,
     register,
-    run_cli_scan,
+    run_cli_scan_jsonl,
     which_available,
 )
 from aegis.schema import AegisFinding, Severity
@@ -88,25 +87,12 @@ class NucleiAdapter:
             argv += ["-H", f"{header_name}: {header_value}"]
             command_str += f' -H "{header_name}: {REDACTED}"'
 
-        def parse(proc, run_id):
-            findings: list[AegisFinding] = []
-            for line in (proc.stdout or "").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                findings.append(_convert(rec, run_id))
-            return findings
-
-        return run_cli_scan(
+        return run_cli_scan_jsonl(
             self, options, run_state,
             argv=argv,
             command_str=command_str,
             subdir="nuclei", raw_filename="results.jsonl",
-            parse=parse, raw_empty="",
+            convert=_convert,
         )
 
 

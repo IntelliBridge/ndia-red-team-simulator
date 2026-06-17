@@ -7,6 +7,7 @@ run path.
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 
 from aegis.scanners.registry import (
@@ -19,6 +20,7 @@ from aegis.scanners.registry import (
 )
 
 if TYPE_CHECKING:
+    from aegis.schema import AegisFinding
     from aegis.state import RunStateAPI
 
 
@@ -42,7 +44,8 @@ class SyftAdapter:
 
         # Syft yields an SBOM artifact, not findings: the parse step always
         # returns [] and the raw CycloneDX document is persisted by the runner.
-        def parse(proc, run_id):
+        def parse(proc: subprocess.CompletedProcess[str],
+                  run_id: str) -> list[AegisFinding]:
             return []
 
         return run_cli_scan(

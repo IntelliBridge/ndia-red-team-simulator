@@ -14,16 +14,19 @@ Returns from ``evaluate``:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aegis.policy.ci_gate import CIGatePolicy, evaluate  # noqa: F401 re-export
 from aegis.workers.celery_app import app
+
+if TYPE_CHECKING:
+    from celery import Task
 
 __all__ = ["CIGatePolicy", "evaluate", "ci_gate"]
 
 
 @app.task(name="aegis.ci_gate", bind=True, max_retries=0)
-def ci_gate(self, job_id: str) -> dict[str, Any]:
+def ci_gate(self: Task, job_id: str) -> dict[str, Any]:
     from aegis.workers.bootstrap import task_context
     with task_context(job_id) as ctx:
         if ctx.skip or ctx.run_state is None:
