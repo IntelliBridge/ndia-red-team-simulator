@@ -22,6 +22,7 @@ import json
 import os
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from starlette.concurrency import run_in_threadpool
 
 router = APIRouter(prefix="/runs", tags=["ws"])
 
@@ -92,6 +93,20 @@ async def _resolve_user_for_ws(websocket: WebSocket, settings):
     return None
 
 
+def _lookup_run_project_id(run_id: str) -> str | None:
+    """Synchronous DB read: the project a run belongs to, or None if missing.
+
+    Isolated into a sync function so the async WS upgrade path can run it via
+    ``run_in_threadpool`` rather than blocking the event loop on a synchronous
+    SQLAlchemy session during the handshake.
+    """
+    from aegis.db.models import Run
+    from aegis.db.session import get_session
+    with get_session() as sess:
+        run = sess.get(Run, run_id)
+        return run.project_id if run is not None else None
+
+
 async def _enforce_upgrade_policy(websocket: WebSocket, run_id: str) -> bool:
     """Return True iff the upgrade should proceed; otherwise close 1008.
 
@@ -123,14 +138,13 @@ async def _enforce_upgrade_policy(websocket: WebSocket, run_id: str) -> bool:
         return False
 
     from aegis.api.policy import has_project_access
-    from aegis.db.models import Run
-    from aegis.db.session import get_session
-    with get_session() as sess:
-        run = sess.get(Run, run_id)
-        if run is None:
-            await websocket.close(code=1008, reason="run not found")
-            return False
-        project_id = run.project_id
+    # The project lookup is the one blocking (synchronous SQLAlchemy) call on
+    # this async upgrade path; offload it to a worker thread so it can't stall
+    # the event loop while the handshake completes.
+    project_id = await run_in_threadpool(_lookup_run_project_id, run_id)
+    if project_id is None:
+        await websocket.close(code=1008, reason="run not found")
+        return False
     if not has_project_access(user, project_id):
         await websocket.close(code=1008, reason="no project membership")
         return False
