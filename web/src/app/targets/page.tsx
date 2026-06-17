@@ -3,14 +3,41 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
-import { api } from "@/lib/api";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+  RoleGated,
+} from "@aegis/design-system";
+import {
+  api,
+  deleteTarget,
+  listAuthProfiles,
+  startScan,
+  type AuthProfile,
+} from "@/lib/api";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
+import { useRoles } from "@/hooks/useRoles";
 
 type Target = {
   id: string; kind: string; value: string; verified: boolean; project_id: string;
 };
 
 const fetcher = (path: string) => api<{ targets: Target[] }>(path);
+
+// Scanners that take a URL target. DAST scanners can additionally scan
+// behind a login via an auth profile (feat/authenticated-dast).
+const SCANNERS = ["trivy", "zap", "nuclei"] as const;
+const DAST_SCANNERS = new Set(["zap", "nuclei"]);
+
+const profilesFetcher = () => listAuthProfiles("default");
 
 export default function TargetsPage() {
   const router = useRouter();
@@ -19,9 +46,19 @@ export default function TargetsPage() {
   const { data, error, mutate } = useSWR(
     authed ? "/v1/targets?project=default" : null, fetcher,
   );
+  const { roles } = useRoles();
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [scanner, setScanner] = useState<string>("trivy");
+  const [authProfileId, setAuthProfileId] = useState("");
+
+  const isDast = DAST_SCANNERS.has(scanner);
+  const { data: profilesData } = useSWR(
+    authed && isDast ? "/v1/auth-profiles?project=default" : null,
+    profilesFetcher,
+  );
+  const profiles: AuthProfile[] = Array.isArray(profilesData) ? profilesData : [];
 
   if (!authed) return <p className="text-slate-500">Redirecting to sign in…</p>;
   if (error) return <p className="text-slate-600">Failed to load.</p>;
@@ -45,19 +82,30 @@ export default function TargetsPage() {
     }
   };
 
-  const startScan = async (target: Target) => {
+  const launchScan = async (target: Target) => {
     setBusy(true);
     try {
       setErr(null);
-      const out = await api<{ run_id: string }>("/v1/scans", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          target: target.value, scanner: "trivy",
-          project_id: target.project_id,
-        }),
+      const out = await startScan({
+        target: target.value,
+        scanner,
+        project_id: target.project_id,
+        ...(isDast && authProfileId ? { auth_profile_id: authProfileId } : {}),
       });
       router.push(`/runs/${out.run_id}`);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeTarget = async (target: Target) => {
+    setBusy(true);
+    try {
+      setErr(null);
+      await deleteTarget(target.id);
+      mutate();
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -73,6 +121,40 @@ export default function TargetsPage() {
           {err}
         </p>
       )}
+      <div className="flex flex-wrap items-start gap-3">
+        <label className="flex flex-col text-sm">
+          <span className="mb-1">Scanner</span>
+          <select
+            value={scanner}
+            onChange={(e) => { setScanner(e.target.value); setAuthProfileId(""); }}
+            className="rounded-md border border-slate-200 bg-white px-2 py-1.5"
+          >
+            {SCANNERS.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+        </label>
+        {isDast && (
+          <div className="flex flex-col text-sm">
+            <label className="flex flex-col">
+              <span className="mb-1">Authentication profile (optional)</span>
+              <select
+                value={authProfileId}
+                onChange={(e) => setAuthProfileId(e.target.value)}
+                className="w-72 rounded-md border border-slate-200 bg-white px-2 py-1.5"
+              >
+                <option value="">None</option>
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name} ({p.kind})</option>
+                ))}
+              </select>
+            </label>
+            <span className="mt-1 text-xs text-slate-500">
+              Lets DAST scanners test behind a login. Manage profiles under Auth Profiles.
+            </span>
+          </div>
+        )}
+      </div>
       <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -92,13 +174,46 @@ export default function TargetsPage() {
                 <td className="px-3 py-2">{t.value}</td>
                 <td className="px-3 py-2">{t.verified ? "yes" : "no"}</td>
                 <td className="px-3 py-2">
-                  <button
-                    className="rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
-                    disabled={busy}
-                    onClick={() => startScan(t)}
-                  >
-                    Start scan
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+                      disabled={busy}
+                      onClick={() => launchScan(t)}
+                    >
+                      Start scan
+                    </button>
+                    <RoleGated minRole="admin" callerRole={roles[t.project_id]}>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <button
+                            className="rounded-md border border-border px-3 py-1.5 text-sm text-destructive hover:bg-muted disabled:opacity-50"
+                            disabled={busy}
+                          >
+                            Delete
+                          </button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete target?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This permanently removes{" "}
+                              <span className="font-mono">{t.value}</span> and is
+                              written to the audit chain. It cannot be undone.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              variant="destructive"
+                              onClick={() => removeTarget(t)}
+                            >
+                              Delete target
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </RoleGated>
+                  </div>
                 </td>
               </tr>
             ))}

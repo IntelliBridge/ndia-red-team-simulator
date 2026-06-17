@@ -81,28 +81,25 @@ shipped June 2026 with 1329 tests passing (21 skipped offline) on Python
 | GitHub PR-scoped scans with fork-restricted mode | ✅ Shipped |
 | Three-profile observability (Postgres mirror / Loki / Elasticsearch) + OTel security-log pipeline (host audit sources, secrets redacted before export) | ✅ Shipped |
 | Scanner adapters: Strix · Trivy · Semgrep · Nuclei · ZAP · CodeQL · Bandit · Grype · Checkov · Trufflehog · SonarQube · Syft · Bumblebee · Deepsec | ✅ Shipped |
+| Authenticated DAST flows — encrypted auth profiles (form / bearer / header / cookie) injected into ZAP + Nuclei scans, secrets redacted everywhere | ✅ Shipped |
 | Kali toolbelt via MCP — nmap, sqlmap, nikto, hydra, +6 more | ✅ Shipped |
-| ~36 agents wired (24 CAI + 12 Aegis-native specialists: cloud_recon, osint_collector, threat_intel, api_security_tester, web_surface_mapper, ssl_tls_auditor, dns_enumerator, secrets_hunter, iac_auditor, container_security, crypto_analyst, log_triage) + 5 multi-agent patterns, runnable via `POST /v1/agents/{name}/run`; active specialists reach the live Kali belt over MCP | ✅ Shipped |
+| Unified tool catalog: 42 effect-classified tools (10 Kali + 14 scanner adapters + 17 CAI function-tools + Camoufox OSINT web search) | ✅ Shipped |
+| CAI agents: 36 wired + 5 multi-agent patterns (offsec / redteam-swarm / bb-triage / 2 red-blue), incl. 12 Aegis-native authored specialists, runnable via `POST /v1/agents/{name}/run`; active specialists reach the live Kali belt over MCP | ✅ Shipped |
 | Unified human-in-the-loop gate (propose → approve → act) across agents, Kali tools, and remediation | ✅ Shipped |
 | Agentic remediation strategy (vuln-fixer engine) — diff by default, opens the human-reviewed PR on approval | ✅ Shipped |
 | Multi-format finding ingestion (Snyk · Veracode · Trivy · SARIF → `AegisFinding`) | ✅ Shipped |
+| Bidirectional ticket sync — Jira / ServiceNow / Linear (default-off, env-selected) | ✅ Shipped |
+| Cloud-target ownership verification (DNS TXT / GitHub repo linkage) gating `verified` | ✅ Shipped |
+| Backport / release-train awareness for generated fix PRs | ✅ Shipped |
 | Per-task LLM routing with budget caps | ✅ Shipped |
-| `@aegis/design-system` workspace + Storybook — curated domain components over ported shadcn base primitives (table / card / alert / input / …) | ✅ Shipped |
-| 42 integrated tools (10 Kali + 14 scanner adapters + 17 CAI function-tools + Camoufox OSINT search) — passing the 35+ target | ✅ Shipped |
-| Authenticated DAST flows — encrypted auth profiles inject credentials into ZAP / Nuclei | ✅ Shipped |
-| Community scanner-adapter marketplace — validated entry-point plugins via `aegis plugins` | ✅ Shipped |
-| Full UI parity (cancel / delete, agent & tool consoles, report export), dark mode, Cmd-K palette, audit-chain visualization | ✅ Shipped |
-| LLM guardrails — secret / PII scrubbing of diffs & outputs + prompt-injection detection / blocking | ✅ Shipped |
-| Append-only audit enforced at the database + WORM tamper-evident export (S3 Object Lock) | ✅ Shipped |
-| Supply-chain integrity — Ed25519-signed plugins; keyless cosign-signed, SBOM + SLSA-provenance-attested release images | ✅ Shipped |
-| Pluggable, fail-closed authorization policy engine (static default + OPA / Cedar) | ✅ Shipped |
-| Cross-org multi-tenancy — Postgres Row-Level Security isolation + per-tenant cost dashboards / chargeback + per-tenant LLM routing | ✅ Shipped |
-| Ticketing & ownership — bidirectional Jira / ServiceNow / Linear sync; DNS-TXT / GitHub-repo target ownership verification; release-train-aware fix PRs | ✅ Shipped |
-| Compliance evidence pack (`aegis evidence-pack`) — audit export + SOC 2 / ISO 27001 / FedRAMP controls crosswalk | ✅ Shipped |
-| Production Helm chart — hardened pods, optional gVisor sandbox RuntimeClass, HA Keycloak, air-gapped vendor mirror | ✅ Shipped |
-| Web OSINT search via the Camoufox anti-detect browser (DuckDuckGo) | ✅ Shipped |
-| 60+ specialized agents (full roster from the OnePager) | 🔨 Roadmap |
-| Per-scan microVM isolation (Firecracker) | 🔨 Roadmap |
+| Cross-org multi-tenancy — Postgres RLS (`FORCE`) on tenant tables, per-tenant monthly budget + LLM routing, `/cost` chargeback dashboard | ✅ Shipped |
+| `@aegis/design-system` workspace + Storybook — curated domain components over ported shadcn base primitives (table / card / alert / input / …) plus Radix/`cmdk` interactive primitives (alert-dialog / tooltip / command) | ✅ Shipped |
+| Web UI for the full backend surface — cancel run, delete target, report / vulnfixer-export downloads, `/agents` + `/tools` run pages, `/audit` chain visualization, dark mode, Cmd/Ctrl-K command palette (all RBAC-gated) | ✅ Shipped |
+| Production Helm chart — hardened pod specs (non-root / dropped caps / seccomp), `*.enabled` dep toggles, gVisor sandbox, HA Keycloak | ✅ Shipped |
+| Air-gapped vendor mirror (`AEGIS_OFFLINE_VENDOR_HOST`) for offline submodule fetches | ✅ Shipped |
+| SOC 2 / ISO 27001 / FedRAMP compliance evidence pack (`aegis evidence-pack`) | ✅ Shipped |
+| 60+ specialized agents (full roster from the OnePager; 36 wired + 5 patterns today) | 🔨 Roadmap |
+| Per-scan sandbox isolation — Firecracker microVM (gVisor `RuntimeClass` shipped) | 🔨 Roadmap |
 
 See [`CHANGELOG.md`](CHANGELOG.md) for per-release detail and the
 consolidated [`docs/roadmap.md`](docs/roadmap.md) for the full
@@ -287,6 +284,7 @@ Pushes to `main` deploy to GitHub Pages via
 | Hash-chained audit log | [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md) |
 | Logs, traces, metrics pipeline | [`docs/architecture/observability.md`](docs/architecture/observability.md) |
 | `/v1/*` HTTP API reference | [`docs/api/v1.md`](docs/api/v1.md) |
+| Integrations (ticket sync · ownership verification · backports) | [`docs/integrations/index.md`](docs/integrations/index.md) |
 | Production deployment runbook | [`docs/ops/deploy.md`](docs/ops/deploy.md) |
 | Local development stack | [`docs/dev/local-stack.md`](docs/dev/local-stack.md) |
 | Frontend (workspace, design system, Storybook) | [`docs/dev/frontend.md`](docs/dev/frontend.md) |

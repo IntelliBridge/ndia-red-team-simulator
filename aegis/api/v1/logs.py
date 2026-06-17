@@ -12,7 +12,7 @@ log rows are monotonically increasing, so ``id < cursor`` is the
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -23,6 +23,9 @@ from aegis.audit.chain import resolve_writer
 from aegis.config import load_config
 from aegis.safety import authorize
 
+if TYPE_CHECKING:
+    from aegis.db.models import ApplicationLog
+
 router = APIRouter(prefix="/logs", tags=["logs"])
 
 
@@ -30,7 +33,7 @@ _DEFAULT_LIMIT = 100
 _MAX_LIMIT = 500
 
 
-def _row_to_dict(row) -> dict[str, Any]:
+def _row_to_dict(row: ApplicationLog) -> dict[str, Any]:
     return {
         "id": row.id,
         "ts": row.ts.isoformat() if row.ts else None,

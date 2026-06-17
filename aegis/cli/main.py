@@ -11,6 +11,10 @@ import argparse
 import json  # noqa: F401  (re-exported for test patch target aegis.cli.main.json)
 import sys
 from pathlib import Path  # noqa: F401  (re-exported for test patch target aegis.cli.main.Path)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
 
 # Console output (ANSI colours + ``[*]``/``[!]`` writers) lives in a dedicated
 # peer module now; ``main()`` and every per-command module call through it so
@@ -186,6 +190,47 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="Verify a specific project's chain")
     p_audit_verify.add_argument("--all", action="store_true",
                                 help="Verify every chain known to the writer")
+    p_audit_export = audit_sub.add_parser(
+        "export", help="Export audit chains to the WORM (Object-Lock) bucket")
+    p_audit_export.add_argument("--all", action="store_true",
+                                help="Export every chain known to the writer (default)")
+    p_audit_export.add_argument("--chain", default=None,
+                                help="Export a single chain by id (e.g. run:<id>, "
+                                     "project:<id>, or system)")
+    p_audit_export.add_argument("--no-verify", dest="no_verify", action="store_true",
+                                help="Skip hash-chain verification before archiving")
+
+    # plugins (community adapter marketplace)
+    p_plugins = sub.add_parser("plugins", help="Inspect community scanner/agent adapters")
+    plugins_sub = p_plugins.add_subparsers(dest="plugins_action", required=True)
+    p_plugins_list = plugins_sub.add_parser(
+        "list", help="List discovered third-party plugins (AEGIS_PLUGINS=1)")
+    p_plugins_list.add_argument("--json", action="store_true",
+                                help="Emit the discovery report as a JSON array")
+    p_plugins_sign = plugins_sub.add_parser(
+        "sign",
+        help="Sign a plugin distribution with an Ed25519 key (produces a .sig)")
+    p_plugins_sign.add_argument("--dist", required=True,
+                                help="Distribution name to sign (e.g. aegis-plugin-example)")
+    p_plugins_sign.add_argument("--version", default=None,
+                                help="Distribution version (omit for unversioned)")
+    p_plugins_sign.add_argument("--entry-point", dest="entry_point", required=True,
+                                help="Entry point GROUP:NAME whose factory is signed "
+                                     "(e.g. aegis.scanners:example)")
+    p_plugins_sign.add_argument("--key", required=True,
+                                help="Path to the Ed25519 private key PEM")
+    p_plugins_sign.add_argument("--out", default=None,
+                                help="Output directory for the .sig (default: cwd)")
+
+    # evidence-pack — bundle audit + controls evidence for auditors
+    p_evidence = sub.add_parser(
+        "evidence-pack",
+        help="Bundle audit + controls evidence for SOC 2 / ISO 27001 / FedRAMP reviewers",
+    )
+    p_evidence.add_argument("--out", required=True,
+                            help="Output directory for the evidence pack")
+    p_evidence.add_argument("--project", default=None,
+                            help="Limit the pack to a single project's chain")
 
     # migrate (Phase 3 M11 — surface lands now, impl in M11)
     p_migrate = sub.add_parser("migrate", help="Move filesystem run data into Postgres (M11)")
@@ -277,34 +322,48 @@ _COMMANDS = {
 }
 
 
-def _cmd_status_dispatch(args, config):
+def _cmd_status_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
     from aegis.cli.status import cmd_status
     cmd_status(args, config)
 
 
-def _cmd_audit_dispatch(args, config):
-    from aegis.cli.audit import cmd_audit_verify
+def _cmd_audit_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
+    from aegis.cli.audit import cmd_audit_export, cmd_audit_verify
     if args.audit_action == "verify":
         cmd_audit_verify(args, config)
+    elif args.audit_action == "export":
+        cmd_audit_export(args, config)
     else:
         _console._err(f"Unknown audit action: {args.audit_action}")
         sys.exit(2)
 
 
-def _cmd_migrate_dispatch(args, config):
+def _cmd_migrate_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
     from aegis.cli.migrate import cmd_migrate
     cmd_migrate(args, config)
 
 
-def _cmd_ci_gate_dispatch(args, config):
+def _cmd_ci_gate_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
     from aegis.cli.ci_gate import cmd_ci_gate
     cmd_ci_gate(args, config)
+
+
+def _cmd_evidence_pack_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
+    from aegis.cli.evidence import cmd_evidence_pack
+    cmd_evidence_pack(args, config)
+
+
+def _cmd_plugins_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
+    from aegis.cli.plugins import cmd_plugins
+    cmd_plugins(args, config)
 
 
 _COMMANDS["status"] = _cmd_status_dispatch
 _COMMANDS["audit"] = _cmd_audit_dispatch
 _COMMANDS["migrate"] = _cmd_migrate_dispatch
 _COMMANDS["ci-gate"] = _cmd_ci_gate_dispatch
+_COMMANDS["evidence-pack"] = _cmd_evidence_pack_dispatch
+_COMMANDS["plugins"] = _cmd_plugins_dispatch
 
 
 def main(argv: list[str] | None = None) -> None:

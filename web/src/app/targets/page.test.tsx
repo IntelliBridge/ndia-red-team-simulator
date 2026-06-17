@@ -22,12 +22,42 @@ vi.mock("@/hooks/useRequireAuth", () => ({
   useRequireAuth: useRequireAuthMock,
 }));
 
-// targets calls api() DIRECTLY for create()/startScan() mutations -> mock it.
+// targets calls api() directly for create() and the typed startScan()/
+// listAuthProfiles() helpers for scans + DAST auth profiles -> mock all.
 const apiMock = vi.hoisted(() => vi.fn());
+const deleteTargetMock = vi.hoisted(() => vi.fn());
+const startScanMock = vi.hoisted(() => vi.fn());
+const listAuthProfilesMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", () => ({
   api: apiMock,
+  startScan: startScanMock,
+  listAuthProfiles: listAuthProfilesMock,
   apiBase: "http://api.test",
   apiWsBase: "ws://api.test",
+  deleteTarget: deleteTargetMock,
+}));
+
+const useRolesMock = vi.hoisted(() => vi.fn());
+vi.mock("@/hooks/useRoles", () => ({ useRoles: useRolesMock }));
+
+// Render RoleGated/AlertDialog transparently so gating + the confirm action
+// stay observable in the DOM.
+vi.mock("@aegis/design-system", () => ({
+  RoleGated: ({ minRole, callerRole, children, fallback }: any) => {
+    const rank: Record<string, number> = { scanner: 1, remediator: 2, approver: 3, admin: 4 };
+    return (rank[callerRole] ?? 0) >= (rank[minRole] ?? 99)
+      ? h("div", null, children)
+      : h("div", null, fallback ?? null);
+  },
+  AlertDialog: ({ children }: any) => h("div", null, children),
+  AlertDialogTrigger: ({ children }: any) => h("div", null, children),
+  AlertDialogContent: ({ children }: any) => h("div", null, children),
+  AlertDialogHeader: ({ children }: any) => h("div", null, children),
+  AlertDialogFooter: ({ children }: any) => h("div", null, children),
+  AlertDialogTitle: ({ children }: any) => h("div", null, children),
+  AlertDialogDescription: ({ children }: any) => h("div", null, children),
+  AlertDialogAction: ({ children, onClick }: any) => h("button", { onClick }, children),
+  AlertDialogCancel: ({ children }: any) => h("button", null, children),
 }));
 
 import TargetsPage from "./page";
@@ -43,19 +73,46 @@ function target(over: Record<string, unknown> = {}) {
   };
 }
 
+function profile(over: Record<string, unknown> = {}) {
+  return {
+    id: "ap-1",
+    project_id: "default",
+    name: "Staging login",
+    kind: "form",
+    config: { login_url: "https://target.example/login" },
+    created_at: "2026-06-01T00:00:00Z",
+    ...over,
+  };
+}
+
+// Key-aware SWR stub: the page issues two useSWR calls (targets list +
+// auth profiles when a DAST scanner is selected).
+function stubSWR({
+  targets = [target()],
+  profiles = [profile()],
+}: { targets?: unknown[]; profiles?: unknown[] } = {}) {
+  useSWRMock.mockImplementation((key: string | null) => {
+    if (key?.startsWith("/v1/auth-profiles")) {
+      return { data: profiles, error: undefined, mutate: vi.fn() };
+    }
+    return { data: { targets }, error: undefined, mutate: mutateMock };
+  });
+}
+
 beforeEach(() => {
   useSWRMock.mockReset();
   apiMock.mockReset();
+  deleteTargetMock.mockReset();
+  startScanMock.mockReset();
+  listAuthProfilesMock.mockReset();
   mutateMock.mockReset();
   pushMock.mockReset();
   replaceMock.mockReset();
   useRequireAuthMock.mockReturnValue(true);
-  // Default: authed, one target, no SWR error.
-  useSWRMock.mockReturnValue({
-    data: { targets: [target()] },
-    error: undefined,
-    mutate: mutateMock,
-  });
+  // Default: admin on the default project so delete is shown.
+  useRolesMock.mockReturnValue({ roles: { default: "admin" }, projects: [], isLoading: false, error: undefined });
+  // Default: authed, one target, one auth profile, no SWR error.
+  stubSWR();
 });
 
 afterEach(cleanup);
@@ -94,7 +151,9 @@ describe("TargetsPage", () => {
 
     expect(screen.getByText("t-1")).toBeTruthy();
     expect(screen.getByText("t-2")).toBeTruthy();
-    expect(screen.getByText("https://a.example")).toBeTruthy();
+    // The value also appears in the per-row delete-confirm dialog body (the
+    // transparent AlertDialog mock renders its description), so match all.
+    expect(screen.getAllByText("https://a.example").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("domain")).toBeTruthy();
     // verified booleans become yes/no.
     expect(screen.getByText("yes")).toBeTruthy();
@@ -142,28 +201,26 @@ describe("TargetsPage", () => {
     expect(mutateMock).not.toHaveBeenCalled();
   });
 
-  it("startScan(): POSTs /v1/scans and routes to the new run on success", async () => {
-    apiMock.mockResolvedValue({ run_id: "run-99" });
-    useSWRMock.mockReturnValue({
-      data: { targets: [target({ id: "t-9", value: "https://scan.example", project_id: "p7" })] },
-      error: undefined,
-      mutate: mutateMock,
+  it("startScan(): calls startScan without auth_profile_id and routes to the new run", async () => {
+    startScanMock.mockResolvedValue({ run_id: "run-99" });
+    stubSWR({
+      targets: [target({ id: "t-9", value: "https://scan.example", project_id: "p7" })],
     });
 
     render(h(TargetsPage));
     fireEvent.click(screen.getByRole("button", { name: "Start scan" }));
 
-    await waitFor(() => expect(apiMock).toHaveBeenCalledTimes(1));
-    expect(apiMock).toHaveBeenCalledWith("/v1/scans", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target: "https://scan.example", scanner: "trivy", project_id: "p7" }),
+    await waitFor(() => expect(startScanMock).toHaveBeenCalledTimes(1));
+    expect(startScanMock).toHaveBeenCalledWith({
+      target: "https://scan.example",
+      scanner: "trivy",
+      project_id: "p7",
     });
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/runs/run-99"));
   });
 
   it("startScan(): surfaces the error panel and does not navigate on rejection", async () => {
-    apiMock.mockRejectedValue(new Error("scan-denied-403"));
+    startScanMock.mockRejectedValue(new Error("scan-denied-403"));
     render(h(TargetsPage));
 
     fireEvent.click(screen.getByRole("button", { name: "Start scan" }));
@@ -171,5 +228,85 @@ describe("TargetsPage", () => {
     const panel = await screen.findByText(/scan-denied-403/);
     expect(panel.className).toContain("border-red-200");
     expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("hides Delete for a non-admin caller", () => {
+    useRolesMock.mockReturnValue({ roles: { default: "remediator" }, projects: [], isLoading: false, error: undefined });
+    render(h(TargetsPage));
+    expect(screen.queryByText("Delete target")).toBeNull();
+  });
+
+  it("delete: admin confirms then DELETEs the target and refetches", async () => {
+    deleteTargetMock.mockResolvedValue(undefined);
+    useSWRMock.mockReturnValue({
+      data: { targets: [target({ id: "t-del", value: "https://gone.example" })] },
+      error: undefined,
+      mutate: mutateMock,
+    });
+    render(h(TargetsPage));
+
+    // Trigger button + the confirm AlertDialogAction both read variants of
+    // "Delete"; click the confirm action ("Delete target").
+    fireEvent.click(screen.getByRole("button", { name: "Delete target" }));
+
+    await waitFor(() => expect(deleteTargetMock).toHaveBeenCalledWith("t-del"));
+    await waitFor(() => expect(mutateMock).toHaveBeenCalled());
+  });
+
+  it("delete: surfaces the error panel and does not refetch on rejection", async () => {
+    deleteTargetMock.mockRejectedValue(new Error("delete-denied-403"));
+    render(h(TargetsPage));
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete target" }));
+
+    const panel = await screen.findByText(/delete-denied-403/);
+    expect(panel.className).toContain("border-red-200");
+    expect(mutateMock).not.toHaveBeenCalled();
+  });
+
+  it("hides the auth profile select for non-DAST scanners", () => {
+    render(h(TargetsPage));
+    expect(screen.getByLabelText("Scanner")).toBeTruthy();
+    expect(screen.queryByLabelText("Authentication profile (optional)")).toBeNull();
+  });
+
+  it("shows the auth profile select for zap and includes auth_profile_id in the scan", async () => {
+    startScanMock.mockResolvedValue({ run_id: "run-42" });
+    stubSWR({
+      targets: [target({ id: "t-9", value: "https://scan.example", project_id: "p7" })],
+      profiles: [profile({ id: "ap-9", name: "Staging login", kind: "form" })],
+    });
+
+    render(h(TargetsPage));
+    fireEvent.change(screen.getByLabelText("Scanner"), { target: { value: "zap" } });
+
+    const select = screen.getByLabelText("Authentication profile (optional)");
+    expect(screen.getByText("Staging login (form)")).toBeTruthy();
+    fireEvent.change(select, { target: { value: "ap-9" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start scan" }));
+
+    await waitFor(() => expect(startScanMock).toHaveBeenCalledTimes(1));
+    expect(startScanMock).toHaveBeenCalledWith({
+      target: "https://scan.example",
+      scanner: "zap",
+      project_id: "p7",
+      auth_profile_id: "ap-9",
+    });
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/runs/run-42"));
+  });
+
+  it("omits auth_profile_id for a DAST scanner when no profile is chosen", async () => {
+    startScanMock.mockResolvedValue({ run_id: "run-43" });
+    render(h(TargetsPage));
+
+    fireEvent.change(screen.getByLabelText("Scanner"), { target: { value: "nuclei" } });
+    fireEvent.click(screen.getByRole("button", { name: "Start scan" }));
+
+    await waitFor(() => expect(startScanMock).toHaveBeenCalledTimes(1));
+    expect(startScanMock).toHaveBeenCalledWith({
+      target: "https://target.example",
+      scanner: "nuclei",
+      project_id: "default",
+    });
   });
 });

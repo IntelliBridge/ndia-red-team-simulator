@@ -31,17 +31,17 @@ export default function LoginPage() {
         <input
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="w-80 rounded-md border border-slate-200 px-3 py-1.5 text-sm"
+          className="w-80 rounded-md border border-input bg-background px-3 py-1.5 text-sm"
         />
       </label>
       <button
-        className="rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+        className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-50"
         disabled={busy}
         onClick={devLogin}
       >
         Continue as dev admin
       </button>
-      <p className="mt-6 text-slate-500">
+      <p className="mt-6 text-muted-foreground">
         Keycloak / OIDC is also live at{" "}
         <code>http://localhost:8080/realms/aegis</code> — wire the NextAuth
         provider config under{" "}

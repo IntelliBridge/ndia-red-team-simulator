@@ -241,6 +241,7 @@ has a rank; each action requires a minimum rank.
 | `tool.invoke`     | `remediator` |
 | `fix.apply`       | `approver`   |
 | `target.manage`   | `admin`      |
+| `auth_profile.manage` | `admin`  |
 | `audit.verify`    | `admin`      |
 
 System callers (workers via `is_system=True`) bypass the check —
@@ -249,6 +250,95 @@ their identity is established at the bearer-resolution step instead.
 The full source of truth is `aegis/api/policy.py`. The `<RoleGated>`
 React component is **UX only** — every protected route and worker
 entry re-runs the same check server-side.
+
+---
+
+## Policy engine
+
+The role-rank decision above is **pluggable**. The route-level gate
+(`aegis.api.policy.check`) no longer inlines the rule table; it builds a
+normalized request and asks the configured `PolicyEngine`
+(`aegis/policy/engine.py`) for a decision. A deny still raises the same
+`HTTPException(403)`, carrying the engine's `reason`. Every call site is
+unchanged.
+
+This is the route-level RBAC layer only. It is distinct from — and runs
+*in addition to* — the target-allowlist + audit gate
+(`aegis.safety.authorize`, the effect-class human-in-the-loop gate of
+[ADR 0004](../adr/0004-unified-effect-class-gate.md)). Both layers still
+run on a mutating request: the `PolicyEngine` answers "may this role do
+this action on this project?"; `authorize()` answers "is this *target*
+allowlisted, and record it." Swapping the policy engine does not touch
+`authorize()`.
+
+### The three engines
+
+| Engine | `AEGIS_POLICY_ENGINE` | Behaviour |
+|--------|-----------------------|-----------|
+| `StaticPolicyEngine` | `static` (**default**) | The built-in role-rank table above, **behaviour-identical** to the historical inline check. No network. |
+| `OPAPolicyEngine`    | `opa`    | POSTs the decision input to an [Open Policy Agent](https://www.openpolicyagent.org/) data endpoint; reads `result.allow` (bool) + optional `result.reason`. |
+| `CedarPolicyEngine`  | `cedar`  | POSTs the request to a `cedar-agent`-style REST endpoint; reads a `decision` of `Allow`/`Deny` + optional `reason`. |
+
+The static engine is the default; running with it is byte-for-byte the
+same authorization behaviour as before this seam existed. The example
+OPA / Cedar policies that ship with Aegis replicate the same role-rank
+table, so `opa` / `cedar` are drop-in equivalents — see
+[deploy.md](../ops/deploy.md) § "External policy engine (optional)".
+
+### Fail closed
+
+Both external engines **fail closed**. Any connection error, timeout
+(the gate is on the hot path of every mutating request, so the HTTP
+timeout is short), non-2xx response, or malformed/missing decision body
+yields a **deny** — the request gets a `403`, and the failure is logged
+(no request body or secrets are logged). A misconfigured or unreachable
+OPA / Cedar server fails *safe*: it locks the platform down, never opens
+it up.
+
+### Decision input
+
+`check()` normalizes the question into a `PolicyRequest` whose
+`to_input()` is the JSON document external engines evaluate. OPA receives
+it wrapped as `{"input": <document>}`; Cedar receives `subject` /
+`context` plus `action` / `resource` as `principal` / `context` /
+`action` / `resource`. The document:
+
+```json
+{
+  "subject": {
+    "sub": "<keycloak sub>",
+    "email": "alice@example.com",
+    "project_memberships": { "proj-a": "admin", "proj-b": "scanner" },
+    "is_system": false
+  },
+  "action": "fix.apply",
+  "resource": {
+    "project_id": "proj-a"
+  },
+  "context": {}
+}
+```
+
+`resource` may also carry `target` / `run_id` / `effect_class`;
+`context` may carry request-time flags such as `override_authorized`.
+System principals (workers) arrive with `is_system: true` and are
+allowed by every engine, mirroring the static bypass.
+
+### Switching engines
+
+Selection mirrors the blob-store / audit-writer backend pattern: read
+once per process from the environment, with a reset hook for tests.
+
+| Var | Default | Used by |
+|-----|---------|---------|
+| `AEGIS_POLICY_ENGINE` | `static` | api, worker — `static` \| `opa` \| `cedar` |
+| `AEGIS_OPA_URL`       | `http://localhost:8181` | `opa` engine base URL |
+| `AEGIS_OPA_PATH`      | `/v1/data/aegis/authz`  | `opa` engine data path |
+| `AEGIS_CEDAR_URL`     | `http://localhost:8180` | `cedar` engine base URL |
+
+An unknown `AEGIS_POLICY_ENGINE` value logs a warning and falls back to
+`static`. The ops-side runbook for standing up an OPA / Cedar sidecar
+lives in [deploy.md](../ops/deploy.md).
 
 ---
 
@@ -262,5 +352,6 @@ entry re-runs the same check server-side.
 | `401 invalid or expired worker token`  | Worker token outside the overlap window, or signed with an unknown key version.                            |
 | `403 CSRF token missing or mismatched` | Cookie-authed POST without `X-Aegis-CSRF`. CLI bearer is exempt.                                          |
 | `403 no membership on project …`       | RBAC: user not in `aegis_project_roles` for that project (read), or below the action's minimum rank (write). |
+| `403 policy engine unavailable: …`     | External `opa` / `cedar` engine errored / timed out / returned a malformed decision — the engine failed closed (deny). Check the OPA / Cedar sidecar. |
 | WebSocket close `1008 origin not allowed` | Browser origin not in `AEGIS_CORS_ORIGINS` / `AEGIS_WEB_ORIGIN`.                                        |
 | WebSocket close `1008 no project membership` | Run belongs to a project the user doesn't have membership on.                                       |

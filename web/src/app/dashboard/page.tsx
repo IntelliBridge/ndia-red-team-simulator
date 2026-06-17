@@ -16,7 +16,8 @@ export default function DashboardPage() {
 
   const { data, error, isLoading } = useSWR(authed ? "/v1/runs" : null, fetcher);
 
-  if (!authed) return <p className="text-slate-500">Redirecting to sign in…</p>;
+  if (!authed)
+    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
 
   const signOut = () => {
     logout();
@@ -28,33 +29,33 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Recent runs</h1>
         <div className="flex items-center gap-3 text-sm">
-          <span className="text-slate-500">{getEmail() ?? "(session)"}</span>
+          <span className="text-muted-foreground">{getEmail() ?? "(session)"}</span>
           <button
             onClick={signOut}
-            className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm hover:bg-slate-100"
+            className="rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted"
           >
             Sign out
           </button>
         </div>
       </div>
 
-      {isLoading && <p className="text-slate-500">Loading…</p>}
+      {isLoading && <p className="text-muted-foreground">Loading…</p>}
       {error && (
-        <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           Failed to load runs: {String(error)}
         </p>
       )}
       {!isLoading && !error && (!data || data.runs.length === 0) && (
-        <p className="text-slate-600">
+        <p className="text-muted-foreground">
           No runs yet. Head to{" "}
-          <a className="text-sky-700 underline" href="/targets">/targets</a> to
+          <a className="text-primary underline" href="/targets">/targets</a> to
           register a target and start one.
         </p>
       )}
       {data && data.runs.length > 0 && (
-        <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+        <div className="overflow-hidden rounded-md border border-border bg-card">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+            <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2">Run</th>
                 <th className="px-3 py-2">Project</th>
@@ -65,9 +66,9 @@ export default function DashboardPage() {
             </thead>
             <tbody>
               {data.runs.map((r) => (
-                <tr key={r.id} className="border-t border-slate-100">
+                <tr key={r.id} className="border-t border-border">
                   <td className="px-3 py-2 font-mono text-xs">
-                    <a className="text-sky-700 underline" href={`/runs/${r.id}`}>
+                    <a className="text-primary underline" href={`/runs/${r.id}`}>
                       {r.id}
                     </a>
                   </td>
@@ -76,7 +77,7 @@ export default function DashboardPage() {
                   <td className="px-3 py-2">
                     <RunStatusBadge status={r.status} />
                   </td>
-                  <td className="px-3 py-2 text-slate-600">
+                  <td className="px-3 py-2 text-muted-foreground">
                     {new Date(r.created_at).toLocaleString()}
                   </td>
                 </tr>

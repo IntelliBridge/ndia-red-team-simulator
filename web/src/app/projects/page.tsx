@@ -7,11 +7,12 @@ export default function ProjectsPage() {
   const authed = useRequireAuth();
   const { projects, isLoading, error } = useRoles();
 
-  if (!authed) return <p className="text-slate-500">Redirecting to sign in…</p>;
-  if (isLoading) return <p className="text-slate-500">Loading…</p>;
+  if (!authed)
+    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
+  if (isLoading) return <p className="text-muted-foreground">Loading…</p>;
   if (error)
     return (
-      <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+      <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
         Failed to load projects: {String(error)}
       </p>
     );
@@ -20,11 +21,11 @@ export default function ProjectsPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Projects</h1>
       {projects.length === 0 ? (
-        <p className="text-slate-600">You don&apos;t belong to any projects yet.</p>
+        <p className="text-muted-foreground">You don&apos;t belong to any projects yet.</p>
       ) : (
-        <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+        <div className="overflow-hidden rounded-md border border-border bg-card">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+            <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2">Slug</th>
                 <th className="px-3 py-2">Name</th>
@@ -34,10 +35,10 @@ export default function ProjectsPage() {
             </thead>
             <tbody>
               {projects.map((p) => (
-                <tr key={p.id} className="border-t border-slate-100">
+                <tr key={p.id} className="border-t border-border">
                   <td className="px-3 py-2 font-mono text-xs">
                     <a
-                      className="text-sky-700 underline"
+                      className="text-primary underline"
                       href={`/projects/${p.slug}/settings`}
                     >
                       {p.slug}
@@ -45,7 +46,7 @@ export default function ProjectsPage() {
                   </td>
                   <td className="px-3 py-2">{p.name}</td>
                   <td className="px-3 py-2">{p.role}</td>
-                  <td className="px-3 py-2 text-slate-600">
+                  <td className="px-3 py-2 text-muted-foreground">
                     {p.daily_llm_budget_cents == null
                       ? "—"
                       : `$${(p.daily_llm_budget_cents / 100).toFixed(2)}`}

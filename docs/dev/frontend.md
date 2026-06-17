@@ -57,10 +57,16 @@ build step.
   ported into `src/primitives/` and re-exported from `index.ts`
   alongside `ComponentProps<…>` type aliases (`TableProps`,
   `CardProps`, …). Their imports are rewritten to the workspace-local
-  `../lib/utils`. Primitives that pull a runtime dependency
-  (`alert-dialog`/`tooltip` need `radix-ui`, `command` needs `cmdk`)
-  are **deferred** until those packages are added to the workspace
-  lockfile — `pnpm install --frozen-lockfile` can't fetch them in CI.
+  `../lib/utils`.
+
+- **Radix / `cmdk` primitives.** The interactive leaves that pull a
+  runtime dependency — `alert-dialog` and `tooltip`
+  (`@radix-ui/react-alert-dialog`, `@radix-ui/react-dialog`,
+  `@radix-ui/react-tooltip`) and `command` (`cmdk`) — now ship too.
+  Those packages are in `web/pnpm-lock.yaml`, so `pnpm install
+  --frozen-lockfile` resolves them in CI; the old lockfile gate is
+  lifted. They back the confirm dialogs on destructive actions, the
+  hover `Tooltip`s, and the Cmd/Ctrl-K command palette.
 
 - **Storybook is the spec.** Every component exported from
   `index.ts` must have a story file co-located (`*.stories.tsx`). The
@@ -88,9 +94,9 @@ flowchart LR
   index -- "imported by" --> web
 ```
 
-## v0.4.0 component batch
+## Component inventory
 
-The first eight components ship in `@aegis/design-system`. Each has
+The first eight components shipped in `@aegis/design-system`. Each has
 a story; every page in the web app uses at least one of them:
 
 | Component         | Where it appears                                  |
@@ -104,8 +110,45 @@ a story; every page in the web app uses at least one of them:
 | `RoleGated`       | findings detail (Apply Patch / Verify buttons)    |
 | `ToastList`       | global transient notifications                    |
 
+The Radix / `cmdk` primitive leaves now back the interactive surfaces
+added in the frontend-completion batch:
+
+| Primitive     | Backing package(s)                                 | Where it appears                                              |
+|---------------|----------------------------------------------------|--------------------------------------------------------------|
+| `AlertDialog` | `@radix-ui/react-alert-dialog`, `react-dialog`     | confirm dialogs on destructive/active actions (cancel run, delete target, active agents/Kali tools) |
+| `Tooltip`     | `@radix-ui/react-tooltip`                          | header controls, gated-button affordances                    |
+| `Command`     | `cmdk`                                             | the Cmd/Ctrl-K command palette                               |
+
 Each component carries `forwardRef`-free signatures and accepts
 `className` for last-wins Tailwind merging via the `cn()` helper.
+
+## Page inventory
+
+| Page                       | Surfaces                                                                                                  |
+|----------------------------|-----------------------------------------------------------------------------------------------------------|
+| `/dashboard`               | run + finding overview                                                                                     |
+| `/runs`, `/runs/[id]`      | run list + detail; **Cancel run** (`POST /v1/runs/{id}/cancel`, `remediator`); `report.json` / `report.md` download links + **Vulnfixer export** (`GET /v1/runs/{id}/exports/vulnfixer`) |
+| `/findings`, detail        | finding list + detail; Apply Patch / Verify (`RoleGated`)                                                  |
+| `/targets`                 | target list; **Delete target** (`DELETE /v1/targets/{id}`, `admin`, confirm dialog)                        |
+| `/agents`                  | invoke a wired agent with a prompt (`POST /v1/agents/{name}/run`); `read` agents need `remediator`, active/offensive agents need `approver` + an explicit confirm |
+| `/tools`                   | run a Kali tool (`POST /v1/tools/kali/{tool}`); `read` tools need `remediator`, active tools (`sqlmap`/`hydra`/`metasploit`/`wpscan`) need `approver` + an **Execute** toggle + confirm |
+| `/audit`                   | audit-chain visualization — each chain rendered as linked blocks with valid/broken status + per-event hashes (`AuditChainBadge`) |
+| `/projects`, settings      | project list + per-project settings                                                                       |
+| `/logs`                    | terminal-style log viewer (`/v1/logs`)                                                                     |
+
+Two cross-cutting UX affordances live in the app shell:
+
+- **Dark mode.** A header theme toggle flips a `class`-strategy
+  Tailwind dark theme, persisted to `localStorage`. (This is the app's
+  own toggle; the MkDocs docs site has a separate Material toggle.)
+- **Command palette.** Cmd/Ctrl-K opens a `cmdk`-backed palette for
+  quick navigation between the pages above.
+
+Destructive and active actions (cancel run, delete target, active
+agents, active Kali tools) confirm through an `AlertDialog` before the
+mutating call fires. Every such control is also wrapped in
+`<RoleGated>`, and the server re-checks RBAC — the client gate is
+cosmetic.
 
 ## `api()` helper
 
@@ -170,6 +213,9 @@ without bouncing through Keycloak, and `/api/auth/signout-aegis`
    If the primitive pulls a runtime dependency (Radix, `cmdk`, …), add
    that package to the workspace **first** — CI installs with
    `--frozen-lockfile` and can't fetch anything the lockfile is missing.
+   `@radix-ui/react-alert-dialog`, `@radix-ui/react-dialog`,
+   `@radix-ui/react-tooltip`, and `cmdk` are already in the lockfile
+   (they back `AlertDialog` / `Tooltip` / `Command`).
 
 2. Compose the Aegis-branded wrapper under `src/components/`; export
    from `src/index.ts`. Co-locate a `*.stories.tsx` file.
@@ -197,8 +243,10 @@ git add web/pnpm-lock.yaml web/package.json …/package.json
 
 ## What's deferred
 
-- Dark mode.
-- Audit chain visualisation page.
 - Per-finding HTML report (smaller than the run-level).
 - Storybook test-runner CI gate flip (after the second batch).
 - Storybook a11y "serious-or-worse" gate.
+
+Dark mode, the command palette, the `/agents` and `/tools` surfaces,
+and the audit-chain visualization page have all shipped — see the
+page inventory above.

@@ -41,3 +41,4 @@ deploy/certs/*.crt
 
 # desloppify local state
 .desloppify/
+.mypy-baseline.txt

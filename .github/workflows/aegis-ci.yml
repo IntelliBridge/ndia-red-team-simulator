@@ -43,7 +43,6 @@ jobs:
         run: ruff check aegis tests
 
       - name: Type-check (mypy)
-        continue-on-error: true
         run: mypy aegis
 
       - name: Run tests
@@ -156,6 +155,30 @@ jobs:
               f"{len(defined['exporters'])} exporters"
           )
           PY
+
+  helm-lint:
+    name: Helm chart lints + templates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.15.4"
+      - name: helm lint
+        run: helm lint deploy/helm/aegis
+      # Templating with default values must succeed (renders every manifest).
+      - name: helm template (default values)
+        run: helm template aegis deploy/helm/aegis > /dev/null
+      # And again with the sandbox + ingress toggles on, so the gated
+      # RuntimeClass / Ingress paths are exercised too.
+      - name: helm template (sandbox + ingress enabled)
+        run: |
+          helm template aegis deploy/helm/aegis \
+            --set sandbox.enabled=true \
+            --set ingress.enabled=true > /dev/null
 
   coverage:
     name: Coverage (>=90%)

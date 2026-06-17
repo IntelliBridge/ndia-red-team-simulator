@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 
 import aegis.cli.main as _main
 from aegis.cli import _console
+from aegis.config import AegisConfig
 
 
-def _cmd_scan_api(args, _config):
+def _cmd_scan_api(args: argparse.Namespace, _config: AegisConfig) -> None:
     from aegis.cli import api_client
 
     client = api_client.build_client()
@@ -29,7 +31,7 @@ def _cmd_scan_api(args, _config):
         _console._info(f"Status: {result['status_url']}")
 
 
-def cmd_scan(args, config) -> None:
+def cmd_scan(args: argparse.Namespace, config: AegisConfig) -> None:
     """Scan a target — thin CLI shell over ``services.scans.start_scan``.
 
     Local-only conveniences (loading pre-existing Strix events.jsonl,

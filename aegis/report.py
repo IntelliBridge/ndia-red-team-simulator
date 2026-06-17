@@ -310,7 +310,7 @@ def _md_to_html_min(md: str) -> str:
     in_table = False
     table_rows: list[list[str]] = []
 
-    def flush_table():
+    def flush_table() -> None:
         nonlocal in_table, table_rows
         if not table_rows:
             in_table = False

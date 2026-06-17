@@ -23,6 +23,7 @@ from uuid import uuid4
 
 from aegis.config import AegisConfig
 from aegis.effects import build_action_plan
+from aegis.llm.guardrails import GuardrailViolation
 from aegis.remediate.cai_runner import run_code_fix, run_live_hardening
 from aegis.remediate.deps_workflow import build_version_bump_diff
 from aegis.remediate.patch_workflow import (
@@ -261,7 +262,7 @@ def generate_fix(
     actor: str,
     config: AegisConfig,
     override_authorized: bool = False,
-    gh_client=None,
+    gh_client: Any = None,
 ) -> FixOutcome:
     """Generate (and optionally commit / PR) a remediation for ``finding``."""
 
@@ -309,13 +310,19 @@ def _generate_patch_fix(
     use_golden_patch: bool,
     actor: str,
     config: AegisConfig,
-    gh_client,
+    gh_client: Any,
 ) -> FixOutcome:
     project_id, budget_checker = _budget_for(run_state)
-    result = run_code_fix(finding, repo_path=repo,
-                          use_golden_patch=use_golden_patch,
-                          project_id=project_id, run_id=run_state.run_id,
-                          budget_checker=budget_checker)
+    try:
+        result = run_code_fix(finding, repo_path=repo,
+                              use_golden_patch=use_golden_patch,
+                              project_id=project_id, run_id=run_state.run_id,
+                              budget_checker=budget_checker)
+    except GuardrailViolation as exc:
+        return FixOutcome(
+            success=False, strategy="patch", finding_id=finding.id,
+            source="cai", status="failed", error=str(exc),
+        )
     if not result.success or not result.diff:
         return FixOutcome(
             success=False, strategy="patch",
@@ -404,9 +411,15 @@ def _generate_live_fix(
         detail={"actor": actor, "finding_id": finding.id},
     )
     project_id, budget_checker = _budget_for(run_state)
-    result = run_live_hardening(finding, project_id=project_id,
-                                run_id=run_state.run_id,
-                                budget_checker=budget_checker)
+    try:
+        result = run_live_hardening(finding, project_id=project_id,
+                                    run_id=run_state.run_id,
+                                    budget_checker=budget_checker)
+    except GuardrailViolation as exc:
+        return FixOutcome(
+            success=False, strategy="live", finding_id=finding.id,
+            source="cai", status="failed", error=str(exc),
+        )
     return FixOutcome(
         success=result.success, strategy="live",
         finding_id=finding.id,
@@ -526,7 +539,7 @@ def _generate_deps_fix(
     push: bool,
     actor: str,
     config: AegisConfig,
-    gh_client,
+    gh_client: Any,
 ) -> FixOutcome:
     if repo is None:
         return FixOutcome(success=False, strategy="deps",
