@@ -84,6 +84,29 @@ class Target(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class AuthProfile(Base):
+    """Authenticated-DAST credential profile (Phase 5).
+
+    ``config`` carries only NON-secret fields (login_url, username_field,
+    password_field, username, header_name, cookie_name, …). The secret
+    itself is Fernet-encrypted at rest in ``secret_ciphertext``
+    (``aegis.security_utils.secrets``) and is only decrypted by
+    ``services.auth_profiles.resolve_auth_for_scan`` for the worker —
+    no API response ever includes it.
+    """
+    __tablename__ = "auth_profiles"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)  # form|bearer|header|cookie
+    config: Mapped[dict] = mapped_column(JSONB, default=dict)
+    secret_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_auth_profiles_project_name"),
+    )
+
+
 class Run(Base):
     __tablename__ = "runs"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)

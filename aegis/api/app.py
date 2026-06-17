@@ -12,6 +12,7 @@ from aegis.api.settings import APISettings, load_settings
 from aegis.api.v1 import (
     agents,
     audit,
+    auth_profiles,
     exports,
     findings,
     fix,
@@ -92,6 +93,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(fix.router, prefix="/v1")
     app.include_router(verify.router, prefix="/v1")
     app.include_router(targets.router, prefix="/v1")
+    app.include_router(auth_profiles.router, prefix="/v1")
     app.include_router(projects.router, prefix="/v1")
     app.include_router(logs.router, prefix="/v1")
 

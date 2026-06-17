@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import time
@@ -122,6 +123,7 @@ def run_cli_scan(
     raw_filename: str | None = None,
     parse_error_label: str | None = None,
     raw_empty: str = "{}",
+    env: dict[str, str] | None = None,
 ) -> ScanResult:
     """Run a CLI-subprocess scanner and assemble its ``ScanResult``.
 
@@ -145,6 +147,10 @@ def run_cli_scan(
       ``None`` for adapters that never surface a parse error (JSONL/SBOM).
     * ``raw_empty`` — placeholder written when stdout is empty (``"{}"`` for
       JSON, ``""`` for JSONL).
+    * ``env`` — extra environment variables merged over ``os.environ`` for the
+      subprocess (e.g. ZAP auth headers). Values may hold secrets, so only the
+      key *names* are recorded on the result (``ScanResult.env_keys``); the
+      values are never persisted anywhere.
     """
     version = adapter.adapter_version()
     started = time.monotonic()
@@ -152,15 +158,18 @@ def run_cli_scan(
     # never overrode it, honour the adapter's declared ``default_timeout``.
     timeout = (adapter.default_timeout if options.timeout == _DEFAULT_TIMEOUT
                else options.timeout)
+    env_keys = sorted(env) if env else []
     try:
         proc = subprocess.run(
             argv, capture_output=True, text=True, timeout=timeout,
+            env={**os.environ, **env} if env else None,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
         return ScanResult(
             findings=[], adapter_name=adapter.name,
             adapter_version=version,
             command_str=command_str,
+            env_keys=env_keys,
             exit_code=-1,
             duration_s=time.monotonic() - started,
             error=str(exc),
@@ -172,6 +181,7 @@ def run_cli_scan(
             findings=[], adapter_name=adapter.name,
             adapter_version=version,
             command_str=command_str,
+            env_keys=env_keys,
             exit_code=proc.returncode,
             duration_s=time.monotonic() - started,
             error=f"failed to parse {parse_error_label}: {exc}",
@@ -184,6 +194,7 @@ def run_cli_scan(
         findings=findings, adapter_name=adapter.name,
         adapter_version=version,
         command_str=command_str,
+        env_keys=env_keys,
         exit_code=proc.returncode,
         duration_s=time.monotonic() - started,
     )

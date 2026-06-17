@@ -7,6 +7,7 @@ import subprocess
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from aegis.scanners.dast_auth import REDACTED, DastAuthError, auth_header
 from aegis.scanners.registry import (
     ScanOptions,
     ScanResult,
@@ -70,6 +71,30 @@ class ZapAdapter:
 
     def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
+        command_str = f"zap-cli report -o - -f json {target}"
+
+        # Authenticated DAST: the resolved auth dict rides in
+        # ``extra["auth"]`` (see resolve_auth_for_scan). ZAP replays a single
+        # auth header on every request via the ZAP_AUTH_HEADER /
+        # ZAP_AUTH_HEADER_VALUE env vars, so the secret reaches the subprocess
+        # environment only — never the argv, the recorded command (redacted
+        # below), logs, or persisted artifacts.
+        env: dict[str, str] | None = None
+        auth = (options.extra or {}).get("auth")
+        if auth:
+            try:
+                header_name, header_value = auth_header(auth)
+            except DastAuthError as exc:
+                return ScanResult(
+                    findings=[], adapter_name=self.name,
+                    adapter_version=self.adapter_version(),
+                    command_str=command_str,
+                    exit_code=-1, error=str(exc),
+                )
+            env = {"ZAP_AUTH_HEADER": header_name,
+                   "ZAP_AUTH_HEADER_VALUE": header_value}
+            command_str = (f"ZAP_AUTH_HEADER={header_name} "
+                           f"ZAP_AUTH_HEADER_VALUE={REDACTED} {command_str}")
 
         def parse(proc: subprocess.CompletedProcess[str],
                   run_id: str) -> list[AegisFinding]:
@@ -79,9 +104,10 @@ class ZapAdapter:
         return run_cli_scan(
             self, options, run_state,
             argv=["zap-cli", "report", "-o", "-", "-f", "json", target],
-            command_str=f"zap-cli report -o - -f json {target}",
+            command_str=command_str,
             subdir="zap", raw_filename="report.json",
             parse=parse, parse_error_label="zap json",
+            env=env,
         )
 
 

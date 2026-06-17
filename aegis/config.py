@@ -40,6 +40,14 @@ class AegisConfig:
     # seconds is presumed crashed (the redelivery guard never re-runs it) and
     # is flipped to ``failed`` by ``aegis.reap_stale_jobs`` on the beat schedule.
     job_max_runtime_seconds: int = 3600
+    # Fernet key for encrypting DAST auth-profile secrets at rest
+    # (``auth_profiles.secret_ciphertext``). Sourced from the environment
+    # (``AEGIS_AUTH_PROFILES_KEY``) — keep key material out of aegis.yaml.
+    # Generate with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    auth_profiles_key: str | None = field(
+        default_factory=lambda: os.environ.get("AEGIS_AUTH_PROFILES_KEY")
+    )
     # Pluggable authorization policy engine for the role gate
     # (``aegis.api.policy.check``). ``static`` (default) keeps the built-in
     # role-rank table; ``opa`` / ``cedar`` delegate to an external policy

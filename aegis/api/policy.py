@@ -17,6 +17,7 @@ class Action(str, Enum):
     FIX_APPLY = "fix.apply"
     VERIFY_REPLAY = "verify.replay"
     TARGET_MANAGE = "target.manage"
+    AUTH_PROFILE_MANAGE = "auth_profile.manage"
     AUDIT_VERIFY = "audit.verify"
     RUN_CANCEL = "run.cancel"
     TOOL_INVOKE = "tool.invoke"
@@ -39,6 +40,8 @@ _ACTION_MIN_ROLE: dict[Action, str] = {
     Action.FIX_APPLY: "approver",
     Action.VERIFY_REPLAY: "remediator",
     Action.TARGET_MANAGE: "admin",
+    # Auth profiles hold scan credentials — same bar as managing targets.
+    Action.AUTH_PROFILE_MANAGE: "admin",
     Action.AUDIT_VERIFY: "admin",
     Action.RUN_CANCEL: "remediator",
     Action.TOOL_INVOKE: "remediator",

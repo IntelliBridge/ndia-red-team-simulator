@@ -29,15 +29,16 @@ see `SECURITY.md` and `docs/ops/deploy.md`), the LLM guardrail layers
 `SECURITY.md` § "LLM guardrails"), the plugin entry-point seam now a
 documented, validated, allowlist-gated **scanner-adapter marketplace** (see
 [Extending Aegis](dev/extending.md)), a pluggable authorization **`PolicyEngine`**
-(static default + opt-in OPA / Cedar), and **supply-chain integrity** mostly
+(static default + opt-in OPA / Cedar), **supply-chain integrity** mostly
 shipped (keyless cosign image signing + SBOM + SLSA-3 provenance, and opt-in
-signed plugins; see [Supply-chain integrity](security/supply-chain.md)) all
-landed — the focus has been **capability breadth** and the remaining
-**security / compliance hardening** (below). On breadth, the tool roster has
-now reached the 35+ target (42 effect-classified tools) and the agent roster
-has grown to 36 wired agents + 5 multi-agent patterns — substantial progress
-toward the 60+ OnePager target. The next highest-leverage candidates:
-continuing toward 60+ agents, and authenticated DAST flows.
+signed plugins; see [Supply-chain integrity](security/supply-chain.md)), and
+**authenticated DAST flows** (encrypted auth-profile store + ZAP/Nuclei auth
+injection; see `docs/ops/authenticated-dast.md`) all landed — the focus has
+been **capability breadth** and the remaining **security / compliance
+hardening** (below). On breadth, the tool roster has now reached the 35+ target
+(42 effect-classified tools) and the agent roster has grown to 36 wired agents +
+5 multi-agent patterns — substantial progress toward the 60+ OnePager target.
+The next highest-leverage candidate: continuing toward 60+ agents.
 
 ## Capability breadth
 
@@ -54,7 +55,11 @@ Closing the gap to the OnePager promise.
   **Shipped** — the unified tool catalog (`aegis/tools/catalog.py`) now exposes
   **42** effect-classified tools (10 Kali + 14 scanner adapters + 17 CAI
   function-tools + the Camoufox OSINT search), past the 35+ target.
-- **Authenticated DAST flows.**
+- ~~**Authenticated DAST flows.**~~ **Shipped** (migration `0005`):
+  encrypted auth-profile store (form / bearer / header / cookie kinds),
+  admin-gated `/v1/auth-profiles` API + web page, `auth_profile_id` on
+  `POST /v1/scans`, ZAP/Nuclei header injection with secret redaction.
+  See `docs/ops/authenticated-dast.md`.
 - ~~**Community scanner-adapter marketplace** — third-party adapters via the
   plugin entry-point seam.~~ **Shipped**: the `aegis.scanners` / `aegis.agents`
   entry-point seam is now a documented marketplace — Protocol-conformance

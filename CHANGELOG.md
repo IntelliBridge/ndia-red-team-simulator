@@ -7,6 +7,18 @@ SemVer.
 ## [Unreleased]
 
 ### Added
+- **Authenticated DAST flows (migration `0005`).** A new encrypted
+  auth-profile store (`auth_profiles`) holds the credentials DAST scanners
+  replay behind a login — four kinds: `form` (pre-flight login POST, session
+  cookies forwarded), `bearer`, `header`, `cookie`. Managed via
+  `GET`/`POST`/`DELETE /v1/auth-profiles` and a new `/auth-profiles` web page —
+  admin-gated (`auth_profile.manage`, mirroring target management) with chained
+  `auth_profile.create`/`auth_profile.delete` audit events. `POST /v1/scans`
+  (and the Targets-page scan form) gains an optional `auth_profile_id`; the
+  worker resolves and decrypts it at execution time and injects the auth
+  header into the scan — ZAP via the `ZAP_AUTH_HEADER`/`ZAP_AUTH_HEADER_VALUE`
+  subprocess env vars (never argv), Nuclei via its native `-H` flag. See
+  `docs/ops/authenticated-dast.md`.
 - **Pluggable authorization policy engine.** The route-level role gate
   (`aegis.api.policy.check`) now delegates its decision to a configurable
   `PolicyEngine` (`aegis/policy/engine.py`) selected by `AEGIS_POLICY_ENGINE`:
@@ -69,6 +81,14 @@ SemVer.
     `external` (human-gated) and degrades to a clear, structured error when
     absent. `build_osint_search_tool()` is the web-search tool authored
     specialists add to their toolbelt.
+
+### Security
+- **Auth-profile secrets are Fernet-encrypted at rest**
+  (`AEGIS_AUTH_PROFILES_KEY`, required on api + worker; a missing or invalid
+  key fails closed with a clear error — no plaintext fallback). No endpoint
+  ever returns the secret, audit detail carries only non-secret metadata, and
+  recorded command strings redact the secret value as `***`, so logs and
+  artifacts stay secret-free.
 
 ## [0.13.0] — 2026-06-17 — architecture hardening: validated findings, durable jobs & live events, strict types
 

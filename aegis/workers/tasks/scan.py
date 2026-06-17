@@ -58,6 +58,25 @@ def scan_start(self: Task, job_id: str) -> dict[str, Any]:
             opts["scan_mode"] = detail["scan_mode"]
         if detail.get("scope_mode") is not None:
             opts["scope_mode"] = detail["scope_mode"]
+
+        # Authenticated DAST: admission stores only the AuthProfile id in
+        # Job.detail; the secret is decrypted here, worker-side, and handed
+        # to the adapter via ScanOptions.extra["auth"]. It must never be
+        # written back to Job.detail, logs, or audit events.
+        auth_profile_id = detail.get("auth_profile_id")
+        if auth_profile_id:
+            from aegis.services.auth_profiles import resolve_auth_for_scan
+            try:
+                auth = resolve_auth_for_scan(ctx.session, auth_profile_id)
+            except Exception as exc:
+                # Secret-free by construction: names the profile id and the
+                # failure class only. task_context marks the job failed.
+                raise RuntimeError(
+                    f"failed to resolve auth profile {auth_profile_id!r} "
+                    f"for job {job_id}: {type(exc).__name__}"
+                ) from exc
+            opts["extra"] = {"auth": auth}
+
         result = dispatch(scanner, ctx.run_state, ScanOptions(**opts))
         ctx.run_state.save_findings(result.findings)
         return {

@@ -22,6 +22,9 @@ class StartScanBody(BaseModel):
     target: str | None = None
     scanner: str = "strix"
     instruction: str | None = None
+    # Authenticated DAST: id of a stored AuthProfile. Only the id travels
+    # through admission; the worker resolves (decrypts) it at execution time.
+    auth_profile_id: str | None = None
     override_authorized: bool = False
 
 
@@ -55,6 +58,7 @@ def start(
             target=target, scanner=scanner,
             project_id=project_id, actor=f"user:{user.sub}",
             instruction=body.instruction,
+            auth_profile_id=body.auth_profile_id,
             config=config,
             audit_writer=resolve_writer(config),
             override_authorized=bool(body.override_authorized),

@@ -152,17 +152,27 @@ env knobs.
 
 ### Secrets handling
 
-- Three distinct secret materials:
+- Four distinct secret materials:
   - `AEGIS_API_SESSION_PRIVATE_KEY` (NextAuth side, RS256).
   - `AEGIS_WORKER_SIGNING_KEY` (shared HMAC, rotation overlap).
   - `AEGIS_GITHUB_PRIVATE_KEY` (GitHub App).
+  - `AEGIS_AUTH_PROFILES_KEY` (Fernet, api + worker) — encrypts DAST
+    auth-profile secrets at rest.
+- DAST auth-profile secrets (`auth_profiles.secret_ciphertext`) are
+  Fernet-encrypted before any row or audit event is written, never
+  returned by any endpoint, and redacted (`***`) from recorded command
+  strings; a missing key fails closed. Rotating the key requires
+  re-creating profiles (no dual-key window) — see
+  [`docs/ops/authenticated-dast.md`](docs/ops/authenticated-dast.md).
 - `NEXTAUTH_SECRET` is opaque to Aegis (NextAuth's own).
 - Generated **diffs / patches and LLM I/O** are secret-scrubbed before
   they are persisted, surfaced in a PR, or logged — see § "LLM guardrails"
   above. Secrets that leak into a model-authored diff or a model response
   are redacted to `***REDACTED***` on the canonical path.
 - Rotation procedure for each is documented in
-  [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Rotation runbook".
+  [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Rotation runbook" and
+  [`docs/ops/authenticated-dast.md`](docs/ops/authenticated-dast.md)
+  § "Key rotation".
 
 ### Supply-chain integrity
 

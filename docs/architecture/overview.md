@@ -691,7 +691,6 @@ out items intentionally pushed past v0.4.1. Live-current list:
 - SOC 2 / ISO 27001 / FedRAMP evidence pack.
 - Iterative agent loops with test execution.
 - Native MCP protocol.
-- Authenticated DAST flows.
 - Worker autoscaling / multi-region DR.
 
 The CHANGELOG entry for each release also enumerates its deferred
