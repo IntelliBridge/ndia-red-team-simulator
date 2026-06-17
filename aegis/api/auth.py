@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from functools import lru_cache
 from typing import Any, cast
 
 import httpx
@@ -22,14 +21,42 @@ class CurrentUser:
     is_system: bool = False
 
 
-@lru_cache(maxsize=1)
-def _jwks_cache(jwks_url: str) -> dict[str, Any]:
-    # Cached for the process lifetime; rotated by restart. For Phase 3 dev
-    # this is acceptable.
-    with httpx.Client(timeout=5.0) as client:
-        resp = client.get(jwks_url)
-        resp.raise_for_status()
-        return cast("dict[str, Any]", resp.json())
+class _JwksCache:
+    """Time-boxed cache of fetched JWKS documents, keyed by URL.
+
+    Replaces the former process-lifetime ``lru_cache``: an entry is
+    reused only while it is younger than ``ttl_seconds`` (the
+    ``api_jwks_cache_ttl_seconds`` setting), after which the document is
+    refetched. This bounds the window in which an IdP signing key that
+    has been rotated out keeps being accepted, without forcing a process
+    restart.
+
+    Instances are callable so the existing ``_jwks_cache(url)`` /
+    ``_jwks_cache.cache_clear()`` call sites keep working.
+    """
+
+    def __init__(self) -> None:
+        # url -> (fetched_at_monotonic_or_wall, jwks_document)
+        self._entries: dict[str, tuple[float, dict[str, Any]]] = {}
+
+    def __call__(self, jwks_url: str, ttl_seconds: float = 300.0) -> dict[str, Any]:
+        now = time.time()
+        cached = self._entries.get(jwks_url)
+        if cached is not None and now - cached[0] < ttl_seconds:
+            return cached[1]
+        with httpx.Client(timeout=5.0) as client:
+            resp = client.get(jwks_url)
+            resp.raise_for_status()
+            jwks = cast("dict[str, Any]", resp.json())
+        self._entries[jwks_url] = (now, jwks)
+        return jwks
+
+    def cache_clear(self) -> None:
+        """Drop all cached JWKS documents (forces a refetch)."""
+        self._entries.clear()
+
+
+_jwks_cache = _JwksCache()
 
 
 def _verify_jwt(token: str, settings: APISettings) -> dict[str, Any]:
@@ -41,7 +68,7 @@ def _verify_jwt(token: str, settings: APISettings) -> dict[str, Any]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="OIDC not configured: AEGIS_OIDC_JWKS_URL missing",
         )
-    jwks = _jwks_cache(settings.oidc_jwks_url)
+    jwks = _jwks_cache(settings.oidc_jwks_url, settings.api_jwks_cache_ttl_seconds)
     try:
         claims = jwt.decode(token, jwks)
         claims.validate(now=int(time.time()))
@@ -102,9 +129,10 @@ def issue_worker_token(
 def _parse_worker_token(token: str) -> tuple[int, str, int, str] | None:
     """Return ``(version, worker_id, exp_ts, sig)`` or ``None`` if malformed.
 
-    Accepts both the new v0.3.1 ``worker:v<n>.<id>.<exp>.<sig>`` format
-    and the legacy ``worker:<hex-sig>`` format (Phase 3 demo) so a
-    rolling restart isn't a hard cutover.
+    Only the versioned, time-bound ``worker:v<n>.<id>.<exp>.<sig>`` format
+    (v0.3.1 onward) is accepted. The legacy ``worker:<hex-sig>`` constant
+    payload — non-expiring and signed over a fixed string — has been
+    removed; such tokens parse as malformed and are rejected.
     """
     rest = token[len("worker:"):]
     parts = rest.split(".")
@@ -125,29 +153,22 @@ def _verify_worker_token(token: str, settings: APISettings) -> CurrentUser | Non
 
     Resolution order:
 
-    1. Try the current ``AEGIS_WORKER_SIGNING_KEY`` against ``v<version>``.
-    2. If the supplied version is one less than the current and a
+    1. The token must parse as a versioned, time-bound v1+ token;
+       anything else (including the removed legacy constant-payload
+       ``worker:<hex>`` form) is rejected outright.
+    2. Try the current ``AEGIS_WORKER_SIGNING_KEY`` against ``v<version>``.
+    3. If the supplied version is one less than the current and a
        ``AEGIS_WORKER_SIGNING_KEY_PREVIOUS`` is configured, try that key
        while inside the overlap window.
-    3. Otherwise reject.
+    4. Otherwise reject.
     """
     from hmac import compare_digest
 
     parsed = _parse_worker_token(token)
     if parsed is None:
-        # Legacy static-HMAC path (Phase 3): preserved for a single
-        # release-cut overlap; remove once every worker emits v1+ tokens.
-        if not settings.worker_signing_key:
-            return None
-        sig = token[len("worker:"):]
-        expected = _hmac_sign(settings.worker_signing_key, "aegis-worker")
-        if compare_digest(sig, expected):
-            return CurrentUser(
-                sub="service:worker:legacy",
-                email="worker@aegis.local",
-                project_memberships={"default": "admin"},
-                is_system=True,
-            )
+        # No legacy fallback: the old non-expiring static-HMAC token
+        # (HMAC of the constant "aegis-worker", which granted is_system)
+        # has been removed. Only v1+ tokens are honoured.
         return None
 
     version, worker_id, exp, sig = parsed

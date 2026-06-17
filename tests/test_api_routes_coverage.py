@@ -344,8 +344,13 @@ class TestAuthHelpers(unittest.TestCase):
         result = _verify_worker_token(token, settings)
         self.assertIsNone(result)
 
-    def test_verify_worker_token_legacy_valid(self):
-        """Legacy worker:HEX token resolves correctly."""
+    def test_verify_worker_token_legacy_now_rejected(self):
+        """C1: the legacy ``worker:HEX`` constant-payload token is gone.
+
+        It used to resolve to a non-expiring ``service:worker:legacy``
+        ``is_system`` identity; that branch was deleted, so a
+        well-formed legacy signature must now be rejected.
+        """
         settings = APISettings(
             env="dev", auth_mode="dev",
             worker_signing_key="legacykey",
@@ -353,11 +358,10 @@ class TestAuthHelpers(unittest.TestCase):
         )
         sig = _hmac_sign("legacykey", "aegis-worker")
         token = f"worker:{sig}"
-        user = _verify_worker_token(token, settings)
-        self.assertIsNotNone(user)
-        self.assertEqual(user.sub, "service:worker:legacy")
+        self.assertIsNone(_verify_worker_token(token, settings))
 
-    def test_verify_worker_token_legacy_bad_sig_returns_none(self):
+    def test_verify_worker_token_bare_hex_returns_none(self):
+        """A bare ``worker:<hex>`` (no v-prefix) parses as malformed."""
         settings = APISettings(
             env="dev", auth_mode="dev",
             worker_signing_key="legacykey",
@@ -367,7 +371,7 @@ class TestAuthHelpers(unittest.TestCase):
         result = _verify_worker_token(token, settings)
         self.assertIsNone(result)
 
-    def test_verify_worker_token_no_key_legacy_returns_none(self):
+    def test_verify_worker_token_no_key_returns_none(self):
         settings = APISettings(env="dev", auth_mode="dev", worker_signing_key=None)
         result = _verify_worker_token("worker:badsig", settings)
         self.assertIsNone(result)

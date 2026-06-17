@@ -92,6 +92,14 @@ class AegisConfig:
     auth_profiles_key: str | None = field(
         default_factory=lambda: os.environ.get("AEGIS_AUTH_PROFILES_KEY")
     )
+    # Previous Fernet key, kept valid for decryption through a key
+    # rotation (``AEGIS_AUTH_PROFILES_KEY_PREVIOUS``). When set, secrets
+    # are encrypted with the current key but decryptable with either, so
+    # ciphertext written under the old key keeps resolving until it has
+    # been re-encrypted. Mirrors the worker / session signing-key overlap.
+    auth_profiles_key_previous: str | None = field(
+        default_factory=lambda: os.environ.get("AEGIS_AUTH_PROFILES_KEY_PREVIOUS")
+    )
     # Pluggable authorization policy engine for the role gate
     # (``aegis.api.policy.check``). ``static`` (default) keeps the built-in
     # role-rank table; ``opa`` / ``cedar`` delegate to an external policy

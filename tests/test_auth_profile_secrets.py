@@ -24,11 +24,14 @@ from aegis.security_utils.secrets import (
 )
 
 
-def _key_env(key: str | None) -> mock._patch_dict:
+def _key_env(key: str | None, previous: str | None = None) -> mock._patch_dict:
     env = dict(os.environ)
     env.pop("AEGIS_AUTH_PROFILES_KEY", None)
+    env.pop("AEGIS_AUTH_PROFILES_KEY_PREVIOUS", None)
     if key is not None:
         env["AEGIS_AUTH_PROFILES_KEY"] = key
+    if previous is not None:
+        env["AEGIS_AUTH_PROFILES_KEY_PREVIOUS"] = previous
     return mock.patch.dict(os.environ, env, clear=True)
 
 
@@ -60,6 +63,65 @@ class TestFernetRoundTrip(unittest.TestCase):
         with _key_env(Fernet.generate_key().decode()):
             with self.assertRaises(InvalidToken):
                 decrypt_secret(token)
+
+
+class TestKeyRotationOverlap(unittest.TestCase):
+    """C1: MultiFernet decrypt-after-rotation.
+
+    When ``AEGIS_AUTH_PROFILES_KEY_PREVIOUS`` is set, ciphertext written
+    under the old key keeps decrypting after the current key rotates,
+    while new ciphertext is written under the current key.
+    """
+
+    def test_decrypt_ciphertext_from_previous_key_after_rotation(self):
+        old = Fernet.generate_key().decode()
+        new = Fernet.generate_key().decode()
+        # Encrypt while ``old`` is the sole/current key.
+        with _key_env(old):
+            token = encrypt_secret("hunter2-super-secret")
+        # Rotate: ``new`` current, ``old`` parked as previous.
+        with _key_env(new, previous=old):
+            self.assertEqual(decrypt_secret(token), "hunter2-super-secret")
+
+    def test_decrypt_ciphertext_from_current_key_after_rotation(self):
+        old = Fernet.generate_key().decode()
+        new = Fernet.generate_key().decode()
+        with _key_env(new, previous=old):
+            token = encrypt_secret("freshly-encrypted")
+            # Round-trips under the current key with a previous configured.
+            self.assertEqual(decrypt_secret(token), "freshly-encrypted")
+
+    def test_new_ciphertext_uses_current_key_not_previous(self):
+        # Encryption must use the current key: ciphertext minted after the
+        # rotation must NOT decrypt under the old key alone.
+        old = Fernet.generate_key().decode()
+        new = Fernet.generate_key().decode()
+        with _key_env(new, previous=old):
+            token = encrypt_secret("freshly-encrypted")
+        with _key_env(old):
+            with self.assertRaises(InvalidToken):
+                decrypt_secret(token)
+
+    def test_decrypt_fails_when_token_matches_no_configured_key(self):
+        old = Fernet.generate_key().decode()
+        with _key_env(old):
+            token = encrypt_secret("s3cret")
+        # Rotate to two keys, neither of which produced the token.
+        new = Fernet.generate_key().decode()
+        other = Fernet.generate_key().decode()
+        with _key_env(new, previous=other):
+            with self.assertRaises(InvalidToken):
+                decrypt_secret(token)
+
+    def test_invalid_previous_key_raises_without_echoing_key(self):
+        good = Fernet.generate_key().decode()
+        with _key_env(good, previous="not-a-fernet-key"):
+            with self.assertRaises(AuthProfilesKeyError) as ctx:
+                encrypt_secret("s3cret")
+        message = str(ctx.exception)
+        self.assertIn("AEGIS_AUTH_PROFILES_KEY_PREVIOUS", message)
+        self.assertNotIn("not-a-fernet-key", message)
+        self.assertNotIn("s3cret", message)
 
 
 class TestMissingOrInvalidKey(unittest.TestCase):
