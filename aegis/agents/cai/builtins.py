@@ -18,6 +18,7 @@ from aegis.agents.registry import (
 from aegis.config import load_config
 from aegis.effects import Effect
 from aegis.integrations.cai_loader import load_cai, resolve_cai_agent
+from aegis.llm.guardrails import GuardrailViolation, guard_input, guard_output
 
 
 def _invoke_cai(
@@ -37,6 +38,10 @@ def _invoke_cai(
       agent. An unresolvable key surfaces ``status="error"`` at dispatch.
     """
     config = load_config()
+    try:
+        guard_input(prompt, config=config)
+    except GuardrailViolation as exc:
+        return AgentResult(status="error", output="", error=str(exc))
     bundle = load_cai(config)
     if bundle is None:
         return AgentResult(
@@ -69,7 +74,7 @@ def _invoke_cai(
         )
         output = getattr(result, "final_output", None) or str(result)
         return AgentResult(
-            status="ok", output=str(output),
+            status="ok", output=guard_output(str(output), config=config),
             agent_version=bundle.cai_version,
         )
     except Exception as exc:  # pragma: no cover — CAI may not be installed

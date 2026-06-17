@@ -30,6 +30,7 @@ from aegis.integrations.cai_loader import (
     load_cai_pattern,
     resolve_cai_agent,
 )
+from aegis.llm.guardrails import GuardrailViolation, guard_input, guard_output
 
 
 def _run_agent(bundle: CAIBundle, agent: Any, prompt: str,
@@ -49,6 +50,10 @@ def _invoke_pattern(cai_pattern_name: str, prompt: str, context: AgentContext) -
     only reaches here once the gate in ``dispatch`` has cleared ``execute``.
     """
     config = load_config()
+    try:
+        guard_input(prompt, config=config)
+    except GuardrailViolation as exc:
+        return AgentResult(status="error", output="", error=str(exc))
     bundle = load_cai(config)
     if bundle is None:
         return AgentResult(
@@ -87,7 +92,8 @@ def _invoke_pattern(cai_pattern_name: str, prompt: str, context: AgentContext) -
                 error=f"pattern {cai_pattern_name!r} resolved no runnable agent",
             )
         return AgentResult(
-            status="ok", output="\n\n".join(outputs),
+            status="ok",
+            output=guard_output("\n\n".join(outputs), config=config),
             agent_version=bundle.cai_version,
         )
     except Exception as exc:  # pragma: no cover — CAI may not be installed

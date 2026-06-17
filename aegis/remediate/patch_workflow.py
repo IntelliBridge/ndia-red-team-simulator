@@ -43,21 +43,33 @@ def extract_unified_diff(agent_output: str | None) -> str | None:
       1. ``` diff / ``` patch fenced block.
       2. First ``` block that looks like a unified diff.
       3. Naked --- a/... / +++ b/... block.
+
+    This is the canonical diff-extraction point, so the extracted diff is
+    passed through :func:`aegis.llm.guardrails.guard_diff` before returning —
+    every downstream consumer (persist to disk, PR body, logs) sees the
+    secret-scrubbed diff. Scrubbing is config-gated and passthrough when off.
     """
     if not agent_output:
         return None
 
+    diff: str | None = None
     for match in _FENCE_RE.finditer(agent_output):
         candidate = match.group(1).strip()
         if "---" in candidate and "+++" in candidate:
-            return candidate + "\n" if not candidate.endswith("\n") else candidate
+            diff = candidate + "\n" if not candidate.endswith("\n") else candidate
+            break
 
-    # Fall back: naked diff outside fences.
-    m = _HUNK_HEADER_RE.search(agent_output)
-    if m:
-        return agent_output[m.start():].rstrip() + "\n"
+    if diff is None:
+        # Fall back: naked diff outside fences.
+        m = _HUNK_HEADER_RE.search(agent_output)
+        if m:
+            diff = agent_output[m.start():].rstrip() + "\n"
 
-    return None
+    if diff is None:
+        return None
+
+    from aegis.llm.guardrails import guard_diff
+    return guard_diff(diff)
 
 
 def diff_sha256(diff: str) -> str:
