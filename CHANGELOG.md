@@ -6,6 +6,15 @@ SemVer.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-06-17 — architecture hardening: validated findings, durable jobs & live events, strict types
+
+A hardening milestone across the finding seam, the worker lifecycle, and the
+type system. No language/stack change — Python + TypeScript remain the right
+fit — but the normalization seam is now runtime-validated, job status is
+durable and streamed live, and `mypy` gates merges in strict mode. Offline
+`pytest` (1362 passing / 21 skipped), strict `mypy aegis`, and `mkdocs --strict`
+all stay green.
+
 ### Security
 - **DB-side append-only audit log (migration `0004`).** `audit_events` is now
   insert-only *at the database*: a row-immutability trigger `RAISE EXCEPTION`s
@@ -23,6 +32,45 @@ SemVer.
   and `pgaudit.log` are guarded on availability and skip cleanly where the
   extension isn't loaded. New `deploy/Dockerfile.postgres` ships a
   pgaudit-enabled Postgres for the compose stack.
+
+### Added
+- **Live run events.** The worker publishes job transitions
+  (`running`/`succeeded`/`failed`) to the Redis channel `run:{run_id}:events`
+  (`aegis/workers/events.py`); the existing WS endpoint `/v1/runs/{run_id}/events`
+  streams them and the frontend consumes them live (`useRunEvents` hook) with
+  SWR polling kept only as a fallback. Previously nothing published to that
+  channel and the UI could only poll.
+- **Celery queue routing + beat scheduler.** Long offensive/remediation tasks
+  run on a `scans` queue, fast bookkeeping on `default`, with a dedicated worker
+  pool per queue plus a new `aegis-beat` service so the stale-job reaper
+  actually fires.
+- `pydantic>=2.7` as a core runtime dependency; `aegis/py.typed`; and
+  `make lint` / `make typecheck` / `make check`.
+
+### Changed
+- **`AegisFinding`/`CodeLocation` migrated to Pydantic v2.** Findings are now
+  validated at construction (an out-of-vocabulary `severity`/`finding_type`
+  fails at the adapter instead of silently persisting). `to_dict`/`from_dict`
+  keep their signatures; `from_dict` is lenient on read so legacy `schema_blob`
+  rows still load.
+- **Strict `mypy` now gates merges** (was `continue-on-error`). The whole
+  `aegis` tree is annotated under `disallow_untyped_defs` et al., with the
+  `pydantic.mypy` plugin.
+- **Scanner layer de-duplicated.** New `run_cli_scan_jsonl()` collapses the
+  inlined JSONL loops (nuclei/trufflehog/bumblebee); `ScanResult.from_runner()`
+  collapses the runner re-wrap (strix/trivy).
+
+### Fixed
+- **Durable terminal job status.** A failed task now persists `status="failed"`
+  — `task_context` commits it despite `get_session()`'s rollback-on-exception,
+  which previously discarded the write and stranded the job `running`.
+- **The reaper now runs.** `beat_schedule` was defined but no `celery beat`
+  process existed; the new `aegis-beat` service fires it.
+- **Async WS upgrade no longer blocks the event loop** — the per-connection DB
+  lookup in `_enforce_upgrade_policy` is offloaded via `run_in_threadpool`.
+- **Transient-error retries no longer no-op.** A retried task is reset to
+  `queued` before redelivery so the at-least-once guard doesn't skip it; it
+  still fails terminally once retries are exhausted.
 
 ## [0.12.0] — 2026-06-08 — finish the seams: multi-scanner dispatch, budget caps, API sunsets
 
