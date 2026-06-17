@@ -6,6 +6,43 @@ SemVer.
 
 ## [Unreleased]
 
+### Added
+- **Agent + tool breadth toward the OnePager promise.** The roster grows from
+  16 wired CAI agents + 3 patterns to **36 wired agents + 5 multi-agent
+  patterns**, and the tool catalog reaches **42 effect-classified tools**.
+  - **8 newly-wired CAI agents** (`aegis/agents/cai/builtins.py`) resolved
+    generically by their upstream registry key via `resolve_cai_agent`
+    (CAI's `get_agent_by_name`), so wiring a CAI agent needs no per-agent
+    `CAIBundle` field: `ctf_agent`, `app_logic_mapper`, `dns_smtp_agent`,
+    `flag_discriminator`, `prompt_injection_detector`, `thought_agent`,
+    `usecase_agent`, `memory_query`.
+  - **2 new multi-agent patterns** (`patterns.py`): `red_blue_shared_context`
+    and `red_blue_split_context` — red-team attack alongside a blue-team
+    responder, both `active`-effect and human-gated (now 5 patterns total).
+  - **12 Aegis-native authored specialists** (`aegis/agents/cai/authored.py`)
+    — each a real CAI `Agent` composition (substantive scoped prompt + a real
+    `cai.tools.*` toolbelt) with its own domain + effect: `cloud_recon`,
+    `osint_collector`, `threat_intel`, `api_security_tester`,
+    `web_surface_mapper`, `ssl_tls_auditor`, `dns_enumerator`,
+    `secrets_hunter`, `iac_auditor`, `container_security`, `crypto_analyst`,
+    `log_triage`. Registration is import-safe (CAI only matters at invocation);
+    a failed tool import or offline run degrades to `status="error"`.
+  - **Unified, effect-classified tool catalog** (`aegis/tools/catalog.py`,
+    `TOOL_CATALOG` / `list_tools()`): **42 tools** across four sources —
+    10 Kali + 14 scanner adapters + 17 vendored CAI `@function_tool`s
+    (namespaced `cai_*`) + 1 OSINT search. Each tool carries an authoritative
+    `read`/`active`/`external` effect that `aegis.effects.tool_effect()`
+    consults, so the catalog and the human gate never drift. The Kali
+    allowlist is deliberately not expanded (mcp-kali routes only those 10).
+  - **Camoufox OSINT web search** (`aegis/tools/osint_search.py`): live web
+    OSINT via the Camoufox anti-detect browser against DuckDuckGo's HTML
+    endpoint + trafilatura extraction, used in place of a Google/SerpAPI
+    search (no API key, low detection risk). Behind the optional `osint`
+    extra (`pip install -e ".[osint]"` + `camoufox fetch`); classified
+    `external` (human-gated) and degrades to a clear, structured error when
+    absent. `build_osint_search_tool()` is the web-search tool authored
+    specialists add to their toolbelt.
+
 ## [0.13.0] — 2026-06-17 — architecture hardening: validated findings, durable jobs & live events, strict types
 
 A hardening milestone across the finding seam, the worker lifecycle, and the
