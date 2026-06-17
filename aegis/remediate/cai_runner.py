@@ -215,7 +215,32 @@ def _run_cai_agent(
     a ``BudgetExceeded`` short-circuit returns a structured failure
     without spinning up the agent. CAI's own sys.path injection lives
     in ``cai_loader.load_cai``; this function never touches ``sys.path``.
+
+    Fail-closed budget gate: this is the single ``route()`` call site, so a
+    DB-backed run (``project_id`` set) that arrives without a ``budget_checker``
+    would route *uncapped* — ``route()`` only enforces a budget when one is
+    supplied. Under ``config.llm_budget_strict`` (default in prod) we DENY that
+    case here rather than silently routing, so a cap can never be skipped by a
+    missing wiring. The offline / filesystem path (``project_id is None``) is
+    intentionally unenforced and falls through untouched.
     """
+    if project_id and budget_checker is None and getattr(
+        config, "llm_budget_strict", False
+    ):
+        logger.error(
+            "llm_budget_strict: DB-backed run for project %s task %s reached "
+            "CAI without a budget_checker; denying (fail-closed)",
+            project_id, task,
+        )
+        return RemediationResult(
+            success=False, action=action, finding_id=finding.id,
+            output=prompt,
+            error=(f"BudgetCheckMissing: project {project_id!r} has no budget "
+                   "checker; refusing to route an uncapped LLM call "
+                   "(llm_budget_strict)"),
+            source="cai",
+        )
+
     try:
         spec = route_model(task, config, project_id=project_id,
                            budget_checker=budget_checker)

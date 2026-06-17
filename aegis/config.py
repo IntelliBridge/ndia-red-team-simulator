@@ -131,6 +131,17 @@ class AegisConfig:
     llm_detect_injection: bool = True
     llm_filter_output: bool = True
     llm_injection_block_risk: str = "high"
+    # Fail-closed LLM budget enforcement. ``route()`` only enforces a budget
+    # when a ``budget_checker`` is supplied; a DB-backed run (``project_id``
+    # set) that reaches the CAI invocation *without* one would otherwise route
+    # uncapped. When strict, that case is DENIED rather than silently routed —
+    # so a budget cap can never be skipped by a missing wiring. The offline /
+    # filesystem path (``project_id is None``) is intentionally unenforced and
+    # unaffected. Defaults True in prod (``AEGIS_ENV=prod``), False otherwise;
+    # override with ``AEGIS_LLM_BUDGET_STRICT`` (the established env precedence).
+    llm_budget_strict: bool = field(
+        default_factory=lambda: os.environ.get("AEGIS_ENV", "dev").lower() == "prod"
+    )
 
 
 def load_config(path: str | None = None) -> AegisConfig:
@@ -192,4 +203,7 @@ def _apply_env_overrides(config: AegisConfig) -> AegisConfig:
     block_risk = os.environ.get("AEGIS_LLM_INJECTION_BLOCK_RISK")
     if block_risk is not None:
         config.llm_injection_block_risk = block_risk.strip().lower()
+    config.llm_budget_strict = _env_bool(
+        "AEGIS_LLM_BUDGET_STRICT", config.llm_budget_strict
+    )
     return config

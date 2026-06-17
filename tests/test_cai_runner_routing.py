@@ -55,6 +55,59 @@ class TestBudgetGate(unittest.TestCase):
         self.assertIn("BudgetExceeded", result.error or "")
         sentinel.assert_not_called()
 
+    def test_strict_db_run_without_checker_is_denied_fail_closed(self):
+        # C3 fail-closed: a DB-backed run (project_id set) that reaches CAI
+        # without a budget_checker must be DENIED under llm_budget_strict —
+        # never routed uncapped. load_cai / route must not run.
+        config = AegisConfig(llm_budget_strict=True)
+        sentinel = MagicMock(side_effect=AssertionError("load_cai called"))
+        route_spy = MagicMock(side_effect=AssertionError("route called"))
+        with mpatch("aegis.remediate.cai_runner.load_cai", sentinel), \
+                mpatch("aegis.remediate.cai_runner.route_model", route_spy):
+            result = cai_runner.run_code_fix(
+                _finding(), config=config,
+                project_id="proj-1", budget_checker=None,
+            )
+        self.assertFalse(result.success)
+        self.assertIn("BudgetCheckMissing", result.error or "")
+        sentinel.assert_not_called()
+        route_spy.assert_not_called()
+
+    def test_offline_run_without_checker_is_unenforced(self):
+        # The offline / filesystem path (project_id is None) is intentionally
+        # NOT gated even under strict — it routes via config.model and runs.
+        config = AegisConfig(llm_budget_strict=True, model="m/x")
+        runner = MagicMock()
+        runner.run_sync.return_value = MagicMock(
+            final_output="```diff\n--- a/x\n+++ b/x\n@@ @@\n+ok\n```")
+        bundle = MagicMock(Runner=runner, codeagent=MagicMock(),
+                           blueteam_agent=MagicMock())
+        with mpatch("aegis.remediate.cai_runner.load_cai", return_value=bundle):
+            result = cai_runner.run_code_fix(
+                _finding(), config=config,
+                project_id=None, budget_checker=None,
+            )
+        self.assertTrue(result.success, result.error)
+        runner.run_sync.assert_called_once()
+
+    def test_non_strict_db_run_without_checker_still_routes(self):
+        # With strict OFF (non-prod default), a DB-backed run lacking a checker
+        # is NOT denied here — it routes uncapped (the pre-strict behaviour),
+        # so the gap only fail-closes when strict is enabled.
+        config = AegisConfig(llm_budget_strict=False, model="m/x")
+        runner = MagicMock()
+        runner.run_sync.return_value = MagicMock(
+            final_output="```diff\n--- a/x\n+++ b/x\n@@ @@\n+ok\n```")
+        bundle = MagicMock(Runner=runner, codeagent=MagicMock(),
+                           blueteam_agent=MagicMock())
+        with mpatch("aegis.remediate.cai_runner.load_cai", return_value=bundle):
+            result = cai_runner.run_code_fix(
+                _finding(), config=config,
+                project_id="proj-1", budget_checker=None,
+            )
+        self.assertTrue(result.success, result.error)
+        runner.run_sync.assert_called_once()
+
 
 class TestRouterPicksTaskModel(unittest.TestCase):
     def test_model_lifted_into_context_per_task(self):

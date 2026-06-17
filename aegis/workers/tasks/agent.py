@@ -20,9 +20,13 @@ if TYPE_CHECKING:
 
 @app.task(name="aegis.agent_run", bind=True, max_retries=2)
 def agent_run(self: Task, job_id: str) -> dict[str, Any]:
+    from sqlalchemy import select
+
     from aegis.agents import AgentContext, dispatch
     from aegis.config import load_config
-    from aegis.db.models import Job
+    from aegis.db.models import Job, Project
+    from aegis.llm.budget import enforce_budget_for_run
+    from aegis.llm.router import BudgetExceeded
     from aegis.safety import authorize
     from aegis.workers.bootstrap import task_context
 
@@ -54,6 +58,24 @@ def agent_run(self: Task, job_id: str) -> dict[str, Any]:
                     "agent": agent_name, "target": target,
                     "execute": execute},
         )
+
+        # Budget gate for this DB-backed run (after authorize, before dispatch —
+        # the same authorize→budget→run order the fix path uses). The CAI agents
+        # build their model directly (not via ``router.route``), so the router's
+        # budget hook never sees an agent run; this is the chokepoint that
+        # enforces the project (and org) cap and fail-closes under
+        # ``llm_budget_strict``. A worker job always carries a ``project_id``, so
+        # this is always a DB-backed run; the org tier is resolved from the
+        # project for the monthly cap.
+        org_id = ctx.session.execute(
+            select(Project.org_id).where(Project.id == ctx.project_id)
+        ).scalar_one_or_none()
+        try:
+            enforce_budget_for_run(ctx.project_id, org_id=org_id, config=config)
+        except BudgetExceeded as exc:
+            return {"run_id": ctx.run_id, "agent": agent_name,
+                    "status": "error", "error": f"BudgetExceeded: {exc}"}
+
         result = dispatch(
             agent_name, prompt,
             AgentContext(
