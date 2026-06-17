@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -102,7 +104,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(ws_router, prefix="/v1")
 
     @app.get("/v1/__settings")
-    def _debug_settings():
+    def _debug_settings() -> dict[str, Any]:
         if settings.is_prod:
             return {"detail": "hidden in production"}
         return {

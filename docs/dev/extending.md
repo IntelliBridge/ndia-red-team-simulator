@@ -91,6 +91,117 @@ Defined in [`aegis/scanners/registry.py`](https://github.com/IntelliBridge/aegis
 [`aegis/scanners/strix_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/strix_adapter.py)
 is the reference implementation.
 
+## Don't hand-roll `scan()` — pick the right shared helper
+
+Most adapters wrap a CLI tool, and the wrapping boilerplate (start the
+timer, `subprocess.run`, the `TimeoutExpired` / `FileNotFoundError`
+envelope, persist the raw payload, assemble the `ScanResult`) is
+identical from adapter to adapter. [`aegis/scanners/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/registry.py)
+provides three reuse seams so a new adapter supplies only what genuinely
+varies. Reach for them in this order — write a fully custom `scan()`
+only when none fits.
+
+### CLI-subprocess helpers: `run_cli_scan` vs. `run_cli_scan_jsonl`
+
+Both own the same lifecycle (timer → `subprocess.run` with the adapter's
+`default_timeout` honoured → error envelope → optional raw-payload
+persistence → `ScanResult`). They differ only in **how stdout is
+parsed**:
+
+| Helper | Tool output shape | Parse callback | Malformed input |
+|--------|-------------------|----------------|-----------------|
+| `run_cli_scan(...)` | A **single JSON document** on stdout (one object/array for the whole scan). | `parse(proc, run_id) -> list[AegisFinding]` — gets the whole `CompletedProcess`. | May raise `json.JSONDecodeError`; with `parse_error_label` set that becomes a `"failed to parse <label>"` error result. |
+| `run_cli_scan_jsonl(...)` | **Line-oriented JSONL / NDJSON** — one JSON object per line. | `convert(record, run_id) -> AegisFinding \| None` — invoked once per parsed line. | A line that isn't valid JSON is **silently skipped**; the scan never fails on a bad line, so there is no parse-error envelope. |
+
+The JSONL helper's per-line `convert` callback returning `None` **filters
+that line out**. That is how `bumblebee` keeps only its finding records:
+its callback (`_convert_finding` in
+[`aegis/scanners/bumblebee_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/bumblebee_adapter.py))
+returns `None` for any record whose `record_type != "finding"`, dropping
+the interleaved `scan_summary` / `diagnostic` lines. `nuclei`,
+`trufflehog`, and `bumblebee` all use `run_cli_scan_jsonl`; the
+single-document tools (e.g. grype, sonarqube) use `run_cli_scan`. Both
+take `subdir` / `raw_filename` to persist the raw stdout under
+`run_state.run_path`, or `None` / `None` to persist nothing.
+
+The companion helpers `cli_version(executable, ...)` (probe a tool's
+`--version` banner, or `"unknown"` on any failure) and
+`which_available(*executables)` (`shutil.which` OR-probe) cover the
+matching `adapter_version()` / `health_check()` boilerplate.
+
+### Runner-backed adapters: `ScanResult.from_runner(...)`
+
+`strix` and `trivy` don't shell out directly from the adapter — they
+delegate to a subprocess **runner** in `aegis/runners/` (see below) that
+returns a `*RunResult`. Rather than hand-roll the re-wrap, map that
+result into a `ScanResult` with the classmethod:
+
+```python
+return ScanResult.from_runner(
+    result,
+    adapter_name=self.name,
+    adapter_version=version,
+    duration_s=time.monotonic() - started,
+    command_str=command_str,   # optional; defaults to " ".join(result.command)
+)
+```
+
+`findings` / `error` pass straight through and `exit_code` is
+`result.return_code or 0`. `command_str` defaults to the joined
+`result.command`, but a runner with no `command` attribute passes it
+explicitly (the `trivy` adapter passes the literal `"trivy fs"`). Any
+runner result satisfying the `RunnerResult` Protocol (`findings`,
+`return_code`, `error`) works — the scanner layer never imports the
+runner layer, keeping the dependency one-directional.
+
+### When a fully custom adapter is justified
+
+`deepsec` ([`aegis/scanners/deepsec_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/deepsec_adapter.py))
+is the worked example of an adapter that *can't* use any of the shared
+helpers, and its module docstring spells out why:
+
+- **Multi-step `scan → process → export` flow.** A single deepsec run is
+  three sequential subprocess invocations sharing on-disk state, not the
+  one `subprocess.run` + one stdout payload that `run_cli_scan` models.
+  The AI `process` stage is opt-in (only when `config.deepsec_ai_process`
+  is set, `config.deepsec_budget_usd > 0`, and a model key is present),
+  so the default path stays free.
+- **`pnpm` + config-driven `cwd` invocation.** deepsec isn't on `PATH`;
+  it runs as `pnpm deepsec <subcmd>` from `config.deepsec_path`. That
+  argv-with-cwd shape is something `cli_version` / `which_available`
+  can't express, so `adapter_version()` and `health_check()` stay custom.
+- **`_convert(record, run_id) -> AegisFinding | None` verdict filtering.**
+  Like the JSONL `convert` callback, `_convert` returns `None` to drop a
+  record — here for non-actionable revalidation verdicts
+  (`false-positive` / `fixed` / `duplicate`) — but it's wired into the
+  hand-written scan loop rather than a shared helper. (deepsec also
+  strips code-owner PII before either constructing a finding or persisting
+  its raw artifact; see the docstring.)
+
+## Findings are validated at construction (Pydantic v2)
+
+As of the architecture-hardening pass,
+[`aegis/schema.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/schema.py)'s
+`AegisFinding` and `CodeLocation` are **Pydantic v2 `BaseModel`s**, not
+dataclasses. The fields `severity`, `finding_type`, `status`, and
+`confidence` are typed as `Literal` vocabularies, so construction is
+validated at runtime: an adapter that emits an out-of-vocabulary
+`severity` or omits a required field now **raises at the adapter** (the
+source) instead of silently persisting a malformed finding.
+
+For an adapter author this means two things:
+
+- Construct findings with **valid `Literal` values** — `severity` in
+  `critical | high | medium | low`, `finding_type` in `dependency | sast
+  | dast | runtime | config | code | code_audit | supply_chain`, `status`
+  in `open | fixing | fixed | failed | false_positive`, `confidence` in
+  `high | medium | low`. Map your tool's native vocabulary onto these
+  (deepsec's `_SEVERITY_MAP` / `_canon_severity` is the pattern).
+- The public surface is unchanged: `to_dict()` / `from_dict()` keep the
+  same signatures, and `from_dict` is deliberately lenient (it falls back
+  to an unvalidated construction and logs) so legacy `schema_blob` rows
+  still read. New writes are fail-closed; only reads are best-effort.
+
 ### `AgentAdapter`
 
 Defined in [`aegis/agents/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/registry.py):
@@ -240,5 +351,8 @@ registered.
 
 The call path ties them together: `StrixAdapter.scan` (registered
 adapter) calls `run_strix` (runner), which calls `convert_strix_finding`
-(converter) per event — so a registered adapter is the public face and
-the `runners/` modules are the implementation behind it.
+(converter) per event, then wraps the `StrixRunResult` into a
+`ScanResult` via `ScanResult.from_runner(...)` (see [Runner-backed
+adapters](#runner-backed-adapters-scanresultfrom_runner) above) — so a
+registered adapter is the public face and the `runners/` modules are the
+implementation behind it.

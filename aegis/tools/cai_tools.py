@@ -28,7 +28,7 @@ class _Toolbelt:
     client: KaliClient
 
 
-def _maybe_import_function_tool():
+def _maybe_import_function_tool() -> Any:
     """Return cai.sdk.agents.function_tool if available, else None."""
     try:
         from cai.sdk.agents import function_tool

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 
+from aegis.config import AegisConfig
 
-def cmd_doctor(args, config) -> None:
+
+def cmd_doctor(args: argparse.Namespace, config: AegisConfig) -> None:
     """Validate the Aegis development environment."""
     from aegis.doctor import run_doctor
 

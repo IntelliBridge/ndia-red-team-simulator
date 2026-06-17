@@ -13,11 +13,25 @@ manager that:
 3. Yields a context bundle (session, run state, audit writer, blob store,
    actor) to the task body.
 4. On success: marks ``status='succeeded'``, ``completed_at=now``.
-5. On exception: marks ``status='failed'`` with the error captured.
+5. On a *transient* error (DB/broker blip) when a bound ``task`` was supplied
+   and retries remain: rolls the body back, resets the job to ``'queued'`` so
+   the redelivery guard lets it run again, and re-raises via ``task.retry``.
+6. On any other exception: marks ``status='failed'`` with the error captured.
 
-NOTE: a job that crashes mid-run is left ``running`` and is NOT retried (the
-guard skips its redelivery, fail-closed). A periodic reaper to mark stale
-``running`` rows ``failed`` past a TTL is not yet implemented.
+Two subtleties worth knowing:
+
+- ``get_session()`` rolls back on exception. A naive ``job.status='failed'``
+  set on the body session immediately before re-raising would therefore be
+  *discarded*, stranding the job ``'running'`` until the reaper. The failure
+  path here rolls the body session back itself (releasing the job-row lock),
+  then writes ``'failed'`` and commits on the same session so it survives.
+- The redelivery guard means a retried task must not be left ``'failed'`` —
+  it would be skipped on redelivery. Transient retries reset the row to
+  ``'queued'`` (step 5) rather than failing it.
+
+A periodic reaper (``aegis.workers.tasks.reaper``, on the Celery beat schedule)
+is the backstop for jobs that crash so hard they never reach step 6 — it flips
+``'running'`` rows past their TTL to ``'failed'``.
 """
 
 from __future__ import annotations
@@ -28,7 +42,7 @@ import traceback
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -59,8 +73,36 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _transient_errors() -> tuple[type[BaseException], ...]:
+    """Exception types treated as transient (retryable) when a task body fails.
+
+    sqlalchemy is imported lazily so importing this module doesn't drag in the
+    DB stack (the unit CI job runs without it)."""
+    errs: list[type[BaseException]] = [ConnectionError, TimeoutError]
+    try:
+        from sqlalchemy.exc import InterfaceError, OperationalError
+        errs += [OperationalError, InterfaceError]
+    except Exception:  # noqa: BLE001 — sqlalchemy optional in minimal envs
+        pass
+    return tuple(errs)
+
+
+def _publish(run_id: str, job_id: str, status: str) -> None:
+    """Best-effort lifecycle event to the run's WS channel (never raises)."""
+    try:
+        from aegis.workers.events import publish_job_event
+        publish_job_event(run_id, job_id, status)
+    except Exception:  # noqa: BLE001 — telemetry must never break the task
+        logger.debug("event publish hook failed", exc_info=True)
+
+
 @contextmanager
-def task_context(job_id: str) -> Iterator[TaskContext]:
+def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
+    """Wrap a job-scoped task body. See module docstring.
+
+    ``task`` is the bound Celery task instance (``bind=True``); when supplied it
+    enables transient-error retries. Pass ``task=self`` from the task body.
+    """
     from aegis.audit.chain import PostgresAuditWriter
     from aegis.config import load_config
     from aegis.db.models import Job
@@ -113,12 +155,51 @@ def task_context(job_id: str) -> Iterator[TaskContext]:
             run_state=run_state, session=sess, audit_writer=audit_writer,
             blob_store=blob_store, actor=job.created_by or "system:worker",
         )
+        _publish(run_id, job_id, "running")
         try:
             yield ctx
             job.status = "succeeded"
             job.completed_at = _now()
         except Exception as exc:
-            job.status = "failed"
-            job.completed_at = _now()
-            job.error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+            from celery.exceptions import Retry
+            if isinstance(exc, Retry):
+                # task.retry() (below, or called by the body) already raised
+                # Retry; the row was reset to 'queued'. Nothing more to do.
+                raise
+
+            # Transient blip + retries remain: requeue instead of failing, so
+            # the redelivery guard lets the retry run (a 'failed' row would be
+            # skipped). Reset on the body session after rolling its partial
+            # writes back.
+            if (task is not None and isinstance(exc, _transient_errors())
+                    and task.request.retries < (task.max_retries or 0)):
+                sess.rollback()
+                requeued = sess.get(Job, job_id)
+                if requeued is not None:
+                    requeued.status = "queued"
+                    requeued.started_at = None
+                    sess.commit()
+                logger.warning(
+                    "task_context: transient error on job %s, retrying "
+                    "(%d/%s): %s",
+                    job_id, task.request.retries + 1, task.max_retries, exc,
+                )
+                raise task.retry(exc=exc)
+
+            # Terminal failure. get_session() rolls back on exception, which
+            # would discard a status write made here; roll back ourselves first
+            # (releasing the job-row lock), then persist 'failed' and commit so
+            # it survives the re-raise.
+            sess.rollback()
+            failed = sess.get(Job, job_id)
+            if failed is not None:
+                failed.status = "failed"
+                failed.completed_at = _now()
+                failed.error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+                sess.commit()
+            _publish(run_id, job_id, "failed")
             raise
+    # Reached only when the body succeeded and ``get_session`` committed the
+    # 'succeeded' status — publish after the commit so a consumer that reacts to
+    # the event sees a durable row.
+    _publish(run_id, job_id, "succeeded")

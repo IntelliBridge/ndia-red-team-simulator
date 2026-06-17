@@ -17,6 +17,10 @@ pip install -e ".[test,dev,api,worker]"   # full stack (Phase 3+)
 Python 3.12 or 3.13 is required. The default macOS `python3` (3.9)
 won't work — use Homebrew's `python3.12` or `python3.13`.
 
+`pydantic>=2.7` is a **core runtime dependency** (the finding schema in
+`aegis/schema.py` is now Pydantic v2), so it's pulled in by the base
+install — not gated behind an extra.
+
 For frontend work, the repo is a pnpm workspace:
 
 ```bash
@@ -55,8 +59,14 @@ The Phase 2 offline path is sacred — every PR must keep
 
 ## Code style
 
-- Python 3.12 / 3.13, type hints expected on public APIs.
+- Python 3.12 / 3.13. **`mypy` runs in strict mode and gates merges**
+  (`disallow_untyped_defs`, `disallow_incomplete_defs`, et al. — see
+  `[tool.mypy]` in `pyproject.toml`), so **new code must be fully
+  annotated**, not just public APIs.
 - `ruff check aegis tests` — non-blocking but encouraged.
+- Run the CI gate locally before pushing: `make check`
+  (lint → typecheck → test), or just `make typecheck` (`mypy aegis`)
+  while iterating.
 - Tests use `unittest`; fixtures via `unittest.mock`.
 - Frontend: TypeScript strict mode; Tailwind via `cn()` from
   `@aegis/design-system`. No inline scripts (CSP).
@@ -74,6 +84,9 @@ The Phase 2 offline path is sacred — every PR must keep
    user-visible.
 5. CI gates that must pass:
    - `pytest -q` on Python 3.12 + 3.13.
+   - `mypy aegis` — strict type-check. **This now blocks merge** (the
+     step is no longer `continue-on-error`); mirror it locally with
+     `make typecheck`.
    - `uv lock --check` — no drift in `uv.lock`.
    - `pnpm install --frozen-lockfile` — no drift in
      `web/pnpm-lock.yaml`.
