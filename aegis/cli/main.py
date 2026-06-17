@@ -191,6 +191,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit_verify.add_argument("--all", action="store_true",
                                 help="Verify every chain known to the writer")
 
+    # plugins (community adapter marketplace)
+    p_plugins = sub.add_parser("plugins", help="Inspect community scanner/agent adapters")
+    plugins_sub = p_plugins.add_subparsers(dest="plugins_action", required=True)
+    p_plugins_list = plugins_sub.add_parser(
+        "list", help="List discovered third-party plugins (AEGIS_PLUGINS=1)")
+    p_plugins_list.add_argument("--json", action="store_true",
+                                help="Emit the discovery report as a JSON array")
+
     # migrate (Phase 3 M11 — surface lands now, impl in M11)
     p_migrate = sub.add_parser("migrate", help="Move filesystem run data into Postgres (M11)")
     p_migrate.add_argument("direction", choices=["fs->pg"], default="fs->pg", nargs="?",
@@ -305,10 +313,16 @@ def _cmd_ci_gate_dispatch(args: argparse.Namespace, config: AegisConfig) -> None
     cmd_ci_gate(args, config)
 
 
+def _cmd_plugins_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
+    from aegis.cli.plugins import cmd_plugins
+    cmd_plugins(args, config)
+
+
 _COMMANDS["status"] = _cmd_status_dispatch
 _COMMANDS["audit"] = _cmd_audit_dispatch
 _COMMANDS["migrate"] = _cmd_migrate_dispatch
 _COMMANDS["ci-gate"] = _cmd_ci_gate_dispatch
+_COMMANDS["plugins"] = _cmd_plugins_dispatch
 
 
 def main(argv: list[str] | None = None) -> None:

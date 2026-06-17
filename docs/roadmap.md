@@ -22,16 +22,18 @@ enforcement with a per-model price table; and four review-surfaced cleanups.
 
 ## Now / Next
 
-With the seams closed — and DB-side append-only audit enforcement
+With the seams closed — DB-side append-only audit enforcement
 (row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
-see `SECURITY.md` and `docs/ops/deploy.md`) plus the LLM guardrail layers
+see `SECURITY.md` and `docs/ops/deploy.md`), the LLM guardrail layers
 (diff/output secret scrubbing + prompt-injection detection; see
-`SECURITY.md` § "LLM guardrails") now landed — the focus has been **capability
-breadth** and the remaining **security / compliance hardening** (below). On
-breadth, the tool roster has now reached the 35+ target (42 effect-classified
-tools) and the agent roster has grown to 36 wired agents + 5 multi-agent
-patterns — substantial progress toward the 60+ OnePager target. The
-next highest-leverage candidates: continuing toward 60+ agents, and
+`SECURITY.md` § "LLM guardrails"), and the plugin entry-point seam now a
+documented, validated, allowlist-gated **scanner-adapter marketplace** (see
+[Extending Aegis](dev/extending.md)) all landed — the focus has been
+**capability breadth** and the remaining **security / compliance hardening**
+(below). On breadth, the tool roster has now reached the 35+ target (42
+effect-classified tools) and the agent roster has grown to 36 wired agents +
+5 multi-agent patterns — substantial progress toward the 60+ OnePager target.
+The next highest-leverage candidates: continuing toward 60+ agents, and
 authenticated DAST flows.
 
 ## Capability breadth
@@ -50,8 +52,13 @@ Closing the gap to the OnePager promise.
   **42** effect-classified tools (10 Kali + 14 scanner adapters + 17 CAI
   function-tools + the Camoufox OSINT search), past the 35+ target.
 - **Authenticated DAST flows.**
-- **Community scanner-adapter marketplace** (third-party adapters via the plugin
-  entry-point seam).
+- ~~**Community scanner-adapter marketplace** — third-party adapters via the
+  plugin entry-point seam.~~ **Shipped**: the `aegis.scanners` / `aegis.agents`
+  entry-point seam is now a documented marketplace — Protocol-conformance
+  validation (a bad plugin is rejected, never fatal), the `AEGIS_PLUGINS_ALLOW`
+  distribution allowlist, an `aegis plugins list [--json]` inspector, and a
+  reference plugin at `examples/aegis-plugin-example/`. See
+  [Extending Aegis](dev/extending.md) § "Third-party plugins (marketplace)".
 
 ## Security, audit & compliance
 
