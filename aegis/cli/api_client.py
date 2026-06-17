@@ -15,6 +15,7 @@ require ``requests`` or ``httpx`` just to do a single HTTP probe.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import urllib.error
@@ -94,7 +95,7 @@ class ApiClient:
         return self._request("POST", f"/v1/runs/{run_id}/cancel")
 
 
-def is_api_mode(args) -> bool:
+def is_api_mode(args: argparse.Namespace) -> bool:
     """``--api`` flag (set on the parser) OR ``AEGIS_MODE=api`` in env."""
     if getattr(args, "global_api", False):
         return True

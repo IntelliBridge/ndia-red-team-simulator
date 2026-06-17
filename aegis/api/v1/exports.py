@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -30,7 +30,7 @@ def vulnfixer_export(run_id: str,
         from aegis.storage import open_blob_store
         blob = open_blob_store(config)
         data = blob.get(f"runs/{run_id}/vulnfixer-export.json")
-        return json.loads(data.decode("utf-8"))
+        return cast("dict[str, Any]", json.loads(data.decode("utf-8")))
     except (FileNotFoundError, KeyError):
         pass
     except Exception:  # noqa: BLE001 — blob backend not available
@@ -40,4 +40,4 @@ def vulnfixer_export(run_id: str,
     if not path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="vulnfixer export not produced for this run")
-    return json.loads(path.read_text())
+    return cast("dict[str, Any]", json.loads(path.read_text()))

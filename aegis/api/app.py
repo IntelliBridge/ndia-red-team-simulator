@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -10,6 +12,7 @@ from aegis.api.settings import APISettings, load_settings
 from aegis.api.v1 import (
     agents,
     audit,
+    auth_profiles,
     exports,
     findings,
     fix,
@@ -99,6 +102,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(fix.router, prefix="/v1")
     app.include_router(verify.router, prefix="/v1")
     app.include_router(targets.router, prefix="/v1")
+    app.include_router(auth_profiles.router, prefix="/v1")
     app.include_router(projects.router, prefix="/v1")
     app.include_router(logs.router, prefix="/v1")
     app.include_router(org_cost.router, prefix="/v1")
@@ -112,7 +116,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(ws_router, prefix="/v1")
 
     @app.get("/v1/__settings")
-    def _debug_settings():
+    def _debug_settings() -> dict[str, Any]:
         if settings.is_prod:
             return {"detail": "hidden in production"}
         return {

@@ -42,7 +42,7 @@ flowchart TD
 
 ---
 
-## DB-enforced org isolation (migration `0005_tenant_rls`)
+## DB-enforced org isolation (migration `0006_tenant_rls`)
 
 Migration `0005` makes the database enforce the org boundary. It touches
 `projects` (which already carries `org_id`) plus the eight project-scoped
@@ -157,7 +157,7 @@ exactly what background execution and `alembic upgrade` need.
 
 ---
 
-## Per-tenant cost + LLM routing (migration `0006_org_cost_routing`)
+## Per-tenant cost + LLM routing (migration `0007_org_cost_routing`)
 
 Cost accounting and model routing, previously per-project, lift one tier
 to the Organization.

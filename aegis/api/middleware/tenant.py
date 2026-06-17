@@ -18,10 +18,11 @@ sees ``None`` because we set the scope only after the lookup returns.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from fastapi import Request
+    from fastapi import Request, Response
 
     from aegis.api.auth import CurrentUser
     from aegis.api.settings import APISettings
@@ -84,7 +85,10 @@ def _accessible_org_ids(user: "CurrentUser") -> list[str] | None:
 def tenant_middleware(settings: "APISettings") -> Callable:
     """Return an ASGI middleware closure that pins the request's tenant scope."""
 
-    async def middleware(request: "Request", call_next):
+    async def middleware(
+        request: "Request",
+        call_next: Callable[["Request"], Awaitable["Response"]],
+    ) -> "Response":
         from aegis.db.session import reset_current_tenants, set_current_tenants
 
         org_ids: list[str] | None = None

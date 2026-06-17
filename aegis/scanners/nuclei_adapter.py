@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from aegis.scanners.dast_auth import REDACTED, DastAuthError, auth_header
 from aegis.scanners.registry import (
     ScanOptions,
     ScanResult,
     cli_version,
     register,
-    run_cli_scan,
+    run_cli_scan_jsonl,
     which_available,
 )
 from aegis.schema import AegisFinding, Severity
@@ -65,27 +65,34 @@ class NucleiAdapter:
     def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
         templates = options.extra.get("templates", "cves,vulnerabilities")
+        argv = ["nuclei", "-target", target, "-jsonl", "-silent",
+                "-t", templates]
+        command_str = f"nuclei -target {target} -t {templates}"
 
-        def parse(proc, run_id):
-            findings: list[AegisFinding] = []
-            for line in (proc.stdout or "").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                findings.append(_convert(rec, run_id))
-            return findings
+        # Authenticated DAST: nuclei natively replays a custom header on
+        # every request via ``-H "Name: value"``. The secret lives only in
+        # the argv handed to subprocess.run — the recorded ``command_str``
+        # carries a redacted copy so logs/artifacts stay secret-free.
+        auth = (options.extra or {}).get("auth")
+        if auth:
+            try:
+                header_name, header_value = auth_header(auth)
+            except DastAuthError as exc:
+                return ScanResult(
+                    findings=[], adapter_name=self.name,
+                    adapter_version=self.adapter_version(),
+                    command_str=command_str,
+                    exit_code=-1, error=str(exc),
+                )
+            argv += ["-H", f"{header_name}: {header_value}"]
+            command_str += f' -H "{header_name}: {REDACTED}"'
 
-        return run_cli_scan(
+        return run_cli_scan_jsonl(
             self, options, run_state,
-            argv=["nuclei", "-target", target, "-jsonl", "-silent",
-                  "-t", templates],
-            command_str=f"nuclei -target {target} -t {templates}",
+            argv=argv,
+            command_str=command_str,
             subdir="nuclei", raw_filename="results.jsonl",
-            parse=parse, raw_empty="",
+            convert=_convert,
         )
 
 

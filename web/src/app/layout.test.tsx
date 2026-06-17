@@ -23,6 +23,9 @@ describe("RootLayout", () => {
     const costLink = screen.getByText("Cost", { selector: "a" });
     expect(costLink.getAttribute("href")).toBe("/cost");
 
+    const authProfilesLink = screen.getByText("Auth Profiles", { selector: "a" });
+    expect(authProfilesLink.getAttribute("href")).toBe("/auth-profiles");
+
     const logsLink = screen.getByText("Logs", { selector: "a" });
     expect(logsLink.getAttribute("href")).toBe("/logs");
 

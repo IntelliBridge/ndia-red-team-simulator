@@ -7,7 +7,7 @@ SemVer.
 ## [Unreleased]
 
 ### Added
-- **Cross-org row-level multi-tenancy (migration `0005`).** The
+- **Cross-org row-level multi-tenancy (migration `0006`).** The
   Organization is the tenant; `projects` and the eight project-scoped
   tables (`targets`, `runs`, `jobs`, `findings`, `llm_usage`, `artifacts`,
   `remediation_attempts`, `application_logs`) gain a denormalized `org_id`
@@ -16,7 +16,7 @@ SemVer.
   policy filters rows by the per-request `app.current_tenants` GUC, set by
   the tenant middleware via `aegis.db.session.get_session`; an empty/unset
   GUC means full access (the system / worker path).
-- **Per-tenant cost + LLM routing (migration `0006`).**
+- **Per-tenant cost + LLM routing (migration `0007`).**
   `organizations.monthly_llm_budget_cents` (an org-monthly cap enforced by
   `route()` alongside the project daily cap; `BudgetExceeded` names the
   tier) and `organizations.llm_model_overrides` (a `{task: model}`
@@ -24,14 +24,137 @@ SemVer.
   `GET /v1/orgs/{org_id}/cost?days=30` returns totals +
   by_day/by_model/by_task + a month-to-date budget block, gated to org
   members; a new web **/cost** dashboard renders it.
+- **Authenticated DAST flows (migration `0005`).** A new encrypted
+  auth-profile store (`auth_profiles`) holds the credentials DAST scanners
+  replay behind a login — four kinds: `form` (pre-flight login POST, session
+  cookies forwarded), `bearer`, `header`, `cookie`. Managed via
+  `GET`/`POST`/`DELETE /v1/auth-profiles` and a new `/auth-profiles` web page —
+  admin-gated (`auth_profile.manage`, mirroring target management) with chained
+  `auth_profile.create`/`auth_profile.delete` audit events. `POST /v1/scans`
+  (and the Targets-page scan form) gains an optional `auth_profile_id`; the
+  worker resolves and decrypts it at execution time and injects the auth
+  header into the scan — ZAP via the `ZAP_AUTH_HEADER`/`ZAP_AUTH_HEADER_VALUE`
+  subprocess env vars (never argv), Nuclei via its native `-H` flag. See
+  `docs/ops/authenticated-dast.md`.
+- **Pluggable authorization policy engine.** The route-level role gate
+  (`aegis.api.policy.check`) now delegates its decision to a configurable
+  `PolicyEngine` (`aegis/policy/engine.py`) selected by `AEGIS_POLICY_ENGINE`:
+  `static` (**default**, the existing 4-tier RBAC rule table, behaviour-identical),
+  `opa` (POSTs the decision input to an Open Policy Agent data endpoint), or
+  `cedar` (POSTs to a `cedar-agent` REST endpoint). Both external engines **fail
+  closed** — any error, timeout, or malformed decision denies and logs. The
+  separate target-allowlist + audit gate (`aegis.safety.authorize`) is unchanged.
+  Example drop-in policies replicating the static role-rank table ship at
+  `deploy/opa/aegis-authz.rego` (package `aegis.authz`) and
+  `deploy/cedar/aegis-policy.cedar` (+ `deploy/cedar/aegis-entities.md`); an
+  opt-in `opa` service lands under a non-default `policy` compose profile. See
+  `docs/architecture/auth.md` § "Policy engine" and `docs/ops/deploy.md`.
+- **Community scanner-adapter marketplace.** The `aegis.scanners` /
+  `aegis.agents` entry-point seam is now a documented, supported plugin
+  marketplace: a third-party distribution ships an adapter via a zero-arg
+  factory entry point and an operator enables it with `AEGIS_PLUGINS=1` (on the
+  API, worker, and CLI) — no edit to `aegis`. Discovery now **validates** each
+  plugin against its Protocol: a factory that raises, an object missing `scan`,
+  or an empty `name` is **rejected and skipped** without crashing discovery or
+  affecting other plugins. A new **`aegis plugins list`** subcommand prints a
+  table (name, kind, distribution, version, status `loaded|rejected|skipped`,
+  detail) — `--json` for scripting; with discovery off it prints a hint to set
+  `AEGIS_PLUGINS=1`. A reference plugin lives at
+  `examples/aegis-plugin-example/`. See the
+  [Extending Aegis](docs/dev/extending.md) docs § "Third-party plugins
+  (marketplace)".
+- **Agent + tool breadth toward the OnePager promise.** The roster grows from
+  16 wired CAI agents + 3 patterns to **36 wired agents + 5 multi-agent
+  patterns**, and the tool catalog reaches **42 effect-classified tools**.
+  - **8 newly-wired CAI agents** (`aegis/agents/cai/builtins.py`) resolved
+    generically by their upstream registry key via `resolve_cai_agent`
+    (CAI's `get_agent_by_name`), so wiring a CAI agent needs no per-agent
+    `CAIBundle` field: `ctf_agent`, `app_logic_mapper`, `dns_smtp_agent`,
+    `flag_discriminator`, `prompt_injection_detector`, `thought_agent`,
+    `usecase_agent`, `memory_query`.
+  - **2 new multi-agent patterns** (`patterns.py`): `red_blue_shared_context`
+    and `red_blue_split_context` — red-team attack alongside a blue-team
+    responder, both `active`-effect and human-gated (now 5 patterns total).
+  - **12 Aegis-native authored specialists** (`aegis/agents/cai/authored.py`)
+    — each a real CAI `Agent` composition (substantive scoped prompt + a real
+    `cai.tools.*` toolbelt) with its own domain + effect: `cloud_recon`,
+    `osint_collector`, `threat_intel`, `api_security_tester`,
+    `web_surface_mapper`, `ssl_tls_auditor`, `dns_enumerator`,
+    `secrets_hunter`, `iac_auditor`, `container_security`, `crypto_analyst`,
+    `log_triage`. Registration is import-safe (CAI only matters at invocation);
+    a failed tool import or offline run degrades to `status="error"`.
+  - **Unified, effect-classified tool catalog** (`aegis/tools/catalog.py`,
+    `TOOL_CATALOG` / `list_tools()`): **42 tools** across four sources —
+    10 Kali + 14 scanner adapters + 17 vendored CAI `@function_tool`s
+    (namespaced `cai_*`) + 1 OSINT search. Each tool carries an authoritative
+    `read`/`active`/`external` effect that `aegis.effects.tool_effect()`
+    consults, so the catalog and the human gate never drift. The Kali
+    allowlist is deliberately not expanded (mcp-kali routes only those 10).
+  - **Camoufox OSINT web search** (`aegis/tools/osint_search.py`): live web
+    OSINT via the Camoufox anti-detect browser against DuckDuckGo's HTML
+    endpoint + trafilatura extraction, used in place of a Google/SerpAPI
+    search (no API key, low detection risk). Behind the optional `osint`
+    extra (`pip install -e ".[osint]"` + `camoufox fetch`); classified
+    `external` (human-gated) and degrades to a clear, structured error when
+    absent. `build_osint_search_tool()` is the web-search tool authored
+    specialists add to their toolbelt.
 
 ### Security
-- **DB-enforced cross-org data isolation (migration `0005`).** Postgres
+- **Auth-profile secrets are Fernet-encrypted at rest**
+  (`AEGIS_AUTH_PROFILES_KEY`, required on api + worker; a missing or invalid
+  key fails closed with a clear error — no plaintext fallback). No endpoint
+  ever returns the secret, audit detail carries only non-secret metadata, and
+  recorded command strings redact the secret value as `***`, so logs and
+  artifacts stay secret-free.
+- **DB-enforced cross-org data isolation (migration `0006`).** Postgres
   Row-Level Security with `FORCE ROW LEVEL SECURITY` makes the database
   refuse to return another org's rows — binding the table owner / superuser
   too — as **defense-in-depth** behind the existing app-layer project
   checks. A forgotten `WHERE` clause can no longer leak rows across
   tenants; the isolation is exercised in the Postgres CI jobs.
+
+## [0.13.0] — 2026-06-17 — architecture hardening: validated findings, durable jobs & live events, strict types
+
+A hardening milestone across the finding seam, the worker lifecycle, and the
+type system. No language/stack change — Python + TypeScript remain the right
+fit — but the normalization seam is now runtime-validated, job status is
+durable and streamed live, and `mypy` gates merges in strict mode. Offline
+`pytest` (1362 passing / 21 skipped), strict `mypy aegis`, and `mkdocs --strict`
+all stay green.
+
+### Security
+- **Third-party plugin allowlist (`AEGIS_PLUGINS_ALLOW`).** Loading a plugin
+  runs its code **in-process** in the API and worker, so the marketplace ships
+  with a security gate: `AEGIS_PLUGINS_ALLOW` is a comma-separated list of
+  trusted **distribution** names — when set, only plugins from those
+  distributions load and all others are skipped; when unset (with
+  `AEGIS_PLUGINS=1`) all discovered plugins load and a warning is logged that an
+  unpinned set is active. Protocol-conformance validation rejects a malformed or
+  raising plugin before it can register. Opt-in Ed25519 signature enforcement
+  (below) layers cryptographic authorship verification on top of the allowlist.
+- **Signed third-party plugins (`AEGIS_PLUGINS_REQUIRE_SIGNATURE`).** Opt-in,
+  off-by-default **Ed25519** signature verification for marketplace plugins.
+  When enabled (`AEGIS_PLUGINS_REQUIRE_SIGNATURE=1` + `AEGIS_PLUGINS_TRUSTED_KEYS`
+  pointing at trusted public-key PEMs; `AEGIS_PLUGINS_SIG_DIR` for the `.sig`
+  files), each discovered plugin must carry a valid detached signature *before*
+  registration — an unsigned or invalid one is **rejected** (and surfaces in the
+  new SIGNED column of `aegis plugins list`), a valid one loads with its
+  `key_id`. The signature binds to the SHA-256 of the factory module's source,
+  so it authorises only the code that runs. `aegis plugins sign --dist … --version
+  … --entry-point GROUP:NAME --key PRIVKEY.pem` produces the signature; the
+  reference plugin ships a trusted key + signature under
+  `examples/aegis-plugin-example/signing/`. Enforcement off = today's behaviour
+  unchanged. See [Supply-chain integrity](docs/security/supply-chain.md).
+- **Signed + attested release images (`.github/workflows/release-sign.yml`).**
+  A release-only workflow (on `v*` tags) builds and pushes the four service
+  images (api, worker, web, log_ingest) to GHCR, then **keyless cosign-signs**
+  each by digest (GitHub OIDC — no stored keys), attaches a **CycloneDX SBOM**
+  (Syft) attestation, and generates **SLSA-3 build provenance** via the official
+  slsa-github-generator reusable workflow. Operators verify with `cosign verify`
+  / `cosign verify-attestation` (issuer `https://token.actions.githubusercontent.com`,
+  identity under `github.com/IntelliBridge/aegis/`) before deploy — see
+  `docs/ops/deploy.md` § "Verify release images before deploy". The PR
+  `docker-images` build stays a no-push build.
 - **DB-side append-only audit log (migration `0004`).** `audit_events` is now
   insert-only *at the database*: a row-immutability trigger `RAISE EXCEPTION`s
   on `UPDATE`/`DELETE`/`TRUNCATE` for everyone — table owner and superuser
@@ -48,6 +171,67 @@ SemVer.
   and `pgaudit.log` are guarded on availability and skip cleanly where the
   extension isn't loaded. New `deploy/Dockerfile.postgres` ships a
   pgaudit-enabled Postgres for the compose stack.
+- **LLM guardrails — diff/output secret scrubbing.** A new
+  `aegis/llm/guardrails.py` reuses the audit redactor's secret/token regex
+  (`aegis/audit/redact.py`) to scrub generated diffs/patches and LLM outputs,
+  replacing matches with `***REDACTED***`. Scrubbing runs on the *canonical*
+  unified diff (`extract_unified_diff` in `aegis/remediate/patch_workflow.py`),
+  so every downstream consumer — the persisted `.diff`, the PR body, and the
+  remediation log — inherits the scrub, plus an output filter at the
+  remediation + agent chokepoints.
+- **LLM guardrails — prompt-injection detection.** Untrusted finding fields
+  (title / description / remediation steps / PoC / code snippets) and agent
+  prompts are scored for injection before reaching the model — tiered risk
+  (`none`/`low`/`medium`/`high`) with categories (`instruction_override`,
+  `role_switch`, `exfiltration`, …). At/above a configurable threshold the
+  input is blocked, surfacing a clean, secret-free error: a failed
+  `FixOutcome` in the fix flow, a blocked `AgentResult` in the agent flow.
+  Wired at three chokepoints — `aegis/remediate/cai_runner.py`,
+  `aegis/remediate/patch_workflow.py`, and `aegis/agents/cai/builtins.py` /
+  `patterns.py`. Both layers fail safe and never log the offending text or a
+  matched secret. New env vars: `AEGIS_LLM_GUARDRAILS` (master, default on),
+  `AEGIS_LLM_SCRUB_DIFF`, `AEGIS_LLM_DETECT_INJECTION`,
+  `AEGIS_LLM_FILTER_OUTPUT` (all default on), and
+  `AEGIS_LLM_INJECTION_BLOCK_RISK` (default `high`; `off` = detect-and-log).
+
+### Added
+- **Live run events.** The worker publishes job transitions
+  (`running`/`succeeded`/`failed`) to the Redis channel `run:{run_id}:events`
+  (`aegis/workers/events.py`); the existing WS endpoint `/v1/runs/{run_id}/events`
+  streams them and the frontend consumes them live (`useRunEvents` hook) with
+  SWR polling kept only as a fallback. Previously nothing published to that
+  channel and the UI could only poll.
+- **Celery queue routing + beat scheduler.** Long offensive/remediation tasks
+  run on a `scans` queue, fast bookkeeping on `default`, with a dedicated worker
+  pool per queue plus a new `aegis-beat` service so the stale-job reaper
+  actually fires.
+- `pydantic>=2.7` as a core runtime dependency; `aegis/py.typed`; and
+  `make lint` / `make typecheck` / `make check`.
+
+### Changed
+- **`AegisFinding`/`CodeLocation` migrated to Pydantic v2.** Findings are now
+  validated at construction (an out-of-vocabulary `severity`/`finding_type`
+  fails at the adapter instead of silently persisting). `to_dict`/`from_dict`
+  keep their signatures; `from_dict` is lenient on read so legacy `schema_blob`
+  rows still load.
+- **Strict `mypy` now gates merges** (was `continue-on-error`). The whole
+  `aegis` tree is annotated under `disallow_untyped_defs` et al., with the
+  `pydantic.mypy` plugin.
+- **Scanner layer de-duplicated.** New `run_cli_scan_jsonl()` collapses the
+  inlined JSONL loops (nuclei/trufflehog/bumblebee); `ScanResult.from_runner()`
+  collapses the runner re-wrap (strix/trivy).
+
+### Fixed
+- **Durable terminal job status.** A failed task now persists `status="failed"`
+  — `task_context` commits it despite `get_session()`'s rollback-on-exception,
+  which previously discarded the write and stranded the job `running`.
+- **The reaper now runs.** `beat_schedule` was defined but no `celery beat`
+  process existed; the new `aegis-beat` service fires it.
+- **Async WS upgrade no longer blocks the event loop** — the per-connection DB
+  lookup in `_enforce_upgrade_policy` is offloaded via `run_in_threadpool`.
+- **Transient-error retries no longer no-op.** A retried task is reset to
+  `queued` before redelivery so the at-least-once guard doesn't skip it; it
+  still fails terminally once retries are exhausted.
 
 ## [0.12.0] — 2026-06-08 — finish the seams: multi-scanner dispatch, budget caps, API sunsets
 

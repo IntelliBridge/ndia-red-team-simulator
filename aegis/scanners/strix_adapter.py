@@ -35,14 +35,11 @@ class StrixAdapter:
             scope_mode=options.scope_mode,
             diff_base=options.diff_base,
         )
-        return ScanResult(
-            findings=result.findings,
+        return ScanResult.from_runner(
+            result,
             adapter_name=self.name,
             adapter_version=self.adapter_version(),
-            command_str=" ".join(result.command or []),
-            exit_code=result.return_code or 0,
             duration_s=time.monotonic() - started,
-            error=result.error,
         )
 
 

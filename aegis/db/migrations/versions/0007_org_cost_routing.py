@@ -10,15 +10,15 @@ the Organization tier:
   map of per-tenant routing overrides that win over the config default.
 
 No RLS changes: ``organizations`` is the tenant *root*, not a project-scoped
-table — 0005 forces RLS only on ``projects`` and the eight denormalized tables,
+table — 0006 forces RLS only on ``projects`` and the eight denormalized tables,
 not on ``organizations`` itself, so there is nothing to amend here.
 
-Idempotency mirrors 0005: ``0001_initial`` runs ``create_all`` against the
+Idempotency mirrors 0006: ``0001_initial`` runs ``create_all`` against the
 current ``models.py`` (which now declares both columns), so a fresh
 ``alembic upgrade head`` already has them — the ADD COLUMN uses IF NOT EXISTS.
 
-Revision ID: 0006_org_cost_routing
-Revises: 0005_tenant_rls
+Revision ID: 0007_org_cost_routing
+Revises: 0006_tenant_rls
 Create Date: 2026-06-11
 """
 
@@ -29,8 +29,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0006_org_cost_routing"
-down_revision: Union[str, None] = "0005_tenant_rls"
+revision: str = "0007_org_cost_routing"
+down_revision: Union[str, None] = "0006_tenant_rls"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

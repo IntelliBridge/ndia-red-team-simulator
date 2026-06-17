@@ -87,7 +87,7 @@ top of the app-layer project checks. The full design is in
 [`docs/architecture/multi-tenancy.md`](../architecture/multi-tenancy.md);
 this is the operator-facing runbook.
 
-**RLS is forced at the DB.** Migration `0005_tenant_rls` runs
+**RLS is forced at the DB.** Migration `0006_tenant_rls` runs
 `ENABLE` + **`FORCE ROW LEVEL SECURITY`** on `projects` and the eight
 project-scoped tables (`targets`, `runs`, `jobs`, `findings`, `llm_usage`,
 `artifacts`, `remediation_attempts`, `application_logs`), each carrying a
@@ -110,7 +110,7 @@ background execution and `alembic upgrade` need to read/write across orgs.
 Do **not** add the tenant middleware to the worker.
 
 **Per-tenant config** lives on the `organizations` row (migration
-`0006_org_cost_routing`):
+`0007_org_cost_routing`):
 
 | Column                       | Type    | Meaning                                                  |
 |------------------------------|---------|----------------------------------------------------------|
@@ -214,6 +214,20 @@ secret.
 | `AEGIS_RL_USER_PER_MIN`      | api   | Per-user rate limit (default `30`)                  |
 | `AEGIS_RL_PROJECT_PER_MIN`   | api   | Per-project rate limit (default `120`)              |
 
+### Policy engine (optional)
+
+The route-level role gate is pluggable (see
+[`auth.md`](../architecture/auth.md) § "Policy engine"). Unset, it stays
+on the built-in static rule table. Set these only to delegate to an
+external decision point; see the runbook below.
+
+| Var                          | Where         | Value                                                  |
+|------------------------------|---------------|--------------------------------------------------------|
+| `AEGIS_POLICY_ENGINE`        | api, worker   | `static` (default) \| `opa` \| `cedar`                  |
+| `AEGIS_OPA_URL`              | api, worker   | OPA base URL (default `http://localhost:8181`)          |
+| `AEGIS_OPA_PATH`             | api, worker   | OPA data path (default `/v1/data/aegis/authz`)          |
+| `AEGIS_CEDAR_URL`            | api, worker   | cedar-agent base URL (default `http://localhost:8180`)  |
+
 ### GitHub App (F23)
 
 | Var                                | Where    | Value                                                |
@@ -222,6 +236,12 @@ secret.
 | `AEGIS_GITHUB_APP_ID`              | api, worker | Installation app id                               |
 | `AEGIS_GITHUB_PRIVATE_KEY`         | api, worker | App private key (PEM)                             |
 
+### Authenticated DAST (optional)
+
+| Var                          | Where       | Notes                                                                 |
+|------------------------------|-------------|-----------------------------------------------------------------------|
+| `AEGIS_AUTH_PROFILES_KEY`    | api, worker | Fernet key encrypting auth-profile secrets at rest. Required only when using authenticated DAST — see [`authenticated-dast.md`](authenticated-dast.md). |
+
 ### Observability
 
 | Var                                | Where               | Notes                                                       |
@@ -229,6 +249,36 @@ secret.
 | `OTEL_EXPORTER_OTLP_ENDPOINT`      | api, worker         | Activates the OTel SDK. Without it, logs go to stdout only. |
 | `OTEL_RESOURCE_ATTRIBUTES`         | api, worker         | `service.name=...` etc.                                     |
 | `AEGIS_LOG_INGEST_URL`             | api, worker         | Default path that bypasses the Collector (default profile)  |
+
+### Third-party plugin signatures
+
+Opt-in Ed25519 signature enforcement for marketplace plugins (off by
+default). Set on every process that discovers plugins (`AEGIS_PLUGINS=1`):
+the api, worker, and CLI. See
+[supply-chain integrity](../security/supply-chain.md#signed-third-party-plugins)
+and [Extending Aegis](../dev/extending.md#signature-enforcement-aegis_plugins_require_signature).
+
+| Var                                | Where             | Notes                                                                                   |
+|------------------------------------|-------------------|-----------------------------------------------------------------------------------------|
+| `AEGIS_PLUGINS_REQUIRE_SIGNATURE`  | api, worker, cli  | `1`/truthy requires a valid signature before any plugin loads. Unset = no signature check. |
+| `AEGIS_PLUGINS_TRUSTED_KEYS`       | api, worker, cli  | Colon/comma-separated `*.pem` **public-key** files and/or directories of them.          |
+| `AEGIS_PLUGINS_SIG_DIR`            | api, worker, cli  | Dirs holding `<dist>-<version>.sig` files (falls back to trusted-key dirs + the plugin's module dir). |
+
+### LLM guardrails
+
+Two fail-safe layers (secret scrubbing of generated diffs/LLM output +
+prompt-injection detection on untrusted input) wrap every LLM chokepoint.
+All default **on**; leave them on in production. See `SECURITY.md`
+§ "LLM guardrails" and [`overview.md`](../architecture/overview.md)
+§ "LLM guardrails".
+
+| Var                              | Where        | Notes                                                                 |
+|----------------------------------|--------------|-----------------------------------------------------------------------|
+| `AEGIS_LLM_GUARDRAILS`           | api, worker  | Master switch for both layers. Default **on**; `0`/`off` disables all. |
+| `AEGIS_LLM_SCRUB_DIFF`           | api, worker  | Secret-scrub generated diffs/patches (`***REDACTED***`). Default **on**. |
+| `AEGIS_LLM_DETECT_INJECTION`     | api, worker  | Prompt-injection detection on untrusted finding fields + prompts. Default **on**. |
+| `AEGIS_LLM_FILTER_OUTPUT`        | api, worker  | Secret-scrub LLM output at the remediation/agent chokepoints. Default **on**. |
+| `AEGIS_LLM_INJECTION_BLOCK_RISK` | api, worker  | Block threshold: `none`/`low`/`medium`/`high` (default `high`); `off` = detect-and-log only. |
 
 ---
 
@@ -256,6 +306,37 @@ workspace at the same root path.
 
 ---
 
+## Verify release images before deploy
+
+Release builds (on `v*` tags) are pushed to GHCR, **keyless-signed** with
+cosign, and carry a CycloneDX SBOM + SLSA provenance attestation — see
+[`.github/workflows/release-sign.yml`](https://github.com/IntelliBridge/aegis/blob/main/.github/workflows/release-sign.yml)
+and the [supply-chain integrity](../security/supply-chain.md#signed-attested-release-images)
+page. **Verify each image by digest before `docker compose up` / `kubectl
+apply`** so a tampered or unsigned image fails the gate. Wire this into the
+deploy pipeline; do not deploy an image that fails verification.
+
+```bash
+# Per image: api | worker | web | log_ingest, pinned by digest.
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/IntelliBridge/aegis/' \
+  ghcr.io/intellibridge/aegis/<service>@<DIGEST>
+
+# Optional but recommended: also verify the SBOM + SLSA provenance.
+cosign verify-attestation --type cyclonedx \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/IntelliBridge/aegis/' \
+  ghcr.io/intellibridge/aegis/<service>@<DIGEST>
+```
+
+`scripts/verify-release.sh` wraps the full set (signature + SBOM +
+provenance, the last under the slsa-github-generator identity). Always
+verify and deploy the `@sha256:…` digest, not a floating tag — cosign signs
+the digest, and a tag can be re-pointed after verification.
+
+---
+
 ## First-deploy checklist
 
 1. **Database**: provision Postgres with two roles so the audit log is
@@ -274,7 +355,7 @@ workspace at the same root path.
      alembic -c alembic.ini upgrade head
    ```
    Then point the runtime `AEGIS_DB_URL` at `aegis_app`. The current
-   migration head is `0004_audit_append_only`. Single-role/dev may skip the
+   migration head is `0005_auth_profiles`. Single-role/dev may skip the
    roles entirely — the migration's role/grant steps no-op when the roles
    are absent, and Alembic falls back to `AEGIS_DB_URL`.
 
@@ -398,6 +479,49 @@ If you see any chain marked `BROKEN at seq=N`, that's a structural
 issue — likely a manual database mutation, a partial restore, or a
 clock-skew issue on the writer. The verifier reports the first broken
 event; reconcile from there.
+
+---
+
+## External policy engine (optional)
+
+By default the role gate uses the built-in static rule table — no extra
+service. To delegate the role-rank decision to OPA or Cedar instead,
+stand up the decision point, load the example policy (which replicates
+the static table, so it's a behaviour-identical drop-in), and point the
+API + worker at it via `AEGIS_POLICY_ENGINE`. Both external engines
+**fail closed**: if the engine is unreachable, slow, or returns a bad
+answer, the gate denies (`403`) — so a misconfigured sidecar locks the
+platform down, it never opens it up.
+
+**OPA.** Bring up the bundled `opa` service (it lives under a non-default
+`policy` compose profile, so a plain `docker compose up` never starts it):
+
+```bash
+docker compose --profile policy up opa
+# or, without compose, run OPA directly over the example policy dir:
+opa run --server --addr 0.0.0.0:8181 deploy/opa/
+```
+
+The example policy ships at `deploy/opa/aegis-authz.rego` (package
+`aegis.authz`); the compose service mounts `deploy/opa/` read-only. Then
+point Aegis at it on the API + worker:
+
+```bash
+export AEGIS_POLICY_ENGINE=opa
+export AEGIS_OPA_URL=http://opa:8181        # http://localhost:8181 outside compose
+export AEGIS_OPA_PATH=/v1/data/aegis/authz  # default
+```
+
+**Cedar.** Cedar runs as a `cedar-agent` sidecar (not bundled in the
+compose stack) loaded with `deploy/cedar/aegis-policy.cedar` plus the
+schema/entity notes in `deploy/cedar/aegis-entities.md`. The agent host
+resolves the caller's role for the request's project before evaluation.
+Point Aegis at it:
+
+```bash
+export AEGIS_POLICY_ENGINE=cedar
+export AEGIS_CEDAR_URL=http://cedar-agent:8180
+```
 
 ---
 

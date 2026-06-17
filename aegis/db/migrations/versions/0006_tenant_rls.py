@@ -30,8 +30,8 @@ trigger and policy SQL is naturally idempotent (``DROP ... IF EXISTS`` /
 The RLS / FORCE / policy / trigger SQL is unconditional so it applies in CI;
 only role GRANTs (none here) would need 0004-style DO-block guards.
 
-Revision ID: 0005_tenant_rls
-Revises: 0004_audit_append_only
+Revision ID: 0006_tenant_rls
+Revises: 0005_auth_profiles
 Create Date: 2026-06-11
 """
 
@@ -42,8 +42,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0005_tenant_rls"
-down_revision: Union[str, None] = "0004_audit_append_only"
+revision: str = "0006_tenant_rls"
+down_revision: Union[str, None] = "0005_auth_profiles"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -35,6 +35,10 @@ import unittest
 from contextlib import contextmanager
 from uuid import uuid4
 
+import pytest
+
+pytest.importorskip("sqlalchemy")
+
 AEGIS_DB = os.environ.get("AEGIS_DB_URL")
 
 # Tables that gained a denormalized org_id + RLS in 0005.
