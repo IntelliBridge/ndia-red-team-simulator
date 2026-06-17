@@ -44,6 +44,7 @@ from aegis.agents.registry import (
 from aegis.config import load_config
 from aegis.effects import Effect
 from aegis.integrations.cai_loader import load_cai
+from aegis.llm.guardrails import GuardrailViolation, guard_input, guard_output
 from aegis.tools.osint_search import build_osint_search_tool
 
 
@@ -132,7 +133,12 @@ def _invoke(spec: AuthoredSpec, prompt: str, context: AgentContext) -> AgentResu
     execution, runner) is wrapped as ``status="error"`` so a single agent can
     never crash the dispatcher.
     """
-    bundle = load_cai(load_config())
+    config = load_config()
+    try:
+        guard_input(prompt, config=config)
+    except GuardrailViolation as exc:
+        return AgentResult(status="error", output="", error=str(exc))
+    bundle = load_cai(config)
     if bundle is None:
         return AgentResult(
             status="error",
@@ -152,7 +158,8 @@ def _invoke(spec: AuthoredSpec, prompt: str, context: AgentContext) -> AgentResu
         )
         output = getattr(result, "final_output", None) or str(result)
         return AgentResult(
-            status="ok", output=str(output), agent_version=bundle.cai_version,
+            status="ok", output=guard_output(str(output), config=config),
+            agent_version=bundle.cai_version,
         )
     except Exception as exc:  # noqa: BLE001 - any failure degrades to error
         return AgentResult(

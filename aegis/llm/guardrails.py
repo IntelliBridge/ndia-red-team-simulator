@@ -25,8 +25,12 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from aegis.audit.redact import _TOKEN_PATTERNS
+
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
 
 logger = logging.getLogger(__name__)
 
@@ -274,14 +278,14 @@ def detect_prompt_injection(text: str) -> InjectionVerdict:
 # Config-aware high-level helpers (what the call sites use)
 # ---------------------------------------------------------------------------
 
-def _resolve_config(config):
+def _resolve_config(config: AegisConfig | None) -> AegisConfig:
     if config is not None:
         return config
     from aegis.config import load_config
     return load_config()
 
 
-def guard_input(text: str, *, config=None) -> None:
+def guard_input(text: str, *, config: AegisConfig | None = None) -> None:
     """Inspect untrusted ``text`` and raise :class:`GuardrailViolation` when it
     is an injection at/above the configured block threshold.
 
@@ -316,7 +320,7 @@ def guard_input(text: str, *, config=None) -> None:
         )
 
 
-def guard_diff(diff: str, *, config=None) -> str:
+def guard_diff(diff: str, *, config: AegisConfig | None = None) -> str:
     """Scrub secrets from a generated ``diff`` when enabled (passthrough when
     disabled). Logs the categories + count; returns the scrubbed diff."""
     cfg = _resolve_config(config)
@@ -334,7 +338,7 @@ def guard_diff(diff: str, *, config=None) -> str:
     return result.text
 
 
-def guard_output(text: str, *, config=None) -> str:
+def guard_output(text: str, *, config: AegisConfig | None = None) -> str:
     """Scrub secrets from an LLM ``output`` when enabled (passthrough when
     disabled). Logs the categories + count; returns the scrubbed output."""
     cfg = _resolve_config(config)
