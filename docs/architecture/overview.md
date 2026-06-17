@@ -340,32 +340,57 @@ a warning but still registers, so a third-party plugin can add its own
 without patching core. Promoting one to first-party is a one-line append
 — how `supply_chain` landed in v0.5.1 and `code_audit` in v0.7.0.
 
-### CAI agents (16 wired + 3 multi-agent patterns)
+### CAI agents (36 wired + 5 multi-agent patterns)
 
-Agent adapters wrap upstream `cai.agents.*` agents and dispatch by name.
-Every registered agent is **wired** (executable, not a stub), spanning
-all six `Domain` values:
+Agent adapters dispatch by name. Every registered agent is **wired**
+(executable, not a stub), spanning all six `Domain` values. The roster comes
+from three sources, all in `aegis/agents/cai/`:
+
+- **The original 16 wrapped CAI agents** (`builtins.py`, `by_name=False`) —
+  each resolves off a typed `CAIBundle` field.
+- **8 newly-wired breadth CAI agents** (`builtins.py`, `by_name=True`) —
+  resolved generically by their upstream registry key via
+  `resolve_cai_agent` (CAI's `get_agent_by_name`), so wiring an additional
+  CAI agent needs no per-agent `CAIBundle` field: `ctf_agent`,
+  `app_logic_mapper`, `dns_smtp_agent`, `flag_discriminator`,
+  `prompt_injection_detector`, `thought_agent`, `usecase_agent`,
+  `memory_query`.
+- **12 Aegis-native authored specialists** (`authored.py`) — where the
+  builtins *wrap* agents CAI ships, these *compose* brand-new specialists
+  from the vendored CAI tool catalog: each is a substantive scoped system
+  prompt plus a real toolbelt drawn from `cai.tools.*` (and the Camoufox
+  OSINT search tool, below). Each carries its own `domain` + `effect`.
 
 | Domain | Agents |
 |--------|--------|
-| `offensive` | `bug_bounter`, `red_teamer`, `web_pentester`, `android_sast_agent`, `subghz_sdr_agent`, `wifi_security_tester`, `replay_attack_agent` |
-| `forensic` | `dfir`, `memory_analysis`, `network_traffic_analyzer`, `reverse_engineering` |
-| `audit` | `retester`, `reporter` |
-| `defensive` | `blueteam_agent` |
+| `offensive` | `bug_bounter`, `red_teamer`, `web_pentester`, `android_sast_agent`, `subghz_sdr_agent`, `wifi_security_tester`, `replay_attack_agent`, `ctf_agent`, `app_logic_mapper`, `api_security_tester`, `web_surface_mapper`, `ssl_tls_auditor` |
+| `forensic` | `dfir`, `memory_analysis`, `network_traffic_analyzer`, `reverse_engineering`, `memory_query`, `secrets_hunter`, `crypto_analyst`, `log_triage` |
+| `audit` | `retester`, `reporter`, `flag_discriminator`, `thought_agent`, `usecase_agent` |
+| `defensive` | `blueteam_agent`, `prompt_injection_detector`, `iac_auditor`, `container_security` |
 | `remediation` | `codeagent` |
-| `recon` | `recon` (read-only: nmap, shodan, curl, netcat, netstat) |
+| `recon` | `recon` (read-only: nmap, shodan, curl, netcat, netstat), `dns_smtp_agent`, `cloud_recon`, `osint_collector`, `threat_intel`, `dns_enumerator` |
 
-Beyond the 16 single agents, three **multi-agent patterns** join the
+Beyond the 36 single agents, five **multi-agent patterns** join the
 registry as explicitly-dispatchable entries — `offsec_pattern` (a parallel
-offensive sweep) and the `redteam_swarm` / `bb_triage_swarm` handoff swarms
-— for **19** dispatchable entries in all. A pattern runs **only when
-dispatched by name**; a normal single-agent run never triggers one (no
-auto-swarm). All three are `active`-effect, so they clear the same gate as
-any offensive agent. When executed (post-approval), the active offensive
-specialists (`bug_bounter`, `red_teamer`, `web_pentester`) reach the live
-Kali tool belt over an SSE MCP connection to `config.mcp_kali_url`; the
-read-only `recon` agent is excluded by design (the belt carries active
+offensive sweep), the `redteam_swarm` / `bb_triage_swarm` handoff swarms,
+and two red/blue parallel patterns (`red_blue_shared_context`,
+`red_blue_split_context`) that coordinate a red-team attack alongside a
+blue-team responder — for **41** dispatchable entries in all. A pattern runs
+**only when dispatched by name**; a normal single-agent run never triggers
+one (no auto-swarm). All five are `active`-effect, so they clear the same
+gate as any offensive agent. When executed (post-approval), the active
+offensive specialists (`bug_bounter`, `red_teamer`, `web_pentester`) reach
+the live Kali tool belt over an SSE MCP connection to `config.mcp_kali_url`;
+the read-only `recon` agent is excluded by design (the belt carries active
 tools, and recon stays read-only).
+
+**Effect is per-agent, not per-domain.** The breadth and authored agents are
+classified conservatively: a `recon`-domain agent that egresses to a
+third-party (DNS/SMTP/Shodan/web) is `external`; one that runs shell/exec
+tools against a target is `active`; pure analysis, classification, and
+read-only filesystem work is `read`. So `dns_smtp_agent` (recon) is
+`external`, `prompt_injection_detector` (defensive) is `read`, and
+`container_security` (defensive) is `active`.
 
 ### Kali toolbelt (10, via MCP)
 
@@ -376,9 +401,10 @@ invocation lands on the audit chain at the service boundary (see
 [Audit chain](audit-chain.md)). Each tool carries an effect class (below):
 the `read` recon tools run at `remediator`, while the `active` ones
 (`sqlmap`, `hydra`, `metasploit`, `wpscan`) are gated behind
-`execute=true` + `approver`. Counting both surfaces, Aegis ships
-**24 tools today: 10 Kali + 14 scanner adapters**, on the way to the 35+
-OnePager target.
+`execute=true` + `approver`. The Kali allowlist is deliberately **not**
+expanded beyond these 10 — the bundled *mcp-kali* server only routes those
+names, so adding more would mint non-functional tools. Breadth comes from
+the unified tool catalog instead (below).
 
 Each wrapper sends the exact parameter keys the vendored mcp-kali server
 reads (gobuster/dirb use `url`; hydra uses `username_file`/`password_file`;
@@ -388,6 +414,55 @@ values and list files, metasploit `module` + `options`, john `format`. Every
 value still passes the allowlist `_check`, and no wrapper exposes a freeform
 argument passthrough: the generic `command` surface stays closed (403, all
 roles).
+
+### The unified tool catalog (42 tools)
+
+`aegis/tools/catalog.py` (`TOOL_CATALOG` / `list_tools()`) is the single,
+honest registry of every tool the platform can expose to agents — **42
+today**, drawn from four sources:
+
+| Source | Count | What it is |
+|--------|-------|------------|
+| `kali` | 10 | The mcp-kali allowlist (above), categorized; effect comes authoritatively from `aegis.effects.kali_tool_effect`. |
+| `scanner` | 14 | The registered scanner adapters from `list_scanners()`. `read` except the DAST adapters (`zap`/`nuclei`/`strix`), which actively probe → `active`. |
+| `cai` | 17 | The real `@function_tool`s vendored under `project_repos/cai/src/cai/tools/` (recon/web/network/crypto/misc). Catalog names are namespaced `cai_*` to stay unique alongside the bare Kali `nmap` etc.; the bare CAI name is recorded in `CAI_TOOL_NAMES` for toolbelt wiring. |
+| `osint` | 1 | The Camoufox OSINT search tool (below). |
+
+Each tool carries an **effect** (`read` / `active` / `external`) that is
+authoritative in the catalog: `aegis.effects.tool_effect()` consults it
+(falling back to the Kali map), so the catalog and the human gate never
+drift. Effects are classified conservatively — enumeration/analysis is
+`read`, command execution or active probing is `active`, and anything that
+reaches a third party is `external` (e.g. `cai_shodan_search`, `osint_search`).
+An unknown name fails **safe** to `active`. The module is import-light so it
+never pulls in CAI at import time: it lists what the platform *can* expose,
+independent of whether the optional CAI / Camoufox stacks are installed.
+
+### Camoufox OSINT search (web search, `external`)
+
+`aegis/tools/osint_search.py` provides live web OSINT **instead of** a
+Google / SerpAPI search tool. It drives **DuckDuckGo's HTML-only endpoint**
+through **Camoufox** — a patched, anti-fingerprint Firefox — and extracts
+article text with trafilatura. DuckDuckGo + Camoufox is chosen over a Google
+API because it needs **no API key** and carries low detection risk. Vendored
+and adapted from `c3-e/c3cdao-pipeassist`.
+
+Because Camoufox ships a patched Firefox binary that must be fetched out of
+band, it lives behind the optional `osint` extra:
+
+```bash
+pip install -e ".[osint]" && camoufox fetch
+```
+
+Every entry point **degrades to a clear, structured error** when Camoufox or
+trafilatura is absent, so importing the module is always safe and the offline
+test path never launches a browser. The search tool is classified
+`external` (it reaches third-party sites), so it clears the same
+human-in-the-loop gate as any other external-effect capability.
+`build_osint_search_tool()` returns the CAI `@function_tool` the authored
+recon/OSINT specialists add to their toolbelt in place of a Google search,
+or `None` when the CAI SDK isn't importable (offline) — in which case
+composition simply skips it.
 
 ### Capability matrix
 
@@ -400,8 +475,9 @@ slots into without diverging from the architecture (most recently the
 | Seam | Vocabulary | Registered | Runtime consumer | Dispatch |
 |------|-----------|-----------|------------------|----------|
 | Scanners | 8 capabilities | 14 adapters | `scan_start` Celery task | one adapter per job via `dispatch(name \| capability)`; defaults to `strix` |
-| Agents | 6 `Domain`s | 19 adapters (16 agents + 3 patterns) | `agent_run` Celery task | `POST /v1/agents/{name}/run` → admission → task → `dispatch(name)`; remediation may still call `cai.Runner` directly for `codeagent` / `blueteam_agent` |
+| Agents | 6 `Domain`s | 41 adapters (36 agents + 5 patterns) | `agent_run` Celery task | `POST /v1/agents/{name}/run` → admission → task → `dispatch(name)`; remediation may still call `cai.Runner` directly for `codeagent` / `blueteam_agent` |
 | Kali tools | 10 named tools | 10 (over MCP) | `run_kali_tool` service | per-tool REST call, audited at the service boundary |
+| Tool catalog | 4 sources (kali/scanner/cai/osint), 3 effects | 42 tools | agent toolbelts + `tool_effect()` gate | `TOOL_CATALOG` / `list_tools()`; effect is authoritative here and consulted by `aegis.effects.tool_effect` |
 
 One interconnection fact the matrix still makes explicit, tracked as a
 gap rather than intent: scanners run **one adapter per job** (there is

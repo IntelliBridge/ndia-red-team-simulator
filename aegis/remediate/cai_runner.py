@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from aegis.integrations.cai_loader import load_cai
 from aegis.llm.guardrails import guard_input, guard_output
@@ -24,13 +24,16 @@ from aegis.remediate.patch_workflow import (
 )
 from aegis.schema import AegisFinding
 
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
+
 logger = logging.getLogger(__name__)
 
 RemediationAction = Literal["code_patch", "live_hardening"]
 RemediationSource = Literal["cai", "golden_fixture", "vulnfixer"]
 
 
-def _stringify_agent_result(result) -> str:
+def _stringify_agent_result(result: Any) -> str:
     """Return the most useful printable value from a CAI result object."""
     if result is None:
         return "No output from agent"
@@ -141,7 +144,7 @@ def _use_golden_patch(finding: AegisFinding) -> RemediationResult | None:
     )
 
 
-def _usage_from_result(result) -> tuple[int, int]:
+def _usage_from_result(result: Any) -> tuple[int, int]:
     """Best-effort ``(prompt_tokens, completion_tokens)`` from a CAI result.
 
     The CAI ``RunResult`` exposes per-call token usage on
@@ -166,7 +169,7 @@ def _record_usage(
     run_id: str | None,
     model: str,
     task: str,
-    result,
+    result: Any,
 ) -> None:
     """Best-effort insert of an ``LLMUsage`` row after a routed CAI call.
 
@@ -199,7 +202,7 @@ def _run_cai_agent(
     action: RemediationAction,
     finding: AegisFinding,
     prompt: str,
-    config,
+    config: AegisConfig,
     project_id: str | None,
     budget_checker: BudgetChecker | None,
     run_id: str | None = None,
@@ -290,7 +293,7 @@ def run_code_fix(
     *,
     repo_path: str | None = None,
     use_golden_patch: bool = False,
-    config=None,
+    config: AegisConfig | None = None,
     project_id: str | None = None,
     run_id: str | None = None,
     budget_checker: BudgetChecker | None = None,
@@ -324,7 +327,7 @@ def run_code_fix(
 def run_live_hardening(
     finding: AegisFinding,
     *,
-    config=None,
+    config: AegisConfig | None = None,
     project_id: str | None = None,
     run_id: str | None = None,
     budget_checker: BudgetChecker | None = None,

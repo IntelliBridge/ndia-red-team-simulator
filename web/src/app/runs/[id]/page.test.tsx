@@ -7,8 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // in test files. We build elements with React.createElement (`h`) instead —
 // behaviour and assertions are unchanged.
 
-// SWR drives the findings fetch.
+// SWR drives the findings fetch. mutate() is the revalidation hook the live
+// job-event path calls; the fallback poll passes refreshInterval through.
 const useSWRMock = vi.hoisted(() => vi.fn());
+const mutateMock = vi.hoisted(() => vi.fn());
 vi.mock("swr", () => ({ default: useSWRMock }));
 
 const useRequireAuthMock = vi.hoisted(() => vi.fn(() => true));
@@ -18,10 +20,14 @@ vi.mock("@/hooks/useRequireAuth", () => ({
 
 // apiBase/apiWsBase are imported as VALUES (anchor links + WS url) -> mock them
 // to deterministic hosts. api() itself is only the SWR fetcher (never invoked).
+// bearerToken is read by useRunEvents to pick the cookie vs subprotocol path;
+// default to the cookie (browser) path here and override per-test as needed.
+const bearerTokenMock = vi.hoisted(() => vi.fn<() => string | undefined>(() => undefined));
 vi.mock("@/lib/api", () => ({
   api: vi.fn(),
   apiBase: "http://api.test",
   apiWsBase: "ws://api.test",
+  bearerToken: bearerTokenMock,
 }));
 
 // Stub design-system. StageTimeline lists stage names so the WS path is observable.
@@ -37,17 +43,28 @@ vi.mock("@aegis/design-system", () => ({
 }));
 
 // jsdom has no WebSocket. Capture each constructed instance so tests can drive
-// onmessage and assert close-on-unmount.
+// onmessage and assert close-on-unmount. The page now opens TWO sockets to the
+// same events URL: useRunEvents (job-lifecycle, declared first) and the legacy
+// stage-events effect. Both hit ws://api.test/v1/runs/<id>/events, so tests
+// select by construction order via jobWs()/stageWs() rather than by url.
 const wsInstances: FakeWS[] = [];
 class FakeWS {
   onmessage: ((ev: { data: string }) => void) | null = null;
   close = vi.fn();
   url: string;
-  constructor(url: string) {
+  protocols?: string | string[];
+  constructor(url: string, protocols?: string | string[]) {
     this.url = url;
+    this.protocols = protocols;
     wsInstances.push(this);
   }
 }
+
+// useRunEvents' effect is declared before the legacy stage-events effect, and
+// React runs effects in declaration order, so the job socket is constructed
+// first.
+const jobWs = () => wsInstances[0];
+const stageWs = () => wsInstances[1];
 
 import RunPage from "./page";
 
@@ -72,6 +89,9 @@ function renderPage(id = "run-1") {
 
 beforeEach(() => {
   useSWRMock.mockReset();
+  mutateMock.mockReset();
+  bearerTokenMock.mockReset();
+  bearerTokenMock.mockReturnValue(undefined);
   useRequireAuthMock.mockReturnValue(true);
   wsInstances.length = 0;
   vi.stubGlobal("WebSocket", FakeWS);
@@ -111,11 +131,27 @@ describe("RunPage", () => {
     expect(panel.className).toContain("border-red-200");
   });
 
-  it("opens a WebSocket at the apiWsBase events url for the run", () => {
+  it("opens both event sockets at the apiWsBase events url for the run", () => {
     useSWRMock.mockReturnValue({ data: { findings: [], count: 0 }, error: undefined, isLoading: false });
     renderPage("run-77");
-    expect(wsInstances).toHaveLength(1);
-    expect(wsInstances[0].url).toBe("ws://api.test/v1/runs/run-77/events");
+    // Two subscribers on the same channel: job-lifecycle + legacy stage events.
+    expect(wsInstances).toHaveLength(2);
+    expect(jobWs().url).toBe("ws://api.test/v1/runs/run-77/events");
+    expect(stageWs().url).toBe("ws://api.test/v1/runs/run-77/events");
+  });
+
+  it("offers no subprotocol on the job socket when on the cookie (browser) path", () => {
+    bearerTokenMock.mockReturnValue(undefined);
+    useSWRMock.mockReturnValue({ data: { findings: [], count: 0 }, error: undefined, isLoading: false });
+    renderPage("run-77");
+    expect(jobWs().protocols).toBeUndefined();
+  });
+
+  it("offers the aegis.bearer.<token> subprotocol on the job socket for programmatic callers", () => {
+    bearerTokenMock.mockReturnValue("tok-abc");
+    useSWRMock.mockReturnValue({ data: { findings: [], count: 0 }, error: undefined, isLoading: false });
+    renderPage("run-77");
+    expect(jobWs().protocols).toEqual(["aegis.bearer.tok-abc"]);
   });
 
   it("shows the header id and an HTML report link built from apiBase", () => {
@@ -173,19 +209,21 @@ describe("RunPage", () => {
     expect(screen.getByText("Findings (0)")).toBeTruthy();
   });
 
-  it("closes the socket on unmount", () => {
+  it("closes both sockets on unmount", () => {
     useSWRMock.mockReturnValue({ data: { findings: [], count: 0 }, error: undefined, isLoading: false });
     const { unmount } = renderPage();
-    const ws = wsInstances[0];
+    const job = jobWs();
+    const stage = stageWs();
     unmount();
-    expect(ws.close).toHaveBeenCalledTimes(1);
+    expect(job.close).toHaveBeenCalledTimes(1);
+    expect(stage.close).toHaveBeenCalledTimes(1);
   });
 
   it("appends stage events from the socket into the StageTimeline", () => {
     useSWRMock.mockReturnValue({ data: { findings: [], count: 0 }, error: undefined, isLoading: false });
     renderPage();
 
-    const ws = wsInstances[0];
+    const ws = stageWs();
     act(() => {
       ws.onmessage?.({ data: JSON.stringify({ name: "recon" }) });
       ws.onmessage?.({ data: JSON.stringify({ name: "scan", mode: "live" }) });
@@ -202,7 +240,7 @@ describe("RunPage", () => {
     useSWRMock.mockReturnValue({ data: { findings: [], count: 0 }, error: undefined, isLoading: false });
     renderPage();
 
-    const ws = wsInstances[0];
+    const ws = stageWs();
     act(() => {
       ws.onmessage?.({ data: "not json" });
       ws.onmessage?.({ data: JSON.stringify({ mode: "live" }) });
@@ -210,5 +248,66 @@ describe("RunPage", () => {
 
     // Still waiting: no stage rendered for nameless/garbage frames.
     expect(screen.getByText("Waiting for the worker to emit stage events…")).toBeTruthy();
+  });
+
+  it("passes the fallback poll interval through to SWR", () => {
+    useSWRMock.mockReturnValue({ data: { findings: [], count: 0 }, error: undefined, isLoading: false });
+    renderPage();
+    // 3rd arg is SWR's options object; the slow poll is the WS fallback.
+    expect(useSWRMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Function),
+      expect.objectContaining({ refreshInterval: 30_000 }),
+    );
+  });
+
+  it("revalidates the findings query (mutate) on a job-lifecycle frame", () => {
+    useSWRMock.mockReturnValue({
+      data: { findings: [], count: 0 },
+      error: undefined,
+      isLoading: false,
+      mutate: mutateMock,
+    });
+    renderPage("run-9");
+
+    act(() => {
+      jobWs().onmessage?.({
+        data: JSON.stringify({
+          type: "job",
+          run_id: "run-9",
+          job_id: "j-1",
+          status: "running",
+        }),
+      });
+    });
+
+    expect(mutateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not revalidate on heartbeat / non-job frames", () => {
+    useSWRMock.mockReturnValue({
+      data: { findings: [], count: 0 },
+      error: undefined,
+      isLoading: false,
+      mutate: mutateMock,
+    });
+    renderPage("run-9");
+
+    act(() => {
+      // heartbeat, the legacy stage shape, and pure garbage are all ignored.
+      jobWs().onmessage?.({ data: JSON.stringify({ type: "heartbeat" }) });
+      jobWs().onmessage?.({ data: JSON.stringify({ name: "recon" }) });
+      jobWs().onmessage?.({ data: "not json" });
+    });
+
+    expect(mutateMock).not.toHaveBeenCalled();
+  });
+
+  it("opens no job socket while unauthenticated", () => {
+    useRequireAuthMock.mockReturnValue(false);
+    useSWRMock.mockReturnValue({ data: undefined, error: undefined, isLoading: false });
+    renderPage();
+    // Neither the job nor the stage effect should construct a socket.
+    expect(wsInstances).toHaveLength(0);
   });
 });

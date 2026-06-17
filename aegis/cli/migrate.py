@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 
+from aegis.config import AegisConfig
 
-def cmd_migrate(args, config) -> None:
+
+def cmd_migrate(args: argparse.Namespace, config: AegisConfig) -> None:
     """Migrate filesystem run data into Postgres."""
     direction = getattr(args, "direction", "fs->pg")
     if direction != "fs->pg":

@@ -7,6 +7,10 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aegis.schema import AegisFinding
 
 _FENCE_RE = re.compile(
     r"```(?:diff|patch)\s*\n(.*?)```", re.DOTALL | re.IGNORECASE
@@ -73,7 +77,7 @@ def diff_sha256(diff: str) -> str:
 
 
 def _git(repo: Path, args: list[str], *, check: bool = True,
-         input_text: str | None = None) -> subprocess.CompletedProcess:
+         input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True,
@@ -120,7 +124,7 @@ def deterministic_branch(finding_id: str) -> str:
 
 def commit_patch(
     repo_path: Path | str,
-    finding,
+    finding: AegisFinding,
     diff: str,
     *,
     branch: str | None = None,

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
+
 from aegis.cli import _console, _runstate
+from aegis.config import AegisConfig
 
 
-def cmd_findings(args, config) -> None:
+def cmd_findings(args: argparse.Namespace, config: AegisConfig) -> None:
     """Display findings as a table."""
     state = _runstate._resolve_run_state(config, args.run)
     findings = state.load_findings()

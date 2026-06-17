@@ -6,6 +6,52 @@ SemVer.
 
 ## [Unreleased]
 
+### Added
+- **Agent + tool breadth toward the OnePager promise.** The roster grows from
+  16 wired CAI agents + 3 patterns to **36 wired agents + 5 multi-agent
+  patterns**, and the tool catalog reaches **42 effect-classified tools**.
+  - **8 newly-wired CAI agents** (`aegis/agents/cai/builtins.py`) resolved
+    generically by their upstream registry key via `resolve_cai_agent`
+    (CAI's `get_agent_by_name`), so wiring a CAI agent needs no per-agent
+    `CAIBundle` field: `ctf_agent`, `app_logic_mapper`, `dns_smtp_agent`,
+    `flag_discriminator`, `prompt_injection_detector`, `thought_agent`,
+    `usecase_agent`, `memory_query`.
+  - **2 new multi-agent patterns** (`patterns.py`): `red_blue_shared_context`
+    and `red_blue_split_context` — red-team attack alongside a blue-team
+    responder, both `active`-effect and human-gated (now 5 patterns total).
+  - **12 Aegis-native authored specialists** (`aegis/agents/cai/authored.py`)
+    — each a real CAI `Agent` composition (substantive scoped prompt + a real
+    `cai.tools.*` toolbelt) with its own domain + effect: `cloud_recon`,
+    `osint_collector`, `threat_intel`, `api_security_tester`,
+    `web_surface_mapper`, `ssl_tls_auditor`, `dns_enumerator`,
+    `secrets_hunter`, `iac_auditor`, `container_security`, `crypto_analyst`,
+    `log_triage`. Registration is import-safe (CAI only matters at invocation);
+    a failed tool import or offline run degrades to `status="error"`.
+  - **Unified, effect-classified tool catalog** (`aegis/tools/catalog.py`,
+    `TOOL_CATALOG` / `list_tools()`): **42 tools** across four sources —
+    10 Kali + 14 scanner adapters + 17 vendored CAI `@function_tool`s
+    (namespaced `cai_*`) + 1 OSINT search. Each tool carries an authoritative
+    `read`/`active`/`external` effect that `aegis.effects.tool_effect()`
+    consults, so the catalog and the human gate never drift. The Kali
+    allowlist is deliberately not expanded (mcp-kali routes only those 10).
+  - **Camoufox OSINT web search** (`aegis/tools/osint_search.py`): live web
+    OSINT via the Camoufox anti-detect browser against DuckDuckGo's HTML
+    endpoint + trafilatura extraction, used in place of a Google/SerpAPI
+    search (no API key, low detection risk). Behind the optional `osint`
+    extra (`pip install -e ".[osint]"` + `camoufox fetch`); classified
+    `external` (human-gated) and degrades to a clear, structured error when
+    absent. `build_osint_search_tool()` is the web-search tool authored
+    specialists add to their toolbelt.
+
+## [0.13.0] — 2026-06-17 — architecture hardening: validated findings, durable jobs & live events, strict types
+
+A hardening milestone across the finding seam, the worker lifecycle, and the
+type system. No language/stack change — Python + TypeScript remain the right
+fit — but the normalization seam is now runtime-validated, job status is
+durable and streamed live, and `mypy` gates merges in strict mode. Offline
+`pytest` (1362 passing / 21 skipped), strict `mypy aegis`, and `mkdocs --strict`
+all stay green.
+
 ### Security
 - **DB-side append-only audit log (migration `0004`).** `audit_events` is now
   insert-only *at the database*: a row-immutability trigger `RAISE EXCEPTION`s
@@ -45,6 +91,45 @@ SemVer.
   `AEGIS_LLM_SCRUB_DIFF`, `AEGIS_LLM_DETECT_INJECTION`,
   `AEGIS_LLM_FILTER_OUTPUT` (all default on), and
   `AEGIS_LLM_INJECTION_BLOCK_RISK` (default `high`; `off` = detect-and-log).
+
+### Added
+- **Live run events.** The worker publishes job transitions
+  (`running`/`succeeded`/`failed`) to the Redis channel `run:{run_id}:events`
+  (`aegis/workers/events.py`); the existing WS endpoint `/v1/runs/{run_id}/events`
+  streams them and the frontend consumes them live (`useRunEvents` hook) with
+  SWR polling kept only as a fallback. Previously nothing published to that
+  channel and the UI could only poll.
+- **Celery queue routing + beat scheduler.** Long offensive/remediation tasks
+  run on a `scans` queue, fast bookkeeping on `default`, with a dedicated worker
+  pool per queue plus a new `aegis-beat` service so the stale-job reaper
+  actually fires.
+- `pydantic>=2.7` as a core runtime dependency; `aegis/py.typed`; and
+  `make lint` / `make typecheck` / `make check`.
+
+### Changed
+- **`AegisFinding`/`CodeLocation` migrated to Pydantic v2.** Findings are now
+  validated at construction (an out-of-vocabulary `severity`/`finding_type`
+  fails at the adapter instead of silently persisting). `to_dict`/`from_dict`
+  keep their signatures; `from_dict` is lenient on read so legacy `schema_blob`
+  rows still load.
+- **Strict `mypy` now gates merges** (was `continue-on-error`). The whole
+  `aegis` tree is annotated under `disallow_untyped_defs` et al., with the
+  `pydantic.mypy` plugin.
+- **Scanner layer de-duplicated.** New `run_cli_scan_jsonl()` collapses the
+  inlined JSONL loops (nuclei/trufflehog/bumblebee); `ScanResult.from_runner()`
+  collapses the runner re-wrap (strix/trivy).
+
+### Fixed
+- **Durable terminal job status.** A failed task now persists `status="failed"`
+  — `task_context` commits it despite `get_session()`'s rollback-on-exception,
+  which previously discarded the write and stranded the job `running`.
+- **The reaper now runs.** `beat_schedule` was defined but no `celery beat`
+  process existed; the new `aegis-beat` service fires it.
+- **Async WS upgrade no longer blocks the event loop** — the per-connection DB
+  lookup in `_enforce_upgrade_policy` is offloaded via `run_in_threadpool`.
+- **Transient-error retries no longer no-op.** A retried task is reset to
+  `queued` before redelivery so the at-least-once guard doesn't skip it; it
+  still fails terminally once retries are exhausted.
 
 ## [0.12.0] — 2026-06-08 — finish the seams: multi-scanner dispatch, budget caps, API sunsets
 
