@@ -8,10 +8,17 @@ canonical audit chain before the DB row is mutated.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from aegis.config import AegisConfig
 from aegis.safety import authorize
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from aegis.audit.chain import AuditWriter
+    from aegis.db.models import Target
 
 
 @dataclass
@@ -30,7 +37,7 @@ def create_target(
     value: str,
     actor: str,
     config: AegisConfig,
-    audit_writer,
+    audit_writer: AuditWriter,
 ) -> TargetRecord:
     """Admission boundary for adding a target to a project's allowlist."""
     authorize(
@@ -58,7 +65,7 @@ def delete_target(
     target_id: str,
     actor: str,
     config: AegisConfig,
-    audit_writer,
+    audit_writer: AuditWriter,
 ) -> str:
     """Admission boundary for removing a target from a project's allowlist."""
     from aegis.db.models import Target
@@ -85,3 +92,101 @@ def delete_target(
         if target is not None:
             sess.delete(target)
     return target_id
+
+
+class TargetVerificationError(Exception):
+    """Raised when an ownership-verification check does not pass.
+
+    The API maps this to 422 (the request was well-formed but the operator
+    has not yet proven control of the target). The message is operator-safe
+    — it never carries the verification secret.
+    """
+
+
+def verify_target(
+    session: Session,
+    target_id: str,
+    *,
+    actor: str,
+    audit_writer: AuditWriter | None = None,
+    config: AegisConfig | None = None,
+) -> Target:
+    """Prove the operator controls a target, then mark it ``verified``.
+
+    Dispatches on ``Target.kind``:
+
+    - ``url`` → a DNS TXT record on the host must carry the deterministic
+      ``expected_dns_token``.
+    - ``github_repo`` → the linked GitHub App installation must access the repo.
+    - ``image`` → unsupported (raises ``TargetVerificationError``).
+
+    On success: sets ``verified=True``, flushes, and emits a secret-free
+    ``target.verify`` audit event (mirroring ``create_target``: detail carries
+    kind + matched bool, never the token/secret). On failure: leaves
+    ``verified`` untouched and raises ``TargetVerificationError`` with the
+    reason. ``LookupError`` if the target is unknown.
+
+    Returns the (refreshed) ``Target`` on success; the verification ``method``
+    and ``detail`` are attached as ``target.verify_method`` /
+    ``target.verify_detail`` transient attributes so the API can echo them
+    without re-running the check.
+    """
+    from aegis.config import load_config
+    from aegis.db.models import Target
+    from aegis.services.target_verify import (
+        expected_dns_token,
+        verify_dns_txt,
+        verify_github_repo,
+    )
+
+    cfg = config or load_config()
+
+    target = session.get(Target, target_id)
+    if target is None:
+        raise LookupError(f"target not found: {target_id}")
+
+    if target.kind == "url":
+        expected = expected_dns_token(target, config=cfg)
+        matched, detail = verify_dns_txt(target.value, expected)
+        method = "dns-txt"
+    elif target.kind == "github_repo":
+        matched, detail = verify_github_repo(target.value, target.installation_id)
+        method = "github-app"
+    elif target.kind == "image":
+        raise TargetVerificationError(
+            "image targets cannot be ownership-verified "
+            "(no DNS/GitHub ownership channel for a container image)"
+        )
+    else:
+        raise TargetVerificationError(
+            f"unsupported target kind for verification: {target.kind!r}"
+        )
+
+    if audit_writer is not None:
+        audit_writer.append(
+            action="target.verify",
+            actor=actor,
+            target=target.value,
+            allowlist_check="n/a",
+            override=False,
+            success=matched,
+            detail={
+                "actor": actor,
+                "target_id": target_id,
+                "kind": target.kind,
+                "method": method,
+                "matched": matched,
+            },
+            project_id=target.project_id,
+        )
+
+    if not matched:
+        raise TargetVerificationError(detail)
+
+    target.verified = True
+    session.flush()
+    # Transient attributes for the API to echo (not persisted columns).
+    target.verify_method = method
+    target.verify_detail = detail
+    verified: Target = target
+    return verified

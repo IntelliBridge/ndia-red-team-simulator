@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
+    from aegis.schema import AegisFinding
+
+DEFAULT_BASE_BRANCH = "main"
 
 _FENCE_RE = re.compile(
     r"```(?:diff|patch)\s*\n(.*?)```", re.DOTALL | re.IGNORECASE
@@ -39,21 +48,33 @@ def extract_unified_diff(agent_output: str | None) -> str | None:
       1. ``` diff / ``` patch fenced block.
       2. First ``` block that looks like a unified diff.
       3. Naked --- a/... / +++ b/... block.
+
+    This is the canonical diff-extraction point, so the extracted diff is
+    passed through :func:`aegis.llm.guardrails.guard_diff` before returning —
+    every downstream consumer (persist to disk, PR body, logs) sees the
+    secret-scrubbed diff. Scrubbing is config-gated and passthrough when off.
     """
     if not agent_output:
         return None
 
+    diff: str | None = None
     for match in _FENCE_RE.finditer(agent_output):
         candidate = match.group(1).strip()
         if "---" in candidate and "+++" in candidate:
-            return candidate + "\n" if not candidate.endswith("\n") else candidate
+            diff = candidate + "\n" if not candidate.endswith("\n") else candidate
+            break
 
-    # Fall back: naked diff outside fences.
-    m = _HUNK_HEADER_RE.search(agent_output)
-    if m:
-        return agent_output[m.start():].rstrip() + "\n"
+    if diff is None:
+        # Fall back: naked diff outside fences.
+        m = _HUNK_HEADER_RE.search(agent_output)
+        if m:
+            diff = agent_output[m.start():].rstrip() + "\n"
 
-    return None
+    if diff is None:
+        return None
+
+    from aegis.llm.guardrails import guard_diff
+    return guard_diff(diff)
 
 
 def diff_sha256(diff: str) -> str:
@@ -61,7 +82,7 @@ def diff_sha256(diff: str) -> str:
 
 
 def _git(repo: Path, args: list[str], *, check: bool = True,
-         input_text: str | None = None) -> subprocess.CompletedProcess:
+         input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True,
@@ -108,7 +129,7 @@ def deterministic_branch(finding_id: str) -> str:
 
 def commit_patch(
     repo_path: Path | str,
-    finding,
+    finding: AegisFinding,
     diff: str,
     *,
     branch: str | None = None,
@@ -233,19 +254,84 @@ def rollback(repo_path: Path | str, ref_before: str) -> bool:
         return False
 
 
+def _parse_release_trains(raw: str | None) -> dict[str, str]:
+    """Parse a release-train mapping from JSON or ``name=branch,...`` form.
+
+    Accepts either a JSON object (``{"2024.1": "release/2024.1"}``) or the
+    compact ``name=branch,name=branch`` form. Malformed input yields an empty
+    map (so resolution falls back to the default base) rather than raising.
+    """
+    if not raw:
+        return {}
+    raw = raw.strip()
+    if raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+        return {str(k): str(v) for k, v in parsed.items()} if isinstance(parsed, dict) else {}
+    mapping: dict[str, str] = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair or "=" not in pair:
+            continue
+        name, branch = pair.split("=", 1)
+        name, branch = name.strip(), branch.strip()
+        if name and branch:
+            mapping[name] = branch
+    return mapping
+
+
+def select_base_branch(
+    target_branch_hint: str | None = None, *, config: AegisConfig | None = None
+) -> str:
+    """Resolve the base branch a fix PR should target.
+
+    Looks the ``target_branch_hint`` up in a release-train mapping sourced from
+    (in order) the ``AEGIS_RELEASE_TRAINS`` env var or ``config.release_trains``
+    — JSON or ``name=branch,...``. A hint that matches a train name returns its
+    branch. A hint already shaped like a branch (matches a mapping *value*, or
+    no mapping is configured) is used verbatim. An unknown hint or no hint at
+    all falls back to ``DEFAULT_BASE_BRANCH`` (``"main"``) — keeping every
+    current caller unchanged. Pure: no git/gh involved.
+    """
+    raw = os.environ.get("AEGIS_RELEASE_TRAINS")
+    if raw is None and config is not None:
+        raw = getattr(config, "release_trains", None)
+    mapping = _parse_release_trains(raw)
+
+    if not target_branch_hint:
+        return DEFAULT_BASE_BRANCH
+    if target_branch_hint in mapping:
+        return mapping[target_branch_hint]
+    # Allow passing a concrete branch that is already a known train target.
+    if target_branch_hint in mapping.values():
+        return target_branch_hint
+    return DEFAULT_BASE_BRANCH
+
+
 def open_pull_request(
     repo_path: Path | str,
     branch: str,
     *,
     title: str,
     body: str,
-    base: str = "main",
+    base: str = DEFAULT_BASE_BRANCH,
+    base_hint: str | None = None,
+    config: AegisConfig | None = None,
     push: bool = True,
 ) -> tuple[bool, str]:
     """Push the branch and create a PR via the gh CLI.
 
     Returns (success, pr_url_or_error). Requires gh to be authenticated.
+
+    Backport awareness (additive): when ``base_hint`` is supplied it is
+    resolved through ``select_base_branch`` (release-train mapping) and
+    overrides ``base``. Callers that pass no hint keep the historical
+    ``base="main"`` behaviour unchanged.
     """
+    if base_hint is not None:
+        base = select_base_branch(base_hint, config=config)
     repo = Path(repo_path)
     if push:
         push_result = subprocess.run(

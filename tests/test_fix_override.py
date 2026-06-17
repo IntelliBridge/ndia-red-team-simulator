@@ -66,7 +66,7 @@ def _make_task_ctx(job_detail: dict | None = None):
     ctx.session = sess
 
     @contextlib.contextmanager
-    def fake_tc(job_id):  # noqa: ARG001
+    def fake_tc(job_id, task=None):  # noqa: ARG001
         yield ctx
 
     return ctx, sess, job, fake_tc

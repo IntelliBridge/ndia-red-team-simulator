@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 
@@ -20,7 +21,7 @@ def _kv(label: str, value: str, *, color: str = "") -> None:
         print(f"  {label:<18} {value}")
 
 
-def cmd_status(_args, config: AegisConfig) -> None:
+def cmd_status(_args: argparse.Namespace, config: AegisConfig) -> None:
     api_url = os.environ.get("AEGIS_API_URL", "")
     mode = os.environ.get("AEGIS_MODE", "filesystem")
     db_url = os.environ.get("AEGIS_DB_URL", "")

@@ -13,11 +13,13 @@ const NAV_LINKS: { href: string; label: string }[] = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/projects", label: "Projects" },
   { href: "/targets", label: "Targets" },
+  { href: "/auth-profiles", label: "Auth Profiles" },
   { href: "/findings", label: "Findings" },
   { href: "/agents", label: "Agents" },
   { href: "/tools", label: "Kali tools" },
   { href: "/logs", label: "Logs" },
   { href: "/audit", label: "Audit" },
+  { href: "/cost", label: "Cost" },
 ];
 
 export default function RootLayout({

@@ -7,5 +7,28 @@ modules without pulling worker-only dependencies.
 """
 
 from aegis.policy.ci_gate import CIGatePolicy, evaluate
+from aegis.policy.engine import (
+    CedarPolicyEngine,
+    OPAPolicyEngine,
+    PolicyDecision,
+    PolicyEngine,
+    PolicyRequest,
+    StaticPolicyEngine,
+    build_request,
+    reset_policy_engine,
+    resolve_policy_engine,
+)
 
-__all__ = ["CIGatePolicy", "evaluate"]
+__all__ = [
+    "CIGatePolicy",
+    "evaluate",
+    "CedarPolicyEngine",
+    "OPAPolicyEngine",
+    "PolicyDecision",
+    "PolicyEngine",
+    "PolicyRequest",
+    "StaticPolicyEngine",
+    "build_request",
+    "reset_policy_engine",
+    "resolve_policy_engine",
+]

@@ -86,16 +86,18 @@ services:
       AEGIS_KALI_URL: http://kali:5000
     ports: ["8000:8000"]
 
+  # Long-running offensive/remediation work (-Q scans). Needs the kali belt.
   aegis-worker:
     image: aegis-worker:dev
     build:
       context: ..
       dockerfile: deploy/Dockerfile.worker
+    command: ["celery", "-A", "aegis.workers.celery_app", "worker", "-Q", "scans", "--loglevel=info"]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
       kali: { condition: service_started }
-    environment:
+    environment: &worker-env
       AEGIS_ENV: dev
       AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@postgres:5432/aegis
       AEGIS_BROKER_URL: redis://redis:6379/0
@@ -107,6 +109,26 @@ services:
       AEGIS_S3_SECRET_ACCESS_KEY: aegis-secret
       AEGIS_KALI_URL: http://kali:5000
       AEGIS_DISABLE_LLM: "1"
+
+  # Fast bookkeeping (-Q default): reports, CI gate, exports, parallel_fix
+  # orchestration, and the reaper. Kept off the scans pool so long scans can't
+  # starve it. Reuses the worker image + env via the &worker-env anchor.
+  aegis-worker-default:
+    image: aegis-worker:dev
+    command: ["celery", "-A", "aegis.workers.celery_app", "worker", "-Q", "default", "--loglevel=info"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment: *worker-env
+
+  # Beat scheduler: the only process that fires app.conf.beat_schedule (the
+  # stale-job reaper, every 5 min). Without it the reaper never runs.
+  aegis-beat:
+    image: aegis-worker:dev
+    command: ["celery", "-A", "aegis.workers.celery_app", "beat", "--loglevel=info"]
+    depends_on:
+      redis: { condition: service_healthy }
+    environment: *worker-env
 
   aegis-web:
     image: aegis-web:dev
@@ -139,6 +161,21 @@ services:
     environment:
       AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@postgres:5432/aegis
     ports: ["4319:4319"]
+
+  # ----- policy profile: external OPA policy engine ------------------------
+  # Opt-in (non-default) policy decision point for the role gate. Bring it
+  # up with `docker compose --profile policy up opa`, mount the example
+  # Rego, then run the API/worker with AEGIS_POLICY_ENGINE=opa and
+  # AEGIS_OPA_URL=http://opa:8181. The default `docker compose up` is
+  # unchanged — without the profile this service never starts.
+  opa:
+    image: openpolicyagent/opa:0.66.0
+    profiles: ["policy"]
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies"]
+    volumes:
+      - ./opa:/policies:ro
+    ports:
+      - "8181:8181"
 
   # ----- obs profile: Collector + Loki + Jaeger ----------------------------
   otel-collector:

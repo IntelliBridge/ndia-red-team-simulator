@@ -80,6 +80,31 @@ describe("RootLayout", () => {
     expect(header?.className).toContain("border-border");
   });
 
+  it("renders the Cost and Auth Profiles nav links with the correct hrefs", () => {
+    renderLayout();
+
+    const dashboardLink = screen.getByText("Dashboard", { selector: "a" });
+    expect(dashboardLink.getAttribute("href")).toBe("/dashboard");
+
+    const projectsLink = screen.getByText("Projects", { selector: "a" });
+    expect(projectsLink.getAttribute("href")).toBe("/projects");
+
+    const targetsLink = screen.getByText("Targets", { selector: "a" });
+    expect(targetsLink.getAttribute("href")).toBe("/targets");
+
+    const costLink = screen.getByText("Cost", { selector: "a" });
+    expect(costLink.getAttribute("href")).toBe("/cost");
+
+    const authProfilesLink = screen.getByText("Auth Profiles", { selector: "a" });
+    expect(authProfilesLink.getAttribute("href")).toBe("/auth-profiles");
+
+    const logsLink = screen.getByText("Logs", { selector: "a" });
+    expect(logsLink.getAttribute("href")).toBe("/logs");
+
+    const auditLink = screen.getByText("Audit", { selector: "a" });
+    expect(auditLink.getAttribute("href")).toBe("/audit");
+  });
+
   it("renders passed children inside the layout", () => {
     renderLayout();
     expect(screen.getByText("child-sentinel")).toBeTruthy();
