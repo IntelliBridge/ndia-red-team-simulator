@@ -7,6 +7,19 @@ SemVer.
 ## [Unreleased]
 
 ### Added
+- **Pluggable authorization policy engine.** The route-level role gate
+  (`aegis.api.policy.check`) now delegates its decision to a configurable
+  `PolicyEngine` (`aegis/policy/engine.py`) selected by `AEGIS_POLICY_ENGINE`:
+  `static` (**default**, the existing 4-tier RBAC rule table, behaviour-identical),
+  `opa` (POSTs the decision input to an Open Policy Agent data endpoint), or
+  `cedar` (POSTs to a `cedar-agent` REST endpoint). Both external engines **fail
+  closed** — any error, timeout, or malformed decision denies and logs. The
+  separate target-allowlist + audit gate (`aegis.safety.authorize`) is unchanged.
+  Example drop-in policies replicating the static role-rank table ship at
+  `deploy/opa/aegis-authz.rego` (package `aegis.authz`) and
+  `deploy/cedar/aegis-policy.cedar` (+ `deploy/cedar/aegis-entities.md`); an
+  opt-in `opa` service lands under a non-default `policy` compose profile. See
+  `docs/architecture/auth.md` § "Policy engine" and `docs/ops/deploy.md`.
 - **Community scanner-adapter marketplace.** The `aegis.scanners` /
   `aegis.agents` entry-point seam is now a documented, supported plugin
   marketplace: a third-party distribution ships an adapter via a zero-arg

@@ -28,7 +28,8 @@ see `SECURITY.md` and `docs/ops/deploy.md`), the LLM guardrail layers
 (diff/output secret scrubbing + prompt-injection detection; see
 `SECURITY.md` § "LLM guardrails"), the plugin entry-point seam now a
 documented, validated, allowlist-gated **scanner-adapter marketplace** (see
-[Extending Aegis](dev/extending.md)), and **supply-chain integrity** mostly
+[Extending Aegis](dev/extending.md)), a pluggable authorization **`PolicyEngine`**
+(static default + opt-in OPA / Cedar), and **supply-chain integrity** mostly
 shipped (keyless cosign image signing + SBOM + SLSA-3 provenance, and opt-in
 signed plugins; see [Supply-chain integrity](security/supply-chain.md)) all
 landed — the focus has been **capability breadth** and the remaining
@@ -99,7 +100,13 @@ Closing the gap to the OnePager promise.
 - **Worker autoscaling / multi-region DR.**
 - **Celery → Temporal** queue migration (migration shape documented; deferred).
 - **Production Helm / k8s manifests** (kind scaffolding only today).
-- **OPA / Cedar policy engine** (static rule table today).
+- ~~**OPA / Cedar policy engine** (static rule table today).~~ **Shipped**:
+  the route-level role gate is now a pluggable `PolicyEngine`
+  (`aegis/policy/engine.py`). `static` stays the default and is
+  behaviour-identical; opt into `opa` or `cedar` via `AEGIS_POLICY_ENGINE`
+  to delegate to an external decision point (fail-closed). Example policies
+  ship at `deploy/opa/` and `deploy/cedar/`. See `docs/architecture/auth.md`
+  § "Policy engine".
 - **HA Keycloak / IdP hardening.**
 - **Native MCP protocol** (mcp-kali consumed over REST today).
 - **`AEGIS_OFFLINE_VENDOR_HOST`** — air-gapped vendor mirror for submodules.

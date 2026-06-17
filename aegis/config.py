@@ -40,6 +40,18 @@ class AegisConfig:
     # seconds is presumed crashed (the redelivery guard never re-runs it) and
     # is flipped to ``failed`` by ``aegis.reap_stale_jobs`` on the beat schedule.
     job_max_runtime_seconds: int = 3600
+    # Pluggable authorization policy engine for the role gate
+    # (``aegis.api.policy.check``). ``static`` (default) keeps the built-in
+    # role-rank table; ``opa`` / ``cedar`` delegate to an external policy
+    # service over REST. The engine reads these via the matching env vars
+    # (``AEGIS_POLICY_ENGINE`` / ``AEGIS_OPA_URL`` / ``AEGIS_OPA_PATH`` /
+    # ``AEGIS_CEDAR_URL``) — mirroring the storage/audit backend selectors;
+    # these fields keep the contract discoverable. External engines fail
+    # closed (deny) on any connection error or malformed response.
+    policy_engine: str = "static"
+    opa_url: str | None = None
+    opa_path: str | None = None
+    cedar_url: str | None = None
     # Supply-chain: optional Ed25519 signature enforcement for third-party
     # marketplace plugins. Off by default → the entry-point loader is unchanged.
     # When enabled (env ``AEGIS_PLUGINS_REQUIRE_SIGNATURE=1`` or this flag), only
