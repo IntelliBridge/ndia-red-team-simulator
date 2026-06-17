@@ -11,11 +11,13 @@ Aegis unifies four production-grade open-source security tools —
 [**CAI**](https://github.com/aliasrobotics/cai) (multi-agent LLM
 runtime), [**mcp-kali-server**](https://gitlab.com/kalilinux/packages/mcp-kali-server)
 (offensive toolbelt over MCP), and [**vulnerability-fixer**](https://github.com/OpenHands/vulnerability-fixer)
-(remediation harness) — into one multi-user platform. Every action,
-from the first scan to the merged pull request, is gated by RBAC and
-recorded on a hash-chained audit log, so the question *"what did the
-platform do, against what target, on whose authority?"* always has a
-verifiable answer.
+(remediation harness) — into one multi-user, multi-tenant platform.
+Every action, from the first scan to the merged pull request, is gated
+by a fail-closed authorization policy engine and recorded on an
+append-only, hash-chained audit log (enforced at the database, with
+WORM export to S3 Object Lock), so the question *"what did the platform
+do, against what target, on whose authority?"* always has a verifiable
+answer. Cross-org tenants are isolated by Postgres Row-Level Security.
 
 ---
 
