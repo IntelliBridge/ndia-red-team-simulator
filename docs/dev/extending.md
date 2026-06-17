@@ -61,6 +61,117 @@ Defined in [`aegis/scanners/registry.py`](https://github.com/IntelliBridge/aegis
 [`aegis/scanners/strix_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/strix_adapter.py)
 is the reference implementation.
 
+## Don't hand-roll `scan()` — pick the right shared helper
+
+Most adapters wrap a CLI tool, and the wrapping boilerplate (start the
+timer, `subprocess.run`, the `TimeoutExpired` / `FileNotFoundError`
+envelope, persist the raw payload, assemble the `ScanResult`) is
+identical from adapter to adapter. [`aegis/scanners/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/registry.py)
+provides three reuse seams so a new adapter supplies only what genuinely
+varies. Reach for them in this order — write a fully custom `scan()`
+only when none fits.
+
+### CLI-subprocess helpers: `run_cli_scan` vs. `run_cli_scan_jsonl`
+
+Both own the same lifecycle (timer → `subprocess.run` with the adapter's
+`default_timeout` honoured → error envelope → optional raw-payload
+persistence → `ScanResult`). They differ only in **how stdout is
+parsed**:
+
+| Helper | Tool output shape | Parse callback | Malformed input |
+|--------|-------------------|----------------|-----------------|
+| `run_cli_scan(...)` | A **single JSON document** on stdout (one object/array for the whole scan). | `parse(proc, run_id) -> list[AegisFinding]` — gets the whole `CompletedProcess`. | May raise `json.JSONDecodeError`; with `parse_error_label` set that becomes a `"failed to parse <label>"` error result. |
+| `run_cli_scan_jsonl(...)` | **Line-oriented JSONL / NDJSON** — one JSON object per line. | `convert(record, run_id) -> AegisFinding \| None` — invoked once per parsed line. | A line that isn't valid JSON is **silently skipped**; the scan never fails on a bad line, so there is no parse-error envelope. |
+
+The JSONL helper's per-line `convert` callback returning `None` **filters
+that line out**. That is how `bumblebee` keeps only its finding records:
+its callback (`_convert_finding` in
+[`aegis/scanners/bumblebee_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/bumblebee_adapter.py))
+returns `None` for any record whose `record_type != "finding"`, dropping
+the interleaved `scan_summary` / `diagnostic` lines. `nuclei`,
+`trufflehog`, and `bumblebee` all use `run_cli_scan_jsonl`; the
+single-document tools (e.g. grype, sonarqube) use `run_cli_scan`. Both
+take `subdir` / `raw_filename` to persist the raw stdout under
+`run_state.run_path`, or `None` / `None` to persist nothing.
+
+The companion helpers `cli_version(executable, ...)` (probe a tool's
+`--version` banner, or `"unknown"` on any failure) and
+`which_available(*executables)` (`shutil.which` OR-probe) cover the
+matching `adapter_version()` / `health_check()` boilerplate.
+
+### Runner-backed adapters: `ScanResult.from_runner(...)`
+
+`strix` and `trivy` don't shell out directly from the adapter — they
+delegate to a subprocess **runner** in `aegis/runners/` (see below) that
+returns a `*RunResult`. Rather than hand-roll the re-wrap, map that
+result into a `ScanResult` with the classmethod:
+
+```python
+return ScanResult.from_runner(
+    result,
+    adapter_name=self.name,
+    adapter_version=version,
+    duration_s=time.monotonic() - started,
+    command_str=command_str,   # optional; defaults to " ".join(result.command)
+)
+```
+
+`findings` / `error` pass straight through and `exit_code` is
+`result.return_code or 0`. `command_str` defaults to the joined
+`result.command`, but a runner with no `command` attribute passes it
+explicitly (the `trivy` adapter passes the literal `"trivy fs"`). Any
+runner result satisfying the `RunnerResult` Protocol (`findings`,
+`return_code`, `error`) works — the scanner layer never imports the
+runner layer, keeping the dependency one-directional.
+
+### When a fully custom adapter is justified
+
+`deepsec` ([`aegis/scanners/deepsec_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/deepsec_adapter.py))
+is the worked example of an adapter that *can't* use any of the shared
+helpers, and its module docstring spells out why:
+
+- **Multi-step `scan → process → export` flow.** A single deepsec run is
+  three sequential subprocess invocations sharing on-disk state, not the
+  one `subprocess.run` + one stdout payload that `run_cli_scan` models.
+  The AI `process` stage is opt-in (only when `config.deepsec_ai_process`
+  is set, `config.deepsec_budget_usd > 0`, and a model key is present),
+  so the default path stays free.
+- **`pnpm` + config-driven `cwd` invocation.** deepsec isn't on `PATH`;
+  it runs as `pnpm deepsec <subcmd>` from `config.deepsec_path`. That
+  argv-with-cwd shape is something `cli_version` / `which_available`
+  can't express, so `adapter_version()` and `health_check()` stay custom.
+- **`_convert(record, run_id) -> AegisFinding | None` verdict filtering.**
+  Like the JSONL `convert` callback, `_convert` returns `None` to drop a
+  record — here for non-actionable revalidation verdicts
+  (`false-positive` / `fixed` / `duplicate`) — but it's wired into the
+  hand-written scan loop rather than a shared helper. (deepsec also
+  strips code-owner PII before either constructing a finding or persisting
+  its raw artifact; see the docstring.)
+
+## Findings are validated at construction (Pydantic v2)
+
+As of the architecture-hardening pass,
+[`aegis/schema.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/schema.py)'s
+`AegisFinding` and `CodeLocation` are **Pydantic v2 `BaseModel`s**, not
+dataclasses. The fields `severity`, `finding_type`, `status`, and
+`confidence` are typed as `Literal` vocabularies, so construction is
+validated at runtime: an adapter that emits an out-of-vocabulary
+`severity` or omits a required field now **raises at the adapter** (the
+source) instead of silently persisting a malformed finding.
+
+For an adapter author this means two things:
+
+- Construct findings with **valid `Literal` values** — `severity` in
+  `critical | high | medium | low`, `finding_type` in `dependency | sast
+  | dast | runtime | config | code | code_audit | supply_chain`, `status`
+  in `open | fixing | fixed | failed | false_positive`, `confidence` in
+  `high | medium | low`. Map your tool's native vocabulary onto these
+  (deepsec's `_SEVERITY_MAP` / `_canon_severity` is the pattern).
+- The public surface is unchanged: `to_dict()` / `from_dict()` keep the
+  same signatures, and `from_dict` is deliberately lenient (it falls back
+  to an unvalidated construction and logs) so legacy `schema_blob` rows
+  still read. New writes are fail-closed; only reads are best-effort.
+
 ### `AgentAdapter`
 
 Defined in [`aegis/agents/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/registry.py):
@@ -75,6 +186,89 @@ Defined in [`aegis/agents/registry.py`](https://github.com/IntelliBridge/aegis/b
 `invoke` takes a prompt `str` and an `AgentContext` (`finding_id`,
 `target`, `repo_path`, `actor`, `extra`) and returns an `AgentResult`
 (`status`, `output`, `findings`, `diff`, `agent_version`, `error`).
+
+Each agent also declares an **effect** (`read` / `active` / `external`) — see
+"The tool catalog and effect classification" below — which drives the unified
+human-in-the-loop gate in `aegis/effects.py`. Effect is a per-agent property,
+not a function of domain.
+
+## Authoring a native specialist agent
+
+Beyond wrapping an agent CAI already ships, you can **compose** a brand-new
+specialist from the vendored CAI tool catalog. The pattern lives in
+[`aegis/agents/cai/authored.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/cai/authored.py):
+each specialist is a declarative `AuthoredSpec` (a scoped system prompt +
+a toolbelt + a `domain` and `effect`), turned into a `FunctionAgentAdapter`
+and `register()`ed at import. Adding one is a single list entry:
+
+```python
+AuthoredSpec(
+    name="my_specialist",          # Aegis registry key (dispatch by name)
+    cai_name="MySpecialist",       # the CAI Agent's own name
+    domain="recon",                # one of the six Domain values
+    effect="external",             # read / active / external — drives the gate
+    instructions=_ROE + "You are a … specialist. …",  # substantive prompt
+    tool_imports=[                 # (module_path, attribute) pairs, lazy-resolved
+        ("cai.tools.reconnaissance", "shodan_search"),
+        ("cai.tools.reconnaissance", "curl"),
+    ],
+    use_osint=True,                # append the Camoufox OSINT search tool
+),
+```
+
+Three properties make this safe:
+
+- **Registration is import-safe.** Specs are plain data; the adapter
+  registers `wired=True` at import **without** importing CAI. CAI only
+  matters at invocation.
+- **Invocation degrades, never raises.** `invoke` loads CAI through the
+  central loader; a `None` bundle (submodule missing / offline) surfaces
+  `status="error"`. The CAI `Agent` is built lazily and cached, resolving
+  each `tool_imports` entry defensively — a tool whose import fails is
+  **skipped, not fatal** — and any runtime failure becomes `status="error"`.
+- **OSINT search** is wired by setting `use_osint=True`, which appends the
+  tool returned by
+  [`build_osint_search_tool()`](https://github.com/IntelliBridge/aegis/blob/main/aegis/tools/osint_search.py)
+  — the platform's web-search tool (Camoufox + DuckDuckGo, used in place of a
+  Google/SerpAPI search). It returns `None` when CAI isn't importable, and
+  `None` is filtered out of the toolbelt.
+
+The 12 shipped specialists (`cloud_recon`, `osint_collector`, `threat_intel`,
+`api_security_tester`, `web_surface_mapper`, `ssl_tls_auditor`,
+`dns_enumerator`, `secrets_hunter`, `iac_auditor`, `container_security`,
+`crypto_analyst`, `log_triage`) are the reference implementations.
+
+To wire an *existing* CAI agent instead of composing a new one, add a tuple to
+`_WIRED` in [`aegis/agents/cai/builtins.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/cai/builtins.py)
+with `by_name=True`; it resolves generically by its upstream registry key via
+`resolve_cai_agent` (CAI's `get_agent_by_name`), so no per-agent `CAIBundle`
+field is needed.
+
+## The tool catalog and effect classification
+
+[`aegis/tools/catalog.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/tools/catalog.py)
+(`TOOL_CATALOG` / `list_tools()`) is the single, honest registry of every tool
+the platform can expose to agents — **42 today** across four `source`s:
+`kali` (10, the mcp-kali allowlist), `scanner` (14 registered adapters),
+`cai` (17 vendored `@function_tool`s, namespaced `cai_*`), and `osint` (1, the
+Camoufox web search). The module is import-light, so it lists what the platform
+*can* expose independent of whether the optional CAI / Camoufox stacks are
+installed.
+
+Each `ToolSpec` carries an **effect** that is **authoritative in the catalog**:
+`aegis.effects.tool_effect()` consults it (falling back to the Kali map), so
+the catalog and the gate never drift. Classify conservatively:
+
+| Effect | Use for | Gate |
+|--------|---------|------|
+| `read` | enumeration, analysis, third-party-free observation | none beyond the target allowlist |
+| `active` | command execution or active probing of a live target | `execute=true` + `approver` |
+| `external` | reaches a third party (Shodan API, web search, egress) | `execute=true` + `approver` |
+
+An unclassified name fails **safe** to `active` — never silently treated as
+harmless. To add a `cai` tool, append a `_CaiEntry` (catalog name, bare CAI
+name, category, effect, description); the bare name is recorded in
+`CAI_TOOL_NAMES` for toolbelt wiring.
 
 ## Capabilities are an open vocabulary
 
@@ -318,5 +512,8 @@ registered.
 
 The call path ties them together: `StrixAdapter.scan` (registered
 adapter) calls `run_strix` (runner), which calls `convert_strix_finding`
-(converter) per event — so a registered adapter is the public face and
-the `runners/` modules are the implementation behind it.
+(converter) per event, then wraps the `StrixRunResult` into a
+`ScanResult` via `ScanResult.from_runner(...)` (see [Runner-backed
+adapters](#runner-backed-adapters-scanresultfrom_runner) above) — so a
+registered adapter is the public face and the `runners/` modules are the
+implementation behind it.

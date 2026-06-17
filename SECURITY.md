@@ -110,6 +110,42 @@ and [`docs/ops/deploy.md`](docs/ops/deploy.md) for role provisioning.
   clone, no secret mount, path allowlist scoped to `changed_files`.
 - See [`docs/security/fork-prs.md`](docs/security/fork-prs.md).
 
+### LLM guardrails
+
+Two fail-safe layers sit at every point where untrusted text reaches an
+LLM or where model output leaves the platform (`aegis/llm/guardrails.py`).
+Both are config-gated and default **on**; logs and raised exceptions are
+secret-free (a blocked input surfaces a clean error, never the offending
+text or any matched secret).
+
+- **Diff / output secret scrubbing.** The canonical unified diff (in
+  `extract_unified_diff`) and LLM outputs at the remediation + agent
+  chokepoints are passed through the same secret/token regex set used by
+  the audit redactor (`aegis/audit/redact.py`), with matches replaced by
+  `***REDACTED***`. Because scrubbing happens on the *canonical* diff,
+  every downstream consumer — the persisted `.diff`, the PR body, and the
+  remediation log — inherits the scrub.
+- **Prompt-injection detection.** Untrusted finding fields (title,
+  description, remediation steps, PoC, code snippets) and agent prompts are
+  scored for injection before they reach the model: a tiered risk
+  (`none` / `low` / `medium` / `high`) with categories
+  (`instruction_override`, `role_switch`, `exfiltration`, …). At or above a
+  configurable risk threshold (`AEGIS_LLM_INJECTION_BLOCK_RISK`, default
+  `high`) the input is **blocked** — a failed `FixOutcome` in the fix flow,
+  a blocked `AgentResult` in the agent flow. `off` detects + logs only.
+- Wired at three chokepoints: the remediation LLM boundary
+  (`aegis/remediate/cai_runner.py`), the diff-extraction point
+  (`aegis/remediate/patch_workflow.py`), and the agent-API boundary
+  (`aegis/agents/cai/builtins.py` / `patterns.py`).
+- Config (env vars): `AEGIS_LLM_GUARDRAILS` (master, default on),
+  `AEGIS_LLM_SCRUB_DIFF`, `AEGIS_LLM_DETECT_INJECTION`,
+  `AEGIS_LLM_FILTER_OUTPUT` (all default on), and
+  `AEGIS_LLM_INJECTION_BLOCK_RISK` (default `high`; `off` = detect-and-log).
+
+See [`docs/architecture/overview.md`](docs/architecture/overview.md)
+§ "LLM guardrails" and [`docs/ops/deploy.md`](docs/ops/deploy.md) for the
+env knobs.
+
 ### Secrets handling
 
 - Three distinct secret materials:
@@ -117,6 +153,10 @@ and [`docs/ops/deploy.md`](docs/ops/deploy.md) for role provisioning.
   - `AEGIS_WORKER_SIGNING_KEY` (shared HMAC, rotation overlap).
   - `AEGIS_GITHUB_PRIVATE_KEY` (GitHub App).
 - `NEXTAUTH_SECRET` is opaque to Aegis (NextAuth's own).
+- Generated **diffs / patches and LLM I/O** are secret-scrubbed before
+  they are persisted, surfaced in a PR, or logged — see § "LLM guardrails"
+  above. Secrets that leak into a model-authored diff or a model response
+  are redacted to `***REDACTED***` on the canonical path.
 - Rotation procedure for each is documented in
   [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Rotation runbook".
 
@@ -138,8 +178,6 @@ and [`docs/ops/deploy.md`](docs/ops/deploy.md) for role provisioning.
 
 ## Known gaps (tracked, not shipping in v0.12.0)
 
-- PII / content scrubbing inside diffs and patches.
-- LLM prompt-injection / output filtering guards.
 - Sandbox isolation per scan (gVisor / Firecracker).
 - SOC 2 / ISO 27001 / FedRAMP evidence pack.
 

@@ -17,6 +17,7 @@ from aegis.agents.cai import builtins
 from aegis.agents.registry import AgentContext, dispatch, list_agents
 from aegis.integrations.cai_loader import CAIBundle
 
+# Agents resolved off a typed CAIBundle field (by_name=False).
 _NEW_WIRED = [
     "memory_analysis",
     "network_traffic_analyzer",
@@ -26,6 +27,19 @@ _NEW_WIRED = [
     "wifi_security_tester",
     "replay_attack_agent",
 ]
+
+# Breadth agents resolved generically by their upstream registry key via
+# ``resolve_cai_agent`` (by_name=True). slot name -> (registry key, domain, effect).
+_BY_NAME_WIRED = {
+    "ctf_agent": ("one_tool_agent", "offensive", "active"),
+    "app_logic_mapper": ("app_logic_mapper", "offensive", "active"),
+    "dns_smtp_agent": ("dns_smtp_agent", "recon", "external"),
+    "flag_discriminator": ("flag_discriminator", "audit", "read"),
+    "prompt_injection_detector": ("injection_detector_agent", "defensive", "read"),
+    "thought_agent": ("thought_agent", "audit", "read"),
+    "usecase_agent": ("use_case_agent", "audit", "read"),
+    "memory_query": ("query_agent", "forensic", "read"),
+}
 
 _ORIGINAL = [
     "codeagent",
@@ -65,15 +79,20 @@ def _mock_bundle(**overrides):
 class TestAgentRegistry(unittest.TestCase):
     def test_all_expected_agents_registered(self):
         names = {a["name"] for a in list_agents()}
-        expected = set(_ORIGINAL) | set(_NEW_WIRED) | set(_COMPOSED)
-        self.assertEqual(len(expected), 16)
+        expected = (set(_ORIGINAL) | set(_NEW_WIRED) | set(_COMPOSED)
+                    | set(_BY_NAME_WIRED))
+        # Lower bound, NOT an exact count: a separate change this session adds
+        # ~12 more authored agents in aegis/agents/cai/authored.py, so the live
+        # roster is a *superset* of these. Assert the breadth wired here is
+        # present rather than pinning an exact total that another agent moves.
+        self.assertGreaterEqual(len(expected), 24)
         self.assertTrue(expected <= names,
                         f"missing: {expected - names}")
 
     def test_corrected_slots_map_to_real_specialist_agents(self):
         """The 6 mis-wired slots resolve to named specialists, not fallbacks."""
         wired = {name: cai_attr
-                 for name, _domain, _effect, cai_attr in builtins._WIRED}
+                 for name, _domain, _effect, cai_attr, _by_name in builtins._WIRED}
         for slot, expected_attr in _CORRECTED.items():
             self.assertEqual(
                 wired[slot], expected_attr,
@@ -115,10 +134,71 @@ class TestAgentRegistry(unittest.TestCase):
                                     f"{a['name']} still stubbed")
 
     def test_wired_cai_attrs_are_bundle_fields(self):
+        """Bundle-resolved entries (by_name=False) map to real CAIBundle fields.
+
+        by_name=True entries are resolved generically via ``resolve_cai_agent``
+        on the upstream registry key, so they intentionally do NOT need a
+        per-agent CAIBundle field — they're checked separately below.
+        """
         fields = {f.name for f in dataclasses.fields(CAIBundle)}
-        for name, _domain, _effect, cai_attr in builtins._WIRED:
+        for name, _domain, _effect, cai_attr, by_name in builtins._WIRED:
+            if by_name:
+                continue
             self.assertIn(cai_attr, fields,
                           f"{name!r} maps to unknown CAIBundle field {cai_attr!r}")
+
+    def test_by_name_agents_registered_with_expected_domain_and_effect(self):
+        """Every breadth agent is wired with its classified domain + effect."""
+        by_name = {a["name"]: a for a in list_agents()}
+        wired = {n: (attr, bn)
+                 for n, _d, _e, attr, bn in builtins._WIRED}
+        for slot, (key, domain, effect) in _BY_NAME_WIRED.items():
+            self.assertIn(slot, by_name, f"{slot!r} not registered")
+            self.assertEqual(by_name[slot]["domain"], domain, slot)
+            self.assertEqual(by_name[slot]["effect"], effect, slot)
+            # It resolves by registry key, not a bundle field.
+            self.assertEqual(wired[slot], (key, True), slot)
+
+    def test_by_name_agents_dispatch_through_resolver(self):
+        """A by_name agent routes through resolve_cai_agent, not a bundle attr."""
+        bundle = _mock_bundle()
+        fake_agent = object()
+        with mpatch.object(builtins, "load_cai", return_value=bundle), \
+             mpatch.object(builtins, "load_config", return_value=MagicMock()), \
+             mpatch.object(builtins, "resolve_cai_agent",
+                           return_value=fake_agent) as m_resolve:
+            for slot, (key, _domain, _effect) in _BY_NAME_WIRED.items():
+                res = dispatch(slot, "x", AgentContext(execute=True))
+                self.assertEqual(res.status, "ok", f"{slot}: {res.error}")
+                self.assertEqual(res.output, "ok")
+        # The resolver was consulted for the breadth agents by their key.
+        resolved_keys = {c.args[1] for c in m_resolve.call_args_list}
+        for _slot, (key, _d, _e) in _BY_NAME_WIRED.items():
+            self.assertIn(key, resolved_keys)
+
+    def test_by_name_agent_unresolvable_returns_error(self):
+        """An unresolvable registry key surfaces status=error, never crashes."""
+        bundle = _mock_bundle()
+        with mpatch.object(builtins, "load_cai", return_value=bundle), \
+             mpatch.object(builtins, "load_config", return_value=MagicMock()), \
+             mpatch.object(builtins, "resolve_cai_agent", return_value=None):
+            res = dispatch("ctf_agent", "x", AgentContext(execute=True))
+        self.assertEqual(res.status, "error")
+        self.assertIn("could not be resolved", res.error)
+
+    def test_external_by_name_agent_is_gated_without_execute(self):
+        """The external dns_smtp_agent (3rd-party egress) requires approval."""
+        bundle = _mock_bundle()
+        with mpatch.object(builtins, "load_cai", return_value=bundle), \
+             mpatch.object(builtins, "load_config", return_value=MagicMock()), \
+             mpatch.object(builtins, "resolve_cai_agent",
+                           return_value=object()) as m_resolve:
+            res = dispatch("dns_smtp_agent", "check example.com", AgentContext())
+        self.assertEqual(res.status, "pending_approval")
+        self.assertTrue(res.plan["gated"])
+        # Gate sits upstream of invoke(): the resolver was never reached.
+        m_resolve.assert_not_called()
+        bundle.Runner.run_sync.assert_not_called()
 
     def test_list_agents_exposes_effect_class(self):
         for a in list_agents():

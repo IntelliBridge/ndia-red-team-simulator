@@ -10,12 +10,18 @@ from __future__ import annotations
 
 import json
 import os
+from typing import TYPE_CHECKING
 
 from aegis.cli import _console
 from aegis.plugins import discover_all
 
+if TYPE_CHECKING:
+    import argparse
 
-def cmd_plugins(args, config) -> None:
+    from aegis.config import AegisConfig
+
+
+def cmd_plugins(args: argparse.Namespace, config: AegisConfig) -> None:
     """Dispatch the ``plugins`` subcommands (currently only ``list``)."""
     action = getattr(args, "plugins_action", None)
     if action == "list":
@@ -25,7 +31,7 @@ def cmd_plugins(args, config) -> None:
         raise SystemExit(2)
 
 
-def _cmd_plugins_list(args, config) -> None:
+def _cmd_plugins_list(args: argparse.Namespace, config: AegisConfig) -> None:
     discovery_on = os.environ.get("AEGIS_PLUGINS") == "1"
     plugins = discover_all()
 

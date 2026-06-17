@@ -2226,13 +2226,14 @@ class TestBuiltinsInvokeCAI(unittest.TestCase):
         self.assertEqual(result.status, "ok")
 
     def test_wired_agent_structure(self):
-        """All wired agents have name, domain, effect, cai_attr."""
+        """All wired agents have name, domain, effect, cai_attr, by_name."""
         from aegis.agents.cai.builtins import _WIRED
-        for name, domain, effect, cai_attr in _WIRED:
+        for name, domain, effect, cai_attr, by_name in _WIRED:
             self.assertIsInstance(name, str)
             self.assertIsInstance(domain, str)
             self.assertIn(effect, {"read", "active", "external"})
             self.assertIsInstance(cai_attr, str)
+            self.assertIsInstance(by_name, bool)
 
     def test_not_wired_agents_return_stub_status(self):
         """_not_wired() adapters always return 'not_wired'."""
