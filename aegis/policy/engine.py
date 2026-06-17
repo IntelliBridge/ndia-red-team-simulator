@@ -33,6 +33,15 @@ import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+# httpx ships in the api/worker extras. Only the OPA/Cedar engines reach the
+# REST path; keep ``aegis.policy`` importable by pure callers (the static engine
+# and CI gate) without it. Tests patch ``aegis.policy.engine.httpx.Client``, so
+# the name must stay a module attribute when httpx is installed.
+try:
+    import httpx
+except ModuleNotFoundError:  # pragma: no cover - exercised in the minimal unit env
+    httpx = None
+
 if TYPE_CHECKING:
     from aegis.api.auth import CurrentUser
     from aegis.config import AegisConfig
@@ -181,13 +190,7 @@ def _post_json(url: str, body: dict[str, Any]) -> dict[str, Any] | None:
     and logged (no request body / secrets are logged) so the caller can
     fail closed. ``None`` means "the policy engine could not give a
     usable answer".
-
-    ``httpx`` is an api/worker-extra dependency, so it is imported lazily here
-    (only the OPA/Cedar engines reach this path) — importing ``aegis.policy``
-    must stay possible for pure callers without the api extras installed.
     """
-    import httpx
-
     try:
         with httpx.Client(timeout=_HTTP_TIMEOUT) as client:
             resp = client.post(url, json=body)
