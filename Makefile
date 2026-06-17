@@ -36,6 +36,15 @@ test:
 test-cov:
 	pytest -q --cov=aegis --cov-report=term-missing
 
+lint:
+	ruff check aegis tests
+
+typecheck:
+	mypy aegis
+
+# Local mirror of the CI gate (lint -> type-check -> tests).
+check: lint typecheck test
+
 # ---------------------------------------------------------------------
 # Forwards to deploy/ Makefile so `make up` etc. still work from root
 # ---------------------------------------------------------------------

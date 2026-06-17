@@ -32,9 +32,10 @@ from aegis.log_ingest.writer import (
 if TYPE_CHECKING:
     from aegis.api.auth import CurrentUser
     from aegis.api.settings import APISettings
+    from aegis.log_ingest.writer import SessionFactory
 
 
-def _build_session_factory():
+def _build_session_factory() -> SessionFactory | None:
     db_url = os.environ.get("AEGIS_DB_URL")
     if not db_url:
         return None

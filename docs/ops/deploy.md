@@ -79,7 +79,80 @@ crashed jobs stay `running` indefinitely.
 `Project.daily_llm_budget_cents` (unset = unlimited). The fix path records
 `llm_usage` rows and `route()` blocks once the day's spend reaches the cap.
 Per-call cost is computed from a researched per-model price table
-(`aegis/llm/pricing.py`), with litellm's price map as a fallback.
+(`aegis/llm/pricing.py`), with litellm's price map as a fallback. Per-org
+**monthly** caps and per-tenant LLM routing land in the Multi-tenancy
+runbook below.
+
+---
+
+## Multi-tenancy / RLS
+
+Cross-org isolation is enforced **at the database** as defense-in-depth on
+top of the app-layer project checks. The full design is in
+[`docs/architecture/multi-tenancy.md`](../architecture/multi-tenancy.md);
+this is the operator-facing runbook.
+
+**RLS is forced at the DB.** Migration `0006_tenant_rls` runs
+`ENABLE` + **`FORCE ROW LEVEL SECURITY`** on `projects` and the eight
+project-scoped tables (`targets`, `runs`, `jobs`, `findings`, `llm_usage`,
+`artifacts`, `remediation_attempts`, `application_logs`), each carrying a
+denormalized `org_id` (backfilled, then maintained by a `BEFORE INSERT`
+trigger). The `aegis_tenant_isolation` policy filters rows by `org_id`.
+`FORCE` is deliberate: it binds the table owner / superuser too, so a
+privileged connection can't bypass the boundary. Nothing operator-side
+needs to "turn it on" — the migration enables it.
+
+**The GUC is set per request.** The policy reads a per-transaction GUC
+`app.current_tenants` (a comma-separated org-id list). The API's tenant
+middleware resolves the caller's accessible org ids and
+`aegis.db.session.get_session` sets the GUC (via `set_config(…, is_local)`)
+for the transaction. An **empty / unset GUC means full access** — there is
+nothing for an operator to configure here.
+
+**Workers run as system.** Workers, migrations, and any path that doesn't
+set the GUC run with full access (empty GUC). That is intentional:
+background execution and `alembic upgrade` need to read/write across orgs.
+Do **not** add the tenant middleware to the worker.
+
+**Per-tenant config** lives on the `organizations` row (migration
+`0007_org_cost_routing`):
+
+| Column                       | Type    | Meaning                                                  |
+|------------------------------|---------|----------------------------------------------------------|
+| `monthly_llm_budget_cents`   | INTEGER | Org's monthly LLM spend cap in cents; `NULL` = uncapped. |
+| `llm_model_overrides`        | JSONB   | `{task: model}` per-tenant routing overrides; wins over the config default. |
+
+```sql
+-- cap an org at $500/month and pin its report-summarize task to a cheaper model
+UPDATE organizations
+   SET monthly_llm_budget_cents = 50000,
+       llm_model_overrides = '{"report_summarize": "gpt-4o-mini"}'::jsonb
+ WHERE id = 'org-1';
+```
+
+`route()` enforces **both** the project daily cap and the org monthly cap;
+`GET /v1/orgs/{org_id}/cost` and the web **/cost** dashboard surface the
+spend (see the [API reference](../api/v1.md#orgs-cost)).
+
+**CI exercises it.** RLS enforcement runs in the **Postgres CI jobs** — the
+`FORCE` is what makes that test real (the superuser CI connection is bound
+by the policy), so a regression that drops or weakens the isolation fails
+CI rather than shipping silently.
+
+**Enabling a ticket provider.** Set `AEGIS_TICKET_PROVIDER` to `jira`,
+`servicenow`, or `linear` on the api **and** worker, plus the matching
+creds (table below). Migration `0008_finding_tickets` must be applied
+first. Smoke-test with `POST /v1/findings/{id}/ticket` (needs
+`remediator+`): a `201` returns the external id and URL; a `409` means the
+provider is still `none` or its creds are missing. Leave it unset and
+nothing reaches a tracker.
+
+**Verifying a target.** Register the target, then `GET
+/v1/targets/{id}/verification` for the proof to publish — a DNS TXT record
+(`url` kind) or a GitHub App installation (`github_repo` kind). Publish it,
+then `POST /v1/targets/{id}/verify` (`admin`): `200 {verified:true,…}` on
+success, `422` until the proof resolves. Set a strong `AEGIS_VERIFY_SECRET`
+in prod so the per-target TXT token can't be forged.
 
 ---
 
@@ -158,6 +231,21 @@ secret.
 |------------------------------|-----------------|--------------------------------------------------------|
 | `AEGIS_OFFLINE_VENDOR_HOST`  | build / vendoring | Internal git mirror host for air-gapped submodule fetches (e.g. `git.internal.example.com`). See [Air-gapped / offline vendor mirror](#air-gapped-offline-vendor-mirror). |
 
+### WORM audit archive
+
+Off-DB tamper-resistant export of the audit chain (see the
+[WORM audit archive runbook](#worm-audit-archive-runbook) below). All
+default off / safe; the export beat task self-gates on `AEGIS_WORM_EXPORT`.
+S3 endpoint + credentials reuse the `AEGIS_S3_*` vars above.
+
+| Var                          | Where  | Value                                                                |
+|------------------------------|--------|----------------------------------------------------------------------|
+| `AEGIS_WORM_EXPORT`          | worker | Enable the export (default off `0`). Set `1` to turn WORM on.        |
+| `AEGIS_WORM_BUCKET`          | worker | Object-Lock bucket name (default `aegis-worm`).                      |
+| `AEGIS_WORM_RETENTION_DAYS`  | worker | Object Lock retention in days (default `2555` ≈ 7y).                 |
+| `AEGIS_WORM_LOCK_MODE`       | worker | `COMPLIANCE` (default) or `GOVERNANCE`.                              |
+| `AEGIS_WORM_INTERVAL`        | worker | Beat export interval, seconds (default `86400` = daily).            |
+
 ### CORS / Network
 
 | Var                          | Where | Value                                              |
@@ -167,6 +255,20 @@ secret.
 | `AEGIS_RL_USER_PER_MIN`      | api   | Per-user rate limit (default `30`)                  |
 | `AEGIS_RL_PROJECT_PER_MIN`   | api   | Per-project rate limit (default `120`)              |
 
+### Policy engine (optional)
+
+The route-level role gate is pluggable (see
+[`auth.md`](../architecture/auth.md) § "Policy engine"). Unset, it stays
+on the built-in static rule table. Set these only to delegate to an
+external decision point; see the runbook below.
+
+| Var                          | Where         | Value                                                  |
+|------------------------------|---------------|--------------------------------------------------------|
+| `AEGIS_POLICY_ENGINE`        | api, worker   | `static` (default) \| `opa` \| `cedar`                  |
+| `AEGIS_OPA_URL`              | api, worker   | OPA base URL (default `http://localhost:8181`)          |
+| `AEGIS_OPA_PATH`             | api, worker   | OPA data path (default `/v1/data/aegis/authz`)          |
+| `AEGIS_CEDAR_URL`            | api, worker   | cedar-agent base URL (default `http://localhost:8180`)  |
+
 ### GitHub App (F23)
 
 | Var                                | Where    | Value                                                |
@@ -175,6 +277,12 @@ secret.
 | `AEGIS_GITHUB_APP_ID`              | api, worker | Installation app id                               |
 | `AEGIS_GITHUB_PRIVATE_KEY`         | api, worker | App private key (PEM)                             |
 
+### Authenticated DAST (optional)
+
+| Var                          | Where       | Notes                                                                 |
+|------------------------------|-------------|-----------------------------------------------------------------------|
+| `AEGIS_AUTH_PROFILES_KEY`    | api, worker | Fernet key encrypting auth-profile secrets at rest. Required only when using authenticated DAST — see [`authenticated-dast.md`](authenticated-dast.md). |
+
 ### Observability
 
 | Var                                | Where               | Notes                                                       |
@@ -182,6 +290,55 @@ secret.
 | `OTEL_EXPORTER_OTLP_ENDPOINT`      | api, worker         | Activates the OTel SDK. Without it, logs go to stdout only. |
 | `OTEL_RESOURCE_ATTRIBUTES`         | api, worker         | `service.name=...` etc.                                     |
 | `AEGIS_LOG_INGEST_URL`             | api, worker         | Default path that bypasses the Collector (default profile)  |
+
+### Integrations (ticket sync, target verification, backports)
+
+All optional and **default-off**. See
+[Integrations](../integrations/index.md) for the full behaviour.
+
+| Var                              | Where       | Notes                                                                                          |
+|----------------------------------|-------------|------------------------------------------------------------------------------------------------|
+| `AEGIS_TICKET_PROVIDER`          | api, worker | `none` \| `jira` \| `servicenow` \| `linear`. Default `none` = no-op (nothing reaches a tracker). |
+| `AEGIS_JIRA_URL` / `…_USER` / `…_TOKEN` / `…_PROJECT_KEY` | api, worker | Jira Cloud/Server creds (Basic auth + issue project). Required when provider = `jira`.          |
+| `AEGIS_SERVICENOW_INSTANCE` / `…_TOKEN` | api, worker | ServiceNow instance URL + OAuth bearer. Required when provider = `servicenow`.            |
+| `AEGIS_LINEAR_API_KEY` / `…_TEAM_ID` | api, worker | Linear API key + team. Required when provider = `linear`.                                  |
+| `AEGIS_VERIFY_SECRET`            | api, worker | Server-side salt mixed into the per-target DNS TXT token so it can't be forged. A dev default is used when unset — **set a strong value in prod**. Never logged. |
+| `AEGIS_RELEASE_TRAINS`           | api, worker | Release-train → branch map for fix-PR base selection. JSON (`{"2024.1":"release/2024.1"}`) or `name=branch,…`. Unset = every fix PR targets `main`. |
+
+The ticket creds and `AEGIS_VERIFY_SECRET` are read from the environment
+only — never from an API body, never persisted to a row, never written to
+an audit detail. DNS verification needs `dnspython` (shipped in the `api`
+extra).
+
+### Third-party plugin signatures
+
+Opt-in Ed25519 signature enforcement for marketplace plugins (off by
+default). Set on every process that discovers plugins (`AEGIS_PLUGINS=1`):
+the api, worker, and CLI. See
+[supply-chain integrity](../security/supply-chain.md#signed-third-party-plugins)
+and [Extending Aegis](../dev/extending.md#signature-enforcement-aegis_plugins_require_signature).
+
+| Var                                | Where             | Notes                                                                                   |
+|------------------------------------|-------------------|-----------------------------------------------------------------------------------------|
+| `AEGIS_PLUGINS_REQUIRE_SIGNATURE`  | api, worker, cli  | `1`/truthy requires a valid signature before any plugin loads. Unset = no signature check. |
+| `AEGIS_PLUGINS_TRUSTED_KEYS`       | api, worker, cli  | Colon/comma-separated `*.pem` **public-key** files and/or directories of them.          |
+| `AEGIS_PLUGINS_SIG_DIR`            | api, worker, cli  | Dirs holding `<dist>-<version>.sig` files (falls back to trusted-key dirs + the plugin's module dir). |
+
+### LLM guardrails
+
+Two fail-safe layers (secret scrubbing of generated diffs/LLM output +
+prompt-injection detection on untrusted input) wrap every LLM chokepoint.
+All default **on**; leave them on in production. See `SECURITY.md`
+§ "LLM guardrails" and [`overview.md`](../architecture/overview.md)
+§ "LLM guardrails".
+
+| Var                              | Where        | Notes                                                                 |
+|----------------------------------|--------------|-----------------------------------------------------------------------|
+| `AEGIS_LLM_GUARDRAILS`           | api, worker  | Master switch for both layers. Default **on**; `0`/`off` disables all. |
+| `AEGIS_LLM_SCRUB_DIFF`           | api, worker  | Secret-scrub generated diffs/patches (`***REDACTED***`). Default **on**. |
+| `AEGIS_LLM_DETECT_INJECTION`     | api, worker  | Prompt-injection detection on untrusted finding fields + prompts. Default **on**. |
+| `AEGIS_LLM_FILTER_OUTPUT`        | api, worker  | Secret-scrub LLM output at the remediation/agent chokepoints. Default **on**. |
+| `AEGIS_LLM_INJECTION_BLOCK_RISK` | api, worker  | Block threshold: `none`/`low`/`medium`/`high` (default `high`); `off` = detect-and-log only. |
 
 ---
 
@@ -246,6 +403,37 @@ pointing at the env var.
 
 ---
 
+## Verify release images before deploy
+
+Release builds (on `v*` tags) are pushed to GHCR, **keyless-signed** with
+cosign, and carry a CycloneDX SBOM + SLSA provenance attestation — see
+[`.github/workflows/release-sign.yml`](https://github.com/IntelliBridge/aegis/blob/main/.github/workflows/release-sign.yml)
+and the [supply-chain integrity](../security/supply-chain.md#signed-attested-release-images)
+page. **Verify each image by digest before `docker compose up` / `kubectl
+apply`** so a tampered or unsigned image fails the gate. Wire this into the
+deploy pipeline; do not deploy an image that fails verification.
+
+```bash
+# Per image: api | worker | web | log_ingest, pinned by digest.
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/IntelliBridge/aegis/' \
+  ghcr.io/intellibridge/aegis/<service>@<DIGEST>
+
+# Optional but recommended: also verify the SBOM + SLSA provenance.
+cosign verify-attestation --type cyclonedx \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/IntelliBridge/aegis/' \
+  ghcr.io/intellibridge/aegis/<service>@<DIGEST>
+```
+
+`scripts/verify-release.sh` wraps the full set (signature + SBOM +
+provenance, the last under the slsa-github-generator identity). Always
+verify and deploy the `@sha256:…` digest, not a floating tag — cosign signs
+the digest, and a tag can be re-pointed after verification.
+
+---
+
 ## First-deploy checklist
 
 1. **Database**: provision Postgres with two roles so the audit log is
@@ -264,7 +452,7 @@ pointing at the env var.
      alembic -c alembic.ini upgrade head
    ```
    Then point the runtime `AEGIS_DB_URL` at `aegis_app`. The current
-   migration head is `0004_audit_append_only`. Single-role/dev may skip the
+   migration head is `0005_auth_profiles`. Single-role/dev may skip the
    roles entirely — the migration's role/grant steps no-op when the roles
    are absent, and Alembic falls back to `AEGIS_DB_URL`.
 
@@ -300,6 +488,77 @@ pointing at the env var.
    aegis --api scan https://target/health   # should refuse with 403 unless allowlisted
    ```
 9. **Audit verify**: `aegis audit verify --all` — should print ✓.
+
+---
+
+## WORM audit archive runbook
+
+The audit chain is append-only at the database and hash-verifiable
+(migration `0004`); WORM export adds the third layer — an immutable off-DB
+copy. Each chain is exported to an S3 / MinIO bucket with **Object Lock**,
+so an attacker who fully owns the database (or the bucket credentials)
+still can't alter or delete the sealed copy before its retention expires.
+See [`docs/architecture/audit-chain.md`](../architecture/audit-chain.md)
+§ "WORM archival (Object Lock)" for the object layout and re-verification.
+
+### 1. Create the Object-Lock bucket
+
+Object Lock is a **bucket-creation-time** property — it cannot be enabled on
+an existing bucket. Provision the WORM bucket separately from the main
+`AEGIS_S3_BUCKET`.
+
+MinIO (via `mc`):
+
+```bash
+mc mb --with-lock myalias/aegis-worm
+```
+
+AWS S3: create the bucket with Object Lock enabled (the console's "Object
+Lock" toggle at create time, or `aws s3api create-bucket
+--object-lock-enabled-for-bucket`). Aegis sets retention **per object** on
+each put, so a bucket-level default retention is optional; if you set one,
+make it ≤ `AEGIS_WORM_RETENTION_DAYS`.
+
+Grant the worker IAM the `s3:PutObject` + `s3:PutObjectRetention` +
+`s3:GetObject` / `s3:ListBucket` it needs on the WORM bucket.
+
+### 2. Enable the daily export
+
+Set the env (worker side) and turn the flag on:
+
+```bash
+AEGIS_WORM_EXPORT=1
+AEGIS_WORM_BUCKET=aegis-worm
+AEGIS_WORM_RETENTION_DAYS=2555      # ≈ 7 years; match your compliance regime
+AEGIS_WORM_LOCK_MODE=COMPLIANCE
+AEGIS_WORM_INTERVAL=86400           # seconds; daily
+```
+
+The `aegis.export_chains_to_worm` beat task is already registered in
+`celery beat` (interval = `AEGIS_WORM_INTERVAL`). It **self-gates**: with
+`AEGIS_WORM_EXPORT` unset/off it no-ops on every tick, so leaving the task
+scheduled costs nothing until you opt in. Each run emits an
+`audit.worm_export` event (summary counts only) back onto the chain.
+
+### 3. Export on demand
+
+```bash
+aegis audit export --all                 # every chain, now
+aegis audit export --chain run:run-abc   # one chain
+```
+
+Re-exporting an unchanged chain is a no-op (the object key is derived from
+the chain head + content sha). A broken chain is still archived but flagged
+`verified=false` in its manifest.
+
+### Retention is immutable until expiry
+
+Pick `AEGIS_WORM_RETENTION_DAYS` to match your compliance regime — once an
+object is written, its retention **cannot be shortened**. In `COMPLIANCE`
+mode that holds even for the account root; `GOVERNANCE` mode allows a
+specially-privileged principal to lift retention (use it only if your
+regime permits operator override). Storage costs accrue for the full
+retention window, so size the regime deliberately.
 
 ---
 
@@ -391,6 +650,49 @@ event; reconcile from there.
 
 ---
 
+## External policy engine (optional)
+
+By default the role gate uses the built-in static rule table — no extra
+service. To delegate the role-rank decision to OPA or Cedar instead,
+stand up the decision point, load the example policy (which replicates
+the static table, so it's a behaviour-identical drop-in), and point the
+API + worker at it via `AEGIS_POLICY_ENGINE`. Both external engines
+**fail closed**: if the engine is unreachable, slow, or returns a bad
+answer, the gate denies (`403`) — so a misconfigured sidecar locks the
+platform down, it never opens it up.
+
+**OPA.** Bring up the bundled `opa` service (it lives under a non-default
+`policy` compose profile, so a plain `docker compose up` never starts it):
+
+```bash
+docker compose --profile policy up opa
+# or, without compose, run OPA directly over the example policy dir:
+opa run --server --addr 0.0.0.0:8181 deploy/opa/
+```
+
+The example policy ships at `deploy/opa/aegis-authz.rego` (package
+`aegis.authz`); the compose service mounts `deploy/opa/` read-only. Then
+point Aegis at it on the API + worker:
+
+```bash
+export AEGIS_POLICY_ENGINE=opa
+export AEGIS_OPA_URL=http://opa:8181        # http://localhost:8181 outside compose
+export AEGIS_OPA_PATH=/v1/data/aegis/authz  # default
+```
+
+**Cedar.** Cedar runs as a `cedar-agent` sidecar (not bundled in the
+compose stack) loaded with `deploy/cedar/aegis-policy.cedar` plus the
+schema/entity notes in `deploy/cedar/aegis-entities.md`. The agent host
+resolves the caller's role for the request's project before evaluation.
+Point Aegis at it:
+
+```bash
+export AEGIS_POLICY_ENGINE=cedar
+export AEGIS_CEDAR_URL=http://cedar-agent:8180
+```
+
+---
+
 ## Health checks
 
 Each service exposes a unauthenticated `/health` endpoint:
@@ -416,5 +718,6 @@ get there.
 - Backup / restore: any standard Postgres backup tool works; the
   audit chain is hash-verifiable so a partial restore is detectable
   via `aegis audit verify`.
-- Cost management: per-tenant chargeback dashboards are in the
-  deferred list (see [`overview.md`](../architecture/overview.md)).
+- Cost management: per-tenant monthly budgets + the chargeback dashboard
+  have shipped — see the "Multi-tenancy / RLS" runbook above and
+  [`docs/architecture/multi-tenancy.md`](../architecture/multi-tenancy.md).

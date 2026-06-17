@@ -20,8 +20,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from starlette.concurrency import run_in_threadpool
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from aegis.api.auth import CurrentUser
+    from aegis.api.settings import APISettings
 
 router = APIRouter(prefix="/runs", tags=["ws"])
 
@@ -29,7 +37,7 @@ router = APIRouter(prefix="/runs", tags=["ws"])
 _BEARER_SUBPROTOCOL_PREFIX = "aegis.bearer."
 
 
-def _origin_allowed(origin: str, settings) -> bool:
+def _origin_allowed(origin: str, settings: APISettings) -> bool:
     """Return True iff ``origin`` is in the configured CORS allowlist.
 
     Empty origin is allowed so non-browser clients (CLI, CI, recorded
@@ -58,7 +66,9 @@ def _extract_bearer_subprotocol(websocket: WebSocket) -> tuple[str | None, str |
     return (None, None)
 
 
-async def _resolve_user_for_ws(websocket: WebSocket, settings):
+async def _resolve_user_for_ws(
+    websocket: WebSocket, settings: APISettings
+) -> CurrentUser | None:
     """Resolve a CurrentUser from the WS upgrade request.
 
     Resolution order:
@@ -92,6 +102,20 @@ async def _resolve_user_for_ws(websocket: WebSocket, settings):
     return None
 
 
+def _lookup_run_project_id(run_id: str) -> str | None:
+    """Synchronous DB read: the project a run belongs to, or None if missing.
+
+    Isolated into a sync function so the async WS upgrade path can run it via
+    ``run_in_threadpool`` rather than blocking the event loop on a synchronous
+    SQLAlchemy session during the handshake.
+    """
+    from aegis.db.models import Run
+    from aegis.db.session import get_session
+    with get_session() as sess:
+        run = sess.get(Run, run_id)
+        return run.project_id if run is not None else None
+
+
 async def _enforce_upgrade_policy(websocket: WebSocket, run_id: str) -> bool:
     """Return True iff the upgrade should proceed; otherwise close 1008.
 
@@ -123,21 +147,20 @@ async def _enforce_upgrade_policy(websocket: WebSocket, run_id: str) -> bool:
         return False
 
     from aegis.api.policy import has_project_access
-    from aegis.db.models import Run
-    from aegis.db.session import get_session
-    with get_session() as sess:
-        run = sess.get(Run, run_id)
-        if run is None:
-            await websocket.close(code=1008, reason="run not found")
-            return False
-        project_id = run.project_id
+    # The project lookup is the one blocking (synchronous SQLAlchemy) call on
+    # this async upgrade path; offload it to a worker thread so it can't stall
+    # the event loop while the handshake completes.
+    project_id = await run_in_threadpool(_lookup_run_project_id, run_id)
+    if project_id is None:
+        await websocket.close(code=1008, reason="run not found")
+        return False
     if not has_project_access(user, project_id):
         await websocket.close(code=1008, reason="no project membership")
         return False
     return True
 
 
-async def _redis_pubsub_iter(channel: str):
+async def _redis_pubsub_iter(channel: str) -> AsyncIterator[dict[str, Any]]:
     """Yield messages from Redis pub/sub; falls back to a no-op loop when
     Redis isn't configured (dev convenience)."""
     url = os.environ.get("AEGIS_BROKER_URL")

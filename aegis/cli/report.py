@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
+
 from aegis.cli import _console, _runstate
+from aegis.config import AegisConfig
 
 
-def cmd_report(args, config) -> None:
+def cmd_report(args: argparse.Namespace, config: AegisConfig) -> None:
     """Generate Markdown / JSON / HTML reports — thin shell over the service."""
     from aegis.services.reports import render_reports
 

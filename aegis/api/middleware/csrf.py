@@ -25,7 +25,7 @@ _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 def _has_bearer(request: Request) -> bool:
     auth = request.headers.get("authorization", "")
-    return auth.lower().startswith("bearer ")
+    return bool(auth.lower().startswith("bearer "))
 
 
 def _has_session_cookie(request: Request, settings: APISettings) -> bool:

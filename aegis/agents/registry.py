@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from aegis.effects import (
     Effect,
@@ -43,6 +43,7 @@ class AgentResult:
     plan: dict | None = None   # set on status == "pending_approval"
 
 
+@runtime_checkable
 class AgentAdapter(Protocol):
     name: str
     domain: Domain
@@ -84,7 +85,7 @@ def adapter_effect(adapter: AgentAdapter) -> Effect:
     )
 
 
-_agent_registry: Registry[AgentAdapter] = Registry("agent")
+_agent_registry: Registry[AgentAdapter] = Registry("agent", protocol=AgentAdapter)
 # Historical public handle; kept as the live backing store (see scanners.registry).
 _REGISTRY: dict[str, AgentAdapter] = _agent_registry._items
 

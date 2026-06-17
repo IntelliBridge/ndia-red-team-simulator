@@ -164,5 +164,31 @@ class TestSubprotocolBearer(unittest.TestCase):
                 self.assertEqual(cm.exception.code, 1008)
 
 
+class TestRunLookup(unittest.TestCase):
+    def test_unknown_run_closes_1008(self):
+        """The run-existence check is the one blocking DB read on the async
+        upgrade path; it's now offloaded via ``run_in_threadpool``. A missing
+        run must still close 1008 cleanly rather than crash the handshake."""
+        app, session_cm, settings = _build_app_with_run()
+        client = TestClient(app)
+        test_env = _env_for(settings)
+        test_env["AEGIS_BROKER_URL"] = ""
+        with patch("aegis.db.session.get_session", session_cm), \
+             patch.dict(os.environ, test_env, clear=False):
+            cookie = mint_session_cookie(
+                sub="u-1", email="a@x",
+                project_memberships={"proj-a": "admin"},
+                settings=settings,
+            )
+            client.cookies.set(settings.api_session_cookie_name, cookie)
+            with self.assertRaises(WebSocketDisconnect) as cm:
+                with client.websocket_connect(
+                    "/v1/runs/no-such-run/events",
+                    headers={"Origin": "http://localhost:3000"},
+                ) as ws:
+                    ws.receive_json()
+            self.assertEqual(cm.exception.code, 1008)
+
+
 if __name__ == "__main__":
     unittest.main()

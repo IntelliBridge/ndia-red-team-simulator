@@ -81,6 +81,7 @@ def create_scan_job(
     project_id: str,
     actor: str,
     instruction: str | None = None,
+    auth_profile_id: str | None = None,
     config: AegisConfig,
     allowlist: list[str] | None = None,
     audit_writer: AuditWriter,
@@ -109,8 +110,11 @@ def create_scan_job(
         override_authorized=override_authorized,
         actor=actor, writer=audit_writer,
         project_id=project_id,
+        # auth_profile_id is a non-secret row id; the resolved secret never
+        # touches admission (it is decrypted worker-side at execution time).
         detail={"actor": actor, "scanner": scanner, "target": target,
-                "instruction_set": bool(instruction)},
+                "instruction_set": bool(instruction),
+                "auth_profile_id": auth_profile_id},
     )
 
     from aegis.db.models import Job, Run
@@ -131,6 +135,7 @@ def create_scan_job(
             created_by=actor,
             detail={"target": target, "scanner": scanner,
                     "instruction": instruction,
+                    "auth_profile_id": auth_profile_id,
                     "override_authorized": override_authorized},
         ))
         sess.flush()

@@ -20,9 +20,12 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.error import URLError
 from urllib.request import urlopen
+
+if TYPE_CHECKING:
+    from types import FrameType
 
 
 @dataclass
@@ -49,7 +52,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _run(cmd: list[str], *, check: bool = True, capture: bool = True) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], *, check: bool = True, capture: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         check=check,
@@ -108,7 +111,7 @@ class TargetPack:
             except (ValueError, OSError):
                 pass
 
-    def _signal_handler(self, signum, frame):  # noqa: ARG002
+    def _signal_handler(self, signum: int, frame: FrameType | None) -> None:  # noqa: ARG002
         self._cleanup_silent()
 
     def _cleanup_silent(self) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -79,7 +80,8 @@ class BanditAdapter:
     def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
 
-        def parse(proc, run_id):
+        def parse(proc: subprocess.CompletedProcess[str],
+                  run_id: str) -> list[AegisFinding]:
             payload = json.loads(proc.stdout or "{}")
             return [_convert(r, run_id) for r in payload.get("results", [])]
 

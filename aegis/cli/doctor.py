@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
+
+from aegis.config import AegisConfig
 
 _CYAN = "\033[36m"
 _YELLOW = "\033[33m"
 _RESET = "\033[0m"
 
 
-def _report_offline_vendor(config) -> None:
+def _report_offline_vendor(config: AegisConfig) -> None:
     """Surface the air-gapped submodule mirror, if one is configured.
 
     When ``offline_vendor_host`` is set we print the mirror host plus the
@@ -41,7 +44,8 @@ def _report_offline_vendor(config) -> None:
         print(f"    {original} -> {mirrored}")
 
 
-def cmd_doctor(args, config) -> None:
+
+def cmd_doctor(args: argparse.Namespace, config: AegisConfig) -> None:
     """Validate the Aegis development environment."""
     from aegis.doctor import run_doctor
 

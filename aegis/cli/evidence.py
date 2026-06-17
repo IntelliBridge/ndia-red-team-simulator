@@ -8,11 +8,17 @@ crosswalk, a secret-free system summary, and a hashed manifest.
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 
 from aegis.cli import _console
 
+if TYPE_CHECKING:
+    import argparse
 
-def cmd_evidence_pack(args, config) -> None:
+    from aegis.config import AegisConfig
+
+
+def cmd_evidence_pack(args: argparse.Namespace, config: AegisConfig) -> None:
     """Generate a compliance evidence pack at ``--out``."""
     from aegis.services.evidence import generate_evidence_pack
 

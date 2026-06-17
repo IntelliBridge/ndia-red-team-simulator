@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -10,11 +10,14 @@ from sqlalchemy import select
 from aegis.api.auth import CurrentUser, get_current_user
 from aegis.api.policy import ensure_project_access, has_project_access
 
+if TYPE_CHECKING:
+    from aegis.db.models import Finding
+
 router = APIRouter(prefix="/findings", tags=["findings"])
 
 
 def _finding_to_dict(
-    row,
+    row: Finding,
     *,
     source_tool: bool = False,
     validated_at: bool = False,

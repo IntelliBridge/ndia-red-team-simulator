@@ -171,13 +171,30 @@ class TestCaiResolvers(unittest.TestCase):
 
 
 class TestPatternsRegistered(unittest.TestCase):
-    def test_three_patterns_registered_as_active_offensive(self):
+    # All wired patterns are active/offensive composites. The first three are
+    # the originals; the two red/blue parallel patterns are the breadth added
+    # this change. Asserted as a superset (not an exact count) so it stays green
+    # if more patterns are wired later.
+    _EXPECTED = (
+        "offsec_pattern", "redteam_swarm", "bb_triage_swarm",
+        "red_blue_shared_context", "red_blue_split_context",
+    )
+
+    def test_patterns_registered_as_active_offensive(self):
         from aegis.agents.registry import list_agents
         by_name = {a["name"]: a for a in list_agents()}
-        for name in ("offsec_pattern", "redteam_swarm", "bb_triage_swarm"):
+        for name in self._EXPECTED:
             self.assertIn(name, by_name, f"{name} not registered")
             self.assertEqual(by_name[name]["domain"], "offensive")
             self.assertEqual(by_name[name]["effect"], "active")
+
+    def test_new_red_blue_patterns_map_to_cai_pattern_names(self):
+        """The red/blue patterns resolve via their CAI dict ``name`` keys."""
+        wired = {n: cai for n, _d, _e, cai in patterns_mod._PATTERNS}
+        self.assertEqual(wired["red_blue_shared_context"],
+                         "blue_team_red_team_shared_context")
+        self.assertEqual(wired["red_blue_split_context"],
+                         "blue_team_red_team_split_context")
 
 
 class TestPatternGate(unittest.TestCase):
