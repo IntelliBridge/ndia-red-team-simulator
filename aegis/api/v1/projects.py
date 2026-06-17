@@ -94,7 +94,7 @@ def _resolve_project_by_slug(sess: Session, slug: str) -> Project:
     from sqlalchemy import select
 
     from aegis.db.models import Project
-    project = sess.execute(
+    project: Project | None = sess.execute(
         select(Project).where(Project.slug == slug)
     ).scalar_one_or_none()
     if project is None:

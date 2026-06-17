@@ -145,7 +145,7 @@ class PostgresRunState:
         scanner id never matches a primary key and must be looked up by its
         per-run ``scanner_finding_id``.
         """
-        row = self.session.get(Finding, finding_id)
+        row: Finding | None = self.session.get(Finding, finding_id)
         if row is None:
             row = self.session.execute(
                 select(Finding).where(
