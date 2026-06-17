@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -11,7 +10,7 @@ from aegis.scanners.registry import (
     ScanResult,
     cli_version,
     register,
-    run_cli_scan,
+    run_cli_scan_jsonl,
     which_available,
 )
 from aegis.schema import AegisFinding, Severity
@@ -65,27 +64,13 @@ class NucleiAdapter:
     def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
         templates = options.extra.get("templates", "cves,vulnerabilities")
-
-        def parse(proc, run_id):
-            findings: list[AegisFinding] = []
-            for line in (proc.stdout or "").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                findings.append(_convert(rec, run_id))
-            return findings
-
-        return run_cli_scan(
+        return run_cli_scan_jsonl(
             self, options, run_state,
             argv=["nuclei", "-target", target, "-jsonl", "-silent",
                   "-t", templates],
             command_str=f"nuclei -target {target} -t {templates}",
             subdir="nuclei", raw_filename="results.jsonl",
-            parse=parse, raw_empty="",
+            convert=_convert,
         )
 
 

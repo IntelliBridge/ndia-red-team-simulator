@@ -186,6 +186,22 @@ and [Extending Aegis](../dev/extending.md#signature-enforcement-aegis_plugins_re
 | `AEGIS_PLUGINS_TRUSTED_KEYS`       | api, worker, cli  | Colon/comma-separated `*.pem` **public-key** files and/or directories of them.          |
 | `AEGIS_PLUGINS_SIG_DIR`            | api, worker, cli  | Dirs holding `<dist>-<version>.sig` files (falls back to trusted-key dirs + the plugin's module dir). |
 
+### LLM guardrails
+
+Two fail-safe layers (secret scrubbing of generated diffs/LLM output +
+prompt-injection detection on untrusted input) wrap every LLM chokepoint.
+All default **on**; leave them on in production. See `SECURITY.md`
+§ "LLM guardrails" and [`overview.md`](../architecture/overview.md)
+§ "LLM guardrails".
+
+| Var                              | Where        | Notes                                                                 |
+|----------------------------------|--------------|-----------------------------------------------------------------------|
+| `AEGIS_LLM_GUARDRAILS`           | api, worker  | Master switch for both layers. Default **on**; `0`/`off` disables all. |
+| `AEGIS_LLM_SCRUB_DIFF`           | api, worker  | Secret-scrub generated diffs/patches (`***REDACTED***`). Default **on**. |
+| `AEGIS_LLM_DETECT_INJECTION`     | api, worker  | Prompt-injection detection on untrusted finding fields + prompts. Default **on**. |
+| `AEGIS_LLM_FILTER_OUTPUT`        | api, worker  | Secret-scrub LLM output at the remediation/agent chokepoints. Default **on**. |
+| `AEGIS_LLM_INJECTION_BLOCK_RISK` | api, worker  | Block threshold: `none`/`low`/`medium`/`high` (default `high`); `off` = detect-and-log only. |
+
 ---
 
 ## Build pipeline

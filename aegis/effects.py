@@ -84,6 +84,33 @@ def kali_tool_effect(name: str) -> Effect:
     return _KALI_TOOL_EFFECTS.get((name or "").strip().lower(), "active")
 
 
+# --- Unified tool effects ---------------------------------------------------
+# The full tool roster (Kali + scanners + CAI + OSINT) classifies its own
+# effects in ``aegis.tools.catalog``. ``tool_effect`` is the authoritative
+# lookup across *all* of them: it consults the catalog first, then falls back
+# to the Kali map (so a bare Kali name still resolves), and finally fails
+# *safe* to ``active``. The catalog is imported lazily to avoid an import
+# cycle (the catalog imports this module for ``Effect``/``kali_tool_effect``).
+
+
+def tool_effect(name: str) -> Effect:
+    """Authoritative effect for any platform tool name (catalog or Kali).
+
+    An unknown tool fails *safe* to ``active`` — an unclassified capability is
+    never silently treated as harmless.
+    """
+    key = (name or "").strip()
+    if not key:
+        return "active"
+    try:
+        from aegis.tools.catalog import _EFFECT_BY_NAME
+    except Exception:  # noqa: BLE001 - catalog import must never break the gate
+        _EFFECT_BY_NAME = {}
+    if key in _EFFECT_BY_NAME:
+        return _EFFECT_BY_NAME[key]
+    return _KALI_TOOL_EFFECTS.get(key.lower(), "active")
+
+
 # --- Proposal plans ---------------------------------------------------------
 
 _EXECUTE_NOTE: dict[str, str] = {

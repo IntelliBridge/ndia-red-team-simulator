@@ -11,6 +11,10 @@ import argparse
 import json  # noqa: F401  (re-exported for test patch target aegis.cli.main.json)
 import sys
 from pathlib import Path  # noqa: F401  (re-exported for test patch target aegis.cli.main.Path)
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
 
 # Console output (ANSI colours + ``[*]``/``[!]`` writers) lives in a dedicated
 # peer module now; ``main()`` and every per-command module call through it so
@@ -299,12 +303,12 @@ _COMMANDS = {
 }
 
 
-def _cmd_status_dispatch(args, config):
+def _cmd_status_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
     from aegis.cli.status import cmd_status
     cmd_status(args, config)
 
 
-def _cmd_audit_dispatch(args, config):
+def _cmd_audit_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
     from aegis.cli.audit import cmd_audit_verify
     if args.audit_action == "verify":
         cmd_audit_verify(args, config)
@@ -313,17 +317,17 @@ def _cmd_audit_dispatch(args, config):
         sys.exit(2)
 
 
-def _cmd_migrate_dispatch(args, config):
+def _cmd_migrate_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
     from aegis.cli.migrate import cmd_migrate
     cmd_migrate(args, config)
 
 
-def _cmd_ci_gate_dispatch(args, config):
+def _cmd_ci_gate_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
     from aegis.cli.ci_gate import cmd_ci_gate
     cmd_ci_gate(args, config)
 
 
-def _cmd_plugins_dispatch(args, config):
+def _cmd_plugins_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
     from aegis.cli.plugins import cmd_plugins
     cmd_plugins(args, config)
 

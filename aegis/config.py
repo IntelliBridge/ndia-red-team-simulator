@@ -50,6 +50,15 @@ class AegisConfig:
     plugins_require_signature: bool = False
     plugins_trusted_keys: str | None = None
     plugins_sig_dir: str | None = None
+    # LLM guardrails (aegis.llm.guardrails). Master switch plus per-layer
+    # toggles; all fail-safe and secret-free in logs. ``llm_injection_block_risk``
+    # is the risk tier ("low"|"medium"|"high") at/above which an injected input
+    # is *blocked*; "off" detects + logs but never blocks.
+    llm_guardrails_enabled: bool = True
+    llm_scrub_diff_pii: bool = True
+    llm_detect_injection: bool = True
+    llm_filter_output: bool = True
+    llm_injection_block_risk: str = "high"
 
 
 def load_config(path: str | None = None) -> AegisConfig:
@@ -66,10 +75,42 @@ def load_config(path: str | None = None) -> AegisConfig:
     config_path = Path(path)
 
     if not config_path.exists():
-        # No config file found — return defaults.
-        return AegisConfig()
+        # No config file found — return defaults (still env-overlaid).
+        return _apply_env_overrides(AegisConfig())
 
     with open(config_path, "r") as f:
         raw = yaml.safe_load(f) or {}
 
-    return AegisConfig(**{k: v for k, v in raw.items() if k in AegisConfig.__dataclass_fields__})
+    config = AegisConfig(
+        **{k: v for k, v in raw.items() if k in AegisConfig.__dataclass_fields__}
+    )
+    return _apply_env_overrides(config)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _apply_env_overrides(config: AegisConfig) -> AegisConfig:
+    """Overlay ``AEGIS_LLM_*`` environment variables onto the LLM-guardrail
+    fields. Env wins over YAML so an operator can flip a guard at runtime
+    without editing the config file (the established override precedence)."""
+    config.llm_guardrails_enabled = _env_bool(
+        "AEGIS_LLM_GUARDRAILS", config.llm_guardrails_enabled
+    )
+    config.llm_scrub_diff_pii = _env_bool(
+        "AEGIS_LLM_SCRUB_DIFF", config.llm_scrub_diff_pii
+    )
+    config.llm_detect_injection = _env_bool(
+        "AEGIS_LLM_DETECT_INJECTION", config.llm_detect_injection
+    )
+    config.llm_filter_output = _env_bool(
+        "AEGIS_LLM_FILTER_OUTPUT", config.llm_filter_output
+    )
+    block_risk = os.environ.get("AEGIS_LLM_INJECTION_BLOCK_RISK")
+    if block_risk is not None:
+        config.llm_injection_block_risk = block_risk.strip().lower()
+    return config

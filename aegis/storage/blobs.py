@@ -13,7 +13,10 @@ import hashlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Protocol
+from typing import TYPE_CHECKING, Iterator, Protocol
+
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
 
 
 @dataclass(frozen=True)
@@ -78,7 +81,7 @@ class FilesystemBlobStore:
                 yield chunk
 
 
-def open_blob_store(config_or_url=None) -> BlobStore:
+def open_blob_store(config_or_url: AegisConfig | str | None = None) -> BlobStore:
     """Factory that selects the configured backend.
 
     Reads ``AEGIS_BLOB_BACKEND`` (``fs`` | ``s3``) when called without args.

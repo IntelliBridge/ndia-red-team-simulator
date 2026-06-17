@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
 from aegis.cli import _console, _runstate
+from aegis.config import AegisConfig
 
 
-def _cmd_verify_api(args, _config):
+def _cmd_verify_api(args: argparse.Namespace, _config: AegisConfig) -> None:
     from aegis.cli import api_client
 
     client = api_client.build_client()
@@ -20,7 +22,7 @@ def _cmd_verify_api(args, _config):
     _console._info(f"Job ID: {result.get('job_id')}")
 
 
-def cmd_verify(args, config) -> None:
+def cmd_verify(args: argparse.Namespace, config: AegisConfig) -> None:
     """Verify a finding by replaying its PoC — thin shell over the service.
 
     F4: when ``--api`` / ``AEGIS_MODE=api`` is set, dispatches to the API.

@@ -22,23 +22,37 @@ enforcement with a per-model price table; and four review-surfaced cleanups.
 
 ## Now / Next
 
-With the seams closed — DB-side append-only audit enforcement landed
+With the seams closed — DB-side append-only audit enforcement
 (row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
-see `SECURITY.md` and `docs/ops/deploy.md`), the plugin entry-point seam now
-a documented, validated, allowlist-gated **scanner-adapter marketplace** (see
+see `SECURITY.md` and `docs/ops/deploy.md`), the LLM guardrail layers
+(diff/output secret scrubbing + prompt-injection detection; see
+`SECURITY.md` § "LLM guardrails"), the plugin entry-point seam now a
+documented, validated, allowlist-gated **scanner-adapter marketplace** (see
 [Extending Aegis](dev/extending.md)), and **supply-chain integrity** mostly
 shipped (keyless cosign image signing + SBOM + SLSA-3 provenance, and opt-in
-signed plugins; see [Supply-chain integrity](security/supply-chain.md)) — the
-next focus is the remaining **capability breadth** and **security / compliance
-hardening** (below). The highest-leverage candidates: broadening the agent/tool
-roster toward the OnePager promise, and authenticated DAST flows.
+signed plugins; see [Supply-chain integrity](security/supply-chain.md)) all
+landed — the focus has been **capability breadth** and the remaining
+**security / compliance hardening** (below). On breadth, the tool roster has
+now reached the 35+ target (42 effect-classified tools) and the agent roster
+has grown to 36 wired agents + 5 multi-agent patterns — substantial progress
+toward the 60+ OnePager target. The next highest-leverage candidates:
+continuing toward 60+ agents, and authenticated DAST flows.
 
 ## Capability breadth
 
 Closing the gap to the OnePager promise.
 
-- **60+ specialized agents** (16 wired + 3 multi-agent patterns today).
-- **35+ security tools** (24 today: 10 Kali + 14 scanner adapters).
+- **60+ specialized agents** (36 wired + 5 multi-agent patterns today —
+  substantial progress toward the OnePager target, not yet at 60+). The roster
+  now spans the 16 original CAI agents, 8 newly-wired breadth CAI agents, and
+  12 Aegis-native authored specialists (`cloud_recon`, `osint_collector`,
+  `threat_intel`, `api_security_tester`, `web_surface_mapper`,
+  `ssl_tls_auditor`, `dns_enumerator`, `secrets_hunter`, `iac_auditor`,
+  `container_security`, `crypto_analyst`, `log_triage`).
+- ~~**35+ security tools** (24 today: 10 Kali + 14 scanner adapters).~~
+  **Shipped** — the unified tool catalog (`aegis/tools/catalog.py`) now exposes
+  **42** effect-classified tools (10 Kali + 14 scanner adapters + 17 CAI
+  function-tools + the Camoufox OSINT search), past the 35+ target.
 - **Authenticated DAST flows.**
 - ~~**Community scanner-adapter marketplace** — third-party adapters via the
   plugin entry-point seam.~~ **Shipped**: the `aegis.scanners` / `aegis.agents`
@@ -55,8 +69,16 @@ Closing the gap to the OnePager promise.
   `UPDATE`/`DELETE`/`TRUNCATE` on `audit_events`, `aegis_app`/`aegis_owner` role
   split, pgaudit logging. See `SECURITY.md` § "Audit chain".
 - **WORM / tamper-evident audit storage.**
-- **PII / content scrubbing inside diffs and patches.**
-- **LLM prompt-injection / output filtering.**
+- ~~**PII / content scrubbing inside diffs and patches.**~~ **Shipped**:
+  the canonical unified diff (in `extract_unified_diff`) and LLM outputs are
+  scrubbed through the audit redactor's secret/token regex (`***REDACTED***`),
+  so the persisted `.diff`, PR body, and remediation log all inherit it. See
+  `SECURITY.md` § "LLM guardrails".
+- ~~**LLM prompt-injection / output filtering.**~~ **Shipped**: untrusted
+  finding fields and agent prompts are scored for injection (tiered risk +
+  categories) before the model call and blocked at/above
+  `AEGIS_LLM_INJECTION_BLOCK_RISK` (default `high`); fail-safe, secret-free
+  logs. See `docs/architecture/overview.md` § "LLM guardrails".
 - ~~**Supply-chain integrity** — sigstore image signing, signed plugin entry
   points, SLSA-3 provenance.~~ **Shipped**: release images are keyless
   cosign-signed by digest with a CycloneDX SBOM + SLSA-3 provenance

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from fastapi import Request
+    from starlette.middleware.base import RequestResponseEndpoint
+    from starlette.responses import Response
 
     from aegis.api.settings import APISettings
 
@@ -91,7 +93,8 @@ def rate_limit_middleware(user_per_min: int = 30,
     """Return an ASGI middleware closure."""
     from fastapi.responses import JSONResponse
 
-    async def middleware(request: "Request", call_next):
+    async def middleware(request: "Request",
+                         call_next: "RequestResponseEndpoint") -> "Response":
         if not _is_throttled(request.method, request.url.path):
             return await call_next(request)
 

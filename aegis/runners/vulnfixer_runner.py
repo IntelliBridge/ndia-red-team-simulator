@@ -31,6 +31,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 from aegis.config import AegisConfig, load_config
 from aegis.remediate.cai_runner import RemediationResult
@@ -58,7 +59,7 @@ def _parse_engine_result(stdout: str) -> dict | None:
         s = line.strip()
         if s.startswith(_RESULT_MARKER):
             try:
-                return json.loads(s[len(_RESULT_MARKER):])
+                return cast("dict[Any, Any]", json.loads(s[len(_RESULT_MARKER):]))
             except json.JSONDecodeError:
                 return None
     return None

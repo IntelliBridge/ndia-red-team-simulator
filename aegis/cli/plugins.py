@@ -10,12 +10,18 @@ from __future__ import annotations
 
 import json
 import os
+from typing import TYPE_CHECKING
 
 from aegis.cli import _console
 from aegis.plugins import discover_all
 
+if TYPE_CHECKING:
+    import argparse
 
-def cmd_plugins(args, config) -> None:
+    from aegis.config import AegisConfig
+
+
+def cmd_plugins(args: argparse.Namespace, config: AegisConfig) -> None:
     """Dispatch the ``plugins`` subcommands (``list`` / ``sign``)."""
     action = getattr(args, "plugins_action", None)
     if action == "list":
@@ -27,7 +33,7 @@ def cmd_plugins(args, config) -> None:
         raise SystemExit(2)
 
 
-def _cmd_plugins_list(args, config) -> None:
+def _cmd_plugins_list(args: argparse.Namespace, config: AegisConfig) -> None:
     discovery_on = os.environ.get("AEGIS_PLUGINS") == "1"
     plugins = discover_all()
 
@@ -76,7 +82,7 @@ def _signed_cell(signature: str | None) -> str:
     return f"yes:{signature[:12]}"
 
 
-def _cmd_plugins_sign(args, config) -> None:
+def _cmd_plugins_sign(args: argparse.Namespace, config: AegisConfig) -> None:
     """Sign a plugin distribution, producing the detached ``.sig`` file.
 
     Resolves the ``--entry-point GROUP:NAME`` to its factory, signs the
@@ -101,7 +107,7 @@ def _cmd_plugins_sign(args, config) -> None:
     _console._info(f"signed by key_id: {key_id}")
 
 
-def _load_entry_point_factory(spec: str):
+def _load_entry_point_factory(spec: str) -> object:
     """Resolve a ``GROUP:NAME`` entry-point spec to its loaded factory callable.
 
     Exits 2 on a malformed spec and 1 when no matching entry point is found, so
@@ -115,7 +121,8 @@ def _load_entry_point_factory(spec: str):
 
     for ep in entry_points(group=group):
         if ep.name == name:
-            return ep.load()
+            factory: object = ep.load()
+            return factory
     _console._err(f"no entry point {name!r} in group {group!r}")
     raise SystemExit(1)
 

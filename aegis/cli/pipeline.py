@@ -7,9 +7,10 @@ import sys
 
 import aegis.cli.main as _main
 from aegis.cli import _console
+from aegis.config import AegisConfig
 
 
-def cmd_pipeline(args, config) -> None:
+def cmd_pipeline(args: argparse.Namespace, config: AegisConfig) -> None:
     """Run the full pipeline: scan -> findings -> export -> report."""
     print(f"{_console._BOLD}Aegis Pipeline{_console._RESET}")
     print("=" * 50)
