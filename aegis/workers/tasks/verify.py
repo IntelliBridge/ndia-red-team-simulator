@@ -35,7 +35,7 @@ def verify_replay(self, job_id: str) -> dict[str, Any]:
     from aegis.workers.bootstrap import task_context
 
     config = load_config()
-    with task_context(job_id) as ctx:
+    with task_context(job_id, task=self) as ctx:
         if ctx.skip or ctx.run_state is None:
             return {"job_id": job_id, "skipped": True}
         sess = ctx.session

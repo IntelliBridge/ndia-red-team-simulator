@@ -24,7 +24,7 @@ def agent_run(self, job_id: str) -> dict[str, Any]:
     from aegis.workers.bootstrap import task_context
 
     config = load_config()
-    with task_context(job_id) as ctx:
+    with task_context(job_id, task=self) as ctx:
         if ctx.skip:
             return {"job_id": job_id, "skipped": True}
         job = ctx.session.get(Job, job_id)
