@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 
 from aegis.cli import _console
+from aegis.config import AegisConfig
 
 
-def cmd_targets(args, config) -> None:
+def cmd_targets(args: argparse.Namespace, config: AegisConfig) -> None:
     """Manage vulnerable-target containers (list / up / down)."""
     from aegis.safety import authorize
     from aegis.state import RunState

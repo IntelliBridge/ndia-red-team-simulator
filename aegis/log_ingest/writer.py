@@ -14,7 +14,15 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from contextlib import AbstractContextManager
+
+    from sqlalchemy.orm import Session
+
+    SessionFactory = Callable[[], AbstractContextManager[Session]]
 
 
 @dataclass
@@ -65,7 +73,7 @@ class LogIngestWriter:
     def __init__(
         self,
         *,
-        session_factory=None,
+        session_factory: SessionFactory | None = None,
         batch_size: int = _DEFAULT_BATCH,
         flush_seconds: float = _DEFAULT_FLUSH_SECONDS,
     ) -> None:
@@ -128,6 +136,9 @@ class LogIngestWriter:
 
     def _insert(self, rows: list[LogIngestRow]) -> int:
         from aegis.db.models import ApplicationLog
+        # ``flush`` only reaches here after its ``_session_factory is None``
+        # guard, so the factory is always present at this point.
+        assert self._session_factory is not None
         with self._session_factory() as sess:
             objs = [
                 ApplicationLog(

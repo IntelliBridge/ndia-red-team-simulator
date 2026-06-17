@@ -30,14 +30,12 @@ class TrivyAdapter:
             run_id=run_state.run_id,
             output_dir=run_state.run_path / "trivy",
         )
-        return ScanResult(
-            findings=result.findings,
+        return ScanResult.from_runner(
+            result,
             adapter_name=self.name,
             adapter_version=self.adapter_version(),
-            command_str="trivy fs",
-            exit_code=result.return_code,
             duration_s=time.monotonic() - started,
-            error=result.error,
+            command_str="trivy fs",
         )
 
 

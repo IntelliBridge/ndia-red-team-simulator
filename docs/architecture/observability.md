@@ -188,6 +188,89 @@ so a curl probe doesn't crash.
 
 ---
 
+## Run events & worker queues
+
+Beyond the three telemetry streams, the worker emits a **live
+job-lifecycle event stream** the dashboard consumes, and runs its tasks
+across two Celery queues so a 30-minute scan can't block a CI gate.
+
+### Live run events (Redis pub/sub → WebSocket)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as aegis-worker
+    participant DB as Postgres
+    participant R as Redis pub/sub
+    participant API as aegis-api (WS)
+    participant Web as @aegis/web
+
+    Note over W: task_context runs the job body
+    W->>R: publish run:{run_id}:events<br/>{type:job, status:"running"}
+    W->>DB: UPDATE jobs … (succeeded / failed)
+    Note over W,DB: terminal event published AFTER the commit
+    W->>R: publish {type:job, status:"succeeded"|"failed"}
+    Web->>API: WS GET /v1/runs/{run_id}/events
+    API->>R: SUBSCRIBE run:{run_id}:events
+    R-->>API: event frames
+    API-->>Web: send_json(event)
+    Note over Web: useRunEvents → mutate(); SWR poll is the fallback
+```
+
+The worker publishes a job-transition frame
+(`running` / `succeeded` / `failed`) to the Redis channel
+`run:{run_id}:events` via `publish_job_event` in
+`aegis/workers/events.py`. The WebSocket endpoint
+`GET /v1/runs/{run_id}/events` (`aegis/api/ws.py`) subscribes to that
+channel and streams each frame to the frontend; the web `useRunEvents`
+hook (`web/src/hooks/useRunEvents.ts`) consumes them live and revalidates
+its SWR data, with the existing SWR poll as the fallback when the socket
+is down. Heartbeat frames (emitted when no broker is configured) are
+ignored.
+
+Two load-bearing details:
+
+- **Publishing is best-effort.** A broker hiccup must never fail or retry
+  the job that triggered the event — Postgres stays the source of truth
+  for status; the event stream is a real-time convenience on top of it.
+  Every publish failure is swallowed and logged.
+- **Terminal events are published after the DB commit.** The worker's
+  `task_context` (`aegis/workers/bootstrap.py`) emits the `succeeded` /
+  `failed` frame only once `get_session()` has committed the status row,
+  so a consumer reacting to the event always sees a durable row.
+
+### Celery queue routing
+
+`aegis/workers/celery_app.py` routes tasks across two queues so the
+worker pools don't contend:
+
+| Queue | Tasks | Why |
+|-------|-------|-----|
+| `scans` | `scan_start`, `fix_generate`, `verify_replay`, `agent_run` | Long offensive / remediation work (minutes). |
+| `default` | `ci_gate`, `report_render`, `vulnfixer_render`, `parallel_fix`, `reap_stale_jobs` | Fast bookkeeping — kept off the `scans` pool so a long scan can't starve it. (`parallel_fix` blocks on its `fix_generate` children, so the waiter stays off the pool it waits on.) |
+
+[`deploy/docker-compose.yml`](https://github.com/IntelliBridge/aegis/blob/main/deploy/docker-compose.yml)
+runs **a dedicated worker pool per queue** — `aegis-worker`
+(`-Q scans`) and `aegis-worker-default` (`-Q default`) — plus a separate
+**`aegis-beat`** scheduler service (`celery … beat`). The beat process is
+what actually fires `app.conf.beat_schedule`, i.e. the stale-job reaper
+every 5 minutes; previously the schedule was defined but no beat process
+ran, so it never fired.
+
+### Durable status on failure
+
+A crashed or failed task must leave a **durable** terminal row, but
+`get_session()` rolls back its session on exception — a naive
+`job.status = "failed"` written on that session would be discarded. So
+`task_context` rolls back first (releasing the job-row lock), then
+re-loads the `Job` and writes `status="failed"` + the error on a *fresh*
+commit so it survives. The periodic `reap_stale_jobs` reaper is the
+backstop: a task that dies hard (process killed, never reaching the
+`except`) is left `status="running"` forever, so the reaper sweeps rows
+past their TTL to `failed`.
+
+---
+
 ## Correlation: a worked example
 
 A user hits `POST /v1/scans`. The full chain of ids that lets you

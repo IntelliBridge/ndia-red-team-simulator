@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aegis-platform"
-version = "0.12.0"
+version = "0.13.0"
 description = "Aegis MVP glue code for security finding normalization and remediation orchestration."
 requires-python = ">=3.12"
 dependencies = [
     "PyYAML>=6.0",
+    "pydantic>=2.7",
 ]
 
 [project.optional-dependencies]
@@ -83,5 +84,11 @@ ignore = ["E501"]  # line length handled by formatter
 
 [tool.mypy]
 python_version = "3.12"
+plugins = ["pydantic.mypy"]
 ignore_missing_imports = true
 warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_return_any = true
+no_implicit_optional = true
