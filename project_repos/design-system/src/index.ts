@@ -54,6 +54,37 @@ import {
 } from "./primitives/alert";
 import { Input } from "./primitives/input";
 import { Textarea } from "./primitives/textarea";
+import {
+  AlertDialog,
+  AlertDialogTrigger,
+  AlertDialogPortal,
+  AlertDialogOverlay,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+  alertDialogButtonVariants,
+} from "./primitives/alert-dialog";
+import {
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from "./primitives/tooltip";
+import {
+  Command,
+  CommandDialog,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandSeparator,
+  CommandShortcut,
+} from "./primitives/command";
 
 export {
   Table,
@@ -104,5 +135,60 @@ export type InputProps = ComponentProps<typeof Input>;
 
 export { Textarea };
 export type TextareaProps = ComponentProps<typeof Textarea>;
+
+export {
+  AlertDialog,
+  AlertDialogTrigger,
+  AlertDialogPortal,
+  AlertDialogOverlay,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogFooter,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+  alertDialogButtonVariants,
+};
+export type AlertDialogProps = ComponentProps<typeof AlertDialog>;
+export type AlertDialogTriggerProps = ComponentProps<typeof AlertDialogTrigger>;
+export type AlertDialogPortalProps = ComponentProps<typeof AlertDialogPortal>;
+export type AlertDialogOverlayProps = ComponentProps<typeof AlertDialogOverlay>;
+export type AlertDialogContentProps = ComponentProps<typeof AlertDialogContent>;
+export type AlertDialogHeaderProps = ComponentProps<typeof AlertDialogHeader>;
+export type AlertDialogFooterProps = ComponentProps<typeof AlertDialogFooter>;
+export type AlertDialogTitleProps = ComponentProps<typeof AlertDialogTitle>;
+export type AlertDialogDescriptionProps = ComponentProps<
+  typeof AlertDialogDescription
+>;
+export type AlertDialogActionProps = ComponentProps<typeof AlertDialogAction>;
+export type AlertDialogCancelProps = ComponentProps<typeof AlertDialogCancel>;
+
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider };
+export type TooltipProps = ComponentProps<typeof Tooltip>;
+export type TooltipTriggerProps = ComponentProps<typeof TooltipTrigger>;
+export type TooltipContentProps = ComponentProps<typeof TooltipContent>;
+export type TooltipProviderProps = ComponentProps<typeof TooltipProvider>;
+
+export {
+  Command,
+  CommandDialog,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandSeparator,
+  CommandShortcut,
+};
+export type CommandProps = ComponentProps<typeof Command>;
+export type CommandDialogProps = ComponentProps<typeof CommandDialog>;
+export type CommandInputProps = ComponentProps<typeof CommandInput>;
+export type CommandListProps = ComponentProps<typeof CommandList>;
+export type CommandEmptyProps = ComponentProps<typeof CommandEmpty>;
+export type CommandGroupProps = ComponentProps<typeof CommandGroup>;
+export type CommandItemProps = ComponentProps<typeof CommandItem>;
+export type CommandSeparatorProps = ComponentProps<typeof CommandSeparator>;
+export type CommandShortcutProps = ComponentProps<typeof CommandShortcut>;
 
 export { cn } from "./lib/utils";

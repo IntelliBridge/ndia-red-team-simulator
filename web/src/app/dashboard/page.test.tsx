@@ -111,7 +111,7 @@ describe("DashboardPage", () => {
 
     const panel = screen.getByText(/Failed to load runs:/);
     expect(panel.textContent).toContain("boom-503");
-    expect(panel.className).toContain("border-red-200");
+    expect(panel.className).toContain("border-destructive");
   });
 
   it("renders the empty state when there are no runs", () => {

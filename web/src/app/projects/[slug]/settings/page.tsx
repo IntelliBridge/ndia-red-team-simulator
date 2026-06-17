@@ -42,11 +42,12 @@ export default function ProjectSettingsPage({
     }
   }, [data]);
 
-  if (!authed) return <p className="text-slate-500">Redirecting to sign in…</p>;
-  if (isLoading) return <p className="text-slate-500">Loading…</p>;
+  if (!authed)
+    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
+  if (isLoading) return <p className="text-muted-foreground">Loading…</p>;
   if (error)
     return (
-      <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+      <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
         Failed to load: {String(error)}
       </p>
     );
@@ -78,16 +79,16 @@ export default function ProjectSettingsPage({
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-semibold">{data.project.name}</h1>
-        <p className="font-mono text-xs text-slate-500">{data.project.slug}</p>
+        <p className="font-mono text-xs text-muted-foreground">{data.project.slug}</p>
       </header>
 
       <section className="space-y-3">
-        <h2 className="text-sm uppercase tracking-wide text-slate-500">
+        <h2 className="text-sm uppercase tracking-wide text-muted-foreground">
           Members
         </h2>
-        <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+        <div className="overflow-hidden rounded-md border border-border bg-card">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+            <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2">Email</th>
                 <th className="px-3 py-2">Role</th>
@@ -95,7 +96,7 @@ export default function ProjectSettingsPage({
             </thead>
             <tbody>
               {data.members.map((m) => (
-                <tr key={m.sub} className="border-t border-slate-100">
+                <tr key={m.sub} className="border-t border-border">
                   <td className="px-3 py-2">{m.email}</td>
                   <td className="px-3 py-2">{m.role}</td>
                 </tr>
@@ -107,7 +108,7 @@ export default function ProjectSettingsPage({
 
       <RoleGated minRole="admin" callerRole={callerRole}>
         <section className="space-y-3">
-          <h2 className="text-sm uppercase tracking-wide text-slate-500">
+          <h2 className="text-sm uppercase tracking-wide text-muted-foreground">
             LLM budget
           </h2>
           <div className="flex items-end gap-3">
@@ -118,19 +119,19 @@ export default function ProjectSettingsPage({
                 min="0"
                 value={budget}
                 onChange={(e) => setBudget(e.target.value)}
-                className="rounded-md border border-slate-200 px-2 py-1.5"
+                className="rounded-md border border-input bg-background px-2 py-1.5"
               />
             </label>
             <button
               onClick={saveBudget}
               disabled={busy}
-              className="rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+              className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-50"
             >
               Save
             </button>
           </div>
           {err && (
-            <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+            <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
               {err}
             </p>
           )}

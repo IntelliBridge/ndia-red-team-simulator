@@ -3,12 +3,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   api,
+  cancelRun,
   centsToUsd,
   createAuthProfile,
   deleteAuthProfile,
+  deleteTarget,
+  exportVulnfixerUrl,
   getOrgCost,
+  isCancellable,
   listAuthProfiles,
+  reportUrl,
   resolveOrgId,
+  runAgent,
+  runKaliTool,
   startScan,
   type ProjectMembership,
 } from "./api";
@@ -118,6 +125,85 @@ describe("api() request shaping", () => {
   it("returns {} for an empty response body", async () => {
     fetchMock.mockResolvedValue(ok(""));
     expect(await api("/v1/empty")).toEqual({});
+  });
+});
+
+describe("typed client helpers", () => {
+  it("cancelRun POSTs the run cancel route", async () => {
+    fetchMock.mockResolvedValue(ok("{}"));
+    await cancelRun("run-1");
+    expect(lastUrl()).toBe("http://localhost:8000/v1/runs/run-1/cancel");
+    expect(lastInit().method).toBe("POST");
+  });
+
+  it("deleteTarget DELETEs the target route", async () => {
+    fetchMock.mockResolvedValue(ok("{}"));
+    await deleteTarget("t-9");
+    expect(lastUrl()).toBe("http://localhost:8000/v1/targets/t-9");
+    expect(lastInit().method).toBe("DELETE");
+  });
+
+  it("isCancellable is true only for non-terminal statuses", () => {
+    expect(isCancellable("queued")).toBe(true);
+    expect(isCancellable("running")).toBe(true);
+    expect(isCancellable("completed")).toBe(false);
+    expect(isCancellable("cancelled")).toBe(false);
+    expect(isCancellable(undefined)).toBe(false);
+  });
+
+  it("runAgent POSTs the agent run route with the body", async () => {
+    fetchMock.mockResolvedValue(
+      ok(JSON.stringify({ run_id: "r1", job_id: "j1" })),
+    );
+    const out = await runAgent("red_teamer", {
+      prompt: "go",
+      project_id: "p1",
+      execute: true,
+      target: "https://t.example",
+    });
+    expect(out).toEqual({ run_id: "r1", job_id: "j1" });
+    expect(lastUrl()).toBe("http://localhost:8000/v1/agents/red_teamer/run");
+    const init = lastInit();
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      prompt: "go",
+      project_id: "p1",
+      execute: true,
+      target: "https://t.example",
+    });
+  });
+
+  it("runKaliTool POSTs /tools/kali/{tool} with execute + params + project", async () => {
+    fetchMock.mockResolvedValue(
+      ok(JSON.stringify({ tool: "sqlmap", success: true, return_code: 0 })),
+    );
+    const out = await runKaliTool("sqlmap", {
+      execute: true,
+      params: { target: "x" },
+    });
+    expect(out.tool).toBe("sqlmap");
+    expect(lastUrl()).toBe(
+      "http://localhost:8000/v1/tools/kali/sqlmap?project=default",
+    );
+    expect(JSON.parse(lastInit().body as string)).toEqual({
+      execute: true,
+      params: { target: "x" },
+    });
+  });
+
+  it("reportUrl + exportVulnfixerUrl build authenticated download links per ext", () => {
+    expect(reportUrl("run-7", "html")).toBe(
+      "http://localhost:8000/v1/runs/run-7/report.html",
+    );
+    expect(reportUrl("run-7", "json")).toBe(
+      "http://localhost:8000/v1/runs/run-7/report.json",
+    );
+    expect(reportUrl("run-7", "md")).toBe(
+      "http://localhost:8000/v1/runs/run-7/report.md",
+    );
+    expect(exportVulnfixerUrl("run-7")).toBe(
+      "http://localhost:8000/v1/runs/run-7/exports/vulnfixer",
+    );
   });
 });
 

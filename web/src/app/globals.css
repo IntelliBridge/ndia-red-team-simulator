@@ -2,11 +2,76 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ------------------------------------------------------------------ *
+ * Semantic token layer (dark-mode foundation).
+ *
+ * Light values come from the existing slate-based palette; `.dark`
+ * supplies sensible dark equivalents. These feed Tailwind via
+ * theme.extend.colors (hsl(var(--token))) so utilities like
+ * `bg-background text-foreground border-border bg-card
+ * text-muted-foreground` work and flip under the `.dark` class
+ * (darkMode: "class"). HSL channels are stored *without* the hsl()
+ * wrapper so Tailwind can apply opacity modifiers (e.g. bg-primary/90).
+ * ------------------------------------------------------------------ */
+:root {
+  --background: 210 40% 99%;            /* ~slate-50 */
+  --foreground: 222 47% 11%;            /* ~slate-900 */
+  --card: 0 0% 100%;                    /* white */
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 222 47% 11%;              /* slate-900 */
+  --primary-foreground: 210 40% 98%;   /* slate-50 */
+  --secondary: 210 40% 96%;            /* slate-100 */
+  --secondary-foreground: 222 47% 11%;
+  --muted: 210 40% 96%;                /* slate-100 */
+  --muted-foreground: 215 16% 47%;     /* slate-500 */
+  --accent: 210 40% 96%;               /* slate-100 */
+  --accent-foreground: 222 47% 11%;
+  --destructive: 0 72% 51%;            /* red-600 */
+  --destructive-foreground: 210 40% 98%;
+  --border: 214 32% 91%;               /* slate-200 */
+  --input: 214 32% 91%;                /* slate-200 */
+  --ring: 215 20% 65%;                 /* slate-400 */
+}
+
+.dark {
+  --background: 222 47% 11%;           /* slate-900 */
+  --foreground: 210 40% 98%;          /* slate-50 */
+  --card: 222 44% 13%;                /* slightly lifted slate-900 */
+  --card-foreground: 210 40% 98%;
+  --popover: 222 44% 13%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 210 40% 98%;             /* slate-50 */
+  --primary-foreground: 222 47% 11%;  /* slate-900 */
+  --secondary: 217 33% 17%;           /* slate-800 */
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217 33% 17%;               /* slate-800 */
+  --muted-foreground: 215 20% 65%;    /* slate-400 */
+  --accent: 217 33% 17%;              /* slate-800 */
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 63% 45%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217 33% 22%;              /* slate-700-ish */
+  --input: 217 33% 22%;
+  --ring: 215 20% 50%;
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+}
+
 /* Bare minimum styles; Phase 4 brings real design. */
 * { box-sizing: border-box; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  margin: 0; color: #1a1a2e; background: #fafafc;
+  margin: 0;
 }
 .aegis-header {
   display: flex; justify-content: space-between; align-items: center;

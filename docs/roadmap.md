@@ -190,9 +190,18 @@ Closing the gap to the OnePager promise.
 
 ## Frontend
 
-- **Radix-based shadcn primitives** (`alert-dialog`, `tooltip`, `command`) —
-  gated on adding `radix-ui` / `cmdk` to the offline build lockfile.
-- Dark mode; audit-chain visualization page; per-finding HTML report;
+- ~~**Radix-based shadcn primitives** (`alert-dialog`, `tooltip`, `command`) —
+  gated on adding `radix-ui` / `cmdk` to the offline build lockfile.~~
+  **Shipped**: `alert-dialog`, `tooltip`, and `command`/`cmdk` are ported and
+  in use; the lockfile gate is lifted (`@radix-ui/*` + `cmdk` are now in
+  `web/pnpm-lock.yaml`). They back the confirm dialogs, tooltips, and the
+  Cmd/Ctrl-K command palette.
+- ~~Dark mode; audit-chain visualization page~~ **Shipped**: a class-strategy
+  dark-mode header toggle (persisted to `localStorage`) and an `/audit` page
+  that renders each chain as linked blocks with valid/broken status + hashes.
+  The new `/agents` and `/tools` surfaces, plus cancel-run / delete-target /
+  report + export download controls, also landed here.
+- Still pending: per-finding HTML report (smaller than the run-level);
   Storybook test-runner + a11y CI gates.
 
 ## Observability

@@ -11,27 +11,25 @@ vi.mock("@/hooks/useRequireAuth", () => ({
   useRequireAuth: useRequireAuthMock,
 }));
 
-// Stub AuditChainBadge to keep the test isolated from design-system internals
+// Stub the design-system Tooltip primitives to passthrough children so the
+// test stays isolated from Radix portal/provider plumbing. The TooltipContent
+// (full hash on hover) is rendered inline so we can assert on it.
 vi.mock("@aegis/design-system", () => ({
-  AuditChainBadge: ({
-    state,
-    chainId,
-  }: {
-    state: string;
-    chainId: string;
-    events: number;
-  }) =>
-    React.createElement(
-      "span",
-      { "data-testid": `badge-${chainId}` },
-      state
-    ),
+  TooltipProvider: ({ children }: { children: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children),
+  Tooltip: ({ children }: { children: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children),
+  TooltipTrigger: ({ children }: { children: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children),
+  TooltipContent: ({ children }: { children: React.ReactNode }) =>
+    React.createElement("span", { "data-testid": "tooltip-content" }, children),
 }));
 
 import AuditPage from "./page";
 
 afterEach(cleanup);
 beforeEach(() => {
+  useSWRMock.mockReset();
   useRequireAuthMock.mockReturnValue(true);
 });
 
@@ -52,6 +50,7 @@ describe("AuditPage", () => {
     render(React.createElement(AuditPage));
     const el = screen.getByText(/Failed to verify/);
     expect(el.textContent).toContain("403 Forbidden");
+    expect(el.className).toContain("border-destructive");
   });
 
   it("renders 'Redirecting to sign in…' when not authed", () => {
@@ -70,25 +69,26 @@ describe("AuditPage", () => {
     expect(subtitle.tagName.toLowerCase()).toBe("p");
   });
 
-  it("renders table headers and no badge elements when chains array is empty", () => {
+  it("renders the empty state and no overall-status badge when chains is empty", () => {
     useSWRMock.mockReturnValue({ data: { chains: [] }, error: undefined, isLoading: false });
     render(React.createElement(AuditPage));
-    expect(screen.getByText("Chain").textContent).toBe("Chain");
-    expect(screen.getByText("Events").textContent).toBe("Events");
-    expect(screen.getByText("State").textContent).toBe("State");
-    expect(screen.getByText("Head hash").textContent).toBe("Head hash");
-    expect(screen.queryByTestId(/^badge-/)).toBeNull();
+    expect(screen.getByText("No audit chains found.")).toBeTruthy();
+    expect(screen.queryByTestId("overall-status")).toBeNull();
   });
 
-  it("renders a verified chain row with chain_id, event_count, and badge", () => {
+  it("renders a verified chain with a green-toned 'verified' status and event blocks", () => {
     useSWRMock.mockReturnValue({
       data: {
         chains: [
           {
-            chain_id: "chain-abc",
+            chain_id: "project:alpha",
             verified: true,
-            event_count: 42,
+            event_count: 2,
             head_hash: "deadbeef12345678abcdef0000000000",
+            events: [
+              { seq: 1, this_hash: "aaaa1111", prev_hash: null },
+              { seq: 2, this_hash: "bbbb2222", prev_hash: "aaaa1111" },
+            ],
           },
         ],
       },
@@ -96,61 +96,36 @@ describe("AuditPage", () => {
       isLoading: false,
     });
     render(React.createElement(AuditPage));
-    expect(screen.getByText("chain-abc").textContent).toBe("chain-abc");
-    expect(screen.getByText("42").textContent).toBe("42");
-    const badge = screen.getByTestId("badge-chain-abc");
-    expect(badge.textContent).toBe("verified");
+
+    const status = screen.getByTestId("status-project:alpha");
+    expect(status.textContent).toContain("verified");
+    expect(status.className).toContain("emerald");
+
+    // Per-event blocks render with seq labels.
+    expect(screen.getByText("seq 1")).toBeTruthy();
+    expect(screen.getByText("seq 2")).toBeTruthy();
+
+    // Overall status reflects all-verified.
+    const overall = screen.getByTestId("overall-status");
+    expect(overall.textContent).toContain("All chains verified");
+    expect(overall.className).toContain("emerald");
   });
 
-  it("renders a head hash truncated to 16 characters plus ellipsis", () => {
+  it("renders a broken chain with a destructive-toned 'broken' status", () => {
     useSWRMock.mockReturnValue({
       data: {
         chains: [
           {
-            chain_id: "chain-xyz",
-            verified: false,
-            event_count: 5,
-            head_hash: "aabbccddeeff0011223344556677889900",
-          },
-        ],
-      },
-      error: undefined,
-      isLoading: false,
-    });
-    render(React.createElement(AuditPage));
-    // page does: head_hash.slice(0, 16) + "…"
-    const cell = screen.getByText("aabbccddeeff0011…");
-    expect(cell.textContent).toBe("aabbccddeeff0011…");
-  });
-
-  it("renders '—' for a null head_hash", () => {
-    useSWRMock.mockReturnValue({
-      data: {
-        chains: [
-          {
-            chain_id: "chain-null",
-            verified: false,
-            event_count: 0,
-            head_hash: null,
-          },
-        ],
-      },
-      error: undefined,
-      isLoading: false,
-    });
-    render(React.createElement(AuditPage));
-    expect(screen.getByText("—").textContent).toBe("—");
-  });
-
-  it("renders 'broken' badge state for an unverified chain", () => {
-    useSWRMock.mockReturnValue({
-      data: {
-        chains: [
-          {
-            chain_id: "chain-broken",
+            chain_id: "run:xyz",
             verified: false,
             event_count: 3,
-            head_hash: "1234567890abcdef",
+            head_hash: "00112233",
+            broken_at: 2,
+            events: [
+              { seq: 1, this_hash: "h1", prev_hash: null },
+              { seq: 2, this_hash: "h2", prev_hash: "WRONG" },
+              { seq: 3, this_hash: "h3", prev_hash: "h2" },
+            ],
           },
         ],
       },
@@ -158,24 +133,98 @@ describe("AuditPage", () => {
       isLoading: false,
     });
     render(React.createElement(AuditPage));
-    expect(screen.getByTestId("badge-chain-broken").textContent).toBe("broken");
+
+    const status = screen.getByTestId("status-run:xyz");
+    expect(status.textContent).toContain("broken");
+    expect(status.className).toContain("destructive");
+
+    const overall = screen.getByTestId("overall-status");
+    expect(overall.textContent).toContain("broken");
+    expect(overall.className).toContain("destructive");
   });
 
-  it("renders multiple chain rows with independent badge states", () => {
+  it("falls back to a head-only summary node when a chain has no events", () => {
     useSWRMock.mockReturnValue({
       data: {
         chains: [
-          { chain_id: "chain-1", verified: true, event_count: 10, head_hash: "aaaa0000bbbb1111" },
-          { chain_id: "chain-2", verified: false, event_count: 7, head_hash: null },
+          {
+            chain_id: "system",
+            verified: false,
+            event_count: 5,
+            head_hash: "abcdef0123456789aabbccddeeff",
+            broken_at: 4,
+          },
         ],
       },
       error: undefined,
       isLoading: false,
     });
     render(React.createElement(AuditPage));
-    expect(screen.getByText("chain-1").textContent).toBe("chain-1");
-    expect(screen.getByText("chain-2").textContent).toBe("chain-2");
-    expect(screen.getByTestId("badge-chain-1").textContent).toBe("verified");
-    expect(screen.getByTestId("badge-chain-2").textContent).toBe("broken");
+    // Head node present, no seq blocks.
+    expect(screen.getByTestId("hash-head")).toBeTruthy();
+    expect(screen.queryByText("seq 1")).toBeNull();
+    expect(screen.getByText(/chain broken at seq 4/)).toBeTruthy();
+  });
+
+  it("distinguishes a valid chain from a broken chain when both are present", () => {
+    useSWRMock.mockReturnValue({
+      data: {
+        chains: [
+          {
+            chain_id: "project:good",
+            verified: true,
+            event_count: 1,
+            head_hash: "good0000",
+            events: [{ seq: 1, this_hash: "good0000", prev_hash: null }],
+          },
+          {
+            chain_id: "run:bad",
+            verified: false,
+            event_count: 1,
+            head_hash: "bad0000",
+            broken_at: 1,
+            events: [{ seq: 1, this_hash: "bad0000", prev_hash: null }],
+          },
+        ],
+      },
+      error: undefined,
+      isLoading: false,
+    });
+    render(React.createElement(AuditPage));
+
+    expect(screen.getByTestId("status-project:good").textContent).toContain(
+      "verified",
+    );
+    expect(screen.getByTestId("status-run:bad").textContent).toContain("broken");
+
+    // With one broken chain the overall status is not all-verified.
+    expect(screen.getByTestId("overall-status").textContent).toContain(
+      "1 chain broken",
+    );
+  });
+
+  it("truncates a long this_hash and exposes the full hash via tooltip content", () => {
+    const full = "aabbccddeeff0011223344556677889900";
+    useSWRMock.mockReturnValue({
+      data: {
+        chains: [
+          {
+            chain_id: "project:trunc",
+            verified: true,
+            event_count: 1,
+            head_hash: full,
+            events: [{ seq: 1, this_hash: full, prev_hash: null }],
+          },
+        ],
+      },
+      error: undefined,
+      isLoading: false,
+    });
+    render(React.createElement(AuditPage));
+    // Truncated to 16 chars + ellipsis appears in the node.
+    expect(screen.getAllByText("aabbccddeeff0011…").length).toBeGreaterThan(0);
+    // Full hash surfaced inside the (mocked) tooltip content.
+    const tips = screen.getAllByTestId("tooltip-content");
+    expect(tips.some((t) => t.textContent === full)).toBe(true);
   });
 });

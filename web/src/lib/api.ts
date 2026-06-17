@@ -150,6 +150,127 @@ export type ProjectMembership = {
   role: string;
 };
 
+// ── Run cancellation ───────────────────────────────────────────────
+// POST /v1/runs/{id}/cancel — admission service emits the audit row
+// then flips the run + queued/running jobs to "cancelled". Returns
+// {run_id, status, jobs_cancelled}; we don't surface the body to
+// callers (the SWR refetch picks up the new status), hence Promise<void>.
+export async function cancelRun(runId: string): Promise<void> {
+  await api<{ run_id: string; status: string; jobs_cancelled: number }>(
+    `/v1/runs/${encodeURIComponent(runId)}/cancel`,
+    { method: "POST" },
+  );
+}
+
+// Run statuses that the cancel endpoint can still act on. A terminal
+// run (completed/failed/cancelled) has nothing to revoke, so the UI
+// hides the control rather than POST a no-op.
+const CANCELLABLE_RUN_STATUSES = new Set(["queued", "running", "pending"]);
+
+export function isCancellable(status: string | undefined | null): boolean {
+  return status != null && CANCELLABLE_RUN_STATUSES.has(status);
+}
+
+// ── Target deletion ────────────────────────────────────────────────
+// DELETE /v1/targets/{id} — admin-gated; service writes the audit row
+// before the DB row is removed. Returns {deleted: id}; void to callers.
+export async function deleteTarget(targetId: string): Promise<void> {
+  await api<{ deleted: string }>(
+    `/v1/targets/${encodeURIComponent(targetId)}`,
+    { method: "DELETE" },
+  );
+}
+
+// ── Agent invocation ───────────────────────────────────────────────
+export type RunAgentBody = {
+  prompt: string;
+  project_id?: string;
+  execute?: boolean;
+  target?: string;
+  finding_id?: string;
+  repo_path?: string;
+  override_authorized?: boolean;
+};
+
+// The agent admission route returns the shared JobHandle shape
+// ({run_id, job_id, status_url, status}). Active/offensive agents run
+// with execute=false return a proposal; execute=true performs the
+// state-changing step (approver-gated server-side).
+export type AgentRunResult = {
+  run_id: string;
+  job_id: string;
+  status_url?: string;
+  status?: string;
+};
+
+export function runAgent(
+  name: string,
+  body: RunAgentBody,
+): Promise<AgentRunResult> {
+  return api<AgentRunResult>(
+    `/v1/agents/${encodeURIComponent(name)}/run`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+// ── Kali tool pass-through ─────────────────────────────────────────
+export type KaliRunBody = {
+  execute?: boolean;
+  params?: Record<string, unknown>;
+};
+
+// Active tools (sqlmap/hydra/metasploit/wpscan) without execute=true
+// come back as {tool, status:"pending_approval", effect, params,
+// message}; a real run returns the ToolOutcome fields. The union keeps
+// both observable to the page.
+export type ToolOutcome = {
+  tool: string;
+  success?: boolean;
+  return_code?: number | null;
+  stdout?: string | null;
+  stderr?: string | null;
+  error?: string | null;
+  status?: string;
+  effect?: string;
+  message?: string;
+  params?: Record<string, unknown>;
+};
+
+export function runKaliTool(
+  tool: string,
+  body: KaliRunBody,
+  project = "default",
+): Promise<ToolOutcome> {
+  return api<ToolOutcome>(
+    `/v1/tools/kali/${encodeURIComponent(tool)}?project=${encodeURIComponent(project)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+// ── Report / export downloads ──────────────────────────────────────
+// These are plain authenticated GETs: the browser sends the
+// aegis_api_session cookie (the API CSP-hardens HTML and serves
+// json/md as nosniff downloads — see aegis/api/v1/reports.py). They
+// mirror the existing HTML-report anchor (apiBase + path), so we expose
+// URL builders rather than blob helpers.
+export type ReportExt = "html" | "json" | "md";
+
+export function reportUrl(runId: string, ext: ReportExt): string {
+  return `${BASE}/v1/runs/${encodeURIComponent(runId)}/report.${ext}`;
+}
+
+export function exportVulnfixerUrl(runId: string): string {
+  return `${BASE}/v1/runs/${encodeURIComponent(runId)}/exports/vulnfixer`;
+}
+
 // --- Per-tenant cost (multi-tenancy) ---
 // Mirrors GET /v1/orgs/{org_id}/cost?days=N. cents are integers throughout;
 // format with centsToUsd() at the edge. budget caps/remaining are null when

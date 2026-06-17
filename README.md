@@ -91,7 +91,8 @@ shipped June 2026 with 1329 tests passing (21 skipped offline) on Python
 | Backport / release-train awareness for generated fix PRs | ✅ Shipped |
 | Per-task LLM routing with budget caps | ✅ Shipped |
 | Cross-org multi-tenancy — Postgres RLS (`FORCE`) on tenant tables, per-tenant monthly budget + LLM routing, `/cost` chargeback dashboard | ✅ Shipped |
-| `@aegis/design-system` workspace + Storybook — curated domain components over ported shadcn base primitives (table / card / alert / input / …) | ✅ Shipped |
+| `@aegis/design-system` workspace + Storybook — curated domain components over ported shadcn base primitives (table / card / alert / input / …) plus Radix/`cmdk` interactive primitives (alert-dialog / tooltip / command) | ✅ Shipped |
+| Web UI for the full backend surface — cancel run, delete target, report / vulnfixer-export downloads, `/agents` + `/tools` run pages, `/audit` chain visualization, dark mode, Cmd/Ctrl-K command palette (all RBAC-gated) | ✅ Shipped |
 | Production Helm chart — hardened pod specs (non-root / dropped caps / seccomp), `*.enabled` dep toggles, gVisor sandbox, HA Keycloak | ✅ Shipped |
 | Air-gapped vendor mirror (`AEGIS_OFFLINE_VENDOR_HOST`) for offline submodule fetches | ✅ Shipped |
 | SOC 2 / ISO 27001 / FedRAMP compliance evidence pack (`aegis evidence-pack`) | ✅ Shipped |

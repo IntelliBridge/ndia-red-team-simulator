@@ -3,8 +3,28 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
-import { api, listAuthProfiles, startScan, type AuthProfile } from "@/lib/api";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+  RoleGated,
+} from "@aegis/design-system";
+import {
+  api,
+  deleteTarget,
+  listAuthProfiles,
+  startScan,
+  type AuthProfile,
+} from "@/lib/api";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
+import { useRoles } from "@/hooks/useRoles";
 
 type Target = {
   id: string; kind: string; value: string; verified: boolean; project_id: string;
@@ -26,6 +46,7 @@ export default function TargetsPage() {
   const { data, error, mutate } = useSWR(
     authed ? "/v1/targets?project=default" : null, fetcher,
   );
+  const { roles } = useRoles();
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -72,6 +93,19 @@ export default function TargetsPage() {
         ...(isDast && authProfileId ? { auth_profile_id: authProfileId } : {}),
       });
       router.push(`/runs/${out.run_id}`);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeTarget = async (target: Target) => {
+    setBusy(true);
+    try {
+      setErr(null);
+      await deleteTarget(target.id);
+      mutate();
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -140,13 +174,46 @@ export default function TargetsPage() {
                 <td className="px-3 py-2">{t.value}</td>
                 <td className="px-3 py-2">{t.verified ? "yes" : "no"}</td>
                 <td className="px-3 py-2">
-                  <button
-                    className="rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
-                    disabled={busy}
-                    onClick={() => launchScan(t)}
-                  >
-                    Start scan
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+                      disabled={busy}
+                      onClick={() => launchScan(t)}
+                    >
+                      Start scan
+                    </button>
+                    <RoleGated minRole="admin" callerRole={roles[t.project_id]}>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <button
+                            className="rounded-md border border-border px-3 py-1.5 text-sm text-destructive hover:bg-muted disabled:opacity-50"
+                            disabled={busy}
+                          >
+                            Delete
+                          </button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete target?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This permanently removes{" "}
+                              <span className="font-mono">{t.value}</span> and is
+                              written to the audit chain. It cannot be undone.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                              variant="destructive"
+                              onClick={() => removeTarget(t)}
+                            >
+                              Delete target
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </RoleGated>
+                  </div>
                 </td>
               </tr>
             ))}

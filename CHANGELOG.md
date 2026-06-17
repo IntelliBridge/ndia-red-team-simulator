@@ -7,6 +7,29 @@ SemVer.
 ## [Unreleased]
 
 ### Added
+- **Frontend completion — UI for the previously-unexposed endpoints.** New and
+  extended web surfaces close the gap to the backend:
+  - **Run detail**: a **Cancel run** button (`POST /v1/runs/{id}/cancel`,
+    `remediator`, confirm dialog), `report.json` / `report.md` download links,
+    and a **Vulnfixer export** link (`GET /v1/runs/{id}/exports/vulnfixer`).
+  - **`/targets`**: a **Delete target** action (`DELETE /v1/targets/{id}`,
+    `admin`, confirm dialog).
+  - **`/agents`**: invoke a wired agent with a prompt (`POST
+    /v1/agents/{name}/run`) — `read` agents gated at `remediator`,
+    active/offensive agents at `approver` with an explicit confirm.
+  - **`/tools`**: run a Kali tool (`POST /v1/tools/kali/{tool}`) — `read` tools
+    at `remediator`, active tools (`sqlmap`/`hydra`/`metasploit`/`wpscan`) at
+    `approver` behind an **Execute** toggle + confirm.
+  - **`/audit`**: an audit-chain visualization page rendering each chain as
+    linked blocks with valid/broken status and per-event hashes.
+- **UX polish.** A class-strategy **dark mode** with a header theme toggle
+  persisted to `localStorage`, and a **Cmd/Ctrl-K command palette** for quick
+  navigation.
+- **`@aegis/design-system` Radix / `cmdk` primitives.** `AlertDialog`,
+  `Tooltip`, and `Command` ship (backing the confirm dialogs, tooltips, and the
+  command palette). `@radix-ui/react-alert-dialog`, `@radix-ui/react-dialog`,
+  `@radix-ui/react-tooltip`, and `cmdk` are added to `web/pnpm-lock.yaml`,
+  lifting the offline-build lockfile gate.
 - **Production Helm chart (`deploy/helm/aegis/`).** Deploys the full stack
   (api / worker / web / log-ingest) plus optional in-cluster dependencies
   (Postgres / Redis / Keycloak / MinIO / Kali), each gated by a `*.enabled`
