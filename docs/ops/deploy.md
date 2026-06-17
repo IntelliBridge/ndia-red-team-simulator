@@ -6,6 +6,11 @@ developer laptop. For day-1 local development see
 on the production posture: env vars that must be set, keys that must
 be generated, the deployment topology, and the rotation runbook.
 
+For a Kubernetes deploy via the Helm chart (hardened pod specs,
+sandbox isolation, HA Keycloak), see [Kubernetes (Helm)](kubernetes.md).
+For the auditor-facing evidence bundle, see
+[Compliance evidence pack](compliance-evidence.md).
+
 ---
 
 ## Topology
@@ -220,6 +225,12 @@ secret.
 | `AEGIS_S3_BUCKET`            | api, worker     | Default `aegis`                                        |
 | `AEGIS_S3_ACCESS_KEY_ID` / `…SECRET_ACCESS_KEY` | api, worker | Bucket credentials                       |
 
+### Vendoring
+
+| Var                          | Where           | Value                                                  |
+|------------------------------|-----------------|--------------------------------------------------------|
+| `AEGIS_OFFLINE_VENDOR_HOST`  | build / vendoring | Internal git mirror host for air-gapped submodule fetches (e.g. `git.internal.example.com`). See [Air-gapped / offline vendor mirror](#air-gapped-offline-vendor-mirror). |
+
 ### WORM audit archive
 
 Off-DB tamper-resistant export of the audit chain (see the
@@ -352,6 +363,43 @@ docker build -t aegis-postgres -f deploy/Dockerfile.postgres .
 All Dockerfiles install from the repo root, so the build context must
 be the repo root (`docker build … .`). The web image consumes the pnpm
 workspace at the same root path.
+
+---
+
+## Air-gapped / offline vendor mirror
+
+Aegis vendors several upstream repos as git submodules (CAI, Strix, the
+MCP Kali server, …). Behind an air-gap those can't be fetched from
+`github.com` / `gitlab.com`. Set **`AEGIS_OFFLINE_VENDOR_HOST`** to an
+internal git mirror that serves the same `<org>/<repo>.git` paths, and
+the submodule URLs are rewritten to that host (the `<org>/<repo>` path is
+preserved):
+
+```
+https://github.com/aliasrobotics/cai.git  ->  https://<host>/aliasrobotics/cai.git
+git@github.com:usestrix/strix.git          ->  https://<host>/usestrix/strix.git
+```
+
+Run the helper from the repo root — it rewrites every URL in
+`.gitmodules` (via `git submodule set-url` + `git submodule sync`) and
+then fetches:
+
+```bash
+AEGIS_OFFLINE_VENDOR_HOST=git.internal.example.com \
+  ./scripts/vendor-submodules.sh
+```
+
+The script is idempotent (re-running re-applies the same set-url and
+re-syncs). With the var unset it leaves URLs untouched and only runs
+`git submodule update --init`. The pure rewrite rules live in
+`aegis/vendor.py` (`mirror_url`, `submodule_mirror_map`); the shell
+helper mirrors them exactly.
+
+`config.offline_vendor_host` (the `AEGIS_OFFLINE_VENDOR_HOST` overlay)
+surfaces in **`aegis doctor`**: when set, it prints the mirror host plus
+the rewritten URL for each submodule so an operator can confirm the
+mapping *before* running the script; when unset it leaves a one-line note
+pointing at the env var.
 
 ---
 

@@ -1,0 +1,22 @@
+apiVersion: v2
+name: aegis
+description: >-
+  Aegis security platform — autonomous pentest / DAST orchestration.
+  Deploys the api, worker, web, and log-ingest services plus optional
+  stateful dependencies (Postgres, Redis, Keycloak, MinIO). Mirrors the
+  service topology in deploy/docker-compose.yml.
+type: application
+
+# Chart version (bumped on chart changes). appVersion tracks the Aegis
+# release the default image tags target.
+version: 0.1.0
+appVersion: "0.12.0"
+
+keywords:
+  - security
+  - pentest
+  - dast
+  - aegis
+home: https://github.com/IntelliBridge/aegis
+maintainers:
+  - name: Aegis Platform Team

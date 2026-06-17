@@ -1,0 +1,80 @@
+{{/*
+redis — broker + result backend. Gated by redis.enabled; disable when using
+a managed Redis and point config.brokerUrl / config.resultBackend at it.
+Mirrors the redis service in deploy/docker-compose.yml.
+*/}}
+{{- if .Values.redis.enabled }}
+{{- $component := "redis" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aegis.componentName" (dict "ctx" . "component" $component) }}
+  labels:
+    {{- include "aegis.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "aegis.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aegis.componentLabels" (dict "ctx" . "component" $component) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        # redis:7-alpine runs fine as the unprivileged `redis` user (uid 999).
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          image: {{ include "aegis.image" (dict "ctx" . "image" .Values.redis.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: redis
+              containerPort: 6379
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aegis.componentName" (dict "ctx" . "component" $component) }}
+  labels:
+    {{- include "aegis.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  selector:
+    {{- include "aegis.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+  ports:
+    - name: redis
+      port: {{ .Values.redis.service.port }}
+      targetPort: redis
+{{- end }}
