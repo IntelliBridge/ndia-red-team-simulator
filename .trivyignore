@@ -1,0 +1,9 @@
+# Trivy baseline ignore list for the `deps` CI job (cluster C2).
+#
+# One advisory ID per line (e.g. CVE-YYYY-NNNNN). Blank lines and `#`
+# comments are ignored. The `deps` job runs `trivy fs` at HIGH,CRITICAL with
+# --ignore-unfixed, so only fixable HIGH/CRITICAL advisories can fail the
+# gate; add an ID here only when an advisory is fixable but the fix is not yet
+# safe to take, and document why (tracked in SECURITY.md / C14).
+#
+# Seeded empty: nothing is suppressed yet.

@@ -29,7 +29,10 @@ def _has_bearer(request: Request) -> bool:
 
 
 def _has_session_cookie(request: Request, settings: APISettings) -> bool:
-    return bool(request.cookies.get(settings.api_session_cookie_name))
+    # nan-injection is a semgrep false positive here: this only tests for the
+    # presence of a cookie (no float()/NaN comparison or tainted numeric path).
+    # See SECURITY.md for the documented SAST baseline.
+    return bool(request.cookies.get(settings.api_session_cookie_name))  # nosemgrep
 
 
 def issue_csrf_token() -> str:
