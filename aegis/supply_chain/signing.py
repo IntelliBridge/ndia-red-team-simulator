@@ -54,12 +54,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import (
-    Ed25519PrivateKey,
-    Ed25519PublicKey,
-)
+try:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+        Ed25519PrivateKey,
+        Ed25519PublicKey,
+    )
+
+    _CRYPTOGRAPHY_AVAILABLE = True
+except ModuleNotFoundError:  # pragma: no cover - signing is an optional api-extra feature
+    # ``cryptography`` ships in the api/worker extras. With signature
+    # enforcement off (the default) the marketplace loader must still work
+    # without it, so importing this module never hard-requires cryptography;
+    # only actually signing/verifying does.
+    _CRYPTOGRAPHY_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -350,6 +359,12 @@ def load_plugin_verifier(config: object | None = None) -> PluginVerifier | None:
     """
     if not _enforcement_enabled(config):
         return None
+    if not _CRYPTOGRAPHY_AVAILABLE:  # pragma: no cover - misconfig: enforcement on, no crypto
+        raise RuntimeError(
+            "plugin signature enforcement is enabled but the 'cryptography' "
+            "package is not installed; install the api or worker extra to verify "
+            "plugin signatures (or unset AEGIS_PLUGINS_REQUIRE_SIGNATURE)"
+        )
     trusted_raw = None
     sig_raw = None
     if config is not None:
