@@ -160,10 +160,13 @@ nav:
       - Overview: architecture/overview.md
       - Auth: architecture/auth.md
       - Audit chain: architecture/audit-chain.md
+      - Multi-tenancy: architecture/multi-tenancy.md
       - Observability: architecture/observability.md
   - API reference: api/v1.md
+  - Integrations: integrations/index.md
   - Operations:
       - Production deployment: ops/deploy.md
+      - Authenticated DAST: ops/authenticated-dast.md
   - Development:
       - Local stack: dev/local-stack.md
       - Frontend: dev/frontend.md
@@ -171,6 +174,7 @@ nav:
       - Editing the docs: dev/docs.md
   - Security:
       - Fork-PR safety: security/fork-prs.md
+      - Supply-chain integrity: security/supply-chain.md
       - "Policy (SECURITY.md)": https://github.com/IntelliBridge/aegis/blob/main/SECURITY.md
   - ADRs:
       - "0001 — Vendored submodules": adr/0001-vendored-submodules.md

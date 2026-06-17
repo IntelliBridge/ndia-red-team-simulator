@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
+from typing import TYPE_CHECKING, cast
 
 from aegis.cli import _console, _runstate
 from aegis.schema import AegisFinding
 
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
+    from aegis.schema import Status
+    from aegis.services.fixes import FixOutcome
+    from aegis.state import RunStateAPI
 
-def _cmd_fix_api(args, _config):
+
+def _cmd_fix_api(args: argparse.Namespace, _config: AegisConfig) -> None:
     from aegis.cli import api_client
 
     client = api_client.build_client()
@@ -28,7 +36,7 @@ def _cmd_fix_api(args, _config):
         _console._info(f"Run ID: {result['run_id']}")
 
 
-def cmd_fix(args, config) -> None:
+def cmd_fix(args: argparse.Namespace, config: AegisConfig) -> None:
     """Remediate a finding — thin CLI shell over ``services.fixes.generate_fix``.
 
     The CLI parses options, resolves the run + finding, and prints the
@@ -81,7 +89,7 @@ def cmd_fix(args, config) -> None:
         return
 
     state.update_finding_status(finding_id, "fixing")
-    outcomes: list = []
+    outcomes: list[FixOutcome] = []
 
     if args.patch:
         if args.use_golden_patch:
@@ -124,7 +132,8 @@ def cmd_fix(args, config) -> None:
     _report_fix_outcomes(state, finding_id, outcomes, args.deps)
 
 
-def _refresh_deps_findings(args, state, finding_id):
+def _refresh_deps_findings(args: argparse.Namespace, state: RunStateAPI,
+                           finding_id: str) -> AegisFinding | None:
     """Re-run Trivy fs to refresh deps findings then return the requested one.
 
     Trivy execution is a deterministic local scan; staying at the CLI layer
@@ -158,14 +167,18 @@ def _refresh_deps_findings(args, state, finding_id):
     return dep_finding
 
 
-def _report_fix_outcomes(state, finding_id, outcomes, ran_deps: bool) -> None:
+def _report_fix_outcomes(state: RunStateAPI, finding_id: str,
+                         outcomes: list[FixOutcome], ran_deps: bool) -> None:
     """Print a structured summary for each service outcome + persist status."""
     candidates: list[str] = []
     for outcome in outcomes:
         if outcome.strategy == "deps":
             # The deps service may operate on a different finding id; persist
-            # status on the deps finding itself.
-            state.update_finding_status(outcome.finding_id, outcome.status)
+            # status on the deps finding itself. ``FixStatus`` is a superset of
+            # the persisted ``Status`` literal (it adds ``pending_*``); the
+            # writer stores the string verbatim, so cast at this known boundary.
+            state.update_finding_status(
+                outcome.finding_id, cast("Status", outcome.status))
             if outcome.diff_path:
                 _console._info(f"Bump diff written to {outcome.diff_path}")
             if outcome.commit_hash:
@@ -195,7 +208,9 @@ def _report_fix_outcomes(state, finding_id, outcomes, ran_deps: bool) -> None:
             final = "pending_apply"
         else:
             final = "fixed"
-        state.update_finding_status(finding_id, final)
+        # ``final`` may be ``pending_apply`` (a ``FixStatus`` not in the
+        # persisted ``Status`` literal); the writer stores it verbatim.
+        state.update_finding_status(finding_id, cast("Status", final))
     elif not ran_deps:
         # No strategy contributed a status — restore the finding from "fixing".
         state.update_finding_status(finding_id, "open")

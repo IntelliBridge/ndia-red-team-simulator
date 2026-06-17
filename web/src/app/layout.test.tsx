@@ -6,7 +6,7 @@ import RootLayout, { metadata } from "./layout";
 afterEach(cleanup);
 
 describe("RootLayout", () => {
-  it("renders all five nav links with the correct hrefs", () => {
+  it("renders all six nav links with the correct hrefs", () => {
     render(
       React.createElement(RootLayout, null, React.createElement("div", null, "child-sentinel"))
     );
@@ -19,6 +19,12 @@ describe("RootLayout", () => {
 
     const targetsLink = screen.getByText("Targets", { selector: "a" });
     expect(targetsLink.getAttribute("href")).toBe("/targets");
+
+    const costLink = screen.getByText("Cost", { selector: "a" });
+    expect(costLink.getAttribute("href")).toBe("/cost");
+
+    const authProfilesLink = screen.getByText("Auth Profiles", { selector: "a" });
+    expect(authProfilesLink.getAttribute("href")).toBe("/auth-profiles");
 
     const logsLink = screen.getByText("Logs", { selector: "a" });
     expect(logsLink.getAttribute("href")).toBe("/logs");

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -10,7 +11,7 @@ from aegis.config import AegisConfig
 from aegis.policy.ci_gate import CIGatePolicy, evaluate
 
 
-def cmd_ci_gate(args, config: AegisConfig) -> None:
+def cmd_ci_gate(args: argparse.Namespace, config: AegisConfig) -> None:
     findings: list[dict] = []
     if args.findings_file:
         path = Path(args.findings_file)

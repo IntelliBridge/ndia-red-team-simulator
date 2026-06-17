@@ -39,6 +39,10 @@ reporters who request it.
   restart.
 - Every protected route runs `aegis.api.policy.check` server-side;
   the web `<RoleGated>` component is **UX only**.
+- The role-gate decision is **pluggable** (`AEGIS_POLICY_ENGINE`):
+  the default `static` engine is the built-in role-rank table, while
+  `opa` / `cedar` delegate to an external policy service. External
+  engines **fail closed** — any error or timeout denies.
 - Project-access enforced on read endpoints (reports / exports /
   WebSocket) via `ensure_project_access` /
   `ensure_run_access`.
@@ -97,6 +101,24 @@ See [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md)
 and [`docs/ops/deploy.md`](docs/ops/deploy.md) for role provisioning and the
 WORM bucket runbook.
 
+### Multi-tenancy / data isolation
+
+- The tenant is the **Organization**; every project belongs to one org.
+- **Layered isolation.** The app layer scopes reads to the caller's
+  project memberships (`ensure_project_access` / `ensure_run_access`); the
+  database layer adds **Postgres Row-Level Security** keyed on `org_id` as
+  **defense-in-depth**, so a forgotten `WHERE` clause can't leak rows
+  across orgs.
+- **`FORCE` on the tenant tables** (migration `0005`): `projects` and the
+  eight project-scoped tables (denormalized `org_id` + `BEFORE INSERT`
+  trigger) run with `ENABLE` + `FORCE ROW LEVEL SECURITY`, so the policy
+  binds even the table owner / superuser. A per-request GUC
+  `app.current_tenants` carries the caller's org ids; an empty/unset GUC
+  is the system / worker path (full access). RLS enforcement is exercised
+  in the Postgres CI jobs.
+
+See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
+
 ### Patch workflow
 
 - Patches generated in a temporary branch with automatic rollback on
@@ -112,6 +134,19 @@ WORM bucket runbook.
   audit event with `override=true` so it shows up forensically.
 - CIDR ranges supported (`aegis.safety.is_target_allowed`).
 
+### Target ownership verification
+
+- A target's `verified` flag is set only after the operator proves
+  control: `url` targets must publish a deterministic per-target DNS
+  TXT token (`aegis-site-verification=…`, salted by
+  `AEGIS_VERIFY_SECRET` so it can't be forged for a host the operator
+  doesn't own); `github_repo` targets must be reachable through the
+  configured GitHub App installation; `image` targets are unsupported.
+- `POST /v1/targets/{id}/verify` runs the check (`admin`) and emits a
+  secret-free `target.verify` audit event (kind + method + matched
+  bool); a failed proof returns `422` and leaves `verified` untouched.
+- See [Integrations](docs/integrations/index.md#cloud-target-ownership-verification).
+
 ### Fork-PR safety
 
 - Webhook payloads from GitHub trigger `PRScope` admission. Fork PRs
@@ -119,15 +154,89 @@ WORM bucket runbook.
   clone, no secret mount, path allowlist scoped to `changed_files`.
 - See [`docs/security/fork-prs.md`](docs/security/fork-prs.md).
 
+### LLM guardrails
+
+Two fail-safe layers sit at every point where untrusted text reaches an
+LLM or where model output leaves the platform (`aegis/llm/guardrails.py`).
+Both are config-gated and default **on**; logs and raised exceptions are
+secret-free (a blocked input surfaces a clean error, never the offending
+text or any matched secret).
+
+- **Diff / output secret scrubbing.** The canonical unified diff (in
+  `extract_unified_diff`) and LLM outputs at the remediation + agent
+  chokepoints are passed through the same secret/token regex set used by
+  the audit redactor (`aegis/audit/redact.py`), with matches replaced by
+  `***REDACTED***`. Because scrubbing happens on the *canonical* diff,
+  every downstream consumer — the persisted `.diff`, the PR body, and the
+  remediation log — inherits the scrub.
+- **Prompt-injection detection.** Untrusted finding fields (title,
+  description, remediation steps, PoC, code snippets) and agent prompts are
+  scored for injection before they reach the model: a tiered risk
+  (`none` / `low` / `medium` / `high`) with categories
+  (`instruction_override`, `role_switch`, `exfiltration`, …). At or above a
+  configurable risk threshold (`AEGIS_LLM_INJECTION_BLOCK_RISK`, default
+  `high`) the input is **blocked** — a failed `FixOutcome` in the fix flow,
+  a blocked `AgentResult` in the agent flow. `off` detects + logs only.
+- Wired at three chokepoints: the remediation LLM boundary
+  (`aegis/remediate/cai_runner.py`), the diff-extraction point
+  (`aegis/remediate/patch_workflow.py`), and the agent-API boundary
+  (`aegis/agents/cai/builtins.py` / `patterns.py`).
+- Config (env vars): `AEGIS_LLM_GUARDRAILS` (master, default on),
+  `AEGIS_LLM_SCRUB_DIFF`, `AEGIS_LLM_DETECT_INJECTION`,
+  `AEGIS_LLM_FILTER_OUTPUT` (all default on), and
+  `AEGIS_LLM_INJECTION_BLOCK_RISK` (default `high`; `off` = detect-and-log).
+
+See [`docs/architecture/overview.md`](docs/architecture/overview.md)
+§ "LLM guardrails" and [`docs/ops/deploy.md`](docs/ops/deploy.md) for the
+env knobs.
+
 ### Secrets handling
 
-- Three distinct secret materials:
+- Four distinct secret materials:
   - `AEGIS_API_SESSION_PRIVATE_KEY` (NextAuth side, RS256).
   - `AEGIS_WORKER_SIGNING_KEY` (shared HMAC, rotation overlap).
   - `AEGIS_GITHUB_PRIVATE_KEY` (GitHub App).
+  - `AEGIS_AUTH_PROFILES_KEY` (Fernet, api + worker) — encrypts DAST
+    auth-profile secrets at rest.
+- DAST auth-profile secrets (`auth_profiles.secret_ciphertext`) are
+  Fernet-encrypted before any row or audit event is written, never
+  returned by any endpoint, and redacted (`***`) from recorded command
+  strings; a missing key fails closed. Rotating the key requires
+  re-creating profiles (no dual-key window) — see
+  [`docs/ops/authenticated-dast.md`](docs/ops/authenticated-dast.md).
 - `NEXTAUTH_SECRET` is opaque to Aegis (NextAuth's own).
+- Generated **diffs / patches and LLM I/O** are secret-scrubbed before
+  they are persisted, surfaced in a PR, or logged — see § "LLM guardrails"
+  above. Secrets that leak into a model-authored diff or a model response
+  are redacted to `***REDACTED***` on the canonical path.
 - Rotation procedure for each is documented in
-  [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Rotation runbook".
+  [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Rotation runbook" and
+  [`docs/ops/authenticated-dast.md`](docs/ops/authenticated-dast.md)
+  § "Key rotation".
+- Integration secrets — the ticket-provider credentials
+  (`AEGIS_JIRA_*` / `AEGIS_SERVICENOW_*` / `AEGIS_LINEAR_*`) and the
+  target-verification salt `AEGIS_VERIFY_SECRET` — are env-configured
+  only. They are never accepted in an API body, persisted to a row, or
+  written to an audit detail; provider HTTP errors are wrapped to carry
+  only the provider name + status code, never the body or auth header.
+
+### Supply-chain integrity
+
+- **Signed third-party plugins.** Marketplace plugin discovery supports
+  opt-in **Ed25519** signature enforcement (`AEGIS_PLUGINS_REQUIRE_SIGNATURE`
+  + `AEGIS_PLUGINS_TRUSTED_KEYS`). The signature binds to the SHA-256 of the
+  factory module's source — it authorises only the code that runs. When
+  enforcement is on, an unsigned or invalid plugin is **rejected** before
+  registration; `aegis plugins sign` produces the detached signature.
+- **Signed + attested release images.** Release builds (on `v*` tags) push
+  the four service images to GHCR and **keyless cosign-sign** each by digest
+  (GitHub OIDC, no stored keys), attaching a **CycloneDX SBOM** (Syft) and
+  **SLSA-3 provenance** attestation. Operators verify with `cosign verify` /
+  `cosign verify-attestation` before deploy.
+- Remaining: **Nix reproducible builds** (bit-for-bit independent rebuild)
+  are still deferred (tracked on the roadmap).
+- See [`docs/security/supply-chain.md`](docs/security/supply-chain.md) for
+  the trust model, env vars, and the operator verification runbook.
 
 ## Out of scope
 
@@ -147,8 +256,6 @@ WORM bucket runbook.
 
 ## Known gaps (tracked, not shipping in v0.12.0)
 
-- PII / content scrubbing inside diffs and patches.
-- LLM prompt-injection / output filtering guards.
 - Sandbox isolation per scan (gVisor / Firecracker).
 - SOC 2 / ISO 27001 / FedRAMP evidence pack.
 

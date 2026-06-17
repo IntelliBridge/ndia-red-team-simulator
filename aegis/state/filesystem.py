@@ -11,7 +11,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from aegis.state.facade import ArtifactRef
@@ -63,7 +63,7 @@ class FilesystemRunState:
         if not self.findings_path.exists():
             return []
         with open(self.findings_path) as fh:
-            return json.load(fh)
+            return cast("list[dict[Any, Any]]", json.load(fh))
 
     def save_artifact(self, name: str, content: str | bytes) -> Path:
         """Save a raw artifact (e.g., strix-events.jsonl) to the artifacts dir."""
@@ -101,7 +101,7 @@ class FilesystemRunState:
         with open(self.findings_path, "w") as fh:
             json.dump(findings, fh, indent=2)
 
-    def record_artifact(self, name: str, content,
+    def record_artifact(self, name: str, content: str | bytes,
                         content_type: str = "application/octet-stream") -> ArtifactRef:
         """Content-addressable artifact write (Phase 3 ``RunStateAPI``).
 

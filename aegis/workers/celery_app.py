@@ -33,6 +33,25 @@ app.conf.task_default_max_retries = 3
 app.conf.task_soft_time_limit = 1800
 app.conf.task_time_limit = 2100
 
+# Queue routing: long-running offensive/remediation work goes on the ``scans``
+# queue, fast bookkeeping on ``default``, so a 30-minute scan can't starve a CI
+# gate or report behind it. Deploy a dedicated worker pool per queue (see
+# deploy/docker-compose.yml). ``parallel_fix`` orchestrates two ``fix_generate``
+# children and blocks on their result, so it stays on ``default`` — keeping the
+# waiter off the same pool as the work it waits for avoids slot starvation.
+app.conf.task_default_queue = "default"
+app.conf.task_routes = {
+    "aegis.scan_start": {"queue": "scans"},
+    "aegis.fix_generate": {"queue": "scans"},
+    "aegis.verify_replay": {"queue": "scans"},
+    "aegis.agent_run": {"queue": "scans"},
+    "aegis.report_render": {"queue": "default"},
+    "aegis.vulnfixer_render": {"queue": "default"},
+    "aegis.ci_gate": {"queue": "default"},
+    "aegis.parallel_fix": {"queue": "default"},
+    "aegis.reap_stale_jobs": {"queue": "default"},
+}
+
 # Periodic stale-job reaper: a crashed task is left status="running"
 # forever (the redelivery guard never re-runs it), so beat sweeps every
 # 5 minutes and flips jobs past their TTL to "failed".

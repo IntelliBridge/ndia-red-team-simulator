@@ -30,4 +30,7 @@ RUN pip install --upgrade pip && pip install -e ".[worker]" && \
     ( git -C project_repos/strix rev-parse HEAD > /app/STRIX.sha 2>/dev/null || true ) && \
     ( git -C project_repos/cai   rev-parse HEAD > /app/CAI.sha   2>/dev/null || true )
 
-CMD ["celery", "-A", "aegis.workers.celery_app", "worker", "--loglevel=info"]
+# A standalone worker consumes both queues so nothing is stranded; the compose
+# stack overrides this to run a dedicated pool per queue (-Q scans / -Q default)
+# plus a beat scheduler. See deploy/docker-compose.yml.
+CMD ["celery", "-A", "aegis.workers.celery_app", "worker", "-Q", "scans,default", "--loglevel=info"]

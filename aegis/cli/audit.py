@@ -6,7 +6,10 @@ subparser is wired and the help text is correct from day one.
 
 from __future__ import annotations
 
+import argparse
 import sys
+
+from aegis.config import AegisConfig
 
 _GREEN = "\033[32m"
 _RED = "\033[31m"
@@ -14,7 +17,7 @@ _YELLOW = "\033[33m"
 _RESET = "\033[0m"
 
 
-def cmd_audit_verify(args, config) -> None:
+def cmd_audit_verify(args: argparse.Namespace, config: AegisConfig) -> None:
     """Verify the integrity of one or more audit chains."""
     from aegis.audit.chain import resolve_writer, verify_chain
 
@@ -44,7 +47,7 @@ def cmd_audit_verify(args, config) -> None:
     sys.exit(1 if any_broken else 0)
 
 
-def cmd_audit_export(args, config) -> None:
+def cmd_audit_export(args: argparse.Namespace, config: AegisConfig) -> None:
     """Export audit chains to the WORM (Object-Lock) bucket on demand.
 
     ``--all`` exports every chain; ``--chain CHAIN_ID`` exports one.

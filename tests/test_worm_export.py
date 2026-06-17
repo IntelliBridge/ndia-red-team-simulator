@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from aegis.audit.chain import JsonlAuditWriter, verify_chain
 from aegis.config import AegisConfig
 from aegis.storage.blobs import BlobRef, FilesystemBlobStore
@@ -381,6 +383,13 @@ class TestCmdAuditExport(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestWormExportTask(unittest.TestCase):
+
+    def setUp(self):
+        # The Celery task wrapper imports aegis.workers.celery_app → celery,
+        # which the minimal unit env (.[test,dev]) doesn't install. The
+        # WormArchive logic above is covered celery-free; only the task
+        # wrapper needs this guard.
+        pytest.importorskip("celery")
 
     def test_disabled_returns_disabled(self):
         from aegis.workers.tasks.worm_export import export_chains_to_worm

@@ -17,7 +17,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -44,7 +44,8 @@ def _app_jwt(app_id: str) -> str:
     now = int(time.time())
     header = {"alg": "RS256"}
     payload = {"iat": now - 60, "exp": now + 540, "iss": app_id}
-    return jwt.encode(header, payload, _load_private_key()).decode("ascii")
+    # authlib's jwt.encode is untyped; .decode() is therefore Any.
+    return cast(str, jwt.encode(header, payload, _load_private_key()).decode("ascii"))
 
 
 class GitHubClient:
@@ -109,7 +110,9 @@ class GitHubClient:
                 headers=self._headers(),
             )
             resp.raise_for_status()
-            return resp.json()
+            # httpx Response.json() is typed Any; the check-runs endpoint
+            # returns a JSON object.
+            return cast("dict[str, Any]", resp.json())
 
     def list_pr_files(self, repo: str, pr_number: int) -> list[dict]:
         with httpx.Client(timeout=10) as client:
@@ -118,4 +121,6 @@ class GitHubClient:
                 headers=self._headers(),
             )
             resp.raise_for_status()
-            return resp.json()
+            # httpx Response.json() is typed Any; the files endpoint returns
+            # a JSON array of file objects.
+            return cast("list[dict[Any, Any]]", resp.json())

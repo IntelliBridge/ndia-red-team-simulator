@@ -28,7 +28,7 @@ class _Toolbelt:
     client: KaliClient
 
 
-def _maybe_import_function_tool():
+def _maybe_import_function_tool() -> Any:
     """Return cai.sdk.agents.function_tool if available, else None."""
     try:
         from cai.sdk.agents import function_tool
@@ -179,3 +179,77 @@ def build_kali_toolbelt(config: AegisConfig, *,
     return _Toolbelt(tools=[nmap_scan, nikto_scan, sqlmap_test, gobuster_scan, dirb_scan,
                             hydra_attack, wpscan_scan, enum4linux_scan, metasploit_run,
                             john_crack], client=client)
+
+
+@dataclass
+class _ExtendedToolbelt:
+    """A curated set of CAI function-tools + the OSINT search for agents.
+
+    ``tools`` is the list of importable CAI ``@function_tool`` objects;
+    ``names`` records the bare CAI tool names that were successfully loaded
+    (useful for tests / introspection). Both are empty when CAI isn't
+    importable — callers then compose agents without these tools.
+    """
+
+    tools: list[Any]
+    names: list[str]
+
+
+def build_extended_toolbelt() -> _ExtendedToolbelt:
+    """Return CAI function-tools for a SAFE-by-default subset + OSINT search.
+
+    The curated set is the read-only / analysis CAI tools that are safe to hand
+    an agent without an approval gate, plus the Camoufox OSINT search (whose
+    own ``external`` effect is gated downstream). Active CAI tools
+    (generic_linux_command, exec_code, code_interpreter, capture_traffic) are
+    deliberately *omitted* from the default belt — they remain catalogued as
+    ``active`` tools but are not auto-wired here.
+
+    Degrades gracefully: when CAI (or an individual tool module) isn't
+    importable, the missing tool is skipped rather than raising. With no CAI at
+    all the result is an empty belt.
+    """
+    function_tool = _maybe_import_function_tool()
+    tools: list[Any] = []
+    names: list[str] = []
+    if function_tool is None:
+        # CAI SDK absent → the function_tool-decorated modules can't import
+        # either. Return an empty belt so agent composition can skip them.
+        return _ExtendedToolbelt(tools=[], names=[])
+
+    # (module path, attribute) for the curated SAFE-by-default CAI tools.
+    _SAFE_CAI_TOOLS: tuple[tuple[str, str], ...] = (
+        ("cai.tools.reconnaissance.nmap", "nmap"),
+        ("cai.tools.reconnaissance.curl", "curl"),
+        ("cai.tools.reconnaissance.netcat", "netcat"),
+        ("cai.tools.reconnaissance.netstat", "netstat"),
+        ("cai.tools.reconnaissance.wget", "wget"),
+        ("cai.tools.reconnaissance.shodan", "shodan_search"),
+        ("cai.tools.reconnaissance.shodan", "shodan_host_info"),
+        ("cai.tools.web.headers", "web_request_framework"),
+        ("cai.tools.web.js_surface_mapper", "js_surface_mapper"),
+        ("cai.tools.reconnaissance.crypto_tools", "strings_command"),
+        ("cai.tools.reconnaissance.crypto_tools", "decode64"),
+        ("cai.tools.reconnaissance.crypto_tools", "decode_hex_bytes"),
+        ("cai.tools.misc.reasoning", "thought"),
+    )
+
+    import importlib
+
+    for module_path, attr in _SAFE_CAI_TOOLS:
+        try:
+            module = importlib.import_module(module_path)
+            tool = getattr(module, attr)
+        except Exception:  # noqa: BLE001 - a missing/partial tool is skipped
+            continue
+        tools.append(tool)
+        names.append(attr)
+
+    # The Camoufox OSINT search, wrapped as a CAI function-tool.
+    from aegis.tools.osint_search import build_osint_search_tool
+    osint_tool = build_osint_search_tool()
+    if osint_tool is not None:
+        tools.append(osint_tool)
+        names.append("osint_search")
+
+    return _ExtendedToolbelt(tools=tools, names=names)

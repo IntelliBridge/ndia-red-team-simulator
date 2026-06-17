@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -73,7 +74,8 @@ class CheckovAdapter:
     def scan(self, run_state: RunStateAPI, options: ScanOptions) -> ScanResult:
         target = options.target
 
-        def parse(proc, run_id):
+        def parse(proc: subprocess.CompletedProcess[str],
+                  run_id: str) -> list[AegisFinding]:
             payload = json.loads(proc.stdout or "{}")
             results = payload.get("results") or {}
             return [_convert(c, run_id)

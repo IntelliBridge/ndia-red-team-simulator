@@ -52,6 +52,10 @@ class FakeAgent:
     def __init__(self, name=AGENT_NAME):
         self.name = name
         self.domain = "offensive"
+        # ``effect`` is part of the AgentAdapter Protocol; the marketplace
+        # conformance check (isinstance against the runtime_checkable Protocol)
+        # rejects an item that omits it, so a conformant fake must declare it.
+        self.effect = "active"
         self.wired = True
 
     def invoke(self, prompt, context):  # never called in these tests

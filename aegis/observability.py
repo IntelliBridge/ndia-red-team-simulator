@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import uuid
 from contextvars import ContextVar
-from typing import Any, Callable
+from typing import Any, Callable, MutableMapping
 
 _REQUEST_ID: ContextVar[str | None] = ContextVar("aegis_request_id", default=None)
 
@@ -38,7 +38,9 @@ def configure_otel(service_name: str = "aegis") -> None:
     trace.set_tracer_provider(provider)
 
 
-def _inject_correlation_ids(_logger, _method_name, event_dict):
+def _inject_correlation_ids(
+    _logger: Any, _method_name: str, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
     """structlog processor that lifts request_id / trace_id onto every event.
 
     The request id is request-scoped via the ContextVar; the trace + span
@@ -130,7 +132,7 @@ def set_request_id(value: str | None) -> None:
 
 def request_id_middleware() -> Callable:
     """ASGI middleware that propagates / generates X-Aegis-Request-ID."""
-    async def middleware(request, call_next):
+    async def middleware(request: Any, call_next: Any) -> Any:
         rid = (request.headers.get("X-Aegis-Request-ID")
                or uuid.uuid4().hex)
         token = _REQUEST_ID.set(rid)
@@ -147,13 +149,13 @@ def request_id_middleware() -> Callable:
 
 
 class _NoopCounter:
-    def labels(self, *args, **kwargs):
+    def labels(self, *args: Any, **kwargs: Any) -> _NoopCounter:
         return self
-    def inc(self, *args, **kwargs):
+    def inc(self, *args: Any, **kwargs: Any) -> None:
         pass
 
 
-def _make_counters():
+def _make_counters() -> dict[str, Any]:
     try:
         from prometheus_client import Counter, Gauge
     except ImportError:  # pragma: no cover
@@ -200,7 +202,7 @@ def get_metrics() -> dict[str, Any]:
     return _METRICS
 
 
-def metrics_handler():
+def metrics_handler() -> Callable[[], Any]:
     """Return a FastAPI route handler that emits Prometheus exposition format."""
     try:
         from fastapi.responses import Response
@@ -210,12 +212,12 @@ def metrics_handler():
             generate_latest,
         )
     except ImportError:  # pragma: no cover
-        async def _no_metrics():
+        async def _no_metrics() -> dict[str, str]:
             return {"detail": "prometheus_client not installed"}
         return _no_metrics
     # Ensure the counters are registered before we serialize the registry.
     get_metrics()
-    async def metrics():
+    async def metrics() -> Any:
         return Response(generate_latest(REGISTRY),
                         media_type=CONTENT_TYPE_LATEST)
     return metrics

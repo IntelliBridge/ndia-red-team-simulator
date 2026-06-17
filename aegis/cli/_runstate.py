@@ -11,11 +11,17 @@ point.
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 
 from aegis.cli._console import _err, _warn
 
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
+    from aegis.schema import AegisFinding
+    from aegis.state import RunState, RunStateAPI
 
-def _resolve_run_state(config, run_id: str | None = None):
+
+def _resolve_run_state(config: AegisConfig, run_id: str | None = None) -> RunState:
     """Return a RunState for the given (or latest) run, or exit with error."""
     from aegis.state import RunState
 
@@ -29,7 +35,7 @@ def _resolve_run_state(config, run_id: str | None = None):
     return state
 
 
-def _load_findings_objects(state):
+def _load_findings_objects(state: RunStateAPI) -> list[AegisFinding]:
     """Load findings from state and convert to AegisFinding objects."""
     from aegis.schema import AegisFinding
 
