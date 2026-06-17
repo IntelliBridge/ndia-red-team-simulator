@@ -20,6 +20,7 @@ export default function RootLayout({
               <a className="hover:text-sky-700" href="/dashboard">Dashboard</a>
               <a className="hover:text-sky-700" href="/projects">Projects</a>
               <a className="hover:text-sky-700" href="/targets">Targets</a>
+              <a className="hover:text-sky-700" href="/cost">Cost</a>
               <a className="hover:text-sky-700" href="/auth-profiles">Auth Profiles</a>
               <a className="hover:text-sky-700" href="/logs">Logs</a>
               <a className="hover:text-sky-700" href="/audit">Audit</a>

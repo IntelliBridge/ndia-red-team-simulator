@@ -74,7 +74,65 @@ crashed jobs stay `running` indefinitely.
 `Project.daily_llm_budget_cents` (unset = unlimited). The fix path records
 `llm_usage` rows and `route()` blocks once the day's spend reaches the cap.
 Per-call cost is computed from a researched per-model price table
-(`aegis/llm/pricing.py`), with litellm's price map as a fallback.
+(`aegis/llm/pricing.py`), with litellm's price map as a fallback. Per-org
+**monthly** caps and per-tenant LLM routing land in the Multi-tenancy
+runbook below.
+
+---
+
+## Multi-tenancy / RLS
+
+Cross-org isolation is enforced **at the database** as defense-in-depth on
+top of the app-layer project checks. The full design is in
+[`docs/architecture/multi-tenancy.md`](../architecture/multi-tenancy.md);
+this is the operator-facing runbook.
+
+**RLS is forced at the DB.** Migration `0006_tenant_rls` runs
+`ENABLE` + **`FORCE ROW LEVEL SECURITY`** on `projects` and the eight
+project-scoped tables (`targets`, `runs`, `jobs`, `findings`, `llm_usage`,
+`artifacts`, `remediation_attempts`, `application_logs`), each carrying a
+denormalized `org_id` (backfilled, then maintained by a `BEFORE INSERT`
+trigger). The `aegis_tenant_isolation` policy filters rows by `org_id`.
+`FORCE` is deliberate: it binds the table owner / superuser too, so a
+privileged connection can't bypass the boundary. Nothing operator-side
+needs to "turn it on" — the migration enables it.
+
+**The GUC is set per request.** The policy reads a per-transaction GUC
+`app.current_tenants` (a comma-separated org-id list). The API's tenant
+middleware resolves the caller's accessible org ids and
+`aegis.db.session.get_session` sets the GUC (via `set_config(…, is_local)`)
+for the transaction. An **empty / unset GUC means full access** — there is
+nothing for an operator to configure here.
+
+**Workers run as system.** Workers, migrations, and any path that doesn't
+set the GUC run with full access (empty GUC). That is intentional:
+background execution and `alembic upgrade` need to read/write across orgs.
+Do **not** add the tenant middleware to the worker.
+
+**Per-tenant config** lives on the `organizations` row (migration
+`0007_org_cost_routing`):
+
+| Column                       | Type    | Meaning                                                  |
+|------------------------------|---------|----------------------------------------------------------|
+| `monthly_llm_budget_cents`   | INTEGER | Org's monthly LLM spend cap in cents; `NULL` = uncapped. |
+| `llm_model_overrides`        | JSONB   | `{task: model}` per-tenant routing overrides; wins over the config default. |
+
+```sql
+-- cap an org at $500/month and pin its report-summarize task to a cheaper model
+UPDATE organizations
+   SET monthly_llm_budget_cents = 50000,
+       llm_model_overrides = '{"report_summarize": "gpt-4o-mini"}'::jsonb
+ WHERE id = 'org-1';
+```
+
+`route()` enforces **both** the project daily cap and the org monthly cap;
+`GET /v1/orgs/{org_id}/cost` and the web **/cost** dashboard surface the
+spend (see the [API reference](../api/v1.md#orgs-cost)).
+
+**CI exercises it.** RLS enforcement runs in the **Postgres CI jobs** — the
+`FORCE` is what makes that test real (the superuser CI connection is bound
+by the policy), so a regression that drops or weakens the isolation fails
+CI rather than shipping silently.
 
 ---
 
@@ -492,5 +550,6 @@ get there.
 - Backup / restore: any standard Postgres backup tool works; the
   audit chain is hash-verifiable so a partial restore is detectable
   via `aegis audit verify`.
-- Cost management: per-tenant chargeback dashboards are in the
-  deferred list (see [`overview.md`](../architecture/overview.md)).
+- Cost management: per-tenant monthly budgets + the chargeback dashboard
+  have shipped — see the "Multi-tenancy / RLS" runbook above and
+  [`docs/architecture/multi-tenancy.md`](../architecture/multi-tenancy.md).

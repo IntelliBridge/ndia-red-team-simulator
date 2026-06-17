@@ -87,6 +87,7 @@ shipped June 2026 with 1329 tests passing (21 skipped offline) on Python
 | Agentic remediation strategy (vuln-fixer engine) — diff by default, opens the human-reviewed PR on approval | ✅ Shipped |
 | Multi-format finding ingestion (Snyk · Veracode · Trivy · SARIF → `AegisFinding`) | ✅ Shipped |
 | Per-task LLM routing with budget caps | ✅ Shipped |
+| Cross-org multi-tenancy — Postgres RLS (`FORCE`) on tenant tables, per-tenant monthly budget + LLM routing, `/cost` chargeback dashboard | ✅ Shipped |
 | `@aegis/design-system` workspace + Storybook — curated domain components over ported shadcn base primitives (table / card / alert / input / …) | ✅ Shipped |
 | 60+ specialized agents (full roster from the OnePager; 36 wired + 5 patterns today) | 🔨 Roadmap |
 | Authenticated DAST flows (encrypted auth profiles; ZAP/Nuclei auth injection) | ✅ Shipped |

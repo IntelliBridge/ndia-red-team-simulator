@@ -41,6 +41,11 @@ class Organization(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     slug: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    # Per-tenant LLM cost + routing (migration 0006). monthly cap in cents
+    # (NULL == uncapped); llm_model_overrides is a {task: model} map that wins
+    # over the AegisConfig default in aegis.llm.router.route().
+    monthly_llm_budget_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    llm_model_overrides: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -76,6 +81,11 @@ class Target(Base):
     __tablename__ = "targets"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    # Denormalized tenant key for Postgres RLS (migration 0005). Nullable on
+    # the ORM because a BEFORE INSERT trigger backfills it from the row's
+    # project — app code never sets it. See aegis/db/session.py for the GUC.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True)
     kind: Mapped[str] = mapped_column(String(32), nullable=False)   # url|github_repo|image
     value: Mapped[str] = mapped_column(String(1024), nullable=False)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -111,6 +121,9 @@ class Run(Base):
     __tablename__ = "runs"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    # Denormalized tenant key for RLS (0005); trigger-backfilled, see Target.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True)
     target_id: Mapped[str | None] = mapped_column(ForeignKey("targets.id"), nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(256))
     mode: Mapped[str] = mapped_column(String(32), default="live")
@@ -126,6 +139,9 @@ class Job(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False, index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    # Denormalized tenant key for RLS (0005); trigger-backfilled, see Target.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True)
     type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(64))
@@ -188,6 +204,9 @@ class Finding(Base):
     scanner_finding_id: Mapped[str] = mapped_column(String(256), nullable=False)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False, index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    # Denormalized tenant key for RLS (0005); trigger-backfilled, see Target.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True)
     schema_blob: Mapped[dict] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="open", index=True)
     severity: Mapped[str] = mapped_column(String(16), index=True)
@@ -208,6 +227,9 @@ class LLMUsage(Base):
     __tablename__ = "llm_usage"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    # Denormalized tenant key for RLS (0005); trigger-backfilled, see Target.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True)
     run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
     task: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -223,6 +245,9 @@ class Artifact(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False, index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    # Denormalized tenant key for RLS (0005); trigger-backfilled, see Target.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True)
     kind: Mapped[str] = mapped_column(String(64), nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     location: Mapped[str] = mapped_column(String(1024), nullable=False)
@@ -237,6 +262,9 @@ class RemediationAttempt(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     finding_id: Mapped[str] = mapped_column(ForeignKey("findings.id"), nullable=False, index=True)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False)
+    # Denormalized tenant key for RLS (0005); trigger-backfilled, see Target.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True)
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     branch: Mapped[str | None] = mapped_column(String(256))
     commit_hash: Mapped[str | None] = mapped_column(String(64))
@@ -308,6 +336,9 @@ class ApplicationLog(Base):
     run_id: Mapped[str | None] = mapped_column(String(64), index=True)
     job_id: Mapped[str | None] = mapped_column(String(64), index=True)
     project_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    # Denormalized tenant key for RLS (0005); trigger-backfilled, see Target.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True)
     actor: Mapped[str | None] = mapped_column(String(256))
     request_id: Mapped[str | None] = mapped_column(String(128), index=True)
     trace_id: Mapped[str | None] = mapped_column(String(64), index=True)

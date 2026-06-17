@@ -31,14 +31,17 @@ documented, validated, allowlist-gated **scanner-adapter marketplace** (see
 [Extending Aegis](dev/extending.md)), a pluggable authorization **`PolicyEngine`**
 (static default + opt-in OPA / Cedar), **supply-chain integrity** mostly
 shipped (keyless cosign image signing + SBOM + SLSA-3 provenance, and opt-in
-signed plugins; see [Supply-chain integrity](security/supply-chain.md)), and
+signed plugins; see [Supply-chain integrity](security/supply-chain.md)),
 **authenticated DAST flows** (encrypted auth-profile store + ZAP/Nuclei auth
-injection; see `docs/ops/authenticated-dast.md`) all landed — the focus has
-been **capability breadth** and the remaining **security / compliance
-hardening** (below). On breadth, the tool roster has now reached the 35+ target
-(42 effect-classified tools) and the agent roster has grown to 36 wired agents +
-5 multi-agent patterns — substantial progress toward the 60+ OnePager target.
-The next highest-leverage candidate: continuing toward 60+ agents.
+injection; see `docs/ops/authenticated-dast.md`), and **cross-org row-level
+multi-tenancy** (Postgres RLS `FORCE` on the tenant tables + per-tenant
+cost/routing; see [`multi-tenancy.md`](architecture/multi-tenancy.md)) all
+landed — the focus has been **capability breadth** and the remaining
+**security / compliance hardening** (below). On breadth, the tool roster has
+now reached the 35+ target (42 effect-classified tools) and the agent roster
+has grown to 36 wired agents + 5 multi-agent patterns — substantial progress
+toward the 60+ OnePager target. The next highest-leverage candidate:
+continuing toward 60+ agents.
 
 ## Capability breadth
 
@@ -100,8 +103,18 @@ Closing the gap to the OnePager promise.
 
 ## Scale, multi-tenancy & infra
 
-- **Cross-org row-level multi-tenancy.**
-- **Per-tenant cost dashboards / chargeback**; per-tenant LLM model routing.
+- ~~**Cross-org row-level multi-tenancy.**~~ **Shipped** (migration `0006`):
+  Postgres RLS with `FORCE ROW LEVEL SECURITY` on `projects` + the eight
+  project-scoped tables (denormalized `org_id` + `BEFORE INSERT` trigger),
+  filtered by the per-request `app.current_tenants` GUC — defense-in-depth
+  behind the app-layer project checks. See
+  [`architecture/multi-tenancy.md`](architecture/multi-tenancy.md) and
+  `SECURITY.md` § "Multi-tenancy".
+- ~~**Per-tenant cost dashboards / chargeback**; per-tenant LLM model
+  routing.~~ **Shipped** (migration `0007`): `organizations.monthly_llm_budget_cents`
+  (enforced alongside the project daily cap) + `llm_model_overrides`
+  per-tenant routing; `GET /v1/orgs/{org_id}/cost` and a web **/cost**
+  dashboard.
 - **Worker autoscaling / multi-region DR.**
 - **Celery → Temporal** queue migration (migration shape documented; deferred).
 - **Production Helm / k8s manifests** (kind scaffolding only today).

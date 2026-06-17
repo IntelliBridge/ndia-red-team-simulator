@@ -18,6 +18,7 @@ from aegis.api.v1 import (
     fix,
     health,
     logs,
+    org_cost,
     projects,
     reports,
     runs,
@@ -55,6 +56,14 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
                        "X-Aegis-Request-ID"],
         expose_headers=["X-Aegis-Request-ID"],
     )
+
+    # Phase 6: pin the request's tenant scope (accessible org ids) so Postgres
+    # RLS isolates rows per Organization. Registered before CSRF/rate-limit so
+    # it ends up *inner* (Starlette runs the last-added middleware outermost):
+    # the scope is set just around route handling and reset right after, and a
+    # rejected CSRF / rate-limit request never opens a tenant-scoped session.
+    from aegis.api.middleware.tenant import tenant_middleware
+    app.middleware("http")(tenant_middleware(settings))
 
     # F14b: double-submit CSRF on cookie-authenticated mutations.
     from aegis.api.middleware.csrf import csrf_middleware
@@ -96,6 +105,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(auth_profiles.router, prefix="/v1")
     app.include_router(projects.router, prefix="/v1")
     app.include_router(logs.router, prefix="/v1")
+    app.include_router(org_cost.router, prefix="/v1")
 
     # GitHub webhook receiver.
     from aegis.integrations.github_webhooks import router as gh_router

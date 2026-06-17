@@ -7,6 +7,23 @@ SemVer.
 ## [Unreleased]
 
 ### Added
+- **Cross-org row-level multi-tenancy (migration `0006`).** The
+  Organization is the tenant; `projects` and the eight project-scoped
+  tables (`targets`, `runs`, `jobs`, `findings`, `llm_usage`, `artifacts`,
+  `remediation_attempts`, `application_logs`) gain a denormalized `org_id`
+  (backfilled, then maintained by a `BEFORE INSERT` trigger) and run with
+  `ENABLE` + `FORCE ROW LEVEL SECURITY`. The `aegis_tenant_isolation`
+  policy filters rows by the per-request `app.current_tenants` GUC, set by
+  the tenant middleware via `aegis.db.session.get_session`; an empty/unset
+  GUC means full access (the system / worker path).
+- **Per-tenant cost + LLM routing (migration `0007`).**
+  `organizations.monthly_llm_budget_cents` (an org-monthly cap enforced by
+  `route()` alongside the project daily cap; `BudgetExceeded` names the
+  tier) and `organizations.llm_model_overrides` (a `{task: model}`
+  per-tenant routing map that wins over the config default). New
+  `GET /v1/orgs/{org_id}/cost?days=30` returns totals +
+  by_day/by_model/by_task + a month-to-date budget block, gated to org
+  members; a new web **/cost** dashboard renders it.
 - **Authenticated DAST flows (migration `0005`).** A new encrypted
   auth-profile store (`auth_profiles`) holds the credentials DAST scanners
   replay behind a login — four kinds: `form` (pre-flight login POST, session
@@ -89,6 +106,12 @@ SemVer.
   ever returns the secret, audit detail carries only non-secret metadata, and
   recorded command strings redact the secret value as `***`, so logs and
   artifacts stay secret-free.
+- **DB-enforced cross-org data isolation (migration `0006`).** Postgres
+  Row-Level Security with `FORCE ROW LEVEL SECURITY` makes the database
+  refuse to return another org's rows — binding the table owner / superuser
+  too — as **defense-in-depth** behind the existing app-layer project
+  checks. A forgotten `WHERE` clause can no longer leak rows across
+  tenants; the isolation is exercised in the Postgres CI jobs.
 
 ## [0.13.0] — 2026-06-17 — architecture hardening: validated findings, durable jobs & live events, strict types
 

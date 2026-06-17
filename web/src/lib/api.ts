@@ -150,6 +150,60 @@ export type ProjectMembership = {
   role: string;
 };
 
+// --- Per-tenant cost (multi-tenancy) ---
+// Mirrors GET /v1/orgs/{org_id}/cost?days=N. cents are integers throughout;
+// format with centsToUsd() at the edge. budget caps/remaining are null when
+// the org runs uncapped.
+export type OrgBudget = {
+  monthly_cap_cents: number | null;
+  month_spent_cents: number;
+  remaining_cents: number | null;
+};
+
+export type OrgCost = {
+  org_id: string;
+  total_cents: number;
+  call_count: number;
+  by_day: Record<string, number>;
+  by_model: Record<string, number>;
+  by_task: Record<string, number>;
+  budget: OrgBudget;
+};
+
+/**
+ * Fetch a single org's cost rollup over the trailing `days` window.
+ * Auth rides the standard `api()` wrapper (cookie or bearer). The API
+ * answers 403 if the caller belongs to no project in the org, 404 if the
+ * org is unknown — both surface as ApiError to the caller.
+ */
+export async function getOrgCost(
+  orgId: string,
+  days = 30,
+): Promise<OrgCost> {
+  return api<OrgCost>(
+    `/v1/orgs/${encodeURIComponent(orgId)}/cost?days=${days}`,
+  );
+}
+
+/**
+ * Resolve the org id to show on the cost page from the caller's project
+ * memberships (each ProjectMembership carries org_id). We take the first
+ * project's org_id since a caller is typically scoped to one tenant.
+ * Fallback: "default" when the list is empty (e.g. single-tenant dev), so
+ * the page can still render against the default org.
+ */
+export function resolveOrgId(projects: ProjectMembership[]): string {
+  return projects[0]?.org_id ?? "default";
+}
+
+/** Integer cents → "$1,234.56" USD string. */
+export function centsToUsd(cents: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(cents / 100);
+}
+
 // --- DAST authentication profiles (feat/authenticated-dast) ---
 //
 // Secrets are write-only: POST accepts `secret`, but GET never returns
