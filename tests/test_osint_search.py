@@ -159,5 +159,54 @@ class TestCaiToolBuilder(unittest.TestCase):
         self.assertEqual(osint.OSINT_SEARCH_EFFECT, "external")
 
 
+class TestSSRFGuard(unittest.TestCase):
+    """``extract_article`` navigates result URLs that come from third-party
+    search output, so the SSRF guard must keep the headless browser away from
+    cloud metadata, loopback, and RFC-1918 hosts."""
+
+    def test_blocks_internal_literals_and_non_http_schemes(self):
+        for bad in (
+            "http://169.254.169.254/latest/meta-data/",  # cloud metadata
+            "http://127.0.0.1/",                          # loopback
+            "http://10.0.0.5/admin",                      # RFC-1918
+            "http://192.168.1.1/",                        # RFC-1918
+            "http://[::1]/",                              # IPv6 loopback
+            "http://localhost/",                          # localhost
+            "http://db.internal/secrets",                 # internal suffix
+            "file:///etc/passwd",                         # non-http scheme
+            "ftp://example.com/x",                        # non-http scheme
+            "not a url",
+        ):
+            self.assertFalse(osint._is_safe_public_url(bad), bad)
+
+    def test_allows_public_host(self):
+        with mock.patch.object(
+            osint.socket, "getaddrinfo",
+            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+        ):
+            self.assertTrue(osint._is_safe_public_url("https://example.com/news"))
+
+    def test_blocks_name_resolving_to_internal(self):
+        # A public-looking name that resolves to RFC-1918 (DNS-rebinding style).
+        with mock.patch.object(
+            osint.socket, "getaddrinfo",
+            return_value=[(2, 1, 6, "", ("10.1.2.3", 0))],
+        ):
+            self.assertFalse(osint._is_safe_public_url("https://sneaky.example/x"))
+
+    def test_unresolvable_host_fails_open(self):
+        # Cannot reach what does not resolve, so navigation is left to fail.
+        with mock.patch.object(osint.socket, "getaddrinfo", side_effect=OSError):
+            self.assertTrue(osint._is_safe_public_url("https://nope.invalid/x"))
+
+    def test_extract_article_refuses_internal_url_without_navigating(self):
+        page = _FakePage([], html="<html>x</html>", title="secret")
+        article = asyncio.run(
+            _browser_with(page).extract_article("http://169.254.169.254/latest/meta-data/")
+        )
+        self.assertIn("blocked", article.text)
+        self.assertFalse(page.closed)  # new_page()/goto()/close() never reached
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -340,17 +340,15 @@ _SPECS: list[AuthoredSpec] = [
             "codebase or filesystem snapshot. Hunt for hard-coded credentials, "
             "API keys, private keys, tokens, and connection strings in source, "
             "config, history, and dotfiles. Use the filesystem tools to list, "
-            "search, and read files; use curl only to verify (without "
-            "exercising) the format of a suspected endpoint reference. You never "
-            "write, delete, or transmit any secret you find — you locate, "
-            "classify by sensitivity, and report file path plus line so it can "
-            "be rotated."
+            "search, and read files. You never write, delete, or transmit any "
+            "secret you find — and you carry no network/egress tool, so you "
+            "cannot — you locate, classify by sensitivity, and report file path "
+            "plus line so it can be rotated."
         ),
         tool_imports=[
             (_RECON, "list_dir"),
             (_RECON, "cat_file"),
             (_RECON, "find_file"),
-            (_RECON, "curl"),
         ],
     ),
     AuthoredSpec(

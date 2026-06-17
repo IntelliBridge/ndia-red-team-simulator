@@ -285,5 +285,28 @@ class TestAuthoredAgents(unittest.TestCase):
             self.assertIs(spec._agent, first)
 
 
+class TestReadAgentsHaveNoEgress(unittest.TestCase):
+    """A read-effect specialist runs without the human-in-the-loop gate, so it
+    must not carry any network/egress tool — otherwise a prompt-injected run
+    could transmit what it reads (e.g. secrets_hunter must not ship curl)."""
+
+    _EGRESS_TOOLS = {"curl", "wget", "netcat", "nc", "http_request"}
+
+    def test_no_read_agent_ships_an_egress_tool(self):
+        for spec in authored._SPECS:
+            if spec.effect != "read":
+                continue
+            tool_names = {name for _mod, name in spec.tool_imports}
+            leaked = tool_names & self._EGRESS_TOOLS
+            self.assertEqual(
+                leaked, set(),
+                f"read-effect agent {spec.name!r} ships egress tool(s) {leaked}",
+            )
+            self.assertFalse(
+                spec.use_osint,
+                f"read-effect agent {spec.name!r} must not carry external OSINT search",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

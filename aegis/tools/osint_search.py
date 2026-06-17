@@ -18,7 +18,9 @@ it clears the human-in-the-loop gate like any other external-effect capability.
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
+import socket
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -57,16 +59,70 @@ def _extract_with_trafilatura(html: str, url: str) -> str | None:
     except ImportError:
         return None
     try:
-        return trafilatura.extract(
+        extracted: str | None = trafilatura.extract(
             html,
             url=url,
             include_comments=False,
             include_tables=True,
             favor_precision=True,
         )
+        return extracted
     except Exception:  # noqa: BLE001 - extraction is best-effort
         logger.debug("trafilatura extraction failed for %s", url, exc_info=True)
         return None
+
+
+#: Hostnames that always denote the local machine / internal namespaces.
+_BLOCKED_HOSTNAMES = frozenset({"localhost"})
+_BLOCKED_HOST_SUFFIXES = (".localhost", ".local", ".internal")
+
+
+def _is_safe_public_url(url: str) -> bool:
+    """True only for ``http(s)`` URLs that point at a public, non-internal host.
+
+    Result URLs come from third-party search output and are therefore
+    attacker-influenceable, so a poisoned result must not be able to drive the
+    headless browser at cloud metadata (``169.254.169.254``), loopback, or
+    RFC-1918/link-local hosts (SSRF). IP-literal hosts are checked directly;
+    named hosts are resolved and rejected if *any* address is internal. A host
+    that fails to resolve is left to fail at navigation time — it cannot reach
+    anything internal — so resolution failure is not treated as unsafe.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = parsed.hostname
+    if not host:
+        return False
+    lowered = host.lower()
+    if lowered in _BLOCKED_HOSTNAMES or lowered.endswith(_BLOCKED_HOST_SUFFIXES):
+        return False
+    try:
+        ipaddress.ip_address(lowered)
+        candidates: set[str] = {lowered}
+    except ValueError:
+        try:
+            candidates = {str(info[4][0]) for info in socket.getaddrinfo(host, None)}
+        except (OSError, UnicodeError):
+            candidates = set()  # unresolvable → navigation will simply fail
+    for addr in candidates:
+        try:
+            ip = ipaddress.ip_address(addr.split("%", 1)[0])
+        except ValueError:
+            return False
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            return False
+    return True
 
 
 class OSINTBrowser:
@@ -136,6 +192,14 @@ class OSINTBrowser:
 
     async def extract_article(self, url: str) -> ArticleContent:
         """Navigate to ``url`` and extract readable article text (capped)."""
+        if not _is_safe_public_url(url):
+            logger.warning("OSINT: refusing to fetch non-public URL (SSRF guard): %s", url)
+            return ArticleContent(
+                title="",
+                url=url,
+                text="[blocked: refusing to fetch a non-public/internal URL]",
+                extracted_at=datetime.now(UTC).isoformat(),
+            )
         page = await self._browser.new_page()
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=20000)
