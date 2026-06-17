@@ -9,11 +9,45 @@ to stdout. This adapter drives ``scan`` → (optionally) ``process`` → ``expor
 and converts each exported finding into a common ``AegisFinding`` under the
 ``code_audit`` capability.
 
-Cost control: the AI ``process`` stage is **opt-in**. It runs only when
-``config.deepsec_ai_process`` is set, ``config.deepsec_budget_usd > 0``, and an
-AI Gateway / model key is present in the environment. Otherwise the adapter runs
-``scan`` + ``export`` only (regex candidates), so the offline/default path never
-spends money.
+Why this is a *custom* adapter (and not one of the shared-helper CLI adapters)
+------------------------------------------------------------------------------
+The other adapters are single-shot CLI tools: one ``subprocess.run`` whose
+stdout is the findings payload. They therefore route ``scan()`` through
+``run_cli_scan``, ``adapter_version()`` through ``cli_version`` (registry.py),
+and ``health_check()`` through ``which_available`` (registry.py). deepsec cannot
+reuse any of the three, for three distinct reasons:
+
+1. **Multi-step scan → process → export flow.** A single deepsec run is *three*
+   sequential subprocess invocations that share on-disk state: ``scan`` writes
+   candidates, the optional ``process`` enriches them in place, and ``export``
+   emits the JSON. ``run_cli_scan`` models exactly one ``subprocess.run`` and
+   one stdout payload, so ``scan()`` is hand-written to sequence the stages and
+   to persist a PII-sanitized copy of the export artifact (see the security note
+   below). The AI ``process`` stage is **opt-in**: it runs only when
+   ``config.deepsec_ai_process`` is set, ``config.deepsec_budget_usd > 0``, and
+   an AI Gateway / model key is present in the environment. Otherwise the
+   adapter runs ``scan`` + ``export`` only (regex candidates), so the
+   offline/default path never spends money.
+
+2. **``pnpm`` + config-driven cwd invocation.** deepsec is not a tool on
+   ``PATH``; it is a workspace package run as ``pnpm deepsec <subcmd>`` from a
+   checkout directory (``config.deepsec_path``, resolved via ``load_config()``).
+   Every invocation needs ``cwd=config.deepsec_path``. The shared ``cli_version``
+   helper builds a two-element argv (``[executable, subcommand]``) with no
+   ``cwd``, so it cannot express ``["pnpm", "deepsec", "--version"]`` run from a
+   specific directory — hence ``adapter_version()`` stays custom. Likewise the
+   shared ``which_available`` helper is a pure OR over ``shutil.which`` lookups;
+   deepsec's ``health_check()`` is an *AND* of a PATH probe for ``pnpm`` and a
+   filesystem existence check for ``config.deepsec_path``, which that helper
+   cannot represent — so ``health_check()`` stays custom too.
+
+3. **``_convert`` returns ``AegisFinding | None`` for verdict filtering.** deepsec
+   re-validates candidates and tags each with a ``metadata.revalidation.verdict``.
+   ``_convert`` returns ``None`` for non-actionable verdicts (``false-positive``,
+   ``fixed``, ``duplicate``) so the scan loop can drop them, whereas the
+   shared-helper adapters' parsers map every record one-to-one. The ``| None``
+   return is intentional and is consumed by both the live findings list and the
+   sanitized-artifact build in ``scan()``.
 
 Security note: deepsec enriches each finding with code-owner identities —
 ``metadata.owners`` (on-call/manager/contributor names, emails, GitHub handles,
@@ -227,7 +261,7 @@ class DeepsecAdapter:
 
         started = time.monotonic()
 
-        def _run(cmd):
+        def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
             return subprocess.run(
                 cmd, cwd=deepsec_dir, capture_output=True,
                 text=True, timeout=options.timeout,

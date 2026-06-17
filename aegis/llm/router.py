@@ -14,7 +14,10 @@ in the real ``llm_usage``-table check.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol, cast
+
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
 
 
 @dataclass
@@ -38,14 +41,16 @@ _DEFAULT_TASKS = {
 }
 
 
-def _resolve_model(task: str, config) -> str:
+def _resolve_model(task: str, config: AegisConfig) -> str:
     task_models = getattr(config, "task_models", None) or {}
-    return task_models.get(task) or config.model
+    # ``task_models`` is read via ``getattr`` (an optional, dynamically-set
+    # attr), so it is ``Any``; both branches are ``str`` at runtime.
+    return cast(str, task_models.get(task) or config.model)
 
 
 def route(
     task: str,
-    config,
+    config: AegisConfig,
     *,
     project_id: str | None = None,
     budget_checker: BudgetChecker | None = None,

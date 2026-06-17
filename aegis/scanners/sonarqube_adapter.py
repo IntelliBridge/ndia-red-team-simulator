@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -79,7 +80,8 @@ class SonarQubeAdapter:
 
         # Best-effort: issues are fetched from the web API by a later step, so
         # the CLI run persists nothing and yields no findings here.
-        def parse(proc, run_id):
+        def parse(proc: subprocess.CompletedProcess[str],
+                  run_id: str) -> list[AegisFinding]:
             return []
 
         return run_cli_scan(

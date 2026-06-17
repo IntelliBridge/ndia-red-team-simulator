@@ -18,8 +18,11 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
-import httpx
 import pytest
+
+pytest.importorskip("httpx")
+
+import httpx
 
 from aegis.api.auth import CurrentUser
 from aegis.api.policy import (

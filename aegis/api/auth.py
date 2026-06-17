@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -29,7 +29,7 @@ def _jwks_cache(jwks_url: str) -> dict[str, Any]:
     with httpx.Client(timeout=5.0) as client:
         resp = client.get(jwks_url)
         resp.raise_for_status()
-        return resp.json()
+        return cast("dict[str, Any]", resp.json())
 
 
 def _verify_jwt(token: str, settings: APISettings) -> dict[str, Any]:

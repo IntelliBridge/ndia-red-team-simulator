@@ -189,7 +189,7 @@ class TestAgentRunTask(unittest.TestCase):
         ctx.session.get.return_value = fake_job
 
         @contextlib.contextmanager
-        def fake_task_context(job_id):  # noqa: ARG001
+        def fake_task_context(job_id, task=None):  # noqa: ARG001
             yield ctx
 
         # task_context/authorize are imported inside the task body, so
@@ -240,7 +240,7 @@ class TestAgentRunTask(unittest.TestCase):
         ctx.session.get.return_value = fake_job
 
         @contextlib.contextmanager
-        def fake_task_context(job_id):  # noqa: ARG001
+        def fake_task_context(job_id, task=None):  # noqa: ARG001
             yield ctx
 
         with patch("aegis.workers.bootstrap.task_context", fake_task_context), \
@@ -260,7 +260,7 @@ class TestAgentRunTask(unittest.TestCase):
         ctx.skip = True
 
         @contextlib.contextmanager
-        def fake_task_context(job_id):  # noqa: ARG001
+        def fake_task_context(job_id, task=None):  # noqa: ARG001
             yield ctx
 
         with patch("aegis.workers.bootstrap.task_context", fake_task_context), \

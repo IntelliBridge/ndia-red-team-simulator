@@ -19,10 +19,9 @@ mirrors trufflehog's ``evidence`` redaction guarantee.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aegis.config import load_config
 from aegis.scanners.registry import (
@@ -30,7 +29,7 @@ from aegis.scanners.registry import (
     ScanResult,
     cli_version,
     register,
-    run_cli_scan,
+    run_cli_scan_jsonl,
     which_available,
 )
 from aegis.schema import AegisFinding, Severity
@@ -108,6 +107,19 @@ def _convert(record: dict, run_id: str) -> AegisFinding:
     )
 
 
+def _convert_finding(record: dict[str, Any], run_id: str) -> AegisFinding | None:
+    """Per-line callback: convert only ``record_type == "finding"`` records.
+
+    bumblebee emits NDJSON discriminated by ``record_type``
+    (``package``/``finding``/``scan_summary``/``diagnostic``); returning ``None``
+    for the non-``finding`` records filters them out, preserving the in-loop
+    filter the adapter previously applied.
+    """
+    if record.get("record_type") != "finding":
+        return None
+    return _convert(record, run_id)
+
+
 class BumblebeeAdapter:
     name = "bumblebee"
     capabilities = {"supply_chain"}
@@ -131,26 +143,12 @@ class BumblebeeAdapter:
             "--output", "stdout",
         ]
 
-        def parse(proc, run_id):
-            findings: list[AegisFinding] = []
-            for line in (proc.stdout or "").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if rec.get("record_type") == "finding":
-                    findings.append(_convert(rec, run_id))
-            return findings
-
-        return run_cli_scan(
+        return run_cli_scan_jsonl(
             self, options, run_state,
             argv=command,
             command_str=" ".join(command),
             subdir="bumblebee", raw_filename="results.ndjson",
-            parse=parse, raw_empty="",
+            convert=_convert_finding,
         )
 
 

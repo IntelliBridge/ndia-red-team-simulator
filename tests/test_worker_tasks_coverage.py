@@ -88,7 +88,7 @@ def _ctx_factory(
 def _task_context_cm(ctx):
     """Yields *ctx* — replaces ``aegis.workers.bootstrap.task_context``."""
     @contextmanager
-    def _inner(job_id):  # noqa: ARG001
+    def _inner(job_id, task=None):  # noqa: ARG001
         yield ctx
     return _inner
 
@@ -513,7 +513,7 @@ def _make_task_ctx(
     ctx.run_state.load_findings.return_value = findings or []
 
     @contextmanager
-    def fake_tc(job_id):  # noqa: ARG001
+    def fake_tc(job_id, task=None):  # noqa: ARG001
         yield ctx
 
     return ctx, sess, job, fake_tc

@@ -13,7 +13,7 @@ import json
 import time
 import urllib.request
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from aegis.audit.forensic import tool_detail
 from aegis.safety import AuthorizationError, is_target_allowed
@@ -131,7 +131,9 @@ class KaliClient:
         url = f"{self.base_url}/health"
         try:
             with urllib.request.urlopen(url, timeout=5) as resp:
-                return json.loads(resp.read().decode())
+                # json.loads is typed -> Any; the /health endpoint returns a
+                # JSON object, so the runtime value is a dict.
+                return cast("dict[Any, Any]", json.loads(resp.read().decode()))
         except Exception:
             return None
 
@@ -190,19 +192,19 @@ class KaliClient:
     # ``run_tool``; routing through it (rather than calling ``_post``
     # directly) is what gives them the same allowlist gate *and* the
     # forensic audit row on both invocation and authorization denial.
-    def nmap(self, target: str, scan_type: str = "-sV", ports: str | None = None, **kwargs) -> ToolResult:
+    def nmap(self, target: str, scan_type: str = "-sV", ports: str | None = None, **kwargs: Any) -> ToolResult:
         params = {"target": target, "scan_type": scan_type}
         if ports:
             params["ports"] = ports
         params.update(kwargs)
         return self.run_tool("nmap", params)
 
-    def nikto(self, target: str, **kwargs) -> ToolResult:
+    def nikto(self, target: str, **kwargs: Any) -> ToolResult:
         params = {"target": target}
         params.update(kwargs)
         return self.run_tool("nikto", params)
 
-    def sqlmap(self, url: str, data: str | None = None, **kwargs) -> ToolResult:
+    def sqlmap(self, url: str, data: str | None = None, **kwargs: Any) -> ToolResult:
         params = {"url": url}
         if data:
             params["data"] = data

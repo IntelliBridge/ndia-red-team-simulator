@@ -121,6 +121,6 @@ def ensure_run_access(user: CurrentUser, run_id: str) -> str:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="run not found",
             )
-        project_id = run.project_id
+        project_id: str = run.project_id
     ensure_project_access(user, project_id)
     return project_id

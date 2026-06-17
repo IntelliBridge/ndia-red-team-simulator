@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
-from typing import Iterator
+from typing import Iterator, cast
 
 from aegis.storage.blobs import BlobRef
 
@@ -79,7 +79,8 @@ class S3BlobStore:
         if key.startswith("s3://"):
             key = key.split("/", 3)[3]
         obj = self.client.get_object(Bucket=self.bucket, Key=key)
-        return obj["Body"].read()
+        # boto3 is untyped here; StreamingBody.read() returns bytes at runtime.
+        return cast(bytes, obj["Body"].read())
 
     def stream(self, key: str) -> Iterator[bytes]:
         if key.startswith("s3://"):
