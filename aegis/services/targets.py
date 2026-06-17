@@ -8,10 +8,17 @@ canonical audit chain before the DB row is mutated.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from aegis.config import AegisConfig
 from aegis.safety import authorize
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from aegis.audit.chain import AuditWriter
+    from aegis.db.models import Target
 
 
 @dataclass
@@ -30,7 +37,7 @@ def create_target(
     value: str,
     actor: str,
     config: AegisConfig,
-    audit_writer,
+    audit_writer: AuditWriter,
 ) -> TargetRecord:
     """Admission boundary for adding a target to a project's allowlist."""
     authorize(
@@ -58,7 +65,7 @@ def delete_target(
     target_id: str,
     actor: str,
     config: AegisConfig,
-    audit_writer,
+    audit_writer: AuditWriter,
 ) -> str:
     """Admission boundary for removing a target from a project's allowlist."""
     from aegis.db.models import Target
@@ -97,13 +104,13 @@ class TargetVerificationError(Exception):
 
 
 def verify_target(
-    session,
+    session: Session,
     target_id: str,
     *,
     actor: str,
-    audit_writer=None,
+    audit_writer: AuditWriter | None = None,
     config: AegisConfig | None = None,
-):
+) -> Target:
     """Prove the operator controls a target, then mark it ``verified``.
 
     Dispatches on ``Target.kind``:
@@ -181,4 +188,5 @@ def verify_target(
     # Transient attributes for the API to echo (not persisted columns).
     target.verify_method = method
     target.verify_detail = detail
-    return target
+    verified: Target = target
+    return verified

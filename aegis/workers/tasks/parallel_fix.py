@@ -6,14 +6,17 @@ sharing the run context, waits for both, writes a combined summary.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from aegis.workers.celery_app import app
 
+if TYPE_CHECKING:
+    from celery import Task
+
 
 @app.task(name="aegis.parallel_fix", bind=True, max_retries=0)
-def parallel_fix(self, job_id: str) -> dict[str, Any]:
+def parallel_fix(self: Task, job_id: str) -> dict[str, Any]:
     from celery import group
 
     from aegis.db.models import Job

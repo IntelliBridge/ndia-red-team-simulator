@@ -22,7 +22,12 @@ from __future__ import annotations
 import hashlib
 import os
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
+    from aegis.db.models import Target
 
 # A non-secret dev default so local/dev runs work out of the box; production
 # deployments set ``AEGIS_VERIFY_SECRET`` (or ``config.verify_secret``).
@@ -38,13 +43,14 @@ class VerifyResult:
     detail: str
 
 
-def _resolve_secret(config=None) -> str:
+def _resolve_secret(config: AegisConfig | None = None) -> str:
     """Resolve the verification secret: env > config > dev default."""
     env = os.environ.get("AEGIS_VERIFY_SECRET")
     if env:
         return env
-    if config is not None and getattr(config, "verify_secret", None):
-        return config.verify_secret
+    if config is not None and config.verify_secret:
+        secret: str = config.verify_secret
+        return secret
     return _DEV_SECRET
 
 
@@ -59,7 +65,7 @@ def extract_host(value: str) -> str:
     return host.strip("[]").rstrip(".")
 
 
-def expected_dns_token(target, *, config=None) -> str:
+def expected_dns_token(target: Target, *, config: AegisConfig | None = None) -> str:
     """Deterministic TXT verification value bound to the target + project.
 
     ``aegis-site-verification=<sha256(project_id:value:secret)[:32]>``. Pure

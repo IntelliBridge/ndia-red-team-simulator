@@ -17,6 +17,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
+from typing import cast
 
 from authlib.jose import JoseError, jwt
 
@@ -82,7 +83,7 @@ def mint_session_cookie(
     token = jwt.encode(header, payload, private)
     if isinstance(token, bytes):
         token = token.decode("ascii")
-    return token
+    return cast(str, token)
 
 
 def verify_session_cookie(value: str, settings: APISettings) -> SessionClaims:

@@ -5,8 +5,8 @@ Backs the pluggable bidirectional ticket-sync layer
 one row per ``(finding_id, provider)`` recording the external tracker's id,
 url, and last-pulled status. No credential is stored here.
 
-Revision ID: 0005_finding_tickets
-Revises: 0004_audit_append_only
+Revision ID: 0008_finding_tickets
+Revises: 0007_org_cost_routing
 Create Date: 2026-06-11
 """
 
@@ -17,8 +17,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0005_finding_tickets"
-down_revision: Union[str, None] = "0004_audit_append_only"
+revision: str = "0008_finding_tickets"
+down_revision: Union[str, None] = "0007_org_cost_routing"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

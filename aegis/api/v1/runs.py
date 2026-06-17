@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from aegis.api.auth import CurrentUser, get_current_user
 from aegis.api.policy import accessible_project_ids, ensure_project_access
 
+if TYPE_CHECKING:
+    from aegis.db.models import Run
+
 router = APIRouter(prefix="/runs", tags=["runs"])
 
 
 def _run_to_dict(
-    row,
+    row: Run,
     *,
     created_by: bool = False,
     completed_at: bool = False,

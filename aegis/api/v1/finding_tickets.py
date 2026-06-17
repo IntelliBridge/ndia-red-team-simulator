@@ -12,7 +12,7 @@ sync returns 409 with a clear message. No response ever carries a secret.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
@@ -24,10 +24,13 @@ from aegis.config import load_config
 from aegis.integrations.ticket_provider import TicketProviderError
 from aegis.services import finding_tickets as svc
 
+if TYPE_CHECKING:
+    from aegis.db.models import FindingTicket
+
 router = APIRouter(prefix="/findings", tags=["tickets"])
 
 
-def _ticket_to_dict(row) -> dict[str, Any]:
+def _ticket_to_dict(row: FindingTicket) -> dict[str, Any]:
     """Serialize a ``FindingTicket`` to the wire shape (no secret)."""
     return {
         "id": row.id,
@@ -50,7 +53,8 @@ def _load_finding_project(finding_id: str) -> str:
         if finding is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail="finding not found")
-        return finding.project_id
+        project_id: str = finding.project_id
+        return project_id
 
 
 @router.post("/{finding_id}/ticket")

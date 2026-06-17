@@ -12,6 +12,7 @@ selected, cached). ``sync_finding`` upserts a ``FindingTicket`` keyed on
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from aegis.integrations.ticket_provider import (
@@ -20,15 +21,21 @@ from aegis.integrations.ticket_provider import (
     resolve_ticket_provider,
 )
 
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from aegis.audit.chain import AuditWriter
+    from aegis.db.models import FindingTicket
+
 
 def sync_finding(
-    session,
+    session: Session,
     finding_id: str,
     *,
     actor: str,
-    audit_writer=None,
+    audit_writer: AuditWriter | None = None,
     provider: TicketProvider | None = None,
-):
+) -> FindingTicket:
     """Push a finding to the configured tracker and upsert its FindingTicket.
 
     Loads the finding, calls the resolved provider's ``sync_finding``,
@@ -99,15 +106,16 @@ def sync_finding(
             },
             project_id=project_id,
         )
-    return row
+    synced: FindingTicket = row
+    return synced
 
 
 def refresh_status(
-    session,
+    session: Session,
     finding_ticket_id: str,
     *,
     provider: TicketProvider | None = None,
-):
+) -> FindingTicket:
     """Pull the external status for a ticket and update the row.
 
     Raises ``LookupError`` if the ticket id is unknown. Returns the updated
@@ -126,19 +134,21 @@ def refresh_status(
     row.status = status
     row.synced_at = datetime.now(timezone.utc)
     session.flush()
-    return row
+    refreshed: FindingTicket = row
+    return refreshed
 
 
-def list_tickets(session, finding_id: str):
+def list_tickets(session: Session, finding_id: str) -> list[FindingTicket]:
     """Return all FindingTicket rows for a finding (most-recent first)."""
     from sqlalchemy import select
 
     from aegis.db.models import FindingTicket
 
-    return list(
+    rows: list[FindingTicket] = list(
         session.execute(
             select(FindingTicket)
             .where(FindingTicket.finding_id == finding_id)
             .order_by(FindingTicket.synced_at.desc())
         ).scalars().all()
     )
+    return rows

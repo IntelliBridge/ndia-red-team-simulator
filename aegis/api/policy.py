@@ -17,6 +17,7 @@ class Action(str, Enum):
     FIX_APPLY = "fix.apply"
     VERIFY_REPLAY = "verify.replay"
     TARGET_MANAGE = "target.manage"
+    AUTH_PROFILE_MANAGE = "auth_profile.manage"
     AUDIT_VERIFY = "audit.verify"
     RUN_CANCEL = "run.cancel"
     TOOL_INVOKE = "tool.invoke"
@@ -40,6 +41,8 @@ _ACTION_MIN_ROLE: dict[Action, str] = {
     Action.FIX_APPLY: "approver",
     Action.VERIFY_REPLAY: "remediator",
     Action.TARGET_MANAGE: "admin",
+    # Auth profiles hold scan credentials — same bar as managing targets.
+    Action.AUTH_PROFILE_MANAGE: "admin",
     Action.AUDIT_VERIFY: "admin",
     Action.RUN_CANCEL: "remediator",
     Action.TOOL_INVOKE: "remediator",
@@ -50,19 +53,26 @@ _ACTION_MIN_ROLE: dict[Action, str] = {
 
 
 def check(user: CurrentUser, action: Action, project_id: str) -> None:
-    if user.is_system:
-        return
-    role = user.project_memberships.get(project_id)
-    if not role:
+    """Role-gate ``action`` on ``project_id`` for ``user`` (raise 403 on deny).
+
+    The decision is delegated to the configured :class:`PolicyEngine`
+    (``AEGIS_POLICY_ENGINE``): the default :class:`StaticPolicyEngine`
+    reproduces the historical role-rank table exactly (see ``_ROLE_RANK``
+    / ``_ACTION_MIN_ROLE`` below), while ``opa`` / ``cedar`` delegate to an
+    external policy service. A deny raises the same ``HTTPException(403)``
+    as before, carrying the engine's ``reason`` as the detail. All call
+    sites are unchanged.
+    """
+    from aegis.policy.engine import build_request, resolve_policy_engine
+
+    req = build_request(user, action.value, project_id)
+    decision = resolve_policy_engine().evaluate(req)
+    if not decision.allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"user {user.email} has no membership on project {project_id}",
-        )
-    required = _ACTION_MIN_ROLE[action]
-    if _ROLE_RANK.get(role, 0) < _ROLE_RANK[required]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"role '{role}' cannot perform '{action.value}' on project {project_id}",
+            detail=decision.reason or (
+                f"role check failed for '{action.value}' on project {project_id}"
+            ),
         )
 
 
@@ -102,6 +112,48 @@ def ensure_project_access(user: CurrentUser, project_id: str) -> None:
         )
 
 
+def has_org_access(user: CurrentUser, org_id: str) -> bool:
+    """True if the user may read resources scoped to ``org_id``.
+
+    Org-tier mirror of ``has_project_access``: a system principal always
+    passes; otherwise the caller must be a member of at least one project that
+    belongs to ``org_id``. Membership lives in ``project_memberships`` (keyed by
+    project id), so the project→org mapping is resolved from the DB.
+
+    Degrades safely without a DB / on lookup error: returns ``False`` (no
+    access) rather than raising, so a missing session can't open the gate.
+    """
+    if user.is_system:
+        return True
+    project_ids = list(user.project_memberships)
+    if not project_ids:
+        return False
+    try:
+        from sqlalchemy import select
+
+        from aegis.db.models import Project
+        from aegis.db.session import get_session
+        with get_session() as sess:
+            match = sess.execute(
+                select(Project.id)
+                .where(Project.org_id == org_id,
+                       Project.id.in_(project_ids))
+                .limit(1)
+            ).first()
+        return match is not None
+    except Exception:
+        return False
+
+
+def ensure_org_access(user: CurrentUser, org_id: str) -> None:
+    """403 unless the user has access to ``org_id`` (see ``has_org_access``)."""
+    if not has_org_access(user, org_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"user {user.email} has no access to organization {org_id}",
+        )
+
+
 def ensure_run_access(user: CurrentUser, run_id: str) -> str:
     """Resolve the run's project, then enforce membership.
 
@@ -118,6 +170,6 @@ def ensure_run_access(user: CurrentUser, run_id: str) -> str:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="run not found",
             )
-        project_id = run.project_id
+        project_id: str = run.project_id
     ensure_project_access(user, project_id)
     return project_id

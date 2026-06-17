@@ -94,7 +94,7 @@ ticket. The `refresh` endpoint re-queries the tracker and writes the
 current status back onto the row — the inbound half of the bidirectional
 sync.
 
-The `FindingTicket` table is added by migration `0005_finding_tickets`:
+The `FindingTicket` table is added by migration `0008_finding_tickets`:
 one row per `(finding, provider)` recording `provider` / `external_id` /
 `url` / `status` / `synced_at`. **No credential is stored on the row.**
 

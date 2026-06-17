@@ -9,6 +9,11 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
+    from aegis.schema import AegisFinding
 
 DEFAULT_BASE_BRANCH = "main"
 
@@ -43,21 +48,33 @@ def extract_unified_diff(agent_output: str | None) -> str | None:
       1. ``` diff / ``` patch fenced block.
       2. First ``` block that looks like a unified diff.
       3. Naked --- a/... / +++ b/... block.
+
+    This is the canonical diff-extraction point, so the extracted diff is
+    passed through :func:`aegis.llm.guardrails.guard_diff` before returning —
+    every downstream consumer (persist to disk, PR body, logs) sees the
+    secret-scrubbed diff. Scrubbing is config-gated and passthrough when off.
     """
     if not agent_output:
         return None
 
+    diff: str | None = None
     for match in _FENCE_RE.finditer(agent_output):
         candidate = match.group(1).strip()
         if "---" in candidate and "+++" in candidate:
-            return candidate + "\n" if not candidate.endswith("\n") else candidate
+            diff = candidate + "\n" if not candidate.endswith("\n") else candidate
+            break
 
-    # Fall back: naked diff outside fences.
-    m = _HUNK_HEADER_RE.search(agent_output)
-    if m:
-        return agent_output[m.start():].rstrip() + "\n"
+    if diff is None:
+        # Fall back: naked diff outside fences.
+        m = _HUNK_HEADER_RE.search(agent_output)
+        if m:
+            diff = agent_output[m.start():].rstrip() + "\n"
 
-    return None
+    if diff is None:
+        return None
+
+    from aegis.llm.guardrails import guard_diff
+    return guard_diff(diff)
 
 
 def diff_sha256(diff: str) -> str:
@@ -65,7 +82,7 @@ def diff_sha256(diff: str) -> str:
 
 
 def _git(repo: Path, args: list[str], *, check: bool = True,
-         input_text: str | None = None) -> subprocess.CompletedProcess:
+         input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(repo), *args],
         capture_output=True,
@@ -112,7 +129,7 @@ def deterministic_branch(finding_id: str) -> str:
 
 def commit_patch(
     repo_path: Path | str,
-    finding,
+    finding: AegisFinding,
     diff: str,
     *,
     branch: str | None = None,
@@ -266,7 +283,7 @@ def _parse_release_trains(raw: str | None) -> dict[str, str]:
 
 
 def select_base_branch(
-    target_branch_hint: str | None = None, *, config=None
+    target_branch_hint: str | None = None, *, config: AegisConfig | None = None
 ) -> str:
     """Resolve the base branch a fix PR should target.
 
@@ -301,7 +318,7 @@ def open_pull_request(
     body: str,
     base: str = DEFAULT_BASE_BRANCH,
     base_hint: str | None = None,
-    config=None,
+    config: AegisConfig | None = None,
     push: bool = True,
 ) -> tuple[bool, str]:
     """Push the branch and create a PR via the gh CLI.

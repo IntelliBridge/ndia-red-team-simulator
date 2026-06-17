@@ -15,9 +15,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from aegis.workers.celery_app import app
+
+if TYPE_CHECKING:
+    from celery import Task
 
 _STATE_MAP = {
     "verified": "poc_passed",
@@ -27,7 +30,7 @@ _STATE_MAP = {
 
 
 @app.task(name="aegis.verify_replay", bind=True, max_retries=2)
-def verify_replay(self, job_id: str) -> dict[str, Any]:
+def verify_replay(self: Task, job_id: str) -> dict[str, Any]:
     from aegis.config import load_config
     from aegis.db.models import Finding, Job, VerifyJobDetail
     from aegis.schema import AegisFinding
@@ -35,7 +38,7 @@ def verify_replay(self, job_id: str) -> dict[str, Any]:
     from aegis.workers.bootstrap import task_context
 
     config = load_config()
-    with task_context(job_id) as ctx:
+    with task_context(job_id, task=self) as ctx:
         if ctx.skip or ctx.run_state is None:
             return {"job_id": job_id, "skipped": True}
         sess = ctx.session

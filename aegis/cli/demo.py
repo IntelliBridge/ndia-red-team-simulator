@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
 from aegis.cli import _console
+from aegis.config import AegisConfig
 
 
-def cmd_demo(args, config) -> None:
+def cmd_demo(args: argparse.Namespace, config: AegisConfig) -> None:
     """Run the opinionated end-to-end demo."""
     from aegis.demo import run_demo
 

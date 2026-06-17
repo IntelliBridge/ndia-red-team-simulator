@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, cast
 
 from aegis.scanners.severity import canon_severity
 from aegis.schema import AegisFinding, CodeLocation, Severity
@@ -86,7 +86,7 @@ def _coerce_dict(data: dict | str | None) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _str_or_none(value) -> str | None:
+def _str_or_none(value: Any) -> str | None:
     """Return a non-empty string, else ``None`` (preserves the optional split)."""
     if value is None:
         return None
@@ -156,7 +156,7 @@ def _veracode_findings(doc: dict) -> list:
     """
     embedded = doc.get("_embedded")
     if isinstance(embedded, dict) and isinstance(embedded.get("findings"), list):
-        return embedded["findings"]
+        return cast("list[Any]", embedded["findings"])
     top = doc.get("findings")
     return top if isinstance(top, list) else []
 

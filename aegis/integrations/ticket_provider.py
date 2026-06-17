@@ -266,7 +266,8 @@ class ServiceNowTicketProvider:
                 result = resp.json()["result"]
         except httpx.HTTPError as exc:
             raise _wrap(self.name, exc) from None
-        return result.get("state")
+        state: str | None = result.get("state")
+        return state
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +335,8 @@ class LinearTicketProvider:
         if body.get("errors"):
             # GraphQL surfaces errors with a 200; treat as a provider error.
             raise TicketProviderError("linear ticket request returned GraphQL errors")
-        return body["data"]
+        data: dict[str, Any] = body["data"]
+        return data
 
     def sync_finding(
         self, finding_id: str, schema_blob: dict, *, project_id: str
