@@ -160,6 +160,24 @@ env knobs.
 - Rotation procedure for each is documented in
   [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Rotation runbook".
 
+### Supply-chain integrity
+
+- **Signed third-party plugins.** Marketplace plugin discovery supports
+  opt-in **Ed25519** signature enforcement (`AEGIS_PLUGINS_REQUIRE_SIGNATURE`
+  + `AEGIS_PLUGINS_TRUSTED_KEYS`). The signature binds to the SHA-256 of the
+  factory module's source — it authorises only the code that runs. When
+  enforcement is on, an unsigned or invalid plugin is **rejected** before
+  registration; `aegis plugins sign` produces the detached signature.
+- **Signed + attested release images.** Release builds (on `v*` tags) push
+  the four service images to GHCR and **keyless cosign-sign** each by digest
+  (GitHub OIDC, no stored keys), attaching a **CycloneDX SBOM** (Syft) and
+  **SLSA-3 provenance** attestation. Operators verify with `cosign verify` /
+  `cosign verify-attestation` before deploy.
+- Remaining: **Nix reproducible builds** (bit-for-bit independent rebuild)
+  are still deferred (tracked on the roadmap).
+- See [`docs/security/supply-chain.md`](docs/security/supply-chain.md) for
+  the trust model, env vars, and the operator verification runbook.
+
 ## Out of scope
 
 - Findings produced **by** Aegis against deliberately-vulnerable

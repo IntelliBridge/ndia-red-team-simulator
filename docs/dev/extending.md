@@ -424,12 +424,44 @@ export AEGIS_PLUGINS_ALLOW="aegis-plugin-example,acme-scanners"
 Treat the allowlist as a production control. Combined with pinning plugin
 versions in your lockfile, it bounds exactly which third-party code runs.
 
-!!! note "Future hardening — signed plugins"
-    Signature verification of plugin distributions is planned, tying into
-    the broader [supply-chain integrity](../roadmap.md) work (sigstore
-    image signing, signed entry points, SLSA provenance). Until then, the
-    allowlist plus a pinned lockfile is the gate; there is no cryptographic
-    verification of plugin authorship yet.
+### Signature enforcement: `AEGIS_PLUGINS_REQUIRE_SIGNATURE`
+
+The allowlist bounds *which distributions* may load; **signature
+enforcement** adds cryptographic proof of *who authored the code*, bound to
+the exact factory module that runs. It is opt-in and **off by default** —
+the allowlist behaviour above is unchanged until you turn it on.
+
+When `AEGIS_PLUGINS_REQUIRE_SIGNATURE=1` is set, every discovered plugin
+must carry a valid **Ed25519** signature, verifying under a trusted public
+key, **before** it is registered. An unsigned or invalid plugin is
+**rejected** (status `rejected` in `aegis plugins list`, with the reason in
+the detail column); a valid one loads and the new **SIGNED** column shows
+`yes:<key_id>` so an operator can see which trusted key vouched for it. One
+bad signature never crashes discovery.
+
+| Var | Purpose |
+|-----|---------|
+| `AEGIS_PLUGINS_REQUIRE_SIGNATURE` | `1`/truthy to require a valid signature; unset = no signature check. |
+| `AEGIS_PLUGINS_TRUSTED_KEYS` | Colon/comma-separated `*.pem` **public-key** files and/or dirs. |
+| `AEGIS_PLUGINS_SIG_DIR` | Dirs holding `<dist>-<version>.sig` files (falls back to trusted-key dirs + the plugin's module dir). |
+
+A plugin author signs their own distribution with the CLI — it digests the
+factory module's source, signs the canonical payload, and writes the
+detached `<dist>-<version>.sig`:
+
+```bash
+aegis plugins sign \
+  --dist aegis-plugin-example --version 0.1.0 \
+  --entry-point aegis.scanners:example \
+  --key your-ed25519-private-key.pem \
+  --out ./signing
+```
+
+The reference example at
+[`examples/aegis-plugin-example/signing/`](https://github.com/IntelliBridge/aegis/tree/main/examples/aegis-plugin-example/signing)
+ships a working trusted public key + signature. For the full trust model,
+the payload format, and the operator runbook, see
+[Supply-chain integrity](../security/supply-chain.md#signed-third-party-plugins).
 
 ### Validation: a bad plugin is rejected, never fatal
 

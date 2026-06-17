@@ -172,6 +172,20 @@ secret.
 | `OTEL_RESOURCE_ATTRIBUTES`         | api, worker         | `service.name=...` etc.                                     |
 | `AEGIS_LOG_INGEST_URL`             | api, worker         | Default path that bypasses the Collector (default profile)  |
 
+### Third-party plugin signatures
+
+Opt-in Ed25519 signature enforcement for marketplace plugins (off by
+default). Set on every process that discovers plugins (`AEGIS_PLUGINS=1`):
+the api, worker, and CLI. See
+[supply-chain integrity](../security/supply-chain.md#signed-third-party-plugins)
+and [Extending Aegis](../dev/extending.md#signature-enforcement-aegis_plugins_require_signature).
+
+| Var                                | Where             | Notes                                                                                   |
+|------------------------------------|-------------------|-----------------------------------------------------------------------------------------|
+| `AEGIS_PLUGINS_REQUIRE_SIGNATURE`  | api, worker, cli  | `1`/truthy requires a valid signature before any plugin loads. Unset = no signature check. |
+| `AEGIS_PLUGINS_TRUSTED_KEYS`       | api, worker, cli  | Colon/comma-separated `*.pem` **public-key** files and/or directories of them.          |
+| `AEGIS_PLUGINS_SIG_DIR`            | api, worker, cli  | Dirs holding `<dist>-<version>.sig` files (falls back to trusted-key dirs + the plugin's module dir). |
+
 ### LLM guardrails
 
 Two fail-safe layers (secret scrubbing of generated diffs/LLM output +
@@ -211,6 +225,37 @@ docker build -t aegis-postgres -f deploy/Dockerfile.postgres .
 All Dockerfiles install from the repo root, so the build context must
 be the repo root (`docker build … .`). The web image consumes the pnpm
 workspace at the same root path.
+
+---
+
+## Verify release images before deploy
+
+Release builds (on `v*` tags) are pushed to GHCR, **keyless-signed** with
+cosign, and carry a CycloneDX SBOM + SLSA provenance attestation — see
+[`.github/workflows/release-sign.yml`](https://github.com/IntelliBridge/aegis/blob/main/.github/workflows/release-sign.yml)
+and the [supply-chain integrity](../security/supply-chain.md#signed-attested-release-images)
+page. **Verify each image by digest before `docker compose up` / `kubectl
+apply`** so a tampered or unsigned image fails the gate. Wire this into the
+deploy pipeline; do not deploy an image that fails verification.
+
+```bash
+# Per image: api | worker | web | log_ingest, pinned by digest.
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/IntelliBridge/aegis/' \
+  ghcr.io/intellibridge/aegis/<service>@<DIGEST>
+
+# Optional but recommended: also verify the SBOM + SLSA provenance.
+cosign verify-attestation --type cyclonedx \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/IntelliBridge/aegis/' \
+  ghcr.io/intellibridge/aegis/<service>@<DIGEST>
+```
+
+`scripts/verify-release.sh` wraps the full set (signature + SBOM +
+provenance, the last under the slsa-github-generator identity). Always
+verify and deploy the `@sha256:…` digest, not a floating tag — cosign signs
+the digest, and a tag can be re-pointed after verification.
 
 ---
 

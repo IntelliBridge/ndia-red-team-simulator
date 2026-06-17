@@ -74,9 +74,31 @@ all stay green.
   distributions load and all others are skipped; when unset (with
   `AEGIS_PLUGINS=1`) all discovered plugins load and a warning is logged that an
   unpinned set is active. Protocol-conformance validation rejects a malformed or
-  raising plugin before it can register. Cryptographic signature verification of
-  plugin distributions is planned (tying into the supply-chain signing roadmap);
-  until then the allowlist plus a pinned lockfile is the gate.
+  raising plugin before it can register. Opt-in Ed25519 signature enforcement
+  (below) layers cryptographic authorship verification on top of the allowlist.
+- **Signed third-party plugins (`AEGIS_PLUGINS_REQUIRE_SIGNATURE`).** Opt-in,
+  off-by-default **Ed25519** signature verification for marketplace plugins.
+  When enabled (`AEGIS_PLUGINS_REQUIRE_SIGNATURE=1` + `AEGIS_PLUGINS_TRUSTED_KEYS`
+  pointing at trusted public-key PEMs; `AEGIS_PLUGINS_SIG_DIR` for the `.sig`
+  files), each discovered plugin must carry a valid detached signature *before*
+  registration — an unsigned or invalid one is **rejected** (and surfaces in the
+  new SIGNED column of `aegis plugins list`), a valid one loads with its
+  `key_id`. The signature binds to the SHA-256 of the factory module's source,
+  so it authorises only the code that runs. `aegis plugins sign --dist … --version
+  … --entry-point GROUP:NAME --key PRIVKEY.pem` produces the signature; the
+  reference plugin ships a trusted key + signature under
+  `examples/aegis-plugin-example/signing/`. Enforcement off = today's behaviour
+  unchanged. See [Supply-chain integrity](docs/security/supply-chain.md).
+- **Signed + attested release images (`.github/workflows/release-sign.yml`).**
+  A release-only workflow (on `v*` tags) builds and pushes the four service
+  images (api, worker, web, log_ingest) to GHCR, then **keyless cosign-signs**
+  each by digest (GitHub OIDC — no stored keys), attaches a **CycloneDX SBOM**
+  (Syft) attestation, and generates **SLSA-3 build provenance** via the official
+  slsa-github-generator reusable workflow. Operators verify with `cosign verify`
+  / `cosign verify-attestation` (issuer `https://token.actions.githubusercontent.com`,
+  identity under `github.com/IntelliBridge/aegis/`) before deploy — see
+  `docs/ops/deploy.md` § "Verify release images before deploy". The PR
+  `docker-images` build stays a no-push build.
 - **DB-side append-only audit log (migration `0004`).** `audit_events` is now
   insert-only *at the database*: a row-immutability trigger `RAISE EXCEPTION`s
   on `UPDATE`/`DELETE`/`TRUNCATE` for everyone — table owner and superuser

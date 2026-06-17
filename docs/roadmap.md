@@ -26,15 +26,17 @@ With the seams closed — DB-side append-only audit enforcement
 (row-immutability trigger + `aegis_app`/`aegis_owner` role separation + pgaudit;
 see `SECURITY.md` and `docs/ops/deploy.md`), the LLM guardrail layers
 (diff/output secret scrubbing + prompt-injection detection; see
-`SECURITY.md` § "LLM guardrails"), and the plugin entry-point seam now a
+`SECURITY.md` § "LLM guardrails"), the plugin entry-point seam now a
 documented, validated, allowlist-gated **scanner-adapter marketplace** (see
-[Extending Aegis](dev/extending.md)) all landed — the focus has been
-**capability breadth** and the remaining **security / compliance hardening**
-(below). On breadth, the tool roster has now reached the 35+ target (42
-effect-classified tools) and the agent roster has grown to 36 wired agents +
-5 multi-agent patterns — substantial progress toward the 60+ OnePager target.
-The next highest-leverage candidates: continuing toward 60+ agents, and
-authenticated DAST flows.
+[Extending Aegis](dev/extending.md)), and **supply-chain integrity** mostly
+shipped (keyless cosign image signing + SBOM + SLSA-3 provenance, and opt-in
+signed plugins; see [Supply-chain integrity](security/supply-chain.md)) all
+landed — the focus has been **capability breadth** and the remaining
+**security / compliance hardening** (below). On breadth, the tool roster has
+now reached the 35+ target (42 effect-classified tools) and the agent roster
+has grown to 36 wired agents + 5 multi-agent patterns — substantial progress
+toward the 60+ OnePager target. The next highest-leverage candidates:
+continuing toward 60+ agents, and authenticated DAST flows.
 
 ## Capability breadth
 
@@ -77,8 +79,16 @@ Closing the gap to the OnePager promise.
   categories) before the model call and blocked at/above
   `AEGIS_LLM_INJECTION_BLOCK_RISK` (default `high`); fail-safe, secret-free
   logs. See `docs/architecture/overview.md` § "LLM guardrails".
-- **Supply-chain integrity** — sigstore image signing, signed plugin
-  entry points, SLSA-3 / Nix reproducible builds.
+- ~~**Supply-chain integrity** — sigstore image signing, signed plugin entry
+  points, SLSA-3 provenance.~~ **Shipped**: release images are keyless
+  cosign-signed by digest with a CycloneDX SBOM + SLSA-3 provenance
+  attestation (`.github/workflows/release-sign.yml`, on `v*` tags), and
+  third-party plugins support opt-in Ed25519 signature enforcement
+  (`AEGIS_PLUGINS_REQUIRE_SIGNATURE` + trusted keys, `aegis plugins sign`).
+  See [Supply-chain integrity](security/supply-chain.md) and `SECURITY.md`.
+    - **Nix reproducible builds** — bit-for-bit reproducible builds so the
+      published image can be independently rebuilt and compared. Still
+      deferred.
 - **Per-scan sandbox isolation** (gVisor / Firecracker).
 - **SOC 2 / ISO 27001 / FedRAMP evidence pack.**
 
