@@ -40,6 +40,13 @@ class AegisConfig:
     # seconds is presumed crashed (the redelivery guard never re-runs it) and
     # is flipped to ``failed`` by ``aegis.reap_stale_jobs`` on the beat schedule.
     job_max_runtime_seconds: int = 3600
+    # Air-gapped installs can't reach github.com/gitlab.com for the vendored
+    # submodules. When ``AEGIS_OFFLINE_VENDOR_HOST`` is set (e.g.
+    # ``git.internal.example.com``) the submodule URLs are rewritten to that
+    # internal mirror, preserving the ``<org>/<repo>.git`` path. See
+    # ``aegis.vendor`` for the pure rewrite helpers and
+    # ``scripts/vendor-submodules.sh`` for the git plumbing.
+    offline_vendor_host: str | None = None
     # WORM (Write-Once-Read-Many) audit export. These mirror the AEGIS_WORM_*
     # env vars (read at runtime by aegis.storage.worm; S3 creds resolve from
     # AEGIS_S3_* like S3BlobStore) and are surfaced here purely for
@@ -131,16 +138,23 @@ def load_config(path: str | None = None) -> AegisConfig:
 
     config_path = Path(path)
 
-    if not config_path.exists():
-        # No config file found — return defaults (still env-overlaid).
-        return _apply_env_overrides(AegisConfig())
+    if config_path.exists():
+        with open(config_path, "r") as f:
+            raw = yaml.safe_load(f) or {}
+        config = AegisConfig(
+            **{k: v for k, v in raw.items() if k in AegisConfig.__dataclass_fields__}
+        )
+    else:
+        # No config file found — start from defaults.
+        config = AegisConfig()
 
-    with open(config_path, "r") as f:
-        raw = yaml.safe_load(f) or {}
+    # Environment overlay: ``AEGIS_OFFLINE_VENDOR_HOST`` points the vendored
+    # submodules at an internal mirror for air-gapped installs. It overrides
+    # any YAML value so operators can flip it per-shell without editing files.
+    env_host = os.environ.get("AEGIS_OFFLINE_VENDOR_HOST")
+    if env_host:
+        config.offline_vendor_host = env_host
 
-    config = AegisConfig(
-        **{k: v for k, v in raw.items() if k in AegisConfig.__dataclass_fields__}
-    )
     return _apply_env_overrides(config)
 
 

@@ -685,11 +685,17 @@ See the consolidated [Roadmap](../roadmap.md) for the full
 forward-looking list organized by milestone. The Phase-4 plan called
 out items intentionally pushed past v0.4.1. Live-current list:
 
-- Sandbox isolation per scan (gVisor / Firecracker).
-- SOC 2 / ISO 27001 / FedRAMP evidence pack.
+- Firecracker microVM sandbox per scan (the gVisor `RuntimeClass`
+  sandbox for the worker / kali pods has shipped — see the Helm chart and
+  [`ops/kubernetes.md`](../ops/kubernetes.md)).
 - Iterative agent loops with test execution.
 - Native MCP protocol.
 - Worker autoscaling / multi-region DR.
+
+Cross-org multi-tenancy, per-tenant cost dashboards, PII / content
+scrubbing, LLM prompt-injection / output filtering, the gVisor sandbox,
+and the SOC 2 / ISO 27001 / FedRAMP evidence pack — previously listed here
+— have all shipped (see the [Changelog](../roadmap.md) and `CHANGELOG.md`).
 
 The CHANGELOG entry for each release also enumerates its deferred
 items if they were called out at the time.

@@ -7,6 +7,35 @@ SemVer.
 ## [Unreleased]
 
 ### Added
+- **Production Helm chart (`deploy/helm/aegis/`).** Deploys the full stack
+  (api / worker / web / log-ingest) plus optional in-cluster dependencies
+  (Postgres / Redis / Keycloak / MinIO / Kali), each gated by a `*.enabled`
+  toggle. Pod specs ship hardened by default: non-root `securityContext`,
+  all capabilities dropped, `seccompProfile: RuntimeDefault`, resource
+  requests/limits, and liveness/readiness probes on every service. A new
+  `helm-lint` CI job runs `helm lint` + `helm template` (default values
+  and with the sandbox/ingress toggles on). See
+  [`docs/ops/kubernetes.md`](docs/ops/kubernetes.md).
+- **Per-scan sandbox isolation (gVisor).** A `runsc` `RuntimeClass` gated
+  by `sandbox.enabled` is wired onto the untrusted worker + kali pods so a
+  compromised tool can't escape to the node kernel. gVisor must be
+  installed on the scheduling nodes (a node/infra dependency, not a code
+  one). Firecracker remains deferred.
+- **HA Keycloak.** `keycloak.replicas` (default 2), with the shared
+  external DB + distributed Infinispan cache requirement for real HA
+  documented in-chart and in the deploy docs.
+- **Air-gapped vendor mirror.** `AEGIS_OFFLINE_VENDOR_HOST` +
+  `scripts/vendor-submodules.sh` rewrite the git submodule URLs
+  (cai / strix / mcp-kali) to an internal mirror for offline installs
+  (pure rewrite rules in `aegis/vendor.py`); the mapping surfaces in
+  `aegis doctor`. See
+  [`docs/ops/deploy.md`](docs/ops/deploy.md#air-gapped-offline-vendor-mirror).
+- **Compliance evidence pack.** `aegis evidence-pack --out DIR
+  [--project P]` bundles per-chain audit JSONL + `verify_chain` verdicts,
+  a SOC 2 / ISO 27001 / FedRAMP controls crosswalk (partials flagged
+  honestly), a secret-free system/features summary, and a manifest with
+  sha256 hashes (the pack carries no secrets). See
+  [`docs/ops/compliance-evidence.md`](docs/ops/compliance-evidence.md).
 - **Bidirectional ticket sync (migration `0008_finding_tickets`).** A
   pluggable `TicketProvider` (`aegis/integrations/ticket_provider.py`) pushes
   a finding into Jira / ServiceNow / Linear and pulls its status back. The

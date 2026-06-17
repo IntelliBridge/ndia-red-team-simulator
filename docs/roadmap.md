@@ -36,16 +36,22 @@ signed plugins; see [Supply-chain integrity](security/supply-chain.md)),
 **authenticated DAST flows** (encrypted auth-profile store + ZAP/Nuclei auth
 injection; see `docs/ops/authenticated-dast.md`), **cross-org row-level
 multi-tenancy** (Postgres RLS `FORCE` on the tenant tables + per-tenant
-cost/routing; see [`multi-tenancy.md`](architecture/multi-tenancy.md)), and the
+cost/routing; see [`multi-tenancy.md`](architecture/multi-tenancy.md)), the
 **workflow integrations** (bidirectional Jira / ServiceNow / Linear ticket
 sync, cloud-target ownership verification, and backport / release-train
-awareness for fix PRs; see [Integrations](integrations/index.md)) all
-landed — the focus has been **capability breadth** and the remaining
-**security / compliance hardening** (below). On breadth, the tool roster has
-now reached the 35+ target (42 effect-classified tools) and the agent roster
-has grown to 36 wired agents + 5 multi-agent patterns — substantial progress
-toward the 60+ OnePager target. The next highest-leverage candidates:
-continuing toward 60+ agents, and iterative agent loops with test execution.
+awareness for fix PRs; see [Integrations](integrations/index.md)), and the
+**production infra hardening** (a hardened Helm chart, gVisor sandbox
+isolation, HA Keycloak, an air-gapped vendor mirror, and a SOC 2 / ISO 27001 /
+FedRAMP compliance evidence pack; see [Kubernetes (Helm)](ops/kubernetes.md)
+and [Compliance evidence pack](ops/compliance-evidence.md)) all landed — the
+focus has been **capability breadth** and the remaining **security /
+compliance hardening** (below). On breadth, the tool roster has now reached the
+35+ target (42 effect-classified tools) and the agent roster has grown to 36
+wired agents + 5 multi-agent patterns — substantial progress toward the 60+
+OnePager target. The next focus is **capability breadth**: continuing toward
+60+ agents, iterative agent loops with test execution, and the remaining
+deferred infra item, the **native MCP protocol** (mcp-kali is consumed over
+REST today).
 
 ## Capability breadth
 
@@ -108,8 +114,13 @@ Closing the gap to the OnePager promise.
     - **Nix reproducible builds** — bit-for-bit reproducible builds so the
       published image can be independently rebuilt and compared. Still
       deferred.
-- **Per-scan sandbox isolation** (gVisor / Firecracker).
-- **SOC 2 / ISO 27001 / FedRAMP evidence pack.**
+- **Per-scan sandbox isolation** (gVisor / Firecracker). *(gVisor
+  `RuntimeClass` shipped — see "Scale, multi-tenancy & infra".)*
+- ~~**SOC 2 / ISO 27001 / FedRAMP evidence pack.**~~ **Shipped**:
+  `aegis evidence-pack --out DIR` bundles per-chain audit JSONL +
+  verification verdicts, a controls crosswalk (partials flagged), a
+  secret-free system summary, and a hashed manifest. See
+  [`docs/ops/compliance-evidence.md`](ops/compliance-evidence.md).
 
 ## Scale, multi-tenancy & infra
 
@@ -127,7 +138,12 @@ Closing the gap to the OnePager promise.
   dashboard.
 - **Worker autoscaling / multi-region DR.**
 - **Celery → Temporal** queue migration (migration shape documented; deferred).
-- **Production Helm / k8s manifests** (kind scaffolding only today).
+- ~~**Production Helm / k8s manifests** (kind scaffolding only today).~~
+  **Shipped**: `deploy/helm/aegis/` deploys the full stack with hardened
+  pod specs (non-root, dropped caps, seccomp, resource limits,
+  liveness/readiness probes); optional deps gated by `*.enabled`; a
+  `helm-lint` CI job runs `helm lint` + `helm template`. See
+  [`docs/ops/kubernetes.md`](ops/kubernetes.md).
 - ~~**OPA / Cedar policy engine** (static rule table today).~~ **Shipped**:
   the route-level role gate is now a pluggable `PolicyEngine`
   (`aegis/policy/engine.py`). `static` stays the default and is
@@ -135,9 +151,20 @@ Closing the gap to the OnePager promise.
   to delegate to an external decision point (fail-closed). Example policies
   ship at `deploy/opa/` and `deploy/cedar/`. See `docs/architecture/auth.md`
   § "Policy engine".
-- **HA Keycloak / IdP hardening.**
+- ~~**Per-scan sandbox isolation** (gVisor / Firecracker).~~ **Shipped
+  (gVisor)**: a `runsc` `RuntimeClass` gated by `sandbox.enabled`, wired
+  onto the untrusted worker + kali pods (gVisor must be installed on the
+  nodes). Firecracker is still out.
+- ~~**HA Keycloak / IdP hardening.**~~ **Shipped**: `keycloak.replicas`
+  (default 2), with the shared-DB + distributed-cache requirement for
+  real HA documented in-chart and in
+  [`docs/ops/kubernetes.md`](ops/kubernetes.md).
 - **Native MCP protocol** (mcp-kali consumed over REST today).
-- **`AEGIS_OFFLINE_VENDOR_HOST`** — air-gapped vendor mirror for submodules.
+- ~~**`AEGIS_OFFLINE_VENDOR_HOST`** — air-gapped vendor mirror for
+  submodules.~~ **Shipped**: `scripts/vendor-submodules.sh` rewrites the
+  submodule URLs to an internal mirror (`aegis/vendor.py` rewrite rules);
+  surfaced in `aegis doctor`. See
+  [`docs/ops/deploy.md`](ops/deploy.md#air-gapped-offline-vendor-mirror).
 
 ## Integrations & workflow
 

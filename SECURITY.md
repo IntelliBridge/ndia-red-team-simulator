@@ -154,6 +154,37 @@ See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
   clone, no secret mount, path allowlist scoped to `changed_files`.
 - See [`docs/security/fork-prs.md`](docs/security/fork-prs.md).
 
+### Deployment hardening (Helm / k8s)
+
+- The Helm chart (`deploy/helm/aegis/`) renders every Aegis pod
+  hardened by default: non-root `securityContext`
+  (`runAsNonRoot`, uid/gid 1000), all Linux capabilities dropped,
+  `allowPrivilegeEscalation: false`, and `seccompProfile:
+  RuntimeDefault` at the pod and container level. Resource
+  requests/limits and liveness/readiness probes ship on every service.
+- **Optional gVisor sandbox** for the untrusted scan/tool workloads.
+  With `sandbox.enabled=true` a `runsc` `RuntimeClass` is wired onto
+  the worker + kali pods (the tool executors), so a compromised tool is
+  contained from the node kernel. gVisor must be installed on the
+  scheduling nodes. See [`docs/ops/kubernetes.md`](docs/ops/kubernetes.md).
+
+### Air-gapped vendoring
+
+- `AEGIS_OFFLINE_VENDOR_HOST` + `scripts/vendor-submodules.sh` rewrite
+  the vendored git-submodule URLs to an internal mirror so air-gapped
+  installs never reach out to `github.com` / `gitlab.com`. The mapping
+  surfaces in `aegis doctor`. See
+  [`docs/ops/deploy.md`](docs/ops/deploy.md#air-gapped-offline-vendor-mirror).
+
+### Compliance evidence
+
+- `aegis evidence-pack --out DIR` produces a self-contained,
+  **secret-free** bundle for auditors: exported audit chains + their
+  `verify_chain` integrity verdicts, a SOC 2 / ISO 27001 / FedRAMP
+  controls crosswalk (partial coverage flagged honestly), a system
+  summary, and a hashed manifest. See
+  [`docs/ops/compliance-evidence.md`](docs/ops/compliance-evidence.md).
+
 ### LLM guardrails
 
 Two fail-safe layers sit at every point where untrusted text reaches an
@@ -254,10 +285,16 @@ env knobs.
 - Cost / budget exhaustion via LLM-routed agents — see the
   `BudgetChecker` hook in `aegis/llm/router.py`.
 
-## Known gaps (tracked, not shipping in v0.12.0)
+## Known gaps (tracked)
 
-- Sandbox isolation per scan (gVisor / Firecracker).
-- SOC 2 / ISO 27001 / FedRAMP evidence pack.
+- **Firecracker** microVM isolation (the gVisor `RuntimeClass` sandbox
+  for the worker / kali pods has shipped — see "Deployment hardening"
+  above; Firecracker is still out).
+- Native MCP protocol (mcp-kali is consumed over REST today).
 
-These are documented in `docs/architecture/overview.md` under "What's
-deferred."
+PII / content scrubbing and LLM prompt-injection / output filtering —
+previously listed here — have shipped (see § "LLM guardrails" above).
+Sandbox isolation (gVisor) and the SOC 2 / ISO 27001 / FedRAMP evidence
+pack — also previously listed here — have shipped (see the sections above
+and `CHANGELOG.md`). The remaining gaps are documented in
+`docs/architecture/overview.md` under "What's deferred."

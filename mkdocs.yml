@@ -166,6 +166,8 @@ nav:
   - Integrations: integrations/index.md
   - Operations:
       - Production deployment: ops/deploy.md
+      - Kubernetes (Helm): ops/kubernetes.md
+      - Compliance evidence pack: ops/compliance-evidence.md
       - Authenticated DAST: ops/authenticated-dast.md
   - Development:
       - Local stack: dev/local-stack.md

@@ -222,6 +222,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_plugins_sign.add_argument("--out", default=None,
                                 help="Output directory for the .sig (default: cwd)")
 
+    # evidence-pack — bundle audit + controls evidence for auditors
+    p_evidence = sub.add_parser(
+        "evidence-pack",
+        help="Bundle audit + controls evidence for SOC 2 / ISO 27001 / FedRAMP reviewers",
+    )
+    p_evidence.add_argument("--out", required=True,
+                            help="Output directory for the evidence pack")
+    p_evidence.add_argument("--project", default=None,
+                            help="Limit the pack to a single project's chain")
+
     # migrate (Phase 3 M11 — surface lands now, impl in M11)
     p_migrate = sub.add_parser("migrate", help="Move filesystem run data into Postgres (M11)")
     p_migrate.add_argument("direction", choices=["fs->pg"], default="fs->pg", nargs="?",
@@ -338,6 +348,11 @@ def _cmd_ci_gate_dispatch(args: argparse.Namespace, config: AegisConfig) -> None
     cmd_ci_gate(args, config)
 
 
+def _cmd_evidence_pack_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
+    from aegis.cli.evidence import cmd_evidence_pack
+    cmd_evidence_pack(args, config)
+
+
 def _cmd_plugins_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
     from aegis.cli.plugins import cmd_plugins
     cmd_plugins(args, config)
@@ -347,6 +362,7 @@ _COMMANDS["status"] = _cmd_status_dispatch
 _COMMANDS["audit"] = _cmd_audit_dispatch
 _COMMANDS["migrate"] = _cmd_migrate_dispatch
 _COMMANDS["ci-gate"] = _cmd_ci_gate_dispatch
+_COMMANDS["evidence-pack"] = _cmd_evidence_pack_dispatch
 _COMMANDS["plugins"] = _cmd_plugins_dispatch
 
 

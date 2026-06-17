@@ -92,9 +92,11 @@ shipped June 2026 with 1329 tests passing (21 skipped offline) on Python
 | Per-task LLM routing with budget caps | ✅ Shipped |
 | Cross-org multi-tenancy — Postgres RLS (`FORCE`) on tenant tables, per-tenant monthly budget + LLM routing, `/cost` chargeback dashboard | ✅ Shipped |
 | `@aegis/design-system` workspace + Storybook — curated domain components over ported shadcn base primitives (table / card / alert / input / …) | ✅ Shipped |
+| Production Helm chart — hardened pod specs (non-root / dropped caps / seccomp), `*.enabled` dep toggles, gVisor sandbox, HA Keycloak | ✅ Shipped |
+| Air-gapped vendor mirror (`AEGIS_OFFLINE_VENDOR_HOST`) for offline submodule fetches | ✅ Shipped |
+| SOC 2 / ISO 27001 / FedRAMP compliance evidence pack (`aegis evidence-pack`) | ✅ Shipped |
 | 60+ specialized agents (full roster from the OnePager; 36 wired + 5 patterns today) | 🔨 Roadmap |
-| Authenticated DAST flows (encrypted auth profiles; ZAP/Nuclei auth injection) | ✅ Shipped |
-| Sandbox isolation per scan (gVisor / Firecracker) | 🔨 Roadmap |
+| Per-scan sandbox isolation — Firecracker microVM (gVisor `RuntimeClass` shipped) | 🔨 Roadmap |
 
 See [`CHANGELOG.md`](CHANGELOG.md) for per-release detail and the
 consolidated [`docs/roadmap.md`](docs/roadmap.md) for the full
