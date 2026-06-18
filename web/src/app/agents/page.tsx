@@ -2,14 +2,16 @@
 
 // /agents — invoke a registered CAI agent.
 //
-// No GET listing endpoint exists for agents (aegis/api/v1/agents.py only
-// exposes POST /{name}/run), so the picker is a curated list mirroring the
-// wired agents in aegis/agents/cai/builtins.py. The `effect` column there
-// ("read" vs "active") is the human gate: active/offensive agents need the
-// approver role + execute=true + an explicit confirmation, exactly like the
-// API enforces (Action.AGENT_EXECUTE → approver).
+// The picker is fed by GET /v1/agents (aegis/agents/registry.py::
+// list_agents) rather than a hardcoded list, so the roster never drifts
+// from the backend. Only `wired` (invokable) agents are offered. The
+// `effect` field ("read" vs "active"/"external") is the human gate:
+// active/external agents need the approver role + execute=true + an
+// explicit confirmation, exactly like the API enforces (Action.
+// AGENT_EXECUTE → approver).
 
 import { useState } from "react";
+import useSWR from "swr";
 
 import {
   AlertDialog,
@@ -25,40 +27,14 @@ import {
   type Role,
 } from "@aegis/design-system";
 import {
+  listAgents,
   runAgent,
   type AgentRunResult,
+  type AgentSpec,
   type ProjectMembership,
 } from "@/lib/api";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
-
-type AgentEffect = "read" | "active";
-
-type AgentDef = {
-  name: string;
-  domain: string;
-  effect: AgentEffect;
-};
-
-// Mirrors _WIRED in aegis/agents/cai/builtins.py (name, domain, effect).
-const AGENTS: AgentDef[] = [
-  { name: "codeagent", domain: "remediation", effect: "read" },
-  { name: "blueteam_agent", domain: "defensive", effect: "active" },
-  { name: "bug_bounter", domain: "offensive", effect: "active" },
-  { name: "red_teamer", domain: "offensive", effect: "active" },
-  { name: "dfir", domain: "forensic", effect: "read" },
-  { name: "retester", domain: "audit", effect: "active" },
-  { name: "reporter", domain: "audit", effect: "read" },
-  { name: "web_pentester", domain: "offensive", effect: "active" },
-  { name: "recon", domain: "recon", effect: "read" },
-  { name: "memory_analysis", domain: "forensic", effect: "read" },
-  { name: "network_traffic_analyzer", domain: "forensic", effect: "read" },
-  { name: "reverse_engineering", domain: "forensic", effect: "read" },
-  { name: "android_sast_agent", domain: "offensive", effect: "read" },
-  { name: "subghz_sdr_agent", domain: "offensive", effect: "active" },
-  { name: "wifi_security_tester", domain: "offensive", effect: "active" },
-  { name: "replay_attack_agent", domain: "offensive", effect: "active" },
-];
 
 function firstProjectId(projects: ProjectMembership[]): string {
   return projects[0]?.id ?? "default";
@@ -68,7 +44,13 @@ export default function AgentsPage() {
   const authed = useRequireAuth();
   const { roles, projects } = useRoles();
 
-  const [agentName, setAgentName] = useState(AGENTS[0].name);
+  const { data, error: agentsError } = useSWR<AgentSpec[]>(
+    authed ? "/v1/agents" : null,
+    listAgents,
+  );
+  const agents = (data ?? []).filter((a) => a.wired);
+
+  const [agentName, setAgentName] = useState<string>("");
   const [projectId, setProjectId] = useState<string>("");
   const [prompt, setPrompt] = useState("");
   const [target, setTarget] = useState("");
@@ -76,15 +58,22 @@ export default function AgentsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<AgentRunResult | null>(null);
 
-  if (!authed) return <p className="text-slate-500">Redirecting to sign in…</p>;
+  if (!authed)
+    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
 
   const project = projectId || firstProjectId(projects);
   const callerRole = roles[project];
-  const agent = AGENTS.find((a) => a.name === agentName) ?? AGENTS[0];
-  const requiresApproval = agent.effect === "active";
+  // Default to the first wired agent until the user picks one.
+  const selectedName = agentName || agents[0]?.name || "";
+  const agent = agents.find((a) => a.name === selectedName);
+  const requiresApproval = agent ? agent.effect !== "read" : false;
   const minRole: Role = requiresApproval ? "approver" : "remediator";
 
   const invoke = async () => {
+    if (!agent) {
+      setErr("No agent selected.");
+      return;
+    }
     if (!prompt.trim()) {
       setErr("A prompt is required.");
       return;
@@ -130,16 +119,23 @@ export default function AgentsPage() {
             <span className="text-muted-foreground">Agent</span>
             <select
               aria-label="Agent"
-              value={agentName}
+              value={selectedName}
               onChange={(e) => setAgentName(e.target.value)}
-              className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+              disabled={agents.length === 0}
+              className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm disabled:opacity-50"
             >
-              {AGENTS.map((a) => (
-                <option key={a.name} value={a.name}>
-                  {a.name} — {a.domain}
-                  {a.effect === "active" ? " (approval required)" : ""}
+              {agents.length === 0 ? (
+                <option value="">
+                  {agentsError ? "Failed to load agents" : "Loading agents…"}
                 </option>
-              ))}
+              ) : (
+                agents.map((a) => (
+                  <option key={a.name} value={a.name}>
+                    {a.name} — {a.domain}
+                    {a.effect !== "read" ? " (approval required)" : ""}
+                  </option>
+                ))
+              )}
             </select>
           </label>
 
@@ -210,7 +206,7 @@ export default function AgentsPage() {
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>
-                    Invoke {agent.name} with active execution?
+                    Invoke {agent?.name ?? selectedName} with active execution?
                   </AlertDialogTitle>
                   <AlertDialogDescription>
                     This is an active / offensive agent. It may run

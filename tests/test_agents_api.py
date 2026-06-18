@@ -348,5 +348,75 @@ class TestAgentRoute(unittest.TestCase):
         self.assertEqual(r.status_code, 403)
 
 
+class TestCatalogListEndpoints(unittest.TestCase):
+    """GET /v1/agents and GET /v1/tools — read-only catalog listings.
+
+    Neither touches the DB; they only require an authenticated user. The
+    agents route must import the ``aegis.agents`` package (which registers
+    the built-ins) so the roster is non-empty.
+    """
+
+    def _client(self):
+        from fastapi.testclient import TestClient
+
+        from aegis.api.app import create_app
+        from aegis.api.auth import CurrentUser, get_current_user
+        from aegis.api.settings import APISettings
+
+        app = create_app(APISettings(env="dev", auth_mode="dev",
+                                     cors_origins=["http://localhost:3000"]))
+        user = CurrentUser(sub="dev:u@test", email="u@test",
+                           project_memberships={"proj-1": "scanner"})
+        app.dependency_overrides[get_current_user] = lambda: user
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_list_agents_returns_registered_roster(self):
+        client = self._client()
+        r = client.get("/v1/agents")
+        self.assertEqual(r.status_code, 200)
+        agents = r.json()["agents"]
+        self.assertIsInstance(agents, list)
+        self.assertGreater(len(agents), 0)
+        # Each entry carries the four registry fields with JSON-friendly types.
+        sample = agents[0]
+        self.assertEqual(
+            set(sample) >= {"name", "domain", "effect", "wired"}, True)
+        self.assertIn(sample["effect"], {"read", "active", "external"})
+        self.assertIsInstance(sample["wired"], bool)
+        # The codeagent built-in is always wired.
+        by_name = {a["name"]: a for a in agents}
+        self.assertIn("codeagent", by_name)
+
+    def test_list_tools_returns_catalog(self):
+        client = self._client()
+        r = client.get("/v1/tools")
+        self.assertEqual(r.status_code, 200)
+        tools = r.json()["tools"]
+        self.assertIsInstance(tools, list)
+        self.assertGreater(len(tools), 0)
+        sample = tools[0]
+        self.assertEqual(
+            set(sample) >= {"name", "category", "source", "effect",
+                            "description"}, True)
+        # The Kali family must be present (the /tools page filters on it).
+        sources = {t["source"] for t in tools}
+        self.assertIn("kali", sources)
+
+    def test_list_endpoints_require_auth(self):
+        # With no get_current_user override the dev auth dependency rejects an
+        # unauthenticated request (401/403), never 200.
+        from fastapi.testclient import TestClient
+
+        from aegis.api.app import create_app
+        from aegis.api.settings import APISettings
+
+        app = create_app(APISettings(env="dev", auth_mode="dev",
+                                     cors_origins=["http://localhost:3000"]))
+        client = TestClient(app, raise_server_exceptions=False)
+        for path in ("/v1/agents", "/v1/tools"):
+            r = client.get(path)
+            self.assertIn(r.status_code, (401, 403))
+
+
 if __name__ == "__main__":
     unittest.main()

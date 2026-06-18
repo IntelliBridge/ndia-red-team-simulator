@@ -11,6 +11,7 @@ export const metadata = {
 
 const NAV_LINKS: { href: string; label: string }[] = [
   { href: "/dashboard", label: "Dashboard" },
+  { href: "/runs", label: "Runs" },
   { href: "/projects", label: "Projects" },
   { href: "/targets", label: "Targets" },
   { href: "/auth-profiles", label: "Auth Profiles" },

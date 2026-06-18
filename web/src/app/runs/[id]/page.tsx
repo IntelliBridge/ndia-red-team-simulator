@@ -130,7 +130,9 @@ export default function RunPage({ params }: { params: { id: string } }) {
       <div className="space-y-8">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <h1 className="font-mono text-xl">{params.id}</h1>
+            <h1 data-testid="run-heading" className="font-mono text-xl">
+              {params.id}
+            </h1>
             {run?.status && (
               <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                 {run.status}
