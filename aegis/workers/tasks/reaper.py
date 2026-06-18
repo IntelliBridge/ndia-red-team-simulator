@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from aegis.db.models import Job
 from aegis.workers.celery_app import app
+from aegis.workers.job_state import set_job_status
 
 
 def reap_stale_jobs_in_session(
@@ -45,7 +46,10 @@ def reap_stale_jobs_in_session(
         .all()
     )
     for job in stale:
-        job.status = "failed"
+        # The query already constrains to status == "running", so this is
+        # always the legal running → failed edge; routing it through the guard
+        # keeps the lifecycle single-sourced.
+        set_job_status(job, "failed")
         job.completed_at = now
         job.error = "reaped: exceeded max runtime TTL"
     return len(stale)

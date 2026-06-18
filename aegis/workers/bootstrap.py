@@ -109,6 +109,7 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
     from aegis.db.session import get_session, init_engine
     from aegis.state import PostgresRunState
     from aegis.storage import open_blob_store
+    from aegis.workers.job_state import set_job_status
 
     db_url = os.environ.get("AEGIS_DB_URL")
     if db_url:
@@ -139,7 +140,7 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
             )
             return
 
-        job.status = "running"
+        set_job_status(job, "running")
         job.started_at = _now()
         sess.flush()
         run_id = job.run_id
@@ -158,7 +159,7 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
         _publish(run_id, job_id, "running")
         try:
             yield ctx
-            job.status = "succeeded"
+            set_job_status(job, "succeeded")
             job.completed_at = _now()
         except Exception as exc:
             from celery.exceptions import Retry
@@ -176,7 +177,7 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
                 sess.rollback()
                 requeued = sess.get(Job, job_id)
                 if requeued is not None:
-                    requeued.status = "queued"
+                    set_job_status(requeued, "queued")
                     requeued.started_at = None
                     sess.commit()
                 logger.warning(
@@ -193,7 +194,7 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
             sess.rollback()
             failed = sess.get(Job, job_id)
             if failed is not None:
-                failed.status = "failed"
+                set_job_status(failed, "failed")
                 failed.completed_at = _now()
                 failed.error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
                 sess.commit()
