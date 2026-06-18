@@ -21,6 +21,12 @@ from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
+import pytest
+
+# Postgres-backed (real ``aegis.state.postgres`` / migration paths, gated by
+# AEGIS_DB_URL); excluded from the CI unit job's "not integration" filter.
+pytestmark = pytest.mark.integration
+
 AEGIS_DB = os.environ.get("AEGIS_DB_URL")
 
 

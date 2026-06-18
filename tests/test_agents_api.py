@@ -21,54 +21,13 @@ pytest.importorskip("sqlalchemy")
 from aegis.agents import AgentResult
 from aegis.audit.chain import InMemoryAuditWriter
 from aegis.config import AegisConfig
-from aegis.db.models import Base, Job, Organization, Project, Run
+from aegis.db.models import Job, Organization, Project, Run
 from aegis.safety import AuthorizationError
 from aegis.services.agents import create_agent_job
+from tests.conftest import make_sqlite_session_factory as _make_session_factory
 
-
-def _patch_jsonb_for_sqlite() -> None:
-    """Compile postgres JSONB → sqlite TEXT so create_all doesn't raise."""
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.ext.compiler import compiles
-
-    @compiles(JSONB, "sqlite")
-    def _compile_jsonb_sqlite(type_, compiler, **kw):  # noqa: ARG001
-        return "TEXT"
-
-
-def _make_session_factory():
-    """Return a (session_cm, engine, Session) triple backed by sqlite."""
-    _patch_jsonb_for_sqlite()
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
-    # StaticPool shares the single in-memory connection across threads so
-    # route tests (endpoint runs in Starlette's threadpool) see the same
-    # DB the test thread seeded.
-    engine = create_engine(
-        "sqlite://", future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception as exc:
-        raise unittest.SkipTest(f"sqlite can't host the schema: {exc}")
-    Session = sessionmaker(engine, expire_on_commit=False)
-
-    @contextlib.contextmanager
-    def session_cm():
-        sess = Session()
-        try:
-            yield sess
-            sess.commit()
-        except Exception:
-            sess.rollback()
-            raise
-        finally:
-            sess.close()
-
-    return session_cm, engine, Session
+# DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
+pytestmark = pytest.mark.integration
 
 
 def _seed_project(Session) -> None:

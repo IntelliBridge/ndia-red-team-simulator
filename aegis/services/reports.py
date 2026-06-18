@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -9,6 +10,8 @@ from aegis.schema import AegisFinding
 
 if TYPE_CHECKING:
     from aegis.state import RunStateAPI
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -26,8 +29,12 @@ def render_reports(
 ) -> ReportOutcome:
     from aegis.report import save_reports
 
+    logger.info("render_reports start run_id=%s findings=%d html=%s",
+                run_state.run_id, len(findings), html)
     md_path, json_path = save_reports(run_state, findings, html=html)
     html_path = str(run_state.run_path / "report.html") if html else None
+    logger.info("render_reports finished run_id=%s markdown=%s json=%s",
+                run_state.run_id, md_path, json_path)
     return ReportOutcome(
         markdown_path=md_path,
         json_path=json_path,

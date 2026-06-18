@@ -30,9 +30,6 @@ pytest.importorskip("httpx")
 pytest.importorskip("sqlalchemy")
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from aegis.api.app import create_app
 from aegis.api.auth import (
@@ -49,48 +46,24 @@ from aegis.api.settings import APISettings
 from aegis.config import AegisConfig
 from aegis.safety import AuthorizationError
 from aegis.services.scans import JobHandle
+from tests.conftest import make_sqlite_session_factory
+
+# DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
+pytestmark = pytest.mark.integration
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def _patch_jsonb_for_sqlite() -> None:
-    """Compile JSONB columns to TEXT so SQLite can handle them."""
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.ext.compiler import compiles
-
-    @compiles(JSONB, "sqlite")
-    def _to_text(t, c, **kw):  # noqa: ARG001
-        return "TEXT"
-
-
 def _make_sqlite_session():
-    """Build an in-memory SQLite engine with all Aegis tables."""
-    _patch_jsonb_for_sqlite()
-    from aegis.db.models import Base
+    """Build an in-memory SQLite engine with all Aegis tables.
 
-    engine = create_engine(
-        "sqlite://",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    Session = sessionmaker(engine, expire_on_commit=False)
-
-    @contextlib.contextmanager
-    def session_cm():
-        sess = Session()
-        try:
-            yield sess
-            sess.commit()
-        except Exception:
-            sess.rollback()
-            raise
-        finally:
-            sess.close()
-
-    return Session, session_cm
+    Returns ``(Session, session_cm)`` — the shape this module's ``_build_app``
+    expects; the engine is unused here. Delegates to the shared
+    ``make_sqlite_session_factory`` (tests/conftest.py).
+    """
+    factory = make_sqlite_session_factory()
+    return factory.Session, factory.session_cm
 
 
 def _build_app(extra_rows_fn=None):

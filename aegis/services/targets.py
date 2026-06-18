@@ -7,6 +7,7 @@ canonical audit chain before the DB row is mutated.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
 
     from aegis.audit.chain import AuditWriter
     from aegis.db.models import Target
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -56,6 +59,8 @@ def create_target(
         sess.add(Target(id=tid, project_id=project_id,
                         kind=kind, value=value, verified=False))
         sess.flush()
+    logger.info("create_target project_id=%s target_id=%s kind=%s",
+                project_id, tid, kind)
     return TargetRecord(id=tid, project_id=project_id, kind=kind,
                         value=value, verified=False)
 
@@ -145,6 +150,7 @@ def verify_target(
     if target is None:
         raise LookupError(f"target not found: {target_id}")
 
+    logger.info("verify_target start target_id=%s kind=%s", target_id, target.kind)
     if target.kind == "url":
         expected = expected_dns_token(target, config=cfg)
         matched, detail = verify_dns_txt(target.value, expected)
@@ -181,8 +187,10 @@ def verify_target(
         )
 
     if not matched:
+        logger.info("verify_target failed target_id=%s method=%s", target_id, method)
         raise TargetVerificationError(detail)
 
+    logger.info("verify_target verified target_id=%s method=%s", target_id, method)
     target.verified = True
     session.flush()
     # Transient attributes for the API to echo (not persisted columns).

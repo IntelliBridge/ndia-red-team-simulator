@@ -9,12 +9,15 @@ supplied ``PostgresAuditWriter``; the row carries the worker actor
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from aegis.workers.celery_app import app
 
 if TYPE_CHECKING:
     from celery import Task
+
+logger = logging.getLogger(__name__)
 
 
 @app.task(name="aegis.scan_start", bind=True, max_retries=2)
@@ -27,8 +30,10 @@ def scan_start(self: Task, job_id: str) -> dict[str, Any]:
     from aegis.workers.bootstrap import task_context
 
     config = load_config()
+    logger.info("scan_start begin job_id=%s", job_id)
     with task_context(job_id, task=self) as ctx:
         if ctx.skip or ctx.run_state is None:
+            logger.info("scan_start skipped job_id=%s", job_id)
             return {"job_id": job_id, "skipped": True}
         job = ctx.session.get(Job, job_id)
         detail = (job.detail if job else {}) or {}
@@ -79,6 +84,8 @@ def scan_start(self: Task, job_id: str) -> dict[str, Any]:
 
         result = dispatch(scanner, ctx.run_state, ScanOptions(**opts))
         ctx.run_state.save_findings(result.findings)
+        logger.info("scan_start finished job_id=%s scanner=%s findings=%d exit_code=%s",
+                    job_id, scanner, len(result.findings), result.exit_code)
         return {
             "run_id": ctx.run_id, "scanner": scanner,
             "findings": len(result.findings),

@@ -14,6 +14,7 @@ Returns from ``evaluate``:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from aegis.policy.ci_gate import CIGatePolicy, evaluate  # noqa: F401 re-export
@@ -22,14 +23,18 @@ from aegis.workers.celery_app import app
 if TYPE_CHECKING:
     from celery import Task
 
+logger = logging.getLogger(__name__)
+
 __all__ = ["CIGatePolicy", "evaluate", "ci_gate"]
 
 
 @app.task(name="aegis.ci_gate", bind=True, max_retries=0)
 def ci_gate(self: Task, job_id: str) -> dict[str, Any]:
     from aegis.workers.bootstrap import task_context
+    logger.info("ci_gate begin job_id=%s", job_id)
     with task_context(job_id) as ctx:
         if ctx.skip or ctx.run_state is None:
+            logger.info("ci_gate skipped job_id=%s", job_id)
             return {"job_id": job_id, "skipped": True}
         findings = ctx.run_state.load_findings()
         from aegis.db.models import Job
@@ -43,5 +48,7 @@ def ci_gate(self: Task, job_id: str) -> dict[str, Any]:
             require_validated=bool(policy_detail.get("require_validated", False)),
         )
         exit_code, reason = evaluate(findings, policy)
+        logger.info("ci_gate finished job_id=%s exit_code=%s findings_evaluated=%d",
+                    job_id, exit_code, len(findings))
         return {"job_id": job_id, "exit_code": exit_code, "reason": reason,
                 "findings_evaluated": len(findings)}

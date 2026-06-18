@@ -7,7 +7,6 @@ the ``aegis.services.target_verify`` seam so no network is touched. Mirrors
 
 from __future__ import annotations
 
-import contextlib
 import unittest
 from unittest.mock import patch
 
@@ -16,49 +15,12 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from aegis.audit.chain import InMemoryAuditWriter
-from aegis.db.models import Base, Organization, Project, Target
+from aegis.db.models import Organization, Project, Target
 from aegis.services import targets as targets_svc
+from tests.conftest import make_sqlite_session_factory as _make_session_factory
 
-
-def _patch_jsonb_for_sqlite() -> None:
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.ext.compiler import compiles
-
-    @compiles(JSONB, "sqlite")
-    def _compile_jsonb_sqlite(type_, compiler, **kw):  # noqa: ARG001
-        return "TEXT"
-
-
-def _make_session_factory():
-    _patch_jsonb_for_sqlite()
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
-
-    engine = create_engine(
-        "sqlite://", future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception as exc:
-        raise unittest.SkipTest(f"sqlite can't host the schema: {exc}")
-    Session = sessionmaker(engine, expire_on_commit=False)
-
-    @contextlib.contextmanager
-    def session_cm():
-        sess = Session()
-        try:
-            yield sess
-            sess.commit()
-        except Exception:
-            sess.rollback()
-            raise
-        finally:
-            sess.close()
-
-    return session_cm, engine, Session
+# DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
+pytestmark = pytest.mark.integration
 
 
 def _seed(Session) -> None:

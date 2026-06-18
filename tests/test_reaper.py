@@ -1,15 +1,14 @@
 """Unit tests for the stale-job reaper (``aegis.workers.tasks.reaper``).
 
-Offline + DB-free: an sqlite in-memory harness (the
-``_patch_jsonb_for_sqlite`` / ``Base.metadata.create_all`` pattern from
-``tests/test_agents_api.py``) hosts the schema so we can seed real
-``Job`` rows and exercise ``reap_stale_jobs_in_session`` directly. An
-explicit ``now`` keeps the TTL boundary deterministic.
+Offline + DB-free: the shared sqlite in-memory harness
+(``make_sqlite_session_factory`` from ``tests/conftest.py``) hosts the
+schema so we can seed real ``Job`` rows and exercise
+``reap_stale_jobs_in_session`` directly. An explicit ``now`` keeps the TTL
+boundary deterministic.
 """
 
 from __future__ import annotations
 
-import contextlib
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -17,54 +16,15 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from aegis.db.models import Base, Job, Organization, Project, Run
+from aegis.db.models import Job, Organization, Project, Run
 from aegis.workers.tasks.reaper import reap_stale_jobs_in_session
+from tests.conftest import make_sqlite_session_factory as _make_session_factory
+
+# DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
+pytestmark = pytest.mark.integration
 
 TTL_SECONDS = 3600
 NOW = datetime(2026, 6, 8, 12, 0, 0, tzinfo=timezone.utc)
-
-
-def _patch_jsonb_for_sqlite() -> None:
-    """Compile postgres JSONB → sqlite TEXT so create_all doesn't raise."""
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.ext.compiler import compiles
-
-    @compiles(JSONB, "sqlite")
-    def _compile_jsonb_sqlite(type_, compiler, **kw):  # noqa: ARG001
-        return "TEXT"
-
-
-def _make_session_factory():
-    """Return a (session_cm, engine, Session) triple backed by sqlite."""
-    _patch_jsonb_for_sqlite()
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
-
-    engine = create_engine(
-        "sqlite://", future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception as exc:
-        raise unittest.SkipTest(f"sqlite can't host the schema: {exc}")
-    Session = sessionmaker(engine, expire_on_commit=False)
-
-    @contextlib.contextmanager
-    def session_cm():
-        sess = Session()
-        try:
-            yield sess
-            sess.commit()
-        except Exception:
-            sess.rollback()
-            raise
-        finally:
-            sess.close()
-
-    return session_cm, engine, Session
 
 
 def _seed_org_project_run(Session) -> None:

@@ -28,6 +28,7 @@ gracefully to an empty findings list.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -42,6 +43,8 @@ from aegis.schema import AegisFinding
 
 if TYPE_CHECKING:
     from aegis.state import RunStateAPI
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -231,6 +234,8 @@ def run_strix(
     on_finding: Callable[[AegisFinding], None] | None = None,
     skip_docker_check: bool = False,
 ) -> StrixRunResult:
+    logger.info("strix run start run_id=%s target=%s scan_mode=%s timeout=%s",
+                run_state.run_id, target, scan_mode, timeout)
     strix_dir = run_state.run_path / "strix"
     # Per-run working directory: Strix's strix_runs/ tree lands *under here*, so
     # discovery is keyed to this run alone and never collides with a concurrent
@@ -244,6 +249,7 @@ def run_strix(
     events_path: Path | None = None
 
     def _err(msg: str, command: list[str] | None = None) -> StrixRunResult:
+        logger.error("strix run error run_id=%s: %s", run_state.run_id, msg)
         return StrixRunResult(
             success=False, partial_success=False, return_code=-1,
             command=command or [], log_path=str(log_path), events_path=str(run_dir),
@@ -347,6 +353,11 @@ def run_strix(
     return_code = proc.wait()
     log_fh.close()
 
+    logger.info(
+        "strix run finished run_id=%s return_code=%s findings=%d partial=%s",
+        run_state.run_id, return_code, len(findings),
+        return_code != 0 and bool(findings),
+    )
     return StrixRunResult(
         success=return_code == 0,
         partial_success=return_code != 0 and bool(findings),

@@ -10,12 +10,15 @@ the worker actor and is correlated with the admission row by ``run_id``.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from aegis.workers.celery_app import app
 
 if TYPE_CHECKING:
     from celery import Task
+
+logger = logging.getLogger(__name__)
 
 
 @app.task(name="aegis.agent_run", bind=True, max_retries=2)
@@ -31,8 +34,10 @@ def agent_run(self: Task, job_id: str) -> dict[str, Any]:
     from aegis.workers.bootstrap import task_context
 
     config = load_config()
+    logger.info("agent_run begin job_id=%s", job_id)
     with task_context(job_id, task=self) as ctx:
         if ctx.skip:
+            logger.info("agent_run skipped job_id=%s", job_id)
             return {"job_id": job_id, "skipped": True}
         job = ctx.session.get(Job, job_id)
         detail = (job.detail if job else {}) or {}
@@ -86,6 +91,8 @@ def agent_run(self: Task, job_id: str) -> dict[str, Any]:
                 execute=execute,
             ),
         )
+        logger.info("agent_run finished job_id=%s agent=%s status=%s",
+                    job_id, agent_name, result.status)
         return {
             "run_id": ctx.run_id, "agent": agent_name,
             "status": result.status,

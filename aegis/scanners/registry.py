@@ -159,12 +159,19 @@ def run_cli_scan(
     timeout = (adapter.default_timeout if options.timeout == _DEFAULT_TIMEOUT
                else options.timeout)
     env_keys = sorted(env) if env else []
+    # ``run_state`` is always real on the live path; only log-safe access is
+    # guarded so the boundary logs never themselves raise on a None run_state.
+    run_id = getattr(run_state, "run_id", None)
+    logger.info("scanner %s start run_id=%s timeout=%s",
+                adapter.name, run_id, timeout)
     try:
         proc = subprocess.run(
             argv, capture_output=True, text=True, timeout=timeout,
             env={**os.environ, **env} if env else None,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.error("scanner %s error run_id=%s: %s",
+                     adapter.name, run_id, exc, exc_info=True)
         return ScanResult(
             findings=[], adapter_name=adapter.name,
             adapter_version=version,
@@ -177,6 +184,8 @@ def run_cli_scan(
     try:
         findings = parse(proc, run_state.run_id)
     except json.JSONDecodeError as exc:
+        logger.error("scanner %s parse error run_id=%s label=%s: %s",
+                     adapter.name, run_id, parse_error_label, exc)
         return ScanResult(
             findings=[], adapter_name=adapter.name,
             adapter_version=version,
@@ -190,6 +199,9 @@ def run_cli_scan(
         raw_dir = Path(run_state.run_path) / subdir
         raw_dir.mkdir(parents=True, exist_ok=True)
         (raw_dir / raw_filename).write_text(proc.stdout or raw_empty)
+    logger.info("scanner %s finished run_id=%s findings=%d exit_code=%s duration_s=%.2f",
+                adapter.name, run_id, len(findings), proc.returncode,
+                time.monotonic() - started)
     return ScanResult(
         findings=findings, adapter_name=adapter.name,
         adapter_version=version,
@@ -233,11 +245,18 @@ def run_cli_scan_jsonl(
     started = time.monotonic()
     timeout = (adapter.default_timeout if options.timeout == _DEFAULT_TIMEOUT
                else options.timeout)
+    # ``run_state`` is always real on the live path; only log-safe access is
+    # guarded so the boundary logs never themselves raise on a None run_state.
+    run_id = getattr(run_state, "run_id", None)
+    logger.info("scanner %s start run_id=%s timeout=%s",
+                adapter.name, run_id, timeout)
     try:
         proc = subprocess.run(
             argv, capture_output=True, text=True, timeout=timeout,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        logger.error("scanner %s error run_id=%s: %s",
+                     adapter.name, run_id, exc, exc_info=True)
         return ScanResult(
             findings=[], adapter_name=adapter.name,
             adapter_version=version,
@@ -262,6 +281,9 @@ def run_cli_scan_jsonl(
         raw_dir = Path(run_state.run_path) / subdir
         raw_dir.mkdir(parents=True, exist_ok=True)
         (raw_dir / raw_filename).write_text(proc.stdout or "")
+    logger.info("scanner %s finished run_id=%s findings=%d exit_code=%s duration_s=%.2f",
+                adapter.name, run_id, len(findings), proc.returncode,
+                time.monotonic() - started)
     return ScanResult(
         findings=findings, adapter_name=adapter.name,
         adapter_version=version,

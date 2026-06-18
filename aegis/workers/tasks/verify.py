@@ -13,6 +13,7 @@ chips reflect the verify result. Mapping:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -21,6 +22,8 @@ from aegis.workers.celery_app import app
 
 if TYPE_CHECKING:
     from celery import Task
+
+logger = logging.getLogger(__name__)
 
 _STATE_MAP = {
     "verified": "poc_passed",
@@ -38,14 +41,17 @@ def verify_replay(self: Task, job_id: str) -> dict[str, Any]:
     from aegis.workers.bootstrap import task_context
 
     config = load_config()
+    logger.info("verify_replay begin job_id=%s", job_id)
     with task_context(job_id, task=self) as ctx:
         if ctx.skip or ctx.run_state is None:
+            logger.info("verify_replay skipped job_id=%s", job_id)
             return {"job_id": job_id, "skipped": True}
         sess = ctx.session
         job = sess.get(Job, job_id)
         detail = cast(VerifyJobDetail, (job.detail if job else {}) or {})
         finding_row = sess.get(Finding, detail.get("finding_id"))
         if finding_row is None:
+            logger.error("verify_replay error job_id=%s: finding missing", job_id)
             raise RuntimeError("finding missing")
         finding = AegisFinding.from_dict(finding_row.schema_blob)
         outcome = verify(
@@ -59,6 +65,8 @@ def verify_replay(self: Task, job_id: str) -> dict[str, Any]:
         finding_row.validation_state = state
         finding_row.validated_at = datetime.now(timezone.utc)
 
+        logger.info("verify_replay finished job_id=%s finding_id=%s status=%s validation_state=%s",
+                    job_id, outcome.finding_id, outcome.status, state)
         return {"job_id": job_id, "finding_id": outcome.finding_id,
                 "status": outcome.status, "strategy": outcome.strategy,
                 "validation_state": state}

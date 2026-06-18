@@ -13,7 +13,6 @@ is still on the chain and the job is queued — never a half-state.
 
 from __future__ import annotations
 
-import contextlib
 import unittest
 from unittest.mock import patch
 
@@ -23,56 +22,15 @@ pytest.importorskip("sqlalchemy")
 
 from aegis.audit.chain import InMemoryAuditWriter
 from aegis.config import AegisConfig
-from aegis.db.models import Base, Finding, Organization, Project, Run
+from aegis.db.models import Finding, Organization, Project, Run
 from aegis.services.fixes import create_fix_job
 from aegis.services.runs import cancel_run
 from aegis.services.scans import create_scan_job
 from aegis.services.verify import create_verify_job
+from tests.conftest import make_sqlite_session_factory as _make_session_factory
 
-
-def _patch_jsonb_for_sqlite() -> None:
-    """Compile postgres JSONB → sqlite TEXT so create_all doesn't raise.
-
-    The admission services never read JSONB columns back inside this
-    test; they only INSERT, so the on-disk encoding doesn't matter.
-    """
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.ext.compiler import compiles
-
-    @compiles(JSONB, "sqlite")
-    def _compile_jsonb_sqlite(type_, compiler, **kw):  # noqa: ARG001
-        return "TEXT"
-
-
-def _make_session_factory():
-    """Return a (session_factory, engine) pair backed by sqlite.
-
-    Patched in for aegis.db.session.get_session so the admission services
-    can do INSERTs without a real Postgres.
-    """
-    _patch_jsonb_for_sqlite()
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    engine = create_engine("sqlite://", future=True)
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception as exc:
-        raise unittest.SkipTest(f"sqlite can't host the schema: {exc}")
-    Session = sessionmaker(engine, expire_on_commit=False)
-
-    @contextlib.contextmanager
-    def session_cm():
-        sess = Session()
-        try:
-            yield sess
-            sess.commit()
-        except Exception:
-            sess.rollback()
-            raise
-        finally:
-            sess.close()
-
-    return session_cm, engine, Session
+# DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
+pytestmark = pytest.mark.integration
 
 
 def _seed_project(Session) -> None:

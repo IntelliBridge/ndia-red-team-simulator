@@ -45,8 +45,18 @@ jobs:
       - name: Type-check (mypy)
         run: mypy aegis
 
-      - name: Run tests
-        run: pytest -q --cov=aegis --cov-report=term-missing
+      # Pure-unit fast lane: this job installs only .[test,dev] (no api/worker
+      # extras), so the DB-backed tests carry the ``integration`` marker and are
+      # deselected here — they run in the Postgres-equipped ``coverage`` /
+      # ``api-integration`` jobs instead. An explicit ``-m`` makes that split
+      # real (previously the filter was inert: nothing was marked). A CLI ``-m``
+      # overrides ``addopts``, so the docker/e2e/slow/auth_required exclusions
+      # are restated here alongside ``not integration``.
+      - name: Run unit tests (no integration)
+        run: >-
+          pytest -q
+          -m "not integration and not docker and not e2e and not slow and not auth_required"
+          --cov=aegis --cov-report=term-missing
 
   no-leaked-artifacts:
     name: aegis_output is not committed

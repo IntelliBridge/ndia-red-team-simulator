@@ -15,6 +15,7 @@ so it's unit-testable without Celery or a real DB.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -23,6 +24,8 @@ from sqlalchemy.orm import Session
 from aegis.db.models import Job
 from aegis.workers.celery_app import app
 from aegis.workers.job_state import set_job_status
+
+logger = logging.getLogger(__name__)
 
 
 def reap_stale_jobs_in_session(
@@ -52,6 +55,8 @@ def reap_stale_jobs_in_session(
         set_job_status(job, "failed")
         job.completed_at = now
         job.error = "reaped: exceeded max runtime TTL"
+    if stale:
+        logger.warning("reaper flipped %d stale running job(s) to failed", len(stale))
     return len(stale)
 
 
@@ -61,7 +66,9 @@ def reap_stale_jobs() -> dict[str, Any]:
     from aegis.config import load_config
     from aegis.db.session import get_session
 
+    logger.info("reap_stale_jobs begin")
     ttl_seconds = load_config().job_max_runtime_seconds
     with get_session() as sess:
         reaped = reap_stale_jobs_in_session(sess, ttl_seconds)
+    logger.info("reap_stale_jobs finished reaped=%d", reaped)
     return {"reaped": reaped}

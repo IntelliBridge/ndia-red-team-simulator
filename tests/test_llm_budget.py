@@ -8,7 +8,6 @@ unit test with a fake checker — no DB, no CAI.
 
 from __future__ import annotations
 
-import contextlib
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -17,52 +16,24 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from aegis.config import AegisConfig
-from aegis.db.models import Base, LLMUsage, Organization, Project
+from aegis.db.models import LLMUsage, Organization, Project
 from aegis.llm.budget import DbBudgetChecker
 from aegis.llm.router import BudgetExceeded, route
+from tests.conftest import make_sqlite_session_factory
 
-
-def _patch_jsonb_for_sqlite() -> None:
-    """Compile postgres JSONB → sqlite TEXT so create_all doesn't raise."""
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.ext.compiler import compiles
-
-    @compiles(JSONB, "sqlite")
-    def _compile_jsonb_sqlite(type_, compiler, **kw):  # noqa: ARG001
-        return "TEXT"
+# DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
+pytestmark = pytest.mark.integration
 
 
 def _make_session_factory():
-    """Return a (session_cm, Session) pair backed by in-memory sqlite."""
-    _patch_jsonb_for_sqlite()
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
+    """Return a ``(session_cm, Session)`` pair backed by in-memory sqlite.
 
-    engine = create_engine(
-        "sqlite://", future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception as exc:  # pragma: no cover - env-dependent
-        raise unittest.SkipTest(f"sqlite can't host the schema: {exc}")
-    Session = sessionmaker(engine, expire_on_commit=False)
-
-    @contextlib.contextmanager
-    def session_cm():
-        sess = Session()
-        try:
-            yield sess
-            sess.commit()
-        except Exception:
-            sess.rollback()
-            raise
-        finally:
-            sess.close()
-
-    return session_cm, Session
+    The shared ``make_sqlite_session_factory`` returns the
+    ``(session_cm, engine, Session)`` triple; this module only needs the
+    context manager + the maker, so drop the engine.
+    """
+    factory = make_sqlite_session_factory()
+    return factory.session_cm, factory.Session
 
 
 def _seed_project(Session, *, project_id: str, cap: int | None) -> None:

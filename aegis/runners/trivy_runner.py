@@ -10,6 +10,7 @@ and to a small CAI prompt for the version bump.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from pathlib import Path
 
 from aegis.scanners.severity import canon_severity
 from aegis.schema import AegisFinding
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -79,11 +82,14 @@ def run_trivy(
     trivy_command: str | None = None,
     extra_args: list[str] | None = None,
 ) -> TrivyRunResult:
+    logger.info("trivy run start run_id=%s repo=%s", run_id, repo_path)
     repo = Path(repo_path)
     if not repo.is_dir():
+        logger.error("trivy run error run_id=%s: repo not found: %s", run_id, repo)
         return TrivyRunResult(False, -1, [], None, f"repo not found: {repo}")
     cmd_head = [trivy_command] if trivy_command else [shutil.which("trivy") or "trivy"]
     if not shutil.which(cmd_head[0]):
+        logger.error("trivy run error run_id=%s: trivy CLI not found", run_id)
         return TrivyRunResult(False, -1, [], None,
                               "trivy CLI not found — install with `brew install trivy` or `apt install trivy`")
     cmd = cmd_head + ["fs", "--quiet", "--format", "json", "--no-progress"]
@@ -94,8 +100,10 @@ def run_trivy(
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=900)
     except subprocess.TimeoutExpired:
+        logger.error("trivy run error run_id=%s: timed out", run_id)
         return TrivyRunResult(False, -1, [], None, "trivy timed out")
     except FileNotFoundError as exc:
+        logger.error("trivy run error run_id=%s: %s", run_id, exc, exc_info=True)
         return TrivyRunResult(False, -1, [], None, str(exc))
 
     raw_path = None
@@ -104,17 +112,22 @@ def run_trivy(
         raw_path = output_dir / "trivy.json"
         raw_path.write_text(result.stdout or "")
     if result.returncode != 0 and not result.stdout:
+        logger.error("trivy run error run_id=%s: exit_code=%s no stdout",
+                     run_id, result.returncode)
         return TrivyRunResult(False, result.returncode, [],
                               str(raw_path) if raw_path else None,
                               result.stderr or "trivy failed")
     try:
         raw_json = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as exc:
+        logger.error("trivy run parse error run_id=%s: %s", run_id, exc)
         return TrivyRunResult(False, result.returncode, [],
                               str(raw_path) if raw_path else None,
                               f"failed to parse trivy json: {exc}")
 
     findings = parse_trivy_json(raw_json, run_id, repo_path=str(repo))
+    logger.info("trivy run finished run_id=%s findings=%d exit_code=%s",
+                run_id, len(findings), result.returncode)
     return TrivyRunResult(
         success=True, return_code=result.returncode, findings=findings,
         raw_json_path=str(raw_path) if raw_path else None,

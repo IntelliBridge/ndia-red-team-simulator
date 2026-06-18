@@ -14,9 +14,12 @@ onto the audit chain.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from aegis.workers.celery_app import app
+
+logger = logging.getLogger(__name__)
 
 
 @app.task(name="aegis.export_chains_to_worm")
@@ -27,8 +30,10 @@ def export_chains_to_worm() -> dict[str, Any]:
     from aegis.storage.worm import WormArchive, worm_export_enabled
 
     if not worm_export_enabled():
+        logger.info("export_chains_to_worm skipped: WORM export disabled")
         return {"status": "disabled"}
 
+    logger.info("export_chains_to_worm begin")
     config = load_config()
     writer = resolve_writer(config)
     archive = WormArchive.from_env()
@@ -49,6 +54,8 @@ def export_chains_to_worm() -> dict[str, Any]:
     except Exception:  # pragma: no cover - audit emit must not fail the export
         pass
 
+    logger.info("export_chains_to_worm finished broken_chains=%d",
+                len(summary.broken_chains))
     result = summary.to_dict()
     result["status"] = "ok"
     return result
