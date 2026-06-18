@@ -179,6 +179,38 @@ jobs:
           helm template aegis deploy/helm/aegis \
             --set sandbox.enabled=true \
             --set ingress.enabled=true > /dev/null
+      # Prod-secret guard (C8): a prod deployment that left the dev secret
+      # placeholders in place with no external secret wired MUST be rejected.
+      # Assert both the non-zero exit AND the actionable guard message.
+      - name: helm template (prod + dev placeholders) fails the guard
+        run: |
+          out="$(helm template aegis deploy/helm/aegis \
+            -f deploy/helm/aegis/ci/prod-placeholders-values.yaml 2>&1)" && rc=0 || rc=$?
+          echo "$out"
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::prod-secret guard did NOT fire: render succeeded with dev placeholders in prod"
+            exit 1
+          fi
+          echo "$out" | grep -q "shipped DEV placeholders" || {
+            echo "::error::render failed but not via the prod-secret guard (unexpected error)"; exit 1; }
+          echo "prod-secret guard fired as expected"
+      # The same prod deployment is accepted once the External Secrets Operator
+      # is wired in, and renders an ExternalSecret (not an inline Secret).
+      - name: helm template (prod + externalSecrets) renders an ExternalSecret
+        run: |
+          out="$(helm template aegis deploy/helm/aegis \
+            -f deploy/helm/aegis/ci/prod-externalsecrets-values.yaml)"
+          echo "$out" | grep -q "kind: ExternalSecret" || {
+            echo "::error::ExternalSecret was not rendered when externalSecrets.enabled=true"; exit 1; }
+          echo "ExternalSecret rendered as expected"
+      # A prod deployment with secrets overridden by real values renders cleanly.
+      - name: helm template (prod + real secrets) succeeds
+        run: |
+          helm template aegis deploy/helm/aegis \
+            --set config.env=prod \
+            --set config.secret.s3AccessKeyId=ci-real-access-key \
+            --set config.secret.s3SecretAccessKey=ci-real-secret-key \
+            --set config.secret.nextAuthSecret=ci-real-nextauth-secret > /dev/null
 
   sast:
     name: SAST (semgrep + bandit)

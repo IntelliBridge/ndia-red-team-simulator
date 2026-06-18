@@ -102,6 +102,31 @@ Usage: {{ include "aegis.image" (dict "ctx" . "image" .Values.api.image) }}
 {{- end -}}
 
 {{/*
+Production secret safety guard. `fail`s the render when the chart would ship
+the built-in DEV secret placeholders into a prod environment with no
+externally-managed secret wired in. A deployment is considered safe when ANY
+of the following holds:
+  - config.env != "prod" (dev/staging may use placeholders), OR
+  - config.secret.existingSecret is set (operator pre-provisioned a Secret), OR
+  - config.secret.externalSecrets.enabled (External Secrets Operator fills it).
+Otherwise, if any secret value still equals its shipped dev placeholder, the
+render aborts with actionable guidance. Self-contained (callable from any
+template); takes the root context.
+*/}}
+{{- define "aegis.validateProdSecret" -}}
+{{- $s := .Values.config.secret -}}
+{{- if and (eq .Values.config.env "prod") (not $s.existingSecret) (not $s.externalSecrets.enabled) -}}
+{{- $placeholders := list -}}
+{{- if eq (toString $s.s3AccessKeyId) "aegis" -}}{{- $placeholders = append $placeholders "config.secret.s3AccessKeyId" -}}{{- end -}}
+{{- if eq (toString $s.s3SecretAccessKey) "aegis-secret" -}}{{- $placeholders = append $placeholders "config.secret.s3SecretAccessKey" -}}{{- end -}}
+{{- if eq (toString $s.nextAuthSecret) "dev-secret-change-me" -}}{{- $placeholders = append $placeholders "config.secret.nextAuthSecret" -}}{{- end -}}
+{{- if $placeholders -}}
+{{- fail (printf "config.env=prod but these secret values are still the shipped DEV placeholders: %s. Refusing to deploy insecure secrets to production. Fix by either (a) overriding them with real values (--set or a sealed values file), (b) setting config.secret.existingSecret to a pre-provisioned Secret, or (c) setting config.secret.externalSecrets.enabled=true to source them from the External Secrets Operator." (join ", " $placeholders)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Pod-level securityContext (non-root). Shared by all Aegis pods.
 */}}
 {{- define "aegis.podSecurityContext" -}}
