@@ -30,6 +30,15 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground antialiased">
         <ThemeProvider>
+          {/* Skip link: first focusable element, visually hidden until
+              keyboard-focused, so keyboard/screen-reader users can jump
+              past the nav straight to the page content. */}
+          <a
+            href="#main-content"
+            className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-sm focus:text-primary-foreground"
+          >
+            Skip to content
+          </a>
           <header className="border-b border-border bg-card">
             <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
               <div className="text-lg font-semibold tracking-tight">
@@ -49,7 +58,13 @@ export default function RootLayout({
               </nav>
             </div>
           </header>
-          <main className="mx-auto max-w-6xl px-6 py-6">{children}</main>
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className="mx-auto max-w-6xl px-6 py-6"
+          >
+            {children}
+          </main>
           <CommandPalette links={NAV_LINKS} />
         </ThemeProvider>
       </body>

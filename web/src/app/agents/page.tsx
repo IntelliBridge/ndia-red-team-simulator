@@ -108,7 +108,7 @@ export default function AgentsPage() {
       </div>
 
       {err && (
-        <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {err}
         </p>
       )}
@@ -256,7 +256,7 @@ export default function AgentsPage() {
             <dd className="font-mono">{result.status ?? "queued"}</dd>
             <dt className="text-muted-foreground">Run</dt>
             <dd className="font-mono">
-              <a className="text-sky-700 underline" href={`/runs/${result.run_id}`}>
+              <a className="text-primary underline" href={`/runs/${result.run_id}`}>
                 {result.run_id}
               </a>
             </dd>

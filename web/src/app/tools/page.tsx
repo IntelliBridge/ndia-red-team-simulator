@@ -123,7 +123,7 @@ export default function ToolsPage() {
       </div>
 
       {err && (
-        <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {err}
         </p>
       )}
@@ -277,7 +277,7 @@ export default function ToolsPage() {
                 <dd className="font-mono">{String(outcome.success ?? false)}</dd>
               </dl>
               {outcome.error && (
-                <p className="text-sm text-red-700">{outcome.error}</p>
+                <p className="text-sm text-destructive">{outcome.error}</p>
               )}
               <div className="space-y-1">
                 <p className="text-xs uppercase text-muted-foreground">stdout</p>

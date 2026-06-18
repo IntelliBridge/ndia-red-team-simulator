@@ -60,8 +60,9 @@ export default function TargetsPage() {
   );
   const profiles: AuthProfile[] = Array.isArray(profilesData) ? profilesData : [];
 
-  if (!authed) return <p className="text-slate-500">Redirecting to sign in…</p>;
-  if (error) return <p className="text-slate-600">Failed to load.</p>;
+  if (!authed)
+    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
+  if (error) return <p className="text-muted-foreground">Failed to load.</p>;
 
   const create = async () => {
     if (!value) return;
@@ -117,7 +118,7 @@ export default function TargetsPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Targets</h1>
       {err && (
-        <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {err}
         </p>
       )}
@@ -127,7 +128,7 @@ export default function TargetsPage() {
           <select
             value={scanner}
             onChange={(e) => { setScanner(e.target.value); setAuthProfileId(""); }}
-            className="rounded-md border border-slate-200 bg-white px-2 py-1.5"
+            className="rounded-md border border-border bg-background px-2 py-1.5"
           >
             {SCANNERS.map((s) => (
               <option key={s} value={s}>{s}</option>
@@ -141,7 +142,7 @@ export default function TargetsPage() {
               <select
                 value={authProfileId}
                 onChange={(e) => setAuthProfileId(e.target.value)}
-                className="w-72 rounded-md border border-slate-200 bg-white px-2 py-1.5"
+                className="w-72 rounded-md border border-border bg-background px-2 py-1.5"
               >
                 <option value="">None</option>
                 {profiles.map((p) => (
@@ -149,26 +150,27 @@ export default function TargetsPage() {
                 ))}
               </select>
             </label>
-            <span className="mt-1 text-xs text-slate-500">
+            <span className="mt-1 text-xs text-muted-foreground">
               Lets DAST scanners test behind a login. Manage profiles under Auth Profiles.
             </span>
           </div>
         )}
       </div>
-      <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-md border border-border bg-card">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+          <caption className="sr-only">Registered targets</caption>
+          <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
-              <th className="px-3 py-2">ID</th>
-              <th className="px-3 py-2">Kind</th>
-              <th className="px-3 py-2">Value</th>
-              <th className="px-3 py-2">Verified</th>
-              <th className="px-3 py-2">Actions</th>
+              <th scope="col" className="px-3 py-2">ID</th>
+              <th scope="col" className="px-3 py-2">Kind</th>
+              <th scope="col" className="px-3 py-2">Value</th>
+              <th scope="col" className="px-3 py-2">Verified</th>
+              <th scope="col" className="px-3 py-2">Actions</th>
             </tr>
           </thead>
           <tbody>
             {(data?.targets ?? []).map((t) => (
-              <tr key={t.id} className="border-t border-slate-100">
+              <tr key={t.id} className="border-t border-border">
                 <td className="px-3 py-2">{t.id}</td>
                 <td className="px-3 py-2">{t.kind}</td>
                 <td className="px-3 py-2">{t.value}</td>
@@ -176,7 +178,7 @@ export default function TargetsPage() {
                 <td className="px-3 py-2">
                   <div className="flex items-center gap-2">
                     <button
-                      className="rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+                      className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                       disabled={busy}
                       onClick={() => launchScan(t)}
                     >
@@ -226,10 +228,10 @@ export default function TargetsPage() {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder="https://target.example"
-          className="w-80 rounded-md border border-slate-200 px-3 py-1.5 text-sm"
+          className="w-80 rounded-md border border-border bg-background px-3 py-1.5 text-sm"
         />
         <button
-          className="rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+          className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           onClick={create}
           disabled={busy}
         >

@@ -182,7 +182,7 @@ describe("RunPage", () => {
     renderPage();
     const panel = screen.getByText(/Failed to load:/);
     expect(panel.textContent).toContain("ws-down-500");
-    expect(panel.className).toContain("border-red-200");
+    expect(panel.className).toContain("border-destructive");
   });
 
   it("opens both event sockets at the apiWsBase events url for the run", () => {

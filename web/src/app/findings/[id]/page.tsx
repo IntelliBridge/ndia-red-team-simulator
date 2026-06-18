@@ -21,11 +21,12 @@ export default function FindingPage({ params }: { params: { id: string } }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  if (!authed) return <p className="text-slate-500">Redirecting to sign in…</p>;
-  if (isLoading) return <p className="text-slate-500">Loading…</p>;
+  if (!authed)
+    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
+  if (isLoading) return <p className="text-muted-foreground">Loading…</p>;
   if (error || !data)
     return (
-      <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+      <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
         Failed to load.
       </p>
     );
@@ -79,7 +80,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
               <button
                 onClick={triggerVerify}
                 disabled={busy}
-                className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm hover:bg-slate-100 disabled:opacity-50"
+                className="rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
               >
                 Verify
               </button>
@@ -88,7 +89,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
               <button
                 onClick={applyFix}
                 disabled={busy}
-                className="rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+                className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
                 Apply patch + open PR
               </button>
@@ -99,7 +100,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
         {blob.description}
       </FindingCard>
       {err && (
-        <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {err}
         </p>
       )}

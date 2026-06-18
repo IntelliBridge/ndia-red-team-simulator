@@ -197,7 +197,7 @@ describe("TargetsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
     const panel = await screen.findByText(/create-failed-422/);
-    expect(panel.className).toContain("border-red-200");
+    expect(panel.className).toContain("border-destructive");
     expect(mutateMock).not.toHaveBeenCalled();
   });
 
@@ -226,7 +226,7 @@ describe("TargetsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start scan" }));
 
     const panel = await screen.findByText(/scan-denied-403/);
-    expect(panel.className).toContain("border-red-200");
+    expect(panel.className).toContain("border-destructive");
     expect(pushMock).not.toHaveBeenCalled();
   });
 
@@ -260,7 +260,7 @@ describe("TargetsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete target" }));
 
     const panel = await screen.findByText(/delete-denied-403/);
-    expect(panel.className).toContain("border-red-200");
+    expect(panel.className).toContain("border-destructive");
     expect(mutateMock).not.toHaveBeenCalled();
   });
 
