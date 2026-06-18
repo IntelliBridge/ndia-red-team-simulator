@@ -170,7 +170,14 @@ async def _redis_pubsub_iter(channel: str) -> AsyncIterator[dict[str, Any]]:
             await asyncio.sleep(5)
             yield {"type": "heartbeat"}
     try:
-        import redis.asyncio as redis_async
+        # Resolve via importlib (reads sys.modules) rather than
+        # ``import redis.asyncio as redis_async`` — the latter binds through the
+        # ``asyncio`` attribute on the already-imported ``redis`` package, which
+        # makes the seam unpatchable once anything has imported ``redis``. Tests
+        # patch ``sys.modules['redis.asyncio']``; this keeps that seam reliable.
+        import importlib
+
+        redis_async = importlib.import_module("redis.asyncio")
     except ImportError:
         while True:
             await asyncio.sleep(5)

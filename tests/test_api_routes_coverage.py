@@ -204,7 +204,13 @@ def _fake_redis_module(events):
 @contextlib.contextmanager
 def _patched_redis_boundary(events):
     """Patch ``AEGIS_BROKER_URL`` + ``redis.asyncio`` so the real
-    ``_redis_pubsub_iter`` yields ``events`` from its genuine redis path."""
+    ``_redis_pubsub_iter`` yields ``events`` from its genuine redis path.
+
+    ``_redis_pubsub_iter`` resolves the module via
+    ``importlib.import_module("redis.asyncio")``, which reads ``sys.modules``,
+    so this patch is robust to suite ordering even after another test has
+    already imported the real ``redis`` package.
+    """
     import os
     with patch.dict(os.environ, {"AEGIS_BROKER_URL": "redis://localhost:6379"}), \
          patch.dict("sys.modules", {"redis.asyncio": _fake_redis_module(events)}):
