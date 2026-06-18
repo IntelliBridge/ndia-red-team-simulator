@@ -115,7 +115,7 @@ def verify_tenant_integrity_in_session(
         # project visible as expected_org_id = NULL drift rather than dropping
         # it. Identifiers are static (from the module constant), never user
         # input, so the f-string interpolation is safe.
-        rows = sess.execute(text(
+        rows = sess.execute(text(  # nosemgrep
             f"SELECT x.id, x.project_id, x.org_id, p.org_id AS expected "
             f"FROM {table} x "
             f"LEFT JOIN projects p ON p.id = x.project_id "
@@ -137,7 +137,7 @@ def verify_tenant_integrity_in_session(
             )
             if repair and expected is not None:
                 sess.execute(
-                    text(
+                    text(  # nosemgrep
                         f"UPDATE {table} SET org_id = :org WHERE id = :id"
                     ),
                     {"org": expected, "id": row_id},
