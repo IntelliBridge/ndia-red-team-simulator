@@ -6,4 +6,13 @@
 # gate; add an ID here only when an advisory is fixable but the fix is not yet
 # safe to take, and document why (tracked in SECURITY.md / C14).
 #
-# Seeded empty: nothing is suppressed yet.
+# --- Next.js (web/, pnpm-lock.yaml) — TRACKED: requires the Next 14 -> 15 major
+# upgrade (no fix exists on the 14.x line). That is a separate, tested frontend
+# migration (Next 15 changes async params/caching), out of scope for this
+# remediation pass; the web UI is auth-gated internal admin, lowering exposure.
+# Tracked as a follow-up (see SECURITY.md "Known gaps").
+CVE-2026-44573       # Next.js information disclosure via middleware
+CVE-2026-44578       # Next.js SSRF via crafted request
+GHSA-8h8q-6873-q5fj  # Next.js DoS (Server Actions)
+GHSA-h25m-26qc-wcjf  # Next.js HTTP request deserialization DoS
+GHSA-q4gf-8mx6-v5v3  # Next.js DoS (Server Components)

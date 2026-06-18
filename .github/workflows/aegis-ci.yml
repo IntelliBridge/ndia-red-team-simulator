@@ -305,9 +305,13 @@ jobs:
           curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
             | sudo sh -s -- -b /usr/local/bin
       - name: Trivy filesystem scan (HIGH,CRITICAL)
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
         run: |
-          trivy fs --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
-            --ignorefile .trivyignore --no-progress .
+          # --scanners vuln: this job is the dependency-CVE gate; secret
+          # scanning is the trufflehog job's responsibility.
+          trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 --ignorefile .trivyignore --no-progress .
 
   coverage:
     name: Coverage (>=90%)
