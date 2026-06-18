@@ -122,6 +122,14 @@ class AegisConfig:
     plugins_require_signature: bool = False
     plugins_trusted_keys: str | None = None
     plugins_sig_dir: str | None = None
+    # Sandbox third-party plugin scanners (default on): a discovered plugin's
+    # ``scan()`` runs out-of-process under resource rlimits + a wall-clock
+    # timeout, network-off by default. Disable with env ``AEGIS_PLUGINS_SANDBOX=0``
+    # (or this flag) for trusted first-party plugins. Per-run resource caps and
+    # the network opt-in are env-only (``AEGIS_PLUGIN_SANDBOX_*`` /
+    # ``AEGIS_PLUGIN_SANDBOX_NETWORK``); the verifier/sandbox read env directly,
+    # these fields keep the contract discoverable.
+    plugins_sandbox: bool = True
     # LLM guardrails (aegis.llm.guardrails). Master switch plus per-layer
     # toggles; all fail-safe and secret-free in logs. ``llm_injection_block_risk``
     # is the risk tier ("low"|"medium"|"high") at/above which an injected input

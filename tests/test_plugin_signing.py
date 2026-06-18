@@ -23,6 +23,7 @@ import importlib
 import io
 import os
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -413,6 +414,83 @@ class TestCommittedExampleSigned(unittest.TestCase):
         self.assertEqual(row.status, "loaded", row.detail)
         self.assertIsNotNone(row.signature)
         self.assertIn("example", scanner_registry._REGISTRY)
+
+
+# ---------------------------------------------------------------------------
+# Signature gate + sandbox compose: a signed plugin runs out-of-process
+# ---------------------------------------------------------------------------
+
+class TestSignedPluginSandboxed(unittest.TestCase):
+    """The signature gate and the sandbox stack compose.
+
+    The signature binds to the plugin's *real* factory source; the sandbox
+    wrapper is trusted in-tree code substituted only after verification. So an
+    operator who turns enforcement on still gets the verified plugin, and it
+    still runs out-of-process.
+    """
+
+    def _example_on_path(self) -> None:
+        inserted = str(EXAMPLE_DIR)
+        if inserted not in sys.path:
+            sys.path.insert(0, inserted)
+            self.addCleanup(sys.path.remove, inserted)
+        self.addCleanup(sys.modules.pop, "aegis_plugin_example", None)
+
+    def test_signed_example_loads_sandbox_wrapped_via_eager_loader(self):
+        """End-to-end: enforcement on + committed key -> example loads, signed,
+        and wrapped in the sandbox proxy by the real eager loader."""
+        from aegis.scanners.registry import maybe_load_entry_points
+        from aegis.scanners.sandbox import SandboxedScanner
+
+        self.addCleanup(scanner_registry._REGISTRY.pop, "example", None)
+        self._example_on_path()
+        import aegis_plugin_example as mod
+        ep = SimpleNamespace(
+            name="example", value="aegis_plugin_example:create_scanner",
+            load=lambda: mod.create_scanner,
+            dist=SimpleNamespace(name="aegis-plugin-example", version="0.1.0"),
+        )
+        env = {
+            "AEGIS_PLUGINS": "1",
+            ENV_REQUIRE_SIGNATURE: "1",
+            ENV_TRUSTED_KEYS: str(EXAMPLE_SIGNING / "keys"),
+            ENV_SIG_DIR: str(EXAMPLE_SIGNING),
+            # leave AEGIS_PLUGINS_SANDBOX unset -> sandbox on by default
+        }
+        with patch.dict(os.environ, env), \
+                patch("importlib.metadata.entry_points",
+                      side_effect=lambda group: [ep] if group == "aegis.scanners" else []):
+            maybe_load_entry_points()
+        registered = scanner_registry._REGISTRY.get("example")
+        self.assertIsInstance(registered, SandboxedScanner)
+        self.assertEqual(registered.name, "example")
+
+    def test_unsigned_example_rejected_before_sandbox_wrap(self):
+        """Signature failure rejects the plugin; nothing is registered/wrapped."""
+        from aegis.scanners.registry import maybe_load_entry_points
+
+        self.addCleanup(scanner_registry._REGISTRY.pop, "example", None)
+        self._example_on_path()
+        import aegis_plugin_example as mod
+        ep = SimpleNamespace(
+            name="example", value="aegis_plugin_example:create_scanner",
+            load=lambda: mod.create_scanner,
+            dist=SimpleNamespace(name="aegis-plugin-example", version="0.1.0"),
+        )
+        with tempfile.TemporaryDirectory() as d:
+            # A trusted key with no matching signature -> rejected.
+            _, foreign_pub = _write_keypair(Path(d))
+            env = {
+                "AEGIS_PLUGINS": "1",
+                ENV_REQUIRE_SIGNATURE: "1",
+                ENV_TRUSTED_KEYS: str(foreign_pub),
+                ENV_SIG_DIR: str(d),
+            }
+            with patch.dict(os.environ, env), \
+                    patch("importlib.metadata.entry_points",
+                          side_effect=lambda group: [ep] if group == "aegis.scanners" else []):
+                maybe_load_entry_points()
+        self.assertNotIn("example", scanner_registry._REGISTRY)
 
 
 if __name__ == "__main__":

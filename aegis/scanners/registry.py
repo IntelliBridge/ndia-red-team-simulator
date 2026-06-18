@@ -359,6 +359,46 @@ def dispatch(name_or_capability: str,
     raise KeyError(f"no scanner registered for {name_or_capability!r}")
 
 
+def _sandbox_wrap(adapter: ScannerAdapter, ep: object) -> ScannerAdapter:
+    """Wrap a discovered plugin adapter so its ``scan()`` runs out-of-process.
+
+    Applied during eager discovery to every conformant, signature-approved
+    third-party scanner (built-ins never pass through here — they are registered
+    directly in code, not via entry points). When sandboxing is disabled
+    (``AEGIS_PLUGINS_SANDBOX=0``) or the entry point cannot be resolved to an
+    importable ``module:factory`` reference (e.g. a lambda factory in a test),
+    the original adapter is returned unchanged and a warning is logged — the
+    allowlist + signature gates still apply, so this is a defence-in-depth layer
+    rather than the only control.
+    """
+    from aegis.scanners.sandbox import (
+        SandboxedScanner,
+        entry_point_ref,
+        sandbox_enabled,
+    )
+
+    if not sandbox_enabled():
+        return adapter
+    # Resolve the importable ``module:factory`` reference the worker re-imports:
+    # the entry point's declared ``.value`` is preferred, with the loaded
+    # factory's module/qualname as the fallback for fakes lacking ``.value``.
+    loader = getattr(ep, "load", None)
+    factory = loader() if callable(loader) else None
+    ref = entry_point_ref(ep, factory)
+    if ref is None:
+        logger.warning(
+            "scanner plugin %r could not be resolved to an importable entry "
+            "point; running in-process (sandbox skipped)", adapter.name,
+        )
+        return adapter
+    return SandboxedScanner(adapter, ref)
+
+
 def maybe_load_entry_points() -> None:
-    """Third-party adapter discovery, gated by AEGIS_PLUGINS=1."""
-    _scanner_registry.maybe_load_entry_points("aegis.scanners")
+    """Third-party adapter discovery, gated by AEGIS_PLUGINS=1.
+
+    Conformant third-party scanners are wrapped in a sandboxing proxy
+    (:class:`aegis.scanners.sandbox.SandboxedScanner`) so their ``scan()`` runs
+    in a resource-limited, network-off subprocess by default.
+    """
+    _scanner_registry.maybe_load_entry_points("aegis.scanners", wrap=_sandbox_wrap)

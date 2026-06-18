@@ -109,6 +109,7 @@ class Registry(Generic[T]):
         *,
         register: bool,
         verifier: PluginVerifier | None = None,
+        wrap: Callable[[T, object], T] | None = None,
     ) -> Iterator[PluginInfo]:
         """Walk ``group``'s entry points once, yielding a PluginInfo per item.
 
@@ -127,6 +128,14 @@ class Registry(Generic[T]):
         and is NOT registered, while a verified one carries the matching
         ``signature`` key_id on its ``loaded`` row. When ``verifier`` is ``None``
         the behaviour is unchanged (no signature check).
+
+        ``wrap`` is an optional ``(item, entry_point) -> item`` hook applied to a
+        conformant, signature-approved item *before* registration. The scanner
+        subsystem uses it to substitute a sandboxing proxy for the raw plugin
+        adapter so untrusted ``scan()`` code runs out-of-process; the conformance
+        and signature checks still run against the *original* item (the signature
+        binds to the plugin's real factory source, and the wrapper is trusted
+        in-tree code). ``None`` leaves the item unchanged.
 
         Caller is responsible for the ``AEGIS_PLUGINS=1`` gate; this method
         assumes discovery is enabled.
@@ -186,10 +195,22 @@ class Registry(Generic[T]):
                     continue
                 signature = result.key_id
 
+            # Conformant + approved: optionally substitute a sandboxing proxy
+            # for the raw plugin (the proxy mirrors ``name``/``capabilities`` so
+            # the report and registry are unaffected) before registering.
+            install = item
+            if wrap is not None:
+                try:
+                    install = wrap(item, ep)
+                except Exception as exc:  # pragma: no cover - wrap is in-tree
+                    yield _info(item.name, "rejected",
+                                f"sandbox wrap failed: {exc}")
+                    continue
+
             # Conformant: prefer the adapter's own ``name`` in the report.
             if register:
                 try:
-                    self.register(item)
+                    self.register(install)
                 except Exception as exc:  # pragma: no cover - validate raised
                     yield _info(item.name, "rejected",
                                 f"registration failed: {exc}")
@@ -205,21 +226,27 @@ class Registry(Generic[T]):
             return "missing non-empty string 'name'"
         return None
 
-    def maybe_load_entry_points(self, group: str) -> None:
+    def maybe_load_entry_points(
+        self, group: str, *, wrap: Callable[[T, object], T] | None = None
+    ) -> None:
         """Discover and register third-party items, gated by AEGIS_PLUGINS=1.
 
         Side-effect-only: drains :meth:`scan_entry_points` with registration
         enabled. Kept as the eager-load entry point the subsystem ``__init__``
         modules call at import time. When optional signature enforcement is on
         (``AEGIS_PLUGINS_REQUIRE_SIGNATURE``), a verifier is wired in so unsigned
-        plugins are rejected here too.
+        plugins are rejected here too. ``wrap`` is forwarded to
+        :meth:`scan_entry_points` (the scanner subsystem passes a sandboxing
+        wrapper so plugin ``scan()`` code runs out-of-process).
         """
         if os.environ.get("AEGIS_PLUGINS") != "1":
             return
         from aegis.supply_chain.signing import load_plugin_verifier
 
         verifier = load_plugin_verifier()
-        for info in self.scan_entry_points(group, register=True, verifier=verifier):
+        for info in self.scan_entry_points(
+            group, register=True, verifier=verifier, wrap=wrap,
+        ):
             if info.status == "rejected":
                 logger.warning(
                     "rejected %s plugin %r: %s", self._kind, info.name, info.detail,
