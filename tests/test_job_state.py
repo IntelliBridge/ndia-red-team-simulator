@@ -14,7 +14,14 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 
-from aegis.workers.job_state import (
+import pytest
+
+# job_state itself is celery-free, but importing it runs aegis/workers/__init__,
+# which imports the Celery app. The minimal unit-CI env (.[test,dev]) has no
+# celery, so skip there — matching the other worker tests' importorskip guard.
+pytest.importorskip("celery")
+
+from aegis.workers.job_state import (  # noqa: E402
     ALLOWED,
     IllegalJobTransition,
     set_job_status,
