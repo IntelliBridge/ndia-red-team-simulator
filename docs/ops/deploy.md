@@ -204,13 +204,31 @@ secret.
 
 ### Worker SA (FW)
 
+!!! warning "Breaking change"
+    The legacy non-expiring `worker:<hex>` token has been **removed** — only
+    versioned, time-bound worker tokens are accepted now. `AEGIS_WORKER_SIGNING_KEY`
+    is therefore **mandatory** for worker auth: without it, workers cannot
+    authenticate to the API.
+
 | Var                                  | Where     | Notes                                                       |
 |--------------------------------------|-----------|-------------------------------------------------------------|
-| `AEGIS_WORKER_SIGNING_KEY`           | api, worker | Current shared HMAC key                                    |
+| `AEGIS_WORKER_SIGNING_KEY`           | api, worker | **Required.** Current shared HMAC key                      |
 | `AEGIS_WORKER_SIGNING_KEY_PREVIOUS`  | api       | Previous key accepted during rotation overlap                |
 | `AEGIS_WORKER_SIGNING_KEY_VERSION`   | api, worker | Integer, default `1`. Workers increment when rotating.     |
 | `AEGIS_WORKER_KEY_OVERLAP_SECONDS`   | api       | Default `300`                                                |
 | `AEGIS_WORKER_TOKEN_TTL_SECONDS`     | worker    | Default `300`                                                |
+
+### Key rotation
+
+Pick up rotated/revoked keys without a restart, and ride a graceful dual-key
+window during cookie / Fernet rotation. See the
+[Rotation runbook](#rotation-runbook) below for the cutover procedures.
+
+| Var                                    | Where       | Notes                                                                                                       |
+|----------------------------------------|-------------|-------------------------------------------------------------------------------------------------------------|
+| `AEGIS_API_JWKS_CACHE_TTL_SECONDS`     | api, worker | Default `300`. The IdP JWKS is a time-boxed cache, not pinned for the process lifetime — a rotated/revoked Keycloak key is picked up after at most one TTL, no restart. |
+| `AEGIS_API_SESSION_PUBLIC_KEY_PREVIOUS`| api         | Previous session public key, accepted **alongside** the current one during a cookie-signing-key rotation. Unset outside rotation. |
+| `AEGIS_AUTH_PROFILES_KEY_PREVIOUS`     | api, worker | Previous DAST auth-profile Fernet key. Accepted via **MultiFernet** so existing profiles decrypt without re-creation. Unset outside rotation. |
 
 ### Data plane
 
@@ -339,6 +357,41 @@ All default **on**; leave them on in production. See `SECURITY.md`
 | `AEGIS_LLM_DETECT_INJECTION`     | api, worker  | Prompt-injection detection on untrusted finding fields + prompts. Default **on**. |
 | `AEGIS_LLM_FILTER_OUTPUT`        | api, worker  | Secret-scrub LLM output at the remediation/agent chokepoints. Default **on**. |
 | `AEGIS_LLM_INJECTION_BLOCK_RISK` | api, worker  | Block threshold: `none`/`low`/`medium`/`high` (default `high`); `off` = detect-and-log only. |
+
+### LLM budget (fail-closed)
+
+| Var                       | Where       | Notes                                                                                                                              |
+|---------------------------|-------------|------------------------------------------------------------------------------------------------------------------------------------|
+| `AEGIS_LLM_BUDGET_STRICT` | api, worker | Fail-closed budget enforcement. Default **on in prod** (`AEGIS_ENV=prod`). A DB-backed run that reaches an LLM call **without** a budget checker is **denied**; the agent-run worker path is budget-enforced. Set `0` to allow ungoverned LLM calls (not recommended outside dev). |
+
+### Plugin sandbox
+
+Third-party plugin scanners run **out-of-process by default**. This is
+defense-in-depth — process isolation + a minimal allowlisted env (parent
+secrets never reach plugin code) + POSIX rlimits + own process group with
+group-kill on timeout + the Ed25519 signature/allowlist gate. It is **not** a
+network or filesystem jail: a hostile plugin can still open sockets / touch
+files the worker UID can reach. Kernel-level isolation is [ADR-0006](../adr/0006-firecracker-microvm-isolation.md).
+See `SECURITY.md` § "Plugin sandbox".
+
+| Var                               | Where  | Notes                                                                             |
+|-----------------------------------|--------|-----------------------------------------------------------------------------------|
+| `AEGIS_PLUGINS_SANDBOX`           | worker | Run plugin scanners out-of-process (default `1`). `0` runs them in-process.        |
+| `AEGIS_PLUGIN_SANDBOX_NETWORK`    | worker | Default `0`.                                                                       |
+| `AEGIS_PLUGIN_SANDBOX_CPU_SECONDS`| worker | `RLIMIT_CPU` for the plugin child, seconds (default `300`).                         |
+| `AEGIS_PLUGIN_SANDBOX_MEMORY_MB`  | worker | `RLIMIT_AS` memory cap, MB (default `1024`).                                        |
+| `AEGIS_PLUGIN_SANDBOX_FILESIZE_MB`| worker | `RLIMIT_FSIZE` write cap, MB (default `256`).                                       |
+
+### Iterative remediation (opt-in)
+
+The fix→test→retry loop. Default off (no test command = no loop). The loop
+**refuses a dirty working tree** (so it can't destroy operator changes) and
+**scrubs fed-back test output for secrets** before it reaches the LLM.
+
+| Var                            | Where  | Notes                                                                                  |
+|--------------------------------|--------|----------------------------------------------------------------------------------------|
+| `AEGIS_REMEDIATION_TEST_COMMAND` | worker | Command run to validate a generated fix (e.g. `pytest -q`). Unset disables the loop.   |
+| `AEGIS_REMEDIATION_MAX_ITERS`  | worker | Max fix→test→retry iterations (default `3`).                                            |
 
 ---
 
@@ -567,23 +620,26 @@ retention window, so size the regime deliberately.
 ### Aegis API session keypair (F14a)
 
 The web side mints with the private key; the API verifies with the
-public key. A rotation is a controlled bump of both.
+public key. A rotation is a controlled bump of both, with a graceful
+dual-key window so live sessions don't break at the cutover.
 
 ```
-Day 0:  generate new keypair (v2)
-Day 0:  set AEGIS_API_SESSION_KEY_ID=aegis-api-session-v2 + new
-        public key on the API (still accepts v1 via the JWKS-style
-        helper; explicit dual-public-key acceptance is not yet shipped).
-Day 0:  set new private key on the web side. NextAuth callbacks now
+Day 0:  generate new keypair (v2).
+Day 0:  on the API, set the new public key as AEGIS_API_SESSION_PUBLIC_KEY,
+        move the old one to AEGIS_API_SESSION_PUBLIC_KEY_PREVIOUS, and
+        bump AEGIS_API_SESSION_KEY_ID=aegis-api-session-v2. The API now
+        accepts cookies signed by either key.
+Day 0:  set the new private key on the web side. NextAuth callbacks now
         mint v2 cookies.
 Day 0 + TTL window:
         all v1 cookies have expired (15 min default).
-Day 0 + TTL window: drop the v1 public key.
+Day 0 + TTL window: drop AEGIS_API_SESSION_PUBLIC_KEY_PREVIOUS.
 ```
 
-The API still verifies against a single public key; graceful dual-key
-rotation is not yet shipped. Until then, plan for a ~15-minute window
-of fresh sign-ins during the cutover.
+The API now accepts a **previous** public key
+(`AEGIS_API_SESSION_PUBLIC_KEY_PREVIOUS`) alongside the current one, so
+in-flight cookies keep validating across the cutover — no forced wave of
+fresh sign-ins.
 
 ### Worker SA key (FW)
 
@@ -608,13 +664,24 @@ guarantees the test suite enforces.
 
 ### Keycloak realm signing key
 
-Aegis fetches Keycloak's JWKS via `AEGIS_OIDC_JWKS_URL` and caches
-for the process lifetime. After a Keycloak signing key rotation:
-
-- Aegis API: restart so the JWKS cache picks up the new key.
-- Aegis worker: same.
+Aegis fetches Keycloak's JWKS via `AEGIS_OIDC_JWKS_URL` and caches it for
+`AEGIS_API_JWKS_CACHE_TTL_SECONDS` (default `300`) — a time-boxed cache,
+**not** pinned for the process lifetime. After a Keycloak signing-key
+rotation (or a key revocation), the API and worker pick up the change after
+at most one TTL with **no restart**. Lower the TTL if you need a faster
+pickup; restart only if you want the change immediately.
 
 NextAuth refreshes JWKS on demand and doesn't need a restart.
+
+### DAST auth-profile Fernet key (`AEGIS_AUTH_PROFILES_KEY`)
+
+Rotating the auth-profile encryption key no longer requires re-creating
+profiles. Set the new key as `AEGIS_AUTH_PROFILES_KEY` and the old one as
+`AEGIS_AUTH_PROFILES_KEY_PREVIOUS` on the api + worker; decryption tries both
+via **MultiFernet** while new writes use the current key. Once profiles have
+been re-saved (or you accept that only current-key ciphertext remains), drop
+`AEGIS_AUTH_PROFILES_KEY_PREVIOUS`. See
+[`authenticated-dast.md`](authenticated-dast.md) § "Key rotation".
 
 ### Database role passwords (`aegis_app` / `aegis_owner`)
 

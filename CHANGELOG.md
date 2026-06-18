@@ -6,6 +6,83 @@ SemVer.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-06-18 — gap remediation: worker auth, fail-closed budget, sandboxed plugins, tenant-drift guard
+
+A security- and correctness-hardening milestone that closes the
+gap-remediation backlog across thirteen clusters. The headline changes:
+worker auth drops its legacy non-expiring token (a breaking change), the LLM
+budget is now fail-closed, third-party plugins run sandboxed out-of-process,
+the tenant key is guarded against drift at the database, and SAST + dependency
+-CVE scans now gate CI. Four spike ADRs (0005–0008) record the deferred,
+infra-dependent next steps.
+
+### Security
+- **Worker auth — legacy token removed (BREAKING).** The non-expiring
+  `worker:<hex>` token is gone; only versioned, time-bound worker tokens are
+  accepted. **`AEGIS_WORKER_SIGNING_KEY` is now mandatory** for worker auth.
+- **Key rotation without restarts.** The IdP JWKS is a time-boxed cache
+  (`AEGIS_API_JWKS_CACHE_TTL_SECONDS`, default `300`) so rotated/revoked keys
+  are picked up without a restart; the API session cookie accepts a previous
+  public key during rotation (`AEGIS_API_SESSION_PUBLIC_KEY_PREVIOUS`); DAST
+  auth-profile secrets support MultiFernet rotation
+  (`AEGIS_AUTH_PROFILES_KEY_PREVIOUS`).
+- **Fail-closed LLM budget (`AEGIS_LLM_BUDGET_STRICT`, default on in prod).** A
+  DB-backed run that reaches an LLM call without a budget checker is **denied**;
+  the agent-run worker path is now budget-enforced.
+- **Out-of-process plugin sandbox (`AEGIS_PLUGINS_SANDBOX=1`).** Third-party
+  plugin scanners run in a child process with a minimal allowlisted env (parent
+  secrets never passed), POSIX rlimits incl. `RLIMIT_NPROC`, its own process
+  group + group-kill on timeout, and a private fd result channel. This is
+  defense-in-depth, **not** a network/filesystem jail (kernel-level isolation
+  is [ADR-0006](docs/adr/0006-firecracker-microvm-isolation.md)); the
+  pre-existing load-then-verify signature limitation stands — run only vetted,
+  signed plugins.
+- **Tenant org_id UPDATE-guard (migration `0009`).** A `BEFORE UPDATE` trigger
+  rejects `org_id` drift on the eight org-scoped tables; an hourly
+  `verify_tenant_integrity` task + `aegis tenants verify` CLI detect drift.
+- **SAST + dependency-CVE CI gates.** `semgrep` (`p/python` +
+  `p/security-audit` + repo bans) and `bandit` (SAST), plus `pip-audit` and
+  `trivy fs` (dependency CVEs) now **gate** CI, with `dependabot` enabled and
+  documented baselines (`.bandit` `B310`, `.semgrepignore` migrations, empty
+  `pip-audit` / `trivy` ignore files).
+- **Iterative remediation safety.** The fix→test→retry loop requires a clean
+  working tree (refuses dirty, to avoid destroying operator changes) and scrubs
+  fed-back test output for secrets before it reaches the LLM.
+- **Prod-secret guard in Helm.** Prod installs hard-fail on shipped dev secret
+  placeholders (see [`docs/ops/kubernetes.md`](docs/ops/kubernetes.md)).
+
+### Added
+- **`GET /v1/agents` & `GET /v1/tools`.** List the wired agents and the
+  effect-classified tool catalog over the API.
+- **Findings & runs list pages.** Web list views for findings and runs.
+- **Client Keycloak OIDC sign-in.** Browser sign-in through the Keycloak OIDC
+  code flow.
+- **Iterative fix→test→retry remediation (opt-in).** Drive a generated fix
+  through a validation command and retry up to a bound
+  (`AEGIS_REMEDIATION_TEST_COMMAND`, `AEGIS_REMEDIATION_MAX_ITERS`, default `3`).
+- **Helm `ExternalSecret` support + prod-secret guard.** Wire real secrets via
+  an external secret store; prod installs reject shipped dev placeholders.
+- **`aegis tenants verify` CLI.** Reconcile tenant `org_id` integrity on demand.
+- **Spike ADRs 0005–0008.** Worker autoscaling + multi-region DR, Firecracker
+  per-scan microVM isolation, native MCP toolbelt, and Nix reproducible builds.
+
+### Changed
+- **Deterministic Strix per-run output dir.** Each run writes to its own
+  deterministic output directory.
+- **Explicit job-state transition guard.** Job status changes go through an
+  explicit, validated state-transition guard.
+- **Test hygiene.** A shared `tests/conftest.py`
+  (`sqlite_session_factory` / `db_session`), an `integration` pytest marker, a
+  CI unit-vs-integration split, and boundary logging — see
+  [`docs/dev/testing.md`](docs/dev/testing.md).
+- **Frontend theming + a11y.** Semantic-token theming and accessibility passes.
+
+### Fixed
+- **WebSocket test redis seam.** A test-only redis seam fixes a
+  suite-ordering hang in the WebSocket tests.
+
+### Earlier (staged) 0.14.0 work
+
 ### Added
 - **Frontend completion — UI for the previously-unexposed endpoints.** New and
   extended web surfaces close the gap to the backend:
