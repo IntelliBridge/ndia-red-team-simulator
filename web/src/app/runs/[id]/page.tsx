@@ -45,11 +45,15 @@ const runFetcher = (path: string) => api<Run>(path);
 // a safety net rather than the primary update path.
 const FALLBACK_POLL_MS = 30_000;
 
+// Validation-state tones. The badge always renders the state text too, so
+// colour is a supplementary cue (not the sole signal). poc_failed uses the
+// destructive token; the unvalidated/neutral case uses muted tokens so it
+// flips correctly in dark mode.
 const VALIDATION_TONES: Record<string, string> = {
   poc_passed: "bg-emerald-100 text-emerald-900",
-  poc_failed: "bg-red-100 text-red-900",
+  poc_failed: "bg-destructive/15 text-destructive",
   inconclusive: "bg-amber-100 text-amber-900",
-  unvalidated: "bg-slate-100 text-slate-500",
+  unvalidated: "bg-muted text-muted-foreground",
 };
 
 export default function RunPage({ params }: { params: { id: string } }) {
@@ -100,11 +104,12 @@ export default function RunPage({ params }: { params: { id: string } }) {
     return () => ws.close();
   }, [params.id, authed]);
 
-  if (!authed) return <p className="text-slate-500">Redirecting to sign in…</p>;
-  if (isLoading) return <p className="text-slate-500">Loading…</p>;
+  if (!authed)
+    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
+  if (isLoading) return <p className="text-muted-foreground">Loading…</p>;
   if (error)
     return (
-      <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+      <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
         Failed to load: {String(error)}
       </p>
     );
@@ -130,7 +135,9 @@ export default function RunPage({ params }: { params: { id: string } }) {
       <div className="space-y-8">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <h1 className="font-mono text-xl">{params.id}</h1>
+            <h1 data-testid="run-heading" className="font-mono text-xl">
+              {params.id}
+            </h1>
             {run?.status && (
               <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                 {run.status}
@@ -176,17 +183,17 @@ export default function RunPage({ params }: { params: { id: string } }) {
         </header>
 
         {cancelErr && (
-          <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+          <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
             {cancelErr}
           </p>
         )}
 
         <section className="space-y-3">
-          <h2 className="text-sm uppercase tracking-wide text-slate-500">
+          <h2 className="text-sm uppercase tracking-wide text-muted-foreground">
             Live stage events
           </h2>
           {stages.length === 0 ? (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-muted-foreground">
               Waiting for the worker to emit stage events…
             </p>
           ) : (
@@ -195,18 +202,21 @@ export default function RunPage({ params }: { params: { id: string } }) {
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-sm uppercase tracking-wide text-slate-500">
+          <h2 className="text-sm uppercase tracking-wide text-muted-foreground">
             Findings ({data?.count ?? 0})
           </h2>
-          <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+          <div className="overflow-hidden rounded-md border border-border bg-card">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+              <caption className="sr-only">
+                Findings for run {params.id}
+              </caption>
+              <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
-                  <th className="px-3 py-2">ID</th>
-                  <th className="px-3 py-2">Severity</th>
-                  <th className="px-3 py-2">Title</th>
-                  <th className="px-3 py-2">Validation</th>
-                  <th className="px-3 py-2">Status</th>
+                  <th scope="col" className="px-3 py-2">ID</th>
+                  <th scope="col" className="px-3 py-2">Severity</th>
+                  <th scope="col" className="px-3 py-2">Title</th>
+                  <th scope="col" className="px-3 py-2">Validation</th>
+                  <th scope="col" className="px-3 py-2">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -214,12 +224,12 @@ export default function RunPage({ params }: { params: { id: string } }) {
                   const blob = f.schema_blob;
                   const tone =
                     VALIDATION_TONES[f.validation_state] ??
-                    "bg-slate-100 text-slate-500";
+                    "bg-muted text-muted-foreground";
                   return (
-                    <tr key={f.id} className="border-t border-slate-100">
+                    <tr key={f.id} className="border-t border-border">
                       <td className="px-3 py-2 font-mono text-xs">
                         <a
-                          className="text-sky-700 underline"
+                          className="text-primary underline"
                           href={`/findings/${f.id}`}
                         >
                           {f.id}
@@ -276,7 +286,7 @@ function ReportLinks({ runId }: { runId: string }) {
               href={reportUrl(runId, l.ext)}
               target="_blank"
               rel="noreferrer"
-              className="text-sky-700 underline"
+              className="text-primary underline"
             >
               {l.label}
             </a>
@@ -290,7 +300,7 @@ function ReportLinks({ runId }: { runId: string }) {
             href={exportVulnfixerUrl(runId)}
             target="_blank"
             rel="noreferrer"
-            className="text-sky-700 underline"
+            className="text-primary underline"
           >
             Vulnfixer export
           </a>

@@ -202,7 +202,7 @@ describe("AuthProfilesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
     const panel = await screen.findByText(/create-denied-403/);
-    expect(panel.className).toContain("border-red-200");
+    expect(panel.className).toContain("border-destructive");
     expect(mutateMock).not.toHaveBeenCalled();
   });
 

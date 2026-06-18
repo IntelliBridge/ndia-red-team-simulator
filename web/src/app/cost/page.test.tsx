@@ -125,7 +125,7 @@ describe("CostPage", () => {
     render(h(CostPage));
     const panel = screen.getByText(/Failed to load cost:/);
     expect(panel.textContent).toContain("boom-503");
-    expect(panel.className).toContain("border-red-200");
+    expect(panel.className).toContain("border-destructive");
   });
 
   it("surfaces a projects-fetch error too", () => {
@@ -175,7 +175,7 @@ describe("CostPage", () => {
     expect(screen.getAllByText("Uncapped").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("colors remaining red when at or below zero", () => {
+  it("flags remaining as over budget when at or below zero", () => {
     useSWRMock.mockReturnValue({
       data: cost({
         budget: {
@@ -188,8 +188,10 @@ describe("CostPage", () => {
       isLoading: false,
     });
     render(h(CostPage));
-    const remaining = screen.getByText("-$20.00");
-    expect(remaining.className).toContain("text-red-700");
+    // Over budget carries a non-colour cue (the "over budget —" prefix) plus
+    // the destructive token, so the state isn't conveyed by colour alone.
+    const remaining = screen.getByText(/over budget — -\$20\.00/);
+    expect(remaining.className).toContain("text-destructive");
   });
 
   it("renders one by-day bar per day with day attribution", () => {

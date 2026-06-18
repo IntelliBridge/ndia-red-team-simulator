@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -29,6 +30,8 @@ from typing import Any
 
 from aegis import __version__
 from aegis.audit.chain import resolve_writer, verify_chain
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -277,6 +280,7 @@ def generate_evidence_pack(
         from aegis.config import load_config
         config = load_config()
 
+    logger.info("generate_evidence_pack start out_dir=%s project=%s", out_dir, project)
     out = Path(out_dir)
     audit_dir = out / "audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
@@ -340,6 +344,8 @@ def generate_evidence_pack(
         pack_hash=pack_hash,
     )
     _write_json(out / "manifest.json", manifest.to_dict())
+    logger.info("generate_evidence_pack finished out_dir=%s chains=%d files=%d",
+                out_dir, len(chains), len(files))
     return manifest
 
 

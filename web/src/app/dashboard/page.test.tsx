@@ -82,13 +82,17 @@ describe("DashboardPage", () => {
     useRequireAuthMock.mockReturnValue(false);
     useSWRMock.mockReturnValue({ data: undefined, error: undefined, isLoading: false });
     render(h(DashboardPage));
-    expect(useSWRMock).toHaveBeenLastCalledWith(null, expect.any(Function));
+    expect(useSWRMock).toHaveBeenLastCalledWith(null, expect.any(Function), {
+      refreshInterval: 15000,
+    });
 
     cleanup();
     useRequireAuthMock.mockReturnValue(true);
     useSWRMock.mockReturnValue({ data: undefined, error: undefined, isLoading: true });
     render(h(DashboardPage));
-    expect(useSWRMock).toHaveBeenLastCalledWith("/v1/runs", expect.any(Function));
+    expect(useSWRMock).toHaveBeenLastCalledWith("/v1/runs", expect.any(Function), {
+      refreshInterval: 15000,
+    });
   });
 
   it("renders the loading state", () => {

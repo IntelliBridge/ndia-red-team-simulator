@@ -122,7 +122,7 @@ describe("FindingPage", () => {
     });
     renderPage();
     const panel = screen.getByText("Failed to load.");
-    expect(panel.className).toContain("border-red-200");
+    expect(panel.className).toContain("border-destructive");
   });
 
   it("renders the failure panel when data is missing (no error)", () => {
@@ -218,7 +218,7 @@ describe("FindingPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
 
     const panel = await screen.findByText(/verify-failed-409/);
-    expect(panel.className).toContain("border-red-200");
+    expect(panel.className).toContain("border-destructive");
     expect(mutateMock).not.toHaveBeenCalled();
   });
 });

@@ -39,7 +39,7 @@ const SECRET_LABEL: Record<AuthProfileKind, string> = {
 
 const fetcher = () => listAuthProfiles(PROJECT);
 
-const inputCls = "rounded-md border border-slate-200 px-2 py-1.5";
+const inputCls = "rounded-md border border-border bg-background px-2 py-1.5";
 const labelCls = "flex flex-col text-sm";
 
 export default function AuthProfilesPage() {
@@ -63,9 +63,10 @@ export default function AuthProfilesPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  if (!authed) return <p className="text-slate-500">Redirecting to sign in…</p>;
-  if (isLoading) return <p className="text-slate-500">Loading…</p>;
-  if (error) return <p className="text-slate-600">Failed to load.</p>;
+  if (!authed)
+    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
+  if (isLoading) return <p className="text-muted-foreground">Loading…</p>;
+  if (error) return <p className="text-muted-foreground">Failed to load.</p>;
 
   const callerRole = roles[PROJECT];
   const profiles = data ?? [];
@@ -134,51 +135,52 @@ export default function AuthProfilesPage() {
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-semibold">Auth Profiles</h1>
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-muted-foreground">
           Credentials DAST scanners use to test behind a login. Secrets are
           write-only and never shown again.
         </p>
       </header>
 
       {err && (
-        <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {err}
         </p>
       )}
 
-      <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-md border border-border bg-card">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+          <caption className="sr-only">DAST authentication profiles</caption>
+          <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
             <tr>
-              <th className="px-3 py-2">Name</th>
-              <th className="px-3 py-2">Kind</th>
-              <th className="px-3 py-2">Config</th>
-              <th className="px-3 py-2">Created</th>
-              <th className="px-3 py-2">Actions</th>
+              <th scope="col" className="px-3 py-2">Name</th>
+              <th scope="col" className="px-3 py-2">Kind</th>
+              <th scope="col" className="px-3 py-2">Config</th>
+              <th scope="col" className="px-3 py-2">Created</th>
+              <th scope="col" className="px-3 py-2">Actions</th>
             </tr>
           </thead>
           <tbody>
             {profiles.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-3 py-4 text-slate-500">
+                <td colSpan={5} className="px-3 py-4 text-muted-foreground">
                   No authentication profiles yet.
                 </td>
               </tr>
             )}
             {profiles.map((p) => (
-              <tr key={p.id} className="border-t border-slate-100">
+              <tr key={p.id} className="border-t border-border">
                 <td className="px-3 py-2">{p.name}</td>
                 <td className="px-3 py-2">{p.kind}</td>
-                <td className="px-3 py-2 font-mono text-xs text-slate-500">
+                <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
                   {Object.entries(p.config ?? {})
                     .map(([k, v]) => `${k}=${v}`)
                     .join(" ") || "—"}
                 </td>
-                <td className="px-3 py-2 text-slate-500">{p.created_at}</td>
+                <td className="px-3 py-2 text-muted-foreground">{p.created_at}</td>
                 <td className="px-3 py-2">
                   <RoleGated minRole="admin" callerRole={callerRole}>
                     <button
-                      className="rounded-md border border-red-200 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+                      className="rounded-md border border-destructive/40 px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50"
                       disabled={busy}
                       onClick={() => remove(p)}
                     >
@@ -210,7 +212,7 @@ export default function AuthProfilesPage() {
               <select
                 value={kind}
                 onChange={(e) => setKind(e.target.value as AuthProfileKind)}
-                className={`bg-white ${inputCls}`}
+                className={inputCls}
               >
                 {KINDS.map((k) => (
                   <option key={k.value} value={k.value}>
@@ -300,7 +302,7 @@ export default function AuthProfilesPage() {
               />
             </label>
             <button
-              className="rounded-md bg-sky-700 px-3 py-1.5 text-sm text-white hover:bg-sky-800 disabled:opacity-50"
+              className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               onClick={create}
               disabled={busy}
             >

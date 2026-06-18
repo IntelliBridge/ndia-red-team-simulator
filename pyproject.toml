@@ -22,6 +22,16 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
 ]
+security = [
+    # Self-scanning toolchain for the `sast`/`deps` CI jobs (cluster C2).
+    # bandit -> Python AST security linter; pip-audit -> dependency CVE
+    # audit against the resolved env; semgrep -> rule-based SAST
+    # (p/python + p/security-audit). trivy is installed in CI from its
+    # upstream release, not pip, so it is intentionally absent here.
+    "bandit>=1.7",
+    "pip-audit>=2.7",
+    "semgrep>=1.60",
+]
 api = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",

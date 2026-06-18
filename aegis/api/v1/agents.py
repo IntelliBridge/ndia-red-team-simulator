@@ -35,6 +35,23 @@ class RunAgentBody(BaseModel):
     override_authorized: bool = False
 
 
+@router.get("")
+def list_agents_route(
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """List the registered CAI agents (name, domain, effect, wired).
+
+    Read-only catalog: any authenticated user may enumerate the roster
+    (the picker in ``web/src/app/agents/page.tsx`` consumes this). The
+    per-run RBAC + human gate still apply at ``POST /{agent_name}/run``.
+    Importing the ``aegis.agents`` package (not ``registry`` directly)
+    triggers built-in registration, so the list is populated.
+    """
+    from aegis.agents import list_agents
+
+    return {"agents": list_agents()}
+
+
 @router.post("/{agent_name}/run")
 def run_agent(
     agent_name: str,

@@ -29,11 +29,11 @@ function StatCard({
   tone?: string;
 }) {
   return (
-    <div className="rounded-md border border-slate-200 bg-white p-4">
-      <div className="text-xs uppercase tracking-wide text-slate-500">
+    <div className="rounded-md border border-border bg-card p-4">
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">
         {label}
       </div>
-      <div className={`mt-1 text-2xl font-semibold ${tone ?? "text-slate-900"}`}>
+      <div className={`mt-1 text-2xl font-semibold ${tone ?? "text-foreground"}`}>
         {value}
       </div>
     </div>
@@ -47,7 +47,9 @@ function ByDayChart({ byDay }: { byDay: Record<string, number> }) {
   const max = entries.reduce((m, [, c]) => Math.max(m, c), 0);
 
   if (entries.length === 0) {
-    return <p className="text-sm text-slate-500">No daily usage in range.</p>;
+    return (
+      <p className="text-sm text-muted-foreground">No daily usage in range.</p>
+    );
   }
 
   return (
@@ -68,7 +70,7 @@ function ByDayChart({ byDay }: { byDay: Record<string, number> }) {
             <div
               data-testid="bar"
               data-day={day}
-              className="w-full rounded-t bg-sky-500"
+              className="w-full rounded-t bg-primary"
               style={{ height: `${pct}%` }}
             />
           </div>
@@ -89,12 +91,17 @@ function BreakdownTable({
 }) {
   const sorted = Object.entries(rows).sort(([, a], [, b]) => b - a);
   return (
-    <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+    <div className="overflow-hidden rounded-md border border-border bg-card">
       <table className="w-full text-sm">
-        <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+        <caption className="sr-only">Spend by {caption}</caption>
+        <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
-            <th className="px-3 py-2">{keyLabel}</th>
-            <th className="px-3 py-2 text-right">Spend</th>
+            <th scope="col" className="px-3 py-2">
+              {keyLabel}
+            </th>
+            <th scope="col" className="px-3 py-2 text-right">
+              Spend
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -102,14 +109,14 @@ function BreakdownTable({
             <tr>
               <td
                 colSpan={2}
-                className="px-3 py-4 text-center text-slate-500"
+                className="px-3 py-4 text-center text-muted-foreground"
               >
                 No {caption} usage in range.
               </td>
             </tr>
           ) : (
             sorted.map(([name, cents]) => (
-              <tr key={name} className="border-t border-slate-100">
+              <tr key={name} className="border-t border-border">
                 <td className="px-3 py-2 font-mono text-xs">{name}</td>
                 <td className="px-3 py-2 text-right">{centsToUsd(cents)}</td>
               </tr>
@@ -141,18 +148,18 @@ export default function CostPage() {
   );
 
   if (!authed)
-    return <p className="text-slate-500">Redirecting to sign in…</p>;
+    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
 
   const error = projectsError ?? costError;
   if (error)
     return (
-      <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+      <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
         Failed to load cost: {String(error)}
       </p>
     );
 
   if (projectsLoading || costLoading || !data)
-    return <p className="text-slate-500">Loading…</p>;
+    return <p className="text-muted-foreground">Loading…</p>;
 
   const { total_cents, call_count, by_day, by_model, by_task, budget } = data;
   const cap =
@@ -172,17 +179,17 @@ export default function CostPage() {
       <header className="flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Cost</h1>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-muted-foreground">
             Per-tenant LLM spend for org{" "}
             <span className="font-mono">{orgId}</span> over the last {days}{" "}
             days.
           </p>
         </div>
-        <label className="flex items-center gap-2 text-sm text-slate-600">
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
           <span>Window</span>
           <select
             aria-label="Days window"
-            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm"
+            className="rounded-md border border-border bg-background px-2 py-1 text-sm"
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
           >
@@ -198,29 +205,29 @@ export default function CostPage() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard label="Total spend" value={centsToUsd(total_cents)} />
         <StatCard label="Call count" value={call_count.toLocaleString()} />
-        <div className="rounded-md border border-slate-200 bg-white p-4">
-          <div className="text-xs uppercase tracking-wide text-slate-500">
+        <div className="rounded-md border border-border bg-card p-4">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">
             Budget
           </div>
           <dl className="mt-1 space-y-1 text-sm">
             <div className="flex justify-between">
-              <dt className="text-slate-500">Monthly cap</dt>
+              <dt className="text-muted-foreground">Monthly cap</dt>
               <dd className="font-medium">{cap}</dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">Month to date</dt>
+              <dt className="text-muted-foreground">Month to date</dt>
               <dd className="font-medium">
                 {centsToUsd(budget.month_spent_cents)}
               </dd>
             </div>
             <div className="flex justify-between">
-              <dt className="text-slate-500">Remaining</dt>
+              <dt className="text-muted-foreground">Remaining</dt>
               <dd
                 className={`font-medium ${
-                  remainingNegative ? "text-red-700" : "text-slate-900"
+                  remainingNegative ? "text-destructive" : "text-foreground"
                 }`}
               >
-                {remaining}
+                {remainingNegative ? `over budget — ${remaining}` : remaining}
               </dd>
             </div>
           </dl>
@@ -228,13 +235,13 @@ export default function CostPage() {
       </div>
 
       {noUsage ? (
-        <p className="rounded-md border border-slate-200 bg-white p-4 text-sm text-slate-600">
+        <p className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
           No usage recorded for this org in the selected window.
         </p>
       ) : (
         <>
-          <section className="rounded-md border border-slate-200 bg-white p-4">
-            <h2 className="mb-3 text-sm font-semibold text-slate-700">
+          <section className="rounded-md border border-border bg-card p-4">
+            <h2 className="mb-3 text-sm font-semibold text-foreground">
               Spend by day
             </h2>
             <ByDayChart byDay={by_day} />

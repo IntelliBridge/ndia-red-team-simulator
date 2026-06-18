@@ -171,6 +171,7 @@ nav:
       - Authenticated DAST: ops/authenticated-dast.md
   - Development:
       - Local stack: dev/local-stack.md
+      - Testing: dev/testing.md
       - Frontend: dev/frontend.md
       - Extending Aegis: dev/extending.md
       - Editing the docs: dev/docs.md
@@ -183,6 +184,10 @@ nav:
       - "0002 — Registry seam + runners": adr/0002-registry-seam-and-runners.md
       - "0003 — Agent execution path": adr/0003-agent-execution-path.md
       - "0004 — Unified effect-class gate": adr/0004-unified-effect-class-gate.md
+      - "0005 — Worker autoscaling + DR": adr/0005-worker-autoscaling-and-dr.md
+      - "0006 — Firecracker microVM isolation": adr/0006-firecracker-microvm-isolation.md
+      - "0007 — Native MCP toolbelt": adr/0007-native-mcp-toolbelt.md
+      - "0008 — Nix reproducible builds": adr/0008-nix-reproducible-builds.md
   - "Changelog ↗": https://github.com/IntelliBridge/aegis/blob/main/CHANGELOG.md
   - "Contributing ↗": https://github.com/IntelliBridge/aegis/blob/main/CONTRIBUTING.md
   - Legacy:

@@ -17,6 +17,7 @@ Secret handling invariants:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
 
     from aegis.audit.chain import AuditWriter
     from aegis.db.models import AuthProfile
+
+logger = logging.getLogger(__name__)
 
 VALID_KINDS = frozenset({"form", "bearer", "header", "cookie"})
 
@@ -181,8 +184,13 @@ def resolve_auth_for_scan(session: Session, profile_id: str) -> dict[str, Any]:
 
     profile = session.get(AuthProfile, profile_id)
     if profile is None:
+        logger.error("resolve_auth_for_scan error: auth profile not found: %s",
+                     profile_id)
         raise LookupError(f"auth profile not found: {profile_id}")
 
+    # Secret-free by construction: logs the profile id + kind only, never the
+    # decrypted secret (the return value carries it; the log must not).
+    logger.info("resolve_auth_for_scan profile_id=%s kind=%s", profile_id, profile.kind)
     return {
         "kind": profile.kind,
         "config": dict(profile.config or {}),

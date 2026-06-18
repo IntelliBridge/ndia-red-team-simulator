@@ -25,7 +25,11 @@ global:
 # Secret (see config.secret below). Service URLs default to in-cluster DNS
 # names that line up with the dependency Services this chart renders.
 config:
-  env: prod
+  # Mirrors deploy/docker-compose.yml (AEGIS_ENV=dev). The shipped
+  # config.secret.* values are DEV placeholders, so the default env is dev;
+  # set env=prod via your prod values file, which activates the secret guard
+  # in templates/secret.yaml that refuses to deploy those placeholders.
+  env: dev
   authMode: dev
   # SQLAlchemy URL. When postgres.enabled=true this points at the in-cluster
   # Service; override for a managed Postgres.
@@ -48,11 +52,50 @@ config:
   # Secret-bearing values. Templated into a Secret, NEVER hardcoded into a
   # ConfigMap. Override these in production. existingSecret short-circuits
   # the rendered Secret so you can wire an external secret store instead.
+  #
+  # Production safety: when config.env=prod the chart REFUSES to render with
+  # these dev placeholders still in place and no externally-managed secret
+  # wired in (see templates/secret.yaml). Supply one of:
+  #   - real values via --set / a sealed values file, or
+  #   - secret.existingSecret pointing at a pre-provisioned Secret, or
+  #   - secret.externalSecrets.enabled=true to render an ExternalSecret that
+  #     the External Secrets Operator reconciles from your backing store.
   secret:
+    # Name of a pre-existing Secret to consume instead of rendering one here.
+    # When set, secret.yaml is skipped and every component reads this Secret.
     existingSecret: ""
     s3AccessKeyId: aegis
     s3SecretAccessKey: aegis-secret
     nextAuthSecret: dev-secret-change-me
+    # External Secrets Operator integration. When enabled, the chart renders
+    # an ExternalSecret (templates/externalsecret.yaml) that materialises the
+    # config Secret from an external store (Vault, AWS/GCP SM, etc.) instead
+    # of templating the secret values above. The materialised Secret reuses
+    # aegis.secretName, so components need no change. Requires the External
+    # Secrets Operator (external-secrets.io) installed in the cluster.
+    externalSecrets:
+      enabled: false
+      # ClusterSecretStore/SecretStore the operator pulls from.
+      secretStoreRef:
+        name: aegis
+        kind: ClusterSecretStore
+      # How often the operator re-syncs the backing store.
+      refreshInterval: 1h
+      # Map each Secret key to a remote key/property in the backing store.
+      # remoteRef.key is the path in the store; property is the field within.
+      data:
+        - secretKey: AEGIS_S3_ACCESS_KEY_ID
+          remoteRef:
+            key: aegis/s3
+            property: access_key_id
+        - secretKey: AEGIS_S3_SECRET_ACCESS_KEY
+          remoteRef:
+            key: aegis/s3
+            property: secret_access_key
+        - secretKey: NEXTAUTH_SECRET
+          remoteRef:
+            key: aegis/nextauth
+            property: secret
 
 # -- Sandbox isolation (gVisor) -----------------------------------------------
 # gVisor (`runsc`) sandboxes the pods that execute untrusted scan/tool

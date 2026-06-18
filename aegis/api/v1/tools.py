@@ -22,6 +22,24 @@ class KaliRunBody(BaseModel):
     params: dict[str, Any] | None = None
 
 
+@router.get("")
+def list_tools_route(
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """List the platform tool catalog (name, category, source, effect).
+
+    Read-only: any authenticated user may enumerate the roster (the
+    picker in ``web/src/app/tools/page.tsx`` consumes this). Invocation
+    is still gated per tool at ``POST /kali/{tool}``. ``effect`` is the
+    authoritative classification from ``aegis.tools.catalog``.
+    """
+    from dataclasses import asdict
+
+    from aegis.tools.catalog import list_tools
+
+    return {"tools": [asdict(spec) for spec in list_tools()]}
+
+
 @router.post("/kali/{tool}")
 def kali_run(
     tool: str,

@@ -10,6 +10,7 @@ the worker actor and is correlated with the admission row by ``run_id``.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from aegis.workers.celery_app import app
@@ -17,18 +18,26 @@ from aegis.workers.celery_app import app
 if TYPE_CHECKING:
     from celery import Task
 
+logger = logging.getLogger(__name__)
+
 
 @app.task(name="aegis.agent_run", bind=True, max_retries=2)
 def agent_run(self: Task, job_id: str) -> dict[str, Any]:
+    from sqlalchemy import select
+
     from aegis.agents import AgentContext, dispatch
     from aegis.config import load_config
-    from aegis.db.models import Job
+    from aegis.db.models import Job, Project
+    from aegis.llm.budget import enforce_budget_for_run
+    from aegis.llm.router import BudgetExceeded
     from aegis.safety import authorize
     from aegis.workers.bootstrap import task_context
 
     config = load_config()
+    logger.info("agent_run begin job_id=%s", job_id)
     with task_context(job_id, task=self) as ctx:
         if ctx.skip:
+            logger.info("agent_run skipped job_id=%s", job_id)
             return {"job_id": job_id, "skipped": True}
         job = ctx.session.get(Job, job_id)
         detail = (job.detail if job else {}) or {}
@@ -54,6 +63,24 @@ def agent_run(self: Task, job_id: str) -> dict[str, Any]:
                     "agent": agent_name, "target": target,
                     "execute": execute},
         )
+
+        # Budget gate for this DB-backed run (after authorize, before dispatch —
+        # the same authorize→budget→run order the fix path uses). The CAI agents
+        # build their model directly (not via ``router.route``), so the router's
+        # budget hook never sees an agent run; this is the chokepoint that
+        # enforces the project (and org) cap and fail-closes under
+        # ``llm_budget_strict``. A worker job always carries a ``project_id``, so
+        # this is always a DB-backed run; the org tier is resolved from the
+        # project for the monthly cap.
+        org_id = ctx.session.execute(
+            select(Project.org_id).where(Project.id == ctx.project_id)
+        ).scalar_one_or_none()
+        try:
+            enforce_budget_for_run(ctx.project_id, org_id=org_id, config=config)
+        except BudgetExceeded as exc:
+            return {"run_id": ctx.run_id, "agent": agent_name,
+                    "status": "error", "error": f"BudgetExceeded: {exc}"}
+
         result = dispatch(
             agent_name, prompt,
             AgentContext(
@@ -64,6 +91,8 @@ def agent_run(self: Task, job_id: str) -> dict[str, Any]:
                 execute=execute,
             ),
         )
+        logger.info("agent_run finished job_id=%s agent=%s status=%s",
+                    job_id, agent_name, result.status)
         return {
             "run_id": ctx.run_id, "agent": agent_name,
             "status": result.status,

@@ -31,6 +31,15 @@ class APISettings:
     oidc_jwks_url: str | None = field(
         default_factory=lambda: os.environ.get("AEGIS_OIDC_JWKS_URL")
     )
+    # How long a fetched JWKS document is trusted before it is refetched.
+    # Bounds the window in which a rotated-out IdP signing key keeps being
+    # accepted; previously the JWKS was cached for the whole process
+    # lifetime and only refreshed on restart.
+    api_jwks_cache_ttl_seconds: int = field(
+        default_factory=lambda: int(
+            os.environ.get("AEGIS_API_JWKS_CACHE_TTL_SECONDS", "300")
+        )
+    )
     # Aegis-side cookie session key (F14a). The NextAuth callback signs;
     # FastAPI verifies. RS256, separate from Keycloak's JWKS and from
     # NEXTAUTH_SECRET. The private side is only required where minting
@@ -41,6 +50,16 @@ class APISettings:
     )
     api_session_public_key: str | None = field(
         default_factory=lambda: os.environ.get("AEGIS_API_SESSION_PUBLIC_KEY")
+    )
+    # Previous session public key, kept valid through a rotation overlap.
+    # ``verify_session_cookie`` tries the current key first, then this one,
+    # so cookies minted before a rotation keep verifying until the old key
+    # is retired. Minting always uses the current key. Mirrors the worker
+    # signing-key overlap (``worker_signing_key_previous``).
+    api_session_public_key_previous: str | None = field(
+        default_factory=lambda: os.environ.get(
+            "AEGIS_API_SESSION_PUBLIC_KEY_PREVIOUS"
+        )
     )
     api_session_key_id: str = field(
         default_factory=lambda: os.environ.get(

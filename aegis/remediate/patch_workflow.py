@@ -254,6 +254,25 @@ def rollback(repo_path: Path | str, ref_before: str) -> bool:
         return False
 
 
+def restore_tree(repo_path: Path | str, ref_before: str) -> bool:
+    """Fully restore the working tree to ``ref_before``.
+
+    Unlike :func:`rollback` (a bare ``reset --hard``), this also runs
+    ``git clean -fd`` so files *added* by an applied-but-not-committed diff are
+    removed — ``reset --hard`` alone leaves untracked files behind. Used by the
+    iterative fix→test→retry loop, which applies a candidate patch, runs the
+    project tests, then must leave a pristine tree for the next attempt. Returns
+    True on a clean restore.
+    """
+    repo = Path(repo_path)
+    try:
+        _git(repo, ["reset", "--hard", ref_before])
+        _git(repo, ["clean", "-fd"])
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
 def _parse_release_trains(raw: str | None) -> dict[str, str]:
     """Parse a release-train mapping from JSON or ``name=branch,...`` form.
 

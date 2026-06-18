@@ -12,6 +12,7 @@ selected, cached). ``sync_finding`` upserts a ``FindingTicket`` keyed on
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -26,6 +27,8 @@ if TYPE_CHECKING:
 
     from aegis.audit.chain import AuditWriter
     from aegis.db.models import FindingTicket
+
+logger = logging.getLogger(__name__)
 
 
 def sync_finding(
@@ -58,6 +61,7 @@ def sync_finding(
     project_id = finding.project_id
     schema_blob = dict(finding.schema_blob or {})
 
+    logger.info("sync_finding start finding_id=%s project_id=%s", finding_id, project_id)
     prov = provider or resolve_ticket_provider()
     ref: TicketRef = prov.sync_finding(
         finding_id, schema_blob, project_id=project_id
@@ -106,6 +110,8 @@ def sync_finding(
             },
             project_id=project_id,
         )
+    logger.info("sync_finding finished finding_id=%s provider=%s external_id=%s",
+                finding_id, ref.provider, ref.external_id)
     synced: FindingTicket = row
     return synced
 
@@ -129,11 +135,15 @@ def refresh_status(
     if row is None:
         raise LookupError(f"finding ticket not found: {finding_ticket_id}")
 
+    logger.info("refresh_status start ticket_id=%s provider=%s",
+                finding_ticket_id, row.provider)
     prov = provider or resolve_ticket_provider()
     status = prov.fetch_status(row.external_id)
     row.status = status
     row.synced_at = datetime.now(timezone.utc)
     session.flush()
+    logger.info("refresh_status finished ticket_id=%s status=%s",
+                finding_ticket_id, status)
     refreshed: FindingTicket = row
     return refreshed
 

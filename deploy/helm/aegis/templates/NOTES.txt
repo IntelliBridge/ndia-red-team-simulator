@@ -1,4 +1,14 @@
+{{- include "aegis.validateProdSecret" . -}}
 Aegis {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Config secret source:
+{{- if .Values.config.secret.existingSecret }}
+  - existing Secret "{{ .Values.config.secret.existingSecret }}" (managed out-of-band).
+{{- else if .Values.config.secret.externalSecrets.enabled }}
+  - ExternalSecret -> Secret "{{ include "aegis.secretName" . }}" (External Secrets Operator; store "{{ .Values.config.secret.externalSecrets.secretStoreRef.name }}").
+{{- else }}
+  - chart-rendered Secret "{{ include "aegis.secretName" . }}".{{ if eq .Values.config.env "prod" }} (values overridden from dev placeholders){{ end }}
+{{- end }}
 
 Components:
   - api         (Service: {{ include "aegis.componentName" (dict "ctx" . "component" "api") }}:{{ .Values.api.service.port }})

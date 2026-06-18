@@ -27,6 +27,7 @@ offline test path, so the default behaviour there is a clean degrade.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -37,6 +38,8 @@ from aegis.config import AegisConfig, load_config
 from aegis.remediate.cai_runner import RemediationResult
 from aegis.remediate.patch_workflow import diff_sha256, extract_unified_diff
 from aegis.schema import AegisFinding
+
+logger = logging.getLogger(__name__)
 
 # The deploy image exposes a driver under the vendored tree. It must honour
 # --emit-diff (unified diff to stdout) + --no-push + --no-pr in propose mode,
@@ -107,10 +110,14 @@ def run_agentic_fix(
     if config is None:
         config = load_config()
 
-    fail = lambda msg: RemediationResult(  # noqa: E731 - terse local helper
-        success=False, action="code_patch", finding_id=finding.id,
-        output="", error=msg, source="vulnfixer",
-    )
+    logger.info("vulnfixer run start finding_id=%s open_pr=%s", finding.id, open_pr)
+
+    def fail(msg: str) -> RemediationResult:
+        logger.error("vulnfixer run error finding_id=%s: %s", finding.id, msg)
+        return RemediationResult(
+            success=False, action="code_patch", finding_id=finding.id,
+            output="", error=msg, source="vulnfixer",
+        )
 
     if not repo_path:
         return fail("agentic remediation requires a repo working tree (--repo)")
@@ -145,6 +152,8 @@ def run_agentic_fix(
         result = _parse_engine_result(proc.stdout)
         if not result or not result.get("pr_url"):
             return fail("vuln-fixer engine opened no PR (no AEGIS_RESULT pr_url)")
+        logger.info("vulnfixer run finished finding_id=%s pr_url=%s",
+                    finding.id, result.get("pr_url"))
         return RemediationResult(
             success=True, action="code_patch", finding_id=finding.id,
             output=proc.stdout, source="vulnfixer",
@@ -155,6 +164,7 @@ def run_agentic_fix(
     if diff is None:
         return fail("vuln-fixer engine produced no parseable unified diff")
 
+    logger.info("vulnfixer run finished finding_id=%s diff_bytes=%d", finding.id, len(diff))
     return RemediationResult(
         success=True, action="code_patch", finding_id=finding.id,
         output=proc.stdout, diff=diff, diff_sha256_hex=diff_sha256(diff),

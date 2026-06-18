@@ -89,17 +89,46 @@ class TestKeyRotationOverlap(unittest.TestCase):
         self.assertIsNone(_verify_worker_token(token, new))
 
 
-class TestLegacyTokenStillAccepted(unittest.TestCase):
-    def test_static_hmac_legacy_path_works_during_transition(self):
-        # The Phase 3 demo path: token is just the HMAC of "aegis-worker".
+class TestLegacyTokenRejected(unittest.TestCase):
+    """C1: the legacy non-expiring constant-payload token is gone.
+
+    The Phase 3 demo token was ``worker:<HMAC("aegis-worker")>`` — no
+    expiry, signed over a fixed string, and it granted ``is_system``.
+    That branch was deleted; such a token must now be rejected.
+    """
+
+    @staticmethod
+    def _legacy_token(secret: str) -> str:
         from hashlib import sha256
         from hmac import new as hmac_new
-        secret = "key-v1"
         legacy_sig = hmac_new(secret.encode(), b"aegis-worker", sha256).hexdigest()
-        token = f"worker:{legacy_sig}"
-        user = _verify_worker_token(token, _settings(worker_signing_key=secret))
-        self.assertIsNotNone(user)
-        self.assertEqual(user.sub, "service:worker:legacy")
+        return f"worker:{legacy_sig}"
+
+    def test_static_hmac_legacy_token_now_rejected(self):
+        secret = "key-v1"
+        token = self._legacy_token(secret)
+        self.assertIsNone(
+            _verify_worker_token(token, _settings(worker_signing_key=secret))
+        )
+
+    def test_legacy_token_rejected_even_with_matching_previous_key(self):
+        # Rotation state should not resurrect the legacy path either.
+        secret = "key-v1"
+        token = self._legacy_token(secret)
+        settings = _settings(
+            worker_signing_key="key-v2",
+            worker_signing_key_previous=secret,
+            worker_signing_key_version=2,
+        )
+        self.assertIsNone(_verify_worker_token(token, settings))
+
+    def test_legacy_token_does_not_grant_system_actor(self):
+        # Guard the specific privilege the deleted branch handed out: a
+        # constant-payload token must never resolve to a service:worker
+        # / is_system identity.
+        token = self._legacy_token("key-v1")
+        user = _verify_worker_token(token, _settings(worker_signing_key="key-v1"))
+        self.assertIsNone(user)
 
 
 if __name__ == "__main__":

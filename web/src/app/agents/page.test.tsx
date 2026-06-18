@@ -8,8 +8,16 @@ vi.mock("@/hooks/useRequireAuth", () => ({ useRequireAuth: useRequireAuthMock })
 const useRolesMock = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/useRoles", () => ({ useRoles: useRolesMock }));
 
+// The agent picker now loads its roster from GET /v1/agents via SWR.
+const useSWRMock = vi.hoisted(() => vi.fn());
+vi.mock("swr", () => ({ default: useSWRMock }));
+
 const runAgentMock = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/api", () => ({ runAgent: runAgentMock }));
+const listAgentsMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/api", () => ({
+  runAgent: runAgentMock,
+  listAgents: listAgentsMock,
+}));
 
 vi.mock("@aegis/design-system", () => ({
   RoleGated: ({ minRole, callerRole, children, fallback }: any) => {
@@ -31,6 +39,18 @@ vi.mock("@aegis/design-system", () => ({
 
 import AgentsPage from "./page";
 
+// A representative GET /v1/agents slice: one read agent, one active agent,
+// plus an unwired agent that must be filtered out of the picker.
+const AGENTS = [
+  { name: "recon", domain: "recon", effect: "read", wired: true },
+  { name: "red_teamer", domain: "offensive", effect: "active", wired: true },
+  { name: "ghost", domain: "audit", effect: "read", wired: false },
+];
+
+function withAgents(over: { data?: unknown; error?: unknown } = {}) {
+  useSWRMock.mockReturnValue({ data: AGENTS, error: undefined, ...over });
+}
+
 function selectAgent(name: string) {
   fireEvent.change(screen.getByLabelText("Agent"), { target: { value: name } });
 }
@@ -38,6 +58,9 @@ function selectAgent(name: string) {
 beforeEach(() => {
   useRequireAuthMock.mockReturnValue(true);
   runAgentMock.mockReset();
+  listAgentsMock.mockReset();
+  useSWRMock.mockReset();
+  withAgents();
   // approver on the default project (first in the projects list).
   useRolesMock.mockReturnValue({
     roles: { "proj-1": "approver" },
@@ -56,9 +79,28 @@ describe("AgentsPage", () => {
     expect(screen.getByText("Redirecting to sign in…")).toBeTruthy();
   });
 
+  it("passes the agents key only once authed (null while not)", () => {
+    useRequireAuthMock.mockReturnValue(false);
+    render(h(AgentsPage));
+    expect(useSWRMock).toHaveBeenLastCalledWith(null, listAgentsMock);
+
+    cleanup();
+    useRequireAuthMock.mockReturnValue(true);
+    render(h(AgentsPage));
+    expect(useSWRMock).toHaveBeenLastCalledWith("/v1/agents", listAgentsMock);
+  });
+
   it("shows the safety banner", () => {
     render(h(AgentsPage));
     expect(screen.getByText(/may run active operations/)).toBeTruthy();
+  });
+
+  it("offers only wired agents in the picker", () => {
+    render(h(AgentsPage));
+    const select = screen.getByLabelText("Agent") as HTMLSelectElement;
+    const values = Array.from(select.options).map((o) => o.value);
+    expect(values).toEqual(["recon", "red_teamer"]);
+    expect(values).not.toContain("ghost");
   });
 
   it("runs a read agent at remediator with execute=false", async () => {
@@ -115,5 +157,11 @@ describe("AgentsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run agent" }));
     expect(await screen.findByText("A prompt is required.")).toBeTruthy();
     expect(runAgentMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed-load placeholder option when the roster errors", () => {
+    withAgents({ data: undefined, error: new Error("boom") });
+    render(h(AgentsPage));
+    expect(screen.getByText("Failed to load agents")).toBeTruthy();
   });
 });

@@ -86,6 +86,99 @@ class TestMintAndVerify(unittest.TestCase):
                 verify_session_cookie(cookie, settings)
 
 
+class TestSessionKeyRotationOverlap(unittest.TestCase):
+    """C1: a cookie minted under the previous key verifies during overlap.
+
+    Rotation flow: the new key becomes ``api_session_public_key`` and the
+    old public key is parked in ``api_session_public_key_previous``. A
+    cookie minted before the rotation (signed by the old private key)
+    must keep verifying until the previous key is retired. Minting always
+    uses the current key.
+    """
+
+    def test_cookie_under_previous_key_accepted_during_overlap(self):
+        old_private, old_public = generate_keypair()
+        new_private, new_public = generate_keypair()
+        # The browser still holds a cookie signed by the old key.
+        old_settings = _settings_with_session_keys(
+            api_session_private_key=old_private,
+            api_session_public_key=old_public,
+        )
+        cookie = mint_session_cookie(
+            sub="user-1", email="alice@example.com",
+            project_memberships={"proj-a": "admin"},
+            settings=old_settings,
+        )
+        # The API has rotated: current = new key, previous = old key.
+        rotated = _settings_with_session_keys(
+            api_session_private_key=new_private,
+            api_session_public_key=new_public,
+            api_session_public_key_previous=old_public,
+        )
+        claims = verify_session_cookie(cookie, rotated)
+        self.assertEqual(claims.sub, "user-1")
+        self.assertEqual(claims.project_memberships, {"proj-a": "admin"})
+
+    def test_cookie_under_previous_key_rejected_without_overlap(self):
+        # Same rotation, but no previous key configured → the old cookie
+        # is no longer trusted.
+        old_private, old_public = generate_keypair()
+        _new_private, new_public = generate_keypair()
+        old_settings = _settings_with_session_keys(
+            api_session_private_key=old_private,
+            api_session_public_key=old_public,
+        )
+        cookie = mint_session_cookie(
+            sub="user-1", email="alice@example.com", settings=old_settings,
+        )
+        rotated = _settings_with_session_keys(
+            api_session_public_key=new_public,
+            api_session_public_key_previous=None,
+        )
+        with self.assertRaises(SessionCookieError):
+            verify_session_cookie(cookie, rotated)
+
+    def test_current_key_still_wins_when_previous_configured(self):
+        # A cookie minted under the *current* key must verify regardless
+        # of whether a previous key is parked.
+        new_private, new_public = generate_keypair()
+        _old_private, old_public = generate_keypair()
+        settings = _settings_with_session_keys(
+            api_session_private_key=new_private,
+            api_session_public_key=new_public,
+            api_session_public_key_previous=old_public,
+        )
+        cookie = mint_session_cookie(
+            sub="user-2", email="bob@example.com", settings=settings,
+        )
+        claims = verify_session_cookie(cookie, settings)
+        self.assertEqual(claims.sub, "user-2")
+
+    def test_expired_cookie_still_rejected_under_previous_key(self):
+        # The overlap is for key rotation, not for resurrecting expired
+        # sessions: an expired cookie stays rejected even if its signing
+        # key is the configured previous key.
+        old_private, old_public = generate_keypair()
+        _new_private, new_public = generate_keypair()
+        old_settings = _settings_with_session_keys(
+            api_session_private_key=old_private,
+            api_session_public_key=old_public,
+            api_session_ttl_seconds=1,
+        )
+        cookie = mint_session_cookie(
+            sub="user-1", email="alice@example.com", settings=old_settings,
+        )
+        rotated = _settings_with_session_keys(
+            api_session_public_key=new_public,
+            api_session_public_key_previous=old_public,
+        )
+        import time
+        with patch("aegis.api.session_cookie.time.time",
+                   return_value=time.time() + 10):
+            with self.assertRaises(SessionCookieError):
+                verify_session_cookie(cookie, rotated)
+
+
 class TestParityViaTestClient(unittest.TestCase):
     """The same /v1/runs handler must succeed for both auth paths.
 

@@ -21,6 +21,7 @@ app = Celery(
         "aegis.workers.tasks.ci_gate",
         "aegis.workers.tasks.parallel_fix",
         "aegis.workers.tasks.reaper",
+        "aegis.workers.tasks.tenant_reconcile",
         "aegis.workers.tasks.worm_export",
     ],
 )
@@ -50,6 +51,7 @@ app.conf.task_routes = {
     "aegis.ci_gate": {"queue": "default"},
     "aegis.parallel_fix": {"queue": "default"},
     "aegis.reap_stale_jobs": {"queue": "default"},
+    "aegis.verify_tenant_integrity": {"queue": "default"},
 }
 
 # Periodic stale-job reaper: a crashed task is left status="running"
@@ -59,6 +61,15 @@ app.conf.beat_schedule = {
     "reap-stale-jobs": {
         "task": "aegis.reap_stale_jobs",
         "schedule": 300.0,
+    },
+    # Periodic tenant-isolation reconciliation: re-derive each scoped row's
+    # org_id from its project and flag any drift the 0009 UPDATE trigger
+    # couldn't have caught (rows predating it, written out-of-band, restored).
+    # Read-only — it logs/audits, never repairs. Hourly is ample for a
+    # detective control.
+    "verify-tenant-integrity": {
+        "task": "aegis.verify_tenant_integrity",
+        "schedule": 3600.0,
     },
     # Periodic WORM export of the audit chains to the Object-Lock bucket.
     # The task self-gates on AEGIS_WORM_EXPORT, so this entry is harmless

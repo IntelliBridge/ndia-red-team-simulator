@@ -1,7 +1,10 @@
 # aegis-plugin-example
 
-A reference **community scanner adapter** for the Aegis marketplace. It is a
-copyable template, not a real scanner — `scan()` returns zero findings.
+A reference **community scanner adapter** for the Aegis marketplace, and a
+*working sandboxed* one: `scan()` walks the target directory and flags any line
+containing the demo marker token `AEGIS-EXAMPLE-SECRET` as a low-severity
+finding. It is still a copyable template — swap the body of `scan()` for a real
+tool — but it now exercises the whole finding pipeline end-to-end.
 
 ## What it shows
 
@@ -9,6 +12,13 @@ copyable template, not a real scanner — `scan()` returns zero findings.
 - A factory (`create_scanner`) returning an object that satisfies the
   `ScannerAdapter` Protocol (`name`, `capabilities`, `default_timeout` +
   `adapter_version` / `health_check` / `scan`).
+- A `scan()` that returns real `AegisFinding`s and writes an artifact into the
+  run **directory** — all from **inside the sandbox subprocess** (see below).
+  Findings are the round-tripped result (serialized back to the parent);
+  artifacts land on the filesystem run dir. By design the sandboxed child has
+  **no database access**, so under the Postgres state backend a plugin's
+  artifact is not registered in the `Artifact` table — that ingestion is parent
+  responsibility and not yet wired for sandboxed plugins.
 
 ## Try it
 
@@ -29,6 +39,44 @@ AEGIS_PLUGINS=1 aegis plugins list --json
 
 When enabled, the `example` scanner shows up with `status=loaded` and is
 registered into the scanner registry (you can `aegis scan ... --scanner example`).
+
+## Sandboxed by default
+
+Third-party plugin code is untrusted, so Aegis runs a discovered scanner's
+`scan()` **out-of-process**. The registry wraps the adapter in a
+`SandboxedScanner`, which launches `python -m aegis.scanners.sandbox_worker`
+with:
+
+- a **list argv** (no shell — the same safe invocation pattern as the built-in
+  CLI scanners),
+- POSIX `resource` rlimits (CPU seconds, address space, file size, open files,
+  processes, no core dump) + a wall-clock timeout that kills the whole process
+  group,
+- a **minimal allowlisted environment** — the parent's secrets (DB URL,
+  signing/encryption keys, cloud creds) are never passed to plugin code, and
+- proxy env vars stripped by default.
+
+This is **defense-in-depth**, not a jail: it does not add a network namespace or
+a filesystem jail, so a hostile plugin can still open sockets or touch files the
+worker's user can reach. Only run plugins you have vetted and signed. Stronger
+kernel-level isolation (netns/seccomp, microVM-per-plugin) is a tracked
+follow-up.
+
+The run id, run directory, and `ScanOptions` cross the boundary as a JSON
+request on stdin; the result returns as a JSON `ScanResult` on stdout. A plugin
+that crashes, hangs, or blows a resource limit degrades to a clean
+`ScanResult` error (exit code `-1`) instead of taking down the host scan.
+
+You don't write any of this — a conformant scanner gets the isolation for free.
+Tunables (all optional):
+
+| Env var | Default | Effect |
+|---|---|---|
+| `AEGIS_PLUGINS_SANDBOX` | `1` (on) | Set `0` to run trusted plugins in-process. |
+| `AEGIS_PLUGIN_SANDBOX_NETWORK` | `0` (off) | Set `1` to keep proxy env (allow network). |
+| `AEGIS_PLUGIN_SANDBOX_CPU_SECONDS` | `300` | CPU-time rlimit for the child. |
+| `AEGIS_PLUGIN_SANDBOX_MEMORY_MB` | `1024` | Address-space rlimit for the child. |
+| `AEGIS_PLUGIN_SANDBOX_FILESIZE_MB` | `256` | Largest file the child may write. |
 
 ## Make your own
 

@@ -11,17 +11,24 @@ and records the command and (key-only) environment to ``strix/run.json``.
 
 Strix itself writes each run under ``<cwd>/strix_runs/<run_name>/`` with its
 events at ``<cwd>/strix_runs/<run_name>/events.jsonl`` (the run name is
-auto-generated). We therefore launch Strix with ``cwd`` set to the per-run
-``strix/`` directory and, once the process exits, discover the newest
-``strix/strix_runs/*/events.jsonl`` and parse it — dedup'd by finding ``id``.
-If the process exits non-zero but at least one finding was emitted, the
-result is ``partial_success`` and findings are preserved. A missing events
-file degrades gracefully to an empty findings list.
+auto-generated and not known up front). Strix exposes no output-dir flag, so
+to make discovery deterministic we launch Strix with ``cwd`` set to a
+**per-run** directory ``strix/run-<run_id>/`` and key event discovery to that
+directory alone. Each run therefore owns an isolated subtree — two concurrent
+runs (distinct ``run_id``) can never observe each other's ``strix_runs/`` —
+and ``discover_events_path`` resolves the single ``events.jsonl`` within it
+unambiguously rather than picking the newest mtime across a shared tree (which
+was fragile under concurrency, reruns, and coarse filesystem clocks). The
+events file is parsed and dedup'd by finding ``id``. If the process exits
+non-zero but at least one finding was emitted, the result is
+``partial_success`` and findings are preserved. A missing events file degrades
+gracefully to an empty findings list.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -36,6 +43,8 @@ from aegis.schema import AegisFinding
 
 if TYPE_CHECKING:
     from aegis.state import RunStateAPI
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -163,17 +172,37 @@ VALID_SCAN_MODES = frozenset({"quick", "standard", "deep"})
 VALID_SCOPE_MODES = frozenset({"auto", "diff", "full"})
 
 
-def discover_events_path(strix_dir: Path) -> Path | None:
-    """Return the newest ``strix_dir/strix_runs/*/events.jsonl``, or None.
+def run_output_dir(strix_dir: Path, run_id: str) -> Path:
+    """Return the deterministic per-run Strix working directory.
+
+    Strix writes its ``strix_runs/<auto-name>/`` tree relative to its ``cwd``.
+    We anchor that ``cwd`` at a ``run-<run_id>`` subdirectory of ``strix_dir``
+    so every run owns an isolated, predictable subtree — the basis for
+    concurrency-safe, deterministic event discovery.
+    """
+    return strix_dir / f"run-{run_id}"
+
+
+def discover_events_path(search_dir: Path) -> Path | None:
+    """Return the ``events.jsonl`` Strix wrote under ``search_dir``, or None.
 
     Strix auto-generates a run-name subdirectory under ``strix_runs/`` and
     writes its events there, so the concrete path is not known until after the
-    process has run. Pick the most recently modified candidate.
+    process has run. ``search_dir`` is the per-run working directory
+    (``run_output_dir``), which a single Strix invocation populates with
+    exactly one ``strix_runs/<auto-name>/events.jsonl``.
+
+    Resolution is **deterministic**: rather than picking the newest mtime —
+    which is non-deterministic under coarse filesystem clocks and ambiguous
+    when a directory accumulates more than one run — we search recursively and,
+    in the (unexpected) event of multiple candidates, return the
+    lexicographically greatest path so the same inputs always yield the same
+    result. Returns None when no events file exists yet.
     """
-    candidates = list(strix_dir.glob("strix_runs/*/events.jsonl"))
+    candidates = sorted(search_dir.rglob("events.jsonl"))
     if not candidates:
         return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
+    return candidates[-1]
 
 
 # ---------------------------------------------------------------------------
@@ -205,18 +234,25 @@ def run_strix(
     on_finding: Callable[[AegisFinding], None] | None = None,
     skip_docker_check: bool = False,
 ) -> StrixRunResult:
+    logger.info("strix run start run_id=%s target=%s scan_mode=%s timeout=%s",
+                run_state.run_id, target, scan_mode, timeout)
     strix_dir = run_state.run_path / "strix"
-    strix_dir.mkdir(parents=True, exist_ok=True)
+    # Per-run working directory: Strix's strix_runs/ tree lands *under here*, so
+    # discovery is keyed to this run alone and never collides with a concurrent
+    # run (which owns its own run-<run_id>/ subtree).
+    run_dir = run_output_dir(strix_dir, run_state.run_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
     log_path = strix_dir / "strix.log"
-    # Strix writes events under strix_dir/strix_runs/<auto-name>/events.jsonl;
-    # the concrete path is discovered after the process runs. Until then this
+    # Strix writes events under run_dir/strix_runs/<auto-name>/events.jsonl; the
+    # concrete path is discovered after the process runs. Until then this
     # placeholder only labels the pre-run error returns (no events exist yet).
     events_path: Path | None = None
 
     def _err(msg: str, command: list[str] | None = None) -> StrixRunResult:
+        logger.error("strix run error run_id=%s: %s", run_state.run_id, msg)
         return StrixRunResult(
             success=False, partial_success=False, return_code=-1,
-            command=command or [], log_path=str(log_path), events_path=str(strix_dir),
+            command=command or [], log_path=str(log_path), events_path=str(run_dir),
             error=msg,
         )
 
@@ -266,11 +302,12 @@ def run_strix(
 
     log_fh = open(log_path, "wb")
     try:
-        # Launch with cwd=strix_dir so Strix's strix_runs/ tree lands there
-        # predictably (strix uses Path.cwd() / "strix_runs").
+        # Launch with cwd=run_dir so Strix's strix_runs/ tree lands under this
+        # run's isolated directory (strix uses Path.cwd() / "strix_runs"),
+        # making event discovery deterministic and concurrency-safe.
         proc = subprocess.Popen(
             cmd, stdout=log_fh, stderr=subprocess.STDOUT,
-            env=env, cwd=str(strix_dir),
+            env=env, cwd=str(run_dir),
         )
     except FileNotFoundError as exc:
         log_fh.close()
@@ -288,13 +325,13 @@ def run_strix(
         return proc.poll() is not None
 
     # Strix creates its strix_runs/<name>/ subdir shortly after launch, so the
-    # events file path is not known up front. Poll for it while the process
-    # runs; once it appears we can tail it live (preserving on_finding
-    # streaming). If the process exits before it ever appears, fall back to a
-    # final glob of the newest strix_runs/*/events.jsonl.
+    # events file path is not known up front. Poll for it (within this run's
+    # isolated run_dir) while the process runs; once it appears we can tail it
+    # live (preserving on_finding streaming). If the process exits before it
+    # ever appears, make one final discovery attempt under run_dir.
     findings: list[AegisFinding] = []
     while True:
-        events_path = discover_events_path(strix_dir)
+        events_path = discover_events_path(run_dir)
         if events_path is not None:
             findings = tail_events(
                 events_path, run_state.run_id,
@@ -304,7 +341,7 @@ def run_strix(
         if is_done():
             # Process finished without ever creating an events file; make one
             # last attempt to discover late-flushed output.
-            events_path = discover_events_path(strix_dir)
+            events_path = discover_events_path(run_dir)
             if events_path is not None:
                 findings = tail_events(
                     events_path, run_state.run_id,
@@ -316,6 +353,11 @@ def run_strix(
     return_code = proc.wait()
     log_fh.close()
 
+    logger.info(
+        "strix run finished run_id=%s return_code=%s findings=%d partial=%s",
+        run_state.run_id, return_code, len(findings),
+        return_code != 0 and bool(findings),
+    )
     return StrixRunResult(
         success=return_code == 0,
         partial_success=return_code != 0 and bool(findings),
@@ -323,6 +365,6 @@ def run_strix(
         findings=findings,
         command=cmd,
         log_path=str(log_path),
-        events_path=str(events_path) if events_path is not None else str(strix_dir),
+        events_path=str(events_path) if events_path is not None else str(run_dir),
         error=None if return_code == 0 else f"strix exited with code {return_code}",
     )

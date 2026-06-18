@@ -248,8 +248,11 @@ class TestRunStrixDiscoveryFailure(unittest.TestCase):
             from aegis.state import RunState
             state = RunState(tmp, "run-success")
             # Strix writes events under strix_runs/<auto-name>/events.jsonl,
-            # relative to its cwd (the runner sets cwd=strix_dir).
-            events_path = state.run_path / "strix" / "strix_runs" / "auto" / "events.jsonl"
+            # relative to its cwd. The runner now sets cwd to the per-run output
+            # dir (strix_dir/run-<run_id>/), so events land beneath that.
+            from aegis.runners.strix_runner import run_output_dir
+            run_dir = run_output_dir(state.run_path / "strix", state.run_id)
+            events_path = run_dir / "strix_runs" / "auto" / "events.jsonl"
             events_path.parent.mkdir(parents=True, exist_ok=True)
 
             class FakeProc:

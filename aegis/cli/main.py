@@ -200,6 +200,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit_export.add_argument("--no-verify", dest="no_verify", action="store_true",
                                 help="Skip hash-chain verification before archiving")
 
+    # tenants (multi-tenancy — org_id integrity reconciliation)
+    p_tenants = sub.add_parser("tenants", help="Multi-tenancy maintenance operations")
+    tenants_sub = p_tenants.add_subparsers(dest="tenants_action", required=True)
+    p_tenants_verify = tenants_sub.add_parser(
+        "verify",
+        help="Reconcile denormalized org_id against each row's project "
+             "(detects tenant drift); exits non-zero if any is found")
+    p_tenants_verify.add_argument(
+        "--repair", action="store_true",
+        help="Backfill each drifted row's org_id from its project "
+             "(default: report only)")
+
     # plugins (community adapter marketplace)
     p_plugins = sub.add_parser("plugins", help="Inspect community scanner/agent adapters")
     plugins_sub = p_plugins.add_subparsers(dest="plugins_action", required=True)
@@ -358,12 +370,22 @@ def _cmd_plugins_dispatch(args: argparse.Namespace, config: AegisConfig) -> None
     cmd_plugins(args, config)
 
 
+def _cmd_tenants_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
+    from aegis.cli.tenants import cmd_tenants_verify
+    if args.tenants_action == "verify":
+        cmd_tenants_verify(args, config)
+    else:
+        _console._err(f"Unknown tenants action: {args.tenants_action}")
+        sys.exit(2)
+
+
 _COMMANDS["status"] = _cmd_status_dispatch
 _COMMANDS["audit"] = _cmd_audit_dispatch
 _COMMANDS["migrate"] = _cmd_migrate_dispatch
 _COMMANDS["ci-gate"] = _cmd_ci_gate_dispatch
 _COMMANDS["evidence-pack"] = _cmd_evidence_pack_dispatch
 _COMMANDS["plugins"] = _cmd_plugins_dispatch
+_COMMANDS["tenants"] = _cmd_tenants_dispatch
 
 
 def main(argv: list[str] | None = None) -> None:

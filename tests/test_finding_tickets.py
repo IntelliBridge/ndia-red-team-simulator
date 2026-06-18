@@ -6,7 +6,6 @@ in-memory sqlite (JSONB compiled to TEXT), mirroring test_fix_override.py.
 
 from __future__ import annotations
 
-import contextlib
 import unittest
 from unittest.mock import patch
 
@@ -18,8 +17,12 @@ pytest.importorskip("httpx")
 import httpx
 
 from aegis.audit.chain import InMemoryAuditWriter
-from aegis.db.models import Base, Finding, Organization, Project, Run
+from aegis.db.models import Finding, Organization, Project, Run
 from aegis.integrations import ticket_provider as tp
+from tests.conftest import make_sqlite_session_factory as _make_session_factory
+
+# DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
+pytestmark = pytest.mark.integration
 
 
 def _make_finding_blob(**overrides) -> dict:
@@ -34,47 +37,6 @@ def _make_finding_blob(**overrides) -> dict:
     }
     base.update(overrides)
     return base
-
-
-def _patch_jsonb_for_sqlite() -> None:
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.ext.compiler import compiles
-
-    @compiles(JSONB, "sqlite")
-    def _compile_jsonb_sqlite(type_, compiler, **kw):  # noqa: ARG001
-        return "TEXT"
-
-
-def _make_session_factory():
-    _patch_jsonb_for_sqlite()
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
-
-    engine = create_engine(
-        "sqlite://", future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception as exc:
-        raise unittest.SkipTest(f"sqlite can't host the schema: {exc}")
-    Session = sessionmaker(engine, expire_on_commit=False)
-
-    @contextlib.contextmanager
-    def session_cm():
-        sess = Session()
-        try:
-            yield sess
-            sess.commit()
-        except Exception:
-            sess.rollback()
-            raise
-        finally:
-            sess.close()
-
-    return session_cm, engine, Session
 
 
 def _seed_finding(Session) -> None:

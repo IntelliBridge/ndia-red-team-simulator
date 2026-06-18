@@ -29,5 +29,7 @@ test("scan → finding → PR happy path", async ({ page, request }) => {
   await expect(page.locator("h1")).toContainText("Recent runs");
 
   await page.goto(`${WEB}/runs/${run_id}`);
-  await expect(page.locator("h1")).toContainText(`Run ${run_id}`);
+  // The run heading renders the bare run id (no "Run " prefix); target it by
+  // its stable test id rather than matching on the h1 text.
+  await expect(page.getByTestId("run-heading")).toContainText(run_id);
 });

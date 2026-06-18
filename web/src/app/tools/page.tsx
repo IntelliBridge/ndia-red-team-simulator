@@ -2,14 +2,15 @@
 
 // /tools — authorized Kali tool pass-through.
 //
-// No GET listing endpoint exists (aegis/api/v1/tools.py only exposes
-// POST /kali/{tool}); the picker is the curated ALLOWED_TOOLS set from
-// aegis/tools/kali_client.py. Tool effect classification mirrors
-// aegis/effects.py _KALI_TOOL_EFFECTS: active tools (sqlmap/hydra/
-// metasploit/wpscan) need execute=true + the approver role; read tools
-// run at remediator. The server enforces the same gate.
+// The picker is fed by GET /v1/tools (aegis/tools/catalog.py::list_tools),
+// filtered to the Kali family since the POST endpoint is /v1/tools/kali/
+// {tool}. Tool effect classification ("read"/"active"/"external") comes
+// straight off the catalog: active tools (sqlmap/hydra/metasploit/wpscan)
+// need execute=true + the approver role; read tools run at remediator.
+// The server enforces the same gate.
 
 import { useState } from "react";
+import useSWR from "swr";
 
 import {
   AlertDialog,
@@ -24,33 +25,29 @@ import {
   RoleGated,
   type Role,
 } from "@aegis/design-system";
-import { runKaliTool, type ToolOutcome } from "@/lib/api";
+import {
+  listTools,
+  runKaliTool,
+  type ToolOutcome,
+  type ToolSpec,
+} from "@/lib/api";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
-
-type ToolEffect = "read" | "active";
-
-type ToolDef = { name: string; effect: ToolEffect };
-
-// Mirrors ALLOWED_TOOLS + _KALI_TOOL_EFFECTS in the backend.
-const TOOLS: ToolDef[] = [
-  { name: "nmap", effect: "read" },
-  { name: "gobuster", effect: "read" },
-  { name: "dirb", effect: "read" },
-  { name: "nikto", effect: "read" },
-  { name: "sqlmap", effect: "active" },
-  { name: "metasploit", effect: "active" },
-  { name: "hydra", effect: "active" },
-  { name: "john", effect: "read" },
-  { name: "wpscan", effect: "active" },
-  { name: "enum4linux", effect: "read" },
-];
 
 export default function ToolsPage() {
   const authed = useRequireAuth();
   const { roles } = useRoles();
 
-  const [toolName, setToolName] = useState(TOOLS[0].name);
+  const { data, error: toolsError } = useSWR<ToolSpec[]>(
+    authed ? "/v1/tools" : null,
+    listTools,
+  );
+  // Only the Kali family is invokable through this page (the pass-through
+  // endpoint is /v1/tools/kali/{tool}); scanner/cai/osint tools run via
+  // their own flows.
+  const tools = (data ?? []).filter((t) => t.source === "kali");
+
+  const [toolName, setToolName] = useState<string>("");
   const [target, setTarget] = useState("");
   const [paramsText, setParamsText] = useState("{}");
   const [execute, setExecute] = useState(false);
@@ -58,10 +55,12 @@ export default function ToolsPage() {
   const [err, setErr] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<ToolOutcome | null>(null);
 
-  if (!authed) return <p className="text-slate-500">Redirecting to sign in…</p>;
+  if (!authed)
+    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
 
-  const tool = TOOLS.find((t) => t.name === toolName) ?? TOOLS[0];
-  const isActive = tool.effect === "active";
+  const selectedName = toolName || tools[0]?.name || "";
+  const tool = tools.find((t) => t.name === selectedName);
+  const isActive = tool ? tool.effect !== "read" : false;
   const minRole: Role = isActive ? "approver" : "remediator";
   const callerRole = roles["default"];
 
@@ -91,6 +90,10 @@ export default function ToolsPage() {
 
   const invoke = async () => {
     setErr(null);
+    if (!tool) {
+      setErr("No tool selected.");
+      return;
+    }
     const params = parseParams();
     if (params === null) return;
     setBusy(true);
@@ -120,7 +123,7 @@ export default function ToolsPage() {
       </div>
 
       {err && (
-        <p className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {err}
         </p>
       )}
@@ -131,16 +134,23 @@ export default function ToolsPage() {
             <span className="text-muted-foreground">Tool</span>
             <select
               aria-label="Tool"
-              value={toolName}
+              value={selectedName}
               onChange={(e) => setToolName(e.target.value)}
-              className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+              disabled={tools.length === 0}
+              className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm disabled:opacity-50"
             >
-              {TOOLS.map((t) => (
-                <option key={t.name} value={t.name}>
-                  {t.name}
-                  {t.effect === "active" ? " (active)" : ""}
+              {tools.length === 0 ? (
+                <option value="">
+                  {toolsError ? "Failed to load tools" : "Loading tools…"}
                 </option>
-              ))}
+              ) : (
+                tools.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.name}
+                    {t.effect !== "read" ? " (active)" : ""}
+                  </option>
+                ))
+              )}
             </select>
           </label>
 
@@ -205,8 +215,8 @@ export default function ToolsPage() {
                 <AlertDialogHeader>
                   <AlertDialogTitle>
                     {willExecute
-                      ? `Execute ${tool.name} against the target?`
-                      : `Submit ${tool.name} proposal?`}
+                      ? `Execute ${selectedName} against the target?`
+                      : `Submit ${selectedName} proposal?`}
                   </AlertDialogTitle>
                   <AlertDialogDescription>
                     {willExecute
@@ -267,7 +277,7 @@ export default function ToolsPage() {
                 <dd className="font-mono">{String(outcome.success ?? false)}</dd>
               </dl>
               {outcome.error && (
-                <p className="text-sm text-red-700">{outcome.error}</p>
+                <p className="text-sm text-destructive">{outcome.error}</p>
               )}
               <div className="space-y-1">
                 <p className="text-xs uppercase text-muted-foreground">stdout</p>

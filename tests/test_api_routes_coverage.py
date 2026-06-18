@@ -30,9 +30,6 @@ pytest.importorskip("httpx")
 pytest.importorskip("sqlalchemy")
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from aegis.api.app import create_app
 from aegis.api.auth import (
@@ -49,48 +46,24 @@ from aegis.api.settings import APISettings
 from aegis.config import AegisConfig
 from aegis.safety import AuthorizationError
 from aegis.services.scans import JobHandle
+from tests.conftest import make_sqlite_session_factory
+
+# DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
+pytestmark = pytest.mark.integration
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def _patch_jsonb_for_sqlite() -> None:
-    """Compile JSONB columns to TEXT so SQLite can handle them."""
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.ext.compiler import compiles
-
-    @compiles(JSONB, "sqlite")
-    def _to_text(t, c, **kw):  # noqa: ARG001
-        return "TEXT"
-
-
 def _make_sqlite_session():
-    """Build an in-memory SQLite engine with all Aegis tables."""
-    _patch_jsonb_for_sqlite()
-    from aegis.db.models import Base
+    """Build an in-memory SQLite engine with all Aegis tables.
 
-    engine = create_engine(
-        "sqlite://",
-        future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    Session = sessionmaker(engine, expire_on_commit=False)
-
-    @contextlib.contextmanager
-    def session_cm():
-        sess = Session()
-        try:
-            yield sess
-            sess.commit()
-        except Exception:
-            sess.rollback()
-            raise
-        finally:
-            sess.close()
-
-    return Session, session_cm
+    Returns ``(Session, session_cm)`` — the shape this module's ``_build_app``
+    expects; the engine is unused here. Delegates to the shared
+    ``make_sqlite_session_factory`` (tests/conftest.py).
+    """
+    factory = make_sqlite_session_factory()
+    return factory.Session, factory.session_cm
 
 
 def _build_app(extra_rows_fn=None):
@@ -204,7 +177,13 @@ def _fake_redis_module(events):
 @contextlib.contextmanager
 def _patched_redis_boundary(events):
     """Patch ``AEGIS_BROKER_URL`` + ``redis.asyncio`` so the real
-    ``_redis_pubsub_iter`` yields ``events`` from its genuine redis path."""
+    ``_redis_pubsub_iter`` yields ``events`` from its genuine redis path.
+
+    ``_redis_pubsub_iter`` resolves the module via
+    ``importlib.import_module("redis.asyncio")``, which reads ``sys.modules``,
+    so this patch is robust to suite ordering even after another test has
+    already imported the real ``redis`` package.
+    """
     import os
     with patch.dict(os.environ, {"AEGIS_BROKER_URL": "redis://localhost:6379"}), \
          patch.dict("sys.modules", {"redis.asyncio": _fake_redis_module(events)}):
@@ -344,8 +323,13 @@ class TestAuthHelpers(unittest.TestCase):
         result = _verify_worker_token(token, settings)
         self.assertIsNone(result)
 
-    def test_verify_worker_token_legacy_valid(self):
-        """Legacy worker:HEX token resolves correctly."""
+    def test_verify_worker_token_legacy_now_rejected(self):
+        """C1: the legacy ``worker:HEX`` constant-payload token is gone.
+
+        It used to resolve to a non-expiring ``service:worker:legacy``
+        ``is_system`` identity; that branch was deleted, so a
+        well-formed legacy signature must now be rejected.
+        """
         settings = APISettings(
             env="dev", auth_mode="dev",
             worker_signing_key="legacykey",
@@ -353,11 +337,10 @@ class TestAuthHelpers(unittest.TestCase):
         )
         sig = _hmac_sign("legacykey", "aegis-worker")
         token = f"worker:{sig}"
-        user = _verify_worker_token(token, settings)
-        self.assertIsNotNone(user)
-        self.assertEqual(user.sub, "service:worker:legacy")
+        self.assertIsNone(_verify_worker_token(token, settings))
 
-    def test_verify_worker_token_legacy_bad_sig_returns_none(self):
+    def test_verify_worker_token_bare_hex_returns_none(self):
+        """A bare ``worker:<hex>`` (no v-prefix) parses as malformed."""
         settings = APISettings(
             env="dev", auth_mode="dev",
             worker_signing_key="legacykey",
@@ -367,7 +350,7 @@ class TestAuthHelpers(unittest.TestCase):
         result = _verify_worker_token(token, settings)
         self.assertIsNone(result)
 
-    def test_verify_worker_token_no_key_legacy_returns_none(self):
+    def test_verify_worker_token_no_key_returns_none(self):
         settings = APISettings(env="dev", auth_mode="dev", worker_signing_key=None)
         result = _verify_worker_token("worker:badsig", settings)
         self.assertIsNone(result)

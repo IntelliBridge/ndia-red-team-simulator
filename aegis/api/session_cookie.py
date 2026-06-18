@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 from authlib.jose import JoseError, jwt
 
@@ -86,19 +86,47 @@ def mint_session_cookie(
     return cast(str, token)
 
 
+def _decode_with_key(value: str, public_key: str) -> Any:
+    """Decode + time-validate ``value`` against a single public key.
+
+    Returns the authlib claims object; raises ``JoseError`` if the
+    signature does not verify or the token is expired/not-yet-valid.
+    """
+    claims = jwt.decode(value, public_key)
+    claims.validate(now=int(time.time()))
+    return claims
+
+
 def verify_session_cookie(value: str, settings: APISettings) -> SessionClaims:
     """Verify the JWT against the Aegis public key.
 
+    Tries the current ``AEGIS_API_SESSION_PUBLIC_KEY`` first, then the
+    previous key (``AEGIS_API_SESSION_PUBLIC_KEY_PREVIOUS``) if one is
+    configured, so cookies minted just before a key rotation keep
+    verifying through the overlap window. Minting always uses the
+    current key. Mirrors the worker-token signing-key overlap.
+
     Raises ``SessionCookieError`` if the cookie is missing keys, expired,
-    or signed by an untrusted key.
+    or signed by a key that is neither the current nor the previous one.
     """
     public = _ensure_key(settings.api_session_public_key,
                          label="AEGIS_API_SESSION_PUBLIC_KEY")
-    try:
-        claims = jwt.decode(value, public)
-        claims.validate(now=int(time.time()))
-    except JoseError as exc:
-        raise SessionCookieError(f"invalid session cookie: {exc}") from exc
+    candidates = [public]
+    if settings.api_session_public_key_previous:
+        candidates.append(settings.api_session_public_key_previous)
+
+    claims = None
+    last_error: JoseError | None = None
+    for key in candidates:
+        try:
+            claims = _decode_with_key(value, key)
+            break
+        except JoseError as exc:
+            last_error = exc
+    if claims is None:
+        raise SessionCookieError(
+            f"invalid session cookie: {last_error}"
+        ) from last_error
 
     aud = claims.get("aud")
     if aud != "aegis-api":

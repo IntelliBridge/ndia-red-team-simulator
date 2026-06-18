@@ -47,6 +47,7 @@ def cancel_run(
 
     from aegis.db.models import Job, Run
     from aegis.db.session import get_session
+    from aegis.workers.job_state import set_job_status
 
     with get_session() as sess:
         run = sess.get(Run, run_id)
@@ -74,7 +75,9 @@ def cancel_run(
                               Job.status.in_(["queued", "running"]))
         ).scalars().all()
         for j in jobs:
-            j.status = "cancelled"
+            # Both selected states (queued, running) legally transition to
+            # cancelled; the guard keeps this write single-sourced.
+            set_job_status(j, "cancelled")
             j.completed_at = now
             if j.celery_task_id:
                 try:

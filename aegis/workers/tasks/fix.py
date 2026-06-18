@@ -10,12 +10,15 @@ emits via the bootstrap-supplied writer.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, cast
 
 from aegis.workers.celery_app import app
 
 if TYPE_CHECKING:
     from celery import Task
+
+logger = logging.getLogger(__name__)
 
 
 @app.task(name="aegis.fix_generate", bind=True, max_retries=2)
@@ -27,14 +30,18 @@ def fix_generate(self: Task, job_id: str) -> dict[str, Any]:
     from aegis.workers.bootstrap import task_context
 
     config = load_config()
+    logger.info("fix_generate begin job_id=%s", job_id)
     with task_context(job_id, task=self) as ctx:
         if ctx.skip or ctx.run_state is None:
+            logger.info("fix_generate skipped job_id=%s", job_id)
             return {"job_id": job_id, "skipped": True}
         sess = ctx.session
         job = sess.get(Job, job_id)
         detail = cast(FixJobDetail, (job.detail if job else {}) or {})
         finding_row = sess.get(Finding, detail.get("finding_id"))
         if finding_row is None:
+            logger.error("fix_generate error job_id=%s: finding %s missing",
+                         job_id, detail.get("finding_id"))
             raise RuntimeError(f"finding {detail.get('finding_id')} missing")
         finding = AegisFinding.from_dict(finding_row.schema_blob)
 
@@ -58,6 +65,8 @@ def fix_generate(self: Task, job_id: str) -> dict[str, Any]:
         # onto findings.status so /v1/findings + UI badges reflect it.
         finding_row.status = outcome.status
 
+        logger.info("fix_generate finished job_id=%s finding_id=%s status=%s success=%s",
+                    job_id, outcome.finding_id, outcome.status, outcome.success)
         return {
             "job_id": job_id, "finding_id": outcome.finding_id,
             "status": outcome.status, "success": outcome.success,

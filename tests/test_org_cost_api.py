@@ -8,7 +8,6 @@ session, so the patch covers both the gate and the aggregation.
 
 from __future__ import annotations
 
-import contextlib
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -20,40 +19,20 @@ pytest.importorskip("httpx")
 pytest.importorskip("sqlalchemy")
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from aegis.api.app import create_app
 from aegis.api.auth import CurrentUser, get_current_user
 from aegis.api.settings import APISettings
+from tests.conftest import make_sqlite_session_factory
 
-
-def _patch_jsonb_for_sqlite() -> None:
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.ext.compiler import compiles
-
-    @compiles(JSONB, "sqlite")
-    def _to_text(t, c, **kw):  # noqa: ARG001
-        return "TEXT"
+# DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
+pytestmark = pytest.mark.integration
 
 
 def _build_app_with_costs():
-    _patch_jsonb_for_sqlite()
-    from aegis.db.models import (
-        Base,
-        LLMUsage,
-        Organization,
-        Project,
-    )
+    from aegis.db.models import LLMUsage, Organization, Project
 
-    engine = create_engine(
-        "sqlite://", future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    Session = sessionmaker(engine, expire_on_commit=False)
+    session_cm, _engine, Session = make_sqlite_session_factory()
 
     now = datetime.now(timezone.utc)
     with Session() as s:
@@ -75,15 +54,6 @@ def _build_app_with_costs():
         s.add(LLMUsage(project_id="proj-b", org_id="org-2", model="gpt-5",
                        task="patch", cost_cents=999, created_at=now))
         s.commit()
-
-    @contextlib.contextmanager
-    def session_cm():
-        sess = Session()
-        try:
-            yield sess
-            sess.commit()
-        finally:
-            sess.close()
 
     settings = APISettings(env="dev", auth_mode="dev",
                             cors_origins=["http://localhost:3000"])

@@ -14,7 +14,13 @@ export default function DashboardPage() {
   const router = useRouter();
   const authed = useRequireAuth();
 
-  const { data, error, isLoading } = useSWR(authed ? "/v1/runs" : null, fetcher);
+  // Poll every 15s so the dashboard tracks newly queued/finished runs
+  // without a manual refresh (the run-detail view has its own live feed).
+  const { data, error, isLoading } = useSWR(
+    authed ? "/v1/runs" : null,
+    fetcher,
+    { refreshInterval: 15000 },
+  );
 
   if (!authed)
     return <p className="text-muted-foreground">Redirecting to sign in…</p>;

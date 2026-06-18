@@ -13,11 +13,15 @@ the ``created_at >= start_of_utc_day`` range scan.
 from __future__ import annotations
 
 from datetime import datetime, time, timezone
-from typing import Callable, ContextManager
+from typing import TYPE_CHECKING, Callable, ContextManager
 
 from sqlalchemy import func, or_, select
 
 from aegis.db.models import LLMUsage, Organization, Project
+from aegis.llm.router import BudgetChecker, BudgetExceeded
+
+if TYPE_CHECKING:
+    from aegis.config import AegisConfig
 
 
 def _start_of_utc_day(now: datetime | None = None) -> datetime:
@@ -133,3 +137,62 @@ class DbBudgetChecker:
             return None
         model = overrides.get(task)
         return model if isinstance(model, str) and model else None
+
+
+def enforce_budget_for_run(
+    project_id: str | None,
+    *,
+    org_id: str | None = None,
+    config: AegisConfig | None = None,
+    checker: BudgetChecker | None = None,
+) -> None:
+    """Fail-closed budget pre-flight for a DB-backed run before it incurs cost.
+
+    For the agent-run path the CAI agents construct their model directly rather
+    than through ``router.route``, so the router's budget gate never sees them.
+    This helper closes that gap: a DB-backed run (``project_id`` set) is checked
+    against its project daily cap (and org monthly cap when ``org_id`` given)
+    using a ``DbBudgetChecker``, raising :class:`BudgetExceeded` when either is
+    exhausted. The offline / filesystem path (``project_id is None``) is
+    intentionally unenforced and returns immediately.
+
+    When ``config.llm_budget_strict`` is set (default in prod) and the checker
+    cannot be reached at all (e.g. the DB lookup itself errors), the call is
+    DENIED rather than allowed through uncapped — the same fail-closed posture
+    the router-backed paths take. With strict off, a checker error degrades to
+    "allow" so a transient DB blip can't wedge a non-prod run.
+    """
+    if not project_id:
+        return
+    if config is None:
+        from aegis.config import load_config
+        config = load_config()
+    strict = bool(getattr(config, "llm_budget_strict", False))
+    if checker is None:
+        checker = DbBudgetChecker()
+
+    try:
+        project_remaining = checker.remaining(project_id)
+        org_remaining: int | None = None
+        if org_id is not None:
+            org_fn = getattr(checker, "remaining_org", None)
+            if callable(org_fn):
+                org_remaining = org_fn(org_id)
+    except BudgetExceeded:
+        raise
+    except Exception as exc:  # noqa: BLE001 — see fail-closed contract above
+        if strict:
+            raise BudgetExceeded(
+                f"project {project_id!r} budget could not be verified; "
+                "denying (llm_budget_strict)"
+            ) from exc
+        return
+
+    if project_remaining is not None and project_remaining <= 0:
+        raise BudgetExceeded(
+            f"project {project_id!r} has exhausted its daily LLM budget"
+        )
+    if org_remaining is not None and org_remaining <= 0:
+        raise BudgetExceeded(
+            f"organization {org_id!r} has exhausted its monthly LLM budget"
+        )

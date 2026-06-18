@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from aegis.integrations.cai_loader import load_cai
@@ -18,9 +19,18 @@ from aegis.llm.guardrails import guard_input, guard_output
 from aegis.llm.router import BudgetChecker, BudgetExceeded
 from aegis.llm.router import route as route_model
 from aegis.remediate.patch_workflow import (
+    _ref_before,
+    apply_patch,
     diff_sha256,
     extract_unified_diff,
+    is_repo_dirty,
     load_golden_patch,
+    restore_tree,
+)
+from aegis.remediate.test_runner import (
+    DEFAULT_TEST_TIMEOUT_SECONDS,
+    parse_test_command,
+    run_project_tests,
 )
 from aegis.schema import AegisFinding
 
@@ -55,10 +65,25 @@ class RemediationResult:
     diff_sha256_hex: str | None = None
     source: RemediationSource = "cai"
     plan: dict[str, Any] | None = None
+    # Iterative fix→test→retry bookkeeping (C13). ``iterations`` is how many
+    # agent attempts were made; ``tests_passed`` is the verdict of the final
+    # project-test run (``None`` when no test command was configured / run).
+    iterations: int = 1
+    tests_passed: bool | None = None
+    test_runs: list[dict[str, Any]] = field(default_factory=list)
 
 
-def build_code_fix_prompt(finding: AegisFinding) -> str:
-    """Build a prompt for CAI CodeAgent to generate a code fix."""
+def build_code_fix_prompt(
+    finding: AegisFinding, *, test_feedback: str | None = None
+) -> str:
+    """Build a prompt for CAI CodeAgent to generate a code fix.
+
+    When ``test_feedback`` is supplied (an iterative retry after the project
+    test command failed on the previous patch), the failing test output is
+    appended so the agent can correct its diff. The feedback is operator/test
+    -tool output, not untrusted finding content, but it still flows through the
+    same input guardrail at the call site before reaching the agent.
+    """
     lines = [
         f"## Security Finding: {finding.title}",
         "",
@@ -93,6 +118,17 @@ def build_code_fix_prompt(finding: AegisFinding) -> str:
 
     if finding.remediation_steps:
         lines.extend(["", "### Remediation Steps", finding.remediation_steps])
+
+    if test_feedback:
+        lines.extend([
+            "",
+            "### Previous Attempt Failed the Project Test Suite",
+            "Your last patch was applied but the project's test command failed.",
+            "Read the failing output below and produce a corrected diff.",
+            "```",
+            test_feedback,
+            "```",
+        ])
 
     lines.extend([
         "",
@@ -215,7 +251,32 @@ def _run_cai_agent(
     a ``BudgetExceeded`` short-circuit returns a structured failure
     without spinning up the agent. CAI's own sys.path injection lives
     in ``cai_loader.load_cai``; this function never touches ``sys.path``.
+
+    Fail-closed budget gate: this is the single ``route()`` call site, so a
+    DB-backed run (``project_id`` set) that arrives without a ``budget_checker``
+    would route *uncapped* — ``route()`` only enforces a budget when one is
+    supplied. Under ``config.llm_budget_strict`` (default in prod) we DENY that
+    case here rather than silently routing, so a cap can never be skipped by a
+    missing wiring. The offline / filesystem path (``project_id is None``) is
+    intentionally unenforced and falls through untouched.
     """
+    if project_id and budget_checker is None and getattr(
+        config, "llm_budget_strict", False
+    ):
+        logger.error(
+            "llm_budget_strict: DB-backed run for project %s task %s reached "
+            "CAI without a budget_checker; denying (fail-closed)",
+            project_id, task,
+        )
+        return RemediationResult(
+            success=False, action=action, finding_id=finding.id,
+            output=prompt,
+            error=(f"BudgetCheckMissing: project {project_id!r} has no budget "
+                   "checker; refusing to route an uncapped LLM call "
+                   "(llm_budget_strict)"),
+            source="cai",
+        )
+
     try:
         spec = route_model(task, config, project_id=project_id,
                            budget_checker=budget_checker)
@@ -297,6 +358,7 @@ def run_code_fix(
     project_id: str | None = None,
     run_id: str | None = None,
     budget_checker: BudgetChecker | None = None,
+    test_feedback: str | None = None,
 ) -> RemediationResult:
     """Invoke CAI CodeAgent to generate a code patch.
 
@@ -304,6 +366,11 @@ def run_code_fix(
     bundled golden patch fixture is loaded instead of calling CAI. The result
     is marked with ``source="golden_fixture"`` so downstream reporting can
     label the stage.
+
+    ``test_feedback`` (C13 iterative loop) carries the failing output from a
+    previous patch's project-test run; it is woven into the prompt so the agent
+    can correct the diff. The golden-patch / disabled-LLM short-circuit ignores
+    feedback by design — there is no agent to re-prompt.
     """
     if use_golden_patch or os.environ.get("AEGIS_DISABLE_LLM") == "1":
         golden = _use_golden_patch(finding)
@@ -317,11 +384,165 @@ def run_code_fix(
     return _run_cai_agent(
         task="patch", action="code_patch",
         finding=finding,
-        prompt=build_code_fix_prompt(finding),
+        prompt=build_code_fix_prompt(finding, test_feedback=test_feedback),
         config=config, project_id=project_id, run_id=run_id,
         budget_checker=budget_checker,
         extra_context={"repo_path": repo_path} if repo_path else None,
     )
+
+
+def _apply_and_test(
+    repo: Path,
+    diff: str,
+    command_argv: list[str],
+    *,
+    test_timeout: float,
+) -> tuple[bool, str]:
+    """Apply ``diff`` to ``repo``, run the test command, then roll back.
+
+    Returns ``(passed, feedback)``. ``feedback`` is the failing-test (or
+    apply-failure) output to feed back to the agent on the next iteration; it
+    is empty on success. The working tree is always restored to the pre-apply
+    ref via :func:`restore_tree` (reset + clean, so files the diff *added* are
+    also removed), so iterations never compound each other's changes — mirroring
+    the clean-replay discipline of ``verify_finding`` (apply → observe → reset).
+    """
+    ref_before = _ref_before(repo)
+    applied = apply_patch(repo, diff, dry_run=False)
+    if not applied.success:
+        # A diff that won't even apply is itself actionable feedback.
+        return False, (
+            "The diff did not apply cleanly to the repository.\n"
+            f"git apply error:\n{applied.stderr}"
+        )
+    try:
+        test_result = run_project_tests(repo, command_argv, timeout=test_timeout)
+    finally:
+        if ref_before is not None:
+            restore_tree(repo, ref_before)
+    if test_result.passed:
+        return True, ""
+    if not test_result.ran:
+        # Misconfigured command (e.g. binary not found) — surface it, but it is
+        # not the agent's fault, so the feedback is informational.
+        return False, f"Project test command could not run: {test_result.error}"
+    return False, test_result.combined_output
+
+
+def run_iterative_code_fix(
+    finding: AegisFinding,
+    *,
+    repo: str,
+    config: AegisConfig,
+    project_id: str | None = None,
+    run_id: str | None = None,
+    budget_checker: BudgetChecker | None = None,
+    use_golden_patch: bool = False,
+    test_timeout: float | None = None,
+) -> RemediationResult:
+    """Generate a code patch, then fix→test→retry until the project tests pass.
+
+    The loop (C13):
+
+      1. Ask the agent for a diff (the first attempt uses the plain finding
+         prompt; later attempts append the previous run's failing test output).
+      2. Apply the diff to ``repo`` and run the **operator-configured** project
+         test command (``config.remediation_test_command``); roll the tree back.
+      3. On pass → return the validated diff. On failure → loop, feeding the
+         output back, for at most ``config.remediation_max_iters`` attempts.
+
+    When no test command is configured the loop is a no-op: a single
+    :func:`run_code_fix` is returned unchanged, so the historical single-shot
+    behaviour is preserved. The returned :class:`RemediationResult` carries
+    ``iterations`` / ``tests_passed`` / ``test_runs`` so the caller (and the PR
+    body) can record how many rounds it took and whether the gate is green.
+
+    SECURITY: the test command comes solely from operator config and is
+    executed as list-argv (never ``shell=True``); untrusted finding/patch
+    content never reaches the command line — only the agent prompt.
+    """
+    command_argv = parse_test_command(config.remediation_test_command)
+    if command_argv is None:
+        # No project-test gate configured → single-shot, unchanged behaviour.
+        return run_code_fix(
+            finding, repo_path=repo, use_golden_patch=use_golden_patch,
+            config=config, project_id=project_id, run_id=run_id,
+            budget_checker=budget_checker,
+        )
+
+    repo_path = Path(repo)
+    if is_repo_dirty(repo_path):
+        # The loop reset/cleans the working tree between attempts (restore_tree
+        # = git reset --hard + git clean -fd), which would destroy the operator's
+        # uncommitted/untracked changes. Refuse the destructive loop on a dirty
+        # tree and fall back to the safe single-shot path (branch-first, with its
+        # own allow_dirty contract) rather than risk data loss.
+        logger.warning(
+            "iterative remediation skipped for %s: %s has a dirty working tree; "
+            "using single-shot fix instead", finding.id, repo,
+        )
+        return run_code_fix(
+            finding, repo_path=repo, use_golden_patch=use_golden_patch,
+            config=config, project_id=project_id, run_id=run_id,
+            budget_checker=budget_checker,
+        )
+    max_iters = max(1, config.remediation_max_iters)
+    effective_timeout = (
+        DEFAULT_TEST_TIMEOUT_SECONDS if test_timeout is None else test_timeout
+    )
+
+    test_runs: list[dict[str, Any]] = []
+    feedback: str | None = None
+    last: RemediationResult | None = None
+
+    for attempt in range(1, max_iters + 1):
+        result = run_code_fix(
+            finding, repo_path=repo, use_golden_patch=use_golden_patch,
+            config=config, project_id=project_id, run_id=run_id,
+            budget_checker=budget_checker, test_feedback=feedback,
+        )
+        result.iterations = attempt
+        result.test_runs = test_runs
+        last = result
+
+        # Agent failed to even produce a diff (budget, guardrail, no parse):
+        # there is nothing to test, so stop — retrying won't help a hard error.
+        if not result.success or not result.diff:
+            result.tests_passed = None
+            return result
+
+        passed, fb = _apply_and_test(
+            repo_path, result.diff, command_argv, test_timeout=effective_timeout,
+        )
+        test_runs.append({"iteration": attempt, "passed": passed})
+        result.tests_passed = passed
+        if passed:
+            logger.info("remediation tests passed for %s on attempt %d/%d",
+                        finding.id, attempt, max_iters)
+            return result
+
+        # A golden-fixture diff is immutable — there is no agent to re-prompt,
+        # so re-testing the same patch would be pointless. Stop after one round.
+        if result.source == "golden_fixture":
+            return result
+
+        logger.info("remediation tests failed for %s on attempt %d/%d",
+                    finding.id, attempt, max_iters)
+        # Scrub secrets from the test output before weaving it into the next
+        # agent prompt (and thus shipping it to the LLM provider): failing-test
+        # output routinely contains connection strings / tokens / env. The
+        # prompt's guard_input does injection detection only, not redaction.
+        feedback = guard_output(fb, config=config)
+
+    # Exhausted the budget of attempts with tests still red. Return the last
+    # diff (still success=True so the caller may open the PR with a clear
+    # "tests not green" signal) — the caller decides whether to proceed.
+    assert last is not None  # loop runs at least once (max_iters >= 1)
+    last.error = (
+        f"project tests still failing after {max_iters} attempt(s)"
+        if last.error is None else last.error
+    )
+    return last
 
 
 def run_live_hardening(

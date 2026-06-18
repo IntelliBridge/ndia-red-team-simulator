@@ -45,8 +45,18 @@ jobs:
       - name: Type-check (mypy)
         run: mypy aegis
 
-      - name: Run tests
-        run: pytest -q --cov=aegis --cov-report=term-missing
+      # Pure-unit fast lane: this job installs only .[test,dev] (no api/worker
+      # extras), so the DB-backed tests carry the ``integration`` marker and are
+      # deselected here — they run in the Postgres-equipped ``coverage`` /
+      # ``api-integration`` jobs instead. An explicit ``-m`` makes that split
+      # real (previously the filter was inert: nothing was marked). A CLI ``-m``
+      # overrides ``addopts``, so the docker/e2e/slow/auth_required exclusions
+      # are restated here alongside ``not integration``.
+      - name: Run unit tests (no integration)
+        run: >-
+          pytest -q
+          -m "not integration and not docker and not e2e and not slow and not auth_required"
+          --cov=aegis --cov-report=term-missing
 
   no-leaked-artifacts:
     name: aegis_output is not committed
@@ -179,6 +189,129 @@ jobs:
           helm template aegis deploy/helm/aegis \
             --set sandbox.enabled=true \
             --set ingress.enabled=true > /dev/null
+      # Prod-secret guard (C8): a prod deployment that left the dev secret
+      # placeholders in place with no external secret wired MUST be rejected.
+      # Assert both the non-zero exit AND the actionable guard message.
+      - name: helm template (prod + dev placeholders) fails the guard
+        run: |
+          out="$(helm template aegis deploy/helm/aegis \
+            -f deploy/helm/aegis/ci/prod-placeholders-values.yaml 2>&1)" && rc=0 || rc=$?
+          echo "$out"
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::prod-secret guard did NOT fire: render succeeded with dev placeholders in prod"
+            exit 1
+          fi
+          echo "$out" | grep -q "shipped DEV placeholders" || {
+            echo "::error::render failed but not via the prod-secret guard (unexpected error)"; exit 1; }
+          echo "prod-secret guard fired as expected"
+      # The same prod deployment is accepted once the External Secrets Operator
+      # is wired in, and renders an ExternalSecret (not an inline Secret).
+      - name: helm template (prod + externalSecrets) renders an ExternalSecret
+        run: |
+          out="$(helm template aegis deploy/helm/aegis \
+            -f deploy/helm/aegis/ci/prod-externalsecrets-values.yaml)"
+          echo "$out" | grep -q "kind: ExternalSecret" || {
+            echo "::error::ExternalSecret was not rendered when externalSecrets.enabled=true"; exit 1; }
+          echo "ExternalSecret rendered as expected"
+      # A prod deployment with secrets overridden by real values renders cleanly.
+      - name: helm template (prod + real secrets) succeeds
+        run: |
+          helm template aegis deploy/helm/aegis \
+            --set config.env=prod \
+            --set config.secret.s3AccessKeyId=ci-real-access-key \
+            --set config.secret.s3SecretAccessKey=ci-real-secret-key \
+            --set config.secret.nextAuthSecret=ci-real-nextauth-secret > /dev/null
+
+  sast:
+    name: SAST (semgrep + bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Aegis (security extra)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[security]"
+      # semgrep p/python + p/security-audit at ERROR only: high-signal
+      # rules so the gate stays low-noise. --error makes a finding fail the
+      # job; .semgrep.yml adds our repo-specific bans (shell=True, yaml.load,
+      # eval/exec) on top of the registry packs. Registry packs are fetched
+      # from semgrep.dev at run time (no auth/token required for these packs).
+      - name: Semgrep (p/python + p/security-audit, ERROR)
+        env:
+          SEMGREP_SEND_METRICS: "off"
+        run: |
+          semgrep --config p/python \
+                  --config p/security-audit \
+                  --config .semgrep.yml \
+                  --severity ERROR \
+                  --error \
+                  --metrics off \
+                  aegis
+      # bandit -ll -ii => report MEDIUM+ severity AND MEDIUM+ confidence
+      # (a non-zero exit fails the job). --ini .bandit carries the documented
+      # baseline skips (see .bandit and SECURITY.md). bandit does NOT
+      # auto-discover .bandit, so the path is passed explicitly.
+      - name: Bandit (-ll -ii, high-confidence)
+        run: bandit -r aegis -ll -ii --ini .bandit
+
+  deps:
+    name: Dependency CVEs (pip-audit + trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Audit the *resolved* runtime env (api + worker), not just the lean
+      # base, so transitive CVEs in the deployed deps are caught. The
+      # `security` extra brings pip-audit itself.
+      - name: Install Aegis (resolved runtime + security extra)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[api,worker,security]"
+      # --skip-editable drops the local aegis-platform editable (not on PyPI,
+      # so it has no advisory record). Un-fixable transitive CVE IDs go in
+      # .github/pip-audit-ignores.txt (documented baseline, seeded empty);
+      # each line that is not blank / a comment becomes one --ignore-vuln.
+      - name: pip-audit (resolved env)
+        run: |
+          ignores=()
+          while IFS= read -r line; do
+            line="${line%%#*}"
+            line="$(echo "$line" | xargs)"
+            [ -n "$line" ] && ignores+=(--ignore-vuln "$line")
+          done < .github/pip-audit-ignores.txt
+          # NB: no --strict here — it is incompatible with the deliberate
+          # --skip-editable (it would treat the intentionally-skipped local
+          # aegis-platform editable as a collection failure and always fail).
+          pip-audit --skip-editable "${ignores[@]}"
+      # trivy fs over the whole repo: HIGH,CRITICAL only, and exit 1 on a hit so
+      # the job gates. .trivyignore carries the documented baseline of un-fixable
+      # advisories (seeded empty). We install the trivy binary directly (same
+      # curl|sh pattern as the trufflehog job) rather than via
+      # aquasecurity/trivy-action: that action's pinned releases reference an
+      # internal aquasecurity/setup-trivy tag that upstream has removed, which
+      # fails action resolution at job-setup. A direct install has no such
+      # transitive-tag dependency.
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sudo sh -s -- -b /usr/local/bin
+      - name: Trivy filesystem scan (HIGH,CRITICAL)
+        env:
+          TRIVY_DISABLE_VEX_NOTICE: "true"
+        run: |
+          # --scanners vuln: this job is the dependency-CVE gate; secret
+          # scanning is the trufflehog job's responsibility.
+          trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+            --exit-code 1 --ignorefile .trivyignore --no-progress .
 
   coverage:
     name: Coverage (>=90%)

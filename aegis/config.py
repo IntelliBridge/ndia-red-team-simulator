@@ -92,6 +92,14 @@ class AegisConfig:
     auth_profiles_key: str | None = field(
         default_factory=lambda: os.environ.get("AEGIS_AUTH_PROFILES_KEY")
     )
+    # Previous Fernet key, kept valid for decryption through a key
+    # rotation (``AEGIS_AUTH_PROFILES_KEY_PREVIOUS``). When set, secrets
+    # are encrypted with the current key but decryptable with either, so
+    # ciphertext written under the old key keeps resolving until it has
+    # been re-encrypted. Mirrors the worker / session signing-key overlap.
+    auth_profiles_key_previous: str | None = field(
+        default_factory=lambda: os.environ.get("AEGIS_AUTH_PROFILES_KEY_PREVIOUS")
+    )
     # Pluggable authorization policy engine for the role gate
     # (``aegis.api.policy.check``). ``static`` (default) keeps the built-in
     # role-rank table; ``opa`` / ``cedar`` delegate to an external policy
@@ -114,6 +122,14 @@ class AegisConfig:
     plugins_require_signature: bool = False
     plugins_trusted_keys: str | None = None
     plugins_sig_dir: str | None = None
+    # Sandbox third-party plugin scanners (default on): a discovered plugin's
+    # ``scan()`` runs out-of-process under resource rlimits + a wall-clock
+    # timeout, network-off by default. Disable with env ``AEGIS_PLUGINS_SANDBOX=0``
+    # (or this flag) for trusted first-party plugins. Per-run resource caps and
+    # the network opt-in are env-only (``AEGIS_PLUGIN_SANDBOX_*`` /
+    # ``AEGIS_PLUGIN_SANDBOX_NETWORK``); the verifier/sandbox read env directly,
+    # these fields keep the contract discoverable.
+    plugins_sandbox: bool = True
     # LLM guardrails (aegis.llm.guardrails). Master switch plus per-layer
     # toggles; all fail-safe and secret-free in logs. ``llm_injection_block_risk``
     # is the risk tier ("low"|"medium"|"high") at/above which an injected input
@@ -123,6 +139,30 @@ class AegisConfig:
     llm_detect_injection: bool = True
     llm_filter_output: bool = True
     llm_injection_block_risk: str = "high"
+    # Fail-closed LLM budget enforcement. ``route()`` only enforces a budget
+    # when a ``budget_checker`` is supplied; a DB-backed run (``project_id``
+    # set) that reaches the CAI invocation *without* one would otherwise route
+    # uncapped. When strict, that case is DENIED rather than silently routed —
+    # so a budget cap can never be skipped by a missing wiring. The offline /
+    # filesystem path (``project_id is None``) is intentionally unenforced and
+    # unaffected. Defaults True in prod (``AEGIS_ENV=prod``), False otherwise;
+    # override with ``AEGIS_LLM_BUDGET_STRICT`` (the established env precedence).
+    llm_budget_strict: bool = field(
+        default_factory=lambda: os.environ.get("AEGIS_ENV", "dev").lower() == "prod"
+    )
+    # Iterative fix→test→retry loop (aegis.remediate.cai_runner). When
+    # ``remediation_test_command`` is set, a generated code patch is applied to
+    # the repo and this command is run; on failure the test output is fed back
+    # to the agent for up to ``remediation_max_iters`` attempts before the PR is
+    # opened. SECURITY: the command is **operator-configured** and is *never*
+    # derived from untrusted finding/patch content — it is split with
+    # ``shlex.split`` and executed as list-argv (never ``shell=True``). Unset
+    # (the default) keeps the single-shot patch path unchanged. Both are
+    # env-overridable (``AEGIS_REMEDIATION_TEST_COMMAND`` /
+    # ``AEGIS_REMEDIATION_MAX_ITERS``) via ``_apply_env_overrides`` so an
+    # operator can flip them per-shell with env-wins-over-YAML precedence.
+    remediation_test_command: str | None = None
+    remediation_max_iters: int = 3
 
 
 def load_config(path: str | None = None) -> AegisConfig:
@@ -184,4 +224,16 @@ def _apply_env_overrides(config: AegisConfig) -> AegisConfig:
     block_risk = os.environ.get("AEGIS_LLM_INJECTION_BLOCK_RISK")
     if block_risk is not None:
         config.llm_injection_block_risk = block_risk.strip().lower()
+    config.llm_budget_strict = _env_bool(
+        "AEGIS_LLM_BUDGET_STRICT", config.llm_budget_strict
+    )
+    config.remediation_test_command = os.environ.get(
+        "AEGIS_REMEDIATION_TEST_COMMAND", config.remediation_test_command
+    )
+    max_iters = os.environ.get("AEGIS_REMEDIATION_MAX_ITERS")
+    if max_iters is not None:
+        try:
+            config.remediation_max_iters = int(max_iters)
+        except ValueError:
+            pass
     return config

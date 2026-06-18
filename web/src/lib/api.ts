@@ -217,6 +217,42 @@ export function runAgent(
   );
 }
 
+// ── Agent catalog (GET /v1/agents) ─────────────────────────────────
+// Read-only roster mirroring aegis/agents/registry.py::list_agents.
+// `effect` ("read"/"active"/"external") is the human gate: active/
+// external agents need the approver role + execute=true server-side.
+export type AgentEffect = "read" | "active" | "external";
+
+export type AgentSpec = {
+  name: string;
+  domain: string;
+  effect: AgentEffect;
+  wired: boolean;
+};
+
+export async function listAgents(): Promise<AgentSpec[]> {
+  const out = await api<{ agents: AgentSpec[] }>("/v1/agents");
+  return out.agents ?? [];
+}
+
+// ── Tool catalog (GET /v1/tools) ───────────────────────────────────
+// Read-only roster mirroring aegis/tools/catalog.py::list_tools. Same
+// effect semantics as agents; the Kali pass-through enforces the gate.
+export type ToolEffect = "read" | "active" | "external";
+
+export type ToolSpec = {
+  name: string;
+  category: string;
+  source: string;
+  effect: ToolEffect;
+  description: string;
+};
+
+export async function listTools(): Promise<ToolSpec[]> {
+  const out = await api<{ tools: ToolSpec[] }>("/v1/tools");
+  return out.tools ?? [];
+}
+
 // ── Kali tool pass-through ─────────────────────────────────────────
 export type KaliRunBody = {
   execute?: boolean;

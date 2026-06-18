@@ -21,54 +21,13 @@ pytest.importorskip("sqlalchemy")
 from aegis.agents import AgentResult
 from aegis.audit.chain import InMemoryAuditWriter
 from aegis.config import AegisConfig
-from aegis.db.models import Base, Job, Organization, Project, Run
+from aegis.db.models import Job, Organization, Project, Run
 from aegis.safety import AuthorizationError
 from aegis.services.agents import create_agent_job
+from tests.conftest import make_sqlite_session_factory as _make_session_factory
 
-
-def _patch_jsonb_for_sqlite() -> None:
-    """Compile postgres JSONB → sqlite TEXT so create_all doesn't raise."""
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.ext.compiler import compiles
-
-    @compiles(JSONB, "sqlite")
-    def _compile_jsonb_sqlite(type_, compiler, **kw):  # noqa: ARG001
-        return "TEXT"
-
-
-def _make_session_factory():
-    """Return a (session_cm, engine, Session) triple backed by sqlite."""
-    _patch_jsonb_for_sqlite()
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
-    # StaticPool shares the single in-memory connection across threads so
-    # route tests (endpoint runs in Starlette's threadpool) see the same
-    # DB the test thread seeded.
-    engine = create_engine(
-        "sqlite://", future=True,
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    try:
-        Base.metadata.create_all(bind=engine)
-    except Exception as exc:
-        raise unittest.SkipTest(f"sqlite can't host the schema: {exc}")
-    Session = sessionmaker(engine, expire_on_commit=False)
-
-    @contextlib.contextmanager
-    def session_cm():
-        sess = Session()
-        try:
-            yield sess
-            sess.commit()
-        except Exception:
-            sess.rollback()
-            raise
-        finally:
-            sess.close()
-
-    return session_cm, engine, Session
+# DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
+pytestmark = pytest.mark.integration
 
 
 def _seed_project(Session) -> None:
@@ -346,6 +305,76 @@ class TestAgentRoute(unittest.TestCase):
                 json={"project_id": "proj-1", "prompt": "x",
                       "target": "http://attacker.example.com"})
         self.assertEqual(r.status_code, 403)
+
+
+class TestCatalogListEndpoints(unittest.TestCase):
+    """GET /v1/agents and GET /v1/tools — read-only catalog listings.
+
+    Neither touches the DB; they only require an authenticated user. The
+    agents route must import the ``aegis.agents`` package (which registers
+    the built-ins) so the roster is non-empty.
+    """
+
+    def _client(self):
+        from fastapi.testclient import TestClient
+
+        from aegis.api.app import create_app
+        from aegis.api.auth import CurrentUser, get_current_user
+        from aegis.api.settings import APISettings
+
+        app = create_app(APISettings(env="dev", auth_mode="dev",
+                                     cors_origins=["http://localhost:3000"]))
+        user = CurrentUser(sub="dev:u@test", email="u@test",
+                           project_memberships={"proj-1": "scanner"})
+        app.dependency_overrides[get_current_user] = lambda: user
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_list_agents_returns_registered_roster(self):
+        client = self._client()
+        r = client.get("/v1/agents")
+        self.assertEqual(r.status_code, 200)
+        agents = r.json()["agents"]
+        self.assertIsInstance(agents, list)
+        self.assertGreater(len(agents), 0)
+        # Each entry carries the four registry fields with JSON-friendly types.
+        sample = agents[0]
+        self.assertEqual(
+            set(sample) >= {"name", "domain", "effect", "wired"}, True)
+        self.assertIn(sample["effect"], {"read", "active", "external"})
+        self.assertIsInstance(sample["wired"], bool)
+        # The codeagent built-in is always wired.
+        by_name = {a["name"]: a for a in agents}
+        self.assertIn("codeagent", by_name)
+
+    def test_list_tools_returns_catalog(self):
+        client = self._client()
+        r = client.get("/v1/tools")
+        self.assertEqual(r.status_code, 200)
+        tools = r.json()["tools"]
+        self.assertIsInstance(tools, list)
+        self.assertGreater(len(tools), 0)
+        sample = tools[0]
+        self.assertEqual(
+            set(sample) >= {"name", "category", "source", "effect",
+                            "description"}, True)
+        # The Kali family must be present (the /tools page filters on it).
+        sources = {t["source"] for t in tools}
+        self.assertIn("kali", sources)
+
+    def test_list_endpoints_require_auth(self):
+        # With no get_current_user override the dev auth dependency rejects an
+        # unauthenticated request (401/403), never 200.
+        from fastapi.testclient import TestClient
+
+        from aegis.api.app import create_app
+        from aegis.api.settings import APISettings
+
+        app = create_app(APISettings(env="dev", auth_mode="dev",
+                                     cors_origins=["http://localhost:3000"]))
+        client = TestClient(app, raise_server_exceptions=False)
+        for path in ("/v1/agents", "/v1/tools"):
+            r = client.get(path)
+            self.assertIn(r.status_code, (401, 403))
 
 
 if __name__ == "__main__":
