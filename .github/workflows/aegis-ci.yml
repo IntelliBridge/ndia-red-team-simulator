@@ -292,19 +292,22 @@ jobs:
           # --skip-editable (it would treat the intentionally-skipped local
           # aegis-platform editable as a collection failure and always fail).
           pip-audit --skip-editable "${ignores[@]}"
-      # trivy fs over the whole repo: HIGH,CRITICAL only, and exit 1 on a
-      # hit so the job gates. .trivyignore carries the documented baseline of
-      # un-fixable advisories (seeded empty). Pinned action tag, matching the
-      # repo convention of pinning third-party actions.
+      # trivy fs over the whole repo: HIGH,CRITICAL only, and exit 1 on a hit so
+      # the job gates. .trivyignore carries the documented baseline of un-fixable
+      # advisories (seeded empty). We install the trivy binary directly (same
+      # curl|sh pattern as the trufflehog job) rather than via
+      # aquasecurity/trivy-action: that action's pinned releases reference an
+      # internal aquasecurity/setup-trivy tag that upstream has removed, which
+      # fails action resolution at job-setup. A direct install has no such
+      # transitive-tag dependency.
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sudo sh -s -- -b /usr/local/bin
       - name: Trivy filesystem scan (HIGH,CRITICAL)
-        uses: aquasecurity/trivy-action@v0.28.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-          trivyignores: .trivyignore
+        run: |
+          trivy fs --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 \
+            --ignorefile .trivyignore --no-progress .
 
   coverage:
     name: Coverage (>=90%)
