@@ -1,0 +1,172 @@
+# OpenTelemetry Collector — obs profile config.
+#
+# Aegis services emit OTLP/Logs (+ traces) to this Collector. Logs fan
+# out to:
+#   - Loki                 (logs/loki pipeline; always when obs is up)
+#   - aegis-log-ingest     (logs/aegis-ingest pipeline; the Postgres mirror)
+#   - Elasticsearch        (logs/elasticsearch pipeline; obs-search only)
+#
+# Traces go to Jaeger. The Postgres mirror path (`otlphttp/aegis-ingest`)
+# posts to the in-tree aegis-log-ingest service which decodes the
+# OTLP-JSON envelope and writes batched inserts to application_logs.
+#
+# Security pipeline (logs/security): host/OS audit sources — filelog
+# (auth.log/secure), journald (sshd/sudo/kernel), and rfc5424 syslog over
+# tcp — are scrubbed in two stages BEFORE any export: `redaction` masks
+# secret-like attribute values, and `transform/redact_body` scrubs secrets
+# from the raw log `body` (where host log lines actually land). Then `filter`
+# denoises and the records fan out to the Postgres mirror
+# (otlphttp/aegis-ingest) and Loki. Both redaction stages run before batch/export.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # --- security log sources (logs/security pipeline) ---
+  # Tail security-relevant host log files.
+  filelog:
+    include:
+      - /var/log/auth.log
+      - /var/log/secure
+    include_file_path: true
+    start_at: end
+    operators:
+      # Tag the source stream so downstream filtering/redaction can key on it.
+      - type: add
+        field: attributes.log_source
+        value: filelog
+      # Best-effort severity tag for common auth failures.
+      - type: regex_parser
+        regex: '(?P<authmsg>Failed password|authentication failure|sudo:)'
+        parse_from: body
+        if: 'body matches "Failed password|authentication failure|sudo:"'
+
+  # systemd journal, scoped to security-relevant units.
+  journald:
+    units:
+      - sshd
+      - sudo
+      - kernel
+
+  # rfc5424 syslog over tcp for network appliances / remote hosts.
+  syslog:
+    protocol: rfc5424
+    tcp:
+      listen_address: 0.0.0.0:54526
+
+  # Kubernetes API events (audit-adjacent signal) via the contrib
+  # k8sobjects receiver. Watches the core Event resource.
+  k8sobjects:
+    objects:
+      - name: events
+        mode: watch
+        group: events.k8s.io
+
+processors:
+  batch:
+    send_batch_size: 500
+    timeout: 2s
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 75
+    spike_limit_percentage: 15
+
+  # --- security log shaping (logs/security pipeline) ---
+  # Security-critical stage: drop/scrub secret-like attributes BEFORE batch
+  # or export. allow_all_keys keeps non-sensitive attrs; blocked_values
+  # masks token/password/apikey/bearer-style values wherever they appear.
+  redaction:
+    allow_all_keys: true
+    blocked_values:
+      - '(?i)(password|passwd|pwd)["\s:=]+\S+'
+      - '(?i)(api[_-]?key|apikey|secret|token)["\s:=]+\S+'
+      - '(?i)authorization["\s:=]+\S+'
+      - '(?i)bearer\s+[A-Za-z0-9._\-]+'
+    summary: debug
+
+  # Body-level secret scrubbing (logs/security pipeline). `redaction` above
+  # only masks attribute VALUES; raw host log lines land in the record `body`
+  # (filelog/journald/syslog put the line there — see filelog's
+  # `parse_from: body`). A password typed at a prompt, an `Authorization:`
+  # header an app logged, or a token on a sudo command line would otherwise
+  # reach Loki + the Postgres mirror unredacted. RE2 (Go) patterns mirror
+  # `redaction.blocked_values`. error_mode: ignore so a non-string body is a
+  # no-op rather than a pipeline error.
+  transform/redact_body:
+    error_mode: ignore
+    log_statements:
+      - context: log
+        statements:
+          - 'replace_pattern(body, "(?i)(password|passwd|pwd)\\s*[:=]\\s*\\S+", "***REDACTED***")'
+          - 'replace_pattern(body, "(?i)(api[_-]?key|apikey|secret|token)\\s*[:=]\\s*\\S+", "***REDACTED***")'
+          - 'replace_pattern(body, "(?i)authorization\\s*:\\s*.+", "***REDACTED***")'
+          - 'replace_pattern(body, "(?i)bearer\\s+[A-Za-z0-9._+/=-]+", "***REDACTED***")'
+          - 'replace_pattern(body, "AKIA[0-9A-Z]{16}", "***REDACTED***")'
+
+  # Denoise: keep security-relevant logs, drop obvious noise. OTTL
+  # conditions are OR'd; a record is dropped if any condition matches.
+  filter:
+    error_mode: ignore
+    logs:
+      log_record:
+        - 'IsMatch(body, "(?i)(debug|healthcheck|/healthz|kube-probe)") == true'
+        - 'severity_number < SEVERITY_NUMBER_INFO'
+
+exporters:
+  loki:
+    endpoint: http://loki:3100/loki/api/v1/push
+  otlphttp/aegis-ingest:
+    # aegis-log-ingest mounts its OTLP/Logs JSON endpoint at /v1/logs.
+    endpoint: http://aegis-log-ingest:4319
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+  # ``obs-search`` profile additionally brings Elasticsearch up; the
+  # pipeline below is enabled per-deployment by uncommenting (the
+  # Collector is permissive about unused exporters).
+  # elasticsearch:
+  #   endpoints: ["http://elasticsearch:9200"]
+  #   logs_index: "aegis-logs"
+
+# --- forward-looking security components (NOT in the vendored distro) ---
+# osquery (endpoint/host telemetry receiver) and isolationforest (ML
+# anomaly-scoring processor) are NOT standard opentelemetry-collector-contrib
+# components; they require custom/community builds not present here. They are
+# left commented so they never reach an active pipeline (an unknown component
+# would fail Collector startup). Activate only on a distro that ships them.
+# receivers:
+#   osquery:
+#     # community/custom receiver: requires an osqueryd extension build.
+#     scrapers: [processes, logged_in_users, listening_ports]
+# processors:
+#   isolationforest:
+#     # community/custom ML processor: scores logs for anomalies.
+#     mode: enrich
+
+service:
+  pipelines:
+    logs/loki:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [loki]
+    logs/aegis-ingest:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/aegis-ingest]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/jaeger]
+    # Host/OS audit sources -> redact attrs + body -> denoise -> Postgres mirror + Loki.
+    logs/security:
+      receivers: [filelog, journald, syslog, k8sobjects]
+      processors: [memory_limiter, redaction, transform/redact_body, filter, batch]
+      exporters: [otlphttp/aegis-ingest, loki]
+  telemetry:
+    logs:
+      level: info

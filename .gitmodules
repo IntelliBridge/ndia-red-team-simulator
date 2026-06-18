@@ -1,0 +1,24 @@
+[submodule "project_repos/cai"]
+	path = project_repos/cai
+	url = https://github.com/aliasrobotics/cai.git
+[submodule "project_repos/mcp-kali-server"]
+	path = project_repos/mcp-kali-server
+	url = https://gitlab.com/kalilinux/packages/mcp-kali-server.git
+[submodule "project_repos/vulnerability-fixer"]
+	path = project_repos/vulnerability-fixer
+	url = https://github.com/OpenHands/vulnerability-fixer.git
+[submodule "project_repos/strix"]
+	path = project_repos/strix
+	url = https://github.com/usestrix/strix.git
+[submodule "project_repos/shadcn-ui"]
+	path = project_repos/shadcn-ui
+	url = https://github.com/shadcn-ui/ui
+[submodule "project_repos/opentelemetry-collector-contrib"]
+	path = project_repos/opentelemetry-collector-contrib
+	url = https://github.com/open-telemetry/opentelemetry-collector-contrib
+[submodule "project_repos/bumblebee"]
+	path = project_repos/bumblebee
+	url = https://github.com/perplexityai/bumblebee.git
+[submodule "project_repos/deepsec"]
+	path = project_repos/deepsec
+	url = https://github.com/vercel-labs/deepsec.git

@@ -1,0 +1,66 @@
+{
+  "_embedded": {
+    "findings": [
+      {
+        "issue_id": 1001,
+        "scan_type": "STATIC",
+        "description": "Placeholder SQL injection finding for offline fixture testing.",
+        "count": 1,
+        "finding_status": {
+          "status": "OPEN"
+        },
+        "finding_details": {
+          "severity": 4,
+          "cwe": {
+            "id": 89,
+            "name": "Improper Neutralization of Special Elements used in an SQL Command"
+          },
+          "finding_category": {
+            "id": 19,
+            "name": "SQL Injection"
+          },
+          "file_name": "Login.java",
+          "file_path": "src/main/java/com/example/test/Login.java",
+          "file_line_number": 88
+        }
+      },
+      {
+        "issue_id": 1002,
+        "scan_type": "STATIC",
+        "description": "Placeholder cross-site scripting finding.",
+        "count": 1,
+        "finding_details": {
+          "severity": 3,
+          "cwe": {
+            "id": 80,
+            "name": "Improper Neutralization of Script-Related HTML Tags"
+          },
+          "finding_category": {
+            "id": 20,
+            "name": "Cross-Site Scripting (XSS)"
+          },
+          "file_name": "Profile.java",
+          "file_path": "src/main/java/com/example/test/Profile.java",
+          "file_line_number": 142
+        }
+      },
+      {
+        "issue_id": 1003,
+        "scan_type": "STATIC",
+        "description": "Placeholder informational finding with out-of-range severity.",
+        "finding_details": {
+          "severity": 99,
+          "cwe": {
+            "id": 117,
+            "name": "Improper Output Neutralization for Logs"
+          },
+          "finding_category": {
+            "id": 21,
+            "name": "Information Leakage"
+          }
+        }
+      },
+      42
+    ]
+  }
+}

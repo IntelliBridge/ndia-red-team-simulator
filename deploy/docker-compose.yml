@@ -1,0 +1,232 @@
+version: "3.9"
+
+services:
+  postgres:
+    # Custom image adds pgaudit (out-of-band logging of DDL + role/GRANT
+    # changes) on top of postgres:16; preload + log classes set via the
+    # image CMD. See deploy/Dockerfile.postgres and migration 0004.
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.postgres
+    image: aegis-postgres:dev
+    environment:
+      POSTGRES_USER: aegis
+      POSTGRES_PASSWORD: aegis
+      POSTGRES_DB: aegis
+    ports: ["5432:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aegis"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    command: start-dev --import-realm
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports: ["8080:8080"]
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/aegis-realm.json:ro
+
+  minio:
+    image: quay.io/minio/minio:latest
+    command: server /data --console-address ":9001"
+    # MinIO S3 port mapped to 9100 on the host because 9000 conflicts with
+    # other tools (Portainer, llama.cpp, etc.). Container-internal 9000 is
+    # unchanged so AEGIS_S3_ENDPOINT=http://minio:9000 still works.
+    ports: ["9100:9000", "9101:9001"]
+    environment:
+      MINIO_ROOT_USER: aegis
+      MINIO_ROOT_PASSWORD: aegis-secret
+    volumes:
+      - minio-data:/data
+
+  kali:
+    image: aegis-kali:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.kali
+    ports: ["5000:5000"]
+    environment:
+      AEGIS_KALI_ALLOW_GENERIC_COMMAND: "0"
+
+  aegis-api:
+    image: aegis-api:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_started }
+    environment:
+      AEGIS_ENV: dev
+      AEGIS_AUTH_MODE: dev
+      AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@postgres:5432/aegis
+      AEGIS_BROKER_URL: redis://redis:6379/0
+      AEGIS_RESULT_BACKEND: redis://redis:6379/1
+      AEGIS_BLOB_BACKEND: s3
+      AEGIS_S3_ENDPOINT: http://minio:9000
+      AEGIS_S3_BUCKET: aegis
+      AEGIS_S3_ACCESS_KEY_ID: aegis
+      AEGIS_S3_SECRET_ACCESS_KEY: aegis-secret
+      AEGIS_CORS_ORIGINS: http://localhost:3300
+      AEGIS_OIDC_ISSUER: http://keycloak:8080/realms/aegis
+      AEGIS_OIDC_JWKS_URL: http://keycloak:8080/realms/aegis/protocol/openid-connect/certs
+      AEGIS_KALI_URL: http://kali:5000
+    ports: ["8000:8000"]
+
+  # Long-running offensive/remediation work (-Q scans). Needs the kali belt.
+  aegis-worker:
+    image: aegis-worker:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.worker
+    command: ["celery", "-A", "aegis.workers.celery_app", "worker", "-Q", "scans", "--loglevel=info"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      kali: { condition: service_started }
+    environment: &worker-env
+      AEGIS_ENV: dev
+      AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@postgres:5432/aegis
+      AEGIS_BROKER_URL: redis://redis:6379/0
+      AEGIS_RESULT_BACKEND: redis://redis:6379/1
+      AEGIS_BLOB_BACKEND: s3
+      AEGIS_S3_ENDPOINT: http://minio:9000
+      AEGIS_S3_BUCKET: aegis
+      AEGIS_S3_ACCESS_KEY_ID: aegis
+      AEGIS_S3_SECRET_ACCESS_KEY: aegis-secret
+      AEGIS_KALI_URL: http://kali:5000
+      AEGIS_DISABLE_LLM: "1"
+
+  # Fast bookkeeping (-Q default): reports, CI gate, exports, parallel_fix
+  # orchestration, and the reaper. Kept off the scans pool so long scans can't
+  # starve it. Reuses the worker image + env via the &worker-env anchor.
+  aegis-worker-default:
+    image: aegis-worker:dev
+    command: ["celery", "-A", "aegis.workers.celery_app", "worker", "-Q", "default", "--loglevel=info"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment: *worker-env
+
+  # Beat scheduler: the only process that fires app.conf.beat_schedule (the
+  # stale-job reaper, every 5 min). Without it the reaper never runs.
+  aegis-beat:
+    image: aegis-worker:dev
+    command: ["celery", "-A", "aegis.workers.celery_app", "beat", "--loglevel=info"]
+    depends_on:
+      redis: { condition: service_healthy }
+    environment: *worker-env
+
+  aegis-web:
+    image: aegis-web:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.web
+    depends_on: [aegis-api]
+    # Host port :3300 avoids the macOS collision where another local dev
+    # server commonly grabs :3000. Container-internal stays :3000 so the
+    # Next.js process is unchanged.
+    ports: ["3300:3000"]
+    environment:
+      NEXT_PUBLIC_AEGIS_API_URL: http://localhost:8000
+      NEXTAUTH_URL: http://localhost:3300
+      NEXTAUTH_SECRET: dev-secret-change-me
+
+  # ----- Always-on Postgres log mirror (F20c) ------------------------------
+  # The aegis-log-ingest sidecar receives OTLP/Logs (under the obs profile)
+  # and/or direct JSON batches from the API + worker (default profile) and
+  # writes them to application_logs. SELECT * FROM application_logs WHERE
+  # run_id='...' returns the full trace without needing Loki or
+  # Elasticsearch up.
+  aegis-log-ingest:
+    image: aegis-log-ingest:dev
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.log_ingest
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@postgres:5432/aegis
+    ports: ["4319:4319"]
+
+  # ----- policy profile: external OPA policy engine ------------------------
+  # Opt-in (non-default) policy decision point for the role gate. Bring it
+  # up with `docker compose --profile policy up opa`, mount the example
+  # Rego, then run the API/worker with AEGIS_POLICY_ENGINE=opa and
+  # AEGIS_OPA_URL=http://opa:8181. The default `docker compose up` is
+  # unchanged — without the profile this service never starts.
+  opa:
+    image: openpolicyagent/opa:0.66.0
+    profiles: ["policy"]
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policies"]
+    volumes:
+      - ./opa:/policies:ro
+    ports:
+      - "8181:8181"
+
+  # ----- obs profile: Collector + Loki + Jaeger ----------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.108.0
+    profiles: ["obs"]
+    depends_on:
+      aegis-log-ingest: { condition: service_started }
+      loki: { condition: service_started }
+    volumes:
+      - ./otel/config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4320:4318"   # OTLP HTTP (4318 taken by Jaeger below; remap)
+
+  loki:
+    image: grafana/loki:2.9.7
+    profiles: ["obs"]
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./loki/config.yaml:/etc/loki/config.yaml:ro
+    ports:
+      - "3100:3100"
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.55
+    profiles: ["obs"]
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+
+  # ----- obs-search profile: Elasticsearch + Kibana ------------------------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    profiles: ["obs-search"]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.13.0
+    profiles: ["obs-search"]
+    depends_on: [elasticsearch]
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+
+volumes:
+  postgres-data:
+  minio-data:

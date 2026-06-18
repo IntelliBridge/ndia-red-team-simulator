@@ -1,0 +1,43 @@
+{
+  "@version": "2.14.0",
+  "site": [
+    {
+      "@name": "https://juice-shop.example.com",
+      "@host": "juice-shop.example.com",
+      "@port": "443",
+      "alerts": [
+        {
+          "pluginid": "40018",
+          "name": "SQL Injection",
+          "riskcode": "3",
+          "confidence": "2",
+          "desc": "SQL injection may be possible.",
+          "solution": "Use parameterized queries / prepared statements.",
+          "cweid": "89",
+          "instances": [
+            {
+              "uri": "https://juice-shop.example.com/rest/user/login",
+              "method": "POST",
+              "param": "email"
+            }
+          ]
+        },
+        {
+          "pluginid": "10038",
+          "name": "Content Security Policy (CSP) Header Not Set",
+          "riskcode": "1",
+          "confidence": "2",
+          "desc": "Content Security Policy header is missing.",
+          "solution": "Set a Content-Security-Policy header.",
+          "cweid": "693",
+          "instances": [
+            {
+              "uri": "https://juice-shop.example.com/",
+              "method": "GET"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

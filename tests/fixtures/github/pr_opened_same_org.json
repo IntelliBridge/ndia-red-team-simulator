@@ -1,0 +1,18 @@
+{
+  "action": "opened",
+  "number": 42,
+  "pull_request": {
+    "number": 42,
+    "base": {
+      "sha": "0000000000000000000000000000000000000001",
+      "ref": "main",
+      "repo": { "full_name": "acme/widget" }
+    },
+    "head": {
+      "sha": "0000000000000000000000000000000000000002",
+      "ref": "fix-injection",
+      "repo": { "full_name": "acme/widget", "fork": false }
+    }
+  },
+  "installation": { "id": 7777 }
+}

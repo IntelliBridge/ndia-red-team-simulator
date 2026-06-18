@@ -1,0 +1,13 @@
+{
+  "enabledPlugins": {
+    "cdao-agent-toolkit@cdao-agent-toolkit": true
+  },
+  "extraKnownMarketplaces": {
+    "cdao-agent-toolkit": {
+      "source": {
+        "source": "directory",
+        "path": "./cdao_plugin_marketplace"
+      }
+    }
+  }
+}
