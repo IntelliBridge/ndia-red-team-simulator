@@ -11,6 +11,7 @@ from aegis.runners.strix_runner import (
     discover_events_path,
     discover_strix_command,
     parse_events_lines,
+    run_output_dir,
     run_strix,
     tail_events,
 )
@@ -128,18 +129,32 @@ class TestDiscoverEventsPath(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertIsNone(discover_events_path(Path(tmp)))
 
-    def test_picks_newest_events_file(self):
+    def test_finds_single_events_file(self):
         with tempfile.TemporaryDirectory() as tmp:
-            strix_dir = Path(tmp)
-            old = strix_dir / "strix_runs" / "run-old" / "events.jsonl"
-            new = strix_dir / "strix_runs" / "run-new" / "events.jsonl"
-            for p in (old, new):
+            search_dir = Path(tmp)
+            events = search_dir / "strix_runs" / "auto-run" / "events.jsonl"
+            events.parent.mkdir(parents=True, exist_ok=True)
+            events.write_text("")
+            self.assertEqual(discover_events_path(search_dir), events)
+
+    def test_resolution_is_deterministic_not_mtime_based(self):
+        # The old implementation picked the newest mtime, which is fragile.
+        # Discovery is now keyed to a single per-run dir holding exactly one
+        # Strix run; if more than one events file somehow appears, resolution
+        # must still be deterministic (lexicographically greatest), regardless
+        # of mtime ordering.
+        with tempfile.TemporaryDirectory() as tmp:
+            search_dir = Path(tmp)
+            a = search_dir / "strix_runs" / "run-aaa" / "events.jsonl"
+            b = search_dir / "strix_runs" / "run-bbb" / "events.jsonl"
+            for p in (a, b):
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_text("")
-            # Force `new` to be the most recently modified.
-            os.utime(old, (1_000_000, 1_000_000))
-            os.utime(new, (2_000_000, 2_000_000))
-            self.assertEqual(discover_events_path(strix_dir), new)
+            # Give the lexicographically-greatest path the OLDER mtime to prove
+            # mtime no longer drives the choice.
+            os.utime(b, (1_000_000, 1_000_000))
+            os.utime(a, (2_000_000, 2_000_000))
+            self.assertEqual(discover_events_path(search_dir), b)
 
 
 class TestRunStrixMockedSubprocess(unittest.TestCase):
@@ -148,8 +163,10 @@ class TestRunStrixMockedSubprocess(unittest.TestCase):
             state = RunState(tmp, "ry")
             strix_dir = state.run_path / "strix"
             # Strix writes its events under strix_runs/<auto-name>/events.jsonl
-            # relative to its cwd (which the runner sets to strix_dir).
-            events_path = strix_dir / "strix_runs" / "auto-run" / "events.jsonl"
+            # relative to its cwd, which the runner now sets to the per-run
+            # run_output_dir (strix_dir/run-<run_id>/).
+            run_dir = run_output_dir(strix_dir, state.run_id)
+            events_path = run_dir / "strix_runs" / "auto-run" / "events.jsonl"
             events_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Fake Popen: writes 2 findings then "exits" with rc=2 immediately.
@@ -203,8 +220,9 @@ class TestRunStrixMockedSubprocess(unittest.TestCase):
                 "standard",
             )
 
-            # Strix must be launched with cwd=strix_dir so strix_runs/ lands there.
-            self.assertEqual(popen.call_args.kwargs["cwd"], str(strix_dir))
+            # Strix must be launched with cwd=run_dir (the per-run output dir)
+            # so its strix_runs/ tree lands in this run's isolated subtree.
+            self.assertEqual(popen.call_args.kwargs["cwd"], str(run_dir))
 
     def test_scan_mode_threaded_into_command(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -494,6 +512,106 @@ class TestRunStrixMockedSubprocess(unittest.TestCase):
             self.assertTrue(result.success)
             self.assertEqual(result.findings, [])
             self.assertFalse(result.partial_success)
+
+
+class TestRunStrixConcurrentRuns(unittest.TestCase):
+    """Two overlapping runs must each discover only their own events file.
+
+    Regression for the old newest-mtime glob, which keyed discovery to a shared
+    tree and could hand one run another run's events.jsonl. Each run now owns a
+    deterministic per-run output dir (``strix_dir/run-<run_id>/``); discovery is
+    keyed to it, so concurrent runs are fully isolated.
+    """
+
+    def test_each_concurrent_run_finds_its_own_events_file(self):
+        with tempfile.TemporaryDirectory() as tmp_a, \
+             tempfile.TemporaryDirectory() as tmp_b:
+            state_a = RunState(tmp_a, "run-a")
+            state_b = RunState(tmp_b, "run-b")
+
+            # Both runs launch at (close to) the same time so their events
+            # files share an mtime window — the exact case the old glob got
+            # wrong. A barrier forces the two FakeProcs to overlap.
+            barrier = threading.Barrier(2)
+
+            # A FakeProc that writes a finding (whose id is keyed off its own
+            # cwd) into <cwd>/strix_runs/auto/events.jsonl — i.e. relative to
+            # the per-run dir the runner launches it in, mirroring real Strix.
+            class FakeProc:
+                def __init__(self, *args, **kwargs):
+                    self.returncode = None
+                    cwd = Path(kwargs["cwd"])
+                    # The finding id encodes the run-<id> dir name so we can
+                    # later prove no cross-run leakage.
+                    self._marker = cwd.name
+                    self._events = cwd / "strix_runs" / "auto" / "events.jsonl"
+                    self._t = threading.Thread(target=self._run, daemon=True)
+                    self._t.start()
+
+                def _run(self):
+                    barrier.wait(timeout=5)
+                    self._events.parent.mkdir(parents=True, exist_ok=True)
+                    with open(self._events, "a") as fh:
+                        fh.write(json.dumps({
+                            "event_type": "finding.created",
+                            "payload": {"report": {
+                                "id": f"vuln-{self._marker}",
+                                "title": self._marker,
+                            }},
+                        }) + "\n")
+                    time.sleep(0.03)
+                    self.returncode = 0
+
+                def poll(self):
+                    return self.returncode
+
+                def terminate(self):
+                    self.returncode = 0
+
+                def wait(self):
+                    while self.returncode is None:
+                        time.sleep(0.01)
+                    return self.returncode
+
+            results: dict[str, object] = {}
+
+            def _launch(key: str, state: RunState) -> None:
+                results[key] = run_strix("http://localhost:3000", state)
+
+            # Patch once in the main thread (the patches are identical for both
+            # runs). unittest.mock.patch mutates shared module globals and is not
+            # thread-safe, so applying it *inside* each worker thread could leak
+            # a stale mock onto aegis.runners.strix_runner and flake unrelated
+            # tests; the worker threads only call run_strix.
+            with patch("aegis.runners.strix_runner.docker_available", return_value=True), \
+                 patch("aegis.runners.strix_runner.subprocess.Popen", side_effect=FakeProc), \
+                 patch("aegis.runners.strix_runner.shutil.which", return_value="/fake/strix"):
+                t_a = threading.Thread(target=_launch, args=("a", state_a))
+                t_b = threading.Thread(target=_launch, args=("b", state_b))
+                t_a.start()
+                t_b.start()
+                t_a.join()
+                t_b.join()
+
+            res_a = results["a"]
+            res_b = results["b"]
+
+            run_dir_a = run_output_dir(state_a.run_path / "strix", "run-a")
+            run_dir_b = run_output_dir(state_b.run_path / "strix", "run-b")
+
+            # Each run sees exactly its own finding — no cross-contamination.
+            # The FakeProc keys each finding id off its cwd (the per-run dir
+            # name), so the expected ids follow run_dir.name.
+            self.assertEqual({f.id for f in res_a.findings}, {f"vuln-{run_dir_a.name}"})
+            self.assertEqual({f.id for f in res_b.findings}, {f"vuln-{run_dir_b.name}"})
+            self.assertNotEqual(
+                {f.id for f in res_a.findings}, {f.id for f in res_b.findings},
+            )
+
+            # And each resolved events_path lives under its own per-run dir.
+            self.assertTrue(res_a.events_path.startswith(str(run_dir_a)))
+            self.assertTrue(res_b.events_path.startswith(str(run_dir_b)))
+            self.assertNotEqual(res_a.events_path, res_b.events_path)
 
 
 if __name__ == "__main__":
