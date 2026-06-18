@@ -24,7 +24,11 @@ from uuid import uuid4
 from aegis.config import AegisConfig
 from aegis.effects import build_action_plan
 from aegis.llm.guardrails import GuardrailViolation
-from aegis.remediate.cai_runner import run_code_fix, run_live_hardening
+from aegis.remediate.cai_runner import (
+    run_code_fix,
+    run_iterative_code_fix,
+    run_live_hardening,
+)
 from aegis.remediate.deps_workflow import build_version_bump_diff
 from aegis.remediate.patch_workflow import (
     apply_patch,
@@ -313,11 +317,25 @@ def _generate_patch_fix(
     gh_client: Any,
 ) -> FixOutcome:
     project_id, budget_checker = _budget_for(run_state)
+    # Drive the iterative fix→test→retry loop (C13) only when a working tree is
+    # available AND an operator has configured a project-test command. Without
+    # both, fall through to the historical single-shot ``run_code_fix`` — the
+    # path (and its test seam) is unchanged when no test gate is set.
+    use_loop = repo is not None and bool(config.remediation_test_command)
     try:
-        result = run_code_fix(finding, repo_path=repo,
-                              use_golden_patch=use_golden_patch,
-                              project_id=project_id, run_id=run_state.run_id,
-                              budget_checker=budget_checker)
+        if use_loop:
+            assert repo is not None  # narrowed by use_loop
+            result = run_iterative_code_fix(
+                finding, repo=repo, config=config,
+                project_id=project_id, run_id=run_state.run_id,
+                budget_checker=budget_checker,
+                use_golden_patch=use_golden_patch,
+            )
+        else:
+            result = run_code_fix(finding, repo_path=repo,
+                                  use_golden_patch=use_golden_patch,
+                                  project_id=project_id, run_id=run_state.run_id,
+                                  budget_checker=budget_checker)
     except GuardrailViolation as exc:
         return FixOutcome(
             success=False, strategy="patch", finding_id=finding.id,
@@ -368,17 +386,34 @@ def _generate_patch_fix(
             source=result.source, diff_path=diff_path,
         )
 
+    # Surface the iterative fix→test→retry verdict (C13) in the PR body and
+    # outcome detail when a project-test gate ran (``tests_passed`` is set).
+    test_line = ""
+    iter_detail: dict[str, Any] = {}
+    if result.tests_passed is not None:
+        verdict = "passing" if result.tests_passed else "FAILING"
+        test_line = (f"project tests: {verdict} after {result.iterations} "
+                     f"attempt(s)\n")
+        iter_detail = {
+            "remediation_iterations": result.iterations,
+            "remediation_tests_passed": result.tests_passed,
+        }
+
     return _finalize_apply(
         run_state, finding, commit_result,
         strategy="patch", source=result.source, diff_path=diff_path,
         log_action="patch_commit",
         log_result=(f"branch={commit_result.branch} commit={commit_result.commit_hash} "
                     f"ref_before={commit_result.ref_before} "
-                    f"diff_sha256={commit_result.diff_sha256}"),
+                    f"diff_sha256={commit_result.diff_sha256} "
+                    f"iterations={result.iterations} "
+                    f"tests_passed={result.tests_passed}"),
         repo=repo, open_pr=open_pr, push=push,
         pr_title=f"Aegis fix: {finding.title} ({finding.id})",
         pr_body=(f"Source: {result.source}\n"
-                 f"diff sha256: {commit_result.diff_sha256}\n"),
+                 f"diff sha256: {commit_result.diff_sha256}\n"
+                 f"{test_line}"),
+        extra_detail=iter_detail or None,
     )
 
 

@@ -11,6 +11,7 @@ from aegis.remediate.patch_workflow import (
     extract_unified_diff,
     is_repo_dirty,
     load_golden_patch,
+    restore_tree,
     rollback,
 )
 from aegis.schema import AegisFinding
@@ -148,6 +149,20 @@ class TestCommitPatch(unittest.TestCase):
             assert result.ref_before  # for type checker
             self.assertTrue(rollback(repo, result.ref_before))
             self.assertEqual((repo / "routes" / "login.js").read_text(), _SEED_LOGIN_JS)
+
+    def test_restore_tree_removes_untracked_added_file(self):
+        # restore_tree = reset --hard + clean -fd. After applying (not
+        # committing) a diff that adds a file, the tree must be pristine.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            _init_repo(repo, _SEED_LOGIN_JS)
+            ref = _git(repo, "rev-parse", "HEAD").strip()
+            add = "--- /dev/null\n+++ b/added.txt\n@@ -0,0 +1 @@\n+x\n"
+            self.assertTrue(apply_patch(repo, add, dry_run=False).success)
+            self.assertTrue((repo / "added.txt").exists())
+            self.assertTrue(restore_tree(repo, ref))
+            self.assertFalse((repo / "added.txt").exists())
+            self.assertEqual(_git(repo, "status", "--porcelain").strip(), "")
 
     def test_branch_first_does_not_mutate_current_branch(self):
         with tempfile.TemporaryDirectory() as tmp:

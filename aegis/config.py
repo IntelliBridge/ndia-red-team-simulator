@@ -150,6 +150,19 @@ class AegisConfig:
     llm_budget_strict: bool = field(
         default_factory=lambda: os.environ.get("AEGIS_ENV", "dev").lower() == "prod"
     )
+    # Iterative fix→test→retry loop (aegis.remediate.cai_runner). When
+    # ``remediation_test_command`` is set, a generated code patch is applied to
+    # the repo and this command is run; on failure the test output is fed back
+    # to the agent for up to ``remediation_max_iters`` attempts before the PR is
+    # opened. SECURITY: the command is **operator-configured** and is *never*
+    # derived from untrusted finding/patch content — it is split with
+    # ``shlex.split`` and executed as list-argv (never ``shell=True``). Unset
+    # (the default) keeps the single-shot patch path unchanged. Both are
+    # env-overridable (``AEGIS_REMEDIATION_TEST_COMMAND`` /
+    # ``AEGIS_REMEDIATION_MAX_ITERS``) via ``_apply_env_overrides`` so an
+    # operator can flip them per-shell with env-wins-over-YAML precedence.
+    remediation_test_command: str | None = None
+    remediation_max_iters: int = 3
 
 
 def load_config(path: str | None = None) -> AegisConfig:
@@ -214,4 +227,13 @@ def _apply_env_overrides(config: AegisConfig) -> AegisConfig:
     config.llm_budget_strict = _env_bool(
         "AEGIS_LLM_BUDGET_STRICT", config.llm_budget_strict
     )
+    config.remediation_test_command = os.environ.get(
+        "AEGIS_REMEDIATION_TEST_COMMAND", config.remediation_test_command
+    )
+    max_iters = os.environ.get("AEGIS_REMEDIATION_MAX_ITERS")
+    if max_iters is not None:
+        try:
+            config.remediation_max_iters = int(max_iters)
+        except ValueError:
+            pass
     return config
