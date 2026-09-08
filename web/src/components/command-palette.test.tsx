@@ -51,7 +51,7 @@ import { CommandPalette } from "./command-palette";
 
 const LINKS = [
   { href: "/dashboard", label: "Dashboard" },
-  { href: "/agents", label: "Agents" },
+  { href: "/runs", label: "Runs" },
 ];
 
 afterEach(cleanup);
@@ -68,14 +68,14 @@ describe("CommandPalette", () => {
     fireEvent.keyDown(document, { key: "k", metaKey: true });
     expect(screen.getByTestId("palette")).toBeTruthy();
     const items = screen.getAllByTestId("cmd-item");
-    expect(items.map((i) => i.textContent)).toEqual(["Dashboard", "Agents"]);
+    expect(items.map((i) => i.textContent)).toEqual(["Dashboard", "Runs"]);
   });
 
   it("navigates and closes when an item is selected", () => {
     render(React.createElement(CommandPalette, { links: LINKS }));
     fireEvent.keyDown(document, { key: "k", ctrlKey: true });
     fireEvent.click(screen.getAllByTestId("cmd-item")[1]);
-    expect(pushMock).toHaveBeenCalledWith("/agents");
+    expect(pushMock).toHaveBeenCalledWith("/runs");
     // Selecting closes the palette.
     expect(screen.queryByTestId("palette")).toBeNull();
   });

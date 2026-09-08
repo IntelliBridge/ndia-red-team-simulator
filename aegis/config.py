@@ -1,0 +1,169 @@
+"""Aegis configuration loader."""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
+
+
+@dataclass
+class AegisConfig:
+    output_dir: str = "./aegis_output"
+    model: str = "gemini/gemini-2.5-flash"
+    target_allowlist: list[str] = field(
+        default_factory=lambda: ["127.0.0.1", "localhost", "host.docker.internal"]
+    )
+    # Stale-job reaper: a job left ``status="running"`` longer than this many
+    # seconds is presumed crashed (the redelivery guard never re-runs it) and
+    # is flipped to ``failed`` by ``aegis.reap_stale_jobs`` on the beat schedule.
+    job_max_runtime_seconds: int = 3600
+    # Air-gapped installs point at an internal package/artifact mirror instead
+    # of the public internet. When ``AEGIS_OFFLINE_VENDOR_HOST`` is set (e.g.
+    # ``git.internal.example.com``) it is surfaced by ``aegis doctor`` and the
+    # evidence pack as a generic air-gapped-mirror setting.
+    offline_vendor_host: str | None = None
+    # WORM (Write-Once-Read-Many) audit export. These mirror the AEGIS_WORM_*
+    # env vars (read at runtime by aegis.storage.worm; S3 creds resolve from
+    # AEGIS_S3_* like S3BlobStore) and are surfaced here purely for
+    # discoverability/documentation — the storage client does NOT read them
+    # off the config object. The target bucket must have Object Lock enabled
+    # at creation for retention to take effect.
+    worm_export_enabled: bool = False
+    worm_bucket: str = "aegis-worm"
+    worm_retention_days: int = 2555
+    worm_lock_mode: str = "COMPLIANCE"
+    worm_export_interval_seconds: int = 86400
+    # Fernet key for encrypting DAST auth-profile secrets at rest
+    # (``auth_profiles.secret_ciphertext``). Sourced from the environment
+    # (``AEGIS_AUTH_PROFILES_KEY``) — keep key material out of aegis.yaml.
+    # Generate with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    auth_profiles_key: str | None = field(
+        default_factory=lambda: os.environ.get("AEGIS_AUTH_PROFILES_KEY")
+    )
+    # Previous Fernet key, kept valid for decryption through a key
+    # rotation (``AEGIS_AUTH_PROFILES_KEY_PREVIOUS``). When set, secrets
+    # are encrypted with the current key but decryptable with either, so
+    # ciphertext written under the old key keeps resolving until it has
+    # been re-encrypted. Mirrors the worker / session signing-key overlap.
+    auth_profiles_key_previous: str | None = field(
+        default_factory=lambda: os.environ.get("AEGIS_AUTH_PROFILES_KEY_PREVIOUS")
+    )
+    # Pluggable authorization policy engine for the role gate
+    # (``aegis.api.policy.check``). ``static`` (default) keeps the built-in
+    # role-rank table; ``opa`` / ``cedar`` delegate to an external policy
+    # service over REST. The engine reads these via the matching env vars
+    # (``AEGIS_POLICY_ENGINE`` / ``AEGIS_OPA_URL`` / ``AEGIS_OPA_PATH`` /
+    # ``AEGIS_CEDAR_URL``) — mirroring the storage/audit backend selectors;
+    # these fields keep the contract discoverable. External engines fail
+    # closed (deny) on any connection error or malformed response.
+    policy_engine: str = "static"
+    opa_url: str | None = None
+    opa_path: str | None = None
+    cedar_url: str | None = None
+    # Supply-chain: optional Ed25519 signature enforcement for third-party
+    # marketplace plugins. Off by default → the entry-point loader is unchanged.
+    # When enabled (env ``AEGIS_PLUGINS_REQUIRE_SIGNATURE=1`` or this flag), only
+    # plugins whose distribution carries a valid signature from a trusted key are
+    # registered. ``plugins_trusted_keys`` / ``plugins_sig_dir`` mirror the
+    # ``AEGIS_PLUGINS_TRUSTED_KEYS`` / ``AEGIS_PLUGINS_SIG_DIR`` env vars (the
+    # verifier reads env directly; these fields keep the contract discoverable).
+    plugins_require_signature: bool = False
+    plugins_trusted_keys: str | None = None
+    plugins_sig_dir: str | None = None
+    # Sandbox third-party plugin scanners (default on): a discovered plugin's
+    # ``scan()`` runs out-of-process under resource rlimits + a wall-clock
+    # timeout, network-off by default. Disable with env ``AEGIS_PLUGINS_SANDBOX=0``
+    # (or this flag) for trusted first-party plugins. Per-run resource caps and
+    # the network opt-in are env-only (``AEGIS_PLUGIN_SANDBOX_*`` /
+    # ``AEGIS_PLUGIN_SANDBOX_NETWORK``); the verifier/sandbox read env directly,
+    # these fields keep the contract discoverable.
+    plugins_sandbox: bool = True
+    # LLM guardrails (aegis.llm.guardrails). Master switch plus per-layer
+    # toggles; all fail-safe and secret-free in logs. ``llm_injection_block_risk``
+    # is the risk tier ("low"|"medium"|"high") at/above which an injected input
+    # is *blocked*; "off" detects + logs but never blocks.
+    llm_guardrails_enabled: bool = True
+    llm_scrub_diff_pii: bool = True
+    llm_detect_injection: bool = True
+    llm_filter_output: bool = True
+    llm_injection_block_risk: str = "high"
+    # Fail-closed LLM budget enforcement. ``route()`` only enforces a budget
+    # when a ``budget_checker`` is supplied; a DB-backed run (``project_id``
+    # set) that reaches the LLM invocation *without* one would otherwise route
+    # uncapped. When strict, that case is DENIED rather than silently routed —
+    # so a budget cap can never be skipped by a missing wiring. The offline /
+    # filesystem path (``project_id is None``) is intentionally unenforced and
+    # unaffected. Defaults True in prod (``AEGIS_ENV=prod``), False otherwise;
+    # override with ``AEGIS_LLM_BUDGET_STRICT`` (the established env precedence).
+    llm_budget_strict: bool = field(
+        default_factory=lambda: os.environ.get("AEGIS_ENV", "dev").lower() == "prod"
+    )
+
+
+def load_config(path: str | None = None) -> AegisConfig:
+    """Load configuration from a YAML file and return an AegisConfig.
+
+    Resolution order for the config file path:
+      1. Explicit ``path`` argument
+      2. ``AEGIS_CONFIG`` environment variable
+      3. ``aegis.yaml`` in the current working directory
+    """
+    if path is None:
+        path = os.environ.get("AEGIS_CONFIG", "aegis.yaml")
+
+    config_path = Path(path)
+
+    if config_path.exists():
+        with open(config_path, "r") as f:
+            raw = yaml.safe_load(f) or {}
+        config = AegisConfig(
+            **{k: v for k, v in raw.items() if k in AegisConfig.__dataclass_fields__}
+        )
+    else:
+        # No config file found — start from defaults.
+        config = AegisConfig()
+
+    # Environment overlay: ``AEGIS_OFFLINE_VENDOR_HOST`` names the internal
+    # package mirror for air-gapped installs. It overrides any YAML value so
+    # operators can flip it per-shell without editing files.
+    env_host = os.environ.get("AEGIS_OFFLINE_VENDOR_HOST")
+    if env_host:
+        config.offline_vendor_host = env_host
+
+    return _apply_env_overrides(config)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _apply_env_overrides(config: AegisConfig) -> AegisConfig:
+    """Overlay ``AEGIS_LLM_*`` environment variables onto the LLM-guardrail
+    fields. Env wins over YAML so an operator can flip a guard at runtime
+    without editing the config file (the established override precedence)."""
+    config.llm_guardrails_enabled = _env_bool(
+        "AEGIS_LLM_GUARDRAILS", config.llm_guardrails_enabled
+    )
+    config.llm_scrub_diff_pii = _env_bool(
+        "AEGIS_LLM_SCRUB_DIFF", config.llm_scrub_diff_pii
+    )
+    config.llm_detect_injection = _env_bool(
+        "AEGIS_LLM_DETECT_INJECTION", config.llm_detect_injection
+    )
+    config.llm_filter_output = _env_bool(
+        "AEGIS_LLM_FILTER_OUTPUT", config.llm_filter_output
+    )
+    block_risk = os.environ.get("AEGIS_LLM_INJECTION_BLOCK_RISK")
+    if block_risk is not None:
+        config.llm_injection_block_risk = block_risk.strip().lower()
+    config.llm_budget_strict = _env_bool(
+        "AEGIS_LLM_BUDGET_STRICT", config.llm_budget_strict
+    )
+    return config

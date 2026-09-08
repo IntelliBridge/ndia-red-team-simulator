@@ -17,5 +17,5 @@
     "lib": "@redsim/design-system/src/lib",
     "hooks": "@redsim/design-system/src/hooks"
   },
-  "registry": "https://ui.shadcn.com/r"
+  "registry": "file:../project_repos/shadcn-ui/apps/v4/registry"
 }

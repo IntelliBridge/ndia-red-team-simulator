@@ -1,0 +1,42 @@
+{{- include "aegis.validateProdSecret" . -}}
+Aegis {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Config secret source:
+{{- if .Values.config.secret.existingSecret }}
+  - existing Secret "{{ .Values.config.secret.existingSecret }}" (managed out-of-band).
+{{- else if .Values.config.secret.externalSecrets.enabled }}
+  - ExternalSecret -> Secret "{{ include "aegis.secretName" . }}" (External Secrets Operator; store "{{ .Values.config.secret.externalSecrets.secretStoreRef.name }}").
+{{- else }}
+  - chart-rendered Secret "{{ include "aegis.secretName" . }}".{{ if eq .Values.config.env "prod" }} (values overridden from dev placeholders){{ end }}
+{{- end }}
+
+Components:
+  - api         (Service: {{ include "aegis.componentName" (dict "ctx" . "component" "api") }}:{{ .Values.api.service.port }})
+  - worker      (Celery; no Service){{ if .Values.sandbox.enabled }} [gVisor: {{ .Values.sandbox.runtimeClassName }}]{{ end }}
+  - web         (Service: {{ include "aegis.componentName" (dict "ctx" . "component" "web") }}:{{ .Values.web.service.port }})
+  - log-ingest  (Service: {{ include "aegis.componentName" (dict "ctx" . "component" "log-ingest") }}:{{ .Values.logIngest.service.port }})
+
+Stateful deps (in-cluster when enabled):
+  - postgres : {{ .Values.postgres.enabled }}
+  - redis    : {{ .Values.redis.enabled }}
+  - keycloak : {{ .Values.keycloak.enabled }}{{ if .Values.keycloak.enabled }} (replicas: {{ .Values.keycloak.replicas }}){{ end }}
+  - minio    : {{ .Values.minio.enabled }}
+
+{{- if .Values.sandbox.enabled }}
+
+Sandbox isolation is ON. gVisor ({{ .Values.sandbox.handler }}) MUST be
+installed on every node that schedules the worker pod.
+{{- end }}
+{{- if not .Values.ingress.enabled }}
+
+Ingress is disabled. Reach the web UI / api via `kubectl port-forward`:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "aegis.componentName" (dict "ctx" . "component" "web") }} 3000:{{ .Values.web.service.port }}
+{{- else }}
+
+Ingress is enabled. Hosts:
+{{- range .Values.ingress.hosts }}
+  - http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- end }}
+
+This chart targets a real Kubernetes cluster; it is not run locally.

@@ -1,0 +1,23 @@
+# Default owner — every PR touches this catch-all unless overridden below.
+* @noah-behrick
+
+# Phase 3 surface owners.
+/aegis/api/            @noah-behrick
+/aegis/workers/        @noah-behrick
+/aegis/db/             @noah-behrick
+/aegis/audit/          @noah-behrick
+/aegis/scanners/       @noah-behrick
+/aegis/services/       @noah-behrick
+/aegis/llm/            @noah-behrick
+
+/web/                  @noah-behrick
+/deploy/               @noah-behrick
+/.github/workflows/    @noah-behrick
+
+# Tests stay open to anyone touching the corresponding source.
+/tests/                @noah-behrick
+
+# Plan / doc artefacts.
+/PLAN*.md              @noah-behrick
+/docs/                 @noah-behrick
+/CHANGELOG.md          @noah-behrick

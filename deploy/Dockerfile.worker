@@ -1,0 +1,36 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+COPY deploy/certs/ /usr/local/share/ca-certificates/aegis-extra/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates git curl \
+    && find /usr/local/share/ca-certificates/aegis-extra/ -type f \( -name "*.pem" -o -name "*.crt" \) \
+         -exec sh -c 'cp "$1" "/usr/local/share/ca-certificates/$(basename "${1%.*}").crt"' _ {} \; \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    PIP_CERT=/etc/ssl/certs/ca-certificates.crt
+
+# Install the CPU-only torch/torchvision first, so the ART/SHAP stack that
+# the ml extra resolves reuses them instead of pulling the multi-GB CUDA
+# wheels. Attacks run on CPU (see the spec: no GPU).
+RUN pip install --upgrade pip && \
+    pip install --index-url https://download.pytorch.org/whl/cpu \
+        "torch>=2.3" "torchvision>=0.18"
+
+COPY pyproject.toml ./
+COPY aegis ./aegis
+
+# This image runs the attacks, so it carries the ml extra (torch, ART,
+# SHAP, onnxruntime, scikit-learn) on top of the Celery worker deps.
+RUN pip install -e ".[worker,ml]"
+
+# A standalone worker consumes both queues so nothing is stranded; the compose
+# stack overrides this to run a dedicated pool per queue (-Q scans / -Q default)
+# plus a beat scheduler. See deploy/docker-compose.yml.
+CMD ["celery", "-A", "aegis.workers.celery_app", "worker", "-Q", "scans,default", "--loglevel=info"]

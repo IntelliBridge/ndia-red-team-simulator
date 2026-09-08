@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Aegis Helm chart values",
+  "description": "Validates the Aegis chart values. The root is intentionally permissive (additionalProperties allowed) so this schema can grow incrementally; the security-sensitive config.secret block is validated strictly.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "config": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "env": {
+          "type": "string",
+          "description": "Deployment environment. 'prod' activates the dev-placeholder secret guard.",
+          "enum": ["dev", "staging", "prod"]
+        },
+        "secret": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "existingSecret",
+            "s3AccessKeyId",
+            "s3SecretAccessKey",
+            "nextAuthSecret",
+            "externalSecrets"
+          ],
+          "properties": {
+            "existingSecret": {
+              "type": "string",
+              "description": "Name of a pre-provisioned Secret to consume instead of rendering one. Empty string renders/sources the Secret in-chart."
+            },
+            "s3AccessKeyId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "s3SecretAccessKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "nextAuthSecret": {
+              "type": "string",
+              "minLength": 1
+            },
+            "externalSecrets": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["enabled"],
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Render an ExternalSecret sourced by the External Secrets Operator instead of templating secret values."
+                },
+                "secretStoreRef": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["name", "kind"],
+                  "properties": {
+                    "name": { "type": "string", "minLength": 1 },
+                    "kind": {
+                      "type": "string",
+                      "enum": ["ClusterSecretStore", "SecretStore"]
+                    }
+                  }
+                },
+                "refreshInterval": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "data": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["secretKey", "remoteRef"],
+                    "properties": {
+                      "secretKey": { "type": "string", "minLength": 1 },
+                      "remoteRef": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["key"],
+                        "properties": {
+                          "key": { "type": "string", "minLength": 1 },
+                          "property": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
