@@ -1,481 +1,517 @@
-> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **Milestones M1–M6**; feature **F004 Run Management**.
->
-> Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): no `redsim/runs.py`/`jobs.py` — orchestration is Celery tasks + `aegis/services/ml_campaigns.py`; state in Postgres (`Run.stage_table`, `jobs` via `aegis/workers/job_state.py`), not `run.json`; a campaign starts at `POST /v1/models/{id}/attacks` (no generic `POST /v1/runs`); admission is audit-first; blobs stream from `GET /v1/artifacts/{id}`.
->
-> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+# Phase P4 · Milestones M1-M6 · Feature F004 (v2, aegis substrate)
 
-# Phase P4 — Orchestration & API wiring
+Status: v2, 2026-09-08. Owner: backend lead (WS4). Waves: Slice 1 scaffold,
+Slice 2 complete. This phase is the integration spine of the ML vertical.
 
-Status: v1, 2026-09-08. Owner: backend lead. Wave: scaffold in Wave 1, complete
-in Wave 2. This phase is the integration spine. Read `00-master-plan.md` first,
-then the design spec `docs/superpowers/specs/2026-09-08-redsim-design.md`, then
-this file.
+Read these first, in order:
 
-P4 turns three independent phases into one running product. P1 builds targets,
-P2 builds attacks and MRI scoring, P3 builds explanation and rules. P4 executes
-them in order, persists the record after each stage, serves the HTTP surface,
-and renders the reports.
+1. `docs/plans/00-master-plan.md` sections 2, 5, 7.
+2. `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md`
+   sections 6, 10, 17.
+3. `specs/004-run-management/spec.md`.
+
+P4 wires the aegis platform so a user starts an attack campaign and watches it
+finish. It owns the new HTTP routers, the campaign admission service, and the
+Celery tasks that run the pipeline. It consumes the target, attack, explain, and
+scoring modules from P1, P2, and P3. It writes no state to disk. All state lives
+in Postgres (`runs`, `jobs`, `findings`, `artifacts`, `ml_campaigns`), in the
+blob store (S3/MinIO), and on the hash-chained audit log.
+
+There is no `redsim/` package. There is no `redsim/runs.py`, no `redsim/jobs.py`,
+no thread pool, no `run.json`, and no new `create_app`. The paths below are the
+real aegis paths on `main`.
 
 ---
 
 ## 1. Objective
 
-Wire the pipeline and the API so a user can launch a run and watch it finish.
+Deliver the orchestration and API surface for one attack campaign against one
+model, end to end, on Celery.
 
-Concretely, deliver four modules:
+Concretely, deliver four things:
 
-1. `redsim/runs.py` — `run_pipeline(config, store) -> RunRecord`. It runs the
-   nine `STAGES` in order, calls the `TARGETS` and `ATTACKS` registries, the
-   scoring module, the explain module, and the rules module. It writes
-   `run.json` through `store.save_record` after every stage so the UI polls
-   progress.
-2. `redsim/jobs.py` — a thread pool and an in-memory handle table. `submit`
-   returns a `run_id` and runs the pipeline off the request thread. `status`
-   returns a `RunSummary` or `None`.
-3. `redsim/api/routes.py` — the full route surface from design spec section 4
-   and master plan section 6.7, completed from the P0 skeleton.
-4. `redsim/report.py` builders — render a `RunRecord` to Markdown, JSON, and
-   HTML, reusing the existing `html_escape` and `_md_to_html_min` helpers.
+1. New routers under `aegis/api/v1/` (`models.py`, `attacks.py`, `datasets.py`,
+   `defenses.py`, `ml_capabilities.py`, `artifacts.py`, `compare.py`,
+   `ml_findings.py`), each mounted on the existing `aegis/api/app.py`
+   `create_app` under `prefix="/v1"`.
+2. `aegis/services/ml_campaigns.py`, an audit-first admission service that
+   mirrors `aegis/services/scans.py::create_scan_job` and ends in `task.delay`.
+3. The Celery tasks in `aegis/workers/tasks/` (`model_validate.py`, `attack.py`,
+   `explain.py`, `harden.py`, `verify.py`, `report.py`), each wrapped by
+   `aegis/workers/bootstrap.py::task_context` and writing status through
+   `aegis/workers/job_state.py::set_job_status`.
+4. Campaign progress through `Run.stage_table` plus the Redis run-event channel,
+   and artifact streaming through `GET /v1/artifacts/{id}`.
 
 The acceptance gate is the vertical smoke test: one image target plus FGSM plus
-SHAP, from `POST /v1/runs` to a `succeeded` `RunRecord` with a `scoring` block.
+SHAP, from `POST /v1/models/{id}/attacks` to a `succeeded` `Run` with a scored
+campaign record served at `GET /v1/runs/{id}/campaign`.
 
 ## 2. Scope
 
 ### In scope
 
-- `run_pipeline` orchestration across all nine stages.
-- Per-stage persistence of `run.json` via `store.save_record`.
-- Population of `RunRecord.measurements`, `observations`, `interpretation`,
-  `recommendations`, `scoring`, `atlas_coverage`, `provenance`, and
-  `limitations`.
-- The stub-target path: `status="not_implemented"`, a stated reason, no
-  fabricated panels.
-- The thread pool, the handle table, and failure capture in `jobs.py`.
-- All P4-owned routes in `routes.py`.
-- The three report builders in `report.py`.
+- The new routers listed in section 1, mounted on the existing app factory.
+- `aegis/services/ml_campaigns.py`: admission for `attack.run`, plus the
+  follow-on admission helpers for `explain.run`, `harden.recommend`, and
+  `verify.replay`. Each emits its audit event before any `Run` or `Job` row and
+  before `task.delay`.
+- The six Celery tasks, each built on `task_context` and the `job_state`
+  machine.
+- Campaign progress through `Run.stage_table` (shape fixed in spec section 6.5)
+  and the `run:{run_id}:events` Redis channel via
+  `aegis/workers/events.py::publish_job_event`.
+- Artifact streaming through the new `GET /v1/artifacts/{id}` route, path- and
+  RLS-confined.
+- The `run.status` roll-up rule (spec section 6.2) evaluated by the worker at
+  each job's terminal transition.
+- The cancel amendment: `aegis/services/runs.py::cancel_run` rejects an
+  already-terminal run with `409 run_terminal` instead of rewriting
+  `Run.status`.
+- Queue routing for the ML tasks and their reaper coverage.
 - The pytest suite named in section 7.
 
 ### Out of scope
 
-- Any target, attack, scoring, explain, or rules logic. P4 consumes those
-  modules, it does not implement them.
-- The schema additions themselves. `Scoring`, `RunRecord.scoring`,
-  `RunRecord.atlas_coverage`, `AttackInfo.atlas_technique_id`,
-  `AttackInfo.atlas_technique_name`, and `Measurement.severity` are P0
-  additions per master plan section 6.1. P4 assumes they exist and fills them.
-- The `create_app()` factory wiring, CORS, and `/health`. Those are the P0
-  skeleton in `redsim/api/app.py`. P4 adds routes into that app.
-- `/v1/targets` and `/v1/attacks`. P0/P1/P2 own those.
-- Dataset routes `/v1/runs/{id}/dataset` and `/v1/datasets/{id}`. P6 owns those.
-- The optional LLM narrative. P3 owns `narrative.py`. P4 leaves narrative off
-  unless the environment enables it, and never blocks a run on it.
+- Any target, attack, scoring, explain, or recommend logic. P4 consumes those
+  modules from P1, P2, and P3. It does not implement them.
+- The schema and migration. `RunConfig` widening, the `ml_campaigns` table, and
+  `targets.detail` are WS0 (`0010_ml_vertical`, master plan section 4). P4
+  assumes they exist and fills them.
+- The plugin sandbox and the sandbox child (`aegis/scanners/sandbox.py`,
+  `aegis/scanners/sandbox_worker.py`, and `python -m aegis.ml.sandbox_worker`).
+  P4 spawns the child from inside the tasks. P1 and WS0 own the child body.
+- The app factory, CORS, auth, tenant middleware, CSRF, and rate limiting. Those
+  exist on `aegis/api/app.py`. P4 mounts routers into that app and touches
+  nothing else.
+- `/v1/scans`. It is unmounted at M0 (spec section 17.1).
+- The web UI (WS5) and the report renderer body (WS6). P4 calls
+  `aegis/services/reports.py::render_reports` from the `report` stage.
+- Keycloak, RLS, and the audit chain themselves (F001, F008). P4 reuses them.
 
-## 3. Prerequisites & dependencies
+## 3. Prerequisites and dependencies
 
 ### Consumed from other phases
 
 | From | Import | Used for |
 |---|---|---|
-| P1 | `from redsim.targets.registry import TARGETS` | resolve `config.target_id` |
-| P1 | `redsim.targets.base.Target`, `Sample` | protocol shape, slice type |
-| P2 | `from redsim.attacks.registry import ATTACKS` | resolve `config.attack_id` |
-| P2 | `redsim.attacks.base.AttackAdapter`, `AttackOutput` | protocol shape, attack result |
-| P2 | `redsim.scoring.score_run`, `severity_for` | MRI block, measurement severity |
-| P3 | `redsim.explain.shap_image.explain` (and `shap_tabular`) | observations, `expl_shift_mean` |
-| P3 | `redsim.explain.base.ExplainOutput` | explain return shape |
-| P3 | `redsim.recommend.rules.interpret`, `recommend` | interpretation, candidates |
-| P0 | `redsim.schema` all models, `STAGES`, `STANDING_LIMITATIONS` | record construction |
-| P0 | `redsim.state.RunStore` | persistence, artifact resolution |
-| P0 | `redsim.api.app.create_app` | app factory to mount routes on |
+| P1 | `aegis.ml.targets` registry + `targets/base.py` | resolve the `Target`, load in the sandbox child |
+| P1/WS0 | `aegis.ml.sandbox_worker` (child entry) | run each stage inside the plugin sandbox |
+| P2 | `aegis.ml.attacks` registry + `attacks/base.py` (`resolve_params`) | resolve the attack set, validate params |
+| P2 | `aegis.ml.eval`, `aegis.ml.scoring` | measurements, MRI, severity |
+| P3 | `aegis.ml.explain` (`shap_image`, `shap_tabular`) | observations, `expl_shift`, `S_expl` |
+| P3 | `aegis.ml.recommend.rules`, `aegis.ml.recommend.narrative` | interpretation, candidate recommendations |
+| WS0 | `aegis.ml.schema` (`RunConfig`, `RunRecord`, `Provenance`, `STAGES`, `STANDING_LIMITATIONS`) | campaign record construction |
+| WS0 | migration `0010_ml_vertical` (`ml_campaigns`, `targets.detail`) | campaign persistence |
+| aegis | `aegis/api/app.py::create_app` | mount point for the new routers |
+| aegis | `aegis/api/auth.py::get_current_user`, `aegis/api/policy.py` (`Action`, `check`, `ensure_project_access`, `accessible_project_ids`) | auth and RBAC |
+| aegis | `aegis/audit/chain.py::resolve_writer`, `aegis/safety.py::authorize` | audit-first admission |
+| aegis | `aegis/workers/bootstrap.py::task_context`, `aegis/workers/job_state.py::set_job_status` | execution wrapper, status machine |
+| aegis | `aegis/workers/events.py::publish_job_event` | live stage and job events |
+| aegis | `aegis/storage` blob store, `aegis/db/models.py` (`Run`, `Job`, `Finding`, `Artifact`) | bytes and rows |
+| aegis | `aegis/services/reports.py::render_reports` | the `report` stage output |
 
-### Wave discipline
+### Audit chain (from aegis, F008)
 
-P4 starts in Wave 1. Scaffold `runs.py` and `jobs.py` against the Protocols and
-the registries, not against concrete classes. Import `Target`, `AttackAdapter`,
-`score_run`, `explain`, `interpret`, and `recommend` by their master-plan
-signatures. Where a dependency is not merged yet, guard the call site so the
-scaffold imports and the tests collect. Complete the wiring in Wave 2 as P1, P2,
-and P3 land.
+Admission and execution both write to the hash-chained audit log. Admission uses
+`resolve_writer(config)` (Postgres online, JSONL offline). The worker uses the
+`PostgresAuditWriter` that `task_context` supplies as `ctx.audit_writer`. Every
+human-triggered status change appends a chained event *before* the row changes
+(spec invariant 6.7.4). The emission order per task is fixed in spec section
+10.5. `detail` carries digests, counts, ids, and blob references only. It never
+carries model bytes, images, dataset rows, prompt text, or secrets.
 
-The one cross-phase value P4 forwards is `expl_shift_mean`. The explain stage
-produces it. The scoring stage consumes it. When `explain_k == 0` or the explain
-stage is skipped, pass `expl_shift_mean=None` so `score_run` renormalizes the
-weights, exactly as master plan section 6.1 specifies.
+### New `Action` members (WS0, spec section 17.2)
+
+`MODEL_REGISTER` (remediator), `ATTACK_RUN` (scanner), `EXPLAIN_RUN` (scanner),
+`HARDEN_RECOMMEND` (remediator), `FINDING_REVIEW` (approver), `FINDING_ANNOTATE`
+(remediator), `REPORT_EXPORT` (scanner). P4 calls `check(user, Action.X,
+project_id)` at each write route. WS0 adds the rows to `aegis/api/policy.py`.
 
 ### Environment
 
-Reads `REDSIM_OUTPUT_DIR` through `RunStore` defaults. Narrative stays off
-unless `PYTHIA_BASE_URL`, `PYTHIA_API_KEY`, and `REDSIM_LLM_MODEL` are all set
-and `config.llm_narrative` is true. See master plan section 6.8.
+`AEGIS_DB_URL`, `AEGIS_BROKER_URL`, `AEGIS_RESULT_BACKEND`, blob store env, and
+the sandbox budget `AEGIS_ML_SANDBOX_TIMEOUT_S`. The Pythia narrative stays off
+unless `PYTHIA_BASE_URL`, `PYTHIA_API_KEY`, and `AEGIS_ML_LLM_MODEL` are set and
+`llm_narrative` is true (master plan section 5, spec section 10.8).
 
 ## 4. Interfaces
 
-### Exposed to other phases
+### HTTP surface exposed (spec section 17)
 
-```python
-# redsim/runs.py
-def run_pipeline(config: RunConfig, store: RunStore) -> RunRecord: ...
-#   Executes STAGES in order. Writes run.json via store.save_record after each
-#   stage. Returns the final RunRecord (status succeeded, failed, or
-#   not_implemented).
+Base `/v1`, mounted on the existing app. Auth, RLS, CSRF, and rate limits apply.
+New ML routes use the structured error envelope
+`{"detail": {"code", "message", "phase"?, "field"?}}`. Retained routes keep
+`{"detail": "<string>"}`.
 
-# redsim/jobs.py
-def submit(config: RunConfig) -> str: ...          # returns run_id, runs on the pool
-def status(run_id: str) -> RunSummary | None: ...  # None when the run_id is unknown
+| Method | Path | Router | Gate | Returns |
+|---|---|---|---|---|
+| GET | `/v1/models?project=` | `models.py` | membership | list of ML `Target` rows with manifest and status |
+| POST | `/v1/models` (bundled / upload / endpoint) | `models.py` | `MODEL_REGISTER` | 201 Target; 413/415/422 on refusal; 501 for endpoint (Phase B) |
+| GET | `/v1/models/{id}` | `models.py` | membership | detail plus validation summary and campaign history |
+| DELETE | `/v1/models/{id}` | `models.py` | `TARGET_MANAGE` | 200; 409 `campaign_in_flight` |
+| POST | `/v1/models/{id}/attacks` | `attacks.py` | `ATTACK_RUN` | 202 JobHandle `{run_id, job_ids, status_url}`; starts a campaign |
+| GET | `/v1/attacks?modality=` | `attacks.py` | authenticated | attack registry (`AttackInfo` + phase/access/status) |
+| GET | `/v1/datasets` | `datasets.py` | authenticated | bundled dataset manifest |
+| GET | `/v1/defenses` | `defenses.py` | authenticated | ART preprocessing defenses for verify |
+| GET | `/v1/ml/capabilities` | `ml_capabilities.py` | authenticated | honest modality and feature roster |
+| GET | `/v1/runs/{id}/campaign` | `compare.py` or `ml_findings.py` | membership | full campaign record (spec section 5) |
+| GET | `/v1/runs/{id}/artifacts` | `artifacts.py` | membership | `Artifact` row list |
+| GET | `/v1/artifacts/{id}` | `artifacts.py` | membership via run | streams the blob; CSP + nosniff + ETag |
+| GET | `/v1/runs/{id}/compare?with=` | `compare.py` | membership on both | verify delta or side-by-side |
+| PATCH | `/v1/runs/{id}/reviewer-notes` | `compare.py` or `ml_findings.py` | `FINDING_ANNOTATE` | stores notes; audit `finding.annotate` |
+| POST | `/v1/findings/{id}/explain` | `ml_findings.py` | `EXPLAIN_RUN` | 202 JobHandle; 409 if not terminal |
+| POST | `/v1/findings/{id}/harden` | `ml_findings.py` | `HARDEN_RECOMMEND` | 202 JobHandle; 409 if not terminal |
+
+Retained routes that P4 amends, not replaces: `GET /v1/runs`, `GET
+/v1/runs/{id}`, `POST /v1/runs/{id}/cancel` (the 409 amendment),
+`GET/PATCH /v1/findings…`, `POST /v1/findings/{id}/verify` (body extended with
+`{defense, params}`), `GET /v1/runs/{id}/report.{md,json,html}` (one `check()`
+added). These live in `aegis/api/v1/runs.py`, `runs_cancel.py`, `findings.py`,
+`verify.py`, and `reports.py`.
+
+A campaign starts at `POST /v1/models/{id}/attacks`. There is no generic
+`POST /v1/runs`. The campaign record is read at `GET /v1/runs/{id}/campaign`.
+The plain `GET /v1/runs/{id}` wire shape is untouched so the existing web tests
+keep passing.
+
+### Celery task names and queues (spec section 10.2)
+
+| Task name | `Job.type` | Module | Queue |
+|---|---|---|---|
+| `aegis.model_validate` | `model.validate` | `workers/tasks/model_validate.py` | `scans` |
+| `aegis.attack_run` | `attack.run` (one Job per attack) | `workers/tasks/attack.py` | `scans` |
+| `aegis.explain_run` | `explain.run` | `workers/tasks/explain.py` | `scans` |
+| `aegis.harden_recommend` | `harden.recommend` | `workers/tasks/harden.py` | `default` |
+| `aegis.verify_replay` | `verify.replay` | `workers/tasks/verify.py` (ML branch) | `scans` |
+| `aegis.report_render` | `report.render` | `workers/tasks/report.py` | `default` |
+
+Each ML task is declared `bind=True, max_retries=2`, exactly like `scan_start`
+and `verify_replay`. Add the new modules to the `include` list and the queue
+routes in `aegis/workers/celery_app.py`.
+
+### Job state machine (consumed, `aegis/workers/job_state.py`)
+
+```
+queued    -> running | cancelled
+running   -> succeeded | failed | cancelled | queued
+succeeded | failed | cancelled -> (terminal)
 ```
 
-`submit` creates a `RunStore` with a fresh `run_id`, writes an initial queued
-`run.json`, then hands `run_pipeline` to the pool. It returns before the
-pipeline finishes.
-
-### HTTP surface (P4 completes the P0 skeleton)
-
-Base `/`, JSON errors `{detail}`, CORS allows `http://localhost:3000`, no auth.
-
-| Method | Path | Owner | Returns |
-|---|---|---|---|
-| GET | `/health` | P0 | `{status:"ok", version}` |
-| GET | `/v1/targets` | P0/P1 | list `TargetInfo` |
-| GET | `/v1/attacks` | P0/P2 | list `AttackInfo` (incl. atlas fields) |
-| POST | `/v1/runs` | P4 | 202 `{run_id}`; 501 stub target; 422 bad params |
-| GET | `/v1/runs` | P4 | list `RunSummary` |
-| GET | `/v1/runs/{id}` | P4 | full `RunRecord` (incl. `scoring`, `atlas_coverage`) |
-| PATCH | `/v1/runs/{id}/reviewer-notes` | P4 | updated `RunRecord` |
-| GET | `/v1/runs/{id}/artifacts/{path}` | P4 | PNG/JSON, path-confined |
-| GET | `/v1/runs/{id}/report.{md,json,html}` | P4 | report; HTML with strict CSP |
-
-Response bodies are the Pydantic models from `redsim/schema.py`. Do not invent
-fields.
+Every status write goes through `set_job_status`. `running -> queued` is the
+transient-retry requeue that `task_context` performs. `task_context` runs a task
+only when its job is `queued`; any other status yields `skip=True` and the body
+returns without work. This is the cancellation and redelivery guard. It is why a
+cancelled attack never re-fires.
 
 ## 5. Ordered implementation steps
 
-### Step 1 — pipeline skeleton (`runs.py`, Wave 1)
+### Step 1 — mount the routers (Slice 1)
 
-Write `run_pipeline(config, store)` as a stage loop over `STAGES`. Keep a live
-`RunRecord`. After each stage, set `record.stage`, append the stage to
-`record.stages_done`, and call `store.save_record(record.model_dump(mode="json"))`.
+Create the eight router modules under `aegis/api/v1/` as `APIRouter` instances,
+each with its own `prefix` and `tags`, following `aegis/api/v1/targets.py`. Add
+each to the import block and the `include_router(..., prefix="/v1")` block in
+`aegis/api/app.py::create_app`. Start with read-only handlers that return `501`
+where the pipeline is not wired yet, so the app boots and the route table is
+complete.
 
-`RunStore.save_record` takes a plain dict, so always dump the record first. Use
-`mode="json"` so datetimes and enums serialize cleanly, matching the
-`json.dumps(..., default=str)` the store already does.
+### Step 2 — `ml_capabilities.py`, `datasets.py`, `attacks.py`, `defenses.py`
 
-Wrap the whole body in one try block. On any exception set
-`record.status="failed"`, `record.error=str(exc)`, keep `record.stage` at the
-failing stage, write the record one last time, and return it. Never leave a
-half-written record on disk without a terminal status.
+Wire the four catalog reads first. They are pure reads over the P1/P2/P3
+registries and the dataset and defense manifests. `GET /v1/ml/capabilities`
+returns the honest roster in spec section 17.2 and never leaks the Pythia key or
+base URL. `GET /v1/attacks` lists the registry plus `phase`, `access`,
+`requires_gradients`, `status`, and `reason`, including the benign
+`noise_control` adapter as `family: "control"`.
 
-### Step 2 — `load_target` stage
+### Step 3 — `models.py`
 
-Resolve the target with `TARGETS.get(config.target_id)`. A missing id raises
-`KeyError`. Catch it at the `POST /v1/runs` boundary and return 422, so the
-pipeline never starts on an unknown target.
+Implement the model catalog and upload. `GET /v1/models` lists `Target` rows of
+kind `ml_model_artifact` / `ml_model_endpoint`. `POST /v1/models` accepts
+`bundled`, `upload`, and `endpoint` sources. The upload handler performs static
+checks only (size cap while streaming, magic bytes, pickle refusal), computes
+`sha256`, writes the bytes to the blob store, and creates the `Target` with
+`status="registered"`. The same service then creates the `ml.ingest` Run and the
+`model.validate` Job and moves the status to `validating`. Deep validation runs
+on the worker (step 6). `endpoint` returns `501` with `phase: "B"`. Nothing
+deserialises the file in the API process.
 
-Call `target.info()`. When `info().status == "not_implemented"`, stop early. Set
-`record.status="not_implemented"`, copy `info().reason` into `record.error`,
-attach the `TargetInfo` to `record.target`, write `run.json`, and return. Do not
-sample, attack, explain, or score. The UI must show the reason and no fabricated
-panels (design spec section 5).
+### Step 4 — `aegis/services/ml_campaigns.py` (admission)
 
-For a live target, call `target.load()` (idempotent) and set `record.target`.
+Mirror `aegis/services/scans.py::create_scan_job`. Write
+`create_attack_campaign(...)` with this load-bearing order:
 
-### Step 3 — `sample` stage
+1. `authorize("attack.run", target=None, allowlist=config.target_allowlist,
+   actor=f"user:{user.sub}", writer=audit_writer, project_id=..., run_id=...,
+   detail=<config snapshot, model sha256, dataset id + revision, settings_hash>)`.
+   The chained audit row lands before any domain row.
+2. Insert one `Run` (`scanner="ml.campaign"`, `mode="api"`, `status="queued"`,
+   `stage_table={}`), flush for FK precedence.
+3. Insert one `attack.run` `Job` per attack id, chained in the declared order
+   (the first carries `chain_position == 0`); insert the campaign-wide
+   `explain.run` Job when `explain_k > 0`; insert `harden.recommend` when
+   `auto_recommend`. Each Job's `detail` carries the campaign config snapshot.
+4. `attack_run.delay(job_id_of_chain_position_0)`. A broker failure is logged;
+   the rows stay `queued` for a later pickup. The audit row already exists.
+5. Return `JobHandle.to_response()` → 202 `{run_id, job_ids, status_url}`.
 
-Call `target.sample(config.n_samples, config.seed)` to get a `Sample`. Keep the
-`Sample.x`, `Sample.y`, `Sample.indices`, and `Sample.class_names` in local
-state for later stages. Persist the record.
+Add sibling admission helpers `create_explain_job`, `create_harden_job`, and the
+ML branch of `create_verify_job` (or extend `aegis/services/verify.py`), each
+audit-first and each ending in `task.delay`. Reject the guarded cases with the
+spec section 17.3 codes (`model_load_refused`, `unknown_attack`,
+`attack_requires_gradients`, `eps_grid_invalid`, `params_out_of_range`, and so
+on).
 
-### Step 4 — `clean_eval` stage
+### Step 5 — `attacks.py` route `POST /v1/models/{id}/attacks`
 
-Run `target.predict_proba(sample.x)`, take the argmax, and count correct
-predictions against `sample.y`. Build the clean `Measurement`:
+Read the `Target`, run `check(user, Action.ATTACK_RUN, project_id)`, validate
+the `CampaignConfig` body (Pydantic + manifest compatibility + attack
+`resolve_params`), reject a target whose status is not `available` with
+`409 model_load_refused`, then call `create_attack_campaign`. Return 202. The
+route runs no pipeline work.
 
-- `id="m.clean"`, `family="clean"`, `attack_id=None`.
-- `n`, `n_correct`, `accuracy`.
-- `per_class` keyed by class name, each `{"n": ..., "n_correct": ...}`.
-- `wall_time_s` for the stage.
+### Step 6 — the Celery tasks (`aegis/workers/tasks/`)
 
-Append it to `record.measurements`. Persist.
+Build each task on `task_context(job_id, task=self)`. On `ctx.skip`, return
+early. Read config from `Job.detail`. Re-check the world before spawning the
+child (spec section 10.4): assert the `Target` belongs to `Job.project_id` and
+is `available`, recompute the model `sha256`, re-validate the config, and assert
+the dataset revision matches the audit row. Spawn the sandbox child
+(`python -m aegis.ml.sandbox_worker --stage <stage>`), read the returned
+envelope, verify artifact digests, and persist rows.
 
-### Step 5 — `attack` stage
+- `model_validate.py`: verify sha256, run the validate stage, write
+  `ml.validation_report`, set `targets.detail.status` to `available` or
+  `refused`.
+- `attack.py`: the chain body. `chain_position == 0` also runs `sample`,
+  `clean_eval`, and `control`, and writes `slice.npz`, `m.clean`, and the
+  `m.control.*` rows; later jobs re-fetch `slice.npz` (digest-checked) and reuse
+  those rows. Run the attack at each ε in the grid, build measurements, create
+  the `Finding` by threshold, record the `ml.adv_slice`, `ml.flip_matrix`, and
+  `ml.curve` artifacts, then `attack_run.delay` the next attack job or
+  `explain_run.delay` the pre-created explain job.
+- `explain.py`: SHAP clean vs adversarial, then the `score` stage. The MRI and
+  `S_expl` are written only here, with all five subscores present, then
+  `harden_recommend.delay`.
+- `harden.py`: `interpret`, then `recommend` (rules always; optional Pythia
+  narrative), then `report` through `render_reports`. Mark `Run.status`
+  `succeeded` when it is the last job of the chain.
+- `verify.py`: the ML branch of `verify_replay`. Apply the ART preprocessor
+  defense around a copy of the estimator inside the child, re-run the whole
+  in-scope attack set at the campaign's ε grid on the same slice, compute ΔMRI,
+  and map the outcome through the existing `_STATE_MAP` to
+  `Finding.validation_state` and `Finding.status`.
+- `report.py`: re-render reports from findings on demand (the existing
+  `report.render` shape).
 
-Resolve the adapter with `ATTACKS.get(config.attack_id)`. Call
-`adapter.resolve_params(config.params)` to fill defaults and reject
-out-of-range values. `resolve_params` raises `ValueError` on bad params. Catch
-it at the `POST` boundary for a 422. Run
-`adapter.run(target, sample.x, sample.y, resolved_params, config.seed)` to get
-an `AttackOutput`.
+Write `Run.stage_table` per the spec section 6.5 shape after each stage. Publish
+each transition on `run:{run_id}:events` with
+`publish_job_event(run_id, job_id, status, type="stage", stage=...)`. Remember
+the failure rule: anything written to `Job.detail` or `Run.stage_table` inside a
+failing body is rolled back, so commit partial evidence as `Artifact` rows
+before the risky step.
 
-`AttackOutput` carries `x_adv`, `linf_norm_mean`, `l2_norm_mean`, `wall_time_s`,
-`params`, `library_versions`, and `notes`. It does **not** carry predictions, so
-compute the adversarial predictions here with `target.predict_proba(out.x_adv)`.
+### Step 7 — `run.status` roll-up
 
-Build the evasion `Measurement`:
+At each job's terminal transition, inside the same transaction, evaluate the
+roll-up rule (spec section 6.2): `succeeded` when all campaign jobs are terminal
+and at least one succeeded and none failed; `failed` when all terminal and at
+least one failed; otherwise `running`. A task that fails marks the remaining
+`queued` chain jobs `cancelled` with `error="upstream job failed: <job_id>"` and
+sets `Run.status="failed"`. Follow-on jobs never reopen a terminal run.
 
-- `id=f"m.evasion.{config.attack_id}"`, `family="evasion"`,
-  `attack_id=config.attack_id`, `params=resolved_params`.
-- `n`, `n_correct`, `accuracy` on `x_adv`.
-- `n_flipped_from_clean` = count where the clean argmax and the adversarial
-  argmax differ.
-- `linf_norm_mean`, `l2_norm_mean` from `AttackOutput`.
-- `per_class`, `wall_time_s`.
+### Step 8 — `artifacts.py`
 
-Set `Measurement.severity` with `severity_for(measurement, eps_small, eps_mid)`
-(P2, master 6.3). Append and persist. Keep `x_adv` for the explain stage.
+`GET /v1/runs/{id}/artifacts` lists `Artifact` rows. `GET /v1/artifacts/{id}`
+resolves the artifact, checks project access through its `run_id`, and streams
+the blob. Serve `image/png` inline; serve JSON, `.npz`, and text as
+`Content-Disposition: attachment`. Every response carries
+`X-Content-Type-Options: nosniff`, `Content-Security-Policy: default-src 'none'`,
+and `ETag = sha256`. Return `404` for unknown ids and for a row whose blob is
+missing (`artifact_blob_missing`). Confine the lookup to the blob store key; a
+path escape is a `404`.
 
-### Step 6 — `control` stage
+### Step 9 — `compare.py` and `GET /v1/runs/{id}/campaign`
 
-Skip when `config.include_control` is false. Otherwise resolve the
-`noise_control` adapter, run it at the same eps as the attack, and build a
-`Measurement` with `id="m.control.noise"`, `family="control"`. Persist.
+`GET /v1/runs/{id}/campaign` assembles the full campaign record from
+`ml_campaigns`, the measurements, artifacts, observations, interpretation,
+recommendations, and the `MRIRecord` (spec section 5). `GET
+/v1/runs/{id}/compare?with=` returns the verify delta when the two runs are a
+baseline/verify pairing, or two scorecards side by side when settings match but
+the model differs. Reject a settings mismatch with `409 incompatible_campaigns`
+and a missing score with `409 score_unavailable`.
 
-The control exists to show whether random noise at the same budget degrades the
-model. Do not blend it into the evasion row.
+### Step 10 — `ml_findings.py`
 
-### Step 7 — `explain` stage
+Add `POST /v1/findings/{id}/explain` and `POST /v1/findings/{id}/harden`. Each
+runs RBAC, rejects a non-terminal campaign with `409 campaign_not_terminal` and
+a duplicate in-flight job with `409 job_in_flight`, then delegates to the
+matching admission helper. `POST /v1/findings/{id}/verify` stays in
+`aegis/api/v1/verify.py`; extend its body with `{defense, params}`.
 
-Skip when `config.explain_k == 0`. Otherwise call the P3 entry point,
-`explain(target, sample, x_adv, config.explain_k, config.seed, store)`
-(master plan section 6.4). It writes the artifact PNGs through the same
-`store` and returns an `ExplainOutput`.
+### Step 11 — cancel amendment
 
-Copy `ExplainOutput.observations` into `record.observations`. Keep
-`ExplainOutput.expl_shift_mean` for the scoring stage. Fold
-`ExplainOutput.shap_version` into provenance. Persist.
+Amend `aegis/services/runs.py::cancel_run` to reject an already-terminal run.
+When `Run.status` is `succeeded`, `failed`, or `cancelled`, raise a typed error
+that `aegis/api/v1/runs_cancel.py` maps to `409 run_terminal`, and leave the run
+untouched (provenance preserved, spec section 6.3). For a live run, keep the
+existing behaviour: audit `run.cancel` first, then set `Run.status="cancelled"`,
+flip every `queued`/`running` job to `cancelled` through `set_job_status`, and
+best-effort revoke the Celery tasks. Add the cooperative-kill loop (spec section
+10.7): the ML tasks poll `Job.status` in a fresh session while waiting on the
+child and SIGKILL the child's process group on `cancelled`.
 
-Pick the explain module by domain: `shap_image.explain` for images,
-`shap_tabular.explain` for tabular. The first milestone runs the image path
-only.
+### Step 12 — celery wiring and reaper
 
-### Step 8 — `interpret` stage
-
-Score first, because interpretation rests on the scoring block. Call
-`score_run(record.measurements, expl_shift_mean, reference_eps, eps_grid)` (P2,
-master 6.3) and set `record.scoring`. Derive `reference_eps` and `eps_grid` from
-the resolved attack params. Pass `expl_shift_mean=None` when the explain stage
-was skipped, so `score_run` renormalizes the weights.
-
-Then call `interpret(record.measurements, record.observations, record.scoring)`
-(P3, master 6.5) and set `record.interpretation`. Persist.
-
-### Step 9 — `recommend` stage
-
-Call `recommend(record.measurements, record.observations, record.scoring)` (P3)
-and set `record.recommendations`. Each candidate stays `status="candidate"` and
-`validation="not evaluated"` from the schema defaults.
-
-When narrative is enabled (all three env vars plus `config.llm_narrative`), pass
-the candidates through `redsim.recommend.narrative`. The narrative is optional
-prose over rule outputs. It must not add claims. A narrative failure never fails
-the run. Catch it, log it, and keep the rule text. Persist.
-
-### Step 10 — `report` stage and finalize
-
-Fill `record.atlas_coverage` from the ATLAS technique ids on the attacks used
-(the `atlas_technique_id` fields P3 populates on `AttackInfo`). De-duplicate.
-
-Build `record.provenance` (a `Provenance` model): `redsim_version`, `python`,
-`torch`, `art`, `shap`, `numpy`, `model_sha256` and `model_manifest` from
-`target.manifest()`, `dataset`, `dataset_split`, `started_at`, `finished_at`,
-`hostname`, `device`, and `nondeterminism` sources.
-
-Set `record.limitations` from `STANDING_LIMITATIONS`, then extend it with
-run-specific notes (slice size, single seed, single eps unless swept). The
-schema validator `_limitations_required_when_done` rejects a `succeeded` record
-with an empty `limitations`, so this list must be non-empty before the terminal
-write.
-
-Set `record.status="succeeded"`, `record.stage=None`. Write `run.json` a final
-time. Return the record.
-
-Rendering the report files is on demand at the route, not written to disk here,
-unless a later phase needs cached copies. The stage marks the run complete.
-
-### Step 11 — `jobs.py`
-
-Build a module-level `ThreadPoolExecutor` and a dict mapping `run_id` to a
-`Future` (the handle table). Guard both with a lock.
-
-`submit(config)`:
-
-1. Create a `RunStore` with a fresh `run_id`.
-2. Write an initial `run.json` with `status="queued"`, `stage=None`,
-   `created_at=now`.
-3. Submit `run_pipeline(config, store)` to the pool. Store the `Future`.
-4. Return `store.run_id`.
-
-`status(run_id)`:
-
-1. Open the store with `RunStore.open(run_id)`. Return `None` when it is `None`.
-2. Load `run.json` with `store.load_record()`.
-3. Build a `RunSummary` from the loaded dict: `run_id`, `status`, `stage`,
-   `config.target_id`, `config.attack_id`, `created_at`.
-
-Read status from disk, not from the `Future`, so a process restart still reports
-progress. The `Future` handle only reports in-process failures that never
-reached disk.
-
-### Step 12 — `routes.py`
-
-Complete the router the P0 skeleton mounts on `create_app()`.
-
-- `POST /v1/runs`: validate the body as `RunConfig` (FastAPI returns 422 on a
-  bad body). Resolve the target. When `TARGETS.maybe_get(target_id)` is `None`,
-  return 422. When `target.info().status == "not_implemented"`, return 501 with
-  the reason in `detail`. Validate the attack params with
-  `adapter.resolve_params`, returning 422 on `ValueError`. Otherwise call
-  `jobs.submit(config)` and return 202 `{"run_id": run_id}`.
-- `GET /v1/runs`: list ids with `RunStore.list_run_ids()`, load each record, and
-  return a list of `RunSummary`.
-- `GET /v1/runs/{id}`: open the store, load `run.json`, validate it as
-  `RunRecord`, and return it. 404 when the run is unknown.
-- `PATCH /v1/runs/{id}/reviewer-notes`: load the record, set `reviewer_notes`
-  from the body, rewrite `run.json` via `store.save_record`, return the updated
-  `RunRecord`.
-- `GET /v1/runs/{id}/artifacts/{path:path}`: call `store.resolve(rel)` for the
-  path-escape guard. `resolve` raises `ValueError` on a traversal attempt.
-  Convert that to 404. Return the bytes with the content type inferred from the
-  suffix (`.png` -> `image/png`, `.json` -> `application/json`).
-- `GET /v1/runs/{id}/report.md`: return the Markdown builder output,
-  `text/markdown`.
-- `GET /v1/runs/{id}/report.json`: return `record.model_dump(mode="json")`,
-  `application/json`.
-- `GET /v1/runs/{id}/report.html`: return the HTML builder output with the exact
-  header from the design spec:
-  `Content-Security-Policy: default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'`.
-
-### Step 13 — `report.py` builders
-
-Add three functions that take a `RunRecord`:
-
-- `render_markdown(record) -> str`: the six report sections in order (config and
-  provenance, measurements, observations, interpretation, candidate
-  recommendations, limitations). Keep the honesty labels: candidates read
-  "candidate / not evaluated", the center-mass metric reads "heuristic".
-- `render_json(record) -> str`: `json.dumps(record.model_dump(mode="json"))`.
-  It must equal the record dump so a run reruns from it.
-- `render_html(record) -> str`: run `render_markdown` through `_md_to_html_min`.
-  Every interpolation already routes through `html_escape` inside the helper, so
-  a `<script>` in a class name renders inert.
-
-Reuse the existing helpers. Do not add a template engine.
+Add the six task modules to the `include` list and `task_routes` in
+`aegis/workers/celery_app.py` (`scans` for `model_validate`, `attack_run`,
+`explain_run`, `verify_replay`; `default` for `harden_recommend` and
+`report_render`). The existing beat reaper (`aegis.reap_stale_jobs`, every 300 s)
+already covers every `running` job past `job_max_runtime_seconds`, so the ML
+tasks need no new reaper.
 
 ## 6. Files to create or modify
 
 | File | Action | Contents |
 |---|---|---|
-| `redsim/runs.py` | create | `run_pipeline` stage loop, per-stage persistence |
-| `redsim/jobs.py` | create | pool, handle table, `submit`, `status` |
-| `redsim/api/routes.py` | create | all P4 routes from section 4 |
-| `redsim/api/app.py` | modify | mount the P4 router (if P0 left a seam) |
-| `redsim/report.py` | modify | `render_markdown`, `render_json`, `render_html` |
-| `tests/fakes.py` | modify | add a fake attack double next to `TinyTarget` |
-| `tests/test_runs.py` | create | pipeline persists after each stage |
-| `tests/test_jobs.py` | create | `submit` then poll `status` |
-| `tests/test_api.py` | create | POST -> poll -> GET, 501 stub, traversal, CSP |
-| `tests/test_report.py` | create | six sections, escaped script, json equality |
+| `aegis/api/v1/models.py` | create | model catalog + upload routes |
+| `aegis/api/v1/attacks.py` | create | attack registry read + `POST /v1/models/{id}/attacks` |
+| `aegis/api/v1/datasets.py` | create | bundled dataset manifest read |
+| `aegis/api/v1/defenses.py` | create | ART defense list read |
+| `aegis/api/v1/ml_capabilities.py` | create | `GET /v1/ml/capabilities` |
+| `aegis/api/v1/artifacts.py` | create | artifact list + `GET /v1/artifacts/{id}` stream |
+| `aegis/api/v1/compare.py` | create | `/campaign`, `/compare`, reviewer-notes |
+| `aegis/api/v1/ml_findings.py` | create | `POST /v1/findings/{id}/{explain,harden}` |
+| `aegis/api/app.py` | modify | import and `include_router` the eight new routers |
+| `aegis/services/ml_campaigns.py` | create | `create_attack_campaign` + follow-on admission helpers |
+| `aegis/services/runs.py` | modify | `cancel_run` rejects a terminal run with 409 |
+| `aegis/services/verify.py` | modify | ML branch of `create_verify_job`, body `{defense, params}` |
+| `aegis/api/v1/verify.py` | modify | extend the verify body |
+| `aegis/api/v1/reports.py` | modify | add the `REPORT_EXPORT` `check()` |
+| `aegis/workers/tasks/model_validate.py` | create | `aegis.model_validate` task |
+| `aegis/workers/tasks/attack.py` | create | `aegis.attack_run` chain task |
+| `aegis/workers/tasks/explain.py` | create | `aegis.explain_run` + score stage |
+| `aegis/workers/tasks/harden.py` | create | `aegis.harden_recommend` + interpret/recommend/report |
+| `aegis/workers/tasks/verify.py` | modify | ML branch of `aegis.verify_replay` |
+| `aegis/workers/tasks/report.py` | modify | ML campaign report render |
+| `aegis/workers/celery_app.py` | modify | `include` + `task_routes` for the ML tasks |
+| `tests/ml/fakes.py` | create/modify | `TinyTarget` + a small test attack adapter |
+| `tests/ml/test_ml_admission.py` | create | audit-before-Job-row |
+| `tests/ml/test_ml_campaign_api.py` | create | POST → 202 → poll → campaign |
+| `tests/ml/test_artifacts_api.py` | create | artifact path guard + CSP |
+| `tests/ml/test_cancel_terminal.py` | create | 409 on terminal cancel |
 
-Note on test doubles: the existing double in `tests/fakes.py` is `TinyTarget`
-(`id="tiny"`), a random-weight image target. There is no attack double yet. Add
-one small `AttackAdapter` fake (call it what the suite already expects) so the
-run and API tests never need ART or the CIFAR-10 assets.
+## 7. Testing and validation
 
-## 7. Testing & validation
+Backend pytest under `tests/ml/` with the `ml` marker, the sqlite conftest
+harness (`tests/conftest.py`), and the `TinyTarget` fake. Offline, no ART or
+CIFAR-10 assets in the unit path. Use the FastAPI `TestClient` in dev-token auth
+mode.
 
-Backend pytest, offline, under 60 s total (design spec section 7).
+1. **Admission is audit-first** (`test_ml_admission.py`). Call
+   `create_attack_campaign` with a failing `audit_writer` and assert no `Run` or
+   `Job` row exists. On success, assert the audit event's `ts` precedes the
+   `Job` row (mirrors `tests/test_admission_audit_before_enqueue.py`).
+2. **`POST /v1/models/{id}/attacks` returns 202** (`test_ml_campaign_api.py`).
+   POST a valid `CampaignConfig` against a `TinyTarget` model with the test
+   attack. Assert 202 and a `{run_id, job_ids, status_url}` body.
+3. **Campaign completes**. Run the chain to a terminal state (eager Celery or a
+   direct task call). Poll `GET /v1/runs/{id}` to `succeeded`. Assert
+   `GET /v1/runs/{id}/campaign` carries the clean, evasion, and control
+   measurements, an `MRIRecord` with all five subscores, and a non-empty
+   `limitations`.
+4. **Artifact path guard** (`test_artifacts_api.py`). Assert
+   `GET /v1/artifacts/{id}` streams a known blob, returns `404` for an unknown
+   id and for a traversal attempt, and that no blob-store key outside the run's
+   artifacts is reachable.
+5. **Report CSP**. Assert `GET /v1/runs/{id}/report.html` carries
+   `Content-Security-Policy: default-src 'none'`, and `X-Content-Type-Options:
+   nosniff`, and that the `REPORT_EXPORT` gate rejects a caller below `scanner`.
+6. **Cancel a terminal run** (`test_cancel_terminal.py`). Cancel a `succeeded`
+   run and assert `409 run_terminal` with the run untouched. Cancel a `running`
+   run and assert every `queued`/`running` job flips to `cancelled` and the run
+   is `cancelled`.
+7. **Job state** reuse. `tests/test_job_state.py` already covers the machine.
+   Add an ML case that a cancelled attack job is skipped on redelivery
+   (`task_context` `skip=True`).
 
-1. **Pipeline persists after each stage** (`test_runs.py`). Run `run_pipeline`
-   with `TinyTarget` and the fake attack against a temp `RunStore`. Assert
-   `run.json` exists and its `stages_done` grows across a sequence of loads, or
-   assert the final record lists all expected stages in `stages_done`. Assert
-   the final `status == "succeeded"`, `scoring` is set, and `measurements`
-   holds a clean and an evasion row.
-2. **Stub target -> not_implemented**. Register a stub target whose
-   `info().status == "not_implemented"`. Run the pipeline. Assert
-   `status == "not_implemented"`, `error` holds the reason, and there are no
-   measurements, observations, or scoring.
-3. **POST -> poll -> GET** (`test_api.py`, FastAPI `TestClient`). POST a valid
-   `RunConfig`, assert 202 and a `run_id`. Poll `GET /v1/runs/{id}` until
-   `status` is `succeeded` or `failed`. Assert the final record carries
-   `scoring`, at least the clean and evasion `measurements`, and
-   `atlas_coverage`.
-4. **Stub target -> 501**. POST a run whose `target_id` is a stub. Assert 501
-   and a reason in `detail`.
-5. **Bad params -> 422**. POST a run with an out-of-range param. Assert 422.
-6. **Artifact traversal blocked**. GET
-   `/v1/runs/{id}/artifacts/..%2f..%2frun.json` (and a plain `../` variant).
-   Assert 404, driven by the `RunStore.resolve` guard.
-7. **Report HTML has the CSP header**. GET `/v1/runs/{id}/report.html`. Assert
-   the response header equals
-   `default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'`.
-8. **Report shape** (`test_report.py`). Assert Markdown holds the six sections
-   in order. Assert a `<script>` inside a class name renders escaped in HTML.
-   Assert `render_json` equals `record.model_dump()`.
-9. **Jobs** (`test_jobs.py`). `submit` a config, poll `status` to a terminal
-   state, assert a `RunSummary` comes back and an unknown id returns `None`.
-
-Run `make test` and `make typecheck`. Both must stay green.
+Run `make test` and `make typecheck`. Both must stay green. `vitest` (the web
+tests) is WS5 and out of scope here.
 
 ## 8. Acceptance criteria / definition of done
 
-1. **Vertical smoke test.** `POST /v1/runs` for the CIFAR-10 image target with
-   `fgsm` and `explain_k > 0` returns 202. Polling `GET /v1/runs/{id}` reaches
-   `succeeded`. The record holds `measurements` (clean, evasion, control), a
-   `scoring` block with a grade, `observations` with SHAP artifacts,
-   `interpretation`, `recommendations`, `atlas_coverage`, `provenance`, and a
+1. **Vertical smoke test.** `POST /v1/models/{id}/attacks` for one bundled image
+   target with `fgsm` and `explain_k > 0` returns 202 on the live stack (API +
+   Celery worker on Redis). The `attack.run` → `explain.run` → `harden.recommend`
+   chain runs. Polling `GET /v1/runs/{id}` reaches `succeeded`.
+   `GET /v1/runs/{id}/campaign` holds the clean, evasion, and control
+   measurements, the SHAP observations, the `MRIRecord` with all five subscores
+   and a grade, the interpretation, the candidate recommendations, and a
    non-empty `limitations`.
-2. `run_pipeline` writes `run.json` after every stage. A poll mid-run shows a
-   growing `stages_done` and the current `stage`.
-3. A stub target returns 501 from `POST /v1/runs` and never starts a pipeline.
-   A stub run record, if built, is `not_implemented` with a reason and no
-   fabricated panels.
-4. Artifact path traversal returns 404 through `RunStore.resolve`.
-5. `report.html` carries the exact design-spec CSP header. `report.json` equals
-   the record dump. `report.md` holds the six sections in order.
-6. A `succeeded` record always states its limitations. The schema validator
-   passes.
-7. The full pytest suite in section 7 passes. `make test` and `make typecheck`
-   stay green.
+2. Admission appends the `attack.run` audit event before any `Run` or `Job` row
+   and before `task.delay`. `aegis audit verify --run <run_id>` passes for the
+   campaign chain.
+3. `Run.stage_table` advances monotonically through `STAGES`, and each transition
+   publishes a frame on `run:{run_id}:events`.
+4. `GET /v1/artifacts/{id}` streams the blob under the CSP, nosniff, and ETag
+   headers, RLS-confined, and returns `404` for a path escape or a missing blob.
+5. `cancel_run` rejects a terminal run with `409 run_terminal` and cancels every
+   live job of a running campaign.
+6. A `succeeded` campaign always states its `limitations`; the schema validator
+   passes. A `failed` or `cancelled` campaign has no `score`.
+7. The pytest suite in section 7 passes. `make test` and `make typecheck` stay
+   green.
 
-## 9. Effort estimate & special considerations
+## 9. Effort estimate and special considerations
 
-Estimate: 2 to 3 developer-days. Scaffolding in Wave 1 is about half a day. The
-Wave 2 completion, once P1 through P3 land, is the rest, most of it in the
-stage-by-stage integration and the API tests.
+Estimate: 4 to 6 developer-days across Slice 1 (routers + catalog reads +
+admission scaffold) and Slice 2 (the task chain, campaign record, and verify),
+gated on P1, P2, and P3 landing their modules.
 
-### Thread pool sizing
+### Celery queues
 
-Runs are CPU-bound (torch, ART, SHAP) and the demo is single-user. Size the
-pool small, `max_workers=2` by default, overridable with an env var. A large
-pool oversubscribes the CPU and slows every run. Keep the pool module-level and
-create it once, not per request.
+The ML attack, explain, model-validate, and verify tasks run on the `scans`
+queue with the long-running scanner work; `harden.recommend` and `report.render`
+run on `default`. Deploy a dedicated worker pool per queue (spec section 20).
+Keeping the harden/report bookkeeping off `scans` stops a 30-minute campaign
+from starving a report behind it. Add the new task names to
+`aegis/workers/celery_app.py::task_routes` or they inherit `default` and land on
+the wrong pool.
 
-### Error propagation
+### Reaper
 
-Wrap the whole pipeline body in one try block. On failure set
-`status="failed"`, put `str(exc)` in `error`, keep `stage` at the failing stage,
-and write `run.json` one last time. A run must never sit `running` on disk after
-its worker died. `jobs.status` reads that terminal state from disk, so a caller
-polling `GET /v1/runs/{id}` sees the failure even after a process restart.
-Distinguish user errors (unknown target, bad params) from pipeline faults:
-catch the former at the `POST` boundary and return 422 or 501, never a 500.
+A task that crashes so hard it never reaches `task_context`'s failure path is
+left `running`. The existing beat reaper (`aegis.reap_stale_jobs`, every 300 s)
+flips any `running` job past `job_max_runtime_seconds` (default 3600) to `failed`
+with `error="reaped: exceeded max runtime TTL"`. The ML tasks need no new
+reaper; they only need to respect the redelivery guard so a reaped-then-
+redelivered job is skipped.
 
-### Atomic run.json writes
+### Sandbox child
 
-`RunStore.save_record` already writes to `run.json.tmp` and calls
-`Path.replace`, which is atomic on the same filesystem. Rely on it. Never write
-`run.json` directly. On EFS the tmp file and the target sit in the same run
-directory, so the atomic rename holds. A concurrent poller therefore reads
-either the old record or the new one, never a torn file.
+Every stage that touches model bytes runs inside the plugin sandbox as a child
+process (`python -m aegis.ml.sandbox_worker --stage <stage>`), never in the API
+process and never in the worker parent. The parent waits on the child in a 5 s
+loop that re-reads `Job.status` in a fresh session, so a cancel can SIGKILL the
+child's process group (spec section 10.7). `harden.recommend` is the one task
+that never loads a model; it runs on the `default` pool and may call Pythia. The
+sandbox wall clock (`AEGIS_ML_SANDBOX_TIMEOUT_S`) raises `SandboxTimeout` per
+stage; the Celery soft/hard limits (1800/2100 s) are the outer fence.
 
-### Narrative isolation
+### Failure isolation
 
-The optional LLM narrative runs inside the `recommend` stage. It must never fail
-a run. Catch every exception from `narrative`, keep the rule text, and continue.
-It stays off unless all three env vars and `config.llm_narrative` are set.
+Anything written to `Job.detail` or `Run.stage_table` inside a failing task body
+is rolled back by `task_context`. Commit partial evidence as `Artifact` rows
+before the risky step. A failed chain job marks the remaining `queued` jobs
+`cancelled` and sets `Run.status="failed"`; nothing downstream runs on partial
+inputs. Failure classes (`ModelLoadRefused`, `SandboxTimeout`,
+`ExplainerUnavailable`, and the rest) are run/infrastructure states, never model
+outcomes, and never render as "robust" or "not robust".
 
-### Determinism note
+### The LLM narrative
 
-The pipeline forwards `config.seed` to `sample`, `attack`, and `explain`. SHAP
-sampling and CPU float reductions stay non-deterministic. Record those in
-`provenance.nondeterminism` rather than promising bit-for-bit repeats.
+The Pythia narrative runs only inside `harden.recommend`, only when configured,
+and never fails the job. On any failure the deterministic rule text stands with
+`narrative_source="rules"` and the skip reason recorded. The writer adds no
+claim absent from the rule outputs and never receives images, model data, or
+dataset rows (spec section 10.8).

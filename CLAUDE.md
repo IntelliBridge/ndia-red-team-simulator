@@ -1,137 +1,70 @@
-# redsim
+# Adversarial ML Red-Team Simulator (aegis/ml)
 
-Adversarial ML evaluation simulator: ART attacks, SHAP evidence, candidate
-hardening recommendations. Non-operational proof of concept.
-
-The repo was stripped out of the IntelliBridge `aegis` codebase, which is why
-aegis names still appear in places. Section 6 of the design spec records what
-that strip deleted.
+This repository is `aegis-platform`, a fork of the IntelliBridge `aegis`
+codebase. The adversarial-ML red-team work is one new vertical, `aegis/ml/`,
+added to that platform. An earlier attempt stripped the platform down to a
+standalone `redsim/` package; that split was reverted on 2026-09-08 and
+`redsim/` is gone. Ignore any remaining "redsim" names except as history.
 
 ## What is authoritative
 
-1. `docs/brief.md` is the foundation document. Where it and the design spec
-   disagree, the brief wins. It says so in its own header.
-2. `docs/superpowers/specs/2026-09-08-redsim-design.md` is the design spec.
-   Every stub in `redsim/` and `web/` has a comment pointing back at a section
-   of it.
-
-## What is not authoritative
-
-These files describe Aegis, a different product with Postgres, Keycloak, Kali
-and Celery. None of that exists here. Do not treat them as a description of
-this codebase or build against them.
-
-| File | Status |
-|---|---|
-| `README.md` | The "Get started" and "Documentation" sections are current. Everything else is inherited Aegis narrative, including a Topic map whose links mostly 404 and a release history for a different product. |
-| `.env.example` | Aegis variables. |
-| `deploy/docker-compose.yml` | Aegis service topology: postgres, redis, keycloak, minio, kali, `aegis-api`. None of it applies. |
-| `docs/adversarial-ml-redteam-spec.md` and its `.html` | An earlier hackathon spec that assumes building on top of the Aegis platform and its audit chain. Superseded by `docs/brief.md`, which drops the Aegis dependency. Useful for the ART and SHAP framing, not for architecture. |
-
-`deploy/Dockerfile.api` and `deploy/Dockerfile.web` are the exception. Both are
-current redsim, and `Dockerfile.api` is worth reading before writing the API
-because it already declares the intended entrypoint. See "Adding the backend"
-below.
-
-Docstrings in `redsim/registry.py`, `redsim/report.py` and `redsim/state.py`
-credit the aegis modules they were inherited from. Those are accurate
-provenance notes, leave them alone. The `.aegis-*` CSS classes in
-`web/src/app/globals.css` are cosmetic leftovers.
+1. `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md` — the
+   product spec. Its decisions D1-D13 (section 4) are final and override every
+   other source. It supersedes the older `docs/adversarial-ml-redteam-spec.md`
+   and `docs/superpowers/specs/2026-09-08-redsim-design.md`.
+2. `specs/F001`-`F008` — the Spec Kit feature layer beneath the product spec.
+   Where a feature file conflicts with the product spec, the product spec wins.
+3. `docs/plans/` — the parallel-execution plan (a master plan plus per-phase
+   plans mapped to milestones M0-M7 and features F001-F008). Start with
+   `docs/plans/EXECUTION-CONTEXT.md`, then `docs/plans/00-master-plan.md`.
 
 ## State of the code
 
-Implemented:
+The aegis platform (FastAPI API, Celery workers, Postgres, Redis, S3/MinIO,
+Keycloak/NextAuth, RBAC, RLS, hash-chained audit, LLM routing via Pythia) is
+restored and present. The ML vertical is **contracts only**:
 
-| Module | Lines | What it holds |
-|---|---|---|
-| `redsim/schema.py` | 188 | The full Pydantic wire contract: `RunConfig`, `RunRecord`, `RunSummary`, `Observation`, `Measurement`, `CandidateRecommendation`, `TargetInfo`, `AttackInfo` |
-| `redsim/recommend/guardrails.py` | 361 | Recommendation rules |
-| `redsim/recommend/pythia_client.py` | 105 | Gateway client, SDK-compatible wire contract |
-| `redsim/state.py` | 101 | `RunStore`, `ArtifactRef`, `new_run_id()` |
-| `redsim/report.py` | 99 | XSS-safe Markdown to HTML rendering |
-| `redsim/registry.py` | 79 | Generic name-keyed registry |
-| `redsim/redact.py` | 78 | Redaction |
+| Module | What it holds |
+|---|---|
+| `aegis/ml/schema.py` | The evidence model: `RunConfig`, `RunRecord`, `RunSummary`, `Observation`, `Measurement`, `CandidateRecommendation`, `TargetInfo`, `AttackInfo` |
+| `aegis/ml/targets/base.py` | `Target` Protocol, `Sample` |
+| `aegis/ml/attacks/base.py` | `AttackAdapter` Protocol, `AttackOutput` |
 
-Not written yet:
-
-- `redsim/api/__init__.py` is a one-line docstring. There is no FastAPI app
-  anywhere in the package. `grep -rn "FastAPI\|APIRouter\|uvicorn" redsim/`
-  returns nothing.
-- `redsim/cli.py` does not exist, so the `redsim = "redsim.cli:main"` console
-  script in `pyproject.toml` is a dangling entry point.
-- `redsim/attacks/base.py` and `redsim/targets/base.py` define the
-  `AttackAdapter` and `Target` Protocols. There are no concrete
-  implementations, so no ART attacks are wired up.
-- `redsim/explain/__init__.py` is a one-line stub, so no SHAP.
-- `tests/` covers only the Pythia client. Section 7 of the design spec lists
-  the eight test modules the project intends.
-- `web/src/app/runs/page.tsx` and its siblings are placeholders that render
-  "Not implemented yet".
-
-## Development
-
-`make install` then `make dev`. Full target table is in the README.
-
-The venv is pinned to Python 3.12 because `torch` and
-`adversarial-robustness-toolbox` do not publish wheels for 3.14 yet. `make
-install` prefers pyenv's newest 3.12.x, then `python3.12` on `PATH`, then
-`python3`, and only creates `.venv` when it is missing.
-
-Known broken, both pre-existing rather than caused by the Makefile:
-
-- `lint-py` reports nine ruff findings in `redsim/` and `tests/`, seven
-  auto-fixable. The old Makefile pointed `ruff` at a nonexistent `aegis`
-  path, so this target had never actually run.
-- `lint-web` runs `next lint` in a workspace with no ESLint config and no
-  `eslint` dev dependency, so it drops into Next's interactive setup prompt
-  and hangs or fails. Fixing it means adding `eslint` and `eslint-config-next`.
-- `make check` inherits both.
-
-`make test` and `make typecheck` pass.
-
-The `docs-*` targets have no `mkdocs.yml` and no `mkdocs` dependency behind
-them. They are kept because the user asked for them, not because they work.
-
-Nothing in CI runs tests. `.github/workflows/deploy-aws.yml` only builds
-images and rolls ECS services, so `make check` is the only gate.
+Not written yet: concrete targets, attacks, explainers, `aegis/ml/scoring.py`,
+`aegis/ml/campaign.py`, the ML Celery tasks, the ML routers under
+`aegis/api/v1/`, the `aegis ml build-assets` CLI, and the `0010_ml_vertical`
+migration. `tests/ml/` covers only the test double `TinyTarget`.
 
 ## Adding the backend
 
-Three things already commit to the shape of the API before a line of it is
-written, so match them rather than inventing a new contract.
+The API factory is `aegis/api/app.py:create_app(settings)`. New ML routers mount
+on it under `/v1`. A campaign starts with `POST /v1/models/{id}/attacks`, not a
+generic `POST /v1/runs`. Jobs run on Celery workers governed by
+`aegis/workers/job_state.py`, with model loading in a sandboxed child
+subprocess. Run and evidence state lives in Postgres (`runs`, `jobs`,
+`findings`, `artifacts`, a new `ml_campaigns` table) plus S3/MinIO for bytes;
+the run record is written as a sha256-addressed Artifact and projected onto
+`ml_campaigns` and `Finding.schema_blob.ml`. See the canonical spec sections 6,
+8, 10, and 17, and `docs/plans/00-master-plan.md` section 5.
 
-1. `deploy/Dockerfile.api` ends with
-   `CMD ["uvicorn", "redsim.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]`.
-   That means the module is `redsim/api/app.py` and it exposes a `create_app()`
-   factory, not a module-level `app`.
-2. `web/src/lib/api.ts` defaults `BASE` to `http://localhost:8000`, overridable
-   with `NEXT_PUBLIC_REDSIM_API_URL`. It already defines `reportUrl()` and
-   `artifactUrl()` against `/v1/runs/...`.
-3. `redsim/schema.py` already holds the response models, and section 4 of the
-   design spec defines the route surface.
+## Development
 
-`make dev` runs its services under `make -j`, so wiring it up is a new target
-plus one word:
-
-```makefile
-dev: require-install
-	$(PY) -m pytest -q
-	$(MAKE) -j dev-web dev-api
-
-dev-api: require-install
-	$(PY) -m uvicorn redsim.api.app:create_app --factory --reload --port 8000
-```
-
-One caveat on `make -j`: it returns as soon as the first child exits, so a
-uvicorn that dies on startup produces a confusing partial teardown rather than
-a clean error. If that gets annoying, a `wait -n` wrapper or a process manager
-handles it better than raw `-j`.
-
-Until `redsim/api/app.py` exists, the `api` image that
-`.github/workflows/deploy-aws.yml` builds and pushes to ECR will build fine and
-then crash on startup, because its `CMD` points at a module that is not there.
+`make install`, then `make dev`. `make check` runs lint, typecheck, and tests.
+The venv is pinned to Python 3.12 because `torch` and
+`adversarial-robustness-toolbox` do not publish 3.14 wheels. CI runs in
+`.github/workflows/aegis-ci.yml`; the AWS build-and-deploy pipeline is
+`.github/workflows/deploy-aws.yml`. Operational facts (AWS state, the Zscaler
+CA, known bugs, key rotation) are in `docs/plans/EXECUTION-CONTEXT.md`.
 
 ## Conventions
 
-Commits are `type(topic): description`. Branch before committing, never commit
+Commits are `type(topic): description`. Branch before committing; do not commit
 to `main` directly. Prose in docs and comments avoids em dashes and semicolons.
+
+## Not authoritative
+
+`README.md`, `.env.example`, and `deploy/docker-compose.yml` carry a mix of
+current and inherited-aegis content; trust the canonical spec and the plans over
+them. Interoperability (Croissant export, MITRE ATLAS, Palantir/Lattice) is not
+in the canonical spec and is deferred; `docs/plans/07-p6-interoperability.md` is
+out of scope until it is re-proposed as a feature.
