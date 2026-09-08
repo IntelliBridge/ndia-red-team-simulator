@@ -47,42 +47,72 @@ export function RobustnessCurve({
         />
         {Object.entries(grouped).map(([key, values], seriesIndex) => {
           const sorted = [...values].sort((a, b) => a.eps - b.eps);
-          const measured = sorted.filter((point) => point.n > 0);
+          const color = colors[seriesIndex % colors.length];
+          // A point with n === 0 carries no evidence: it has no position on
+          // the accuracy axis and it ends the current stroke, so the line
+          // never bridges measured neighbours across a missing epsilon.
+          const segments: RobustnessPoint[][] = [];
+          let segment: RobustnessPoint[] = [];
+          for (const point of sorted) {
+            if (point.n === 0) {
+              if (segment.length) segments.push(segment);
+              segment = [];
+            } else {
+              segment.push(point);
+            }
+          }
+          if (segment.length) segments.push(segment);
           return (
             <g key={key}>
-              {measured.length > 0 && (
-                <path
-                  d={measured
-                    .map(
-                      (p, i) => `${i ? "L" : "M"} ${x(p.eps)} ${y(p.accuracy)}`,
-                    )
-                    .join(" ")}
-                  fill="none"
-                  stroke={colors[seriesIndex % colors.length]}
-                  strokeWidth="2"
-                />
+              {segments
+                .filter((points) => points.length > 1)
+                .map((points) => (
+                  <path
+                    key={`${key}-segment-${points[0].eps}`}
+                    d={points
+                      .map(
+                        (p, i) =>
+                          `${i ? "L" : "M"} ${x(p.eps)} ${y(p.accuracy)}`,
+                      )
+                      .join(" ")}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth="2"
+                  />
+                ))}
+              {sorted.map((p) =>
+                p.n === 0 ? (
+                  <line
+                    key={`${key}-${p.eps}`}
+                    x1={x(p.eps)}
+                    x2={x(p.eps)}
+                    y1={4}
+                    y2={96}
+                    stroke={color}
+                    strokeWidth="1"
+                    strokeDasharray="2 2"
+                    opacity=".6"
+                    role="img"
+                    aria-label={`${key}, epsilon ${p.eps}, no evidence recorded`}
+                  >
+                    <title>{`${key}: ε ${p.eps}, no evidence recorded`}</title>
+                  </line>
+                ) : (
+                  <circle
+                    key={`${key}-${p.eps}`}
+                    cx={x(p.eps)}
+                    cy={y(p.accuracy)}
+                    r="2.2"
+                    fill={color}
+                    role="img"
+                    aria-label={`${key}, epsilon ${p.eps}, accuracy ${(p.accuracy * 100).toFixed(1)}%, n ${p.n}`}
+                  >
+                    <title>
+                      {`${key}: ε ${p.eps}, accuracy ${(p.accuracy * 100).toFixed(1)}%, n=${p.n}`}
+                    </title>
+                  </circle>
+                ),
               )}
-              {sorted.map((p) => (
-                <circle
-                  key={`${key}-${p.eps}`}
-                  cx={x(p.eps)}
-                  cy={p.n === 0 ? 96 : y(p.accuracy)}
-                  r="2.2"
-                  fill={colors[seriesIndex % colors.length]}
-                  role="img"
-                  aria-label={
-                    p.n === 0
-                      ? `${key}, epsilon ${p.eps}, no evidence recorded`
-                      : `${key}, epsilon ${p.eps}, accuracy ${(p.accuracy * 100).toFixed(1)}%, n ${p.n}`
-                  }
-                >
-                  <title>
-                    {p.n === 0
-                      ? `${key}: ε ${p.eps}, no evidence recorded`
-                      : `${key}: ε ${p.eps}, accuracy ${(p.accuracy * 100).toFixed(1)}%, n=${p.n}`}
-                  </title>
-                </circle>
-              ))}
             </g>
           );
         })}
@@ -97,6 +127,9 @@ export function RobustnessCurve({
             {key}
           </span>
         ))}
+        {points.some((point) => point.n === 0) && (
+          <span>dashed marker: no evidence recorded at that ε</span>
+        )}
         <span className="ml-auto">
           ε {min}–{max}
         </span>
