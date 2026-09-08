@@ -1,11 +1,25 @@
 # redsim/ml — Master Implementation Plan (reconciled)
 
-Status: v2.1, 2026-09-08 (later). Supersedes v1, amends v2. This version is
+Status: v2.2, 2026-09-08 (evening). Supersedes v1, amends v2 and v2.1. This version is
 rebased on the **redsim platform** (the aegis platform kept whole under D1 and
 renamed to the `redsim` namespace in commit `b39d933`) after the `main`
 restructure of 2026-09-08.
 
 ## 0. What changed since v1 (read this first)
+
+### v2.2 (2026-09-08, evening): change note
+
+P0 / M0 merged. PR #18 (branch `P0`, John Sasser) landed on `main` as
+`4350d38` (868 passed and 30 skipped offline per the PR body), and PR #11
+(Pythia access) followed as `5fa2d79`. P0 froze `redsim/ml/schema.py` under the spec 5.3 names, so the
+"frozen on PR #8" contracts that v2.1 section 5 listed (`Scoring`,
+`RunRecord.scoring`, `RunRecord.atlas_coverage`, the `AttackInfo` ATLAS
+fields, `Measurement.severity`, the widened `RunConfig`) are superseded.
+Section 5 now lists the P0 shapes, section 4.1 records #18 and #11 as merged
+and #8 and #9 as rebased on P0 with adaptation in progress, and the WS0 / WS2
+naming coordination item is closed. The eight points where P0 resolved spec
+text in favour of the tree are recorded in spec section 4.5. Nothing in D1 to
+D13 changes.
 
 ### v2.1 — 2026-09-08 (later): change note
 
@@ -125,7 +139,7 @@ section and its environment table were written before the rename commit
 | Audit | none | hash-chained append-only audit + WORM to S3 (F008), inherited from aegis |
 | Storage on AWS | EFS + RDS | RDS PostgreSQL 16 + ElastiCache Redis + **S3 (two buckets, one Object-Lock WORM); no EFS** |
 | Config | `REDSIM_OUTPUT_DIR` and friends | `RedsimConfig` (`redsim/config.py`), `redsim.yaml`, `REDSIM_*` env (`REDSIM_DB_URL`, `REDSIM_BROKER_URL`, `REDSIM_BLOB_BACKEND`, `REDSIM_AUTH_MODE`, …) |
-| LLM env | `REDSIM_LLM_MODEL` | `REDSIM_ML_LLM_MODEL`, via Pythia only. `redsim/llm/pythia.py` still reads the scaffold name `REDSIM_LLM_MODEL` until the M0 rename lands, and `.env.example` carries both |
+| LLM env | `REDSIM_LLM_MODEL` | `REDSIM_ML_LLM_MODEL`, via Pythia only. The M0 rename landed with P0 (`4350d38`): `redsim/llm/pythia.py`, `tests/test_llm_pythia.py` and `.env.example` use the new name, and PR #11 (`5fa2d79`) keeps the old one only as a deprecated alias |
 | Services and images | two compose services | `redsim-api`, `redsim-worker` (`-Q scans`), `redsim-worker-default` (`-Q default`), `redsim-beat`, `redsim-web`, `redsim-log-ingest`; Helm chart `deploy/helm/redsim`; CI `.github/workflows/redsim-ci.yml` |
 | Web | none | `@redsim/web` (Next.js 14, `web/`), `@redsim/design-system` (`packages/design-system/`), `NEXT_PUBLIC_REDSIM_API_URL`, cookies `redsim_api_session` / `redsim_csrf` |
 | Demo data | CIFAR-10 | `leibnitz-lab/military_vehicles` (image, spec 11.3.1; `Illia56/Military-Aircraft-Detection` fallback) + Kaggle `sid321axn/malicious-urls-dataset` (tabular, CC0, spec 11.3.3); `lacg030175/UNSW-NB15` is the tabular fallback (11.3.4) and `mstz/spambase` the second fallback and CI tabular fixture (11.3.6); CIFAR-10 is the image CI fixture only (D3, D4(d)) |
@@ -156,7 +170,7 @@ delivers.
 
 | WS | Owner | Milestones | Features | Deliverable |
 |---|---|---|---|---|
-| **WS0 Scaffold** | Backend lead | M0 | cross-cutting | `redsim/ml/` package, migration `0010_ml_vertical` (`targets.detail` JSONB + `ml_campaigns` table), schema widening (`RunConfig` → attack set + ε grid + MRI weights, landed on #8), new `Action` members + `viewer` rank, `ml` dep group (+`onnx2torch`, `safetensors`), env rename `REDSIM_LLM_MODEL` → `REDSIM_ML_LLM_MODEL`, `/v1/scans` unmounted, `redsim ml build-assets` CLI skeleton. Blocks all. |
+| **WS0 Scaffold** | Backend lead | M0 | cross-cutting | `redsim/ml/` package, migration `0010_ml_vertical` (`targets.detail` JSONB + `ml_campaigns` table), schema freeze (`CampaignConfig`, `ScoringConfig`, `MRIRecord`, `MLFindingDetail`, `MLModelManifest`, `CampaignRecord`, landed on #18), new `Action` members + `viewer` rank, `ml` dep group (+`onnx2torch`, `safetensors`), env rename `REDSIM_LLM_MODEL` → `REDSIM_ML_LLM_MODEL`, `/v1/scans` unmounted, `redsim ml build-assets` CLI skeleton. Blocks all. **Merged** as `4350d38`. |
 | **WS1 Catalog & ingest** | Dev A | M1, M4, M5b | F002 | `redsim/ml/targets/`, bundled-model seeding via `build-assets`, `POST /v1/models` upload, `model.validate` sandboxed task, `redsim/services/ml_models.py`, web `/models`. |
 | **WS2 Attacks, engine & scoring** | Dev B | M1, M3, M4, M6 | F003, F004 | `redsim/ml/attacks/`, `campaign.py`, `eval.py`, `scoring.py`; the `attack.run` Celery chain (sample→clean_eval→control→attack); MRI + severity. |
 | **WS3 Explain, recommend & findings** | Dev C | M2, M3, M6 | F005, F006 | `redsim/ml/explain/`, `recommend/{rules,narrative}.py`, `explain.run` / `harden.recommend` / `verify.replay` tasks, `Finding.schema_blob.ml` projection, dismissal + reviewer-notes routes. |
@@ -170,17 +184,17 @@ F001 (auth) and F008 (audit) are largely **reused platform foundation**
 on the existing chain and wiring Keycloak on Fargate. These are the two features
 v1 missed entirely.
 
-### 4.1 Workstream status (2026-09-08, later)
+### 4.1 Workstream status (2026-09-08, evening)
 
 Pull requests on `IntelliBridge/ndia-red-team-simulator` as of this revision.
 No names are invented for unassigned work (D007 stays open).
 
 | WS | Branch / PR | State | Notes |
 |---|---|---|---|
-| WS0 Scaffold (M0, P0) | owned by another engineer | in progress | Not ours. PR #10 `feat/ml-db-migration` (migration `0010_ml_vertical` + `Target` / `Job` kinds) was **closed** so that WS0/P0 has one owner. |
-| WS1 targets (pure part), WS2 attacks / engine / scoring, WS3 explain / recommend | #8 `feat/ml-core` | open | Carries the frozen contracts of section 5 (`redsim/ml/{schema,registry,artifacts,errors}.py`, `targets/registry.py`, `attacks/registry.py`) and `docs/workstreams/ml-core.md`. Concrete adapters, explainers and rules land on the same branch as pure modules with no platform imports. |
-| WS1 assets (bundled-model seeding) | #9 `feat/ml-assets` | open | Workstream opened (`docs/workstreams/ml-assets.md`). Delivers `redsim ml build-assets`: dataset fetch, bundled model training, `MANIFEST.json`. |
-| Cross-cutting: Pythia transport | #11 `feat/pythia-access` | open | Workstream opened (`docs/workstreams/pythia-access.md`). Gateway URL, key provisioning, connectivity check. See the Pythia note in section 5. |
+| WS0 Scaffold (M0, P0) | #18 `P0` (John Sasser) | **merged** into `main` as `4350d38` (2026-09-08, 868 passed and 30 skipped offline per the PR body) | Not ours. Freezes `redsim/ml/schema.py` under the spec 5.3 names (section 5), migration `0010_ml_vertical`, the seven ML `Action` members and the `viewer` rank, the `REDSIM_ML_LLM_MODEL` rename, `/v1/scans` unmounted, the `redsim ml build-assets` skeleton (`BUILD_ASSETS_STATUS = "not_implemented"`) and the lint baseline. PR #10 `feat/ml-db-migration` was **closed** earlier so that WS0 / P0 had one owner. A change to the frozen contract follows `01-p0-contracts-api-skeleton.md` section 8. Spec section 4.5 records the eight points P0 resolved in favour of the tree. |
+| WS1 targets (pure part), WS2 attacks / engine / scoring, WS3 explain / recommend | #8 `feat/ml-core` | open, rebased on P0, adaptation in progress | Built against the pre-P0 `RunConfig` / `Scoring` contract, now superseded (section 5). The branch contains `4350d38`, modifies no P0-owned file, and `bc81f57` adopts the frozen schema (`CampaignConfig`, `MRIRecord`, the enriched `Measurement` / `Observation` / `Provenance`). The pure modules (`redsim/ml/{registry,artifacts,errors}.py`, `targets/registry.py`, `attacks/registry.py`), the adapters, explainers, scoring and rules, and `docs/workstreams/ml-core.md` stay on the branch with no platform imports. |
+| WS1 assets (bundled-model seeding) | #9 `feat/ml-assets` | open, rebased on P0, adaptation in progress | Workstream `docs/workstreams/ml-assets.md`. Delivers `redsim ml build-assets` (dataset fetch, bundled model training, `MANIFEST.json`) on top of P0's `redsim/cli/ml.py` skeleton (`ebafca2`). Open point: the branch rewrites `redsim/cli/ml.py` while `tests/ml/test_cli_ml.py` on `main` asserts the skeleton's `not_implemented` report, so that suite must be reconciled with the real builder before merge. |
+| Cross-cutting: Pythia transport | #11 `feat/pythia-access` | **merged** into `main` as `5fa2d79` (2026-09-08) | Gateway URL, key provisioning, trust-store TLS, `.env` loading, `python -m redsim.llm.pythia_check`, `docs/ops/pythia.md` and `docs/workstreams/pythia-access.md`. Reads `REDSIM_ML_LLM_MODEL` as frozen by P0. Two follow-up commits (`6f4d06d`, `6a0b8b9`) isolate the `.env` discovery tests. See the Pythia note in section 5. |
 | F008 audit foundation contract | #12 `feat/audit-log-foundation` (William) | **merged** | Contract doc for the audit chain the ML events append to. |
 | Earlier contributions | #2 (schema and registry contract tests), #4 (CIFAR-10 target and asset pipeline), both by Metz | closed by their author | Superseded by the platform substrate. CIFAR-10 stays a CI fixture. |
 | Not mapped | #16 `feat/replit-redsim-migration` (Metz) | open | Targets a Replit port. D1 (reconciliation rows 1 and 30) rejected the Replit monorepo path. Needs a coordinator decision. Not part of this plan. |
@@ -193,35 +207,64 @@ No names are invented for unassigned work (D007 stays open).
   `Interpretation`/`CandidateRecommendation` evidence model stays. It is written
   as a sha256-addressed Artifact (`ml.run_record`) and **projected** onto
   `ml_campaigns.score` and `findings.schema_blob.ml`; a projection that
-  disagrees with the record is a bug. Frozen on PR #8:
-  - `Scoring`: `mri` (int 0–100), `grade` (`A`–`F`), `reading` (attack-scoped
-    wording only), `subscores` (`S_acc`, `S_asr`, `S_eps`, `S_conf`, `S_expl`,
-    each 0–100), `weights` (the vector used, never renormalized),
-    `reference_eps`, `eps_grid`, `attack_ids`, `modality`, `inputs`
-    (`acc_clean` and the per-attack `acc_adv` / `asr` / `pert` / `conf_gap` /
-    `expl_shift`), `basis_measurements`, and for verify re-runs `delta_from`
-    (baseline run id), `delta_mri`, `delta_subscores`. It carries
-    `not_a_readiness_statement: Literal[True]`.
-  - `RunRecord.scoring: Scoring | None` and `RunRecord.atlas_coverage:
-    list[str]` (MITRE ATLAS technique ids exercised, filled in Phase B2, empty
-    until then).
-  - `AttackInfo.atlas_technique_id` / `atlas_technique_name` (for example
-    `AML.T0043` / `Craft Adversarial Data`), `None` until B2 lands.
-  - `Measurement.severity: Literal["critical","high","medium","low"] | None`,
-    derived per spec 15.5, never hand-set.
-  - `RunConfig` widened: `attack_ids` (campaign attack set, with `attack_id` kept
-    for the single-attack form), `eps_grid` (default `[0.01, 0.03, 0.1]`),
-    `reference_eps` (default `0.03`), `scoring_weights` (`None` means the spec
-    defaults), `defense` (`{id, params}` for verify-after-harden re-runs),
-    beside `params`, `n_samples`, `seed`, `include_control`, `explain_k`,
-    `llm_narrative`.
+  disagrees with the record is a bug. Frozen on `main` by P0 (PR #18,
+  `4350d38`) under the spec 5.3 names. Read the module in full before
+  building against it. The shapes, in brief:
+  - `CampaignConfig` replaces `RunConfig`: `target_id`, `modality`,
+    `attack_ids`, `attack_params`, `norm`, `eps_grid` (strictly ascending,
+    each in (0, 1]), `reference_eps` (a member of the grid),
+    `finding_asr_threshold`, `n_samples`, `seed`, `include_control`,
+    `explain_k`, `dataset_id`, `dataset_revision`, `dataset_split`,
+    `scoring: ScoringConfig`, `defense: DefenseConfig | None`,
+    `llm_narrative`, `auto_recommend`, `target_snapshot`, `attacks`.
+  - `ScoringConfig`: `version`, `weights: MRIWeights` (0.35 / 0.25 / 0.20 /
+    0.10 / 0.10, validated to sum to 1), `severity`, `confidence` and
+    `interpretation` thresholds. `finding_asr_threshold` is not inside it.
+  - `MRIRecord` (`RunRecord.score`) replaces `Scoring` and
+    `RunRecord.scoring`: `scoring_version`, `weights`, `eps_grid`,
+    `reference_eps`, `norm`, `attack_ids`, `finding_asr_threshold`,
+    `settings_hash`, `inputs: list[MRIInputRow]`, `per_attack: dict[str,
+    PerAttackSubscores]`, `subscores: Subscores` (`S_acc`, `S_asr`, `S_eps`,
+    `S_conf`, `S_expl`), `mri`, `grade`, `completeness`, `missing`,
+    `reading`, `delta: MRIDelta | None`, `computed_at`. It refuses an `mri`
+    without all five subscores, a `grade` that does not match the band
+    (`schema.grade_for_mri`) and a `reading` with a banned readiness word.
+    Weights are never renormalised.
+  - `Measurement` has **no `severity` field**. Severity is finding-level
+    (`MLFindingDetail`, `SeverityThresholds`, spec 15.5). It gains the scoring
+    inputs (`n_clean_correct`, `attack_success_rate`, `pert_first_success_*`,
+    `conf_gap_*`, `expl_shift_mean`, `expl_shift_n`, `expl_shift_n_excluded`,
+    `expl_shift_noise_floor`, `expl_shift_noise_floor_n`, `queries_mean`), and
+    `params` values may be `str`.
+  - `AttackInfo` gains `phase`, `access`, `requires_gradients`, `status` and
+    `reason` with defaults. It has **no ATLAS fields**, and there is no
+    `RunRecord.atlas_coverage`: ATLAS is Phase B2 through
+    `MLFindingDetail.atlas_technique: AtlasTechnique(id, name,
+    atlas_version)`, "never back-filled by guesswork". Keep the
+    attack-to-technique mapping as a module-level constant for B2 and stamp
+    nothing on records in Phase A.
+  - `Provenance` gains `baseline_run_id`, `dataset_revision`, `defense`,
+    `llm`, `onnxruntime`, `parent_run_id`, `sample_indices_sha256`,
+    `settings_hash`, `sklearn`, `thread_env` and `xgboost`.
+  - `CandidateRecommendation.validation` is `Literal["not evaluated",
+    "measured"]`, paired with `measured: MeasuredDelta | None`. A candidate
+    carries no numeric gain until a verify run measures a delta.
+  - `RunRecord` rejects dangling citations (`Interpretation.basis` and
+    `CandidateRecommendation.triggered_by` must name existing measurement or
+    observation ids) and carries `score: MRIRecord | None`. `RunStatus`
+    includes `cancelled`. `CampaignRecord` extends it with `kind`,
+    `completed_at`, `settings_hash`, `baseline_run_id`, `parent_run_id`,
+    `curve: list[RobustnessCurve]`, `completeness`, `missing` and
+    `score_status`. `RunSummary.attack_ids` replaces `attack_id`.
+  - `standing_limitations(dataset_name, eps_grid)` builds the per-campaign
+    limitations list. `STANDING_LIMITATIONS` no longer carries the CIFAR-10
+    sentence.
   - `Provenance.redsim_version` (was `aegis_version` in the spec text).
-  Spec 5.3 names `CampaignConfig`, `MRIRecord`, `MLFindingDetail` and
-  `MLModelManifest` as M0 additions. On #8 the first two roles are filled by the
-  widened `RunConfig` and `Scoring`, which the pure modules read. Whether WS0
-  adds the spec names as the platform-side shapes that project from these, or
-  the spec text is aligned to these names, is a WS0 / WS2 coordination item and
-  not a blocker for #8.
+  The WS0 / WS2 naming question of v2.1 is closed: P0 merged with the spec
+  names, so the `RunConfig` and `Scoring` shapes on PR #8 are superseded and
+  #8 is being adapted to P0's names and semantics (section 4.1). A change to
+  the frozen contract follows `01-p0-contracts-api-skeleton.md` section 8:
+  announce it first and prefer additive optional fields.
 - **Registries** (`redsim/ml/registry.py`): one id-keyed `Registry[T]` class
   with `register(item)` (`TypeError` when the item misses a non-empty string
   `id` or fails the protocol check, `DuplicateRegistration` on a repeated id),
@@ -246,8 +289,8 @@ No names are invented for unassigned work (D007 stays open).
   starts with `POST /v1/models/{id}/attacks`, **not** a generic `POST /v1/runs`.
   Read the campaign at `GET /v1/runs/{id}/campaign`; stream a blob at
   `GET /v1/artifacts/{id}`; act on findings via `POST /v1/findings/{id}/{explain,harden,verify}`;
-  compare with `GET /v1/runs/{id}/compare?with=`. `POST /v1/scans` is unmounted
-  at M0. Phase B2 routes (`POST /v1/runs/{id}/dataset`, `GET /v1/datasets/{id}`,
+  compare with `GET /v1/runs/{id}/compare?with=`. `POST /v1/scans` was unmounted
+  by P0 (`4350d38`). Phase B2 routes (`POST /v1/runs/{id}/dataset`, `GET /v1/datasets/{id}`,
   `POST /v1/datasets`) return `501 not_implemented` until B2 (section 6).
 - **Jobs**: Celery tasks `redsim.model_validate`, `redsim.attack_run`,
   `redsim.explain_run`, `redsim.harden_recommend`, `redsim.verify_replay`,
@@ -261,20 +304,21 @@ No names are invented for unassigned work (D007 stays open).
   scorecard then shows the available subscores and "MRI not computed:
   <dimension> unavailable (<reason>)"), per campaign only, never shown without
   its subscores, per-family table with denominators, and ε curve.
-  `Scoring.weights` records the vector used. A non-default vector puts a badge
+  `MRIRecord.weights` records the vector used. A non-default vector puts a badge
   on the scorecard and makes the campaign incomparable with any other. Grade
   text is attack-scoped; the words "hardened", "deployment-ready", "certified",
   "safe" are banned. ΔMRI is the only sanctioned form of "gain" and appears only
   on a verify run whose `settings_hash` matches its baseline.
 - **Env**: `PYTHIA_BASE_URL`, `PYTHIA_API_KEY`, `PYTHIA_PERSONA`,
   `PYTHIA_TIMEOUT_S`, `REDSIM_ML_LLM_MODEL`, `REDSIM_ML_WORK_DIR` (and the other
-  `REDSIM_ML_*` knobs of spec 20.3, which the spec text still spells
-  `AEGIS_ML_*`). LLM calls go through `redsim/llm/pythia.py` under the platform
-  router and budget. Transitional state: `PythiaSettings.from_env` reads the
-  scaffold's `REDSIM_LLM_MODEL` until the M0 rename lands, and `.env.example`
-  carries both names with a comment saying so.
-- **Pythia access** (cross-cutting, PR #11, facts as reported by that
-  workstream on 2026-09-08): the gateway is
+  `REDSIM_ML_*` knobs of spec 20.3). LLM calls go through
+  `redsim/llm/pythia.py` under the platform router and budget. The M0 rename
+  landed with P0 (`4350d38`): `PythiaSettings.from_env` reads
+  `REDSIM_ML_LLM_MODEL`, `.env.example` and `tests/test_llm_pythia.py` use
+  that name, and PR #11 (`5fa2d79`) keeps `REDSIM_LLM_MODEL` only as a
+  deprecated alias.
+- **Pythia access** (cross-cutting, PR #11, merged as `5fa2d79`, facts as
+  reported by that workstream on 2026-09-08 and kept in `docs/ops/pythia.md`): the gateway is
   `https://pythia.fdet.agiledefense.xyz`, reached through the corporate Zscaler
   proxy. The team key is entitled to 27 models, including
   `amazon/nova-lite-v1:0` (the id `tests/test_llm_pythia.py` uses) and the
@@ -319,11 +363,12 @@ What B2 delivers, in the consolidated vocabulary:
   `AML.T0040 ML Model Inference API Access`, `noise_control` → none. S1's path
   `Finding.schema_blob.atlas_technique` resolves to
   `Finding.schema_blob.ml.atlas_technique` because all ML detail lives in the
-  `ml` block. The mapping is declared on the attack adapter (the
-  `AttackInfo.atlas_technique_id` / `atlas_technique_name` fields already
-  frozen on #8) and a per-campaign coverage block (`RunRecord.atlas_coverage`)
-  lists the techniques exercised. Coverage is a description of the declared
-  attack set, never a score.
+  `ml` block. The mapping is declared beside the attack registry as a
+  module-level constant (P0 froze `AttackInfo` without ATLAS fields and
+  `RunRecord` without `atlas_coverage`), recorded with the ATLAS version it
+  was checked against (spec 27.4), and B2 adds the per-campaign coverage view
+  of spec 27.2 that lists the techniques exercised. Coverage is a description
+  of the declared attack set, never a score.
 - **Platform pushes.** Palantir **Foundry** is primary (scorecard and dataset
   written as Foundry datasets, always with subscores, denominators, ε points,
   `settings_hash` and the grade sentence). Anduril **Lattice** is exploratory
@@ -334,10 +379,11 @@ What B2 delivers, in the consolidated vocabulary:
 
 Consequences for this plan: `docs/plans/07-p6-interoperability.md` maps to spec
 section 27 / milestone B2 (its v1 body is still superseded for paths and
-mechanisms). Phase A work should not block on it, but WS2 keeps the ATLAS
-fields on `AttackInfo` populated as adapters land (cheap, and it is the only B2
-item with a Phase A seam), and WS3 leaves `schema_blob.ml.atlas_technique` as
-`None` rather than guessing. Every B2 route returns `501 not_implemented` and
+mechanisms). Phase A work should not block on it, but WS2 keeps the
+attack-to-technique mapping as a module-level constant as adapters land (cheap,
+and it is the only B2 item with a Phase A seam), stamps nothing on records in
+Phase A, and WS3 leaves `schema_blob.ml.atlas_technique` as `None` rather than
+guessing. Every B2 route returns `501 not_implemented` and
 every B2 control renders disabled with its reason until B2 lands.
 
 ## 7. Integration waves and demo-critical order
@@ -350,6 +396,9 @@ Slice 1: F001 auth · F002 catalog · F008 audit    ── foundation (WS1, WS7 
 Slice 2: F003 profile · F004 runs · F005 evidence ── the engine (WS2, WS3, WS4, WS5)
 Slice 3: F006 findings · F007 reports/compare     ── the tools (WS3, WS6)
 ```
+
+Gate 0 cleared on 2026-09-08 with PR #18 (`4350d38`), so Slices 1 to 3 build
+against the frozen section 5 contracts.
 
 Demo-critical path (D8, spec 3.4): image path end to end → MRI scorecard →
 verify-after-harden → tabular path → ONNX upload → Fargate deploy. **M5a (the
@@ -376,11 +425,11 @@ v2.1:
 - `01`–`06` and `08` carry v2 bodies rebased onto the platform, and commit
   `836b0e1` flipped every path and identifier in them to the `redsim` names
   (`redsim/ml/`, `redsim ml …`, `REDSIM_*`, `redsim-*`, `redsim.*` tasks,
-  `@redsim/web`). Their bodies still predate the frozen names of section 5:
-  they use the spec 5.3 names `CampaignConfig` and `MRIRecord` where PR #8
-  froze the widened `RunConfig` and `Scoring`, and `01` still lists the schema
-  widening as WS0 work that #8 has since landed. Where a body disagrees with
-  this plan, the canonical spec or `specs/F00#`, those win.
+  `@redsim/web`). Their bodies use the spec 5.3 names `CampaignConfig` and
+  `MRIRecord`, which P0 (PR #18, `4350d38`) froze on `main`, so those names
+  are current again. `01` closes with a dated Landed note (PR #18,
+  `4350d38`) and its body still reads as the pre-merge plan. Where a body disagrees with this plan, the canonical spec or
+  `specs/F00#`, those win.
 - `07` keeps its v1 body under a reconciliation banner. It maps to spec
   section 27 / milestone B2 (section 6 above). Use it for the
   parallel-execution shape only, not for the literal paths, signatures or
