@@ -1,414 +1,513 @@
-> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **Milestones M1/M3/M4/M6**; features **F003 Profiles** + **F004 Run Management**; MRI display in **F005/F007**.
->
-> Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): attacks under `aegis/ml/attacks/`; scoring in `aegis/ml/scoring.py`; the MRI formula and weights are unchanged, but it attaches to `ml_campaigns`/`Finding.schema_blob.ml` (projections of the run-record Artifact); attacks run as a **Celery chain**, not a thread pool; grade text is attack-scoped and the banned-word list applies.
->
-> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+# Phase P2 · Milestones M1/M3/M4/M6 · Features F003/F004 + MRI (v2, aegis substrate)
 
-# Phase P2 — Attacks & MRI scoring
+Status: v2, 2026-09-08. Owner: Dev B (WS2). Wave: Slice 2 (the engine). Critical
+path: yes.
 
-Status: v1, 2026-09-08. Owner: Dev B. Wave 1 (parallel). Critical path: yes.
+Read these first, in order:
 
-Read the master plan first (`docs/plans/00-master-plan.md`), then this file.
-Build against the shared contracts in master section 6. This phase delivers the
-ART attack adapters and the Model Robustness Index (MRI) scorer.
+1. `docs/plans/00-master-plan.md`, sections 2, 5, and 7.
+2. `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md`, sections
+   12 (attack catalog), 15 (MRI), and 10 (job and worker flow). These are
+   authoritative.
+3. `specs/003-evaluation-profiles/spec.md` (F003, the campaign configuration)
+   and `specs/004-run-management/spec.md` (F004, the run lifecycle).
+4. The frozen code: `aegis/ml/attacks/base.py`, `aegis/ml/schema.py`,
+   `aegis/ml/targets/base.py`, `aegis/workers/job_state.py`.
+
+This phase builds the attack and scoring half of a campaign on the aegis
+platform. It supersedes the deleted `redsim/` plan. Every path below is a real
+aegis path.
 
 ---
 
 ## 1. Objective
 
-Deliver the attack and scoring half of a run:
+Deliver the attack execution and MRI scoring of one campaign:
 
-1. Three ART attack adapters (`fgsm`, `pgd`, `noise_control`) that each satisfy
-   the `AttackAdapter` Protocol in `redsim/attacks/base.py`, register in one
-   `ATTACKS` registry, and carry their MITRE ATLAS technique.
-2. An evaluation step that turns clean and adversarial predictions into
-   `Measurement` objects (clean accuracy, adversarial accuracy, flip count,
-   per-class counts, perturbation norms).
-3. A deterministic MRI scorer (`score_run`) and a severity classifier
-   (`severity_for`) that follow hackathon spec section 8 exactly, including the
-   renormalization rule when the P3 explanation signal is absent.
+1. Five ART attack adapters under `aegis/ml/attacks/`, each satisfying the
+   `AttackAdapter` protocol in `aegis/ml/attacks/base.py` and registering in one
+   `ATTACKS` registry:
+   - `fgsm` — `art.attacks.evasion.FastGradientMethod`, image, white-box.
+   - `pgd` — `art.attacks.evasion.ProjectedGradientDescent`, image and tabular.
+     For tabular the adapter runs PGD against a differentiable **surrogate** and
+     scores the result on the real bundled tree model (spec 12.2, 12.9).
+   - `hopskipjump` — `art.attacks.evasion.HopSkipJump`, tabular, black-box, no
+     surrogate.
+   - `noise_control` — benign random noise at the same ε and norm. Family
+     `control`. It never creates a Finding (spec 12.4).
+2. `aegis/ml/eval.py` — turn clean, adversarial, and control predictions into
+   `Measurement` objects, one row per (attack, ε) plus one clean row and the
+   control rows (spec 12.5).
+3. `aegis/ml/scoring.py` — the five-subscore MRI and the derived Finding
+   severity, computed exactly per spec section 15. This is a pure function.
+4. `aegis/ml/campaign.py` — assemble the campaign `RunRecord`, write it as a
+   sha256 `Artifact`, and project it onto `ml_campaigns.score` and
+   `Finding.schema_blob.ml`.
 
-Success means P4 can call `ATTACKS.get(id).run(...)`, build measurements, and
-call `score_run(...)` to attach a `Scoring` block to a `RunRecord`, with every
-number reproducible from the stored config and seed.
+The attack set runs as a **Celery chain**, one `attack.run` Job per attack. It
+is not a thread pool. The first job also runs the `sample`, `clean_eval`, and
+`control` stages, then every later job reuses those rows (spec 10.3).
+
+Success means the `attack.run` chain produces the measurements, findings, and
+artifacts of a campaign, and `score_run(...)` reproduces the MRI record that the
+scorecard and severity rules read.
 
 ## 2. Scope
 
 ### In scope
 
-- `redsim/attacks/fgsm.py`, `pgd.py`, `noise_control.py`.
-- `redsim/attacks/registry.py` exposing `ATTACKS: Registry[AttackAdapter]`.
-- `redsim/eval.py`: build `Measurement` objects from a `Sample` and predictions.
-- `redsim/scoring.py`: `score_run(...)` and `severity_for(...)`.
-- ATLAS tagging on `AttackInfo` for the evasion attacks (`AML.T0043`).
-- The eps grid sweep that feeds `S_eps` and severity thresholds.
-- Unit tests for attacks, evaluation, and scoring.
+- `aegis/ml/attacks/{fgsm,pgd,hopskipjump,noise_control}.py` and the `ATTACKS`
+  registry that lists them.
+- `aegis/ml/eval.py`: build `Measurement` objects from a `Sample` and
+  predictions, for clean, evasion, and control families.
+- `aegis/ml/scoring.py`: `score_run(...)` and `severity_for(...)`, per spec 15.
+- `aegis/ml/campaign.py`: the `RunRecord` assembly, its sha256 `Artifact`, and
+  the projection onto `ml_campaigns.score` and `Finding.schema_blob.ml`.
+- The ε sweep `{0.01, 0.03, 0.1}` with `reference_eps = 0.03`, the robustness
+  curve inputs, and the benign control at every ε (spec 12.3, 12.4).
+- The tabular surrogate fit and the per-feature ε scaling for the tabular PGD
+  row (spec 12.9), and the query counter for HopSkipJump (spec 12.5).
+- The `aegis.attack_run` task body (`aegis/workers/tasks/attack.py`) that drives
+  the chain and calls `eval.py` and `campaign.py`.
+- Finding creation by ASR threshold and derived severity (spec 12.6, 15.5).
+- Unit tests under `tests/ml/` for attacks, evaluation, scoring, and severity.
 
 ### Out of scope
 
-- The `Target` implementations and their `art_classifier()` / `torch_model()`
-  (P1). P2 consumes the Protocol, never a concrete target.
-- SHAP and the `expl_shift_mean` value (P3). P2 accepts it as an argument and
-  handles `None` by renormalizing weights.
-- Interpretation and recommendation rules (P3, `recommend/rules.py`).
-- Pipeline orchestration, `run.json` writing, and the HTTP routes (P4).
-- Croissant export and ATLAS coverage aggregation on `RunRecord` (P6 / P4).
-- Tabular and LLM attacks. Image evasion only for the milestone.
+- The `Target` implementations, `art_classifier()`, and `torch_model()` (WS1,
+  F002). P2 consumes the `Target` protocol only.
+- SHAP, `expl_shift`, and the `S_expl` subscore (WS3, P3). P2 leaves `S_expl`
+  absent. See section 4 and the note below on why the MRI is then not computed.
+- The **score stage** call site. `scoring.py` is P2 code, but the score stage
+  that runs it lives in the `explain.run` task (WS3), because the MRI is written
+  only once all five subscores exist (spec 10.2, 10.3). P2 delivers and tests
+  the pure function.
+- The interpretation and recommendation rules and the Pythia writer (WS3, P3).
+- The admission service, routers, RLS, and audit wiring (WS4, F004 API side).
+  P2 assumes admission already wrote the audit row and the Run and Job rows.
+- The sandbox child process and model loading (WS0/WS1, D2). P2 runs inside the
+  child but does not own it.
+- Datasets upload, Croissant, and ATLAS export (dropped in consolidation, master
+  section 6).
 
 ## 3. Prerequisites and dependencies
 
-### Must exist before P2 integrates (from P0)
+### Must exist before P2 integrates
 
-- `redsim/schema.py` with the P0 additions from master section 6.1:
-  - `Scoring` model (`mri`, `grade`, `subscores`, `weights`, `reference_eps`,
-    `eps_grid`, `delta_mri`).
-  - `AttackInfo.atlas_technique_id` and `AttackInfo.atlas_technique_name`.
-  - `Measurement.severity` (`Literal["critical","high","medium","low"] | None`).
-  - `RunRecord.scoring` and `RunRecord.atlas_coverage`.
-  The current `schema.py` does not yet hold these; P2 codes against the master
-  6.1 shapes and must not merge ahead of the P0 schema freeze.
-- `redsim/attacks/base.py`: `AttackAdapter` Protocol and `AttackOutput`
+- `aegis/ml/schema.py` widened per spec 5.3 and 12.5. P2 needs the new
+  `Measurement` fields `n_clean_correct`, `attack_success_rate`, `conf_gap_mean`,
+  `conf_gap_n`, `queries_mean`, `pert_first_success_mean`, `pert_first_success_n`,
+  and the aggregate `expl_shift_mean` and `expl_shift_n` on the reference-ε row.
+  `RunConfig` widens to an attack set, an ε grid, and the MRI weight vector
+  (F003). These are WS0 schema work. P2 codes against the widened shapes and
+  raises a schema note rather than editing the frozen contract locally.
+- `aegis/ml/attacks/base.py`: the `AttackAdapter` protocol and `AttackOutput`
   dataclass. Present and frozen.
-- `redsim/targets/base.py`: `Target` Protocol and `Sample` dataclass. Present
-  and frozen. P2 uses `target.art_classifier()`, `target.predict_proba(x)`, and
-  the `Sample` fields `x`, `y`, `indices`, `class_names`.
-- `redsim/registry.py`: generic `Registry[T]`. Present and frozen.
-- `Measurement` and `ParamSpec` as they already stand in `schema.py`.
+- `aegis/ml/targets/base.py`: the `Target` protocol and `Sample` dataclass.
+  Present and frozen. P2 uses `target.art_classifier()`, `target.predict_proba`,
+  `target.torch_model()` for the tabular surrogate fit, and `target.manifest()`
+  for the perturbable-feature list and the surrogate record.
+- `aegis/registry.py`: the generic `Registry[T]` with duplicate-id detection
+  (spec 12.1).
+- `aegis/workers/job_state.py`: `set_job_status` is the only writer of
+  `Job.status`. P2 never assigns `Job.status` directly.
+- The `ml_campaigns` table and the `Artifact` kinds `ml.run_record`, `ml.score`,
+  `ml.curve`, `ml.adv_slice`, and `ml.flip_matrix` (WS0, migration
+  `0010_ml_vertical`).
 
 ### The one value from P3
 
-- `S_expl` needs `expl_shift_mean` from P3's `ExplainOutput` (master 6.1).
-- P2 builds and tests everything with `expl_shift_mean=None`. In that state
-  `score_run` drops `S_expl` and renormalizes the remaining four weights so
-  they sum to 1.0, then records the applied set in `Scoring.weights`.
-- When P3 lands, no P2 signature changes. P4 passes the real mean and `S_expl`
-  re-enters with weight 0.10. This is the P2 to P3 coupling in master section 5.
+- `S_expl` needs `expl_shift_mean` from P3's SHAP stage (spec 13.5).
+- P2 builds and tests everything with `S_expl` absent. In that state
+  `score_run` does **not** compute the MRI. It records the four available
+  subscores with their denominators and the text
+  `"MRI not computed: explanation stability unavailable (explain stage not run)"`.
+- Weights are **never** renormalised over the four present dimensions. That is
+  the spec rule (spec 15.4). Renormalising would make the number look identical
+  while being incomparable with any five-dimension MRI.
+- When P3 lands, no P2 signature changes. The score stage passes the real
+  `expl_shift_mean`, `S_expl` re-enters at weight 0.10, and the MRI is written.
 
-### Third-party libraries (design spec 2.1)
+### Third-party libraries
 
 - `adversarial-robustness-toolbox` (ART): `FastGradientMethod`,
-  `ProjectedGradientDescent`. Wrap the target through `target.art_classifier()`.
-- `numpy` for perturbation and norm math.
-- CPU `torch` is pulled in by the target, not by P2 directly.
+  `ProjectedGradientDescent`, `HopSkipJump`. Wrap the target through
+  `target.art_classifier()` for white-box, and around `predict` for HopSkipJump.
+- `numpy` for perturbation, norm, and control-noise math.
+- `scikit-learn` or a small torch MLP for the tabular PGD surrogate.
+- `torch` and `xgboost` are pulled in by the target, not by P2 directly.
 
 ## 4. Interfaces consumed and exposed
 
 ### Consumed
 
-- `Target` Protocol: `art_classifier()`, `predict_proba(x)`, plus `info()` for
-  the domain.
-- `Sample`: `x` (float32 in `[0,1]`, NCHW), `y` (int labels), `indices`,
-  `class_names`.
-- `Registry[T]` from `redsim/registry.py`.
-- Schema models: `AttackInfo`, `ParamSpec`, `Measurement`, `Scoring`.
+- `Target` protocol: `art_classifier()`, `predict_proba(x)`, `torch_model()`,
+  `manifest()`, `info()`.
+- `Sample`: `x` (float32 in `[0, 1]`, NCHW for images), `y` (int labels),
+  `indices`, `class_names`.
+- `Registry[T]` from `aegis/registry.py`.
+- Schema models: `AttackInfo`, `ParamSpec`, `Measurement`, and the widened
+  `RunConfig`.
 
 ### Exposed
 
-**Attack registry** (master 6.2):
+**The `ATTACKS` registry** (within `aegis/ml/attacks/`):
 
 ```python
-from redsim.attacks.registry import ATTACKS   # Registry[AttackAdapter]
-# ATTACKS.get(id), .maybe_get(id), .ids(), .items(), iteration — never .list()
+from aegis.ml.attacks import ATTACKS      # Registry[AttackAdapter]
+# ATTACKS.get(id), .maybe_get(id), .ids(), .items(), iteration
 ```
 
-Registered ids: `fgsm`, `pgd`, `noise_control`. Each module constructs its
-adapter and calls `ATTACKS.register(...)` at import; `registry.py` imports the
-three modules so importing `ATTACKS` registers all three.
+Registered ids: `fgsm`, `pgd`, `hopskipjump`, `noise_control`. Each module
+constructs its adapter and registers it under the capability tags
+`adversarial_ml` and `explainability` (spec 12.1). `aegis/ml/attacks/__init__.py`
+imports the modules so importing `ATTACKS` registers them all.
 
-**Attack adapter surface** (per `AttackAdapter` Protocol):
+**The `AttackAdapter` surface** (per `aegis/ml/attacks/base.py`):
 
 ```python
-adapter.id                                   # "fgsm" | "pgd" | "noise_control"
-adapter.info() -> AttackInfo                 # incl. atlas fields + params_schema
-adapter.resolve_params(params) -> dict       # defaults, coercion, range check
+adapter.id                                       # "fgsm" | "pgd" | "hopskipjump" | "noise_control"
+adapter.info() -> AttackInfo                     # id, name, domain, family, params_schema, references
+adapter.resolve_params(params) -> dict           # defaults, coercion, ValueError on out-of-range → HTTP 422
 adapter.run(target, x, y, params, seed) -> AttackOutput
 ```
 
-**Scoring** (master 6.3, exact signatures):
+`resolve_params` is the single guard on parameter bounds. Admission calls it and
+the worker calls it again before running, so a stale client cannot widen a bound
+(spec 12.1).
+
+**Scoring** (`aegis/ml/scoring.py`, exact signatures):
 
 ```python
 def score_run(measurements: list[Measurement],
-              expl_shift_mean: float | None,
-              reference_eps: float,
-              eps_grid: list[float]) -> Scoring: ...
+              observations: list[Observation],
+              settings: ScoringSettings) -> MRIRecord: ...
 
-def severity_for(measurement: Measurement,
-                 eps_small: float, eps_mid: float) -> str:  # critical|high|medium|low
-    ...
+def severity_for(finding_row: dict,
+                 settings: ScoringSettings) -> Severity | None: ...
 ```
 
-**Evaluation** (new, P2 owns the shape; P4 consumes):
+`score_run` is the pure MRI function of spec 15 (`aegis.ml.scoring.compute_mri`
+in the spec text). It reads the campaign weights, `eps_grid`, `reference_eps`,
+and `finding_asr_threshold` from `settings`. It returns an `MRIRecord` (spec
+5.6) with `mri`, `grade`, `completeness`, `missing`, the five `subscores` with
+denominators, the `per_attack` breakdown, `weights`, `settings_hash`, and the
+grade `reading`. `severity_for` maps one attack's per-ε table to a `Severity`
+(`aegis/schema.py`) by the rules in spec 15.5. It never sets severity by hand
+and never writes `Finding.status`.
+
+**Evaluation** (`aegis/ml/eval.py`, new; the `attack.run` task consumes it):
 
 ```python
-# redsim/eval.py
 def measure_clean(target, sample, wall_time_s) -> Measurement: ...
-def measure_evasion(target, sample, out: AttackOutput, attack_id, params,
-                    wall_time_s) -> Measurement: ...
-def measure_control(target, sample, out: AttackOutput, wall_time_s) -> Measurement: ...
+def measure_evasion(target, sample, out, attack_id, eps, params, wall_time_s) -> Measurement: ...
+def measure_control(target, sample, out, eps, wall_time_s) -> Measurement: ...
 ```
 
-### Measurement id convention
+### Measurement id convention (spec 12.3, 12.4)
 
-`Measurement.id` is formed as:
+- Clean family: `"m.clean"`, `family = "clean"`, `attack_id = None`. Computed
+  once per campaign by the first attack job.
+- Evasion family: `"m.evasion.<attack_id>.eps<ε>"`, `family = "evasion"`, one
+  row per (attack, ε). Example: `"m.evasion.fgsm.eps0.03"`.
+- Control family: `"m.control.noise.eps<ε>"`, `family = "control"`,
+  `attack_id = "noise_control"`. Computed once per (norm, ε) by the first job
+  and shared by every attack.
 
-- clean family: `"m.clean"`.
-- evasion family: `"m.evasion.<attack_id>"`, for example `"m.evasion.fgsm"` or
-  `"m.evasion.pgd"`.
-- control family: `"m.control.noise"`.
-
-These ids are cited by P3 interpretation and recommendation `basis` /
-`triggered_by` lists and by `score_run` when it reads families, so keep them
-stable. Set `Measurement.attack_id` to the attack id for evasion and control,
-and `None` for clean.
-
-### ATLAS mapping
-
-- `fgsm` and `pgd`: `atlas_technique_id="AML.T0043"`,
-  `atlas_technique_name="Craft Adversarial Data"`.
-- `noise_control`: leave both ATLAS fields `None`; the control is not an attack
-  technique. P4 aggregates the non-null ids into `RunRecord.atlas_coverage`.
+These ids are cited by the curve artifact, by `score_run`, and by P3
+interpretation. Keep them stable.
 
 ## 5. Ordered implementation steps
 
-1. **Attack registry skeleton.** Create `redsim/attacks/registry.py` with
-   `ATTACKS = Registry[AttackAdapter]("attack", protocol=AttackAdapter)`. Import
-   the three attack modules at the bottom so registration is a side effect of
-   importing `ATTACKS`.
+1. **Registry.** Create the `ATTACKS` registry in `aegis/ml/attacks/__init__.py`
+   as `Registry[AttackAdapter]`. Import the four attack modules so registration
+   is a side effect of import. Assert no duplicate id.
 
-2. **`noise_control.py` first** (no gradient, simplest). Implement `info()`
-   returning `AttackInfo(id="noise_control", family="control", domain="image",
-   params_schema=[ParamSpec(name="eps", type="float", default=0.03, min=0.0,
-   max=0.3, ...)])` with both ATLAS fields `None`. `resolve_params` fills
-   `eps=0.03`, coerces to float, rejects out of `[min,max]` with `ValueError`.
-   `run` draws uniform noise in `[-eps, +eps]` with a seeded `numpy` generator,
-   adds it to `x`, clips to `[0,1]`, and returns `AttackOutput` with `x_adv`,
-   `linf_norm_mean`, `l2_norm_mean`, `wall_time_s`, `params`, and
-   `library_versions={"numpy": ...}`. No target gradient is touched.
+2. **`noise_control.py` first** (no gradient, simplest). `info()` returns
+   `family = "control"`, `domain` per target, one `ParamSpec` for `eps`. `run`
+   draws `u ~ Uniform(-eps, +eps)` per element with `np.random.default_rng(seed)`,
+   adds it, and clips to the valid range (`[0, 1]` for images, the feature range
+   for tabular). L2 uses a random direction scaled to norm ε. For tabular it
+   touches only the declared perturbable features. It never returns a Finding.
 
-3. **`fgsm.py`.** `info()` with `family="evasion"`, `atlas_technique_id=
-   "AML.T0043"`, `atlas_technique_name="Craft Adversarial Data"`, and one
-   `ParamSpec` for `eps` (default 0.03, min 0.0, max 0.3, L-infinity).
-   `resolve_params` as above. `run` gets the ART estimator from
-   `target.art_classifier()`, builds `FastGradientMethod(estimator, eps=eps,
-   norm=np.inf)`, calls `attack.generate(x=x)`, and returns `AttackOutput`.
-   Record `library_versions={"art": art.__version__}`.
+3. **`fgsm.py`.** `info()` with `family = "evasion"`, `domain = "image"`, one
+   `ParamSpec` for `eps` (bounds from the grid), `norm = ∞`. `run` gets the ART
+   estimator from `target.art_classifier()`, builds
+   `FastGradientMethod(estimator, eps=eps, norm=np.inf)`, calls
+   `attack.generate(x=x)`, and returns `AttackOutput`. Record
+   `library_versions = {"art": ..., "numpy": ..., "torch": ...}`.
 
-4. **`pgd.py`.** Same shape with three `ParamSpec`s: `eps` (0.03, L-infinity),
-   `eps_step` (0.007), `max_iter` (10, type `int`). `run` builds
-   `ProjectedGradientDescent(estimator, eps=eps, eps_step=eps_step,
-   max_iter=max_iter, norm=np.inf)` and calls `generate`.
+4. **`pgd.py` (image).** `ParamSpec`s: `eps` (from grid), `eps_step = eps / 4`
+   (the ratio rule, spec 12.2), `max_iter = 10` (bounds 1–50),
+   `num_random_init = 0`, `norm ∈ {∞, 2}`. `run` builds
+   `ProjectedGradientDescent(...)` and calls `generate`.
 
-5. **Determinism.** Seed `numpy` in `noise_control` from the `seed` argument.
-   For FGSM and PGD, set torch and numpy seeds through a small local helper
-   before `generate` so repeated runs match under the same seed (design spec
-   test 7: "deterministic under seed"). Record any residual nondeterminism as a
-   note on `AttackOutput.notes` for provenance.
+5. **`pgd.py` (tabular surrogate).** When `target.info().domain == "tabular"`,
+   fit or load a differentiable surrogate (sklearn `LogisticRegression` in
+   `ScikitlearnLogisticRegression`, or a small torch MLP in `PyTorchClassifier`)
+   against the target's predicted labels, run PGD on the surrogate, then measure
+   every metric on the **real** bundled model. Scale ε per feature over the
+   training-split range and map back (spec 12.9). Hold frozen features with the
+   ART `mask` or re-impose them after each step. Round integer features and
+   measure the post-rounding prediction. Record the surrogate type, sha256, and
+   agreement rate in `notes` and note "white-box via surrogate transfer".
 
-6. **Norm helpers.** Add a private `_norms(x, x_adv) -> tuple[float, float]`
-   that computes mean L-infinity and mean L2 of the per-sample perturbation
-   `x_adv - x` flattened per sample. Reuse in all three `run` methods so
-   `linf_norm_mean` and `l2_norm_mean` are computed one way.
+6. **`hopskipjump.py`.** Tabular black-box. `ParamSpec`s: `norm ∈ {∞, 2}`,
+   `max_iter = 20` (1–50), `max_eval = 1000` (100–5000), `init_eval = 100`,
+   `init_size = 100`. `run` wraps the bundled tree model through ART's
+   `SklearnClassifier` or `XGBoostClassifier` with a prediction counter, runs
+   HopSkipJump, and records `queries_mean`. No surrogate. Success at ε is defined
+   by thresholding the achieved perturbation norm (spec 15.1).
 
-7. **`redsim/eval.py`.** Implement the three `measure_*` builders:
+7. **Norm helper.** Add a private `_norms(x, x_adv) -> tuple[float, float]` that
+   computes mean L∞ and mean L2 of the per-sample perturbation. Reuse it in every
+   `run` so both norms are always recorded, whatever the attack norm.
+
+8. **Determinism.** Seed `np.random.default_rng(seed)` for the slice and control
+   noise, `np.random.seed(seed)` for ART, and `torch.manual_seed(seed)` before
+   each attack. Record residual nondeterminism strings on `AttackOutput.notes`
+   (`"CPU float32 reductions"`, `"HopSkipJump random initialisation"`) for
+   `Provenance.nondeterminism` (spec 12.7).
+
+9. **`aegis/ml/eval.py`.** Implement the three builders.
    - Run `target.predict_proba` on `sample.x` for clean, and on `out.x_adv` for
-     evasion and control. Take `argmax` for predicted labels.
-   - `n` = slice size, `n_correct` = count where prediction equals `sample.y`,
-     `accuracy = n_correct / n`.
-   - `n_flipped_from_clean` (evasion and control): count of samples that were
-     correct on clean but wrong under the perturbation. Clean measurement sets
-     it to `None`.
-   - `per_class`: for each label in `sample.class_names`, `{"n": ..,
-     "n_correct": ..}` using the true label as the key.
-   - `linf_norm_mean` / `l2_norm_mean`: copy from `out` for evasion and control;
-     `None` for clean.
-   - Set `id`, `family`, `attack_id`, `params`, `wall_time_s` per section 4.
+     evasion and control. Take `argmax` for the predicted label.
+   - Set `n`, `n_correct`, `accuracy = n_correct / n`, and `per_class`.
+   - Evasion and control: `n_flipped_from_clean` counts samples correct on clean
+     but wrong under the perturbation. Set `n_clean_correct` and
+     `attack_success_rate = n_flipped_from_clean / n_clean_correct` (spec 12.5).
+   - `conf_gap_mean`: per sample `g_i = max(0, max_{j≠y} p_j(x_adv) − p_y(x_adv))`,
+     mean over all `n`, so a robust model scores 0 (spec 12.5, 15.1). Set
+     `conf_gap_n = n`.
+   - Copy `linf_norm_mean` and `l2_norm_mean` from `out`. Copy `queries_mean` for
+     HopSkipJump.
+   - Clean row: `n_flipped_from_clean`, the norms, and the confidence gap are
+     `None`.
+   - Set `id`, `family`, `attack_id`, `params` (including `eps` and `norm`), and
+     `wall_time_s` per section 4.
 
-8. **`redsim/scoring.py` subscores.** Implement the five subscores on a 0 to 100
-   scale, each the mean over in-scope evasion attacks (hackathon spec 8.2):
-   - `S_acc` = 100 * (worst-case `acc_adv` across the eps grid) / `acc_clean`,
-     clamped to `[0,100]`. `acc_clean` is the `m.clean` accuracy; `acc_adv` per
-     eps is read from the evasion measurements produced across the eps sweep.
-   - `S_asr` = 100 * (1 - mean ASR at `reference_eps`). ASR for an evasion
-     measurement = `n_flipped_from_clean / clean_correct`, where `clean_correct`
-     is `m.clean.n_correct`.
-   - `S_eps` = 100 * normalized area under the robust-accuracy vs eps curve:
-     trapezoidal integral of `acc_adv(eps)` over `eps_grid`, divided by
-     `acc_clean * (max(eps_grid) - min(eps_grid))`, clamped to `[0,100]`. When
-     the grid has one point, fall back to `S_eps = S_acc`.
-   - `S_conf` = 100 * (1 - clamp(`conf_gap`, 0, 1)), where `conf_gap` is the
-     mean of (confidence on the wrong label minus confidence on the true label)
-     over flipped samples. eval.py exposes the per-run `conf_gap`; if unavailable
-     for a measurement, treat it as 0 and note the omission.
-   - `S_expl` = 100 * (1 - `expl_shift_mean`) when the value is not `None`.
+10. **`aegis/ml/scoring.py` subscores** (spec 15.2). Each subscore is on 0–100
+    and is the unweighted mean over the in-scope attacks. Clamp every ratio to
+    `[0, 1]` before scaling.
+    - `S_acc` = `100 · mean_a( min_ε acc_adv(a, ε) / acc_clean )`.
+    - `S_asr` = `100 · mean_a( 1 − asr(a, ε_ref) )`.
+    - `S_eps` = `100 · mean_a( trapz(acc_adv(a, ε) / acc_clean, ε_grid) / (ε_max − ε_min) )`.
+      The clean point ε = 0 is drawn but excluded from the integral. A one-point
+      grid degenerates to the ratio at that point and records the limitation.
+    - `S_conf` = `100 · mean_a( 1 − conf_gap(a, ε_ref) )`.
+    - `S_expl` = `100 · mean_a( 1 − expl_shift(a, ε_ref) )`, only when the
+      explain stage provided `expl_shift_mean`.
 
-9. **Weights and renormalization.** Base weights: `S_acc` 0.35, `S_asr` 0.25,
-   `S_eps` 0.20, `S_conf` 0.10, `S_expl` 0.10. When `expl_shift_mean is None`,
-   drop `S_expl`, divide the remaining four by their sum (0.90) so they total
-   1.0, and put only those four keys in `Scoring.weights`. When it is present,
-   record all five. Never mutate a shared dict; build a fresh weights dict.
+11. **Aggregate and grade** (spec 15.3, 15.5). Compute
+    `MRI = round(0.35·S_acc + 0.25·S_asr + 0.20·S_eps + 0.10·S_conf + 0.10·S_expl)`
+    with Python round-half-to-even. Store subscores to one decimal. Assign the
+    grade band: A `90–100`, B `75–89`, C `60–74`, D `40–59`, F `0–39`. Attach the
+    attack-scoped reading from spec 15.5 and the fixed grade sentence. Never emit
+    the banned words `"hardened"`, `"harden before fielding"`, `"deployment-ready"`,
+    `"not deployment-ready"`, `"certified"`, `"safe"` (spec 15.5, 15.8(iii)).
 
-10. **Aggregate and grade.** `mri = round(sum(weight[k] * subscore[k]))` over the
-    applied weights. Grade bands (spec 8.4): A `90-100`, B `75-89`, C `60-74`,
-    D `40-59`, F `0-39`. Return `Scoring(mri=..., grade=..., subscores=...,
-    weights=..., reference_eps=..., eps_grid=...)`. `subscores` holds every
-    computed subscore including any that were dropped from the weighting, so the
-    UI can still show `S_expl` as "not scored" when absent — confirm this
-    display choice with P5; if they prefer only weighted keys, restrict
-    `subscores` to the applied set.
+12. **The MRI-not-computed rule** (spec 15.4). Compute the MRI **only** when all
+    five subscores exist. If any is unavailable, set `mri = None`, `grade = None`,
+    fill `completeness` and `missing` with the reason, and return the available
+    subscores with denominators. Do **not** renormalise the weights. The cases:
+    `acc_clean == 0` or `m.clean.n_correct == 0` (S_acc, S_asr, S_eps undefined);
+    a missing reference-ε row for some attack (partial run); `explain_k == 0` or
+    the explainer failed (S_expl unavailable); any declared attack with no rows
+    (partial run). An attack recorded `not_run` for a declared reason is removed
+    from the in-scope set before scoring, and the removal is stated on the record.
 
-11. **`severity_for`.** Map an evasion measurement to a severity string using
-    the eps at which it succeeded and its ASR (spec 8.5). Read `eps` from
-    `measurement.params["eps"]`. Compute the measurement ASR as
-    `n_flipped_from_clean / measurement.n` (the flip rate over the evaluated
-    slice; see the note in section 9 on the denominator). Rules:
-    - `critical`: `eps <= eps_small` and `asr >= 0.5`.
-    - `high`: (`eps <= eps_small` and `asr >= 0.2`) or (`eps <= eps_mid` and
-      `asr >= 0.5`).
-    - `medium`: succeeds at `eps <= eps_mid` (ASR below the high thresholds).
-    - `low`: succeeds only above `eps_mid`.
-    "Succeeds" means at least one flip (`n_flipped_from_clean > 0`). Return the
-    highest matching band.
+13. **`severity_for`** (spec 15.5). With the grid sorted ascending, set
+    `ε_small = min`, `ε_large = max`, and `ε_mid = ε_ref` when strictly between,
+    else the median. Read the first-success ε and the ASR from the finding's
+    per-ε table. Return the highest matching band:
+    - `critical` — succeeds at `ε ≤ ε_small` with `asr ≥ 0.5`.
+    - `high` — `ε ≤ ε_small` with `asr ≥ 0.2`, or `ε_mid` with `asr ≥ 0.5`.
+    - `medium` — first success at `ε_mid` and not high, or `ε_small` with
+      `asr < 0.2`.
+    - `low` — first success only at `ε_large`.
+    "Succeeds at ε" means `asr(a, ε) ≥ finding_asr_threshold` (default 0.2).
 
-12. **Wire severity into the pipeline path.** `score_run` (or a thin helper P4
-    calls) assigns `measurement.severity = severity_for(m, eps_small, eps_mid)`
-    for each evasion measurement, using `eps_small = min(eps_grid)` and
-    `eps_mid` = the middle grid point. P4 stores the updated measurements on the
-    `RunRecord`.
+14. **Finding creation** (spec 12.6). In the `attack.run` task, create at most one
+    Finding per attack per campaign when the attack crosses `finding_asr_threshold`
+    at any grid ε. Skip the Finding when `n_clean_correct < 10` at the reference
+    budget and note "denominator too small for a finding". Fill `severity` from
+    `severity_for`, `scanner_finding_id = "ml.<attack_id>"`,
+    `source_tool = "aegis.ml/<attack_id>"`,
+    `dedup_key = "ml:<model_sha256[:16]>:<attack_id>:<settings_hash[:16]>"`, and
+    the full per-ε derivation into `Finding.schema_blob.ml`. Controls never create
+    a Finding. Scoring writes `severity`, never `Finding.status`.
 
-13. **Tests.** Add the pytest modules in section 7. Run under the pinned 3.12
-    venv (`make test`), keep the full attack and scoring suite under a few
-    seconds by using tiny arrays and a tiny model.
+15. **`aegis/ml/campaign.py`.** Assemble the `RunRecord` from the measurements,
+    findings, the curve, and (later) observations. Write it as a sha256-addressed
+    `Artifact` of kind `ml.run_record`. Project it onto `ml_campaigns.score` (the
+    `MRIRecord`, kind `ml.score`) and onto each `Finding.schema_blob.ml`. A
+    projection that disagrees with the record is a bug (master section 5). Write
+    the robustness curve as an `ml.curve` artifact with every point carrying its
+    denominator `n`.
+
+16. **The `attack.run` chain** (`aegis/workers/tasks/attack.py`, spec 10.2, 10.3).
+    One `attack.run` Job per attack. Inside the job, spawn the sandbox child
+    `--stage attack`. If `chain_position == 0`, run `sample`, `clean_eval`
+    (`m.clean`), and the benign `control` at every ε, and write `slice.npz`. Then
+    run this attack at each ε on the same slice with the same seed. Build the
+    measurements through `eval.py`, create the Finding, record the artifacts
+    (`ml.adv_slice` per ε within the size cap, `ml.flip_matrix`, `ml.curve`),
+    write the attack rows into the campaign record, and enqueue the next attack
+    job, or the pre-created `explain.run` when this was the last attack. Route
+    every status write through `set_job_status`. On failure, cancel the remaining
+    queued chain jobs (`queued → cancelled`) and set `Run.status = failed`.
+
+17. **Tests.** Add the pytest modules of section 7 under `tests/ml/`. Use the
+    `TinyTarget` fake in `tests/ml/fakes.py`, tiny arrays, and a tiny model so the
+    suite stays well under the sandbox budget.
 
 ## 6. Files to create and modify
 
 ### Create
 
-- `redsim/attacks/registry.py` — `ATTACKS` registry, imports the three modules.
-- `redsim/attacks/fgsm.py` — `FastGradientMethod` adapter, ATLAS `AML.T0043`.
-- `redsim/attacks/pgd.py` — `ProjectedGradientDescent` adapter, ATLAS `AML.T0043`.
-- `redsim/attacks/noise_control.py` — uniform-noise control, no gradient.
-- `redsim/eval.py` — `measure_clean`, `measure_evasion`, `measure_control`.
-- `redsim/scoring.py` — `score_run`, `severity_for`, subscore helpers.
-- `tests/test_attacks.py`, `tests/test_noise_control.py`,
-  `tests/test_eval.py`, `tests/test_scoring.py`.
+- `aegis/ml/attacks/__init__.py` — the `ATTACKS` registry, imports the modules.
+- `aegis/ml/attacks/fgsm.py` — `FastGradientMethod` adapter.
+- `aegis/ml/attacks/pgd.py` — `ProjectedGradientDescent` adapter, image and
+  tabular-surrogate paths.
+- `aegis/ml/attacks/hopskipjump.py` — `HopSkipJump` adapter, tabular black-box.
+- `aegis/ml/attacks/noise_control.py` — benign-noise control, no gradient.
+- `aegis/ml/eval.py` — `measure_clean`, `measure_evasion`, `measure_control`.
+- `aegis/ml/scoring.py` — `score_run`, `severity_for`, and the subscore helpers.
+- `aegis/ml/campaign.py` — the `RunRecord` assembly, its sha256 `Artifact`, and
+  the projections.
+- `aegis/workers/tasks/attack.py` — the `aegis.attack_run` task and the chain
+  driver (shared with WS4 on the admission side).
+- `tests/ml/test_attacks.py`, `tests/ml/test_eval.py`,
+  `tests/ml/test_scoring.py`, and fixtures in `tests/ml/fakes.py`.
 
 ### Modify
 
-- None of P0's frozen files. P2 depends on the P0 schema additions but does not
-  edit `schema.py`; if a field is missing at integration, raise it as a schema
-  note per master section 7, do not add it locally.
+- `aegis/ml/schema.py` — only through the WS0 schema widening (the new
+  `Measurement` fields and the widened `RunConfig`). P2 does not edit the frozen
+  contract locally. If a field is missing at integration, raise a schema note
+  (master section 7).
+- No other frozen file. Do not assign `Job.status` outside `set_job_status`.
 
 ## 7. Testing and validation
 
-All tests offline, CPU only, deterministic (design spec section 7).
+All tests run offline, CPU only, and deterministic (spec 12.7). Use the `ml`
+pytest marker where torch, ART, or a surrogate is needed, and the sqlite session
+factory from `tests/conftest.py`.
 
 - **`test_attacks.py`.**
-  - FGSM and PGD on a 1-layer random-weight model over 16 random 3x8x8 images:
-    `x_adv` shape equals `x`; every per-sample L-infinity perturbation `<= eps`
-    within a small float tolerance; `x_adv` stays in `[0,1]`.
+  - FGSM and PGD on a tiny random-weight model over small random images:
+    `x_adv.shape == x.shape`; every per-sample L∞ perturbation `≤ eps + tol`;
+    `x_adv` stays in `[0, 1]`. This is the "perturb within the ε ball" check.
   - `AttackOutput.linf_norm_mean` and `l2_norm_mean` are non-negative and
-    `linf_norm_mean <= eps + tol`.
-  - Same seed twice gives identical `x_adv` (determinism).
+    `linf_norm_mean ≤ eps + tol`.
+  - The same seed twice gives an identical `x_adv`.
   - `resolve_params` fills defaults, coerces an int-like `eps` to float, and
-    raises `ValueError` for `eps` above `max` and below `min`.
-  - `info()` returns `atlas_technique_id == "AML.T0043"` for fgsm and pgd.
-  - A known-brittle tiny model flips at least one prediction under FGSM at
-    `eps=0.03`: build a small model that is easy to fool, confirm
-    `n_flipped_from_clean > 0` through `measure_evasion`.
-
-- **`test_noise_control.py`.**
-  - Control perturbation stays inside the eps ball: per-sample L-infinity of
-    `x_adv - x` `<= eps`.
-  - `info().family == "control"` and both ATLAS fields are `None`.
-  - Seeded noise is reproducible.
+    raises `ValueError` above `max` and below `min`.
+  - `noise_control` stays inside the same ε ball with no gradient call, reports
+    `family == "control"`, and never returns a Finding.
+  - `hopskipjump` records `queries_mean` and a nondeterminism note.
+  - A brittle tiny model flips at least one prediction under FGSM at `eps = 0.03`,
+    confirmed through `measure_evasion` (`n_flipped_from_clean > 0`).
 
 - **`test_eval.py`.**
   - `measure_clean` ids as `m.clean`, `attack_id is None`,
-    `accuracy == n_correct / n`, `per_class` sums to `n`.
-  - `measure_evasion` ids as `m.evasion.fgsm`, sets `attack_id`, copies norms
-    from `AttackOutput`, computes `n_flipped_from_clean` correctly on a crafted
-    prediction set.
-  - `measure_control` ids as `m.control.noise`.
+    `accuracy == n_correct / n`, and `per_class` sums to `n`.
+  - `measure_evasion` ids as `m.evasion.fgsm.eps0.03`, sets `attack_id`, copies
+    the norms, and computes `n_flipped_from_clean`, `n_clean_correct`, and
+    `attack_success_rate` correctly on a crafted prediction set.
+  - `measure_control` ids as `m.control.noise.eps0.03`.
+  - `conf_gap_mean` is 0 on a robust fixture and positive on a confidently-wrong
+    fixture.
 
 - **`test_scoring.py`.**
-  - On a fixture set of measurements with known numbers, `score_run` returns the
-    expected `mri` and `grade`. Include one fixture that lands in each band
-    (A through F) to pin the boundaries.
-  - `expl_shift_mean=None` drops `S_expl` and renormalizes: assert
-    `Scoring.weights` has exactly the four keys `S_acc, S_asr, S_eps, S_conf`
-    summing to 1.0 (within tolerance), and the ratio 0.35:0.25:0.20:0.10 is
-    preserved.
-  - `expl_shift_mean=0.4` restores five weights totalling 1.0 and
-    `S_expl == 60.0`.
-  - `severity_for` thresholds: a case at `eps <= eps_small` with `asr >= 0.5`
-    returns `critical`; `eps <= eps_small` with `asr == 0.3` returns `high`;
-    `eps <= eps_mid` with high ASR returns `high`; a mid-only success returns
-    `medium`; a large-eps-only success returns `low`.
-  - Determinism: the same measurement list scores identically twice.
+  - On a fixture measurement set with known numbers, `score_run` returns the
+    expected `mri` and `grade`. Include one fixture in each band A–F to pin the
+    boundaries and the round-half-to-even rule.
+  - `severity_for` thresholds: `ε ≤ ε_small` with `asr ≥ 0.5` → `critical`;
+    `ε ≤ ε_small` with `asr == 0.3` → `high`; `ε_mid` with high ASR → `high`; a
+    mid-only success → `medium`; a large-ε-only success → `low`.
+  - **MRI-not-computed when `S_expl` is absent:** with no `expl_shift_mean`,
+    `mri is None`, `grade is None`, `missing` names explanation stability, the
+    four available subscores are returned with denominators, and
+    `weights` is **not** renormalised (the four present weights still read
+    0.35/0.25/0.20/0.10 and do not sum to 1.0). This is the spec 15.4 rule.
+  - MRI-not-computed also holds when `acc_clean == 0` and when a reference-ε row
+    is missing for some attack.
+  - No banned word appears in any grade text, reading, or record field.
+  - Determinism: the same measurement list scores identically twice, and the
+    stored `MRIRecord` recomputes to the same value.
 
 ## 8. Acceptance criteria (Definition of Done)
 
-1. `from redsim.attacks.registry import ATTACKS` registers `fgsm`, `pgd`,
-   `noise_control`; `ATTACKS.ids()` returns the three sorted ids.
-2. Each adapter satisfies the `AttackAdapter` Protocol at registration (the
-   registry's `runtime_checkable` check passes).
-3. `fgsm` and `pgd` produce `x_adv` inside the L-infinity eps ball and report
-   `linf_norm_mean` / `l2_norm_mean`; `noise_control` stays inside the same ball
-   with no gradient call.
-4. FGSM flips at least one prediction on the brittle test model.
-5. `eval.py` builds `Measurement` objects with the section-4 ids, correct
-   accuracies, flip counts, per-class counts, and norms.
-6. `score_run` reproduces the hackathon spec 8 math: five subscores with the
-   0.35/0.25/0.20/0.10/0.10 weights, the correct MRI aggregate, and the A to F
-   grade bands. With `expl_shift_mean=None`, `S_expl` is dropped and
-   `Scoring.weights` holds the renormalized four-weight set.
-7. `severity_for` returns `critical|high|medium|low` per the spec 8.5 rules.
-8. `pytest` passes for `test_attacks.py`, `test_noise_control.py`,
-   `test_eval.py`, `test_scoring.py`; `make check` stays green for P2 files.
-9. No P0 frozen file is modified.
+1. `from aegis.ml.attacks import ATTACKS` registers `fgsm`, `pgd`,
+   `hopskipjump`, and `noise_control`; `ATTACKS.ids()` returns them; each
+   satisfies the `AttackAdapter` protocol at registration.
+2. `fgsm` and image `pgd` produce `x_adv` inside the L∞ ε ball and report both
+   norms; `noise_control` stays inside the same ball with no gradient call and
+   never creates a Finding.
+3. Tabular `pgd` runs on a differentiable surrogate and scores on the real
+   bundled model, with the surrogate recorded; tabular `hopskipjump` runs
+   black-box and records `queries_mean`.
+4. `eval.py` builds `Measurement` objects with the section-4 ids, correct
+   accuracies, flip counts, ASR, per-class counts, confidence gap, and norms.
+5. `score_run` reproduces the spec 15 math: five subscores with the
+   0.35/0.25/0.20/0.10/0.10 weights and the correct round-half-to-even MRI and
+   A–F grade. It is a pure function and the stored record recomputes.
+6. When `S_expl` is absent, `score_run` sets `mri = None`, states the reason,
+   returns the four available subscores with denominators, and does **not**
+   renormalise the weights.
+7. `severity_for` returns `critical | high | medium | low` per spec 15.5, and no
+   banned word appears anywhere in the product output.
+8. The `attack.run` chain runs one Job per attack, the first job writes the
+   clean and control rows, later jobs reuse them, and every status write goes
+   through `set_job_status`. On failure the remaining chain jobs are cancelled.
+9. The `RunRecord` is written as a sha256 `Artifact` and projected onto
+   `ml_campaigns.score` and `Finding.schema_blob.ml`; the projection matches the
+   record.
+10. `pytest -m ml` passes for `test_attacks.py`, `test_eval.py`, and
+    `test_scoring.py`; `make check` stays green for P2 files; no frozen file is
+    edited outside the WS0 schema widening.
 
 ## 9. Effort estimate and special considerations
 
-**Effort.** About 1.5 to 2 developer-days: half a day for the three adapters and
-the registry, half a day for `eval.py`, and half a day for `scoring.py` plus
-tests. The scoring math is the subtle part, not the attacks.
+**Effort.** About 2.5 to 3 developer-days: one day for the four adapters and the
+registry (the tabular surrogate and HopSkipJump wrapper are the heavy parts),
+half a day for `eval.py`, one day for `scoring.py` and `campaign.py` plus tests.
+The scoring math and the MRI-not-computed rule are the subtle parts, not the
+attacks.
 
-**CPU runtime.** FGSM is one gradient step and is fast. PGD at `max_iter=10`
-over the default 200-image slice is the heaviest attack; on a laptop CPU expect
-seconds, not minutes, with the small CNN from P1. Keep tests on tiny arrays so
-the suite stays well under the design spec's 60-second budget.
+**The Celery chain, not a thread pool.** The v1 plan ran attacks in an in-process
+thread pool. That is gone. Attacks run as a Celery chain, one `attack.run` Job
+per attack, each in the sandboxed worker child. The first job owns the shared
+`sample`, `clean_eval`, and `control` stages and writes `slice.npz`; later jobs
+re-fetch it digest-checked and reuse the clean and control rows, so every row is
+computed on the same indices. This is the single largest substrate change from
+v1.
 
 **Wrapping the target.** Always get the ART estimator through
-`target.art_classifier()`. Never build a `PyTorchClassifier` inside P2; that
-coupling belongs to P1 so the attack code stays target-agnostic and works for
-any future estimator.
+`target.art_classifier()`. Never build a `PyTorchClassifier` inside P2. That
+coupling belongs to WS1 so the attack code stays target-agnostic.
 
-**Eps grid sweep.** `S_acc` (worst-case) and `S_eps` (area under curve) both
-need `acc_adv` at several eps values. P2 defines the sweep as: for each eps in
-`eps_grid`, re-run the evasion attack and build one evasion measurement, then
-pass the whole list to `score_run`. `reference_eps` (default 0.03) selects the
-measurement used for `S_asr` and headline reporting. Decide with P4 whether the
-sweep runs inside `run_pipeline` or inside a P2 helper the pipeline calls; the
-scorer itself only consumes the resulting measurements, so it is agnostic. Keep
-the grid small (for example `[0.01, 0.03, 0.1]`) to bound PGD cost.
+**The score stage is not in `attack.run`.** `scoring.py` is P2 code, but the MRI
+is written in the `explain.run` task's score stage, because it needs all five
+subscores (spec 10.2, 10.3). P2 delivers and tests the pure `score_run`; WS3
+calls it once `S_expl` exists.
 
-**ASR denominator for severity.** `score_run` computes the aggregate `S_asr`
-ASR exactly as `n_flipped_from_clean / m.clean.n_correct`, because it holds the
-clean measurement. `severity_for` receives a single measurement (fixed
-signature from master 6.3) and cannot see `m.clean`, so it uses the flip rate
-over the evaluated slice, `n_flipped_from_clean / measurement.n`, as its ASR.
-This is a documented, defensible proxy that differs from the aggregate ASR by
-the clean-accuracy factor. If P0/P4 want the two figures identical, the clean
-resolution is for `score_run` to assign `measurement.severity` after computing
-the exact ASR, and for `severity_for` to stay the unit-testable threshold
-mapper. Flag this in the P2 PR so the team confirms the choice.
+**Renormalisation is forbidden.** The most important scoring behaviour is that
+`score_run` returns no MRI when `S_expl` is absent, and it does not divide the
+four remaining weights by their sum. A renormalised four-dimension number looks
+identical to a real MRI while being incomparable with every five-dimension one.
+Keep the weight table in one place, validate that it sums to 1.0, and store the
+applied weights and the `missing` reasons in every record.
 
-**Renormalization is the coupling seam.** The single most important P2 behavior
-is that `score_run` works and is fully tested with `expl_shift_mean=None` before
-P3 lands. Keep the weight table in one place, renormalize by dividing by the
-present-weight sum, and always write the applied weights into `Scoring.weights`
-so a reader can see which formula produced the MRI.
+**Determinism and provenance.** Seed numpy, ART, and torch before every attack,
+and record residual nondeterminism on `AttackOutput.notes` so the worker folds
+it into `Provenance.nondeterminism`. Every `Measurement` must reproduce from
+`(model_sha256, dataset_revision, split, indices, attack_id, resolved params,
+seed)`, which is what a rerun and a ΔMRI comparison match (spec 12.7, 14).
 
-**Determinism and provenance.** Seed numpy and torch before every attack, and
-record any known nondeterminism (for example CPU float32 reductions) on
-`AttackOutput.notes` so P4 can fold it into `Provenance.nondeterminism`.
+**Tabular awkwardness.** L∞ budgets on mixed-type tabular data are a standing
+limitation. Scale ε per declared feature, freeze categorical columns and the
+label, round integer features and measure the post-rounding prediction, and
+state all of it in `notes`. Tabular MRIs are never compared with image MRIs
+(spec 12.9, 15.8(i)).

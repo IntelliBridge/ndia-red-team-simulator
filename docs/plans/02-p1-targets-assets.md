@@ -1,39 +1,57 @@
-> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **Milestones M1/M4/M5b**; feature **F002 Evaluation Catalog**.
+> **Phase P1 · Milestones M1/M4/M5b · Feature F002 (v2, aegis substrate)**
 >
-> Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): targets under `aegis/ml/targets/`; assets seeded by the `aegis ml build-assets` CLI into S3 (`ml/assets/`, `bundled/`), not baked ad-hoc; demo data is `leibnitz-lab/military_vehicles` + `lacg030175/UNSW-NB15` — **CIFAR-10 is a CI fixture only**; upload is admin-gated, ONNX/state_dict only, loaded in the sandboxed worker.
+> This plan is rebased on the aegis platform. It replaces the v1 body, which
+> was written against the deleted `redsim/` package. Read `docs/plans/00-master-plan.md`
+> (sections 2, 5, 7) and the canonical spec
+> `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md` (sections 5,
+> 9, 11, 12.2) first. Where this plan and those disagree, they win.
 >
-> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+> Substrate in one line: targets live under `aegis/ml/targets/`; assets are
+> seeded by the `aegis ml build-assets` CLI into the blob store under
+> `ml/assets/` and `bundled/`; the demo data is `leibnitz-lab/military_vehicles`
+> (image) and `lacg030175/UNSW-NB15` (tabular); CIFAR-10 is a CI fixture only;
+> uploads are admin-gated, ONNX or `state_dict` only, and loaded only in the
+> sandboxed worker.
 
-# P1 — Targets & assets (CIFAR-10 image + tabular)
+# P1 — Targets and assets (Evaluation Catalog)
 
-Owner: Dev A. Wave: 1 (parallel). Depends on: P0 contracts. Feeds: P2, P3, P4.
-
-Read `docs/plans/00-master-plan.md` section 6 first. Its contracts are
-canonical. This plan builds against `redsim/targets/base.py` and
-`redsim/schema.py`, which already exist, so work can start at once.
+Owner: Dev A (WS1). Wave: Slice 1 (foundation). Depends on: WS0 (M0 scaffold and
+migration `0010_ml_vertical`). Feeds: WS2 (attacks), WS3 (explain), WS4 (API and
+campaign service).
 
 ---
 
 ## 1. Objective
 
-Ship the target layer: the concrete models the simulator evaluates, the
-offline asset builder that produces the image model, and the registry that
-lists every target for the API.
+Ship the target layer and the catalog surface: the concrete models a campaign
+evaluates, the offline asset builder that produces them, the registry that lists
+them, and the admin-gated upload path that admits a caller's own model without
+ever loading it in the API.
 
 Deliverables:
 
-- A real CIFAR-10 image target that satisfies the full `Target` Protocol and
-  reports `status == "available"`.
-- An offline `setup_assets.py` that trains the small CNN once, records its
-  provenance, and writes `assets/cifar10_smallcnn.pt` and
-  `assets/MANIFEST.json`. Weights ship as an asset. They are never trained at
-  container start.
-- A real tabular target on a public benign dataset, wrapped for ART.
-- An LLM stub target that stays honest: `status == "not_implemented"` with a
-  reason, and `load()` raises `NotImplementedError`.
-- The `TARGETS` registry, populated at import.
+- A live **image** target on `leibnitz-lab/military_vehicles` (7-class coarse
+  task): a small CNN shipped as a `state_dict` plus an in-tree architecture, and
+  exported to ONNX. `info().status == "available"`.
+- A live **tabular** target on `lacg030175/UNSW-NB15` (config `standard`, binary
+  `label` task): a bundled RandomForest or XGBoost tree ensemble with a
+  build-time differentiable **PGD surrogate**, wrapped for ART. `status ==
+  "available"`.
+- A **CIFAR-10** small CNN target kept for CI and fixtures only. It never appears
+  in the demo catalog and never populates a `Finding`.
+- An **endpoint / LLM** stub target: `status == "not_implemented"` with a reason;
+  `load()` raises `NotImplementedError`.
+- The `TARGETS` registry under `aegis/ml`, populated at import.
+- The `aegis ml build-assets` CLI: fetch each dataset by pinned HuggingFace
+  revision, train and export the bundled models with a fixed seed, write each
+  model plus `MANIFEST.json` plus the evaluation-slice to the blob store, and
+  register a `Target` row of kind `ml_model_artifact`.
+- The `POST /v1/models` upload path with the sandboxed `model.validate` job:
+  ONNX preferred, PyTorch `state_dict` with a declared architecture accepted,
+  full pickles refused, and every model loaded only in the child subprocess.
 
-The image path is the demo spine. Build it first.
+The image path is the demo spine (D8 step 1). Build it first. The tabular path is
+D8 step 4; ONNX upload is D8 step 5.
 
 ---
 
@@ -41,195 +59,261 @@ The image path is the demo spine. Build it first.
 
 ### In scope
 
-- `redsim/setup_assets.py` — CIFAR-10 download, CNN training, manifest write.
-- `redsim/targets/image_cifar10.py` — the live image target.
-- `redsim/targets/tabular_*.py` — a real tabular target (see step order for the
-  chosen dataset and model).
-- `redsim/targets/llm_stub.py` — the not-implemented LLM target.
-- `redsim/targets/registry.py` — `TARGETS`, a `Registry[Target]`.
-- Unit tests for the registry, the image target, and the tabular target.
+- `aegis/ml/targets/architectures.py` — the in-tree architecture catalog.
+- `aegis/ml/targets/image_vehicles.py` — the live vehicle-imagery CNN target.
+- `aegis/ml/targets/tabular_unsw.py` — the live UNSW-NB15 tree-ensemble target.
+- `aegis/ml/targets/image_cifar10.py` — the CIFAR-10 CNN, CI fixture only.
+- `aegis/ml/targets/endpoint.py` — the `not_implemented` endpoint / LLM stub.
+- `aegis/ml/targets/registry.py` — `TARGETS`, a `Registry[Target]`.
+- `aegis/ml/loaders.py` — file-signature format detection, worker-side only.
+- `aegis/ml/sandbox.py` and `aegis/ml/sandbox_worker.py` — the ML model sandbox
+  and its `validate` stage.
+- `aegis/cli/ml.py` — the `build-assets` subcommand (registered in
+  `aegis/cli/main.py`).
+- `aegis/services/ml_models.py` — the model admission service (register bundled,
+  admit upload, enqueue `model.validate`).
+- `aegis/api/v1/models.py` — `POST /v1/models`, `DELETE /v1/models/{id}`,
+  `GET /v1/models`, mounted on `aegis/api/app.py`.
+- `MLModelManifest` in `aegis/ml/schema.py` (the typed `targets.detail` payload).
+- Tests under `tests/ml/`.
 
 ### Out of scope
 
-- Attacks and MRI scoring (P2).
-- SHAP, interpretation, recommendations (P3). P1 only exposes `torch_model()`
-  and `art_classifier()` so P3 can attach.
-- Orchestration, `runs.py`, `jobs.py`, HTTP routes (P4). P1 does not touch the
+- Attacks, the ε sweep, MRI scoring (WS2). P1 exposes `art_classifier()` and
+  `sample()` so WS2 can attach.
+- SHAP, interpretation, recommendations (WS3). P1 exposes `torch_model()`.
+- The campaign chain, `attack.run`, run-state writes, the campaign service (WS4).
+  P1 admits models and runs `model.validate` only.
+- The web `/models` list and detail launcher. That is P5 (WS5); P1 stops at the
   API.
-- ONNX ingest as a target (P6).
-- Any change to `redsim/schema.py` or `redsim/targets/base.py`. Those are P0
-  contracts. If a field is missing, raise it in master-plan section 6.1 first.
+- Black-box endpoint execution against `ml_model_endpoint` (Phase B).
+- Dataset upload or export. Phase A has no dataset upload path (section 11.1).
+- The migration `0010_ml_vertical` itself and the `ml` dependency group. Those
+  are WS0 (M0). If `targets.detail` or a schema field is missing, raise it with
+  WS0, do not add it here.
 
 ---
 
-## 3. Prerequisites & dependencies
+## 3. Prerequisites and dependencies
 
-- **From P0 (already present):** the `Target` Protocol and `Sample` dataclass
-  in `redsim/targets/base.py`; `TargetInfo` and `Provenance` in
-  `redsim/schema.py`; `Registry` in `redsim/registry.py`. All exist today, so
-  P1 starts immediately with no wait on P0.
-- **Runtime libraries** (already declared in `pyproject.toml`, design spec
-  2.1): `torch` (CPU), `torchvision`, `numpy`,
-  `adversarial-robustness-toolbox`, and for the tabular target either
-  `scikit-learn` or `torch`. Confirm `scikit-learn` is on the dependency list
-  before choosing the sklearn route; if it is absent, use a torch MLP so no new
-  dependency is added.
-- **Asset directory:** `assets/`. The design spec (section 6) gitignores it
-  except the manifest. Confirm `.gitignore` keeps `assets/cifar10_smallcnn.pt`
-  out of git and keeps `assets/MANIFEST.json` in.
-- **Network:** `setup_assets.py` needs internet once to download CIFAR-10. The
-  targets themselves load from disk and run fully offline, which the test suite
-  requires (design spec section 7: all tests offline, < 60 s).
+**From WS0 / M0 (must land first):**
 
-No dependency on P2, P3, P4, P5, P6, or P7.
+- Migration `0010_ml_vertical` adds `targets.detail` (JSONB) and the
+  `ml_campaigns` table. P1 writes only `targets.detail`.
+- API-side validation of the two new `Target.kind` values, `ml_model_artifact`
+  and `ml_model_endpoint` (`Target.kind` is a free `String(32)`, so no column
+  change; section 5.1).
+- The `ml` dependency group: `torch` (CPU), `torchvision`,
+  `adversarial-robustness-toolbox`, `shap`, `numpy`, `scikit-learn`, `xgboost`,
+  `onnx`, `onnxruntime`, `onnx2torch`, `safetensors`, `datasets`,
+  `huggingface_hub`. The API process imports none of them (section 9.1 rule 2).
+- The `aegis ml` CLI skeleton (`aegis/cli/ml.py` registered in
+  `aegis/cli/main.py`).
+
+**Already present in aegis (consume, do not modify):**
+
+- The `Target` Protocol and `Sample` dataclass in `aegis/ml/targets/base.py`.
+- `TargetInfo`, `Domain`, `Provenance` in `aegis/ml/schema.py`.
+- `Registry[T]` in `aegis/registry.py` (duplicate-id detection).
+- `BlobStore` in `aegis/storage/blobs.py` (`put`/`get`; `AEGIS_BLOB_BACKEND=s3`
+  for MinIO/S3; content-addressed, so a second put of identical bytes is a
+  no-op).
+- The sandbox primitives in `aegis/scanners/sandbox.py` (rlimits, process group,
+  minimal env, wall-clock kill). The ML sandbox reuses these conventions.
+- The audit chain (`aegis/audit/chain.py`, `resolve_writer`) and
+  `aegis.safety.authorize` (the only audit emitter).
+- The admin-gated target surface (`aegis/api/v1/targets.py`,
+  `aegis/services/targets.py`, `aegis/api/policy.py`).
+- `tests/ml/fakes.py::TinyTarget` (a full `Target` on 8x8x3, 3 classes, no
+  network, no assets).
+
+**Network.** `build-assets` needs internet once, at build time, to fetch each
+dataset by pinned revision. The targets themselves and the whole test suite run
+offline (section 22).
 
 ---
 
-## 4. Interfaces consumed & exposed
+## 4. Interfaces consumed and exposed
 
 ### Consumed (do not modify)
 
-`Sample` (dataclass, `redsim/targets/base.py`):
+`Sample` (dataclass, `aegis/ml/targets/base.py`):
 
-- `x: np.ndarray` — float32 in [0, 1], NCHW for images.
+- `x: np.ndarray` — float32 in [0, 1], NCHW for images; `(n, n_features)` for
+  tabular.
 - `y: np.ndarray` — int labels, shape `(n,)`.
 - `indices: np.ndarray` — index into the source split, for reproducibility.
 - `class_names: list[str]`.
 
-`TargetInfo` (`redsim/schema.py`): `id`, `name`, `domain`
-(`"image" | "tabular" | "llm"`), `status` (`"available" | "not_implemented"`),
-`reason: str | None`, `metadata: dict[str, Any]`.
-
-`Provenance` (`redsim/schema.py`): P1 does not build a `Provenance` (P4 does),
-but the manifest supplies the values P4 later copies into it: `torch`,
-`model_sha256`, `dataset`, `dataset_split`, `model_manifest`, and the seeds
-that go into `nondeterminism`.
+`TargetInfo` (`aegis/ml/schema.py`): `id`, `name`, `domain` (the `Domain`
+literal `image | tabular | llm`), `status` (`available | not_implemented`),
+`metadata: dict`. `Provenance` is built by WS4 from the manifest, not by P1.
 
 ### Exposed
 
-`TARGETS: Registry[Target]` from `redsim/targets/registry.py`, populated at
-import with every target. Consumers use `.get(id)`, `.maybe_get(id)`, `.ids()`,
-`.items()`, iteration, and `in`. Never `.list()` — that method does not exist.
+`TARGETS: Registry[Target]` from `aegis/ml/targets/registry.py`, populated at
+import with every target. Consumers use `.get(id)`, `.ids()`, iteration, and the
+methods `aegis/registry.py` exposes. Registration runs the `Registry` conformance
+check at import, so a target that misses a member fails loudly at load, not
+mid-campaign.
 
-Every registered target implements the full `Target` Protocol exactly:
+Every registered target implements the full `Target` Protocol:
 
-| Member | Signature | P1 obligation |
-|---|---|---|
-| `id` | `str` attribute | Unique, stable. `cifar10_smallcnn`, a tabular id, `llm_pythia`. |
-| `info()` | `-> TargetInfo` | Live targets report `status="available"`; the stub reports `"not_implemented"` with a `reason`. `metadata` carries dataset name, split, and clean accuracy from the manifest. |
-| `load()` | `-> None` | Idempotent. Loads weights and the eval split from disk. The stub raises `NotImplementedError`. |
-| `sample(n, seed)` | `-> Sample` | Stratified by class, seeded, reproducible. |
-| `predict_proba(x)` | `-> np.ndarray` | Shape `(n, n_classes)`, rows sum to 1. |
-| `art_classifier()` | `-> Any` | ART estimator wrapping the model. Reports input range and `nb_classes` to ART (see below). |
-| `torch_model()` | `-> Any` | The `torch.nn.Module` in eval mode for SHAP. The tabular sklearn target may raise `NotImplementedError`; coordinate with P3 (tabular SHAP uses `KernelExplainer`, not a gradient explainer). |
-| `manifest()` | `-> dict[str, Any]` | Dataset and weights provenance: names, versions, sha256, training config. Read from `assets/MANIFEST.json` for the image target. |
+| Member | P1 obligation |
+|---|---|
+| `id` (`str`) | Unique, stable. `vehicles_cnn`, `unsw_trees`, `cifar10_smallcnn`, `endpoint_stub`. |
+| `info() -> TargetInfo` | Live targets report `status="available"`; the stub reports `"not_implemented"` with a reason. `metadata` carries dataset id, split, and clean accuracy read from the manifest. |
+| `load() -> None` | Idempotent. Reads weights and the evaluation split from the blob store. The stub raises `NotImplementedError`. |
+| `sample(n, seed) -> Sample` | Stratified by class, seeded, reproducible: equal per-class allocation, remainder redistributed when a class is exhausted (section 11.5). Same `(n, seed)` returns identical `indices`. |
+| `predict_proba(x) -> np.ndarray` | Shape `(n, n_classes)`, rows sum to 1. |
+| `art_classifier() -> Any` | The ART estimator wrapping the model (below). Built once and cached. |
+| `torch_model() -> Any` | The `torch.nn.Module` in eval mode, for SHAP. The tree target raises `NotImplementedError` (WS3 uses `TreeExplainer`, not a gradient explainer). |
+| `manifest() -> dict` | Dataset and weights provenance parsed from the asset `MANIFEST.json`. |
 
-**ART wiring convention (image target):** wrap the CNN in ART's
-`PyTorchClassifier` with `clip_values=(0.0, 1.0)` (the [0, 1] input range),
-`nb_classes=10`, `input_shape=(3, 32, 32)`, the model's loss, and no ART
-preprocessing normalization. The classifier receives x already float32 in
-[0, 1], NCHW, matching `Sample.x`. Any per-channel normalization the CNN needs
-lives inside the `nn.Module` (a first normalization layer), so ART and SHAP
-both see the raw [0, 1] tensor and the L-infinity budget is measured in that
-same space. This keeps the perturbation budget that P2 applies consistent with
-the range ART clips to.
+**ART wiring (image target).** Wrap the CNN in `PyTorchClassifier` with
+`clip_values=(0.0, 1.0)`, `nb_classes=7`, `input_shape=(3, 128, 128)`, the
+model's loss, no ART preprocessing. Channel normalisation lives inside the
+`nn.Module`, so ART and SHAP both see the raw [0, 1] tensor and the L∞ budget is
+measured in that space (section 11.3.1 preprocessing rule).
 
-**ART wiring convention (tabular target):** wrap with `SklearnClassifier` for a
-sklearn model, or `PyTorchClassifier` for a torch MLP. Set `clip_values` to the
-observed feature min/max of the training data (record these in the manifest),
-and set `nb_classes` to the label count. Tabular x is float32, shape
-`(n, n_features)`, not NCHW.
+**ART wiring (tabular target).** Wrap the tree ensemble in ART's
+`XGBoostClassifier` or `SklearnClassifier` over `predict` for HopSkipJump (no
+gradients). PGD runs against the build-time surrogate
+(`ScikitlearnLogisticRegression` or a small torch MLP in `PyTorchClassifier`) and
+is scored on the real model (section 12.2). ε is per-feature-scaled from the
+training-split range recorded in the manifest (section 12.9). Perturbable
+features are declared in the manifest; categorical columns and the label are
+frozen.
+
+`MLModelManifest` (the typed `targets.detail` payload for `ml_model_*` kinds,
+section 5.5). P1 defines it in `aegis/ml/schema.py` and writes it at
+registration. Fields include `name`, `modality`, `format`
+(`onnx | torch_state_dict | safetensors_state_dict | sklearn_joblib |
+xgboost_json | endpoint`), `sha256`, `size_bytes`, `architecture_id`,
+`input_shape`, `n_classes`, `class_names`, `features` (tabular), `surrogate`
+(tabular trees), `dataset_id`, `dataset_revision`, `dataset_split`,
+`clean_accuracy`, `status` (`registered | validating | available | refused`),
+`refusal_reason`, `gradients`, `bundled`, `license`, `source_url`, and
+`manifest_sha256`. Reads stay lenient the way `AegisFinding.from_dict` is;
+validation happens at write time.
 
 ---
 
 ## 5. Ordered implementation steps
 
-1. **CNN architecture.** Define `SmallCNN(nn.Module)` in a shared spot both
-   `setup_assets.py` and `image_cifar10.py` import (put it in
-   `image_cifar10.py` and import it into the builder). Two conv blocks
-   (`Conv2d -> ReLU -> MaxPool2d`, e.g. 3->32 then 32->64) then two FC layers
-   to 10 logits. Put the CIFAR channel normalization as the first step inside
-   `forward` (register mean/std as buffers) so the module accepts x in [0, 1]
-   NCHW and every consumer sees the same input contract.
+1. **Architecture catalog.** Define the in-tree architectures in
+   `aegis/ml/targets/architectures.py`, keyed by `architecture_id`: the vehicle
+   CNN and the CIFAR-10 small CNN as named `nn.Module` classes. Free-form
+   uploaded code is never accepted; a `state_dict` upload names one of these ids
+   (section 9.2). Put the channel normalisation as the first step inside
+   `forward` (mean/std as buffers) so every consumer sees x in [0, 1] NCHW.
 
-2. **`setup_assets.py` — download.** Use `torchvision.datasets.CIFAR10` to pull
-   the train split (for training) and the test split (the eval slice). Set
-   every seed before any randomness: `torch.manual_seed`, `numpy`, and Python
-   `random`; set `torch.use_deterministic_algorithms(True)` where feasible and
-   record any residual nondeterminism source in the manifest.
+2. **`MLModelManifest`.** Add the model manifest and (with WS0) the
+   `Provenance.dataset_revision` field to `aegis/ml/schema.py`. This is the
+   contract `build-assets` writes and every consumer reads.
 
-3. **`setup_assets.py` — train.** Train `SmallCNN` on the train split for a
-   fixed epoch count with a fixed seed. Target clean test accuracy 65-75 %
-   (design spec 2.2). Keep it small: a handful of epochs on CPU is enough at
-   this accuracy band. Evaluate on the full test split and record the achieved
-   clean accuracy. Never hard-code the accuracy in docs; the manifest holds the
-   real number.
+3. **Image target — build path.** In `aegis/cli/ml.py`, fetch
+   `leibnitz-lab/military_vehicles` at a pinned revision with
+   `snapshot_download(..., repo_type="dataset", revision=<sha>,
+   allow_patterns=["train_coarse/*", "test_coarse/*"])`, then
+   `datasets.load_dataset("imagefolder", ...)`. Set every seed before any
+   randomness. Preprocess per section 11.3.1: resize the shorter side to 128 and
+   center-crop square, float32 [0, 1], NCHW, no external normalisation. Train the
+   catalog CNN on `train_coarse` to a recorded clean accuracy (measured, never
+   documented as a fixed number), evaluate on the full `test_coarse` split,
+   export the `state_dict` and the ONNX graph, and bundle the `test_coarse`
+   evaluation slice.
 
-4. **`setup_assets.py` — write assets.** Save weights to
-   `assets/cifar10_smallcnn.pt` (`state_dict` only, not the pickled module).
-   Compute the sha256 of the written weight bytes. Write `assets/MANIFEST.json`
-   with: dataset name (`CIFAR-10`), dataset version/source, split
-   (`test` for eval, `train` for training), model arch label, epochs, seed(s),
-   achieved clean test accuracy, `torch.__version__`, and the weight sha256.
-   Make the script idempotent and re-runnable, and print the manifest summary
-   at the end. Add a `--force` flag to retrain over existing assets.
+4. **Image target — runtime.** In `aegis/ml/targets/image_vehicles.py`,
+   implement `load()` (fetch `state_dict` and the evaluation slice from the blob
+   store, build the catalog CNN, `eval()`, idempotent), `sample(n, seed)`
+   (stratified, seeded, reproducible), `predict_proba`, `art_classifier` (the
+   `PyTorchClassifier` above), `torch_model`, `info`, and `manifest`.
 
-5. **`image_cifar10.py` — load.** Implement `load()` to read the test split
-   from a local torchvision cache (offline), build `SmallCNN`, load the
-   `state_dict` from `assets/cifar10_smallcnn.pt`, and set the module to
-   `eval()`. Idempotent: a second call is a no-op. Cache the test tensors and
-   labels as float32 [0, 1] NCHW and int labels.
+5. **Tabular target — build path.** In `aegis/cli/ml.py`, load
+   `lacg030175/UNSW-NB15` config `standard` at a pinned revision. Fit the
+   categorical encoder (`proto`, `service`, `state`) on the train split, record
+   its vocabularies. Train the RandomForest or XGBoost on the train split for the
+   binary `label` task. Fit the **PGD surrogate** on the train split to the
+   bundled model's predicted labels, record its kind, sha256, and clean-slice
+   agreement rate. Bundle the full `standard` test split as the evaluation split,
+   the encoder, the per-feature min/max, and the declared perturbable features.
 
-6. **`image_cifar10.py` — sample.** Implement `sample(n, seed)` to draw a
-   stratified slice: split `n` across the 10 classes as evenly as possible,
-   pick per-class indices with a seeded `numpy.random.default_rng(seed)`, and
-   return a `Sample` with `x` float32 [0, 1] NCHW, int `y`, the source
-   `indices`, and `class_names` in CIFAR label order. Same `(n, seed)` must
-   return identical `indices` every call.
+6. **Tabular target — runtime.** In `aegis/ml/targets/tabular_unsw.py`,
+   implement `load()`, `sample`, `predict_proba`, `art_classifier` (tree wrapper
+   for HopSkipJump; surrogate exposed for WS2's PGD), `info`, and `manifest`.
+   `torch_model()` raises `NotImplementedError` with a note that WS3 uses
+   `TreeExplainer` on the real model.
 
-7. **`image_cifar10.py` — predict & wrappers.** Implement `predict_proba(x)`
-   (softmax over logits, shape `(n, 10)`), `art_classifier()` (the
-   `PyTorchClassifier` per the convention above, built once and cached),
-   `torch_model()` (the module in eval mode), `info()` (status `"available"`,
-   metadata from the manifest: dataset, split, clean accuracy), and
-   `manifest()` (parsed `assets/MANIFEST.json`).
+7. **CIFAR-10 target (CI only).** In `aegis/ml/targets/image_cifar10.py`,
+   implement the small CNN target against the vendored 500-image fixture
+   (`tests/ml/fixtures/cifar10_test_500.npz`, seed-0 stratified, 50 per class;
+   section 11.3.5). It loads offline from the fixture, never from the network.
+   Register it, but keep it out of the demo catalog: mark
+   `metadata["fixture_only"] = True` so WS4/WS5 exclude it.
 
-8. **`tabular_*.py` — build the target.** Pick a small public benign dataset
-   (e.g. scikit-learn's bundled `load_breast_cancer` or `load_wine`, which ship
-   with the library and need no download, keeping the target offline). Train a
-   small model at import-safe cost, or ship a tiny pre-fit artifact the same way
-   as the CNN. Prefer sklearn (`LogisticRegression` or a small
-   `MLPClassifier`) wrapped in ART `SklearnClassifier`; if `scikit-learn` is
-   not a dependency, use a torch MLP wrapped in `PyTorchClassifier`. Record the
-   dataset name, feature count, class count, and feature min/max in a manifest
-   dict returned by `manifest()`.
+8. **Endpoint / LLM stub.** In `aegis/ml/targets/endpoint.py`, register a target
+   with a stable id, `domain="llm"`, `info().status == "not_implemented"`, and a
+   reason naming the Phase B endpoint shape (`AuthProfile` credentials, target
+   allowlist). `load()` raises `NotImplementedError`; the API rejects any
+   campaign against it with HTTP 501 upstream (section 9.1 rule 4).
 
-9. **`tabular_*.py` — Protocol.** Implement `info()` (status `"available"`,
-   domain `"tabular"`), `load()`, `sample(n, seed)` (stratified, seeded, x
-   shape `(n, n_features)`), `predict_proba(x)`, `art_classifier()`, and
-   `manifest()`. `torch_model()` may raise `NotImplementedError` for the
-   sklearn route; leave a comment that P3 uses `KernelExplainer` for tabular
-   SHAP so a torch module is not required.
+9. **Loaders (worker-side).** In `aegis/ml/loaders.py`, implement format
+   detection by file signature and the per-format load (ONNX via `onnx.load` +
+   `onnx.checker` + `onnxruntime`; `torch_state_dict` via
+   `torch.load(weights_only=True)` + catalog instantiation +
+   `load_state_dict(strict=True)`; `safetensors` via `safetensors.torch`). This
+   module imports torch/onnx and therefore runs only in the sandbox child, never
+   in the API (section 9.2).
 
-10. **`llm_stub.py`.** A registered target with a stable `id` (e.g.
-    `llm_pythia`), `domain == "llm"`, `info().status == "not_implemented"`, and
-    a `reason` naming the Pythia connection shape (design spec 2.1). `load()`
-    raises `NotImplementedError`. `sample`, `predict_proba`, `art_classifier`,
-    `torch_model`, and `manifest` may raise `NotImplementedError`; the API
-    never calls them because the run is rejected with 501 upstream.
+10. **ML sandbox.** In `aegis/ml/sandbox.py` and `aegis/ml/sandbox_worker.py`,
+    build the `validate` stage on the `aegis/scanners/sandbox.py` primitives with
+    the ML differences of section 9.4: child entry `python -m
+    aegis.ml.sandbox_worker --stage validate`; env limits from
+    `AEGIS_ML_SANDBOX_*` (timeout 1200 s, cpu 900 s, memory 4096 MB, threads 2),
+    network never enabled; the **parent** populates the per-job work dir with the
+    model file fetched from S3 and digest-checked against the manifest; the child
+    reaches no S3, Postgres, Redis, or dataset source. The child returns a typed
+    envelope (format detected, shapes, `gradients`, `onnx_torch_argmax_agreement`,
+    refusal reason); the parent validates it and writes the outcome.
 
-11. **`registry.py`.** Create `TARGETS = Registry[Target]("target", Target)`
-    and register the image, tabular, and LLM-stub instances at module import.
-    The Protocol check in `Registry.register` enforces conformance at import,
-    so a target that misses a method fails loudly at load, not mid-run. Confirm
-    `Target` is a `runtime_checkable` Protocol (it is) so the isinstance check
-    holds.
+11. **`build-assets` CLI.** Wire steps 3 and 5 into `aegis ml build-assets`
+    (`aegis/cli/ml.py`). Fetch each dataset by pinned revision, train and export
+    with a fixed seed, write each model plus `MANIFEST.json` plus the evaluation
+    slice to the blob store under `ml/assets/<dataset_id>/<revision>/` (datasets)
+    and `bundled/<model_id>/` (models), and call `register_bundled_model` so a
+    `Target` of kind `ml_model_artifact` is inserted with the manifest as
+    `detail` and `status="available"`. Idempotent and re-runnable; add `--force`
+    to rebuild. Print the manifest summary. This is the "seed sample models and
+    datasets into S3 on first deploy" step; it is a one-off worker/CLI task, not
+    baked into the image (section 11.5).
 
-12. **Wire imports.** Make `redsim/targets/__init__.py` (or the registry
-    module) import each target module so registration runs when `TARGETS` is
-    imported. Keep import side effects cheap: register lightweight instances
-    and defer weight loading to `load()`, so importing the registry does not
-    read `assets/` or the dataset.
+12. **Model admission service.** In `aegis/services/ml_models.py`, add
+    `register_bundled_model(...)` (audit `model.register` `source=bundled`, seed
+    `available`) and `admit_upload(...)`. `admit_upload` streams bytes to the
+    blob store, sniffs the first 16 bytes against the section 9.2 table, computes
+    sha256 without deserialising, refuses pickles and format mismatches, writes
+    the `model.register` audit row **before** the `Target` row, inserts the
+    `Target` (kind `ml_model_artifact`, manifest `status="registered"`), then
+    creates an `ml.ingest` Run and a `model.validate` Job and enqueues it
+    (status becomes `validating`). No loading happens in the API.
+
+13. **`POST /v1/models` router.** In `aegis/api/v1/models.py`, add the multipart
+    upload endpoint (fields `declared_format`, `architecture_id` when required,
+    `modality`, `dataset_id`, `license_statement`). Gate it at `admin`
+    (`target.manage` tier; add `Action.MODEL_REGISTER` at `admin` rank in
+    `aegis/api/policy.py`). Enforce `Content-Length` and the streaming cap
+    `AEGIS_ML_UPLOAD_MAX_MB` (413 over cap). Refuse pickles with 415, format
+    mismatch or missing/unknown `architecture_id` with 422, all with an audit
+    `model.register` `success=false`. Add `GET /v1/models` (RLS- and
+    membership-gated read) and `DELETE /v1/models/{id}` (admin; audit before
+    mutate; FK to `runs` blocks deletion of a referenced model; the blob is never
+    deleted here). Mount the router in `aegis/api/app.py`.
+
+14. **Wire the registry.** Make `aegis/ml/targets/__init__.py` import each target
+    module so registration fires when `TARGETS` is imported. Keep import side
+    effects cheap: register lightweight instances and defer all blob reads to
+    `load()`, so importing the registry touches neither S3 nor a dataset.
 
 ---
 
@@ -237,142 +321,178 @@ and set `nb_classes` to the label count. Tabular x is float32, shape
 
 Create:
 
-- `redsim/setup_assets.py`
-- `redsim/targets/image_cifar10.py`
-- `redsim/targets/tabular_sklearn.py` (name reflects the chosen route; use
-  `tabular_torch.py` if the torch MLP route is taken)
-- `redsim/targets/llm_stub.py`
-- `redsim/targets/registry.py`
-- `assets/MANIFEST.json` (generated by `setup_assets.py`)
-- `assets/cifar10_smallcnn.pt` (generated; gitignored)
-- `tests/test_targets.py`
+- `aegis/ml/targets/architectures.py`
+- `aegis/ml/targets/image_vehicles.py`
+- `aegis/ml/targets/tabular_unsw.py`
+- `aegis/ml/targets/image_cifar10.py`
+- `aegis/ml/targets/endpoint.py`
+- `aegis/ml/targets/registry.py`
+- `aegis/ml/loaders.py`
+- `aegis/ml/sandbox.py`
+- `aegis/ml/sandbox_worker.py`
+- `aegis/cli/ml.py` (the `build-assets` subcommand)
+- `aegis/services/ml_models.py`
+- `aegis/api/v1/models.py`
+- `tests/ml/test_targets.py`
+- `tests/ml/test_build_assets.py`
+- `tests/ml/test_models_upload.py`
+- `tests/ml/test_sandbox.py`
 
 Modify:
 
-- `redsim/targets/__init__.py` — import target modules so registration fires.
-- `.gitignore` — confirm it excludes `assets/cifar10_smallcnn.pt` and any
-  torchvision download cache, and keeps `assets/MANIFEST.json`.
+- `aegis/ml/targets/__init__.py` — import target modules so registration fires.
+- `aegis/ml/schema.py` — add `MLModelManifest` (and, with WS0,
+  `Provenance.dataset_revision`).
+- `aegis/api/app.py` — mount the `/v1/models` router.
+- `aegis/api/policy.py` — add `Action.MODEL_REGISTER` at `admin` rank.
+- `aegis/cli/main.py` — register the `ml build-assets` subcommand.
 
-Do not modify: `redsim/targets/base.py`, `redsim/schema.py`,
-`redsim/registry.py`.
+Do not modify: `aegis/ml/targets/base.py`, `aegis/registry.py`,
+`aegis/scanners/sandbox.py`. Do not add the `0010_ml_vertical` migration here; it
+is WS0.
 
 ---
 
-## 7. Testing & validation
+## 7. Testing and validation
 
-`tests/test_targets.py`, all offline, fast (design spec section 7). The test
-run assumes `assets/cifar10_smallcnn.pt` and the CIFAR test cache exist; gate
-the image tests behind a skip if the asset is missing so CI without the asset
-still passes, and document that the asset must be built once with
-`python -m redsim.setup_assets`.
+All tests under `tests/ml/`, offline, using the sqlite harness in
+`tests/conftest.py` and the `ml` pytest marker. Image and tabular tests that need
+bundled assets skip cleanly when the asset is absent, so CI without the built
+assets still passes; `TinyTarget` covers the protocol path with no assets.
 
-1. **Registry lists targets.** `TARGETS.ids()` contains the image, tabular,
-   and LLM-stub ids. `TARGETS.get(id)` returns each. Each item satisfies the
-   `Target` Protocol (the registry already enforced this at import; assert
-   `isinstance(t, Target)`).
+1. **Registry lists targets.** `TARGETS.ids()` contains `vehicles_cnn`,
+   `unsw_trees`, `cifar10_smallcnn`, and the endpoint stub. Each item satisfies
+   the `Target` protocol (`isinstance(t, Target)`), and importing the registry
+   reads no blob and hits no network.
 
-2. **Stub is honest.** The LLM target's `info().status == "not_implemented"`,
-   its `reason` is a non-empty string, and `load()` raises
+2. **Stub is honest.** The endpoint target's `info().status ==
+   "not_implemented"`, its reason is a non-empty string, and `load()` raises
    `NotImplementedError`.
 
-3. **Image target loads and predicts a batch.** `load()` is idempotent (call
-   twice). `sample(20, seed=0)` returns a `Sample` with `x.dtype == float32`,
-   `x` in [0, 1], shape `(20, 3, 32, 32)`, `y` length 20, `indices` length 20,
-   and `class_names` length 10. `predict_proba(sample.x)` has shape `(20, 10)`
-   and rows sum to ~1.
+3. **Protocol over `TinyTarget`.** `TinyTarget` (`tests/ml/fakes.py`) exercises
+   `sample`, `predict_proba`, and `art_classifier` with no assets: `sample(20,
+   0).indices` equals a second `sample(20, 0).indices`; `predict_proba` rows sum
+   to ~1; `art_classifier()` predicts a batch and reports `nb_classes` and
+   `clip_values=(0.0, 1.0)`.
 
-4. **Sample is stratified, seeded, reproducible.** `sample(20, 0).indices`
-   equals a second `sample(20, 0).indices` exactly. The class histogram of
-   `sample(50, 0).y` is even across the 10 classes (each class within one of
-   `50 // 10`). A different seed yields different `indices`.
+4. **Image target (asset-gated).** `load()` is idempotent; `sample(20, 0)`
+   returns float32 x in [0, 1], shape `(20, 3, 128, 128)`, `y` length 20,
+   stratified across the 7 coarse classes; `art_classifier()` reports
+   `nb_classes=7`, `input_shape=(3, 128, 128)`, `clip_values=(0.0, 1.0)`.
 
-5. **ART classifier reports the right contract.** The image
-   `art_classifier()` returns an object whose `nb_classes == 10` and whose
-   `clip_values == (0.0, 1.0)`; `input_shape == (3, 32, 32)`. It predicts on
-   `sample.x` without error and returns shape `(n, 10)`.
+5. **Tabular target (asset-gated).** `sample` returns x shape `(n, n_features)`;
+   `predict_proba` sums to ~1; the ART tree wrapper predicts a batch;
+   `torch_model()` raises `NotImplementedError`; the manifest carries the
+   surrogate block (kind, sha256, agreement) and the per-feature ranges.
 
-6. **Tabular target predicts.** `load()`, `sample(n, seed)` returns x shape
-   `(n, n_features)`, `predict_proba` returns `(n, n_classes)` summing to ~1,
-   `sample` is seeded and reproducible, and `art_classifier()` predicts a batch.
+6. **`build-assets` writes the manifest.** After a run against a tiny fixture
+   dataset, `MANIFEST.json` is present in the blob store and parses; it contains
+   dataset id, resolved revision, license, split, per-class `n`, seed, model
+   architecture, weight sha256, measured clean accuracy, and (tabular) the
+   surrogate. A `Target` of kind `ml_model_artifact` exists with `status ==
+   "available"`.
 
-7. **Manifest round-trip.** `image_target.manifest()` parses and contains
-   dataset, split, seed, epochs, clean accuracy, torch version, and the weight
-   sha256; the sha256 matches the bytes of `assets/cifar10_smallcnn.pt`.
+7. **Upload refuses a pickle.** `POST /v1/models` with a pickle-opcode body
+   (`\x80` at byte 0) or a `.pkl`/`.joblib` name returns 415, retains no bytes,
+   and writes a `model.register` audit row with `success=false`. A `state_dict`
+   without `architecture_id`, or an unknown id, returns 422. A non-admin caller
+   is denied.
+
+8. **Sandbox isolation.** Launch the real `aegis.ml.sandbox_worker --stage
+   validate` child on a `TinyTarget`-style file and on a deliberately malformed
+   file. The child loads the model only in the subprocess; the parent never
+   imports torch/onnx; a malformed file yields a typed `{"ok": false}` envelope
+   and a `refused` outcome, not a crash and not a fake result.
 
 Run `make test` and `make typecheck`; both must stay green. Do not rely on
-`lint-py`, which has known pre-existing findings (see CLAUDE.md).
+`lint-py`, which has known pre-existing findings.
 
 ---
 
 ## 8. Acceptance criteria / Definition of done
 
-- `python -m redsim.setup_assets` runs offline-after-download, trains the CNN
-  to a recorded clean test accuracy in the 65-75 % band, and writes
-  `assets/cifar10_smallcnn.pt` plus `assets/MANIFEST.json` with every required
-  field (dataset name/version, split, arch, epochs, seed, clean accuracy, torch
-  version, weight sha256).
-- `from redsim.targets.registry import TARGETS` returns a `Registry[Target]`
-  with the image target (`status="available"`), the tabular target
-  (`status="available"`), and the LLM stub (`status="not_implemented"` with a
-  reason).
-- The image target implements every `Target` Protocol member. `sample` is
-  stratified, seeded, and reproducible. `x` is float32 in [0, 1], NCHW.
-  `art_classifier()` reports `clip_values=(0.0, 1.0)`, `nb_classes=10`,
-  `input_shape=(3, 32, 32)`. `torch_model()` returns the module in `eval()`.
-- The tabular target predicts and wraps for ART; `torch_model()` either returns
-  a module or raises `NotImplementedError` with a note pointing P3 at
-  `KernelExplainer`.
-- The LLM stub's `load()` raises `NotImplementedError`; nothing is faked.
-- Seeds used for training and sampling are recorded in the manifest so P4 can
-  copy them into `Provenance.model_manifest` and `Provenance.nondeterminism`.
-- `tests/test_targets.py` passes; `make test` and `make typecheck` stay green.
+- `aegis ml build-assets` runs offline-after-fetch, trains and exports the
+  vehicle CNN (`state_dict` + ONNX) and the UNSW-NB15 tree ensemble with a fixed
+  seed, writes each model plus `MANIFEST.json` plus its evaluation slice to the
+  blob store under `ml/assets/` and `bundled/`, and registers each as a `Target`
+  of kind `ml_model_artifact`, `status="available"`.
+- `from aegis.ml.targets.registry import TARGETS` returns a `Registry[Target]`
+  with the vehicle image target and the UNSW-NB15 tabular target
+  (`status="available"`), the CIFAR-10 CNN (registered, `fixture_only`), and the
+  endpoint stub (`status="not_implemented"` with a reason).
+- Each live target implements every `Target` member. `sample` is stratified,
+  seeded, and reproducible; image x is float32 [0, 1] NCHW; the image
+  `art_classifier()` reports `nb_classes=7`, `input_shape=(3, 128, 128)`,
+  `clip_values=(0.0, 1.0)`.
+- The tabular manifest declares the perturbable features, per-feature ranges, and
+  the PGD surrogate (kind, sha256, clean-slice agreement); `torch_model()` raises
+  `NotImplementedError`.
+- `POST /v1/models` accepts ONNX and `state_dict`-with-architecture, refuses
+  pickles (415) and format mismatches (422), never loads a model in the API, is
+  gated at `admin`, and writes the `model.register` audit row before the `Target`
+  row. The admission service enqueues a `model.validate` Job whose sandboxed
+  outcome moves the manifest status to `available` or `refused`.
+- The `model.validate` job loads the model only in the sandbox child; the API
+  process imports no ML library.
+- CIFAR-10 is present as a CI fixture only and never enters the demo catalog or a
+  `Finding`.
+- `tests/ml/` passes; `make test` and `make typecheck` stay green.
 
 ---
 
-## 9. Effort estimate & special considerations
+## 9. Effort and special considerations
 
-**Effort:** ~1.5 to 2 developer-days. The image target and `setup_assets.py`
-are the bulk; the tabular target and stub are half a day together.
+**Effort:** ~3 to 4 developer-days. The image target with `build-assets` and the
+sandboxed upload path are the bulk; the tabular target with its surrogate is a
+day; the CIFAR-10 fixture target and the stub are half a day together.
 
-**Offline training time.** The small CNN at 65-75 % accuracy needs only a few
-epochs. On a laptop CPU this is minutes, not hours. Keep the epoch count in the
-manifest so the number is auditable. This runs once; the weights ship as an
-asset. Never train at container start (master-plan risk 9, design spec 2.1).
+**Asset seeding is a one-off task to S3, not baked into the image.** Dataset and
+model bytes are fetched once by `aegis ml build-assets` and written to the blob
+store under `ml/assets/` and `bundled/` (section 11.5). The worker reads them
+from S3/MinIO; the API and web containers never hold them. This is the "seed
+sample models and datasets into S3 on first deploy" step. Do not train at
+container start and do not bake the datasets into the image. Coordinate the
+deploy hook with WS7.
 
-**Asset size.** A 2-conv + 2-FC state_dict is small (well under ~5 MB). It is
-safe to bake into the container image rather than fetch from S3, which removes
-an S3 round-trip from cold start. The CIFAR test split the target loads is
-~30 MB; bake the needed test tensors (or the torchvision cache) into the image
-too so the target loads fully offline. If image bloat becomes a problem later,
-move `assets/` to S3 and pull on first boot behind `REDSIM_S3_BUCKET`
-(master-plan section 6.8), but the baked-in path is the default and keeps the
-demo self-contained.
+**CIFAR-10 is fixture-only.** The 500-image seed-0 subset
+(`tests/ml/fixtures/cifar10_test_500.npz`) and the small CNN exist so CI runs
+offline and deterministically. They never appear in the demo catalog, never
+populate a `Finding`, and never render as evidence (section 11.1). Keep them
+behind the `fixture_only` flag.
 
-**Where assets live for ECS.** Default: baked into `deploy/Dockerfile.api` at
-build time under `assets/`, read-only at runtime. This matches the "bake
-trained CNN weights as an asset" mitigation in master-plan risk 9. The run
-output directory (`REDSIM_OUTPUT_DIR`, an EFS mount) is separate and writable;
-`assets/` is not written at runtime. Coordinate with P7 so the Dockerfile
-copies `assets/` and the build either runs `setup_assets.py` or restores a
-committed/cached weight file. Do not run training in the image build if it slows
-CI past the layer-cache budget; prefer committing the weight artifact or caching
-it in GHA.
+**Never load a model in the API.** The API streams bytes, sniffs a signature,
+computes sha256, and writes rows; it imports no torch, onnx, onnxruntime, ART, or
+SHAP (section 9.1 rule 2). Every load — validation, clean eval, attack, explain,
+verify — runs in `aegis.ml.sandbox_worker`, one path for bundled models and
+uploads alike, so the demo exercises the boundary rather than bypassing it. The
+ML sandbox is defense-in-depth (process isolation, rlimits, wall-clock kill,
+minimal env, no credentials), not a network or filesystem jail; the Fargate
+target has no gVisor equivalent, which is a recorded risk (section 25).
 
-**Reproducibility.** Record every seed (training seed, sampling is caller-seeded
-per call) in the manifest. Note residual nondeterminism (for example CPU
-float32 reductions) so P4 can list it in `Provenance.nondeterminism`. Same
-`(n, seed)` into `sample()` must return identical `indices`, which the tests
-enforce.
+**Normalisation convention (load-bearing).** x is float32 in [0, 1], NCHW.
+Channel normalisation lives inside the `nn.Module`, so ART's
+`clip_values=(0.0, 1.0)` and the L∞ budget WS2 applies are both measured in the
+[0, 1] space and SHAP sees the same raw tensor. Do not normalise in `sample()` or
+before ART; keep one input contract end to end.
 
-**Normalization convention (restated, load-bearing).** x is float32 in [0, 1],
-NCHW. Channel normalization lives inside the `nn.Module`, so ART's
-`clip_values=(0.0, 1.0)` and the L-infinity budget P2 applies are both measured
-in the [0, 1] space, and SHAP sees the same raw tensor. Do not normalize in
-`sample()` or before ART; keep one input contract end to end.
+**Tabular ε semantics.** Mixed categorical/numeric features make L∞ ε awkward, so
+perturbation is restricted to the declared continuous features with per-feature
+scaling from the training-split range, and this is a standing limitation of every
+tabular campaign (section 12.9). The surrogate is never introduced silently: PGD
+runs on the surrogate, is scored on the real model, and is labelled in
+`Measurement.notes`; HopSkipJump runs directly on the tree model.
 
-**Coordination seams.** P2 consumes `art_classifier()` and `sample()`; P3
-consumes `torch_model()` (image) and calls `predict_proba` through
-`KernelExplainer` (tabular). Keep the tabular `torch_model()` behavior explicit
-so P3 knows which SHAP explainer to pick. Flag any needed schema field in
-master-plan section 6.1 before adding it; do not edit `schema.py` or `base.py`
-in this phase.
+**Reproducibility and provenance.** Record every seed (training seed, split seed,
+sampling is caller-seeded per call), the resolved HuggingFace revision, the split
+name, and the evaluation-slice indices in the manifest. WS4 copies them into
+`Provenance.model_manifest`, `Provenance.dataset_revision`, and
+`Provenance.sample_indices_sha256`. Same `(dataset_revision, split, n, seed)`
+into `sample()` must return identical rows, which the tests enforce.
+
+**Coordination seams.** WS2 consumes `art_classifier()` and `sample()` and the
+tabular surrogate; WS3 consumes `torch_model()` (image) and `TreeExplainer` on
+the real tree model (tabular), so keep the tabular `torch_model()` refusal
+explicit. WS4 owns the campaign admission and the `Provenance` build; P1 stops at
+`model.validate`. WS5 owns web `/models` (P5). Raise any missing schema field or
+`targets.detail` shape with WS0 before adding it; do not edit
+`aegis/ml/targets/base.py` or `aegis/registry.py` in this phase.

@@ -1,421 +1,430 @@
-> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **Milestone M0** (scaffold + migration `0010_ml_vertical`); cross-cutting contracts for **F002/F003/F004**.
->
-> Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): package `redsim/` → `aegis/ml/`; schema lives in `aegis/ml/schema.py`; no new `create_app` — ML routers mount on the existing `aegis/api/app.py`; add `targets.detail` JSONB + `ml_campaigns` table via one Alembic migration; widen `RunConfig` to attack-set + ε-grid + MRI weights.
->
-> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+# Phase P0 · Milestone M0 · aegis/ml scaffold (v2, aegis substrate)
 
-# P0 — Contracts, schema additions & API skeleton
+Status: v2, 2026-09-08. Owner: Backend lead. Wave: Gate 0 (blocking, about
+0.5 to 1 day). Read `docs/plans/00-master-plan.md` sections 2, 5 and 7 first,
+then the canonical spec
+`docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md` sections 5,
+6, 7 and 23. Those sources are canonical. Do not invent alternatives.
 
-Status: v1, 2026-09-08. Owner: Backend lead. Wave: 0 (blocking, ~0.5 day).
-Read `docs/plans/00-master-plan.md` first, section 6 above all. Section 6 is
-canonical. Do not invent alternatives.
+This phase lands Milestone M0 (Scaffold and contracts) on the restored aegis
+platform. The ML vertical lives in `aegis/ml/`. There is no `redsim/` package,
+no `RunStore`, no thread pool, and no new `create_app`. ML routers mount on the
+existing `aegis/api/app.py:create_app`.
 
 ---
 
 ## 1. Objective
 
-Land the day-0 blocker. Freeze the wire contract so every other phase builds
-against a fixed surface.
+Freeze the ML wire contract and the database shape so every later slice builds
+against a fixed surface. P0 is additive and low risk. It wires no ML code.
 
-P0 does three things:
+P0 does six things:
 
-1. Add the missing fields to `redsim/schema.py` from master section 6.1. These
-   are the `Scoring` model, the ATLAS fields on `AttackInfo`, `severity` on
-   `Measurement`, and `scoring` plus `atlas_coverage` on `RunRecord`.
-2. Boot a real FastAPI app. Serve the read-only endpoints that need no ML, so
-   P5 (web) and P7 (infra) build against a live server from day 0.
-3. Ship the shared plumbing the other phases import: the two registry
-   singletons, the `redsim` CLI, and a validated `run_record.json` fixture.
+1. Add one Alembic migration, `0010_ml_vertical`, that adds the `targets.detail`
+   JSONB column and the `ml_campaigns` table with full row-level-security
+   parity.
+2. Widen the config and record types in `aegis/ml/schema.py`: generalise
+   `RunConfig` into `CampaignConfig` (attack set, epsilon grid, MRI weight
+   vector) and add the campaign, score, manifest and finding-detail models.
+3. Add the seven new `Action` members and the `viewer` rank to
+   `aegis/api/policy.py`, and prune the stale members whose routes are gone.
+4. Add `onnx2torch` and `safetensors` to the `ml` optional-dependency group,
+   and rename the environment variable `REDSIM_LLM_MODEL` to
+   `AEGIS_ML_LLM_MODEL`.
+5. Unmount `/v1/scans` from the existing app factory.
+6. Add the `aegis ml build-assets` CLI skeleton and commit a campaign fixture
+   under `tests/ml/fixtures/` for the UI team.
 
-After P0 merges, the schema is frozen. Later changes follow the protocol in
+After P0 merges, the schema, the migration head, the policy table and the
+campaign response shape are frozen. Later changes follow the protocol in
 section 8.
 
 ## 2. Scope — in / out
 
 ### In scope
 
-- Schema additions in section 6.1, exactly as written. No other schema edits.
-- `redsim/api/app.py` with a `create_app()` factory.
-- `redsim/api/routes.py` with `GET /health`, `GET /v1/targets`,
-  `GET /v1/attacks`, `POST /v1/runs` (stub behaviour only), `GET /v1/runs`,
-  and `GET /v1/runs/{id}`.
-- `redsim/targets/registry.py` and `redsim/attacks/registry.py`: the empty
-  `TARGETS` and `ATTACKS` singletons that section 6.2 names. P0 creates the
-  containers. P1 and P2 register concrete items into them.
-- `redsim/cli.py` with `main()`, wired to the dangling `redsim` console script.
-- `tests/fixtures/run_record.json`, a full `RunRecord` with a populated
-  `scoring` block and `atlas_coverage`.
-- `tests/test_api.py` and schema round-trip tests for the new fields.
+- **Migration `0010_ml_vertical`.** One migration file. `targets.detail` as
+  `ADD COLUMN detail JSONB NULL`. The `ml_campaigns` table with the columns of
+  spec section 5.6: `run_id` PK and FK to `runs.id`, `project_id` NOT NULL FK,
+  `org_id` nullable FK, `target_id`, `kind`, `modality`, `baseline_run_id`,
+  `parent_run_id`, `settings_hash`, `config`, `provenance`, `score`,
+  `limitations`, `reviewer_notes`, `created_at`, `completed_at`. Full RLS
+  parity: the `aegis_set_org_id_ml_campaigns` BEFORE INSERT trigger, the
+  `aegis_check_org_id_ml_campaigns` BEFORE UPDATE guard, `ENABLE` and `FORCE ROW
+  LEVEL SECURITY`, and the `aegis_tenant_isolation` policy, all copied verbatim
+  from `0006_tenant_rls.py` and `0009_tenant_org_id_guard.py`. `down_revision`
+  is `0009_tenant_org_id_guard`. The migration is additive and reversible.
+- **Schema widening in `aegis/ml/schema.py`.** Generalise `RunConfig` into
+  `CampaignConfig` and add `ScoringConfig`, `DefenseConfig`, `MRIInputRow`,
+  `MRIRecord`, `MRIDelta`, `MeasuredDelta`, `MLFindingDetail` and
+  `MLModelManifest`. Add the `score` stage to `STAGES` after `explain`. Add the
+  `MLModelManifest` field set of spec 5.5. Field names and types come from spec
+  5.3 and 5.6 exactly.
+- **Policy additions in `aegis/api/policy.py`.** Add the seven `Action` members
+  and their minimum roles (section 4). Add `"viewer": 0` to `_ROLE_RANK`. Prune
+  the stale members `AGENT_RUN`, `AGENT_EXECUTE`, `FIX_GENERATE`, `FIX_APPLY`,
+  `TOOL_INVOKE`, `TICKET_SYNC` from both `Action` and `_ACTION_MIN_ROLE`.
+- **Dependencies.** Add `onnx2torch` and `safetensors` to the `ml` group in
+  `pyproject.toml`. Install `ml` only in `deploy/Dockerfile.worker`.
+- **Environment rename.** Change `REDSIM_LLM_MODEL` to `AEGIS_ML_LLM_MODEL` in
+  `aegis/llm/pythia.py`, the comment in `aegis/ml/schema.py`, and
+  `tests/test_llm_pythia.py`, in the same change.
+- **Unmount `/v1/scans`.** Remove the `scans` router include and its import from
+  `aegis/api/app.py`, and delete `aegis/api/v1/scans.py` and its tests.
+- **CLI skeleton `aegis/cli/ml.py`.** Add the `aegis ml build-assets`
+  subcommand skeleton, wired into `build_parser` and the dispatch in
+  `aegis/cli/main.py`. The body is a stub that reports not-implemented and
+  exits cleanly.
+- **Fixture `tests/ml/fixtures/run_record.json`.** One campaign record shaped
+  like the `GET /v1/runs/{id}/campaign` response (spec 17.2), for the web page
+  tests.
+- **Tests.** Schema round-trip, policy, environment rename, the app-has-no-ML
+  guard, and the fixture validation (section 7).
 
 ### Out of scope
 
-- Any target, attack, explain, scoring, or recommend logic. P0 registers no
-  concrete target or attack.
-- `POST /v1/runs` real execution. P0 returns a stub. P4 completes it.
-- `PATCH /v1/runs/{id}/reviewer-notes`, `GET /v1/runs/{id}/artifacts/{path}`,
-  and the report routes. P4 owns these.
-- Dataset routes. P6 owns these.
-- `runs.py`, `jobs.py`, `scoring.py`. Other phases own these.
-- Editing any existing field in `schema.py`. Add only.
+- Any attack, loader, explain, scoring, recommend, sandbox, or defense logic.
+  Those land in M1 to M6.
+- The eight new ML routers (`aegis/api/v1/{models,attacks,datasets,defenses,
+  ml_capabilities,artifacts,compare,ml_findings}.py`) and their admission
+  services (`aegis/services/ml_*.py`). Slices 1 to 3 own these.
+- The Celery task modules (`aegis/workers/tasks/{model_validate,attack,explain,
+  harden}.py`) and the `verify.py` ML branch. M1 to M6 own these.
+- Bundled models, datasets, and the real `build-assets` implementation. M1 and
+  M4 own these.
+- Editing an existing field in `aegis/db/models.py`. The migration adds one
+  column and one table. No existing table changes shape.
 
 ## 3. Prerequisites & dependencies
 
-- Python 3.12 venv from `make install`. `make test` and `make typecheck`
-  already pass.
-- These files exist and are read-only inputs to P0:
-  - `redsim/schema.py` (188 lines, the models to extend).
-  - `redsim/state.py` (`RunStore`, `new_run_id()`, `list_run_ids`).
-  - `redsim/registry.py` (`Registry[T]`, `DuplicateRegistration`).
-  - `redsim/targets/base.py` (`Target` protocol, `Sample`).
-  - `redsim/attacks/base.py` (`AttackAdapter` protocol, `AttackOutput`).
-  - `deploy/Dockerfile.api` (declares the `create_app` factory entrypoint).
-  - `web/src/lib/api.ts` (client base `http://localhost:8000`, route shapes).
-- No other phase blocks P0. P0 blocks all others. Merge it first.
+- Python 3.12 environment with `pip install -e ".[api,worker,test,dev]"`. The
+  default `pytest -q` tier is green today.
+- These files are read-only inputs to P0:
+  - `aegis/ml/schema.py` — the scaffold contract to widen.
+  - `aegis/db/models.py` — the aegis tables the migration extends; `Run` and
+    `Target` are the FK anchors for `ml_campaigns`.
+  - `aegis/api/app.py` — the existing `create_app` factory that mounts routers.
+  - `aegis/api/v1/__init__.py` — the v1 router collection.
+  - `aegis/api/policy.py` — the `Action` enum, `_ROLE_RANK`, `_ACTION_MIN_ROLE`
+    and `check()`.
+  - `aegis/llm/pythia.py` — `PythiaSettings.from_env`, which reads the LLM model
+    variable today.
+  - `aegis/db/migrations/versions/0006_tenant_rls.py` and
+    `0009_tenant_org_id_guard.py` — the RLS trigger, guard and policy DDL to
+    copy verbatim for `ml_campaigns`.
+  - `aegis/cli/main.py` — `build_parser` and the `_COMMANDS` dispatch table.
+  - `tests/ml/fakes.py` (`TinyTarget`) and `tests/conftest.py` (the sqlite
+    session harness) — reused by later tiers.
+- P0 is Gate 0. It blocks all slices. No slice blocks P0. Merge it first.
 
 ## 4. Interfaces consumed / exposed
 
 ### 4.1 Consumed
 
-From `redsim/registry.py`:
-
-```python
-class Registry(Generic[T]):
-    def register(self, item: T) -> T: ...
-    def get(self, item_id: str) -> T: ...        # raises KeyError
-    def maybe_get(self, item_id: str) -> T | None: ...
-    def ids(self) -> list[str]: ...
-    def items(self) -> list[T]: ...
-    def __iter__(self) -> Iterator[T]: ...
-```
-
-Use `.items()`, `.maybe_get(id)`, and iteration. Do not call `.list()`. It
-does not exist (master 6.2).
-
-From `redsim/targets/base.py` and `redsim/attacks/base.py`:
-
-```python
-class Target(Protocol):
-    id: str
-    def info(self) -> TargetInfo: ...            # UI reads status, reason, metadata
-
-class AttackAdapter(Protocol):
-    id: str
-    def info(self) -> AttackInfo: ...            # UI reads params_schema, atlas fields
-```
-
-Routes call `.info()` on each registered item. They never touch the model.
-
-From `redsim/state.py`:
-
-```python
-RunStore.list_run_ids(output_dir=...) -> list[str]
-RunStore.open(run_id, output_dir=...) -> RunStore | None
-RunStore.load_record() -> dict | None
-new_run_id() -> str
-```
+- From `aegis/db/models.py`: `Base`, `Run`, `Target`. The migration copies the
+  RLS trigger, guard and `aegis_tenant_isolation` policy DDL from
+  `0006_tenant_rls.py` and `0009_tenant_org_id_guard.py`.
+- From `aegis/api/policy.py`: the `Action` enum, `_ROLE_RANK`,
+  `_ACTION_MIN_ROLE`, `check()`, `ensure_project_access`.
+- From `aegis/llm/pythia.py`: `PythiaSettings.from_env`.
+- From `aegis/cli/main.py`: `build_parser` and `_COMMANDS`.
 
 ### 4.2 Exposed
 
-New registry singletons (master 6.2). Other phases import these exact objects:
+- **Migration.** `revision = "0010_ml_vertical"`, `down_revision =
+  "0009_tenant_org_id_guard"`. `upgrade` adds `targets.detail` and
+  `ml_campaigns`; `downgrade` drops the table and the column.
+- **Column and table.** `targets.detail` (JSONB, holds `MLModelManifest` for
+  `ml_model_*` kinds). `ml_campaigns` (1:1 with `runs`, RLS-scoped by `org_id`).
+- **Schema additions in `aegis/ml/schema.py`** (spec 5.3, 5.5, 5.6):
 
-```python
-# redsim/targets/registry.py
-from redsim.registry import Registry
-from redsim.targets.base import Target
-TARGETS: Registry[Target] = Registry("target", Target)
+  - `CampaignConfig`: `target_id`, `modality`, `attack_ids: list[str]`,
+    `attack_params: dict[str, dict]`, `norm: Literal["linf","l2"]`,
+    `eps_grid: list[float]` (sorted ascending), `reference_eps: float` (a member
+    of `eps_grid`), `finding_asr_threshold: float = 0.2`, `n_samples`, `seed`,
+    `include_control`, `explain_k`, `dataset_id`, `dataset_revision`,
+    `dataset_split`, `scoring: ScoringConfig`, `defense: DefenseConfig | None`,
+    `llm_narrative: bool = False`, `auto_recommend: bool = True`,
+    `target_snapshot`, `attacks`.
+  - `ScoringConfig`: the MRI weight vector `S_acc 0.35 / S_asr 0.25 /
+    S_eps 0.20 / S_conf 0.10 / S_expl 0.10`, severity and confidence
+    thresholds, interpretation thresholds, and `version`.
+  - `MRIRecord`, `MRIInputRow`, `MRIDelta`, `MeasuredDelta`, `DefenseConfig`,
+    `MLFindingDetail`, `MLModelManifest`.
+  - `RunRecord.config` becomes `CampaignConfig`. `STAGES` gains `score` after
+    `explain`.
+- **Policy table.** New `Action` members and minimum roles:
 
-# redsim/attacks/registry.py
-from redsim.registry import Registry
-from redsim.attacks.base import AttackAdapter
-ATTACKS: Registry[AttackAdapter] = Registry("attack", AttackAdapter)
-```
+  | `Action` | value | min role |
+  |---|---|---|
+  | `MODEL_REGISTER` | `model.register` | `remediator` |
+  | `ATTACK_RUN` | `attack.run` | `scanner` |
+  | `EXPLAIN_RUN` | `explain.run` | `scanner` |
+  | `HARDEN_RECOMMEND` | `harden.recommend` | `remediator` |
+  | `FINDING_REVIEW` | `finding.review` | `approver` |
+  | `FINDING_ANNOTATE` | `finding.annotate` | `remediator` |
+  | `REPORT_EXPORT` | `report.export` | `scanner` |
 
-The app factory (matches `deploy/Dockerfile.api` `CMD`):
+  `_ROLE_RANK` gains `"viewer": 0`. A `viewer` passes every read gate and fails
+  every `check`.
+- **Environment variable.** `AEGIS_ML_LLM_MODEL`, read by
+  `PythiaSettings.from_env` alongside `PYTHIA_BASE_URL` and `PYTHIA_API_KEY`.
+  All three must be present or the narrative is skipped, never faked.
+- **CLI.** `aegis ml build-assets` (skeleton). Reachable through
+  `aegis/cli/main.py`.
+- **Fixture.** `tests/ml/fixtures/run_record.json`, a `GET
+  /v1/runs/{id}/campaign` payload for the web page tests.
+- **App surface change.** `POST /v1/scans` is removed from the app factory.
 
-```python
-# redsim/api/app.py
-def create_app() -> FastAPI: ...
-```
+### 4.3 Reused interfaces, unchanged
 
-The HTTP surface P0 serves (master 6.7, design spec section 4):
-
-| Method | Path | P0 behaviour |
-|---|---|---|
-| GET | `/health` | 200 `{"status":"ok","version": <str>}` |
-| GET | `/v1/targets` | 200 list of `TargetInfo`; `[]` while `TARGETS` is empty |
-| GET | `/v1/attacks` | 200 list of `AttackInfo`; `[]` while `ATTACKS` is empty |
-| POST | `/v1/runs` | 422 unknown/invalid config; 501 registered stub target; 202 `{"run_id": <str>}` stub otherwise |
-| GET | `/v1/runs` | 200 list of `RunSummary` from `RunStore` |
-| GET | `/v1/runs/{id}` | 200 full `RunRecord`; 404 if absent |
-
-The CLI:
-
-```python
-# redsim/cli.py
-def main(argv: list[str] | None = None) -> int: ...
-# redsim serve [--host H] [--port P] [--reload]   -> runs uvicorn on create_app
-# redsim version                                   -> prints the version
-# redsim --version                                 -> prints the version
-```
-
-### 4.3 Schema additions (master 6.1, exact)
-
-```python
-class Scoring(BaseModel):
-    mri: int                       # 0-100, rounded
-    grade: Literal["A", "B", "C", "D", "F"]
-    subscores: dict[str, float]    # keys: S_acc, S_asr, S_eps, S_conf, S_expl
-    weights: dict[str, float]      # weight actually applied (renormalized if S_expl absent)
-    reference_eps: float
-    eps_grid: list[float]
-    delta_mri: int | None = None   # set on verify re-run
-```
-
-Field additions to existing models:
-
-- `AttackInfo`: `atlas_technique_id: str | None = None` and
-  `atlas_technique_name: str | None = None`.
-- `Measurement`: `severity: Literal["critical", "high", "medium", "low"] | None = None`.
-- `RunRecord`: `scoring: Scoring | None = None` and
-  `atlas_coverage: list[str] = Field(default_factory=list)`.
+ML routers mount on the existing `aegis/api/app.py:create_app`. There is no new
+factory. The mount happens through `app.include_router(..., prefix="/v1")`, the
+same call the retained routers use. `aegis/db/models.py` tables (`Run`, `Job`,
+`Finding`, `Artifact`, `AuditEvent`) are reused in place, not copied. Nothing
+in P0 references `redsim/`, `RunStore`, a thread pool, or a second `create_app`.
 
 ## 5. Ordered implementation steps
 
-1. Branch `p0-contracts-api` off the `redsim-mvp` integration branch.
+1. Branch `p0-ml-scaffold` off the integration branch. Never commit to `main`.
 
-2. Edit `redsim/schema.py`. Add the `Scoring` class. Place it directly above
-   `class RunRecord`, so `RunRecord` can name `Scoring` without a forward
-   reference. Copy the field set from section 4.3 exactly. Keep Pydantic v2
-   style and match the surrounding models.
+2. Write `aegis/db/migrations/versions/0010_ml_vertical.py`. Set `revision =
+   "0010_ml_vertical"` and `down_revision = "0009_tenant_org_id_guard"`. In
+   `upgrade`, add `targets.detail` as JSONB nullable, then create `ml_campaigns`
+   with the columns of spec 5.6. Copy the RLS trigger
+   (`aegis_set_org_id_ml_campaigns`), the update guard
+   (`aegis_check_org_id_ml_campaigns`), the `ENABLE` and `FORCE ROW LEVEL
+   SECURITY` statements, and the `aegis_tenant_isolation` policy verbatim from
+   `0006_tenant_rls.py` and `0009_tenant_org_id_guard.py`, substituting the
+   table name. In `downgrade`, drop the policy, the triggers, the functions, the
+   table, and the column, in reverse order.
 
-3. In `redsim/schema.py`, add `atlas_technique_id` and `atlas_technique_name`
-   to `AttackInfo`, after `references`.
+3. Edit `aegis/ml/schema.py`. Generalise `RunConfig` into `CampaignConfig`. Add
+   `ScoringConfig`, `DefenseConfig`, `MRIInputRow`, `MRIRecord`, `MRIDelta`,
+   `MeasuredDelta`, `MLFindingDetail` and `MLModelManifest`. Point
+   `RunRecord.config` at `CampaignConfig`. Add `score` to `STAGES` after
+   `explain`. Keep Pydantic v2 style and match the surrounding models. Add only.
+   Do not change the meaning of an existing field.
 
-4. In `redsim/schema.py`, add `severity` to `Measurement`, after `notes`.
+4. Edit `aegis/api/policy.py`. Add the seven `Action` members and their
+   `_ACTION_MIN_ROLE` rows. Add `"viewer": 0` to `_ROLE_RANK`. Remove
+   `AGENT_RUN`, `AGENT_EXECUTE`, `FIX_GENERATE`, `FIX_APPLY`, `TOOL_INVOKE` and
+   `TICKET_SYNC` from `Action` and `_ACTION_MIN_ROLE`.
 
-5. In `redsim/schema.py`, add `scoring` and `atlas_coverage` to `RunRecord`,
-   after `reviewer_notes`. Use `Field(default_factory=list)` for
-   `atlas_coverage`, to match the mutable-default style already used in this
-   file. This is the intended reading of the master's `= []`.
+5. Edit `pyproject.toml`. Add `onnx2torch` and `safetensors` to the `ml`
+   optional-dependency group.
 
-6. Create `redsim/targets/registry.py`. Define the `TARGETS` singleton from
-   section 4.2. Register nothing. Add a one-line docstring pointing at the
-   design spec. P1 populates it.
+6. Rename the environment variable. In `aegis/llm/pythia.py`, change the
+   `from_env` read from `REDSIM_LLM_MODEL` to `AEGIS_ML_LLM_MODEL`. Update the
+   `llm_narrative` comment in `aegis/ml/schema.py`. Update
+   `tests/test_llm_pythia.py` in the same change.
 
-7. Create `redsim/attacks/registry.py`. Define the `ATTACKS` singleton from
-   section 4.2. Register nothing. P2 populates it.
+7. Unmount `/v1/scans`. Remove `scans` from the import block and the
+   `include_router` call in `aegis/api/app.py`. Delete `aegis/api/v1/scans.py`
+   and its tests.
 
-8. Create `redsim/api/routes.py`. Build one `APIRouter`. Add the six handlers:
-   - `GET /health` returns `{"status": "ok", "version": REDSIM_VERSION}`.
-     Resolve the version once with `importlib.metadata.version("redsim")`,
-     falling back to `"0.1.0"` on `PackageNotFoundError`.
-   - `GET /v1/targets` returns `[t.info() for t in TARGETS]`. Empty is valid.
-   - `GET /v1/attacks` returns `[a.info() for a in ATTACKS]`. Empty is valid.
-   - `POST /v1/runs` accepts a `RunConfig` body. Pydantic returns 422 on a bad
-     body automatically. Then look up the target with `TARGETS.maybe_get`.
-     Return 422 for an unknown `target_id`. Return 501 when the target's
-     `info().status == "not_implemented"`. Otherwise return 202 with
-     `{"run_id": new_run_id()}` as a stub. Add a comment that P4 replaces the
-     stub with a real `jobs.submit(config)` call.
-   - `GET /v1/runs` lists `RunSummary` items. Read `RunStore.list_run_ids()`,
-     open each, load the record, and project the summary fields. Skip any run
-     whose record fails to load. Sort newest first.
-   - `GET /v1/runs/{id}` opens the run with `RunStore.open`. Return 404 when it
-     is `None`. Otherwise validate the stored dict with
-     `RunRecord.model_validate` and return it.
-   - Raise `fastapi.HTTPException` with a `detail` string for every error, so
-     the body stays `{"detail": ...}` (design spec section 4).
+8. Create `aegis/cli/ml.py`. Add `cmd_ml` and the `aegis ml build-assets`
+   subcommand skeleton. Register the `ml` subparser in `build_parser` and add
+   the dispatch entry in `aegis/cli/main.py` (`_COMMANDS` or a
+   `_cmd_ml_dispatch`, matching the `status` and `audit` pattern). The body
+   reports not-implemented and returns cleanly. It seeds no assets in P0.
 
-9. Create `redsim/api/app.py`. Write `create_app() -> FastAPI`. Add
-   `CORSMiddleware` allowing origin `http://localhost:3000`, all methods, all
-   headers. Include the router from `routes.py`. Return the app. Do not create
-   a module-level `app`. The Dockerfile calls the factory with `--factory`.
+9. Create `tests/ml/fixtures/run_record.json`. Shape it like `GET
+   /v1/runs/{id}/campaign` (spec 17.2). Populate every field the web pages
+   render. See section 7 for the required contents.
 
-10. Decide the registration seam. P0 does not import concrete target or attack
-    modules, so the endpoints return `[]` at P0. Record in `app.py` a single
-    commented import block where P1/P2/P4 will import their concrete modules to
-    trigger registration. Note this in section 9 as a coordination point.
+10. Add the tests of section 7.
 
-11. Create `redsim/cli.py`. Use `argparse`. Implement `main(argv=None)`.
-    - `serve` runs `uvicorn.run("redsim.api.app:create_app", factory=True,
-      host=..., port=..., reload=...)` with defaults host `0.0.0.0`, port
-      `8000`.
-    - `version` and `--version` print the resolved version.
-    - Return `0` on success. Return `2` on an unknown command.
-    - Guard the entrypoint with `if __name__ == "__main__": raise SystemExit(main())`.
+11. Run the validation of section 7. Run `alembic upgrade head` on a fresh
+    database, then `alembic downgrade -1`, and confirm both succeed. Run
+    `pytest -q`. Confirm the API process imports no ML library.
 
-12. Create `tests/fixtures/run_record.json`. Shape it like `GET /v1/runs/{id}`,
-    a full `RunRecord` with `status: "succeeded"`. Populate every field P5
-    renders. See section 7 for the required contents.
-
-13. Add tests. See section 7.
-
-14. Run `make typecheck` and `make test`. Fix findings. Do not touch the
-    pre-existing `lint-py` and `lint-web` breakage noted in `CLAUDE.md`.
-
-15. Open a PR into `redsim-mvp`. In the description, state that the schema is
-    now frozen and link section 8.
+12. Open a PR into the integration branch. State that the schema, the migration
+    head, the policy table and the campaign response shape are now frozen, and
+    link section 8.
 
 ## 6. Files to create / modify
 
 Create:
 
-- `redsim/api/app.py`
-- `redsim/api/routes.py`
-- `redsim/targets/registry.py`
-- `redsim/attacks/registry.py`
-- `redsim/cli.py`
-- `tests/fixtures/run_record.json`
-- `tests/test_api.py`
-- `tests/test_schema_additions.py`
+- `aegis/db/migrations/versions/0010_ml_vertical.py`
+- `aegis/cli/ml.py`
+- `tests/ml/fixtures/run_record.json`
+- `tests/ml/test_schema.py`
+- `tests/test_api_process_has_no_ml.py`
 
 Modify:
 
-- `redsim/schema.py` (add only; edit no existing field)
+- `aegis/ml/schema.py` (widen the config and record types; add the new models)
+- `aegis/api/policy.py` (new `Action` members, `viewer` rank, prune stale
+  members)
+- `aegis/api/app.py` (remove the `scans` import and its `include_router` call)
+- `aegis/llm/pythia.py` (environment rename)
+- `aegis/cli/main.py` (register the `ml` subcommand and its dispatch)
+- `pyproject.toml` (`ml` group gains `onnx2torch`, `safetensors`)
+- `tests/test_llm_pythia.py` (environment rename)
+- `deploy/Dockerfile.worker` (install `.[worker,ml]`; keep the API image free
+  of the `ml` extra)
 
-Do not modify: `deploy/Dockerfile.api`, `web/src/lib/api.ts`, `pyproject.toml`
-(the `redsim` console script and all deps already exist).
+Remove:
+
+- `aegis/api/v1/scans.py` and its tests
+
+Do not modify: `aegis/db/models.py` (the migration owns the DDL; the ORM
+`ml_campaigns` model lands with its service in a later slice), the retained
+routers, or the existing migrations `0001`–`0009`.
 
 ## 7. Testing & validation
 
-All tests run offline in under a second. None loads torch, ART, or SHAP.
+The default tier runs offline in under a minute with no services and no `ml`
+extra (the aegis offline-path rule).
 
-`tests/test_api.py`, using `fastapi.testclient.TestClient(create_app())`:
+**Migration up and down.**
 
-- `test_create_app_boots`: `create_app()` returns a `FastAPI` instance without
-  raising.
-- `test_health_ok`: `GET /health` returns 200. Body has `status == "ok"` and a
-  non-empty `version` string.
-- `test_targets_empty`: `GET /v1/targets` returns 200 and `[]` at P0, because
-  P0 registers no target.
-- `test_attacks_empty`: `GET /v1/attacks` returns 200 and `[]` at P0.
-- `test_run_unknown_target_422`: `POST /v1/runs` with a valid body naming an
-  unregistered `target_id` returns 422.
-- `test_run_bad_body_422`: `POST /v1/runs` with `n_samples` below the schema
-  minimum returns 422.
-- `test_runs_list_empty`: `GET /v1/runs` returns 200 and `[]` against an empty
-  output dir. Set `REDSIM_OUTPUT_DIR` to a `tmp_path` for this test.
-- `test_run_not_found_404`: `GET /v1/runs/does-not-exist` returns 404 with a
-  `detail` key.
+- `alembic upgrade head` on a fresh database creates `targets.detail` and
+  `ml_campaigns`, and `ml_campaigns` carries the trigger, the guard, and `FORCE
+  ROW LEVEL SECURITY`.
+- `alembic downgrade -1` drops the table and the column cleanly. The migration
+  is additive and reversible.
 
-Guard the two registry-population tests. If a later phase registers a stub
-target on import, add a variant that asserts a registered
-`not_implemented` target makes `POST /v1/runs` return 501. Keep the empty-case
-tests valid for the P0 merge.
+**App factory still boots.**
 
-`tests/test_schema_additions.py`:
+- `create_app()` returns a `FastAPI` instance without raising. `GET /health`
+  returns 200 through `fastapi.testclient.TestClient(create_app())`.
+- `POST /v1/scans` no longer routes. After the router include is removed the
+  path returns `404`. This closes the pre-M0 behaviour where the inert `scans`
+  router returned `400 unknown scanner`. Confirm the include and the router file
+  are gone.
 
-- `test_scoring_round_trip`: build a `Scoring`, dump it, reload it, assert
-  equality. Assert the subscore keys are `S_acc, S_asr, S_eps, S_conf, S_expl`.
-- `test_attack_info_atlas_fields`: `AttackInfo` accepts `atlas_technique_id`
-  and `atlas_technique_name`, and both default to `None`.
-- `test_measurement_severity`: `Measurement` accepts `severity="high"` and
-  rejects `severity="bogus"`.
-- `test_run_record_scoring_and_coverage`: `RunRecord` accepts a `Scoring` and a
-  populated `atlas_coverage`, and both have sane defaults (`None` and `[]`).
-- `test_fixture_validates`: load `tests/fixtures/run_record.json` and pass it
-  through `RunRecord.model_validate`. It must validate with no error. This is
-  the contract check that keeps the P5 fixture honest.
+**`tests/test_api_process_has_no_ml.py` (unit).** Import `aegis.api.app` and
+build the app with `torch`, `art`, `onnxruntime` and `shap` blocked in
+`sys.modules`. The app still builds. The API process imports no ML library.
 
-`tests/fixtures/run_record.json` must contain, at minimum:
+**`tests/ml/test_schema.py` (unit).**
 
-- `run_id`, `status: "succeeded"`, `stage: "report"`, `stages_done` (the full
-  `STAGES` list), `created_at`, and a valid `config` (`RunConfig`).
-- `target`: a `TargetInfo` with `status: "available"`.
-- `attack`: an `AttackInfo` with `atlas_technique_id: "AML.T0043"` and
-  `atlas_technique_name: "Craft Adversarial Data"`.
-- `provenance`: a full `Provenance` with `started_at` and `finished_at`.
-- `measurements`: three rows (`clean`, `evasion`, `control`). Give the evasion
-  row a `severity` such as `"high"`.
-- `observations`: at least two, one flipped and one not, each with `artifacts`
-  paths and both `center_mass_ratio_*` values.
-- `interpretation` and `recommendations`: at least one each, with `basis` and
-  `triggered_by` that cite real measurement ids.
-- `scoring`: a full `Scoring`. Include all five subscore keys, the matching
-  `weights`, `reference_eps`, and an `eps_grid`. Example `mri: 62`,
-  `grade: "C"`.
-- `atlas_coverage`: `["AML.T0043"]`.
-- `limitations`: the seven `STANDING_LIMITATIONS` strings. The `RunRecord`
-  validator rejects a succeeded run with an empty `limitations` list.
+- `CampaignConfig` and `MRIRecord` round-trip through `model_dump` and
+  `model_validate`.
+- `STAGES` contains `score` after `explain`.
+- `ScoringConfig` weights are `0.35 / 0.25 / 0.20 / 0.10 / 0.10` and sum to 1.
+- `MLModelManifest` accepts the field set of spec 5.5.
 
-Validate the fixture two ways before commit:
+**Policy (unit).**
 
-1. `python -c "import json; from redsim.schema import RunRecord;
-   RunRecord.model_validate(json.load(open('tests/fixtures/run_record.json')))"`
-   prints nothing and exits 0.
-2. Boot the server, and manually confirm `GET /health` returns
-   `{"status":"ok","version":...}` and `GET /v1/targets` returns `[]`.
+- The seven new `Action` members resolve their minimum roles through
+  `_ACTION_MIN_ROLE`.
+- `viewer` ranks 0: it passes a read gate and fails `check` on a gated action.
+- The pruned members (`AGENT_RUN`, `FIX_GENERATE`, and the rest) are absent from
+  `Action`.
+
+**Environment rename.** `tests/test_llm_pythia.py` reads `AEGIS_ML_LLM_MODEL`.
+`PythiaSettings.from_env` returns `None` when any of `PYTHIA_BASE_URL`,
+`PYTHIA_API_KEY` or `AEGIS_ML_LLM_MODEL` is missing.
+
+**Fixture.** `tests/ml/fixtures/run_record.json` validates against the campaign
+response shape and holds:
+
+- `config` (`CampaignConfig`) with `attack_ids`, `eps_grid` `[0.01, 0.03, 0.1]`,
+  `reference_eps` a member of the grid, and `finding_asr_threshold`.
+- `target` (`TargetInfo`), with `target.name` set to `"Tiny random CNN (test
+  double)"` so the fixture can never masquerade as a real model in a screenshot.
+- `attacks` (a list of `AttackInfo`), `provenance`, `measurements[]` (clean,
+  evasion and control rows with `n` and `n_correct`), `curve`, `observations[]`
+  (with `center_mass_ratio_*` and `metric_kind: "heuristic"`),
+  `interpretation[]` (`kind: "inferred"`), `recommendations[]` (`status:
+  "candidate"`, `validation: "not evaluated"`, no numeric expected-gain field),
+  `limitations[]` (non-empty), `completeness`, and a full `score` (`MRIRecord`
+  with the five subscores, the per-attack table with denominators, the epsilon
+  grid, and `reading`).
+
+**Postgres RLS (integration, Postgres only).** Extend `tests/test_tenant_rls.py`
+so `ml_campaigns` is covered by `FORCE ROW LEVEL SECURITY`, and a cross-org read
+of a campaign row returns nothing.
 
 ## 8. Acceptance criteria / Definition of Done
 
-- [ ] `redsim/schema.py` adds `Scoring`, the two `AttackInfo` ATLAS fields,
-      `Measurement.severity`, and `RunRecord.scoring` plus
-      `RunRecord.atlas_coverage`. Field names and types match master section
-      6.1 exactly. No existing field changed.
-- [ ] `uvicorn redsim.api.app:create_app --factory --port 8000` boots and
-      serves. This matches the `deploy/Dockerfile.api` `CMD`.
-- [ ] `GET /health` returns `{"status":"ok","version":<str>}`.
-- [ ] `GET /v1/targets` and `GET /v1/attacks` return `[]` at P0 and read from
-      `TARGETS` and `ATTACKS`.
-- [ ] `POST /v1/runs` returns 422 for a bad body or unknown target, 501 for a
-      registered stub target, and a 202 `{"run_id"}` stub otherwise.
-- [ ] `GET /v1/runs` and `GET /v1/runs/{id}` read `RunStore` and return 404 for
-      a missing run.
-- [ ] `TARGETS` and `ATTACKS` singletons exist at the section-6.2 import paths.
-- [ ] `redsim serve` and `redsim version` work. The `pyproject.toml` console
-      script `redsim` is no longer dangling.
-- [ ] `tests/fixtures/run_record.json` validates against `RunRecord` and holds
-      a populated `scoring` block and `atlas_coverage`.
-- [ ] `make test` and `make typecheck` pass. No new `lint-py` or `lint-web`
-      regressions beyond the pre-existing ones.
-- [ ] The PR states the schema is frozen and records the change protocol below.
+M0 exit check (spec section 23): `alembic upgrade head` on a fresh database,
+`pytest -q` green, and the API process imports no ML library.
+
+- [ ] `0010_ml_vertical` applies on a fresh database and reverses cleanly.
+      `ml_campaigns` has the `aegis_set_org_id_ml_campaigns` trigger, the
+      `aegis_check_org_id_ml_campaigns` guard, `FORCE ROW LEVEL SECURITY`, and
+      the `aegis_tenant_isolation` policy. `targets.detail` is JSONB nullable.
+- [ ] `aegis/ml/schema.py` defines `CampaignConfig` with the attack set, the
+      epsilon grid and the MRI weight vector, plus `ScoringConfig`,
+      `MRIRecord`, `MRIInputRow`, `MRIDelta`, `MeasuredDelta`, `DefenseConfig`,
+      `MLFindingDetail` and `MLModelManifest`. `STAGES` gains `score`. No
+      existing field changed meaning.
+- [ ] `aegis/api/policy.py` adds the seven `Action` members with their minimum
+      roles, adds `"viewer": 0` to `_ROLE_RANK`, and removes the six stale
+      members.
+- [ ] The `ml` group in `pyproject.toml` lists `onnx2torch` and `safetensors`.
+      The worker image installs `.[worker,ml]`; the API image does not.
+- [ ] `PythiaSettings.from_env` reads `AEGIS_ML_LLM_MODEL`. The comment in
+      `aegis/ml/schema.py` and `tests/test_llm_pythia.py` use the new name.
+- [ ] `POST /v1/scans` is unmounted. `aegis/api/v1/scans.py` and its tests are
+      removed. `create_app()` still boots and serves `GET /health`.
+- [ ] `aegis ml build-assets` is reachable through `aegis/cli/main.py` and
+      returns cleanly as a not-implemented skeleton.
+- [ ] `tests/ml/fixtures/run_record.json` validates against the campaign
+      response shape and carries a full `score` block.
+- [ ] `pytest -q` passes. `alembic upgrade head` then `alembic downgrade -1`
+      passes.
 
 ### What P0 must freeze
 
-This phase is the day-0 blocker. After merge, treat these as locked:
+After merge, treat these as locked. A silent change breaks a parallel slice.
 
-- Every field name and type in `redsim/schema.py`, old and new. P5 renders
-  against these. P2 writes `Scoring`. P3 sets `severity`. Any rename breaks a
-  parallel phase silently.
-- The six endpoint shapes in section 4.2 and their status codes.
-- The `TARGETS` and `ATTACKS` import paths and their `Registry` API (`.items`,
-  `.maybe_get`, iteration, no `.list`).
-- The `create_app()` factory name and module path.
-- The `run_record.json` fixture shape, which P5 renders before P4 is done.
+- Every field name and type in `aegis/ml/schema.py`, old and new.
+  `CampaignConfig`, `MRIRecord`, `MLModelManifest` and `MLFindingDetail` are the
+  shared contracts.
+- The migration head `0010_ml_vertical` and the `ml_campaigns` column set.
+- The `Action` values and their minimum roles, and the `viewer` rank.
+- The `GET /v1/runs/{id}/campaign` response shape the fixture encodes.
+- The environment variable name `AEGIS_ML_LLM_MODEL`.
 
 ### Change protocol after freeze
 
-1. Do not change a schema field or an endpoint shape silently.
-2. Announce any change as a one-line note in master section 6.1, plus a
-   heads-up to the team.
-3. Prefer adding an optional field over changing an existing one. Additive,
-   default-valued fields do not break a parallel phase. Renames and type
-   changes do.
+1. Do not rename a schema field, a column, an `Action` value, or a response key
+   silently.
+2. Announce any change as a one-line note in master section 5, plus a heads-up
+   to the team.
+3. Prefer an additive, default-valued field over a change to an existing one.
+   Additive fields do not break a parallel slice; renames and type changes do.
 
 ## 9. Effort estimate & special considerations
 
-Estimate: about half a day for one backend developer. The schema edits are
-small. The app, routes, CLI, and fixture are the bulk. The work is low-risk
-because it wires no ML.
+Estimate: about 0.5 to 1 day for one backend developer. The work is a
+migration, a schema widening, a policy edit, a dependency and environment
+change, one route removal, a CLI stub, and a fixture. It wires no ML.
 
 Special considerations:
 
-- The registries are a coordination seam. Master 6.2 attributes `TARGETS` to
-  P1 and `ATTACKS` to P2, but P0's endpoints must import them on day 0. P0
-  therefore creates the empty singleton containers, and P1/P2 only add
-  `.register(...)` calls. Confirm this split with the P1 and P2 owners so no
-  one redefines the singleton and shadows the shared instance.
-- Registration triggers on import. The endpoints return `[]` until something
-  imports the concrete target and attack modules. P0 leaves a commented import
-  block in `app.py` for P1/P2/P4 to fill. Flag this so a populated
-  `/v1/targets` does not silently wait on nobody importing the modules.
-- `atlas_coverage` default. Master 6.1 writes `= []`. Use
-  `Field(default_factory=list)` to avoid a shared mutable default, matching the
-  rest of `schema.py`. The wire shape is identical.
-- Version source. Read the version from installed package metadata, not a
-  hard-coded string, so `/health` stays true after a version bump.
-- Do not touch the pre-existing `lint-py` and `lint-web` breakage. `CLAUDE.md`
-  records both as inherited, not caused here. `make test` and `make typecheck`
-  are the gate.
-- Follow repo prose conventions in code comments and this doc: no em dashes, no
-  semicolons.
+- **RLS parity is the risk in the migration.** Copy the trigger, the update
+  guard, the `FORCE ROW LEVEL SECURITY` statements and the
+  `aegis_tenant_isolation` policy verbatim from `0006_tenant_rls.py` and
+  `0009_tenant_org_id_guard.py`, changing only the table name to
+  `ml_campaigns`. `org_id` is trigger-backfilled on insert and guarded against
+  drift on update. ML code never sets `org_id`.
+- **The migration is additive and reversible.** `targets.detail` is nullable.
+  No existing row changes meaning. `downgrade` drops the table and the column.
+- **The API image must never import an ML library.** The
+  `tests/test_api_process_has_no_ml.py` guard enforces the boundary rather than
+  assuming it. Keep the `ml` extra in the worker image only.
+- **The environment rename must land in three places at once.**
+  `aegis/llm/pythia.py`, the comment in `aegis/ml/schema.py`, and
+  `tests/test_llm_pythia.py`. A partial rename leaves `from_env` returning
+  `None` and the narrative silently skipped.
+- **Stale-member pruning travels with the route removal.** Remove the six unused
+  `Action` members in the same change that unmounts `/v1/scans`, so nothing
+  references a deleted member. The OPA and Cedar bundles gain the seven new rows
+  when those engines are configured; an unknown action fails closed.
+- **`viewer` needs two more homes outside this Python change.** The Keycloak
+  realm roles (`deploy/keycloak/realm-export.json`) and the design-system
+  `ROLES` tuple (`packages/design-system/src/components/role-gated.tsx`) must
+  also list `viewer`. Flag this to the web and infra owners as a coordination
+  point; it is not blocking for the P0 Python merge.
+- **The fixture is a test double, never a demo result.** Its `target.name` is
+  `"Tiny random CNN (test double)"`. No code path serves it as a real campaign
+  result.
+- **Follow repo prose conventions.** No em dashes and no semicolons in code
+  comments or in this document.
