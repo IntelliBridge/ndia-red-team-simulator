@@ -78,7 +78,7 @@ def _has_column(table: str, column: str, *, offline: bool) -> bool:
 def _has_table(table: str, *, offline: bool) -> bool:
     if context.is_offline_mode():
         return offline
-    return sa.inspect(op.get_bind()).has_table(table)
+    return bool(sa.inspect(op.get_bind()).has_table(table))
 
 
 def upgrade() -> None:
