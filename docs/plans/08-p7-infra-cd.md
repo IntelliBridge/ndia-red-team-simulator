@@ -57,7 +57,7 @@ Deliverables:
   set, so a push to `main` rolls the services.
 
 The done bar is section 26 and the section 20.4 smoke test: a campaign started
-from `/models` against the bundled vehicle-imagery CNN and the UNSW-NB15 tabular
+from `/models` against the bundled vehicle-imagery CNN and the malicious-URLs tabular
 model runs on Fargate end to end, the MRI scorecard renders, `/audit` shows the
 tamper-evident chain, `aegis audit verify --all` passes, and a push to `main`
 deploys green.
@@ -320,7 +320,7 @@ services, then the repo variables.
    Confirm the ALB `/health` returns ok against the api image. Run the one-off
    migration task. Then run `aegis ml build-assets` once as a one-off ECS task
    on the worker image to seed the three bundled models (the image CNN on the
-   vehicle-imagery dataset, the tabular tree ensemble on UNSW-NB15 with its PGD
+   vehicle-imagery dataset, the tabular tree ensemble on malicious-URLs with its PGD
    surrogate, and the ONNX export of the image CNN) and the two evaluation
    datasets into the artifacts bucket, each with its `MANIFEST.json`. The
    manifests are the only source of clean-accuracy numbers.
@@ -433,7 +433,7 @@ services, then the repo variables.
    Then `aegis audit verify --all` passes, and `/audit` shows the chain. The
    WORM export writes the chain to the Object-Lock bucket on the beat schedule.
 8. **Full demo path (the gate).** A campaign started from `/models` against the
-   bundled vehicle-imagery CNN and the UNSW-NB15 tabular model runs FGSM and PGD
+   bundled vehicle-imagery CNN and the malicious-URLs tabular model runs FGSM and PGD
    with the noise control and eps sweep on Fargate. `/runs/[id]` shows the MRI
    scorecard with subscores, the per-family table, and the robustness curve.
    `/findings/[id]` shows the three panes and a measured ΔMRI after Verify.
@@ -447,7 +447,7 @@ This phase is done when section 26 holds on the deployed stack:
 1. `GET /health` behind the api ALB returns ok, and the api and web target
    groups are healthy.
 2. A campaign started from `/models` against the bundled vehicle-imagery CNN and
-   the UNSW-NB15 tabular model runs FGSM and PGD with the noise control and eps
+   the malicious-URLs tabular model runs FGSM and PGD with the noise control and eps
    sweep on Fargate.
 3. `/runs/[id]` shows the MRI scorecard with its subscores, per-family table,
    and robustness curve.

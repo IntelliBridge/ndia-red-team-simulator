@@ -1,4 +1,4 @@
-> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **No canonical feature** — interop was dropped in the consolidation.
+> **RECONCILED (2026-09-08 spec update).** Interoperability is now **Phase B2** in the canonical spec (section 27) and milestone B2 (section 23): specified, off by default, and not built for the Phase A demo. Routes return `501` until B2 (section 17.4). The MITRE ATLAS tag lives at `Finding.schema_blob.ml.atlas_technique` (section 5.7); export is F007's B2 addition and the consume side is F002's. This file predates that section; build against canonical section 27 when B2 is scheduled. It is **not** on the Phase A critical path.
 >
 > Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): **this whole phase is currently out of scope.** Croissant export, dataset endpoints, and MITRE ATLAS are absent from the canonical spec and F001–F008; ONNX survives only as an ingest loader in F002. To keep interop it must be re-proposed as a feature (see `00-master-plan.md` §6). Do not build this without that decision.
 >

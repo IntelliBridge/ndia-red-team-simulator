@@ -63,12 +63,15 @@ Account `140381642432`, region `us-east-1`:
 
 - The substrate is aegis: Postgres with RLS, Celery on Redis, Keycloak auth, the
   hash-chained audit log, and S3 (no EFS). See master plan section 2.
-- **Interoperability is deferred.** Croissant dataset export, MITRE ATLAS
-  tagging, and Palantir/Lattice are absent from the canonical spec.
-  `docs/plans/07-p6-interoperability.md` is out of scope until re-proposed as a
-  feature.
-- Demo data is `leibnitz-lab/military_vehicles` (image) and
-  `lacg030175/UNSW-NB15` (tabular). CIFAR-10 is a CI fixture only.
+- **Interoperability is Phase B2, not Phase A.** Croissant dataset export, its
+  consume side, MITRE ATLAS tagging, and Palantir/Lattice are specified in
+  canonical section 27, off by default and not built; routes return `501` until
+  B2. `docs/plans/07-p6-interoperability.md` maps to Phase B2, off the Phase A
+  critical path.
+- Demo data is `leibnitz-lab/military_vehicles` (image) and Kaggle
+  `sid321axn/malicious-urls-dataset` (tabular URL classifier on lexical
+  features; needs a Kaggle token at build time). `lacg030175/UNSW-NB15` is the
+  tabular fallback; CIFAR-10 is a CI fixture only.
 - The MRI is per-campaign only. Never show it without its five subscores, the
   per-family accuracy table, and the ε curve. The words "hardened",
   "deployment-ready", "certified", and "safe" are banned in score text.

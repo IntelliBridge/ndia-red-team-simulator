@@ -14,8 +14,9 @@ aegis paths below, not the v1 paths.
 This phase turns a finished attack campaign into evidence, candidate advice, and
 a measured verify delta. It owns the explain layer, the recommend layer, the ML
 projection onto the aegis `Finding`, and three Celery tasks. MITRE ATLAS tagging
-is not in the canonical spec (master section 6): it is deferred, and this phase
-does not build it. The filename keeps the word "atlas" for continuity only.
+is **Phase B2** (canonical section 27.2, tag at `Finding.schema_blob.ml.atlas_technique`),
+so this Phase A phase does not build it. The filename keeps the word "atlas" for
+continuity only.
 
 ---
 
@@ -71,10 +72,10 @@ never appear in any output.
 
 ### Out of scope
 
-- **MITRE ATLAS tagging.** Not in the canonical spec (master section 6). The
-  consolidation dropped it. This phase adds no `atlas.py`, no technique map, and
-  no ATLAS field on any schema. If interop is re-proposed as F009 later, the
-  ATLAS technique attaches to `Finding.schema_blob.ml` then, not now.
+- **MITRE ATLAS tagging.** Phase B2 (canonical section 27.2), not Phase A. This
+  phase adds no `atlas.py`, no technique map, and no ATLAS field wiring. When B2
+  lands, the tag is stamped at `Finding.schema_blob.ml.atlas_technique` from the
+  attack registry, not now.
 - The scoring math and the `MRIRecord`. That is WS2 (`aegis/ml/scoring.py`). P3
   reads the score and supplies `expl_shift_mean`. It does not compute the MRI.
 - The attack run, the ε sweep, the clean and control evaluations, and `x_adv`.
@@ -683,7 +684,7 @@ SHAP stays fast. Do not load the real CNN in unit tests.
    tasks. Admission is audit-first. The verify loop wraps the ART estimator with
    a preprocessing defense, reuses the baseline slice, computes ΔMRI under the
    preconditions, updates `validation_state`, and attaches the `MeasuredDelta`.
-9. No ATLAS code exists. The plan records ATLAS as deferred (master section 6).
+9. No ATLAS code exists. ATLAS is Phase B2 (canonical section 27.2), not built here.
 10. `pytest` under `tests/ml/` passes, and every honesty label holds: candidates
     are "candidate / not evaluated", the centre-mass metric is "heuristic", the
     narrative is labelled LLM-generated, and the banned words never appear.
@@ -725,8 +726,8 @@ Partition equivalent in `Provenance.nondeterminism`. SHAP sampling is not
 bit-exact across BLAS builds and thread counts even under a seed. The report
 says so.
 
-**ATLAS is deferred, not designed.** MITRE ATLAS tagging is absent from the
-canonical spec and from F001 through F008 (master section 6). This phase builds
-no ATLAS map, no technique field, and no coverage helper. If interop returns as
-a feature, the ATLAS technique attaches to `Finding.schema_blob.ml` at that
-time. The filename keeps "atlas" for continuity with the earlier plan set only.
+**ATLAS is Phase B2, not built here.** MITRE ATLAS tagging is specified in the
+canonical spec as Phase B2 (section 27.2), so this Phase A phase builds no ATLAS
+map, no technique field, and no coverage helper. When B2 lands, the technique
+attaches at `Finding.schema_blob.ml.atlas_technique`, stamped from the attack
+registry. The filename keeps "atlas" for continuity with the earlier plan set only.
