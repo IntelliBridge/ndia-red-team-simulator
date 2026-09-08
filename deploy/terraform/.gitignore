@@ -1,0 +1,16 @@
+.terraform/
+__pycache__/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.plan.json
+*.tfvars
+*.tfvars.json
+*.tfbackend
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Commit .terraform.lock.hcl and intentionally synthetic *.example files.
