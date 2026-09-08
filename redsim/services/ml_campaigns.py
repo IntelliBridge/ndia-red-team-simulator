@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from redsim.ml.schema import CampaignConfig
+from redsim.ml.schema import CampaignConfig, CandidateRecommendation
 from redsim.safety import authorize
 
 if TYPE_CHECKING:
@@ -177,6 +177,27 @@ def create_attack_campaign(
     return CampaignJobHandle(run_id=run_id, job_ids=[job_id])
 
 
+def recommendation_defense_ids(recommendation: CandidateRecommendation) -> set[str]:
+    """The catalog defense ids a candidate recommendation names.
+
+    Rule-generated candidates (``redsim.ml.recommend.rules``) cite a defense as
+    a ``defense:<id>`` reference next to ``<ART class> (Phase A verify loop)``
+    and the motivating paper, so the ids are read back through
+    ``rules.defense_configs`` rather than by matching the bare class string.
+    Hand-authored evidence (the frozen ``run_record.json`` fixture shape) names
+    the bare ART class instead, which resolves to the catalog id that owns it.
+    """
+    from redsim.ml.defenses import DEFENSES
+    from redsim.ml.recommend.rules import defense_configs
+
+    cited = {cfg.id for cfg in defense_configs(recommendation)}
+    cited |= {
+        str(spec["id"]) for spec in DEFENSES
+        if spec["art_class"] in recommendation.references
+    }
+    return cited
+
+
 def persist_campaign_record(session: Session, run_id: str, record: Any) -> None:
     """Project a completed CampaignRecord onto the queryable campaign row."""
     from sqlalchemy import update
@@ -280,10 +301,12 @@ def create_verify_campaign(
         )
     snapshot = baseline_record.config.model_dump(mode="json")
     spec = get_defense(defense_id)
-    if spec["art_class"] not in recommendation.references:
+    cited_defense_ids = recommendation_defense_ids(recommendation)
+    if defense_id not in cited_defense_ids:
+        named = sorted(cited_defense_ids)
         raise ValueError(
-            "recommendation_defense_mismatch: the selected recommendation "
-            "does not name this defense"
+            f"recommendation_defense_mismatch: recommendation {recommendation_id!r} "
+            f"names {named if named else 'no defense'}, not {defense_id!r}"
         )
     modality = str(snapshot.get("modality") or "")
     if modality not in spec["domains"]:
@@ -387,5 +410,5 @@ def create_verify_campaign(
 
 __all__ = [
     "CampaignJobHandle", "create_attack_campaign", "create_verify_campaign",
-    "persist_campaign_record",
+    "persist_campaign_record", "recommendation_defense_ids",
 ]
