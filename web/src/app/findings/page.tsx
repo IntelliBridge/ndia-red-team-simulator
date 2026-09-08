@@ -88,15 +88,22 @@ export default function FindingsPage() {
                 <TableHead scope="col">ID</TableHead>
                 <TableHead scope="col">Severity</TableHead>
                 <TableHead scope="col">Title</TableHead>
+                <TableHead scope="col">Validation</TableHead>
+                <TableHead scope="col">Attack</TableHead>
+                <TableHead scope="col">First ε</TableHead>
+                <TableHead scope="col">Run</TableHead>
                 <TableHead scope="col">Status</TableHead>
                 <TableHead scope="col">Source</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {findings.map((f) => (
+              {findings.map((f: Finding) => (
                 <TableRow key={f.id}>
                   <TableCell className="font-mono text-xs">
-                    <a className="text-primary underline" href={`/findings/${f.id}`}>
+                    <a
+                      className="text-primary underline"
+                      href={`/findings/${f.id}`}
+                    >
                       {f.id}
                     </a>
                   </TableCell>
@@ -104,6 +111,19 @@ export default function FindingsPage() {
                     <SeverityChip level={f.severity} />
                   </TableCell>
                   <TableCell>{f.schema_blob.title ?? "—"}</TableCell>
+                  <TableCell>{f.validation_state}</TableCell>
+                  <TableCell>{f.schema_blob.ml?.attack_id ?? "—"}</TableCell>
+                  <TableCell>
+                    {f.schema_blob.ml?.first_success_eps ?? "—"}
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">
+                    <a
+                      className="text-primary underline"
+                      href={`/runs/${f.run_id}`}
+                    >
+                      {f.run_id}
+                    </a>
+                  </TableCell>
                   <TableCell>{f.status}</TableCell>
                   <TableCell className="text-muted-foreground">
                     {f.source_tool ?? "—"}

@@ -80,11 +80,11 @@ describe("RunsPage", () => {
     expect(panel.className).toContain("border-destructive");
   });
 
-  it("renders the empty state with a /targets link", () => {
+  it("renders the empty state with a /models link", () => {
     useSWRMock.mockReturnValue({ data: { runs: [], count: 0 }, error: undefined, isLoading: false });
     render(h(RunsPage));
     expect(screen.getByText(/No runs yet\./)).toBeTruthy();
-    expect(screen.getByRole("link", { name: "/targets" }).getAttribute("href")).toBe("/targets");
+    expect(screen.getByRole("link", { name: "/models" }).getAttribute("href")).toBe("/models");
   });
 
   it("renders a row per run with a link, status badge, project and scanner", () => {

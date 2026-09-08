@@ -20,6 +20,14 @@ export { StageTimeline, type StageEntry, type StageTimelineProps }
   from "./components/stage-timeline";
 export { ToastList, type Toast, type ToastListProps, type ToastTone }
   from "./components/toast-list";
+export { LabelBadge, type LabelBadgeProps } from "./components/label-badge";
+export { PanelSection, type PanelSectionProps } from "./components/panel-section";
+export { MriScorecard, type MriScorecardProps } from "./components/mri-scorecard";
+export { DimensionBars } from "./components/dimension-bars";
+export { RobustnessCurve } from "./components/robustness-curve";
+export { MeasurementTable } from "./components/measurement-table";
+export { ObservationCard } from "./components/observation-card";
+export { CompatibilityList } from "./components/compatibility-list";
 
 // Base shadcn/ui primitives (new-york-v4), ported into src/primitives/.
 // These are dependency-free leaves; prop types are React.ComponentProps

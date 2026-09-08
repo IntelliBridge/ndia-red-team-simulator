@@ -2,89 +2,33 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ------------------------------------------------------------------ *
- * Semantic token layer (dark-mode foundation).
- *
- * Light values come from the existing slate-based palette; `.dark`
- * supplies sensible dark equivalents. These feed Tailwind via
- * theme.extend.colors (hsl(var(--token))) so utilities like
- * `bg-background text-foreground border-border bg-card
- * text-muted-foreground` work and flip under the `.dark` class
- * (darkMode: "class"). HSL channels are stored *without* the hsl()
- * wrapper so Tailwind can apply opacity modifiers (e.g. bg-primary/90).
- * ------------------------------------------------------------------ */
 :root {
-  --background: 210 40% 99%;            /* ~slate-50 */
-  --foreground: 222 47% 11%;            /* ~slate-900 */
-  --card: 0 0% 100%;                    /* white */
-  --card-foreground: 222 47% 11%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 222 47% 11%;
-  --primary: 222 47% 11%;              /* slate-900 */
-  --primary-foreground: 210 40% 98%;   /* slate-50 */
-  --secondary: 210 40% 96%;            /* slate-100 */
-  --secondary-foreground: 222 47% 11%;
-  --muted: 210 40% 96%;                /* slate-100 */
-  --muted-foreground: 215 16% 47%;     /* slate-500 */
-  --accent: 210 40% 96%;               /* slate-100 */
-  --accent-foreground: 222 47% 11%;
-  --destructive: 0 72% 51%;            /* red-600 */
-  --destructive-foreground: 210 40% 98%;
-  --border: 214 32% 91%;               /* slate-200 */
-  --input: 214 32% 91%;                /* slate-200 */
-  --ring: 215 20% 65%;                 /* slate-400 */
+  --background: 42 35% 96%; --foreground: 205 32% 16%;
+  --card: 42 32% 99%; --card-foreground: 205 32% 16%;
+  --popover: 42 32% 99%; --popover-foreground: 205 32% 16%;
+  --primary: 190 72% 30%; --primary-foreground: 42 35% 96%;
+  --secondary: 38 25% 89%; --secondary-foreground: 205 32% 16%;
+  --muted: 38 25% 91%; --muted-foreground: 205 14% 43%;
+  --accent: 32 78% 57%; --accent-foreground: 205 32% 16%;
+  --destructive: 5 69% 42%; --destructive-foreground: 42 35% 96%;
+  --border: 36 22% 80%; --input: 36 22% 80%; --ring: 190 72% 30%;
 }
-
 .dark {
-  --background: 222 47% 11%;           /* slate-900 */
-  --foreground: 210 40% 98%;          /* slate-50 */
-  --card: 222 44% 13%;                /* slightly lifted slate-900 */
-  --card-foreground: 210 40% 98%;
-  --popover: 222 44% 13%;
-  --popover-foreground: 210 40% 98%;
-  --primary: 210 40% 98%;             /* slate-50 */
-  --primary-foreground: 222 47% 11%;  /* slate-900 */
-  --secondary: 217 33% 17%;           /* slate-800 */
-  --secondary-foreground: 210 40% 98%;
-  --muted: 217 33% 17%;               /* slate-800 */
-  --muted-foreground: 215 20% 65%;    /* slate-400 */
-  --accent: 217 33% 17%;              /* slate-800 */
-  --accent-foreground: 210 40% 98%;
-  --destructive: 0 63% 45%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 217 33% 22%;              /* slate-700-ish */
-  --input: 217 33% 22%;
-  --ring: 215 20% 50%;
+  --background: 205 32% 11%; --foreground: 42 35% 95%;
+  --card: 205 29% 15%; --card-foreground: 42 35% 95%;
+  --popover: 205 29% 15%; --popover-foreground: 42 35% 95%;
+  --primary: 174 54% 57%; --primary-foreground: 205 32% 11%;
+  --secondary: 205 23% 21%; --secondary-foreground: 42 35% 95%;
+  --muted: 205 23% 20%; --muted-foreground: 36 17% 69%;
+  --accent: 32 78% 57%; --accent-foreground: 205 32% 11%;
+  --destructive: 5 65% 56%; --destructive-foreground: 205 32% 11%;
+  --border: 205 19% 29%; --input: 205 19% 29%; --ring: 174 54% 57%;
 }
-
 @layer base {
-  * {
-    border-color: hsl(var(--border));
-  }
-  body {
-    background-color: hsl(var(--background));
-    color: hsl(var(--foreground));
-  }
+  * { border-color: hsl(var(--border)); box-sizing: border-box; }
+  body { background: hsl(var(--background)); color: hsl(var(--foreground)); font-family: "IBM Plex Sans", "Segoe UI", sans-serif; margin: 0; }
 }
-
-/* Bare minimum styles; Phase 4 brings real design. */
-* { box-sizing: border-box; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  margin: 0;
-}
-.redsim-header {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 0.75rem 1.5rem; background: #1a1a2e; color: #fff;
-}
-.redsim-header a { color: #fff; margin-right: 1rem; text-decoration: none; }
-.redsim-brand { font-weight: 800; letter-spacing: 0.04em; }
-.redsim-main { padding: 1.5rem; max-width: 1080px; margin: 0 auto; }
-.sev-critical { color: #b00020; font-weight: 700; }
-.sev-high { color: #c25e00; font-weight: 700; }
-.sev-medium { color: #b08900; }
-.sev-low { color: #5a5a5a; }
-.badge { padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.75rem; }
-.badge-verified { background: #d4f1de; color: #0a7f33; }
-.badge-still_vulnerable { background: #fbd5d5; color: #b00020; }
-.badge-inconclusive { background: #fdeec1; color: #8a6d00; }
+.font-mono { font-family: "IBM Plex Mono", monospace; }
+.redsim-panel { border: 1px solid hsl(var(--border)); background: hsl(var(--card)); box-shadow: 0 1px 2px hsl(var(--foreground) / .05); }
+.redsim-kicker { color: hsl(var(--muted-foreground)); font-size: .68rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+.redsim-footer { border-top: 1px solid hsl(var(--border)); color: hsl(var(--muted-foreground)); font-size: .72rem; line-height: 1.5; padding-top: 1.25rem; }

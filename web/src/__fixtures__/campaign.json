@@ -1,0 +1,53 @@
+{
+  "run_id": "fixture-run-001",
+  "status": "succeeded",
+  "stage": "report",
+  "stages_done": ["load_target", "sample", "clean_eval", "attack", "control", "explain", "interpret", "recommend", "report"],
+  "config": {
+    "attack_ids": ["fgsm"],
+    "attack_params": {"fgsm": {"eps": 0.03}},
+    "norm": "linf",
+    "eps_grid": [0.01, 0.03, 0.1],
+    "reference_eps": 0.03,
+    "dataset_id": "fixture-public-image",
+    "dataset_revision": "fixture-revision",
+    "n_samples": 50,
+    "seed": 7,
+    "include_control": true,
+    "finding_asr_threshold": 0.2,
+    "explain_k": 8,
+    "auto_recommend": true,
+    "llm_narrative": false,
+    "target_id": "fixture-model",
+    "modality": "image",
+    "dataset_split": "test",
+    "scoring": {"version": "mri-1", "weights": {"acc": 0.35, "asr": 0.25, "eps": 0.2, "conf": 0.1, "expl": 0.1}}
+  },
+  "settings_hash": "fixture-settings-hash",
+  "target": {
+    "id": "fixture-model",
+    "project_id": "default",
+    "name": "Illustrative image classifier",
+    "source": "bundled",
+    "modality": "image",
+    "format": "onnx",
+    "sha256": "fixture-sha256",
+    "manifest": {"dataset_id": "fixture-public-image", "dataset_revision": "fixture-revision", "clean_accuracy": 0.82, "clean_n": 50, "gradients": false},
+    "status": "available"
+  },
+  "attacks": [{"id": "fgsm", "name": "FGSM", "domain": "image", "family": "evasion", "description": "Illustrative fixture attack", "params_schema": [], "references": [], "phase": "A", "access": "white-box", "requires_gradients": true, "status": "available"}],
+  "measurements": [
+    {"id": "m.clean", "family": "clean", "params": {}, "n": 50, "n_correct": 41, "accuracy": 0.82, "n_clean_correct": 41, "per_class": {"car": {"n": 10, "n_correct": 8}}, "wall_time_s": 1.2, "notes": []},
+    {"id": "m.evasion.fgsm", "family": "evasion", "attack_id": "fgsm", "params": {"eps": 0.03}, "n": 50, "n_correct": 24, "accuracy": 0.48, "n_flipped_from_clean": 17, "n_clean_correct": 41, "attack_success_rate": 0.41, "linf_norm_mean": 0.03, "l2_norm_mean": 0.42, "per_class": {"car": {"n": 10, "n_correct": 4}}, "wall_time_s": 2.1, "notes": []},
+    {"id": "m.control.noise", "family": "control", "attack_id": "noise_control", "params": {"eps": 0.03}, "n": 50, "n_correct": 38, "accuracy": 0.76, "n_flipped_from_clean": 3, "n_clean_correct": 41, "attack_success_rate": 0.07, "linf_norm_mean": 0.03, "l2_norm_mean": 0.39, "per_class": {"car": {"n": 10, "n_correct": 7}}, "wall_time_s": 1.6, "notes": []}
+  ],
+  "observations": [{"id": "o.1", "sample_index": 3, "true_label": "car", "pred_clean": "car", "pred_adv": "truck", "flipped": true, "confidence_clean": 0.88, "confidence_adv": 0.71, "artifacts": {"original": "fixture-original", "adv": "fixture-adv", "perturbation": "fixture-perturbation", "control": "fixture-control", "shap_clean": "fixture-shap-clean", "shap_adv": "fixture-shap-adv"}, "artifact_sha256": {}, "center_mass_ratio_clean": 0.61, "center_mass_ratio_adv": 0.43, "metric_kind": "heuristic", "metric_note": "Illustrative center-mass ratio.", "expl_shift": 0.18, "modality": "image", "linf_norm": 0.03, "l2_norm": 0.42, "control_pred": "car", "control_confidence": 0.79}],
+  "interpretation": [{"id": "i.1", "statement": "The evasion family reduced accuracy at the reference setting.", "basis": ["m.evasion.fgsm"], "kind": "inferred"}],
+  "recommendations": [{"id": "r.1", "title": "Evaluate input preprocessing", "rationale": "The measured evasion gap triggered a candidate rule.", "triggered_by": ["m.evasion.fgsm"], "status": "candidate", "validation": "not evaluated", "references": [], "narrative_source": "rules"}],
+  "limitations": ["FIXTURE — illustrative values are not evidence for a deployed model."],
+  "provenance": {"dataset_id": "fixture-public-image", "dataset_revision": "fixture-revision", "seed": 7},
+  "reviewer_notes": null,
+  "completeness": {"status": "complete", "missing": []},
+  "score": {"mri": 0.58, "grade": "C", "subscores": {"S_acc": 0.82, "S_asr": 0.59, "S_eps": 0.5, "S_conf": 0.55, "S_expl": 0.45}, "per_attack": {"fgsm": 0.58}, "weights": {"acc": 0.35, "asr": 0.25, "eps": 0.2, "conf": 0.1, "expl": 0.1}, "reading": "Robustness under the recorded in-scope attack at the reference budget.", "reference_eps": 0.03, "eps_grid": [0.01, 0.03, 0.1], "attack_ids": ["fgsm"]},
+  "curve": [{"attack_id": "fgsm", "family": "evasion", "eps": 0.03, "accuracy": 0.48, "n": 50, "n_correct": 24}, {"attack_id": "noise_control", "family": "control", "eps": 0.03, "accuracy": 0.76, "n": 50, "n_correct": 38}]
+}

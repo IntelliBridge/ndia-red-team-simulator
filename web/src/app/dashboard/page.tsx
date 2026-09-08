@@ -53,8 +53,8 @@ export default function DashboardPage() {
       )}
       {!isLoading && !error && (!data || data.runs.length === 0) && (
         <p className="text-muted-foreground">
-          No runs yet. Head to{" "}
-          <a className="text-primary underline" href="/targets">/targets</a> to
+           No runs yet. Head to{" "}
+           <a className="text-primary underline" href="/models">/models</a> to
           register a target and start one.
         </p>
       )}

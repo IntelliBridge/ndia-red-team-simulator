@@ -29,7 +29,6 @@ describe("RootLayout", () => {
     const expected: Record<string, string> = {
       Dashboard: "/dashboard",
       Projects: "/projects",
-      Targets: "/targets",
       Findings: "/findings",
       Logs: "/logs",
       Audit: "/audit",
@@ -54,9 +53,9 @@ describe("RootLayout", () => {
     ).map((a) => [a.textContent, a.getAttribute("href")]);
     expect(navLinks).toEqual([
       ["Dashboard", "/dashboard"],
+      ["Models", "/models"],
       ["Runs", "/runs"],
       ["Projects", "/projects"],
-      ["Targets", "/targets"],
       ["Auth Profiles", "/auth-profiles"],
       ["Findings", "/findings"],
       ["Logs", "/logs"],
@@ -106,9 +105,6 @@ describe("RootLayout", () => {
 
     const projectsLink = screen.getByText("Projects", { selector: "a" });
     expect(projectsLink.getAttribute("href")).toBe("/projects");
-
-    const targetsLink = screen.getByText("Targets", { selector: "a" });
-    expect(targetsLink.getAttribute("href")).toBe("/targets");
 
     const costLink = screen.getByText("Cost", { selector: "a" });
     expect(costLink.getAttribute("href")).toBe("/cost");

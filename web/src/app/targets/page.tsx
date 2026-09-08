@@ -144,6 +144,13 @@ export default function TargetsPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Targets</h1>
+      <p className="text-sm text-muted-foreground">
+        Adversarial ML model targets are registered in the{" "}
+        <a href="/models" className="text-primary underline">
+          model catalog
+        </a>
+        . This page stays available until the catalog API is mounted.
+      </p>
       {err && (
         <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {err}
