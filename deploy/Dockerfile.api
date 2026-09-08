@@ -19,21 +19,18 @@ ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     PIP_CERT=/etc/ssl/certs/ca-certificates.crt
 
-# Install the CPU-only torch/torchvision first, so the ART/SHAP stack that
-# the ml extra resolves reuses them instead of pulling the multi-GB CUDA
-# wheels. The demo runs on CPU (see the spec: no GPU).
-RUN pip install --upgrade pip && \
-    pip install --index-url https://download.pytorch.org/whl/cpu \
-        "torch>=2.3" "torchvision>=0.18"
+RUN pip install --upgrade pip
 
 COPY pyproject.toml ./
 COPY redsim ./redsim
 COPY alembic.ini ./
 
 # api + worker give the API its SQLAlchemy/alembic side and the Celery
-# client it enqueues jobs with. ml keeps this image on the same dependency
-# set as the worker (torch/torchvision come from the CPU wheels above).
-RUN pip install -e ".[api,worker,ml]"
+# client it enqueues jobs with. The ml extra is NOT installed here: the API
+# process never imports torch, ART, onnxruntime or SHAP and never opens a
+# model file (spec sections 8.4 and 20.2). tests/test_api_process_has_no_ml.py
+# enforces the boundary.
+RUN pip install -e ".[api,worker]"
 
 EXPOSE 8000
 # Apply pending migrations (alembic.ini -> redsim/db/migrations, URL from

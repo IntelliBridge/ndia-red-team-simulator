@@ -10,7 +10,8 @@ Wire contract (mirrors ``pythia_sdk._common``):
 * ``POST {base_url}/v1/chat/completions`` with ``{"model", "messages", ...}``
 * ``Authorization: Bearer pk_…``
 * optional ``X-Pythia-Persona: <persona>``
-* model ids are canonical ``<vendor>/<model>`` or ``pythia/auto``
+* model ids are canonical ``<vendor>/<model>`` or ``pythia/auto``, read from
+  ``REDSIM_ML_LLM_MODEL``
 
 When the official ``pythia_sdk`` package is importable it is used; otherwise
 the same request is made with ``httpx``.
@@ -40,11 +41,11 @@ class PythiaSettings:
     timeout_s: float = 60.0
 
     @classmethod
-    def from_env(cls) -> "PythiaSettings | None":
+    def from_env(cls) -> PythiaSettings | None:
         """Return settings when all required variables are present, else ``None``."""
         base = os.environ.get("PYTHIA_BASE_URL", "").strip()
         key = os.environ.get("PYTHIA_API_KEY", "").strip()
-        model = os.environ.get("REDSIM_LLM_MODEL", "").strip()
+        model = os.environ.get("REDSIM_ML_LLM_MODEL", "").strip()
         if not (base and key and model):
             return None
         persona = os.environ.get("PYTHIA_PERSONA", "").strip() or None
@@ -74,16 +75,18 @@ class _HttpxBackend:
     def chat(self, model: str, messages: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:
         resp = self._client.post(CHAT_PATH, json={"model": model, "messages": messages, **kwargs})
         resp.raise_for_status()
-        return resp.json()
+        data: dict[str, Any] = resp.json()
+        return data
 
 
 def make_backend(settings: PythiaSettings, transport: httpx.BaseTransport | None = None) -> ChatBackend:
     """Prefer the official SDK; fall back to the in-repo httpx client."""
     if transport is None:
         try:
-            from pythia_sdk import PythiaClient  # type: ignore[import-not-found]
-            return PythiaClient(settings.base_url, settings.api_key, persona=settings.persona,
-                                timeout=settings.timeout_s)
+            from pythia_sdk import PythiaClient
+            backend: ChatBackend = PythiaClient(settings.base_url, settings.api_key, persona=settings.persona,
+                                                timeout=settings.timeout_s)
+            return backend
         except ImportError:
             pass
     return _HttpxBackend(settings, transport=transport)
