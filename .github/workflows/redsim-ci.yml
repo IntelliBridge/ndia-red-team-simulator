@@ -34,11 +34,11 @@ jobs:
             install-ml: false
             markers: "not integration and not docker and not e2e and not slow and not auth_required and not ml"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -83,7 +83,7 @@ jobs:
     name: redsim_output is not committed
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fail if redsim_output is tracked
         run: |
           if git ls-files --error-unmatch redsim_output 2>/dev/null; then
@@ -95,7 +95,7 @@ jobs:
     name: Secret scan (trufflehog, verified only)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install trufflehog
         run: curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sudo sh -s -- -b /usr/local/bin
       - name: Scan filesystem (verified secrets only)
@@ -105,10 +105,10 @@ jobs:
     name: OTel Collector config is valid
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install PyYAML
@@ -165,11 +165,11 @@ jobs:
     name: Helm chart lints + templates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: "v3.15.4"
       - name: helm lint
@@ -221,10 +221,10 @@ jobs:
     name: SAST (semgrep + bandit)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install Redsim (security extra)
@@ -258,10 +258,10 @@ jobs:
     name: Dependency CVEs (pip-audit + trivy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       # Audit the *resolved* runtime env (api + worker), not just the lean
@@ -350,10 +350,10 @@ jobs:
       # each merged phase (see docs/dev/ci.md, "Coverage gate").
       COV_FAIL_UNDER: "81"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install Redsim (api, worker, test, dev + ml with CPU torch)
@@ -397,8 +397,8 @@ jobs:
       REDSIM_BROKER_URL: redis://localhost:6379/0
       REDSIM_RESULT_BACKEND: redis://localhost:6379/1
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Install
         run: pip install -e ".[api,worker,test]"
@@ -414,11 +414,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: unit
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: "10"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: "pnpm"
@@ -445,28 +445,28 @@ jobs:
     runs-on: ubuntu-latest
     needs: unit
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Build api
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile.api
           push: false
       - name: Build worker
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile.worker
           push: false
       - name: Build web
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile.web
           push: false
       - name: Build log-ingest
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile.log_ingest
@@ -481,10 +481,10 @@ jobs:
       REDSIM_E2E_STACK: "1"
       REDSIM_DISABLE_LLM: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with: { node-version: "20" }
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with: { python-version: "3.12" }
       - name: Install Redsim
         run: pip install -e ".[api,worker,test]"
