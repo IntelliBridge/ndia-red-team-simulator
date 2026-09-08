@@ -4,6 +4,8 @@
   "stage": "report",
   "stages_done": ["load_target", "sample", "clean_eval", "attack", "control", "explain", "interpret", "recommend", "report"],
   "config": {
+    "target_id": "fixture-model",
+    "modality": "image",
     "attack_ids": ["fgsm"],
     "attack_params": {"fgsm": {"eps": 0.03}},
     "norm": "linf",
@@ -18,8 +20,17 @@
     "explain_k": 8,
     "auto_recommend": true,
     "llm_narrative": false,
-    "scoring_weights": {"acc_clean": 0.35, "acc_adv": 0.25, "asr": 0.2, "conf_gap": 0.1, "expl_shift": 0.1}
+    "dataset_split": "test",
+    "scoring": {
+      "version": "mri-1",
+      "weights": {"acc": 0.35, "asr": 0.25, "eps": 0.2, "conf": 0.1, "expl": 0.1},
+      "severity": {"asr_high": 0.5, "asr_mid": 0.2},
+      "confidence": {"n_high": 100, "n_medium": 30},
+      "interpretation": {"evasion_drop": 0.2, "control_tolerance": 0.05, "control_drop": 0.1, "iterative_margin": 0.1, "center_mass_drop": 0.15, "expl_shift_high": 0.5, "conf_gap_high": 0.5}
+    },
+    "defense": null
   },
+  "settings_hash": "sha256:fixture-settings-hash",
   "target": {
     "id": "fixture-model",
     "project_id": "default",
@@ -44,6 +55,6 @@
   "provenance": {"dataset_id": "fixture-public-image", "dataset_revision": "fixture-revision", "seed": 7},
   "reviewer_notes": null,
   "completeness": {"status": "complete", "missing": []},
-  "score": {"mri": 0.58, "grade": "C", "subscores": {"S_acc": 0.82, "S_asr": 0.59, "S_eps": 0.5, "S_conf": 0.55, "S_expl": 0.45}, "per_attack": {"fgsm": 0.58}, "weights": {"acc_clean": 0.35, "acc_adv": 0.25, "asr": 0.2, "conf_gap": 0.1, "expl_shift": 0.1}, "reading": "Robustness under the recorded in-scope attack at the reference budget.", "reference_eps": 0.03, "eps_grid": [0.01, 0.03, 0.1], "attack_ids": ["fgsm"]},
+  "score": {"mri": 0.58, "grade": "C", "subscores": {"S_acc": 0.82, "S_asr": 0.59, "S_eps": 0.5, "S_conf": 0.55, "S_expl": 0.45}, "per_attack": {"fgsm": 0.58}, "weights": {"acc": 0.35, "asr": 0.25, "eps": 0.2, "conf": 0.1, "expl": 0.1}, "reading": "Robustness under the recorded in-scope attack at the reference budget.", "reference_eps": 0.03, "eps_grid": [0.01, 0.03, 0.1], "attack_ids": ["fgsm"]},
   "curve": [{"attack_id": "fgsm", "family": "evasion", "eps": 0.03, "accuracy": 0.48, "n": 50, "n_correct": 24}, {"attack_id": "noise_control", "family": "control", "eps": 0.03, "accuracy": 0.76, "n": 50, "n_correct": 38}]
 }

@@ -160,6 +160,23 @@ describe("/runs/[id] campaign review", () => {
     expect(screen.getByText("Audit chain")).toBeTruthy();
   });
 
+  it("reads scoring weights from the nested config and the hash from the record", () => {
+    renderPage();
+    expect(
+      screen.getByText("acc=0.35, asr=0.25, eps=0.2, conf=0.1, expl=0.1 (mri-1)"),
+    ).toBeTruthy();
+    expect(screen.getByText("sha256:fixture-settings-hash")).toBeTruthy();
+  });
+
+  it("does not crash when the config omits the scoring block", () => {
+    const bare = campaign();
+    delete (bare.config as { scoring?: unknown }).scoring;
+    delete (bare as { settings_hash?: unknown }).settings_hash;
+    setCampaign(bare);
+    renderPage();
+    expect(screen.getAllByText("not recorded").length).toBeGreaterThan(0);
+  });
+
   it("does not claim failed campaigns are still receiving evidence", () => {
     setCampaign(campaign({ status: "failed", evidence_complete: false }));
     renderPage();

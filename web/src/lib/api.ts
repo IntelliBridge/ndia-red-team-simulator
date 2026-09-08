@@ -336,7 +336,7 @@ export type Capabilities = {
   };
   worker_ml_extra: boolean;
   sandbox_enabled: boolean;
-  scoring_weights?: ScoringWeights;
+  scoring_weights?: MRIWeights;
   endpoint_connector?: {
     status: "available" | "not_implemented";
     reason?: string;
@@ -361,16 +361,36 @@ export type CampaignRequest = {
   auto_recommend?: boolean;
   llm_narrative?: boolean;
 };
-export type ScoringWeights = {
-  acc_clean: number;
-  acc_adv: number;
+// Mirrors redsim.ml.schema.MRIWeights: sums to 1 and is never renormalised.
+export type MRIWeights = {
+  acc: number;
   asr: number;
-  conf_gap: number;
-  expl_shift: number;
+  eps: number;
+  conf: number;
+  expl: number;
 };
+// Mirrors redsim.ml.schema.ScoringConfig, the `ml.scoring` block copied onto
+// the campaign at admission and frozen.
+export type ScoringConfig = {
+  version: string;
+  weights: MRIWeights;
+  severity?: { asr_high: number; asr_mid: number };
+  confidence?: { n_high: number; n_medium: number };
+  interpretation?: Record<string, number>;
+};
+// Mirrors redsim.ml.schema.CampaignConfig as returned on a campaign record.
+// settings_hash is not part of the config: it is a top-level CampaignRecord
+// field (see Campaign below).
 export type CampaignConfig = CampaignRequest & {
-  scoring_weights: ScoringWeights;
-  settings_hash?: string;
+  target_id?: string;
+  modality?: "image" | "tabular" | "llm";
+  dataset_split?: string;
+  scoring: ScoringConfig;
+  defense?: {
+    id: string;
+    art_class?: string | null;
+    params: Record<string, unknown>;
+  } | null;
 };
 export type Measurement = {
   id: string;
@@ -457,7 +477,7 @@ export type MRIRecord = {
   delta?: MRIDelta | null;
   subscores?: MRISubscores;
   per_attack?: Record<string, number>;
-  weights?: ScoringWeights;
+  weights?: MRIWeights;
   reading?: string;
   reference_eps?: number;
   eps_grid?: number[];
@@ -480,6 +500,7 @@ export type Campaign = {
   stages_done: string[];
   error?: string | null;
   config: CampaignConfig;
+  settings_hash?: string | null;
   target: ModelTarget;
   attacks: AttackInfo[];
   provenance?: Record<string, unknown> | null;

@@ -26,6 +26,7 @@ import {
   startCampaign,
   verifyFinding,
   type Campaign,
+  type CampaignRequest,
   type Comparison,
   type DefenseInfo,
   type Finding,
@@ -289,15 +290,20 @@ export default function RunPage({ params }: { params: { id: string } }) {
             <div>
               <dt className="redsim-kicker">scoring weights</dt>
               <dd>
-                {Object.entries(campaign.config.scoring_weights)
-                  .map(([key, value]) => `${key}=${value}`)
-                  .join(", ")}
+                {campaign.config.scoring?.weights
+                  ? Object.entries(campaign.config.scoring.weights)
+                      .map(([key, value]) => `${key}=${value}`)
+                      .join(", ")
+                  : "not recorded"}
+                {campaign.config.scoring?.version
+                  ? ` (${campaign.config.scoring.version})`
+                  : ""}
               </dd>
             </div>
             <div>
               <dt className="redsim-kicker">settings hash</dt>
               <dd className="break-all">
-                {campaign.config.settings_hash ?? "not recorded"}
+                {campaign.settings_hash ?? "not recorded"}
               </dd>
             </div>
             <div>
@@ -501,11 +507,26 @@ export default function RunPage({ params }: { params: { id: string } }) {
             <RoleGated minRole="scanner" callerRole={role}>
               <button
                 onClick={async () => {
-                  const {
-                    scoring_weights: _scoringWeights,
-                    settings_hash: _settingsHash,
-                    ...request
-                  } = campaign.config;
+                  // Resend only the request fields: the recorded config also
+                  // carries admission-time snapshots (scoring, target, attacks)
+                  // that POST /v1/models/{id}/attacks does not accept.
+                  const { config } = campaign;
+                  const request: CampaignRequest = {
+                    attack_ids: config.attack_ids,
+                    attack_params: config.attack_params,
+                    norm: config.norm,
+                    eps_grid: config.eps_grid,
+                    reference_eps: config.reference_eps,
+                    finding_asr_threshold: config.finding_asr_threshold,
+                    dataset_id: config.dataset_id,
+                    dataset_revision: config.dataset_revision,
+                    n_samples: config.n_samples,
+                    seed: config.seed,
+                    include_control: config.include_control,
+                    explain_k: config.explain_k,
+                    auto_recommend: config.auto_recommend,
+                    llm_narrative: config.llm_narrative,
+                  };
                   const result = await startCampaign(
                     campaign.target.id,
                     request,
