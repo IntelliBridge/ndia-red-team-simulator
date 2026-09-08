@@ -10,9 +10,9 @@ plumbing itself (fixtures, markers) see [Testing](testing.md).
 | Workflow | File | Runs on |
 |---|---|---|
 | Redsim CI | `redsim-ci.yml` | every PR and push to `main`, plus `workflow_dispatch` (with an opt-in E2E toggle) |
-| Docs | `docs.yml` | PRs and pushes that touch `docs/`, `mkdocs.yml`, `hooks/`, `pyproject.toml` or the root markdown files. `main` also deploys to GitHub Pages |
+| Docs | `docs.yml` | PRs and pushes that touch `docs/`, `mkdocs.yml`, `hooks/`, `pyproject.toml` or the root markdown files. `mkdocs build --strict` only. The Pages deploy job is dormant behind the repo variable `ENABLE_PAGES` (Pages is off, the repository is private and the plan has no private Pages) |
 | Release sign | `release-sign.yml` | `v*` tags only. Builds, pushes, cosign-signs and SBOM-attests the four images |
-| Deploy to AWS | `deploy-aws.yml` | pushes to `main` that touch runtime paths. Needs the repo variables and the OIDC role described at the top of the file, otherwise it fails at "Configure AWS credentials" |
+| Deploy to AWS | `deploy-aws.yml` | pushes to `main` that touch runtime paths. Builds api, worker and web images for ECR under GitHub OIDC and rolls whichever `ECS_SERVICE_*` variables are set. It fails today at "Configure AWS credentials" (the AssumeRole is refused account-side). It runs none of the test gates |
 
 ## Redsim CI jobs
 
@@ -124,13 +124,27 @@ They go away together with the Next upgrade owned by the web workstream
 ### Dependabot
 
 `.github/dependabot.yml` groups weekly updates per ecosystem: pip, npm (`/web`),
-GitHub Actions and the Docker base images under `deploy/`. Two open groups on
-2026-09-08 are the actions bump (#14, checkout v7, setup-python v7 and friends,
-which also clears the Node 20 deprecation warnings) and the docker bump (#13,
-which moves the Python images from 3.12 to 3.14, Postgres 16 to 18 and Node 20
-to 26). Neither touches the CI-owned files edited for this page, but #13 moves
-the interpreter the ml extra is validated on, so treat it as a runtime change,
-not a routine bump.
+GitHub Actions and the Docker base images under `deploy/`. Three groups merged
+on 2026-09-08: the actions bump (#14, checkout v7, setup-python v7 and
+friends), the docker bump (#13, base images under `deploy/`, which moved the
+web image to `node:26`) and the web bump (#15, 16 npm updates in
+`web/package.json`). Two of them broke CI on `main`, see the next section.
+Treat a Docker base-image bump as a runtime change, not a routine one: it
+moves the interpreter the `ml` extra is validated on.
+
+## State of `main` (2026-09-08 evening, `4320740`)
+
+Redsim CI run 34267569336: 11 jobs green, 2 red, E2E skipped by design.
+
+| Job | Result | Cause |
+|---|---|---|
+| Unit tests (py3.12), Unit tests (py3.13), Coverage gate, API integration, SAST, Dependency CVEs, Helm, OTel config, Secret scan, redsim_output | green | |
+| Next.js build (pnpm, frozen lockfile) | red | `pnpm install --frozen-lockfile` fails with `ERR_PNPM_OUTDATED_LOCKFILE`: the root `pnpm-lock.yaml` is not up to date with `web/package.json` after dependabot #15. Fix: regenerate the lockfile in a PR. |
+| Build images (no push) | red | The web image fails at `corepack enable && corepack prepare pnpm@10.33.2 --activate` (exit 127) in `deploy/Dockerfile.web`, whose base is now `node:26-bookworm-slim` after dependabot #13. That image does not ship corepack. Fix: install pnpm explicitly (or pin a base image that still ships corepack). |
+
+Locally on the same commit: `pytest -q` = 900 passed, 30 skipped, ruff
+(CI selection) clean, `mypy redsim` clean, `mkdocs build --strict` clean.
+`Docs` is green on `main`, `Deploy to AWS` fails at the AssumeRole step.
 
 ## Docs build
 
@@ -152,7 +166,9 @@ cannot find it.
 ## Reproduce locally
 
 The dev venv lives at `.venv/` and was created with uv. It has no `pip`
-module, so install with uv and run tools through the venv interpreter:
+module, so install with uv and run tools through the venv interpreter.
+`mkdocs` needs the `docs` extra (`uv pip install --native-tls -e ".[docs]"`),
+which is installed in the team venv as of 2026-09-08:
 
 ```bash
 V=.venv/bin/python
@@ -164,9 +180,9 @@ $V -c 'import yaml,sys; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' .github
 ```
 
 Behind a TLS-inspecting proxy, `uv` needs `--native-tls` and Python HTTP
-clients need the system trust store (`import truststore;
-truststore.inject_into_ssl()`, already installed in the venv). pip-audit can be
-run the same way against a freeze:
+clients need the system trust store through `truststore.inject_into_ssl()`
+(the `truststore` package is installed in the venv). pip-audit can be run
+the same way against a freeze:
 
 ```bash
 uv pip freeze --python $V | grep -v redsim-platform > /tmp/freeze.txt

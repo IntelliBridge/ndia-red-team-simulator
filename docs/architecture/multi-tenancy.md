@@ -30,7 +30,7 @@ flowchart TD
   org["Organization<br/>(the tenant)"]
   org --> projA["Project A"]
   org --> projB["Project B"]
-  projA --> runsA["runs · jobs · findings<br/>targets · llm_usage · artifacts<br/>remediation_attempts · application_logs"]
+  projA --> runsA["runs · jobs · findings<br/>targets · llm_usage · artifacts<br/>remediation_attempts · application_logs<br/>ml_campaigns"]
   projB --> runsB["runs · jobs · findings<br/>…"]
 ```
 
@@ -44,10 +44,12 @@ flowchart TD
 
 ## DB-enforced org isolation (migration `0006_tenant_rls`)
 
-Migration `0005` makes the database enforce the org boundary. It touches
+Migration `0006` makes the database enforce the org boundary. It touches
 `projects` (which already carries `org_id`) plus the eight project-scoped
 tables: `targets`, `runs`, `jobs`, `findings`, `llm_usage`, `artifacts`,
-`remediation_attempts`, `application_logs`.
+`remediation_attempts`, `application_logs`. Migration `0010_ml_vertical`
+adds a ninth scoped table, `ml_campaigns`, with the same column, triggers
+and policy (section 4 below).
 
 ### 1. Denormalized `org_id` + a backfill trigger
 
@@ -64,8 +66,8 @@ subqueried `projects` would recurse through that table's own RLS.
 
 ### 2. `ENABLE` + `FORCE ROW LEVEL SECURITY` + one policy
 
-Each of the nine tables gets RLS **enabled and forced**, plus a single
-policy `redsim_tenant_isolation`:
+Each RLS table (`projects` plus every scoped table) gets RLS **enabled
+and forced**, plus a single policy `redsim_tenant_isolation`:
 
 ```sql
 ALTER TABLE <t> ENABLE ROW LEVEL SECURITY;
@@ -105,9 +107,39 @@ the owner). `ENABLE` already binds ordinary roles.
 
 !!! note "Why `organizations` itself isn't in the RLS set"
     `organizations` is the tenant *root*, not a project-scoped table, so
-    `0005` does not force RLS on it (and `0006`, which adds org columns,
-    needs no RLS change). The eight scoped tables plus `projects` are the
-    rows that carry a tenant key.
+    `0006` does not force RLS on it (and `0007`, which adds org columns,
+    needs no RLS change). The scoped tables plus `projects` are the rows
+    that carry a tenant key. Also outside the RLS set: `users`,
+    `project_memberships`, `auth_profiles` (app-scoped by `project_id`
+    checks), `audit_events` and `audit_chain_heads` (append-only,
+    chain-scoped, `project_id` nullable) and `finding_tickets`.
+
+### 3. `org_id` drift guard on UPDATE (migration `0009_tenant_org_id_guard`)
+
+The insert trigger only fires on INSERT, so an UPDATE could drive a row's
+`org_id` out of sync with its project's org, and the system path (empty
+GUC) bypasses the policy's `WITH CHECK`. Migration `0009` adds a
+`BEFORE UPDATE` trigger per scoped table (`redsim_check_org_id_<table>`)
+that raises `check_violation` whenever the new `org_id` differs from the
+org owning the row's project. A `NULL` `org_id` is backfilled instead of
+rejected, mirroring the insert trigger. `application_logs` rows with a
+`NULL` `project_id` (system-scoped logs) are left alone because there is
+no owning org to enforce against.
+
+### 4. `ml_campaigns` parity (migration `0010_ml_vertical`)
+
+The campaign and score record of the ML vertical (`ml_campaigns`, one row
+per ML `Run`, spec section 5.6) joins the scoped set with the identical
+denormalized `org_id` column, the `redsim_set_org_id_ml_campaigns` insert
+backfill, the `redsim_check_org_id_ml_campaigns` update guard, `ENABLE`
+plus `FORCE ROW LEVEL SECURITY` and the `redsim_tenant_isolation` policy
+over the same GUC. The trigger, guard and policy SQL is copied from `0006`
+and `0009` with only the table name substituted. ML code never sets
+`org_id` (spec 7.6). The same migration adds the nullable `targets.detail`
+JSONB column that holds the `MLModelManifest` for `ml_model_artifact` and
+`ml_model_endpoint` targets. It is `NULL` for every other kind, so no
+existing row changes meaning. On `main` the ORM does not yet map either
+the column or the table. Only the migration exists.
 
 ---
 
@@ -152,8 +184,16 @@ sequenceDiagram
     MW->>CV: reset (finally)
 ```
 
-Workers and migrations never set the GUC, so they run with full access —
+Workers and migrations never set the GUC, so they run with full access,
 exactly what background execution and `alembic upgrade` need.
+
+A detective control backs the triggers: the
+`redsim.verify_tenant_integrity` beat task (hourly) re-derives each
+scoped row's expected `org_id` from its project, logs any mismatch, and
+records one `tenant.integrity_check` event on the system audit chain. It
+never repairs. `redsim tenants verify` runs the same scan on demand, and
+`--repair` backfills drifted rows from the project once the drift is
+understood.
 
 ---
 
@@ -164,7 +204,7 @@ to the Organization.
 
 ### Schema
 
-Migration `0006` adds two nullable columns to `organizations`:
+Migration `0007` adds two nullable columns to `organizations`:
 
 - **`monthly_llm_budget_cents`** (`INTEGER`) — the org's monthly LLM spend
   cap in cents. `NULL` ⇒ uncapped.

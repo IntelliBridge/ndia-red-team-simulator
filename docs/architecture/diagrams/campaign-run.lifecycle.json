@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Campaign Run Lifecycle",
+    "output": "docs/architecture/diagrams/campaign-run.lifecycle.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      630
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Job status and campaign stages"
+    },
+    {
+      "id": "terminal",
+      "label": "Terminal sinks"
+    }
+  ],
+  "states": [
+    {
+      "id": "queued",
+      "type": "start",
+      "label": "queued",
+      "sublabel": "inserted at admission",
+      "lane": "main",
+      "col": 0,
+      "step": "01",
+      "tag": "entry"
+    },
+    {
+      "id": "attack_phase",
+      "type": "active",
+      "label": "attack.run",
+      "sublabel": "load_target to control",
+      "lane": "main",
+      "col": 1,
+      "step": "02",
+      "tag": "running"
+    },
+    {
+      "id": "explain_phase",
+      "type": "active",
+      "label": "explain.run",
+      "sublabel": "explain, then score",
+      "lane": "main",
+      "col": 2,
+      "step": "03",
+      "tag": "running"
+    },
+    {
+      "id": "harden_phase",
+      "type": "active",
+      "label": "harden.recommend",
+      "sublabel": "interpret to report",
+      "lane": "main",
+      "col": 3,
+      "step": "04",
+      "tag": "running"
+    },
+    {
+      "id": "succeeded",
+      "type": "success",
+      "label": "succeeded",
+      "sublabel": "terminal sink",
+      "lane": "main",
+      "col": 4,
+      "step": "05",
+      "tag": "terminal"
+    },
+    {
+      "id": "cancelled",
+      "type": "failure",
+      "label": "cancelled",
+      "sublabel": "terminal sink",
+      "lane": "terminal",
+      "col": 0,
+      "tag": "terminal"
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "failed",
+      "sublabel": "terminal sink",
+      "lane": "terminal",
+      "col": 1,
+      "tag": "terminal"
+    }
+  ],
+  "transitions": [
+    {
+      "id": "t-retry",
+      "from": "explain_phase",
+      "to": "queued",
+      "label": "any running job: transient error, task.retry back to queued",
+      "variant": "emphasis",
+      "route": "top-channel",
+      "channelY": 72
+    },
+    {
+      "id": "t-run-failed",
+      "from": "harden_phase",
+      "to": "failed",
+      "label": "terminal error, reaper TTL",
+      "variant": "security",
+      "route": "drop"
+    },
+    {
+      "id": "t-queued-cancelled",
+      "from": "queued",
+      "to": "cancelled",
+      "label": "cancel_run, or upstream job failed",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "t-run-cancelled",
+      "from": "attack_phase",
+      "to": "cancelled",
+      "label": "cancel_run + revoke",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "ALLOWED (redsim/workers/job_state.py)",
+      "items": [
+        "queued: to running or cancelled",
+        "running: to succeeded, failed, cancelled or queued"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Retry (redsim/workers/bootstrap.py)",
+      "items": [
+        "task_acks_late: a redelivered job runs only if still queued",
+        "transient: reset to queued, task.retry max 2, reaper 3600 s"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Cancel (redsim/services/runs.py)",
+      "items": [
+        "cancel_run: audit run.cancel first, jobs cancelled, revoke",
+        "a failed task cancels the queued rest, UI retry is a new run"
+      ]
+    }
+  ]
+}

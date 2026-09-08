@@ -12,7 +12,7 @@ flowchart LR
     api["redsim-api"]
     worker["redsim-worker"]
     web["@redsim/web"]
-    scan["scanner subprocesses"]
+    scan["sandbox children"]
   end
 
   subgraph p_default["default compose profile"]
@@ -97,7 +97,7 @@ Indexed for the queries that actually happen:
 |---------------------------|--------------------------------------------|
 | `ix_logs_run_ts`          | per-run timeline (newest first)            |
 | `ix_logs_project_ts`      | per-project tail                           |
-| `ix_logs_request`         | correlate API + worker + scanner by request_id |
+| `ix_logs_request`         | correlate API + worker + sandbox child by request_id |
 | `ix_logs_trace`           | correlate with a Jaeger trace              |
 | `ix_logs_severity_ts`     | filter (e.g. severity=error) + newest first |
 | `ix_logs_service`         | service name filter                        |
@@ -246,16 +246,16 @@ worker pools don't contend:
 
 | Queue | Tasks | Why |
 |-------|-------|-----|
-| `scans` | `scan_start`, `fix_generate`, `verify_replay`, `agent_run` | Long offensive / remediation work (minutes). |
-| `default` | `ci_gate`, `report_render`, `vulnfixer_render`, `parallel_fix`, `reap_stale_jobs` | Fast bookkeeping — kept off the `scans` pool so a long scan can't starve it. (`parallel_fix` blocks on its `fix_generate` children, so the waiter stays off the pool it waits on.) |
+| `scans` | `redsim.scan_start`, `redsim.verify_replay` today. The ML tasks `attack.run`, `explain.run` and `model.validate` join it with WS4. | Long attack / explain / verify work (minutes). |
+| `default` | `redsim.report_render`, `redsim.reap_stale_jobs`, `redsim.verify_tenant_integrity`, `redsim.export_chains_to_worm`. `harden.recommend` joins it with WS4, so the Pythia call never shares a pool with model loading. | Fast bookkeeping, kept off the `scans` pool so a long campaign cannot starve it. |
 
 [`deploy/docker-compose.yml`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/deploy/docker-compose.yml)
 runs **a dedicated worker pool per queue** — `redsim-worker`
 (`-Q scans`) and `redsim-worker-default` (`-Q default`) — plus a separate
 **`redsim-beat`** scheduler service (`celery … beat`). The beat process is
-what actually fires `app.conf.beat_schedule`, i.e. the stale-job reaper
-every 5 minutes; previously the schedule was defined but no beat process
-ran, so it never fired.
+what actually fires `app.conf.beat_schedule`: the stale-job reaper every
+5 minutes, the tenant integrity check hourly and the WORM export at
+`REDSIM_WORM_INTERVAL` (daily by default).
 
 ### Durable status on failure
 
@@ -273,7 +273,8 @@ past their TTL to `failed`.
 
 ## Correlation: a worked example
 
-A user hits `POST /v1/scans`. The full chain of ids that lets you
+A user hits an admission route, for example
+`POST /v1/findings/{id}/verify`. The full chain of ids that lets you
 follow that one call across services:
 
 ```mermaid
@@ -285,21 +286,21 @@ sequenceDiagram
     participant W as redsim-worker
     participant T as Jaeger
 
-    U->>API: POST /v1/scans<br/>X-Redsim-Request-ID req-abc
+    U->>API: POST /v1/findings/{id}/verify<br/>X-Redsim-Request-ID req-abc
     Note over API: middleware sets ContextVar<br/>OTel span trace_id t1
-    API->>DB: INSERT audit_events<br/>action scan.start<br/>request_id req-abc
+    API->>DB: INSERT audit_events<br/>action verify.replay<br/>request_id req-abc
     API->>DB: INSERT application_logs<br/>request_id req-abc trace_id t1
     API-->>U: run_id, job_id
 
     W->>DB: SELECT FROM jobs<br/>request_id req-abc lifted
     Note over W: bootstrap sets the same ContextVar
-    W->>DB: INSERT audit_events<br/>action scan.execute.strix<br/>request_id req-abc
+    W->>DB: INSERT audit_events<br/>action verify.replay (worker re-check)<br/>request_id req-abc
     W->>DB: INSERT application_logs<br/>request_id req-abc trace_id t2
     W->>T: emit traces for both spans
 ```
 
 Operationally: drop `request_id=req-abc` into the Logs page and you
-get the API row, the worker row, and the scanner stderr tail
+get the API row, the worker row, and the sandbox child's stderr tail
 chronologically. Drop `trace_id=t1` into Jaeger and you get the
 upstream-vs-downstream span timing. Drop the same into
 `application_logs.trace_id` and the same time-ordered log slice

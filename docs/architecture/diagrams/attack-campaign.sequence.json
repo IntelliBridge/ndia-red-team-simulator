@@ -1,0 +1,257 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Attack Campaign Sequence",
+    "output": "docs/architecture/diagrams/attack-campaign.sequence.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1080,
+      650
+    ],
+    "column_fit": "spread"
+  },
+  "participants": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "Analyst",
+      "sublabel": "scanner role"
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "@redsim/web",
+      "sublabel": "Next.js"
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "redsim-api",
+      "sublabel": "FastAPI /v1"
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "Postgres",
+      "sublabel": "audit + rows"
+    },
+    {
+      "id": "redis",
+      "type": "messagebus",
+      "label": "Redis",
+      "sublabel": "broker + events"
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Celery worker",
+      "sublabel": "scans / default"
+    },
+    {
+      "id": "blobs",
+      "type": "database",
+      "label": "S3 / MinIO",
+      "sublabel": "artifacts"
+    },
+    {
+      "id": "pythia",
+      "type": "external",
+      "label": "Pythia",
+      "sublabel": "LLM gateway"
+    }
+  ],
+  "segments": [
+    {
+      "from": 150,
+      "to": 322,
+      "label": "Admission (route planned, ordering on main)"
+    },
+    {
+      "from": 322,
+      "to": 450,
+      "label": "Campaign chain (PR #8 code, tasks planned)"
+    },
+    {
+      "from": 450,
+      "to": 578,
+      "label": "Recommend, report, observe"
+    }
+  ],
+  "messages": [
+    {
+      "id": "m01",
+      "from": "user",
+      "to": "web",
+      "y": 180,
+      "label": "launch campaign (planned /models/[id] page)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m02",
+      "from": "web",
+      "to": "api",
+      "y": 212,
+      "label": "POST /v1/models/{id}/attacks (planned route)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m03",
+      "from": "api",
+      "to": "postgres",
+      "y": 244,
+      "label": "RBAC attack.run, audit row first, then Run + Jobs queued (main)",
+      "variant": "security"
+    },
+    {
+      "id": "m04",
+      "from": "api",
+      "to": "redis",
+      "y": 276,
+      "label": "attack_run.delay(first job) after the audit row (task planned)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m05",
+      "from": "api",
+      "to": "web",
+      "y": 308,
+      "label": "202 {run_id, job_ids, status_url}",
+      "variant": "return"
+    },
+    {
+      "id": "m06",
+      "from": "redis",
+      "to": "worker",
+      "y": 340,
+      "label": "deliver on scans, task_context queued to running, redelivery guard (main)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m07",
+      "from": "worker",
+      "to": "blobs",
+      "y": 372,
+      "label": "attack.run: model.load, sample, clean_eval, attack x eps, control (PR #8)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m08",
+      "from": "worker",
+      "to": "postgres",
+      "y": 404,
+      "label": "findings, campaign record, stage_table, attack.execute audit",
+      "variant": "default"
+    },
+    {
+      "id": "m09",
+      "from": "worker",
+      "to": "blobs",
+      "y": 436,
+      "label": "explain.run: SHAP, then score writes the MRIRecord (PR #8, schema on main)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m10",
+      "from": "worker",
+      "to": "pythia",
+      "y": 468,
+      "label": "harden.recommend: rules first, optional text-only narrative (client on main)",
+      "variant": "security"
+    },
+    {
+      "id": "m11",
+      "from": "worker",
+      "to": "blobs",
+      "y": 500,
+      "label": "report render md / json / html (services.reports on main), Run succeeded",
+      "variant": "default"
+    },
+    {
+      "id": "m12",
+      "from": "api",
+      "to": "web",
+      "y": 532,
+      "label": "WS /v1/runs/{run_id}/events frames {job | stage} (main)",
+      "variant": "dashed"
+    },
+    {
+      "id": "m13",
+      "from": "web",
+      "to": "user",
+      "y": 564,
+      "label": "scorecard and findings on /runs/[id] (MRI panels planned)",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "api",
+      "from": 206,
+      "to": 314,
+      "type": "backend"
+    },
+    {
+      "participant": "postgres",
+      "from": 238,
+      "to": 252,
+      "type": "database"
+    },
+    {
+      "participant": "redis",
+      "from": 270,
+      "to": 346,
+      "type": "messagebus"
+    },
+    {
+      "participant": "worker",
+      "from": 334,
+      "to": 508,
+      "type": "backend"
+    },
+    {
+      "participant": "blobs",
+      "from": 366,
+      "to": 380,
+      "type": "database"
+    },
+    {
+      "participant": "pythia",
+      "from": 462,
+      "to": 476,
+      "type": "external"
+    },
+    {
+      "participant": "api",
+      "from": 526,
+      "to": 540,
+      "type": "backend"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "What exists where",
+      "items": [
+        "On main (4320740): RBAC actions, audit-before-enqueue admission, task_context, WS relay, Pythia client, reports, ML schema",
+        "PR #8 feat/ml-core: attacks, eval, MRI, SHAP, rules, narrative. PR #9: assets. Planned: /v1/models routes, ML tasks, /models pages"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Invariants (spec 10, 17)",
+      "items": [
+        "The audit row is appended before any Run or Job row and before task.delay (redsim/services/scans.py)",
+        "Findings, campaign record, stage_table and attack.execute audit rows go to Postgres, the MRI is written only at the score stage"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Observation paths",
+      "items": [
+        "task_context publishes job and stage frames to run:{run_id}:events (redsim/workers/events.py)",
+        "/v1/runs/{run_id}/events relays them (redsim/api/ws.py), SWR polling of /v1/runs/{id} is the fallback, Postgres is the source of truth"
+      ]
+    }
+  ]
+}
