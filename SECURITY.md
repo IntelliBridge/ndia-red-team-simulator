@@ -1,399 +1,334 @@
 # Security policy
 
-## Supported versions
-
-| Version           | Supported                          |
-|-------------------|------------------------------------|
-| 0.14.x (current)  | yes                                |
-| 0.5.x – 0.13.x    | yes — security fixes only          |
-| 0.3.x – 0.4.x     | yes — security fixes only          |
-| < 0.3             | no                                 |
+redsim is a non-operational proof of concept. There is no supported release
+line: `main` is the only line, and the platform it inherits from aegis is
+described below together with the boundaries the adversarial-ML vertical adds.
 
 ## Reporting a vulnerability
 
-Email **security@agiledefense.com** (or open a private security
-advisory on GitHub if the repo is hosted there). Do **not** open a
-public issue.
+Open a private security advisory on the GitHub repository
+(`IntelliBridge/ndia-red-team-simulator`, Security tab) or contact the
+repository owner listed in `CODEOWNERS` directly. Do **not** open a public
+issue.
 
 Include:
 
-1. Affected version / commit.
+1. Affected commit.
 2. Reproduction steps or PoC.
 3. Impact assessment.
 4. Suggested remediation if you have one.
 
-We will acknowledge within 3 business days and aim for triage within
-10 business days. Coordinated disclosure preferred; we will credit
-reporters who request it.
+We acknowledge within 3 business days and aim for triage within 10 business
+days. Coordinated disclosure is preferred.
 
-## Hardening posture (current — v0.14.0)
+## Platform security model
 
-### Auth + authorization
+### Auth and authorization
 
-- Browser sessions: NextAuth + Keycloak code flow; the Redsim-signed
-  `redsim_api_session` cookie (RS256) is the only token FastAPI
-  trusts on the cookie path.
-- CLI / CI: bearer tokens only; bearer wins when both are present.
-- Worker → API: **only** time-bound, versioned tokens with key-rotation
-  overlap. **Breaking change:** the legacy non-expiring `worker:<hex>`
-  token has been **removed** — it is no longer accepted, and
-  `REDSIM_WORKER_SIGNING_KEY` is now **mandatory** for worker auth (a
-  worker can't authenticate without it).
-- Every protected route runs `redsim.api.policy.check` server-side;
-  the web `<RoleGated>` component is **UX only**.
-- The role-gate decision is **pluggable** (`REDSIM_POLICY_ENGINE`):
-  the default `static` engine is the built-in role-rank table, while
-  `opa` / `cedar` delegate to an external policy service. External
-  engines **fail closed** — any error or timeout denies.
-- Project-access enforced on read endpoints (reports / exports /
-  WebSocket) via `ensure_project_access` /
-  `ensure_run_access`.
+- Browser sessions: NextAuth + Keycloak code flow. The redsim-signed
+  `redsim_api_session` cookie (RS256) is the only token FastAPI trusts on the
+  cookie path.
+- CLI / CI: bearer tokens only. Bearer wins when both are present.
+  `REDSIM_AUTH_MODE=dev` accepts `dev:<email>` bearers and is refused when
+  `REDSIM_ENV=prod`.
+- Worker to API: only time-bound, versioned tokens with key-rotation overlap.
+  `REDSIM_WORKER_SIGNING_KEY` is mandatory for worker auth.
+- Every protected route runs `redsim.api.policy.check` server-side. The web
+  `<RoleGated>` component is UX only.
+- Roles rank `viewer` < `scanner` < `remediator` < `approver` < `admin`.
+  `viewer` passes every membership (read) gate and fails every gated action.
+  The ML actions gate as `model.register` (remediator), `attack.run`
+  (scanner), `explain.run` (scanner), `harden.recommend` (remediator),
+  `finding.review` (approver, plus an independence check so a campaign's
+  creator cannot dismiss its own findings), `finding.annotate` (remediator),
+  `report.export` (scanner).
+- The role-gate decision is pluggable (`REDSIM_POLICY_ENGINE`): the default
+  `static` engine is the built-in role-rank table, `opa` and `cedar` delegate
+  to an external policy service. External engines fail closed.
+- Project access is enforced on read endpoints (reports, WebSocket) via
+  `ensure_project_access` / `ensure_run_access`.
 
 See [`docs/architecture/auth.md`](docs/architecture/auth.md).
 
 ### Key rotation
 
-Rotated or revoked keys are picked up without a forced restart or a
-re-create, and rotations get a graceful overlap window:
+- **IdP keys (JWKS).** The Keycloak JWKS is a time-boxed cache
+  (`REDSIM_API_JWKS_CACHE_TTL_SECONDS`, default `300`), so a rotated or
+  revoked signing key is picked up within one TTL with no restart.
+- **API session cookie.** During a rotation the API accepts a previous public
+  key (`REDSIM_API_SESSION_PUBLIC_KEY_PREVIOUS`) alongside the current one.
+- **Auth-profile secrets.** The Fernet key supports MultiFernet rotation
+  (`REDSIM_AUTH_PROFILES_KEY_PREVIOUS`).
 
-- **IdP keys (JWKS).** The Keycloak JWKS is now a **time-boxed cache**
-  (`REDSIM_API_JWKS_CACHE_TTL_SECONDS`, default `300`) rather than pinned
-  for the process lifetime, so a rotated or revoked IdP signing key is
-  picked up after at most one TTL with no restart.
-- **API session cookie.** During a cookie-signing-key rotation the API
-  accepts a **previous** public key
-  (`REDSIM_API_SESSION_PUBLIC_KEY_PREVIOUS`) alongside the current one, so
-  in-flight sessions keep validating across the cutover.
-- **DAST auth-profile secrets.** The Fernet key supports **MultiFernet**
-  rotation (`REDSIM_AUTH_PROFILES_KEY_PREVIOUS`): the previous key still
-  decrypts existing profiles while new writes use the current key, so
-  rotation no longer requires re-creating every profile.
-
-See [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Rotation runbook".
+See [`docs/ops/deploy.md`](docs/ops/deploy.md) under "Rotation runbook".
 
 ### CSRF, CORS, WebSocket
 
-- Cookie-authenticated mutations require an `X-Redsim-CSRF` header
-  matching the `redsim_csrf` cookie (double-submit pattern).
-  Bearer-only callers are exempt.
-- CORS exposes `allow_credentials=True` only against an explicit
-  origin list (`REDSIM_CORS_ORIGINS` + `REDSIM_WEB_ORIGIN`); methods +
-  headers are enumerated.
-- WebSocket upgrades validate `Origin` and resolve auth from
-  subprotocol → header → cookie; policy
-  failures close with `1008`.
+- Cookie-authenticated mutations require an `X-Redsim-CSRF` header matching
+  the `redsim_csrf` cookie (double-submit). Bearer-only callers are exempt.
+- CORS exposes `allow_credentials=True` only against an explicit origin list
+  (`REDSIM_CORS_ORIGINS` plus `REDSIM_WEB_ORIGIN`).
+- WebSocket upgrades validate `Origin` and resolve auth from subprotocol,
+  then header, then cookie. Policy failures close with `1008`.
 
-### HTML report XSS defence
+### HTML report defence
 
-- Strict `html.escape(..., quote=True)` for every finding /
-  evidence interpolation in the report renderer.
-- Every HTML response carries
-  `Content-Security-Policy: default-src 'none'; style-src 'self'
-  'unsafe-inline'; img-src data:; base-uri 'none'; frame-ancestors
-  'none'; form-action 'none'`, `X-Content-Type-Options: nosniff`,
-  `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`.
-- No inline `<script>` tags anywhere in the templates.
+- Strict `html.escape(..., quote=True)` for every finding and evidence
+  interpolation in the report renderer.
+- Every HTML report carries `Content-Security-Policy: default-src 'none'`
+  (with `style-src 'self' 'unsafe-inline'`, `img-src data:`, `base-uri
+  'none'`, `frame-ancestors 'none'`, `form-action 'none'`),
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
+  `X-Frame-Options: DENY`. No inline `<script>` anywhere in the templates.
+  The planned `/v1/artifacts/{id}` route serves SHAP PNGs and JSON under the
+  same headers.
 
 ### Audit chain
 
-- Every active operation runs through `redsim.safety.authorize` and
-  lands a hash-chained event via the configured `AuditWriter`
-  (`PostgresAuditWriter` in api/worker mode; `JsonlAuditWriter`
-  offline; `InMemoryAuditWriter` for tests).
-- Audit-before-enqueue: the chain row exists before Celery is
-  touched. Worker crashes can't produce a half-state.
-- Tool invocations land forensic detail (digests + blob refs) — raw
-  scanner stdout / stderr never appears in audit rows.
-- **Append-only at the database** (migration `0004`): a row-immutability
-  trigger `RAISE EXCEPTION`s on `UPDATE`/`DELETE`/`TRUNCATE` of
-  `audit_events` for everyone (owner + superuser included), so the chain
-  can't be re-signed by editing rows. The runtime `redsim_app` role is
-  granted only `INSERT, SELECT` on it; DDL (dropping the trigger) needs the
-  separate `redsim_owner` role, and `pgaudit` logs such changes out-of-band.
-- **WORM / Object-Lock archival** (`redsim/storage/worm.py`): chains export
-  off-DB to an S3 / MinIO bucket with **Object Lock** (`COMPLIANCE` mode,
-  default 7-year retention) — a daily `celery beat` task (self-gated on
-  `REDSIM_WORM_EXPORT`) plus on-demand `redsim audit export`. The sealed copy
-  can't be overwritten or deleted before retention expires, even by an
-  attacker who owns the database or the bucket credentials, so the chain is
-  tamper-*resistant* off-DB and not merely tamper-*evident*. Re-verify by
-  downloading the archived JSONL into `verify_chain`.
+- Every active operation runs through `redsim.safety.authorize` and lands a
+  hash-chained event via the configured `AuditWriter` (`PostgresAuditWriter`
+  in api/worker mode, `JsonlAuditWriter` offline, `InMemoryAuditWriter` in
+  tests).
+- Audit-before-enqueue: the chain row exists before the `Run` and `Job` rows
+  and before Celery is touched.
+- Forensic detail is digests plus blob refs. Raw tool output, model bytes,
+  dataset rows and prompt text never appear in audit rows.
+- Append-only at the database (migration `0004`): a row-immutability trigger
+  rejects `UPDATE`, `DELETE` and `TRUNCATE` on `audit_events` for everyone,
+  owner and superuser included. The runtime `redsim_app` role has only
+  `INSERT, SELECT`. DDL needs the separate `redsim_owner` role, and
+  `pgaudit` logs such changes out of band.
+- WORM archival (`redsim/storage/worm.py`): chains export to an S3 / MinIO
+  bucket with Object Lock (`COMPLIANCE` mode, default 7-year retention) from
+  a daily beat task self-gated on `REDSIM_WORM_EXPORT`, and on demand with
+  `redsim audit export`. The sealed copy cannot be altered before retention
+  expires, even by an attacker who owns the database.
 
-See [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md)
-and [`docs/ops/deploy.md`](docs/ops/deploy.md) for role provisioning and the
-WORM bucket runbook.
+See [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md).
 
-### Multi-tenancy / data isolation
+### Multi-tenancy and data isolation
 
-- The tenant is the **Organization**; every project belongs to one org.
-- **Layered isolation.** The app layer scopes reads to the caller's
-  project memberships (`ensure_project_access` / `ensure_run_access`); the
-  database layer adds **Postgres Row-Level Security** keyed on `org_id` as
-  **defense-in-depth**, so a forgotten `WHERE` clause can't leak rows
-  across orgs.
-- **`FORCE` on the tenant tables** (migration `0005`): `projects` and the
-  eight project-scoped tables (denormalized `org_id` + `BEFORE INSERT`
-  trigger) run with `ENABLE` + `FORCE ROW LEVEL SECURITY`, so the policy
-  binds even the table owner / superuser. A per-request GUC
-  `app.current_tenants` carries the caller's org ids; an empty/unset GUC
-  is the system / worker path (full access). RLS enforcement is exercised
-  in the Postgres CI jobs.
+- The tenant is the Organization. Every project belongs to one org.
+- The app layer scopes reads to the caller's project memberships, and the
+  database adds Postgres Row-Level Security keyed on `org_id` as defence in
+  depth. `ENABLE` plus `FORCE ROW LEVEL SECURITY` on `projects`, the eight
+  project-scoped tables (migration `0006`) and `ml_campaigns` (migration
+  `0010`), so the policy binds the table owner too. A per-request GUC
+  `app.current_tenants` carries the caller's org ids. An empty GUC is the
+  system / worker path.
+- Tenant integrity: a `BEFORE UPDATE` trigger (migration `0009`, extended to
+  `ml_campaigns` by `0010`) rejects any change to `org_id`, so a row cannot be
+  re-homed into another tenant. An hourly `verify_tenant_integrity` task and
+  `redsim tenants verify` detect drift out of band.
 
 See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
 
-### Target allowlist
+### Targets
 
-- Active scans against non-allowlisted hosts require an explicit
-  `--i-understand-this-target-is-authorized` flag (CLI) /
-  `override_authorized=true` (API). Either path also emits an
-  audit event with `override=true` so it shows up forensically.
-- CIDR ranges supported (`redsim.safety.is_target_allowed`).
-
-### Target ownership verification
-
-- The DNS-TXT / GitHub-App ownership-verification engine was removed
-  with the pentest domain. Targets are gated by the project allowlist
-  (and the explicit override flag above) alone; a target's `verified`
-  flag is never set in this build.
-- `GET /v1/targets/{id}/verification` and `POST /v1/targets/{id}/verify`
-  keep their 404 / project-membership / `admin` gates and then return
-  **`501 Not Implemented`** with an explicit message — an honest
-  "unavailable" path rather than a faked verification. `verified` is
-  left untouched.
+- Targets are gated by the project allowlist in `redsim.yaml`
+  (`redsim.safety.is_target_allowed`, exact host or CIDR). An override
+  (`override_authorized=true`) emits an audit event with `override=true`.
+- The DNS-TXT / GitHub-App ownership-verification engine was removed with the
+  pentest domain. `GET /v1/targets/{id}/verification` and
+  `POST /v1/targets/{id}/verify` keep their 404, membership and `admin` gates
+  and then return `501 Not Implemented`. A target's `verified` flag is never
+  set in this build.
+- ML model targets (`Target.kind` of `ml_model_artifact` and
+  `ml_model_endpoint`) are created only through the planned `/v1/models`
+  routes so the upload rules below cannot be bypassed. `POST /v1/targets`
+  with an ML kind is specified to answer `400 use_models_route`.
 
 ### Deployment hardening (Helm / k8s)
 
-- The Helm chart (`deploy/helm/redsim/`) renders every Redsim pod
-  hardened by default: non-root `securityContext`
-  (`runAsNonRoot`, uid/gid 1000), all Linux capabilities dropped,
-  `allowPrivilegeEscalation: false`, and `seccompProfile:
-  RuntimeDefault` at the pod and container level. Resource
-  requests/limits and liveness/readiness probes ship on every service.
-- **Optional gVisor sandbox** for the untrusted scan/tool workloads.
-  With `sandbox.enabled=true` a `runsc` `RuntimeClass` is wired onto
-  the worker pods (the attack-adapter executors), so a compromised
-  adapter is contained from the node kernel. gVisor must be installed on the
-  scheduling nodes. See [`docs/ops/kubernetes.md`](docs/ops/kubernetes.md).
-
-### Air-gapped installs
-
-- `REDSIM_OFFLINE_VENDOR_HOST` names the internal package / artifact
-  mirror for air-gapped installs and surfaces in `redsim doctor` and the
-  evidence pack. (The vendored pentest submodules and the URL-rewrite
-  helper that used this setting were removed with the pentest domain.)
-  See [`docs/ops/deploy.md`](docs/ops/deploy.md#air-gapped-offline-vendor-mirror).
+- The chart (`deploy/helm/redsim/`) renders every pod non-root (uid/gid
+  1000), all Linux capabilities dropped, `allowPrivilegeEscalation: false`,
+  `seccompProfile: RuntimeDefault`, with resource limits and probes on every
+  service.
+- Optional gVisor sandbox: with `sandbox.enabled=true` a `runsc`
+  `RuntimeClass` is wired onto the worker pods, which are the only pods that
+  load models and run attacks. gVisor must be installed on the scheduling
+  nodes. The ECS Fargate target has no equivalent, which the spec records as
+  a risk. See [`docs/ops/kubernetes.md`](docs/ops/kubernetes.md).
+- Production Helm installs hard-fail on shipped dev secret placeholders. Wire
+  real secrets (for example via the chart's `ExternalSecret` support) before
+  installing to prod.
 
 ### Compliance evidence
 
-- `redsim evidence-pack --out DIR` produces a self-contained,
-  **secret-free** bundle for auditors: exported audit chains + their
-  `verify_chain` integrity verdicts, a SOC 2 / ISO 27001 / FedRAMP
-  controls crosswalk (partial coverage flagged honestly), a system
-  summary, and a hashed manifest. See
-  [`docs/ops/compliance-evidence.md`](docs/ops/compliance-evidence.md).
-
-### LLM guardrails
-
-Two fail-safe layers sit at every point where untrusted text reaches an
-LLM or where model output leaves the platform (`redsim/llm/guardrails.py`).
-Both are config-gated and default **on**; logs and raised exceptions are
-secret-free (a blocked input surfaces a clean error, never the offending
-text or any matched secret).
-
-- **Diff / output secret scrubbing.** Unified diffs (`extract_unified_diff`)
-  and LLM outputs are passed through the same secret/token regex set used
-  by the audit redactor (`redsim/audit/redact.py`), with matches replaced by
-  `***REDACTED***`, so every downstream consumer of a scrubbed text
-  inherits the scrub.
-- **Prompt-injection detection.** Untrusted finding fields (title,
-  description, remediation steps, PoC, code snippets) and free-text prompts
-  are scored for injection before they reach the model: a tiered risk
-  (`none` / `low` / `medium` / `high`) with categories
-  (`instruction_override`, `role_switch`, `exfiltration`, …). At or above a
-  configurable risk threshold (`REDSIM_LLM_INJECTION_BLOCK_RISK`, default
-  `high`) the input is **blocked** with a clean error. `off` detects + logs
-  only.
-- The guardrail surface is `redsim/llm/guardrails.py` alone in this fork.
-  The pentest remediation / agent chokepoints that wired it were removed
-  with the pentest domain; the adversarial-ML explain / recommend stages
-  (`redsim/ml/`) call the same functions at their LLM boundary.
-- Config (env vars): `REDSIM_LLM_GUARDRAILS` (master, default on),
-  `REDSIM_LLM_SCRUB_DIFF`, `REDSIM_LLM_DETECT_INJECTION`,
-  `REDSIM_LLM_FILTER_OUTPUT` (all default on), and
-  `REDSIM_LLM_INJECTION_BLOCK_RISK` (default `high`; `off` = detect-and-log).
-
-See [`docs/architecture/overview.md`](docs/architecture/overview.md)
-§ "LLM guardrails" and [`docs/ops/deploy.md`](docs/ops/deploy.md) for the
-env knobs.
-
-### LLM budget (fail-closed)
-
-Budget enforcement is now **fail-closed** (`REDSIM_LLM_BUDGET_STRICT`,
-default **on** in prod). A DB-backed run that reaches an LLM call
-**without** a budget checker is **denied** rather than billed silently, so
-a missing or misconfigured budget hook can no longer let an ungoverned run
-spend. Set the knob off only in dev where cost isn't a concern.
-
-### Secrets handling
-
-- Four distinct secret materials:
-  - `REDSIM_API_SESSION_PRIVATE_KEY` (NextAuth side, RS256); the API
-    verifies with `REDSIM_API_SESSION_PUBLIC_KEY` and accepts
-    `REDSIM_API_SESSION_PUBLIC_KEY_PREVIOUS` during rotation.
-  - `REDSIM_WORKER_SIGNING_KEY` (shared HMAC, rotation overlap) — now
-    **mandatory** for worker auth (the legacy static token is gone).
-  - `REDSIM_GITHUB_PRIVATE_KEY` (GitHub App).
-  - `REDSIM_AUTH_PROFILES_KEY` (Fernet, api + worker) — encrypts DAST
-    auth-profile secrets at rest; `REDSIM_AUTH_PROFILES_KEY_PREVIOUS`
-    enables MultiFernet rotation.
-- DAST auth-profile secrets (`auth_profiles.secret_ciphertext`) are
-  Fernet-encrypted before any row or audit event is written, never
-  returned by any endpoint, and redacted (`***`) from recorded command
-  strings; a missing key fails closed. The key supports **MultiFernet**
-  rotation via `REDSIM_AUTH_PROFILES_KEY_PREVIOUS` (the previous key still
-  decrypts existing profiles during the overlap), so rotation no longer
-  requires re-creating profiles — see
-  [`docs/ops/authenticated-dast.md`](docs/ops/authenticated-dast.md).
-- `NEXTAUTH_SECRET` is opaque to Redsim (NextAuth's own).
-- Generated **diffs / patches and LLM I/O** are secret-scrubbed before
-  they are persisted, surfaced in a PR, or logged — see § "LLM guardrails"
-  above. Secrets that leak into a model-authored diff or a model response
-  are redacted to `***REDACTED***` on the canonical path.
-- Rotation procedure for each is documented in
-  [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Rotation runbook" and
-  [`docs/ops/authenticated-dast.md`](docs/ops/authenticated-dast.md)
-  § "Key rotation".
-- Integration secrets — the ticket-provider credentials
-  (`REDSIM_JIRA_*` / `REDSIM_SERVICENOW_*` / `REDSIM_LINEAR_*`) and the
-  target-verification salt `REDSIM_VERIFY_SECRET` — are env-configured
-  only. They are never accepted in an API body, persisted to a row, or
-  written to an audit detail; provider HTTP errors are wrapped to carry
-  only the provider name + status code, never the body or auth header.
-
-### Supply-chain integrity
-
-- **Signed third-party plugins.** Marketplace plugin discovery supports
-  opt-in **Ed25519** signature enforcement (`REDSIM_PLUGINS_REQUIRE_SIGNATURE`
-  + `REDSIM_PLUGINS_TRUSTED_KEYS`). The signature binds to the SHA-256 of the
-  factory module's source — it authorises only the code that runs. When
-  enforcement is on, an unsigned or invalid plugin is **rejected** before
-  registration; `redsim plugins sign` produces the detached signature.
-- **Signed + attested release images.** Release builds (on `v*` tags) push
-  the four service images to GHCR and **keyless cosign-sign** each by digest
-  (GitHub OIDC, no stored keys), attaching a **CycloneDX SBOM** (Syft) and
-  **SLSA-3 provenance** attestation. Operators verify with `cosign verify` /
-  `cosign verify-attestation` before deploy.
-- Remaining: **Nix reproducible builds** (bit-for-bit independent rebuild)
-  are still deferred — see
-  [ADR-0008](docs/adr/0008-nix-reproducible-builds.md) (tracked on the
-  roadmap).
-- See [`docs/security/supply-chain.md`](docs/security/supply-chain.md) for
-  the trust model, env vars, and the operator verification runbook.
+`redsim evidence-pack --out DIR` produces a self-contained, secret-free
+bundle for auditors: exported audit chains with their `verify_chain`
+verdicts, a SOC 2 / ISO 27001 / FedRAMP controls crosswalk with partial
+coverage flagged, a system summary and a hashed manifest. See
+[`docs/ops/compliance-evidence.md`](docs/ops/compliance-evidence.md).
 
 ### Plugin sandbox
 
-Third-party plugin scanners run **out-of-process by default**
-(`REDSIM_PLUGINS_SANDBOX=1`). The child process gets a **minimal allowlisted
-environment** — the parent's secrets are **never** passed to plugin code —
-plus **POSIX rlimits** (CPU, address space, file size, and `RLIMIT_NPROC`),
-its **own process group** with a **group-kill on timeout** (so a fork-bomb
-or a stuck child can't outlive the deadline), and a **private fd result
-channel** for handing findings back without a shared file.
+Third-party adapters discovered from the `redsim.scanners` entry-point group
+run out-of-process by default (`REDSIM_PLUGINS_SANDBOX=1`). The child gets a
+minimal allowlisted environment (the parent's secrets, including
+`PYTHIA_API_KEY`, are never passed), POSIX rlimits (CPU, address space, file
+size, open files, processes), its own process group with a group-kill on
+timeout, and a private fd result channel.
 
-**Be honest about what this is and isn't.** It is **defense-in-depth** —
-process isolation + rlimits + a hard timeout + a minimal env, gated by the
-Ed25519 **signature / allowlist** check (see "Supply-chain integrity"
-above). It is **not** a network or filesystem jail: a hostile plugin can
-still open sockets and touch files that the worker UID can reach. Kernel-
-level isolation (a microVM per plugin) is the upgrade path in
-[ADR-0006](docs/adr/0006-firecracker-microvm-isolation.md), not something
-this sandbox provides.
+This is defence in depth, not a jail: process isolation plus rlimits plus a
+hard timeout plus a minimal env, gated by the Ed25519 signature / allowlist
+check. It is not a network namespace or a filesystem jail. Plugin signatures
+are verified after the factory module is imported, so importing a malicious
+module already runs its top-level code. Only run vetted, signed plugins with
+`REDSIM_PLUGINS_ALLOW` and signature enforcement on. See
+[`docs/ops/deploy.md`](docs/ops/deploy.md) under "Plugin sandbox".
 
-There is also a **pre-existing load-then-verify limitation**: the plugin
-signature is verified **after** the factory module is imported, so importing
-a malicious module already executes its top-level code before the signature
-gate runs. The sandbox does not close that gap. **Only run vetted, signed
-plugins**, and keep `REDSIM_PLUGINS_ALLOW` / signature enforcement on. See
-[`docs/ops/deploy.md`](docs/ops/deploy.md) § "Plugin sandbox" for the env
-knobs.
+### Supply-chain integrity
 
-### Tenant integrity (org_id drift)
+- Signed third-party plugins: opt-in Ed25519 signature enforcement
+  (`REDSIM_PLUGINS_REQUIRE_SIGNATURE` plus `REDSIM_PLUGINS_TRUSTED_KEYS`)
+  bound to the SHA-256 of the factory module's source. `redsim plugins sign`
+  produces the detached signature. The upstream example plugin directory is
+  not carried in this fork.
+- Signed and attested release images: `release-sign.yml` builds on `v*` tags,
+  pushes to GHCR, keyless cosign-signs each image by digest and attaches a
+  CycloneDX SBOM and SLSA provenance. Verify with `cosign verify` before
+  deploy (`scripts/verify-release.sh`).
+- Dependency CVEs (`pip-audit`, `trivy`), SAST (`semgrep`, `bandit`) and a
+  verified-secrets scan (`trufflehog`) gate CI with documented baselines
+  (`.bandit`, `.semgrepignore`, `.github/pip-audit-ignores.txt`,
+  `.trivyignore`).
+- See [`docs/security/supply-chain.md`](docs/security/supply-chain.md).
 
-Beyond Row-Level Security (above), the tenant key itself is now guarded
-against drift. A **`BEFORE UPDATE` trigger** (migration `0009`) **rejects**
-any change to `org_id` on the eight org-scoped tables, so a row can't be
-silently re-homed into another tenant by an `UPDATE`. An hourly
-`verify_tenant_integrity` reconciliation task and an
-`redsim tenants verify` CLI command **detect** drift (a row whose `org_id`
-disagrees with its parent project's) out of band, so a gap is caught even
-if a future code path bypasses the trigger.
+### LLM: Pythia holds the provider keys
 
-### Iterative remediation
+- Every LLM call goes through Pythia (`redsim/llm/pythia.py`). redsim holds
+  one `pk_…` gateway key (`PYTHIA_API_KEY`) and no model-provider key
+  anywhere. The gateway applies persona, guardrails, metering and audit before
+  a request reaches a model. The `OPENAI_API_KEY`-style entries in
+  `.env.example` are aegis leftovers read by nothing in the ML vertical.
+- The key lives in `.env` at the repo root, which is gitignored and
+  dockerignored. The Aikido pre-commit hook scans staged files for secrets.
+  Nothing logs the key: `PythiaSettings.redacted()` is the only view that
+  reaches provenance, and the connectivity check prints at most a
+  three-character prefix.
+- The hardening writer receives metrics, scorecard numbers, rule outputs,
+  limitations and a SHAP text summary. It never receives images, model bytes,
+  dataset rows or URL strings. When Pythia is not configured the narrative is
+  skipped, never faked (`narrative_source = "rules"`).
+- TLS to the gateway is verified against the OS trust store by default
+  (`REDSIM_TLS_TRUSTSTORE=1`) or a PEM bundle (`REDSIM_CA_BUNDLE`,
+  `SSL_CERT_FILE`). Verification is never disabled.
+- Guardrails (`redsim/llm/guardrails.py`, config in `redsim/config.py`) sit at
+  the LLM boundary: secret scrubbing of LLM output and prompt-injection
+  scoring of untrusted input with a configurable block threshold
+  (`REDSIM_LLM_GUARDRAILS`, `REDSIM_LLM_SCRUB_DIFF`,
+  `REDSIM_LLM_DETECT_INJECTION`, `REDSIM_LLM_FILTER_OUTPUT`,
+  `REDSIM_LLM_INJECTION_BLOCK_RISK`, all default on).
+- Budget enforcement is fail-closed (`REDSIM_LLM_BUDGET_STRICT`, default on
+  in prod): a DB-backed run that reaches an LLM call without a budget checker
+  is denied, and per-project daily and per-org monthly caps apply.
 
-The opt-in fix→test→retry loop is constrained so it can't damage an
-operator's workspace or leak through fed-back output:
+### Secrets handling
 
-- It **requires a clean working tree** and **refuses to run against a dirty
-  one**, so the loop never overwrites or discards uncommitted operator
-  changes.
-- The test output fed back to the LLM between iterations is **scrubbed for
-  secrets** (the same redactor as the audit path) before it reaches the
-  model.
+- Secret materials: `REDSIM_API_SESSION_PRIVATE_KEY` (web, RS256) with
+  `REDSIM_API_SESSION_PUBLIC_KEY` and `…_PREVIOUS` on the API,
+  `REDSIM_WORKER_SIGNING_KEY` (shared HMAC, rotation overlap),
+  `REDSIM_AUTH_PROFILES_KEY` (Fernet, encrypts auth-profile secrets at rest,
+  kept for the Phase B endpoint connector), `PYTHIA_API_KEY`, the database
+  role passwords, `NEXTAUTH_SECRET` (NextAuth's own), and the S3 credentials
+  when an IAM role is not used.
+- Auth-profile secrets are encrypted before any row or audit event is written,
+  are never returned by any endpoint, and a missing key fails closed.
+- `KAGGLE_USERNAME` / `KAGGLE_KEY` are used by the one-off
+  `redsim ml build-assets` run only, never on the API, web, steady-state
+  worker or beat services, never in the sandbox child, never logged or written
+  to a manifest.
+- Secrets are read from the environment (or `.env` for the Pythia settings)
+  only. They are never accepted in an API body, persisted to a row, or
+  written to an audit detail.
 
-See [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Iterative remediation".
+## ML vertical boundaries
 
-### CI security gates
+These rules come from sections 9, 11, 14 and 21 of the product spec and the
+project brief. The first three are enforced on `main` today, the rest are
+specified for the code in the open ML PRs and the WS4 routes and must hold
+before those merge.
 
-Security scanning now **gates CI** (a failing scan fails the build), not
-just advisory:
+Enforced on `main`:
 
-- **SAST.** `semgrep` (`p/python` + `p/security-audit` + repo-specific
-  banned-pattern rules) and `bandit` run on every PR.
-- **Dependency CVEs.** `pip-audit` (Python deps) and `trivy fs` (filesystem
-  / lockfiles) run on every PR; **dependabot** is enabled for ongoing bumps.
-- **Documented baselines.** The gates ship with explicit, reviewable
-  baselines so they fail on *new* issues, not legacy noise: `.bandit`
-  (`B310`), `.semgrepignore` (migrations), and intentionally **empty**
-  `pip-audit` / `trivy` ignore files (nothing suppressed yet).
+- **The API process never loads a model or imports an ML library.**
+  `tests/test_api_process_has_no_ml.py` builds the app with `torch`,
+  `torchvision`, `art`, `onnx`, `onnxruntime`, `shap`, `sklearn` and
+  `xgboost` blocked and asserts it still serves. `deploy/Dockerfile.api`
+  installs `.[api,worker]` without the `ml` extra. Only the worker image
+  carries torch, ART, onnxruntime and SHAP.
+- **No pentest execution path remains.** `POST /v1/scans` is unmounted, the
+  scanner roster is empty, and `redsim scan` exits non-zero instead of
+  writing an empty findings file.
+- **Open data only.** Every dataset is open, unclassified and publicly
+  licensed (spec section 11). There is no dataset upload path in Phase A, no
+  connection to any operational or mission data source, and no fixture is
+  ever presented as a result.
 
-### WORM secrets in Helm
+Specified for the ML code (PR #8, #9 and WS4):
 
-Production Helm installs **hard-fail on shipped dev secret placeholders** —
-a deploy that still carries the in-chart development secret values is
-rejected rather than quietly running with a known credential. Wire real
-secrets (e.g. via the chart's `ExternalSecret` support) before installing to
-prod. See [`docs/ops/kubernetes.md`](docs/ops/kubernetes.md).
+- **Uploaded models are loaded only on the worker inside a sandboxed child
+  process** (`redsim/ml/sandbox.py`, `redsim/ml/sandbox_worker.py`), built on
+  the plugin sandbox primitives: separate process, rlimits, wall-clock kill,
+  minimal environment, no network configuration, no switch to run
+  in-process. The parent populates a per-job work directory with the
+  digest-checked model file and the evaluation slice. The child never reaches
+  S3, Postgres, Redis or the dataset source. Bundled models take the same
+  path on every run.
+- **Accepted formats are ONNX and pickle-free state dicts only.** ONNX is
+  preferred (`onnx.checker` plus an onnxruntime session without custom-op
+  libraries, `onnx2torch` for gradients). PyTorch `state_dict` uploads are
+  accepted only as `torch.load(..., weights_only=True)` or `safetensors`,
+  and only with an `architecture_id` from the in-tree catalog
+  (`redsim/ml/targets/architectures.py`). Free-form model code is never
+  accepted. TensorFlow SavedModel is not accepted in Phase A.
+- **Pickles are refused.** The API sniffs the first bytes and rejects a
+  pickle opcode, a `.pkl` / `.joblib` name, a full `torch.save` object or a
+  signature that contradicts the declared format with `415 pickle_refused` /
+  `415 unsupported_model_format`, retains no bytes, and writes a
+  `model.register` audit row with `success=false`. There is no trust override
+  in Phase A. The only pickle the loader ever opens is a bundled sklearn
+  asset whose sha256 matches the manifest written at build time.
+- **Static checks in the API, deep validation in the child.** Size cap while
+  streaming (`REDSIM_ML_UPLOAD_MAX_MB`, default 512, `413` above it), magic
+  bytes, sha256, content-addressed blob key. Format parse, architecture
+  instantiation, shape and class-count checks happen in `model.validate`
+  inside the sandbox and are written back as `available` or `refused` with a
+  reason.
+- **URL strings are data.** The tabular pipeline never fetches, resolves or
+  renders a URL from the malicious-URLs dataset, not in the worker, the
+  child, the UI or the reports. The feature extractor is a pure string
+  function. A URL that is displayed is escaped, non-clickable text labelled
+  as dataset content, and it never enters the LLM payload. A test asserts
+  the no-network property.
+- **Defenses touch only an evaluation copy.** The verify-after-harden loop
+  wraps a worker-side copy of the estimator with an ART preprocessor. It
+  never modifies or persists a defended model, never changes the target, and
+  is never triggered automatically.
+- **Attack ids are declarative references** to registered, bounded ART
+  adapters. The repository stores no attack recipes, tactical instructions or
+  executable payloads.
 
 ## Out of scope
 
-- Findings produced **by** Redsim against deliberately-vulnerable or
-  deliberately-weak targets (test models, reference datasets). Those are
-  by design.
+- Findings produced **by** redsim against deliberately weak targets (test
+  models, reference datasets). Those are by design.
 - Vulnerabilities in bundled upstream components. Report those to the
-  respective upstream projects (`shadcn-ui`,
-  `opentelemetry-collector-contrib`, and the adversarial-robustness
-  libraries the ML vertical builds on).
-- DoS / resource exhaustion against the offline CLI when supplied a
-  malicious finding fixture (the CLI is single-process; trust the
-  fixture source).
-- Cost / budget exhaustion via LLM-routed stages — now mitigated by
-  fail-closed budget enforcement (`REDSIM_LLM_BUDGET_STRICT`; see § "LLM
-  budget" above and the `BudgetChecker` hook in `redsim/llm/router.py`).
+  respective upstream projects (`shadcn-ui`, `opentelemetry-collector-contrib`,
+  ART, SHAP, torch, onnxruntime).
+- DoS or resource exhaustion against the offline CLI when supplied a malicious
+  finding fixture (the CLI is single-process, trust the fixture source).
 
 ## Known gaps (tracked)
 
-- Kernel-level (microVM) isolation for attack-adapter runs. The gVisor
-  `RuntimeClass` sandbox for the worker pods has shipped — see
-  "Deployment hardening" above — and third-party plugins run
-  out-of-process; a microVM boundary is not yet in place.
-- Worker autoscaling + multi-region DR (spike in
-  [ADR-0005](docs/adr/0005-worker-autoscaling-and-dr.md)).
-- Nix reproducible builds (spike in
-  [ADR-0008](docs/adr/0008-nix-reproducible-builds.md)).
-
-PII / content scrubbing and LLM prompt-injection / output filtering —
-previously listed here — have shipped (see § "LLM guardrails" above).
-Sandbox isolation (gVisor) and the SOC 2 / ISO 27001 / FedRAMP evidence
-pack — also previously listed here — have shipped (see the sections above
-and `CHANGELOG.md`). The remaining gaps are documented in
-`docs/architecture/overview.md` under "What's deferred."
+- Kernel-level (microVM) isolation for model loading and attack runs. The
+  gVisor `RuntimeClass` for worker pods exists in the Helm chart. The plugin
+  sandbox and the planned ML sandbox child are process isolation plus rlimits,
+  not a network or filesystem jail, and ECS Fargate has no gVisor equivalent.
+- The ML sandbox child, the upload route and the refusal paths above are not
+  on `main` yet (open PRs and WS4).
+- Worker autoscaling and multi-region DR
+  ([ADR-0005](docs/adr/0005-worker-autoscaling-and-dr.md)) and Nix
+  reproducible builds ([ADR-0008](docs/adr/0008-nix-reproducible-builds.md))
+  are deferred spikes.
