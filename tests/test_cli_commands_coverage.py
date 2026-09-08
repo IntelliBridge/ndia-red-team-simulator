@@ -1,4 +1,4 @@
-"""Behavioral tests for CLI modules: main.py, status.py, ci_gate.py, audit.py.
+"""Behavioral tests for CLI modules: main.py, status.py, audit.py.
 
 All external side-effects (subprocess, network, file writes outside tmp, DB,
 scan dispatch, service layer) are mocked. Tests are fully offline — no
@@ -7,7 +7,6 @@ Postgres, Redis, or scanner binaries required.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import tempfile
@@ -18,16 +17,11 @@ from unittest.mock import MagicMock, patch
 
 from aegis.cli._console import _colored_severity, _err, _info, _warn
 from aegis.cli._runstate import _load_findings_objects, _resolve_run_state
-from aegis.cli.fix import _refresh_deps_findings, _report_fix_outcomes
 from aegis.cli.main import (
     build_parser,
-    cmd_export,
     cmd_findings,
-    cmd_fix,
-    cmd_pipeline,
     cmd_report,
     cmd_scan,
-    cmd_targets,
     cmd_verify,
     main,
 )
@@ -174,9 +168,24 @@ class TestLoadFindingsObjects(unittest.TestCase):
 
 class TestBuildParser(unittest.TestCase):
 
+    def test_scan_requires_an_explicit_scanner(self):
+        # No default engine: the pentest default ("strix") and the --use-strix
+        # bypass flag were removed, so `aegis scan <url>` without --scanner is
+        # a usage error (argparse exit 2), never a silently substituted adapter.
+        parser = build_parser()
+        with self.assertRaises(SystemExit) as ctx:
+            parser.parse_args(["scan", "http://target.example.invalid"])
+        self.assertEqual(ctx.exception.code, 2)
+        self.assertIsNone(
+            parser._subparsers._group_actions[0].choices["scan"]
+            ._option_string_actions["--scanner"].default
+            or None,
+        )
+        self.assertNotIn("--use-strix", parser.format_help())
+
     def test_parser_has_scan_subcommand(self):
         parser = build_parser()
-        args = parser.parse_args(["scan", "http://target.example.invalid"])
+        args = parser.parse_args(["scan", "http://target.example.invalid", "--scanner", "fake-attack"])
         self.assertEqual(args.command, "scan")
         self.assertEqual(args.target_url, "http://target.example.invalid")
 
@@ -184,17 +193,6 @@ class TestBuildParser(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(["findings"])
         self.assertEqual(args.command, "findings")
-
-    def test_parser_has_fix_subcommand(self):
-        parser = build_parser()
-        args = parser.parse_args(["fix", "finding-123"])
-        self.assertEqual(args.command, "fix")
-        self.assertEqual(args.finding_id, "finding-123")
-
-    def test_parser_has_export_subcommand(self):
-        parser = build_parser()
-        args = parser.parse_args(["export", "--format", "vulnfixer"])
-        self.assertEqual(args.command, "export")
 
     def test_parser_has_verify_subcommand(self):
         parser = build_parser()
@@ -205,11 +203,6 @@ class TestBuildParser(unittest.TestCase):
         parser = build_parser()
         args = parser.parse_args(["report"])
         self.assertEqual(args.command, "report")
-
-    def test_parser_has_pipeline_subcommand(self):
-        parser = build_parser()
-        args = parser.parse_args(["pipeline", "http://target.example.invalid"])
-        self.assertEqual(args.command, "pipeline")
 
     def test_parser_has_doctor_subcommand(self):
         parser = build_parser()
@@ -223,14 +216,14 @@ class TestBuildParser(unittest.TestCase):
 
     def test_parser_global_api_flag(self):
         parser = build_parser()
-        args = parser.parse_args(["--api", "scan", "http://x.invalid"])
+        args = parser.parse_args(["--api", "scan", "http://x.invalid", "--scanner", "fake-attack"])
         self.assertTrue(args.global_api)
 
     def test_parser_global_override_authorized(self):
         parser = build_parser()
         args = parser.parse_args([
             "--i-understand-this-target-is-authorized", "scan",
-            "http://x.invalid"])
+            "http://x.invalid", "--scanner", "fake-attack"])
         self.assertTrue(args.global_override_authorized)
 
     def test_parser_audit_verify(self):
@@ -239,23 +232,11 @@ class TestBuildParser(unittest.TestCase):
         self.assertEqual(args.command, "audit")
         self.assertEqual(args.audit_action, "verify")
 
-    def test_parser_ci_gate(self):
-        parser = build_parser()
-        args = parser.parse_args(["ci-gate", "--severity-threshold", "critical"])
-        self.assertEqual(args.command, "ci-gate")
-        self.assertEqual(args.severity_threshold, "critical")
-
     def test_parser_migrate(self):
         parser = build_parser()
         args = parser.parse_args(["migrate", "--source", "/tmp/out",
                                   "--project", "my-project"])
         self.assertEqual(args.command, "migrate")
-
-    def test_parser_targets_list(self):
-        parser = build_parser()
-        args = parser.parse_args(["targets", "list"])
-        self.assertEqual(args.command, "targets")
-        self.assertEqual(args.targets_action, "list")
 
 
 # ---------------------------------------------------------------------------
@@ -358,7 +339,7 @@ class TestMainGlobalApiFlag(unittest.TestCase):
                 "run_id": "r1", "job_id": "j1", "status_url": "http://x/status"
             }
             mock_bc.return_value = mock_client
-            main(["--api", "scan", "http://target.invalid"])
+            main(["--api", "scan", "http://target.invalid", "--scanner", "fake-attack"])
             self.assertEqual(os.environ.get("AEGIS_MODE"), "api")
 
 
@@ -375,7 +356,7 @@ class TestMainGlobalOverrideAuthorized(unittest.TestCase):
              patch.dict("aegis.cli.main._COMMANDS", {"scan": fake_cmd_scan}):
             main([
                 "--i-understand-this-target-is-authorized",
-                "scan", "http://target.invalid",
+                "scan", "http://target.invalid", "--scanner", "fake-attack",
             ])
         self.assertTrue(captured.get("override"))
 
@@ -389,71 +370,36 @@ class TestCmdScan(unittest.TestCase):
     def _args(self, **kw):
         defaults = dict(
             target_url="http://target.invalid",
-            repo=None, events=None, demo=False, use_strix=False,
+            scanner="fake-attack",
             instruction=None, timeout=1800, override_authorized=False,
             global_api=False,
         )
         defaults.update(kw)
         return Namespace(**defaults)
 
-    def test_scan_no_findings_warns(self):
+    def test_scan_no_adapter_registered_exits_1_and_writes_no_findings(self):
+        # Real wiring, no start_scan mock: the allowlisted target passes the
+        # safety gate, the live (empty) registry raises KeyError from
+        # dispatch(), and cmd_scan turns that into an honest process failure:
+        # exit 1, the adapter named + the aegis.ml.attacks hint printed, and
+        # no findings.json anywhere under the output dir. A CI caller can
+        # never mistake "no adapter" for "clean scan".
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
+            args = self._args(target_url="http://localhost:3000",
+                              scanner="no-such-adapter-cli")
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.cli._console._warn") as mock_warn:
-                cmd_scan(self._args(), config)
-                # "No Strix findings" warning
-                calls = [str(c) for c in mock_warn.call_args_list]
-                self.assertTrue(any("No Strix" in c for c in calls))
-
-    def test_scan_with_demo_flag_loads_fixture(self):
-        fixture_data = [_make_finding().to_dict()]
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.cli.main.Path") as mock_path_cls, \
-                 patch("aegis.cli.main.json.load", return_value=fixture_data), \
-                 patch("aegis.cli.main.open", create=True), \
-                 patch("aegis.runners.strix_converter.convert_strix_findings",
-                       return_value=[]):
-                # Make fixture appear to exist
-                mock_fixture = MagicMock()
-                mock_fixture.exists.return_value = True
-                mock_fixture.__str__ = lambda s: "/fake/strix_finding.json"
-                mock_path_cls.return_value = mock_fixture
-                mock_path_cls.side_effect = None
-
-                # Just ensure the demo branch is reached without crashing
-                # (fixture loading path is mocked)
-                args = self._args(demo=True)
-                try:
-                    cmd_scan(args, config)
-                except Exception:
-                    pass  # Fixture mock may be incomplete; branch is still hit
-
-    def test_scan_with_events_file_exists(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            events_path = Path(tmp) / "events.jsonl"
-            events_path.write_text('{"event": "test"}\n')
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.runners.strix_converter.load_strix_events",
-                       return_value=[]) as mock_load:
-                args = self._args(events=str(events_path))
+                 patch("aegis.cli._console._err") as mock_err, \
+                 self.assertRaises(SystemExit) as ctx:
                 cmd_scan(args, config)
-                mock_load.assert_called_once()
+            self.assertEqual(ctx.exception.code, 1)
+            calls = " ".join(str(c) for c in mock_err.call_args_list)
+            self.assertIn("No scanner adapter registered", calls)
+            self.assertIn("no-such-adapter-cli", calls)
+            self.assertIn("aegis.ml.attacks", calls)
+            self.assertEqual(list(Path(tmp).rglob("findings.json")), [])
 
-    def test_scan_with_events_file_not_found_warns(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.cli._console._warn") as mock_warn:
-                args = self._args(events=str(Path(tmp) / "nonexistent.jsonl"))
-                cmd_scan(args, config)
-                calls = [str(c) for c in mock_warn.call_args_list]
-                self.assertTrue(any("not found" in c for c in calls))
-
-    def test_scan_with_use_strix_success(self):
+    def test_scan_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             findings = [_make_finding()]
@@ -463,11 +409,15 @@ class TestCmdScan(unittest.TestCase):
             outcome.findings = findings
             outcome.return_code = 0
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.services.scans.start_scan", return_value=outcome):
-                args = self._args(use_strix=True)
-                cmd_scan(args, config)
+                 patch("aegis.services.scans.start_scan", return_value=outcome) as start:
+                cmd_scan(self._args(), config)
+            # The CLI names the adapter explicitly; there is no default engine
+            # and no events-only bypass flag.
+            self.assertEqual(start.call_args.kwargs["scanner"], "fake-attack")
+            self.assertNotIn("use_strix", start.call_args.kwargs)
+            self.assertEqual(len(list(Path(tmp).rglob("findings.json"))), 1)
 
-    def test_scan_with_use_strix_partial_success(self):
+    def test_scan_partial_success(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             findings = [_make_finding()]
@@ -479,12 +429,11 @@ class TestCmdScan(unittest.TestCase):
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
                  patch("aegis.services.scans.start_scan", return_value=outcome), \
                  patch("aegis.cli._console._warn") as mock_warn:
-                args = self._args(use_strix=True)
-                cmd_scan(args, config)
+                cmd_scan(self._args(), config)
                 calls = [str(c) for c in mock_warn.call_args_list]
                 self.assertTrue(any("partial" in c.lower() for c in calls))
 
-    def test_scan_with_use_strix_failure(self):
+    def test_scan_failure_exits_1_and_writes_no_findings(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             outcome = MagicMock()
@@ -492,14 +441,16 @@ class TestCmdScan(unittest.TestCase):
             outcome.partial_success = False
             outcome.findings = []
             outcome.return_code = 2
-            outcome.error = "strix exploded"
+            outcome.error = "adapter exploded"
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
                  patch("aegis.services.scans.start_scan", return_value=outcome), \
-                 patch("aegis.cli._console._err") as mock_err:
-                args = self._args(use_strix=True)
-                cmd_scan(args, config)
-                calls = [str(c) for c in mock_err.call_args_list]
-                self.assertTrue(any("strix" in c.lower() for c in calls))
+                 patch("aegis.cli._console._err") as mock_err, \
+                 self.assertRaises(SystemExit) as ctx:
+                cmd_scan(self._args(), config)
+            self.assertEqual(ctx.exception.code, 1)
+            calls = [str(c) for c in mock_err.call_args_list]
+            self.assertTrue(any("adapter exploded" in c for c in calls))
+            self.assertEqual(list(Path(tmp).rglob("findings.json")), [])
 
     def test_scan_via_api(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -529,7 +480,7 @@ class TestCmdScan(unittest.TestCase):
                 self.assertEqual(ctx.exception.code, 1)
 
     def test_scan_with_findings_prints_summary(self):
-        """When findings are saved the severity summary block is printed."""
+        """When the adapter returns findings the severity summary is printed."""
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             findings = [
@@ -538,39 +489,14 @@ class TestCmdScan(unittest.TestCase):
                 _make_finding(id="f3", severity="medium"),
                 _make_finding(id="f4", severity="low"),
             ]
-
+            outcome = MagicMock()
+            outcome.success = True
+            outcome.partial_success = False
+            outcome.findings = findings
+            outcome.return_code = 0
             with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.runners.strix_converter.load_strix_events",
-                       return_value=findings):
-                events_path = Path(tmp) / "events.jsonl"
-                events_path.write_text("x")
-                args = Namespace(
-                    target_url="http://x.invalid",
-                    repo=None, events=str(events_path), demo=False,
-                    use_strix=False, instruction=None, timeout=1800,
-                    override_authorized=False, global_api=False,
-                )
-                cmd_scan(args, config)
-
-    def test_scan_repo_path_loads_events_jsonl(self):
-        """When --repo has events.jsonl next to it, it gets loaded."""
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            repo = Path(tmp) / "repo"
-            repo.mkdir()
-            events_file = repo / "events.jsonl"
-            events_file.write_text('{"x":1}\n')
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.runners.strix_converter.load_strix_events",
-                       return_value=[]) as mock_load:
-                args = Namespace(
-                    target_url="http://x.invalid",
-                    repo=str(repo), events=None, demo=False,
-                    use_strix=False, instruction=None, timeout=1800,
-                    override_authorized=False, global_api=False,
-                )
-                cmd_scan(args, config)
-                mock_load.assert_called_once()
+                 patch("aegis.services.scans.start_scan", return_value=outcome):
+                cmd_scan(self._args(), config)
 
     def test_scan_api_status_url_printed(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -636,374 +562,6 @@ class TestCmdFindings(unittest.TestCase):
             with patch("builtins.print"):
                 cmd_findings(args, config)
 
-
-# ---------------------------------------------------------------------------
-# cmd_export
-# ---------------------------------------------------------------------------
-
-class TestCmdExport(unittest.TestCase):
-
-    def test_export_unsupported_format_exits_1(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            args = Namespace(format="unknown_format", run=None)
-            with self.assertRaises(SystemExit) as ctx:
-                cmd_export(args, config)
-            self.assertEqual(ctx.exception.code, 1)
-
-    def test_export_vulnfixer_ok(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            args = Namespace(format="vulnfixer", run=None)
-            summary = {
-                "total": 1, "routable_to_vulnfixer": 1, "requires_code_fix": 0,
-            }
-            with patch("aegis.runners.vulnfixer_converter.export_findings",
-                       return_value=summary) as mock_exp, \
-                 patch("builtins.print"):
-                cmd_export(args, config)
-                mock_exp.assert_called_once()
-
-    def test_export_no_findings_returns_early(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            state = RunState(tmp, "empty-run")
-            state.save_findings([])
-            args = Namespace(format="vulnfixer", run="empty-run")
-            with patch("aegis.runners.vulnfixer_converter.export_findings") as mock_exp:
-                cmd_export(args, config)
-                mock_exp.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# cmd_fix
-# ---------------------------------------------------------------------------
-
-class TestCmdFix(unittest.TestCase):
-
-    def _fix_args(self, **kw):
-        defaults = dict(
-            finding_id="test-finding-001",
-            run=None, repo=None,
-            patch=False, live=False, deps=False,
-            apply=False, branch=None,
-            push=False, open_pr=False,
-            rollback=False, ref_before=None,
-            use_golden_patch=False, allow_dirty=False,
-            override_authorized=False, global_api=False,
-        )
-        defaults.update(kw)
-        return Namespace(**defaults)
-
-    def test_fix_finding_not_found_exits_1(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            args = self._fix_args(finding_id="nonexistent-id")
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 self.assertRaises(SystemExit) as ctx:
-                cmd_fix(args, config)
-            self.assertEqual(ctx.exception.code, 1)
-
-    def test_fix_no_strategy_prints_help(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("builtins.print") as mock_print:
-                cmd_fix(self._fix_args(), config)
-                output = " ".join(str(c) for c in mock_print.call_args_list)
-                self.assertIn("fix strategy", output.lower())
-
-    def test_fix_patch_strategy(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            outcome = MagicMock()
-            outcome.strategy = "patch"
-            outcome.success = True
-            outcome.diff_path = None
-            outcome.commit_hash = None
-            outcome.pr_url = None
-            outcome.status = "pending_apply"
-            outcome.error = None
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.services.fixes.generate_fix", return_value=outcome):
-                cmd_fix(self._fix_args(patch=True), config)
-
-    def test_fix_patch_strategy_with_golden(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            outcome = MagicMock()
-            outcome.strategy = "patch"
-            outcome.success = True
-            outcome.diff_path = "/tmp/patch.diff"
-            outcome.commit_hash = "abc123"
-            outcome.branch = "aegis/fix/x"
-            outcome.pr_url = "https://github.com/pr/1"
-            outcome.status = "fixed"
-            outcome.error = None
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.services.fixes.generate_fix", return_value=outcome), \
-                 patch("aegis.cli._console._info") as mock_info:
-                cmd_fix(self._fix_args(patch=True, use_golden_patch=True), config)
-                calls = " ".join(str(c) for c in mock_info.call_args_list)
-                self.assertIn("golden patch", calls.lower())
-
-    def test_fix_live_strategy(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            outcome = MagicMock()
-            outcome.strategy = "live"
-            outcome.success = True
-            outcome.diff_path = None
-            outcome.commit_hash = None
-            outcome.pr_url = None
-            outcome.status = "fixed"
-            outcome.error = None
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.services.fixes.generate_fix", return_value=outcome):
-                cmd_fix(self._fix_args(live=True), config)
-
-    def test_fix_rollback_no_ref_before_exits(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 self.assertRaises(SystemExit) as ctx:
-                cmd_fix(self._fix_args(rollback=True, ref_before=None,
-                                       repo="/tmp/fake"), config)
-            self.assertEqual(ctx.exception.code, 1)
-
-    def test_fix_rollback_no_repo_exits(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 self.assertRaises(SystemExit) as ctx:
-                cmd_fix(self._fix_args(rollback=True, ref_before="abc123",
-                                       repo=None), config)
-            self.assertEqual(ctx.exception.code, 1)
-
-    def test_fix_rollback_success(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.remediate.patch_workflow.rollback",
-                       return_value=True), \
-                 self.assertRaises(SystemExit) as ctx:
-                cmd_fix(self._fix_args(rollback=True, ref_before="abc123",
-                                       repo="/tmp/fake"), config)
-            self.assertEqual(ctx.exception.code, 0)
-
-    def test_fix_rollback_failure_exits_1(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.remediate.patch_workflow.rollback",
-                       return_value=False), \
-                 self.assertRaises(SystemExit) as ctx:
-                cmd_fix(self._fix_args(rollback=True, ref_before="abc123",
-                                       repo="/tmp/fake"), config)
-            self.assertEqual(ctx.exception.code, 1)
-
-    def test_fix_deps_no_repo_exits(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 self.assertRaises(SystemExit) as ctx:
-                cmd_fix(self._fix_args(deps=True, repo=None), config)
-            self.assertEqual(ctx.exception.code, 1)
-
-    def test_fix_via_api(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=True), \
-                 patch("aegis.cli.api_client.build_client") as mock_bc:
-                mock_client = MagicMock()
-                mock_client.fix.return_value = {"job_id": "j1", "run_id": "r1"}
-                mock_bc.return_value = mock_client
-                cmd_fix(self._fix_args(patch=True), config)
-                mock_client.fix.assert_called_once()
-
-    def test_fix_api_error_exits(self):
-        from aegis.cli.api_client import ApiError
-
-        with patch("aegis.cli.api_client.is_api_mode", return_value=True), \
-             patch("aegis.cli.api_client.build_client") as mock_bc:
-            mock_client = MagicMock()
-            mock_client.fix.side_effect = ApiError(500, "internal error")
-            mock_bc.return_value = mock_client
-            with self.assertRaises(SystemExit) as ctx:
-                cmd_fix(self._fix_args(patch=True), AegisConfig())
-            self.assertEqual(ctx.exception.code, 1)
-
-
-# ---------------------------------------------------------------------------
-# _refresh_deps_findings
-# ---------------------------------------------------------------------------
-
-class TestRefreshDepsFinding(unittest.TestCase):
-
-    def test_trivy_fails_continues(self):
-        from aegis.runners.trivy_runner import TrivyRunResult
-
-        with tempfile.TemporaryDirectory() as tmp:
-            finding = _make_finding(
-                id="CVE-2024-9999@lodash",
-                finding_type="dependency",
-                package_name="lodash",
-                installed_version="4.17.20",
-                fixed_version="4.17.21",
-            )
-            state = _seed_state(tmp, findings=[finding])
-            fake_result = TrivyRunResult(
-                success=False, return_code=1, findings=[],
-                raw_json_path=None, error="trivy not found",
-            )
-            args = Namespace(repo="/tmp/fake")
-            with patch("aegis.runners.trivy_runner.run_trivy",
-                       return_value=fake_result), \
-                 patch("aegis.cli._console._warn"):
-                result = _refresh_deps_findings(args, state, "CVE-2024-9999@lodash")
-                self.assertIsNotNone(result)
-
-    def test_trivy_returns_wrong_type_exits(self):
-        from aegis.runners.trivy_runner import TrivyRunResult
-
-        with tempfile.TemporaryDirectory() as tmp:
-            finding = _make_finding(
-                id="f-dast-001",
-                finding_type="dast",  # NOT dependency
-            )
-            state = _seed_state(tmp, findings=[finding])
-            fake_result = TrivyRunResult(
-                success=True, return_code=0, findings=[],
-                raw_json_path=None,
-            )
-            args = Namespace(repo="/tmp/fake")
-            with patch("aegis.runners.trivy_runner.run_trivy",
-                       return_value=fake_result):
-                result = _refresh_deps_findings(args, state, "f-dast-001")
-                self.assertIsNone(result)
-
-    def test_trivy_success_merges_findings(self):
-        from aegis.runners.trivy_runner import TrivyRunResult
-
-        with tempfile.TemporaryDirectory() as tmp:
-            existing = _make_finding(
-                id="CVE-2024-0001@pkg",
-                finding_type="dependency",
-                package_name="pkg",
-                installed_version="1.0",
-                fixed_version="1.1",
-            )
-            state = _seed_state(tmp, findings=[existing])
-            new_finding = _make_finding(
-                id="CVE-2024-0001@pkg",
-                finding_type="dependency",
-                package_name="pkg",
-                installed_version="1.0",
-                fixed_version="1.1",
-            )
-            fake_result = TrivyRunResult(
-                success=True, return_code=0, findings=[new_finding],
-                raw_json_path=None,
-            )
-            args = Namespace(repo="/tmp/fake")
-            with patch("aegis.runners.trivy_runner.run_trivy",
-                       return_value=fake_result):
-                result = _refresh_deps_findings(args, state, "CVE-2024-0001@pkg")
-                self.assertIsNotNone(result)
-                self.assertEqual(result.id, "CVE-2024-0001@pkg")
-
-
-# ---------------------------------------------------------------------------
-# _report_fix_outcomes
-# ---------------------------------------------------------------------------
-
-class TestReportFixOutcomes(unittest.TestCase):
-
-    def _make_outcome(self, strategy, status, **kw):
-        o = MagicMock()
-        o.strategy = strategy
-        o.status = status
-        o.success = kw.get("success", True)
-        o.error = kw.get("error", None)
-        o.diff_path = kw.get("diff_path", None)
-        o.commit_hash = kw.get("commit_hash", None)
-        o.branch = kw.get("branch", None)
-        o.pr_url = kw.get("pr_url", None)
-        o.finding_id = kw.get("finding_id", "test-finding-001")
-        return o
-
-    def test_fixed_outcome_updates_status(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            state = _seed_state(tmp)
-            outcome = self._make_outcome("patch", "fixed")
-            _report_fix_outcomes(state, "test-finding-001", [outcome], False)
-            findings = state.load_findings()
-            self.assertEqual(findings[0]["status"], "fixed")
-
-    def test_failed_outcome_updates_status_to_failed(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            state = _seed_state(tmp)
-            outcome = self._make_outcome("patch", "failed",
-                                         success=False, error="CAI failed")
-            _report_fix_outcomes(state, "test-finding-001", [outcome], False)
-            findings = state.load_findings()
-            self.assertEqual(findings[0]["status"], "failed")
-
-    def test_pending_apply_outcome(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            state = _seed_state(tmp)
-            outcome = self._make_outcome("patch", "pending_apply")
-            _report_fix_outcomes(state, "test-finding-001", [outcome], False)
-            findings = state.load_findings()
-            self.assertEqual(findings[0]["status"], "pending_apply")
-
-    def test_no_outcomes_and_not_deps_restores_to_open(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            state = _seed_state(tmp)
-            _report_fix_outcomes(state, "test-finding-001", [], False)
-            findings = state.load_findings()
-            self.assertEqual(findings[0]["status"], "open")
-
-    def test_deps_outcome_written(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            state = _seed_state(tmp)
-            outcome = self._make_outcome("deps", "fixed",
-                                         commit_hash="abc",
-                                         branch="aegis/fix/x",
-                                         pr_url="https://github.com/pr/1")
-            _report_fix_outcomes(state, "test-finding-001", [outcome], True)
-
-    def test_patch_outcome_with_diff_and_pr(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            state = _seed_state(tmp)
-            outcome = self._make_outcome(
-                "patch", "fixed",
-                diff_path="/tmp/my.diff",
-                commit_hash="deadbeef",
-                branch="aegis/fix/x",
-                pr_url="https://github.com/pr/99",
-            )
-            with patch("aegis.cli._console._info") as mock_info:
-                _report_fix_outcomes(state, "test-finding-001", [outcome], False)
-                calls = " ".join(str(c) for c in mock_info.call_args_list)
-                self.assertIn("PR opened", calls)
-
-
-# ---------------------------------------------------------------------------
-# cmd_verify
-# ---------------------------------------------------------------------------
 
 class TestCmdVerify(unittest.TestCase):
 
@@ -1129,144 +687,6 @@ class TestCmdReport(unittest.TestCase):
                 mock_rr.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# cmd_pipeline
-# ---------------------------------------------------------------------------
-
-class TestCmdPipeline(unittest.TestCase):
-
-    def test_pipeline_runs_all_stages(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            state = _seed_state(tmp)
-            pipeline_args = Namespace(
-                target_url="http://x.invalid",
-                repo=None, events=None, demo=False, use_strix=False,
-                instruction=None, timeout=1800, override_authorized=False,
-                global_api=False, run=None, format="vulnfixer",
-                no_html=False, html=True,
-            )
-            report_result = MagicMock()
-            report_result.markdown_path = Path(tmp) / "report.md"
-            report_result.json_path = Path(tmp) / "report.json"
-            report_result.html_path = None
-
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.cli.main.cmd_scan"), \
-                 patch("aegis.state.FilesystemRunState.latest_run",
-                       return_value=state), \
-                 patch("aegis.runners.vulnfixer_converter.export_findings",
-                       return_value={"total": 1, "routable_to_vulnfixer": 1,
-                                     "requires_code_fix": 0}), \
-                 patch("aegis.services.reports.render_reports",
-                       return_value=report_result), \
-                 patch("builtins.print"):
-                cmd_pipeline(pipeline_args, config)
-
-    def test_pipeline_no_run_state_exits(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            pipeline_args = Namespace(
-                target_url="http://x.invalid",
-                repo=None, events=None, demo=False, use_strix=False,
-                instruction=None, timeout=1800, override_authorized=False,
-                global_api=False,
-            )
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.cli.main.cmd_scan"), \
-                 patch("aegis.state.FilesystemRunState.latest_run",
-                       return_value=None), \
-                 self.assertRaises(SystemExit) as ctx:
-                cmd_pipeline(pipeline_args, config)
-            self.assertEqual(ctx.exception.code, 1)
-
-
-# ---------------------------------------------------------------------------
-# cmd_targets
-# ---------------------------------------------------------------------------
-
-class TestCmdTargets(unittest.TestCase):
-
-    def test_targets_list(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            args = Namespace(targets_action="list")
-            with patch("aegis.targets.list_target_packs",
-                       return_value=["juice-shop", "dvwa"]) as mock_list, \
-                 patch("builtins.print") as mock_print:
-                cmd_targets(args, config)
-                mock_list.assert_called_once()
-                self.assertEqual(mock_print.call_count, 2)
-
-    def test_targets_up(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            mock_pack = MagicMock()
-            mock_pack.runtime.url = "http://localhost:3000"
-            mock_pack.wait_ready.return_value = True
-            mock_pack.up.return_value = MagicMock(url="http://localhost:3000")
-            args = Namespace(
-                targets_action="up",
-                target_pack="juice-shop",
-                repo=None, port=None, run=None, timeout=30,
-                override_authorized=False,
-            )
-            with patch("aegis.targets.get_target_pack",
-                       return_value=mock_pack), \
-                 patch("aegis.safety.authorize"):
-                cmd_targets(args, config)
-                mock_pack.up.assert_called_once()
-
-    def test_targets_up_with_repo(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            mock_pack = MagicMock()
-            mock_pack.runtime.url = "http://localhost:3000"
-            mock_pack.wait_ready.return_value = True
-            mock_pack.up_from_repo.return_value = MagicMock(url="http://localhost:3000")
-            args = Namespace(
-                targets_action="up",
-                target_pack="juice-shop",
-                repo="/tmp/repo", port=None, run=None, timeout=30,
-                override_authorized=False,
-            )
-            with patch("aegis.targets.get_target_pack",
-                       return_value=mock_pack), \
-                 patch("aegis.safety.authorize"):
-                cmd_targets(args, config)
-                mock_pack.up_from_repo.assert_called_once()
-
-    def test_targets_down(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            mock_pack = MagicMock()
-            mock_pack.runtime.url = "http://localhost:3000"
-            mock_pack.container_name = "aegis-juice-shop"
-            args = Namespace(
-                targets_action="down",
-                target_pack="juice-shop",
-                run=None,
-            )
-            with patch("aegis.targets.get_target_pack",
-                       return_value=mock_pack), \
-                 patch("aegis.safety.authorize"):
-                cmd_targets(args, config)
-                mock_pack.down.assert_called_once()
-
-    def test_targets_unknown_action_exits(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            args = Namespace(targets_action="rebuild", target_pack="juice-shop")
-            with patch("aegis.targets.list_target_packs", return_value=[]):
-                with self.assertRaises(SystemExit) as ctx:
-                    cmd_targets(args, config)
-                self.assertEqual(ctx.exception.code, 1)
-
-
-# ---------------------------------------------------------------------------
-# main() dispatch — status / audit / ci-gate / migrate wiring
-# ---------------------------------------------------------------------------
-
 class TestMainDispatchWiring(unittest.TestCase):
 
     def test_status_subcommand_dispatches(self):
@@ -1285,18 +705,6 @@ class TestMainDispatchWiring(unittest.TestCase):
              patch("aegis.config.load_config", return_value=AegisConfig()):
             main(["audit", "verify"])
             mock_av.assert_called_once()
-
-    def test_ci_gate_dispatches(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            findings_file = Path(tmp) / "findings.json"
-            findings_file.write_text("[]")
-            with patch("aegis.config.load_config", return_value=AegisConfig()), \
-                 self.assertRaises(SystemExit):
-                main([
-                    "ci-gate",
-                    "--findings-file", str(findings_file),
-                    "--severity-threshold", "high",
-                ])
 
     def test_migrate_dispatches(self):
         with patch("aegis.cli.migrate.cmd_migrate") as mock_mig, \
@@ -1451,171 +859,6 @@ class TestCmdStatus(unittest.TestCase):
             self.assertIn(_GREEN, output)
 
 
-# ---------------------------------------------------------------------------
-# aegis/cli/ci_gate.py
-# ---------------------------------------------------------------------------
-
-class TestCmdCiGate(unittest.TestCase):
-
-    def test_ci_gate_pass(self):
-        from aegis.cli.ci_gate import cmd_ci_gate
-
-        with tempfile.TemporaryDirectory() as tmp:
-            findings_file = Path(tmp) / "findings.json"
-            findings_file.write_text("[]")
-            args = Namespace(
-                findings_file=str(findings_file),
-                run=None,
-                severity_threshold="high",
-                max_findings=None,
-                require_validated=False,
-                junit_xml=None,
-            )
-            with self.assertRaises(SystemExit) as ctx:
-                cmd_ci_gate(args, AegisConfig())
-            self.assertEqual(ctx.exception.code, 0)
-
-    def test_ci_gate_fail_on_high(self):
-        from aegis.cli.ci_gate import cmd_ci_gate
-
-        with tempfile.TemporaryDirectory() as tmp:
-            findings = [{"severity": "critical", "id": "f1"}]
-            findings_file = Path(tmp) / "findings.json"
-            findings_file.write_text(json.dumps(findings))
-            args = Namespace(
-                findings_file=str(findings_file),
-                run=None,
-                severity_threshold="high",
-                max_findings=None,
-                require_validated=False,
-                junit_xml=None,
-            )
-            with self.assertRaises(SystemExit) as ctx:
-                cmd_ci_gate(args, AegisConfig())
-            self.assertEqual(ctx.exception.code, 1)
-
-    def test_ci_gate_missing_file_exits_2(self):
-        from aegis.cli.ci_gate import cmd_ci_gate
-
-        args = Namespace(
-            findings_file="/nonexistent/path/findings.json",
-            run=None,
-            severity_threshold="high",
-            max_findings=None,
-            require_validated=False,
-            junit_xml=None,
-        )
-        with self.assertRaises(SystemExit) as ctx:
-            cmd_ci_gate(args, AegisConfig())
-        self.assertEqual(ctx.exception.code, 2)
-
-    def test_ci_gate_no_input_exits_2(self):
-        from aegis.cli.ci_gate import cmd_ci_gate
-
-        args = Namespace(
-            findings_file=None,
-            run=None,
-            severity_threshold="high",
-            max_findings=None,
-            require_validated=False,
-            junit_xml=None,
-        )
-        with self.assertRaises(SystemExit) as ctx:
-            cmd_ci_gate(args, AegisConfig())
-        self.assertEqual(ctx.exception.code, 2)
-
-    def test_ci_gate_reads_from_run_state(self):
-        from aegis.cli.ci_gate import cmd_ci_gate
-
-        with tempfile.TemporaryDirectory() as tmp:
-            state = _seed_state(tmp, findings=[
-                _make_finding(severity="low")
-            ])
-            args = Namespace(
-                findings_file=None,
-                run=state.run_id,
-                severity_threshold="high",
-                max_findings=None,
-                require_validated=False,
-                junit_xml=None,
-            )
-            config = _make_config(tmp)
-            with self.assertRaises(SystemExit) as ctx:
-                cmd_ci_gate(args, config)
-            # low severity below "high" threshold → pass
-            self.assertEqual(ctx.exception.code, 0)
-
-    def test_ci_gate_writes_junit_xml_on_pass(self):
-        from aegis.cli.ci_gate import cmd_ci_gate
-
-        with tempfile.TemporaryDirectory() as tmp:
-            findings_file = Path(tmp) / "findings.json"
-            findings_file.write_text("[]")
-            junit_file = Path(tmp) / "junit.xml"
-            args = Namespace(
-                findings_file=str(findings_file),
-                run=None,
-                severity_threshold="high",
-                max_findings=None,
-                require_validated=False,
-                junit_xml=str(junit_file),
-            )
-            with self.assertRaises(SystemExit):
-                cmd_ci_gate(args, AegisConfig())
-            self.assertTrue(junit_file.exists())
-            content = junit_file.read_text()
-            self.assertIn("aegis-ci-gate", content)
-            self.assertIn("failures=\"0\"", content)
-
-    def test_ci_gate_writes_junit_xml_on_fail(self):
-        from aegis.cli.ci_gate import cmd_ci_gate
-
-        with tempfile.TemporaryDirectory() as tmp:
-            findings = [{"severity": "critical", "id": "f1"}]
-            findings_file = Path(tmp) / "findings.json"
-            findings_file.write_text(json.dumps(findings))
-            junit_file = Path(tmp) / "junit.xml"
-            args = Namespace(
-                findings_file=str(findings_file),
-                run=None,
-                severity_threshold="high",
-                max_findings=None,
-                require_validated=False,
-                junit_xml=str(junit_file),
-            )
-            with self.assertRaises(SystemExit):
-                cmd_ci_gate(args, AegisConfig())
-            content = junit_file.read_text()
-            self.assertIn("failures=\"1\"", content)
-            self.assertIn("failure", content)
-
-    def test_ci_gate_output_json_contains_evaluated(self):
-        from aegis.cli.ci_gate import cmd_ci_gate
-
-        with tempfile.TemporaryDirectory() as tmp:
-            findings = [{"severity": "low"}, {"severity": "low"}]
-            findings_file = Path(tmp) / "findings.json"
-            findings_file.write_text(json.dumps(findings))
-            args = Namespace(
-                findings_file=str(findings_file),
-                run=None,
-                severity_threshold="high",
-                max_findings=None,
-                require_validated=False,
-                junit_xml=None,
-            )
-            with patch("builtins.print") as mock_print, \
-                 self.assertRaises(SystemExit):
-                cmd_ci_gate(args, AegisConfig())
-            output = " ".join(str(c) for c in mock_print.call_args_list)
-            self.assertIn("evaluated", output)
-            self.assertIn("2", output)
-
-
-# ---------------------------------------------------------------------------
-# aegis/cli/audit.py
-# ---------------------------------------------------------------------------
-
 class TestCmdAuditVerify(unittest.TestCase):
 
     def _make_writer(self, chain_ids=None, chains=None):
@@ -1764,300 +1007,6 @@ class TestCmdAuditVerify(unittest.TestCase):
                 with self.assertRaises(SystemExit) as ctx:
                     cmd_audit_verify(args, config)
                 self.assertEqual(ctx.exception.code, 0)
-
-
-# ---------------------------------------------------------------------------
-# cmd_demo
-# ---------------------------------------------------------------------------
-
-class TestCmdDemo(unittest.TestCase):
-
-    def test_demo_repo_not_dir_exits(self):
-        from aegis.cli.main import cmd_demo
-
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            args = Namespace(
-                repo=str(Path(tmp) / "nonexistent"),
-                target_pack="juice-shop",
-                live_strix=False, live_llm=False,
-                use_golden_patch=False, keep_target=False,
-                apply=False,
-            )
-            with self.assertRaises(SystemExit) as ctx:
-                cmd_demo(args, config)
-            self.assertEqual(ctx.exception.code, 1)
-
-    def test_demo_ok(self):
-        from aegis.cli.main import cmd_demo
-
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp) / "repo"
-            repo.mkdir()
-            config = _make_config(tmp)
-            mock_outcome = MagicMock()
-            mock_outcome.run_path = str(tmp)
-            mock_outcome.stages = []
-            args = Namespace(
-                repo=str(repo),
-                target_pack="juice-shop",
-                live_strix=False, live_llm=False,
-                use_golden_patch=True, keep_target=False,
-                apply=False,
-            )
-            with patch("aegis.demo.run_demo", return_value=mock_outcome), \
-                 patch("builtins.print"):
-                cmd_demo(args, config)
-
-
-# ---------------------------------------------------------------------------
-# main() — additional branch coverage
-# ---------------------------------------------------------------------------
-
-class TestMainAdditionalBranches(unittest.TestCase):
-
-    def test_dry_run_targets_up_is_blocked(self):
-        """Line 975-980: targets up under --dry-run must exit 2."""
-        # Already tested in TestGlobalDryRunBlocksDocker but kept for
-        # completeness of the targets "up"/"down" branches in main().
-        with self.assertRaises(SystemExit) as ctx:
-            main(["--dry-run", "targets", "up", "juice-shop"])
-        self.assertEqual(ctx.exception.code, 2)
-
-    def test_dry_run_targets_down_is_blocked(self):
-        with self.assertRaises(SystemExit) as ctx:
-            main(["--dry-run", "targets", "down", "juice-shop"])
-        self.assertEqual(ctx.exception.code, 2)
-
-    def test_scan_demo_fixture_not_found_warns(self):
-        """Line 250: demo=True but fixture does not exist → _warn."""
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.cli._console._warn") as mock_warn:
-                # Make the fixture Path.exists() return False
-                real_path_cls = Path
-
-                def fake_path(p):
-                    obj = real_path_cls(p)
-                    return obj
-
-                args = Namespace(
-                    target_url="http://x.invalid",
-                    repo=None, events=None, demo=True,
-                    use_strix=False, instruction=None, timeout=1800,
-                    override_authorized=False, global_api=False,
-                )
-                # Patch the fixture path so it "doesn't exist"
-                with patch("aegis.cli.main.Path") as mock_path_cls:
-                    mock_fixture = MagicMock()
-                    mock_fixture.exists.return_value = False
-
-                    # Return real paths for most calls, mock for the fixture
-                    orig_path = real_path_cls
-
-                    def side_effect(p):
-                        # The fixture path is constructed via __file__ resolution;
-                        # the RunState path goes through output_dir.
-                        # Intercept the fixture path that ends in strix_finding.json
-                        path_obj = orig_path(str(p)) if not callable(p) else orig_path(p)
-                        if "strix_finding" in str(p):
-                            return mock_fixture
-                        return path_obj
-
-                    mock_path_cls.side_effect = side_effect
-                    try:
-                        cmd_scan(args, config)
-                    except Exception:
-                        pass
-                # Verify warn was called for any reason
-                self.assertGreater(mock_warn.call_count, 0)
-
-    def test_fix_deps_refresh_returns_none_exits_1(self):
-        """A deps re-scan that yields no dependency finding for the id exits 1.
-
-        Drives the real ``_refresh_deps_findings`` against a mocked Trivy run:
-        the seeded finding is ``dast`` (not ``dependency``), so the helper
-        returns None and ``cmd_fix`` exits 1.
-        """
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.runners.trivy_runner.run_trivy",
-                       return_value=MagicMock(success=True, findings=[])), \
-                 self.assertRaises(SystemExit) as ctx:
-                cmd_fix(
-                    Namespace(
-                        finding_id="test-finding-001", run=None,
-                        repo="/tmp/fake", patch=False, live=False, deps=True,
-                        apply=False, branch=None, push=False, open_pr=False,
-                        rollback=False, ref_before=None,
-                        use_golden_patch=False, allow_dirty=False,
-                        override_authorized=False, global_api=False,
-                    ),
-                    config,
-                )
-            self.assertEqual(ctx.exception.code, 1)
-
-    def test_deps_outcome_error_warns(self):
-        """Line 475: deps outcome with error emits _warn."""
-        with tempfile.TemporaryDirectory() as tmp:
-            state = _seed_state(tmp)
-            outcome = MagicMock()
-            outcome.strategy = "deps"
-            outcome.status = "failed"
-            outcome.success = False
-            outcome.error = "bump failed"
-            outcome.diff_path = None
-            outcome.commit_hash = None
-            outcome.pr_url = None
-            outcome.finding_id = "test-finding-001"
-            with patch("aegis.cli._console._warn") as mock_warn:
-                _report_fix_outcomes(state, "test-finding-001", [outcome], True)
-                calls = " ".join(str(c) for c in mock_warn.call_args_list)
-                self.assertIn("bump failed", calls)
-
-    def test_deps_outcome_with_diff_path(self):
-        """Line 469: deps outcome with diff_path calls _info."""
-        with tempfile.TemporaryDirectory() as tmp:
-            state = _seed_state(tmp)
-            outcome = MagicMock()
-            outcome.strategy = "deps"
-            outcome.status = "fixed"
-            outcome.success = True
-            outcome.error = None
-            outcome.diff_path = "/tmp/bump.diff"
-            outcome.commit_hash = None
-            outcome.pr_url = None
-            outcome.finding_id = "test-finding-001"
-            with patch("aegis.cli._console._info") as mock_info:
-                _report_fix_outcomes(state, "test-finding-001", [outcome], True)
-                calls = " ".join(str(c) for c in mock_info.call_args_list)
-                self.assertIn("Bump diff", calls)
-
-    def test_demo_stages_printed_with_success_and_failure(self):
-        """Lines 642-647: stages are printed with ✓/✗ and report.html."""
-        from aegis.cli.main import cmd_demo
-
-        with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp) / "repo"
-            repo.mkdir()
-            report_html = Path(tmp) / "report.html"
-            report_html.write_text("<html/>")
-            config = _make_config(tmp)
-
-            stage_ok = MagicMock()
-            stage_ok.success = True
-            stage_ok.name = "scan"
-            stage_ok.mode = "fixture"
-            stage_ok.detail = "ok"
-
-            stage_fail = MagicMock()
-            stage_fail.success = False
-            stage_fail.name = "fix"
-            stage_fail.mode = "fixture"
-            stage_fail.detail = "failed"
-
-            mock_outcome = MagicMock()
-            mock_outcome.run_path = str(tmp)
-            mock_outcome.stages = [stage_ok, stage_fail]
-
-            args = Namespace(
-                repo=str(repo),
-                target_pack="juice-shop",
-                live_strix=False, live_llm=False,
-                use_golden_patch=True, keep_target=False,
-                apply=False,
-            )
-            with patch("aegis.demo.run_demo", return_value=mock_outcome), \
-                 patch("builtins.print") as mock_print:
-                cmd_demo(args, config)
-                output = " ".join(str(c) for c in mock_print.call_args_list)
-                self.assertIn("Report", output)
-
-    def test_fix_api_dispatch_no_run_id_in_response(self):
-        """Lines: fix api path with run_id absent from response."""
-        with patch("aegis.cli.api_client.is_api_mode", return_value=True), \
-             patch("aegis.cli.api_client.build_client") as mock_bc, \
-             patch("aegis.cli._console._info") as mock_info:
-            mock_client = MagicMock()
-            mock_client.fix.return_value = {"job_id": "j1"}  # no run_id
-            mock_bc.return_value = mock_client
-            cmd_fix(
-                Namespace(
-                    finding_id="f1", run=None, repo=None,
-                    patch=False, live=False, deps=False,
-                    apply=False, branch=None, push=False, open_pr=False,
-                    rollback=False, ref_before=None,
-                    use_golden_patch=False, allow_dirty=False,
-                    override_authorized=False, global_api=True,
-                ),
-                AegisConfig(),
-            )
-            calls = " ".join(str(c) for c in mock_info.call_args_list)
-            self.assertIn("j1", calls)
-
-    def test_patch_outcome_with_error_warns(self):
-        """Lines: patch outcome failure with error emits _warn."""
-        with tempfile.TemporaryDirectory() as tmp:
-            state = _seed_state(tmp)
-            outcome = MagicMock()
-            outcome.strategy = "patch"
-            outcome.status = "failed"
-            outcome.success = False
-            outcome.error = "CAI timeout"
-            outcome.diff_path = None
-            outcome.commit_hash = None
-            outcome.pr_url = None
-            with patch("aegis.cli._console._warn") as mock_warn:
-                _report_fix_outcomes(state, "test-finding-001", [outcome], False)
-                calls = " ".join(str(c) for c in mock_warn.call_args_list)
-                self.assertIn("CAI timeout", calls)
-
-    def test_pending_apply_with_no_commit_hash_shows_dry_run_ok(self):
-        """Lines: pending_apply without commit_hash prints dry-run message."""
-        with tempfile.TemporaryDirectory() as tmp:
-            state = _seed_state(tmp)
-            outcome = MagicMock()
-            outcome.strategy = "patch"
-            outcome.status = "pending_apply"
-            outcome.success = True
-            outcome.error = None
-            outcome.diff_path = None
-            outcome.commit_hash = None
-            outcome.pr_url = None
-            with patch("aegis.cli._console._info") as mock_info:
-                _report_fix_outcomes(state, "test-finding-001", [outcome], False)
-                calls = " ".join(str(c) for c in mock_info.call_args_list)
-                self.assertIn("Dry-run OK", calls)
-
-    def test_fix_mixed_failed_and_fixed_outcomes(self):
-        """When any outcome is 'failed', final status is 'failed'."""
-        with tempfile.TemporaryDirectory() as tmp:
-            state = _seed_state(tmp)
-            o_fixed = MagicMock()
-            o_fixed.strategy = "patch"
-            o_fixed.status = "fixed"
-            o_fixed.success = True
-            o_fixed.error = None
-            o_fixed.diff_path = None
-            o_fixed.commit_hash = None
-            o_fixed.pr_url = None
-
-            o_failed = MagicMock()
-            o_failed.strategy = "live"
-            o_failed.status = "failed"
-            o_failed.success = False
-            o_failed.error = "live failed"
-            o_failed.diff_path = None
-            o_failed.commit_hash = None
-            o_failed.pr_url = None
-
-            _report_fix_outcomes(state, "test-finding-001",
-                                  [o_fixed, o_failed], False)
-            findings = state.load_findings()
-            self.assertEqual(findings[0]["status"], "failed")
 
 
 # ---------------------------------------------------------------------------

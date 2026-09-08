@@ -141,13 +141,6 @@ WORM bucket runbook.
 
 See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
 
-### Patch workflow
-
-- Patches generated in a temporary branch with automatic rollback on
-  `git apply --check` failure (`aegis/remediate/patch_workflow.py`).
-- `--apply` requires explicit approver-role consent. Dry-run by
-  default.
-
 ### Target allowlist
 
 - Active scans against non-allowlisted hosts require an explicit
@@ -158,23 +151,15 @@ See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
 
 ### Target ownership verification
 
-- A target's `verified` flag is set only after the operator proves
-  control: `url` targets must publish a deterministic per-target DNS
-  TXT token (`aegis-site-verification=…`, salted by
-  `AEGIS_VERIFY_SECRET` so it can't be forged for a host the operator
-  doesn't own); `github_repo` targets must be reachable through the
-  configured GitHub App installation; `image` targets are unsupported.
-- `POST /v1/targets/{id}/verify` runs the check (`admin`) and emits a
-  secret-free `target.verify` audit event (kind + method + matched
-  bool); a failed proof returns `422` and leaves `verified` untouched.
-- See [Integrations](docs/integrations/index.md#cloud-target-ownership-verification).
-
-### Fork-PR safety
-
-- Webhook payloads from GitHub trigger `PRScope` admission. Fork PRs
-  engage restricted mode: no `--apply`, no `--open-pr`, depth-1
-  clone, no secret mount, path allowlist scoped to `changed_files`.
-- See [`docs/security/fork-prs.md`](docs/security/fork-prs.md).
+- The DNS-TXT / GitHub-App ownership-verification engine was removed
+  with the pentest domain. Targets are gated by the project allowlist
+  (and the explicit override flag above) alone; a target's `verified`
+  flag is never set in this build.
+- `GET /v1/targets/{id}/verification` and `POST /v1/targets/{id}/verify`
+  keep their 404 / project-membership / `admin` gates and then return
+  **`501 Not Implemented`** with an explicit message — an honest
+  "unavailable" path rather than a faked verification. `verified` is
+  left untouched.
 
 ### Deployment hardening (Helm / k8s)
 
@@ -186,17 +171,17 @@ See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
   requests/limits and liveness/readiness probes ship on every service.
 - **Optional gVisor sandbox** for the untrusted scan/tool workloads.
   With `sandbox.enabled=true` a `runsc` `RuntimeClass` is wired onto
-  the worker + kali pods (the tool executors), so a compromised tool is
-  contained from the node kernel. gVisor must be installed on the
+  the worker pods (the attack-adapter executors), so a compromised
+  adapter is contained from the node kernel. gVisor must be installed on the
   scheduling nodes. See [`docs/ops/kubernetes.md`](docs/ops/kubernetes.md).
 
-### Air-gapped vendoring
+### Air-gapped installs
 
-- `AEGIS_OFFLINE_VENDOR_HOST` + `scripts/vendor-submodules.sh` rewrite
-  the vendored git-submodule URLs to an internal mirror so air-gapped
-  installs never reach out to `github.com` / `gitlab.com`. The mapping
-  surfaces in `aegis doctor`. See
-  [`docs/ops/deploy.md`](docs/ops/deploy.md#air-gapped-offline-vendor-mirror).
+- `AEGIS_OFFLINE_VENDOR_HOST` names the internal package / artifact
+  mirror for air-gapped installs and surfaces in `aegis doctor` and the
+  evidence pack. (The vendored pentest submodules and the URL-rewrite
+  helper that used this setting were removed with the pentest domain.)
+  See [`docs/ops/deploy.md`](docs/ops/deploy.md#air-gapped-offline-vendor-mirror).
 
 ### Compliance evidence
 
@@ -215,25 +200,23 @@ Both are config-gated and default **on**; logs and raised exceptions are
 secret-free (a blocked input surfaces a clean error, never the offending
 text or any matched secret).
 
-- **Diff / output secret scrubbing.** The canonical unified diff (in
-  `extract_unified_diff`) and LLM outputs at the remediation + agent
-  chokepoints are passed through the same secret/token regex set used by
-  the audit redactor (`aegis/audit/redact.py`), with matches replaced by
-  `***REDACTED***`. Because scrubbing happens on the *canonical* diff,
-  every downstream consumer — the persisted `.diff`, the PR body, and the
-  remediation log — inherits the scrub.
+- **Diff / output secret scrubbing.** Unified diffs (`extract_unified_diff`)
+  and LLM outputs are passed through the same secret/token regex set used
+  by the audit redactor (`aegis/audit/redact.py`), with matches replaced by
+  `***REDACTED***`, so every downstream consumer of a scrubbed text
+  inherits the scrub.
 - **Prompt-injection detection.** Untrusted finding fields (title,
-  description, remediation steps, PoC, code snippets) and agent prompts are
-  scored for injection before they reach the model: a tiered risk
+  description, remediation steps, PoC, code snippets) and free-text prompts
+  are scored for injection before they reach the model: a tiered risk
   (`none` / `low` / `medium` / `high`) with categories
   (`instruction_override`, `role_switch`, `exfiltration`, …). At or above a
   configurable risk threshold (`AEGIS_LLM_INJECTION_BLOCK_RISK`, default
-  `high`) the input is **blocked** — a failed `FixOutcome` in the fix flow,
-  a blocked `AgentResult` in the agent flow. `off` detects + logs only.
-- Wired at three chokepoints: the remediation LLM boundary
-  (`aegis/remediate/cai_runner.py`), the diff-extraction point
-  (`aegis/remediate/patch_workflow.py`), and the agent-API boundary
-  (`aegis/agents/cai/builtins.py` / `patterns.py`).
+  `high`) the input is **blocked** with a clean error. `off` detects + logs
+  only.
+- The guardrail surface is `aegis/llm/guardrails.py` alone in this fork.
+  The pentest remediation / agent chokepoints that wired it were removed
+  with the pentest domain; the adversarial-ML explain / recommend stages
+  (`aegis/ml/`) call the same functions at their LLM boundary.
 - Config (env vars): `AEGIS_LLM_GUARDRAILS` (master, default on),
   `AEGIS_LLM_SCRUB_DIFF`, `AEGIS_LLM_DETECT_INJECTION`,
   `AEGIS_LLM_FILTER_OUTPUT` (all default on), and
@@ -249,9 +232,7 @@ Budget enforcement is now **fail-closed** (`AEGIS_LLM_BUDGET_STRICT`,
 default **on** in prod). A DB-backed run that reaches an LLM call
 **without** a budget checker is **denied** rather than billed silently, so
 a missing or misconfigured budget hook can no longer let an ungoverned run
-spend. The agent-run worker path is now budget-enforced on the same
-footing as the remediation path. Set the knob off only in dev where cost
-isn't a concern.
+spend. Set the knob off only in dev where cost isn't a concern.
 
 ### Secrets handling
 
@@ -385,29 +366,26 @@ prod. See [`docs/ops/kubernetes.md`](docs/ops/kubernetes.md).
 
 ## Out of scope
 
-- Findings produced **by** Aegis against deliberately-vulnerable
-  targets (Juice Shop, DVWA, etc.). Those are by design.
-- The fixture-assisted demo mode's lack of a live LLM / scanner —
-  documented and intentional.
-- Submodule vulnerabilities. Report those to the respective upstream
-  projects (`cai`, `strix`, `mcp-kali-server`, `vulnerability-fixer`,
-  `bumblebee`, `deepsec`, `shadcn-ui`,
-  `opentelemetry-collector-contrib`).
+- Findings produced **by** Aegis against deliberately-vulnerable or
+  deliberately-weak targets (test models, reference datasets). Those are
+  by design.
+- Vulnerabilities in bundled upstream components. Report those to the
+  respective upstream projects (`shadcn-ui`,
+  `opentelemetry-collector-contrib`, and the adversarial-robustness
+  libraries the ML vertical builds on).
 - DoS / resource exhaustion against the offline CLI when supplied a
   malicious finding fixture (the CLI is single-process; trust the
   fixture source).
-- Cost / budget exhaustion via LLM-routed agents — now mitigated by
+- Cost / budget exhaustion via LLM-routed stages — now mitigated by
   fail-closed budget enforcement (`AEGIS_LLM_BUDGET_STRICT`; see § "LLM
   budget" above and the `BudgetChecker` hook in `aegis/llm/router.py`).
 
 ## Known gaps (tracked)
 
-- **Firecracker** microVM isolation (the gVisor `RuntimeClass` sandbox
-  for the worker / kali pods has shipped — see "Deployment hardening"
-  above; Firecracker is still out — spike in
-  [ADR-0006](docs/adr/0006-firecracker-microvm-isolation.md)).
-- Native MCP protocol (mcp-kali is consumed over REST today — spike in
-  [ADR-0007](docs/adr/0007-native-mcp-toolbelt.md)).
+- Kernel-level (microVM) isolation for attack-adapter runs. The gVisor
+  `RuntimeClass` sandbox for the worker pods has shipped — see
+  "Deployment hardening" above — and third-party plugins run
+  out-of-process; a microVM boundary is not yet in place.
 - Worker autoscaling + multi-region DR (spike in
   [ADR-0005](docs/adr/0005-worker-autoscaling-and-dr.md)).
 - Nix reproducible builds (spike in

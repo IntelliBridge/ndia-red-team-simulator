@@ -43,7 +43,6 @@ config:
   # OIDC issuer/JWKS resolve to the in-cluster Keycloak Service by default.
   oidcIssuer: http://aegis-keycloak:8080/realms/aegis
   oidcJwksUrl: http://aegis-keycloak:8080/realms/aegis/protocol/openid-connect/certs
-  kaliUrl: http://aegis-kali:5000
   disableLlm: "1"
   # Web (Next.js) public config.
   webApiUrl: http://localhost:8000
@@ -98,11 +97,11 @@ config:
             property: secret
 
 # -- Sandbox isolation (gVisor) -----------------------------------------------
-# gVisor (`runsc`) sandboxes the pods that execute untrusted scan/tool
-# workloads (worker + kali). Requires gVisor installed on the nodes and a
-# matching RuntimeClass; the RuntimeClass template below is rendered when
-# sandbox.enabled=true. When disabled, those pods fall back to the default
-# runtime (no runtimeClassName set).
+# gVisor (`runsc`) sandboxes the worker pod, which executes untrusted plugin /
+# attack-adapter workloads out-of-process. Requires gVisor installed on the
+# nodes and a matching RuntimeClass; the RuntimeClass template below is
+# rendered when sandbox.enabled=true. When disabled, the pod falls back to the
+# default runtime (no runtimeClassName set).
 sandbox:
   enabled: false
   # Name of the RuntimeClass object + its handler (must match the gVisor
@@ -161,22 +160,6 @@ logIngest:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: 500m, memory: 512Mi }
   readOnlyRootFilesystem: true
-
-kali:
-  replicaCount: 1
-  image:
-    repository: aegis-kali
-    tag: dev
-  service:
-    type: ClusterIP
-    port: 5000
-  # Untrusted tool execution surface. Sandboxed via gVisor when
-  # sandbox.enabled=true (see worker + kali wiring in their Deployments).
-  allowGenericCommand: "0"
-  resources:
-    requests: { cpu: 250m, memory: 512Mi }
-    limits: { cpu: "1", memory: 1Gi }
-  readOnlyRootFilesystem: false
 
 # -- Stateful dependencies (gate off when using managed equivalents) ----------
 postgres:

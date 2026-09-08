@@ -13,35 +13,22 @@ _RESET = "\033[0m"
 
 
 def _report_offline_vendor(config: AegisConfig) -> None:
-    """Surface the air-gapped submodule mirror, if one is configured.
+    """Surface the air-gapped mirror host, if one is configured.
 
-    When ``offline_vendor_host`` is set we print the mirror host plus the
-    rewritten URL for each submodule so an operator can confirm the mapping
-    before running ``scripts/vendor-submodules.sh``. When unset we leave a
-    single-line note pointing at the env var.
+    When ``offline_vendor_host`` is set we print the mirror host. When unset we
+    leave a single-line note pointing at the env var. The pentest submodule
+    URL-rewrite helper (``aegis.vendor``) was removed with the pentest domain,
+    so this no longer rewrites ``.gitmodules`` URLs — there are no vendored
+    submodules to mirror in the ML red-team fork.
     """
-    from pathlib import Path
-
     host = getattr(config, "offline_vendor_host", None)
     print()
     if not host:
         print(f"  {_YELLOW}~{_RESET} Offline vendor mirror: not set "
-              f"(set AEGIS_OFFLINE_VENDOR_HOST for air-gapped submodule fetches)")
+              f"(set AEGIS_OFFLINE_VENDOR_HOST for an air-gapped package mirror)")
         return
-
-    from aegis.vendor import submodule_mirror_map
 
     print(f"  {_CYAN}>{_RESET} Offline vendor mirror: {host}")
-    gitmodules = Path(".gitmodules")
-    if not gitmodules.exists():
-        print(f"    {_YELLOW}~{_RESET} no .gitmodules found in {Path.cwd()}")
-        return
-    mapping = submodule_mirror_map(gitmodules.read_text(), host)
-    if not mapping:
-        print(f"    {_YELLOW}~{_RESET} .gitmodules declares no submodule URLs")
-        return
-    for original, mirrored in mapping.items():
-        print(f"    {original} -> {mirrored}")
 
 
 

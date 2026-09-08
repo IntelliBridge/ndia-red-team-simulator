@@ -44,9 +44,6 @@ def cmd_status(_args: argparse.Namespace, config: AegisConfig) -> None:
     _kv("oidc issuer", oidc_issuer or "(not set)")
     _kv("auth mode", auth_mode, color=_YELLOW if auth_mode == "dev" else "")
     _kv("model (default)", config.model)
-    _kv("strix path", config.strix_path)
-    _kv("cai path", config.cai_path)
-    _kv("kali url", config.mcp_kali_url)
     _kv("target allowlist", ", ".join(config.target_allowlist))
 
     if api_url and mode != "api":

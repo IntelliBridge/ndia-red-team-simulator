@@ -38,14 +38,13 @@ vi.mock("@/lib/api", () => ({
   isCancellable: (s: string | undefined) =>
     s != null && ["queued", "running", "pending"].includes(s),
   reportUrl: (id: string, ext: string) => `http://api.test/v1/runs/${id}/report.${ext}`,
-  exportVulnfixerUrl: (id: string) => `http://api.test/v1/runs/${id}/exports/vulnfixer`,
   bearerToken: bearerTokenMock,
 }));
 
 // Stub design-system. StageTimeline lists stage names so the WS path is
 // observable; AlertDialog/Tooltip/RoleGated are rendered transparently so
 // confirm-flow + gating remain observable in the DOM.
-vi.mock("@aegis/design-system", () => ({
+vi.mock("@redsim/design-system", () => ({
   SeverityChip: ({ level }: { level: string }) =>
     h("span", { "data-testid": "severity" }, level),
   StageTimeline: ({ stages }: { stages: Array<{ name: string }> }) =>
@@ -221,9 +220,8 @@ describe("RunPage", () => {
     expect(screen.getByRole("link", { name: "Markdown" }).getAttribute("href")).toBe(
       "http://api.test/v1/runs/run-77/report.md",
     );
-    expect(screen.getByRole("link", { name: "Vulnfixer export" }).getAttribute("href")).toBe(
-      "http://api.test/v1/runs/run-77/exports/vulnfixer",
-    );
+    // The Vulnfixer remediation export was removed with the pentest domain.
+    expect(screen.queryByRole("link", { name: /Vulnfixer/ })).toBeNull();
   });
 
   it("renders a finding row per finding with severity, title, validation, status and the count", () => {

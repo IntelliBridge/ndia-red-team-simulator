@@ -1,13 +1,13 @@
-"""Community scanner/agent adapter marketplace: discovery + reporting.
+"""Community scanner/attack adapter marketplace: discovery + reporting.
 
 The :class:`~aegis.registry.Registry` owns the single discovery code path
 (:meth:`~aegis.registry.Registry.scan_entry_points`). This module layers the
-public, read-only *report* on top of it: :func:`discover_all` scans both the
-``aegis.scanners`` and ``aegis.agents`` entry-point groups and returns a
+public, read-only *report* on top of it: :func:`discover_all` scans the
+``aegis.scanners`` entry-point group and returns a
 :class:`PluginInfo` per third-party item, *without* mutating the global
-registries (``register=False``). Built-ins never appear because they are
+registry (``register=False``). Built-ins never appear because they are
 registered eagerly in code, not via entry points — discovery only ever walks
-the entry-point groups, so there is no double-counting.
+the entry-point group, so there is no double-counting.
 
 Discovery is gated by ``AEGIS_PLUGINS=1`` and (optionally) the
 ``AEGIS_PLUGINS_ALLOW`` distribution allowlist; see the README/docs for the
@@ -36,8 +36,8 @@ class PluginInfo:
     """
 
     name: str
-    kind: str            # "scanner" | "agent"
-    group: str           # "aegis.scanners" | "aegis.agents"
+    kind: str            # "scanner"
+    group: str           # "aegis.scanners"
     distribution: str | None
     version: str | None
     status: str          # "loaded" | "rejected" | "skipped"
@@ -49,19 +49,18 @@ class PluginInfo:
 
 
 def discover_all() -> list[PluginInfo]:
-    """Report third-party plugins across both groups without registering them.
+    """Report third-party scanner plugins without registering them.
 
     Returns ``[]`` when ``AEGIS_PLUGINS != 1`` (discovery disabled). Otherwise
-    walks the scanner and agent entry-point groups through the shared
+    walks the scanner entry-point group through the shared
     :meth:`~aegis.registry.Registry.scan_entry_points` path with
-    ``register=False`` so the global registries are left untouched.
+    ``register=False`` so the global registry is left untouched.
     """
     if os.environ.get("AEGIS_PLUGINS") != "1":
         return []
 
-    # Imported lazily so importing this module never drags in the scanner/agent
-    # subsystems (and their eager built-in registration) until discovery runs.
-    from aegis.agents.registry import _agent_registry
+    # Imported lazily so importing this module never drags in the scanner
+    # subsystem (and its eager built-in registration) until discovery runs.
     from aegis.scanners.registry import _scanner_registry
     from aegis.supply_chain.signing import load_plugin_verifier
 
@@ -73,6 +72,4 @@ def discover_all() -> list[PluginInfo]:
     results: list[PluginInfo] = []
     results.extend(_scanner_registry.scan_entry_points(
         "aegis.scanners", register=False, verifier=verifier))
-    results.extend(_agent_registry.scan_entry_points(
-        "aegis.agents", register=False, verifier=verifier))
     return results

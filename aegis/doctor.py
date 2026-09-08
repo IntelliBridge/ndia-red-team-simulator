@@ -5,8 +5,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from pathlib import Path
-from urllib.error import URLError
 from urllib.request import urlopen
 
 from aegis.config import AegisConfig, load_config
@@ -115,6 +113,29 @@ def _check_oidc(issuer: str) -> tuple[bool, str]:
         return False, f"{type(exc).__name__}: {exc}"
 
 
+def _report_attack_adapters() -> None:
+    """Informational: which scanner / attack adapters are registered.
+
+    Never flips the overall result. The pentest engines this check once
+    validated (Strix / CAI / MCP-Kali) were removed with the pentest domain,
+    and a fresh install legitimately has no adapter until an adversarial-ML
+    attack adapter (``aegis.ml.attacks``) or a signed plugin registers through
+    ``aegis.scanners``.
+    """
+    try:
+        from aegis.scanners import list_scanners
+        names = list_scanners()
+    except Exception as exc:  # pragma: no cover - defensive
+        _warn("Attack adapters", f"registry unavailable — {type(exc).__name__}: {exc}")
+        return
+    if names:
+        _pass("Attack adapters", ", ".join(names))
+    else:
+        _warn("Attack adapters",
+              "none registered — the pentest engines were removed; ML attack "
+              "adapters (aegis.ml.attacks) register via aegis.scanners")
+
+
 def run_doctor(config: AegisConfig | None = None, *,
                provider_override: str | None = None,
                api_mode: bool = False) -> bool:
@@ -122,6 +143,8 @@ def run_doctor(config: AegisConfig | None = None, *,
 
     Returns True if every *required* check passes, False otherwise.
     Provider-specific credentials are only required for the active provider.
+    Attack-adapter availability is reported but never required (see
+    :func:`_report_attack_adapters`).
     """
     if config is None:
         config = load_config()
@@ -143,20 +166,6 @@ def run_doctor(config: AegisConfig | None = None, *,
         _fail("Docker", "not found — install Docker")
         ok = False
 
-    strix = Path(config.strix_path)
-    if strix.is_dir():
-        _pass("Strix path", str(strix.resolve()))
-    else:
-        _fail("Strix path", f"{config.strix_path} is not a directory")
-        ok = False
-
-    cai = Path(config.cai_path)
-    if cai.is_dir():
-        _pass("CAI path", str(cai.resolve()))
-    else:
-        _fail("CAI path", f"{config.cai_path} is not a directory")
-        ok = False
-
     provider = provider_override or detect_provider(config.model)
     keys = _PROVIDER_KEYS.get(provider)
     if keys is None:
@@ -169,17 +178,7 @@ def run_doctor(config: AegisConfig | None = None, *,
             _fail(f"{provider} API key", f"set one of {', '.join(keys)} (model={config.model})")
             ok = False
 
-    mcp_url = config.mcp_kali_url.rstrip("/") + "/health"
-    try:
-        with urlopen(mcp_url, timeout=5) as resp:
-            _pass("MCP Kali Server", f"{mcp_url} responded {resp.status}")
-    except (URLError, OSError, ValueError) as exc:
-        _warn("MCP Kali Server", f"not reachable at {mcp_url} — {exc}")
-
-    if os.environ.get("GITHUB_TOKEN"):
-        _pass("GitHub token", "GITHUB_TOKEN set")
-    else:
-        _warn("GitHub token", "GITHUB_TOKEN not set (optional, required for --open-pr)")
+    _report_attack_adapters()
 
     if api_mode:
         db_url = os.environ.get("AEGIS_DB_URL")
@@ -204,12 +203,6 @@ def run_doctor(config: AegisConfig | None = None, *,
             (_pass if oidc_ok else _warn)("OIDC issuer", oidc_detail)
         else:
             _warn("OIDC issuer", "AEGIS_OIDC_ISSUER not set (dev mode allowed only if AEGIS_ENV != prod)")
-
-    gh_ver = _cmd_version("gh --version")
-    if gh_ver:
-        _pass("gh CLI", gh_ver.splitlines()[0])
-    else:
-        _warn("gh CLI", "not found (optional, required for --open-pr)")
 
     print()
     if ok:

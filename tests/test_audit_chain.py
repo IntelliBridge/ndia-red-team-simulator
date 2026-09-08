@@ -110,31 +110,5 @@ class TestRedaction(unittest.TestCase):
             self.assertEqual(rec["detail"]["password"], "<REDACTED>")
 
 
-class TestKaliClientUsesInjectedWriter(unittest.TestCase):
-    """`KaliClient` should land its events on the shared chain, not a side JSONL."""
-
-    def test_writer_receives_kali_event(self):
-        from aegis.tools.kali_client import KaliClient, ToolResult
-
-        events: list = []
-
-        class _StubWriter:
-            def append(self, **kwargs):
-                events.append(kwargs)
-
-        client = KaliClient(target_allowlist=["localhost"],
-                            audit_writer=_StubWriter(),
-                            caller="worker:scan")
-        # Stub the actual POST so we don't reach a network.
-        client._post = lambda path, data: ToolResult(success=True, stdout="", stderr="",
-                                                     return_code=0)
-        client.run_tool("nmap", {"target": "localhost", "scan_type": "-sV"})
-        self.assertEqual(len(events), 1)
-        evt = events[0]
-        self.assertEqual(evt["action"], "kali.nmap")
-        self.assertEqual(evt["actor"], "worker:scan")
-        self.assertTrue(evt["success"])
-
-
 if __name__ == "__main__":
     unittest.main()

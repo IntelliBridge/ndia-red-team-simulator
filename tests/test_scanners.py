@@ -1,60 +1,15 @@
-"""Registry-level checks for the full scanner roster (offline-safe).
+"""Registry-level checks for the scanner-adapter dispatch (offline-safe).
 
-No scanner binary is invoked: dispatch-by-capability is exercised with a
-synthetic capability + mock adapter, and ``health_check`` is checked with
-``shutil.which`` patched to report every binary absent.
+The 14 first-party pentest scanner adapters were removed with the pentest
+domain; the adversarial-ML attack adapters (``aegis.ml.attacks``) register
+through this same registry. No scanner binary is invoked: dispatch-by-capability
+is exercised with a synthetic capability + mock adapter.
 """
 
 import unittest
-from unittest.mock import patch
 
-from aegis.scanners import dispatch, get, list_scanners
-from aegis.scanners.registry import _REGISTRY, KNOWN_CAPABILITIES, ScanOptions, ScanResult, register
-
-# The 14 first-party adapters, sorted.
-_EXPECTED = [
-    "bandit", "bumblebee", "checkov", "codeql", "deepsec", "grype", "nuclei",
-    "semgrep", "sonarqube", "strix", "syft", "trivy", "trufflehog", "zap",
-]
-_CAPABILITIES = KNOWN_CAPABILITIES  # single source of truth: the registry's set
-
-
-class TestScannerRoster(unittest.TestCase):
-    def test_all_fourteen_registered(self):
-        names = set(list_scanners())
-        self.assertTrue(set(_EXPECTED) <= names,
-                        f"missing: {set(_EXPECTED) - names}")
-        # Ignore transient test-only mocks other tests may have registered.
-        real = sorted(n for n in names if not n.startswith("mock"))
-        self.assertEqual(real, _EXPECTED)
-
-    def test_name_matches_registry_key(self):
-        for n in _EXPECTED:
-            self.assertEqual(get(n).name, n)
-
-    def test_capabilities_nonempty_and_known(self):
-        for n in _EXPECTED:
-            caps = get(n).capabilities
-            self.assertTrue(caps, f"{n} declares no capabilities")
-            self.assertTrue(
-                caps <= _CAPABILITIES,
-                f"{n} declares unknown capability {caps - _CAPABILITIES}",
-            )
-
-    def test_every_capability_has_an_adapter(self):
-        covered = set()
-        for n in _EXPECTED:
-            covered |= get(n).capabilities
-        self.assertEqual(covered, _CAPABILITIES)
-
-
-class TestHealthCheck(unittest.TestCase):
-    def test_health_check_false_when_binary_absent(self):
-        # Every adapter resolves its binary via shutil.which; with none on
-        # PATH each must return False and never raise.
-        with patch("shutil.which", return_value=None):
-            for n in _EXPECTED:
-                self.assertIs(get(n).health_check(), False, f"{n}")
+from aegis.scanners import dispatch
+from aegis.scanners.registry import _REGISTRY, ScanOptions, ScanResult, register
 
 
 class TestDispatch(unittest.TestCase):

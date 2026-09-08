@@ -48,6 +48,7 @@ class TestApiClient(unittest.TestCase):
         with patch("urllib.request.urlopen",
                    _stub_urlopen({"run_id": "r1", "job_id": "j1"}, captured)):
             result = client.start_scan(target="http://localhost:3000",
+                                       scanner="fake-attack",
                                        project_id="proj-1")
         self.assertEqual(result["run_id"], "r1")
         method, url, body, headers = captured[0]
@@ -58,18 +59,18 @@ class TestApiClient(unittest.TestCase):
         sent = json.loads(body.decode())
         self.assertEqual(sent["target"], "http://localhost:3000")
         self.assertEqual(sent["project_id"], "proj-1")
+        # The scanner always travels on the wire: the API has no default.
+        self.assertEqual(sent["scanner"], "fake-attack")
 
-    def test_fix_posts_to_correct_route(self):
-        captured: list = []
+    def test_start_scan_requires_an_explicit_scanner(self):
         client = api_client.ApiClient(base_url="http://api.local", token=None)
-        with patch("urllib.request.urlopen",
-                   _stub_urlopen({"job_id": "j2"}, captured)):
-            client.fix(finding_id="f-1", strategy="patch", apply=True)
-        method, url, body, _ = captured[0]
-        self.assertEqual(method, "POST")
-        self.assertEqual(url, "http://api.local/v1/findings/f-1/fix")
-        sent = json.loads(body.decode())
-        self.assertTrue(sent["apply"])
+        with self.assertRaises(TypeError):
+            client.start_scan(target="http://localhost:3000")  # type: ignore[call-arg]
+
+    def test_fix_route_client_was_removed_with_the_pentest_domain(self):
+        # /v1/findings/{id}/fix no longer exists server-side; the client has
+        # no method that could 404 against it.
+        self.assertFalse(hasattr(api_client.ApiClient, "fix"))
 
     def test_verify_posts_with_no_body(self):
         captured: list = []
@@ -88,14 +89,15 @@ class TestApiClient(unittest.TestCase):
         def _raise(req, timeout=None):  # noqa: ARG001
             raise urllib.error.HTTPError(
                 req.full_url, 403, "Forbidden", {},
-                io.BytesIO(b'{"detail":"role lacks fix.apply"}'),
+                io.BytesIO(b'{"detail":"role lacks scan.start"}'),
             )
 
         with patch("urllib.request.urlopen", _raise):
             with self.assertRaises(api_client.ApiError) as ctx:
-                client.start_scan(target="http://localhost:3000")
+                client.start_scan(target="http://localhost:3000",
+                                  scanner="fake-attack")
         self.assertEqual(ctx.exception.status_code, 403)
-        self.assertIn("fix.apply", ctx.exception.body)
+        self.assertIn("scan.start", ctx.exception.body)
 
     def test_health_returns_none_when_unreachable(self):
         client = api_client.ApiClient(base_url="http://nope", token=None)

@@ -1,4 +1,4 @@
-// Public surface of @aegis/design-system.
+// Public surface of @redsim/design-system.
 //
 // Components listed here must have an accompanying Storybook story
 // (per the v0.4.0 F16 incremental gate — the CI gate flips on after

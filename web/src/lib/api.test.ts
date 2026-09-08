@@ -8,14 +8,12 @@ import {
   createAuthProfile,
   deleteAuthProfile,
   deleteTarget,
-  exportVulnfixerUrl,
   getOrgCost,
   isCancellable,
   listAuthProfiles,
+  listScanners,
   reportUrl,
   resolveOrgId,
-  runAgent,
-  runKaliTool,
   startScan,
   type ProjectMembership,
 } from "./api";
@@ -151,47 +149,7 @@ describe("typed client helpers", () => {
     expect(isCancellable(undefined)).toBe(false);
   });
 
-  it("runAgent POSTs the agent run route with the body", async () => {
-    fetchMock.mockResolvedValue(
-      ok(JSON.stringify({ run_id: "r1", job_id: "j1" })),
-    );
-    const out = await runAgent("red_teamer", {
-      prompt: "go",
-      project_id: "p1",
-      execute: true,
-      target: "https://t.example",
-    });
-    expect(out).toEqual({ run_id: "r1", job_id: "j1" });
-    expect(lastUrl()).toBe("http://localhost:8000/v1/agents/red_teamer/run");
-    const init = lastInit();
-    expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body as string)).toEqual({
-      prompt: "go",
-      project_id: "p1",
-      execute: true,
-      target: "https://t.example",
-    });
-  });
-
-  it("runKaliTool POSTs /tools/kali/{tool} with execute + params + project", async () => {
-    fetchMock.mockResolvedValue(
-      ok(JSON.stringify({ tool: "sqlmap", success: true, return_code: 0 })),
-    );
-    const out = await runKaliTool("sqlmap", {
-      execute: true,
-      params: { target: "x" },
-    });
-    expect(out.tool).toBe("sqlmap");
-    expect(lastUrl()).toBe(
-      "http://localhost:8000/v1/tools/kali/sqlmap?project=default",
-    );
-    expect(JSON.parse(lastInit().body as string)).toEqual({
-      execute: true,
-      params: { target: "x" },
-    });
-  });
-
-  it("reportUrl + exportVulnfixerUrl build authenticated download links per ext", () => {
+  it("reportUrl builds authenticated download links per ext", () => {
     expect(reportUrl("run-7", "html")).toBe(
       "http://localhost:8000/v1/runs/run-7/report.html",
     );
@@ -200,9 +158,6 @@ describe("typed client helpers", () => {
     );
     expect(reportUrl("run-7", "md")).toBe(
       "http://localhost:8000/v1/runs/run-7/report.md",
-    );
-    expect(exportVulnfixerUrl("run-7")).toBe(
-      "http://localhost:8000/v1/runs/run-7/exports/vulnfixer",
     );
   });
 });
@@ -345,5 +300,32 @@ describe("auth profile + scan helpers", () => {
         project_id: "p1",
       }),
     );
+  });
+});
+
+describe("listScanners", () => {
+  it("GETs /v1/scanners and returns the roster array", async () => {
+    fetchMock.mockResolvedValue(
+      ok(JSON.stringify({
+        scanners: [{ name: "fake-dast", capabilities: ["dast"] }],
+        count: 1,
+      })),
+    );
+    const out = await listScanners();
+    expect(lastUrl()).toBe("http://localhost:8000/v1/scanners");
+    expect(lastInit().method).toBe("GET");
+    expect(out).toEqual([{ name: "fake-dast", capabilities: ["dast"] }]);
+  });
+
+  it("returns an empty roster when no adapter is registered", async () => {
+    // The pentest built-ins are gone; a fresh install has no adapter until an
+    // ML attack adapter registers. Callers must treat [] as "unavailable".
+    fetchMock.mockResolvedValue(ok(JSON.stringify({ scanners: [], count: 0 })));
+    expect(await listScanners()).toEqual([]);
+  });
+
+  it("tolerates a malformed body by returning an empty roster", async () => {
+    fetchMock.mockResolvedValue(ok(JSON.stringify({})));
+    expect(await listScanners()).toEqual([]);
   });
 });

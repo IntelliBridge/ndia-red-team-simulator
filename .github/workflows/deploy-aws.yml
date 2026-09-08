@@ -1,6 +1,11 @@
 name: Deploy to AWS
 
-# CI/CD for the redsim adversarial-ML simulator.
+# CI/CD for the redsim adversarial-ML simulator. Builds three images from
+# the repo root and pushes them to ECR under ndia-red-team/<name>:
+#   api     deploy/Dockerfile.api     aegis FastAPI + alembic migrations
+#   worker  deploy/Dockerfile.worker  Celery worker with the ml extra
+#                                     (torch/ART/SHAP), runs the attacks
+#   web     deploy/Dockerfile.web     Next.js @redsim/web
 #
 # Auth uses GitHub OIDC — no long-lived AWS keys live in GitHub. The
 # workflow assumes an IAM role scoped to this repo (created out-of-band).
@@ -11,16 +16,19 @@ name: Deploy to AWS
 #   AWS_DEPLOY_ROLE_ARN  arn:aws:iam::140381642432:role/ndia-red-team-gha-deploy
 #   ECR_REGISTRY         140381642432.dkr.ecr.us-east-1.amazonaws.com
 # The deploy job stays dormant until the ECS variables below are set:
-#   ECS_CLUSTER, ECS_SERVICE_API, ECS_SERVICE_WEB
+#   ECS_CLUSTER, ECS_SERVICE_API, ECS_SERVICE_WORKER, ECS_SERVICE_WEB
+# Each ECS_SERVICE_* is optional on its own: an unset one is skipped, so a
+# cluster that runs only api + web (no worker service yet) still deploys.
 
 on:
   push:
     branches: [main]
     paths:
-      - "redsim/**"
+      - "aegis/**"
       - "web/**"
       - "packages/**"
       - "deploy/Dockerfile.*"
+      - "deploy/docker-compose.yml"
       - "pyproject.toml"
       - "pnpm-lock.yaml"
       - ".github/workflows/deploy-aws.yml"
@@ -43,6 +51,8 @@ jobs:
         include:
           - name: api
             dockerfile: deploy/Dockerfile.api
+          - name: worker
+            dockerfile: deploy/Dockerfile.worker
           - name: web
             dockerfile: deploy/Dockerfile.web
     steps:
@@ -89,17 +99,18 @@ jobs:
         env:
           ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
           ECS_SERVICE_API: ${{ vars.ECS_SERVICE_API }}
+          ECS_SERVICE_WORKER: ${{ vars.ECS_SERVICE_WORKER }}
           ECS_SERVICE_WEB: ${{ vars.ECS_SERVICE_WEB }}
         run: |
           set -euo pipefail
           # Guard: the job condition only checks ECS_CLUSTER, so fail loudly
           # if no service is configured rather than reporting a false-positive
           # green deploy that rolled nothing.
-          if [ -z "$ECS_SERVICE_API" ] && [ -z "$ECS_SERVICE_WEB" ]; then
-            echo "::error::ECS_CLUSTER is set but neither ECS_SERVICE_API nor ECS_SERVICE_WEB is configured; nothing to deploy." >&2
+          if [ -z "$ECS_SERVICE_API" ] && [ -z "$ECS_SERVICE_WORKER" ] && [ -z "$ECS_SERVICE_WEB" ]; then
+            echo "::error::ECS_CLUSTER is set but none of ECS_SERVICE_API, ECS_SERVICE_WORKER, ECS_SERVICE_WEB is configured; nothing to deploy." >&2
             exit 1
           fi
-          for svc in "$ECS_SERVICE_API" "$ECS_SERVICE_WEB"; do
+          for svc in "$ECS_SERVICE_API" "$ECS_SERVICE_WORKER" "$ECS_SERVICE_WEB"; do
             [ -n "$svc" ] || continue
             echo "Forcing new deployment for $svc"
             aws ecs update-service \
@@ -108,7 +119,7 @@ jobs:
               --force-new-deployment >/dev/null
           done
           echo "Waiting for services to stabilize..."
-          for svc in "$ECS_SERVICE_API" "$ECS_SERVICE_WEB"; do
+          for svc in "$ECS_SERVICE_API" "$ECS_SERVICE_WORKER" "$ECS_SERVICE_WEB"; do
             [ -n "$svc" ] || continue
             aws ecs wait services-stable \
               --cluster "$ECS_CLUSTER" --services "$svc"

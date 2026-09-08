@@ -10,7 +10,7 @@ vi.mock("@/hooks/useRequireAuth", () => ({ useRequireAuth: useRequireAuthMock })
 
 vi.mock("@/lib/api", () => ({ api: vi.fn() }));
 
-vi.mock("@aegis/design-system", () => ({
+vi.mock("@redsim/design-system", () => ({
   RunStatusBadge: ({ status }: { status: string }) =>
     h("span", { "data-testid": "run-status" }, status),
   Table: ({ children }: any) => h("table", null, children),

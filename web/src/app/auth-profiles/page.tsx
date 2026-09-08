@@ -9,7 +9,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 
-import { RoleGated } from "@aegis/design-system";
+import { RoleGated } from "@redsim/design-system";
 import {
   createAuthProfile,
   deleteAuthProfile,

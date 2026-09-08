@@ -11,41 +11,19 @@ import yaml
 
 @dataclass
 class AegisConfig:
-    strix_path: str = "./project_repos/strix"
-    cai_path: str = "./project_repos/cai"
-    vulnfixer_path: str = "./project_repos/vulnerability-fixer"
-    bumblebee_path: str = "./project_repos/bumblebee"
-    mcp_kali_url: str = "http://127.0.0.1:5000"
     output_dir: str = "./aegis_output"
     model: str = "gemini/gemini-2.5-flash"
     target_allowlist: list[str] = field(
         default_factory=lambda: ["127.0.0.1", "localhost", "host.docker.internal"]
     )
-    target_pack: str = "juice-shop"
-    default_repo: str | None = None
-    enable_pr: bool = False
-    juice_shop_image_tag: str = "bkimminich/juice-shop:v17.3.0"
-    strix_command: str | None = None
-    strix_scan_mode: str = "standard"
-    # Strix code-scope default (v0.10.0): auto | diff | full. `auto` lets Strix
-    # pick PR diff-scope in CI/headless runs; per-scan ScanOptions can override.
-    strix_scope_mode: str = "auto"
-    deepsec_path: str = "./project_repos/deepsec"
-    # The AI "process" stage is opt-in and costs money: it only runs when
-    # this flag is set AND an AI Gateway / model key is in the environment
-    # AND the budget cap below is > 0. Default off keeps `scan` regex-only.
-    deepsec_ai_process: bool = False
-    deepsec_budget_usd: float = 5.0
     # Stale-job reaper: a job left ``status="running"`` longer than this many
     # seconds is presumed crashed (the redelivery guard never re-runs it) and
     # is flipped to ``failed`` by ``aegis.reap_stale_jobs`` on the beat schedule.
     job_max_runtime_seconds: int = 3600
-    # Air-gapped installs can't reach github.com/gitlab.com for the vendored
-    # submodules. When ``AEGIS_OFFLINE_VENDOR_HOST`` is set (e.g.
-    # ``git.internal.example.com``) the submodule URLs are rewritten to that
-    # internal mirror, preserving the ``<org>/<repo>.git`` path. See
-    # ``aegis.vendor`` for the pure rewrite helpers and
-    # ``scripts/vendor-submodules.sh`` for the git plumbing.
+    # Air-gapped installs point at an internal package/artifact mirror instead
+    # of the public internet. When ``AEGIS_OFFLINE_VENDOR_HOST`` is set (e.g.
+    # ``git.internal.example.com``) it is surfaced by ``aegis doctor`` and the
+    # evidence pack as a generic air-gapped-mirror setting.
     offline_vendor_host: str | None = None
     # WORM (Write-Once-Read-Many) audit export. These mirror the AEGIS_WORM_*
     # env vars (read at runtime by aegis.storage.worm; S3 creds resolve from
@@ -58,32 +36,6 @@ class AegisConfig:
     worm_retention_days: int = 2555
     worm_lock_mode: str = "COMPLIANCE"
     worm_export_interval_seconds: int = 86400
-    # Bidirectional ticket-sync (Jira / ServiceNow / Linear). Default "none"
-    # is a no-op — nothing reaches an external tracker until an operator sets
-    # this AND the matching creds. The engines read these from the environment
-    # directly (``AEGIS_TICKET_PROVIDER`` + per-provider vars); the fields are
-    # mirrored here for discoverability and so ``resolve_ticket_provider`` can
-    # fall back to config when the env var is unset.
-    ticket_provider: str = "none"   # none|jira|servicenow|linear
-    jira_url: str | None = None
-    jira_user: str | None = None
-    jira_token: str | None = None
-    jira_project_key: str | None = None
-    servicenow_instance: str | None = None
-    servicenow_token: str | None = None
-    linear_api_key: str | None = None
-    linear_team_id: str | None = None
-    # Cloud-target ownership verification. ``verify_secret`` (env
-    # ``AEGIS_VERIFY_SECRET``) is the HMAC-style salt mixed into the
-    # per-target DNS TXT token so an operator can't forge a value for a
-    # target they don't own; a dev default is used when unset. Never logged.
-    verify_secret: str | None = None
-    # Backport / release-train awareness for generated fix PRs. ``release_trains``
-    # (env ``AEGIS_RELEASE_TRAINS``) maps a release-train name to the branch a
-    # fix PR should target — JSON (``{"2024.1": "release/2024.1"}``) or the
-    # compact ``name=branch,name=branch`` form. Unset / unmatched falls back to
-    # ``"main"`` so all current callers keep targeting main unchanged.
-    release_trains: str | None = None
     # Fernet key for encrypting DAST auth-profile secrets at rest
     # (``auth_profiles.secret_ciphertext``). Sourced from the environment
     # (``AEGIS_AUTH_PROFILES_KEY``) — keep key material out of aegis.yaml.
@@ -141,7 +93,7 @@ class AegisConfig:
     llm_injection_block_risk: str = "high"
     # Fail-closed LLM budget enforcement. ``route()`` only enforces a budget
     # when a ``budget_checker`` is supplied; a DB-backed run (``project_id``
-    # set) that reaches the CAI invocation *without* one would otherwise route
+    # set) that reaches the LLM invocation *without* one would otherwise route
     # uncapped. When strict, that case is DENIED rather than silently routed —
     # so a budget cap can never be skipped by a missing wiring. The offline /
     # filesystem path (``project_id is None``) is intentionally unenforced and
@@ -150,19 +102,6 @@ class AegisConfig:
     llm_budget_strict: bool = field(
         default_factory=lambda: os.environ.get("AEGIS_ENV", "dev").lower() == "prod"
     )
-    # Iterative fix→test→retry loop (aegis.remediate.cai_runner). When
-    # ``remediation_test_command`` is set, a generated code patch is applied to
-    # the repo and this command is run; on failure the test output is fed back
-    # to the agent for up to ``remediation_max_iters`` attempts before the PR is
-    # opened. SECURITY: the command is **operator-configured** and is *never*
-    # derived from untrusted finding/patch content — it is split with
-    # ``shlex.split`` and executed as list-argv (never ``shell=True``). Unset
-    # (the default) keeps the single-shot patch path unchanged. Both are
-    # env-overridable (``AEGIS_REMEDIATION_TEST_COMMAND`` /
-    # ``AEGIS_REMEDIATION_MAX_ITERS``) via ``_apply_env_overrides`` so an
-    # operator can flip them per-shell with env-wins-over-YAML precedence.
-    remediation_test_command: str | None = None
-    remediation_max_iters: int = 3
 
 
 def load_config(path: str | None = None) -> AegisConfig:
@@ -188,9 +127,9 @@ def load_config(path: str | None = None) -> AegisConfig:
         # No config file found — start from defaults.
         config = AegisConfig()
 
-    # Environment overlay: ``AEGIS_OFFLINE_VENDOR_HOST`` points the vendored
-    # submodules at an internal mirror for air-gapped installs. It overrides
-    # any YAML value so operators can flip it per-shell without editing files.
+    # Environment overlay: ``AEGIS_OFFLINE_VENDOR_HOST`` names the internal
+    # package mirror for air-gapped installs. It overrides any YAML value so
+    # operators can flip it per-shell without editing files.
     env_host = os.environ.get("AEGIS_OFFLINE_VENDOR_HOST")
     if env_host:
         config.offline_vendor_host = env_host
@@ -227,13 +166,4 @@ def _apply_env_overrides(config: AegisConfig) -> AegisConfig:
     config.llm_budget_strict = _env_bool(
         "AEGIS_LLM_BUDGET_STRICT", config.llm_budget_strict
     )
-    config.remediation_test_command = os.environ.get(
-        "AEGIS_REMEDIATION_TEST_COMMAND", config.remediation_test_command
-    )
-    max_iters = os.environ.get("AEGIS_REMEDIATION_MAX_ITERS")
-    if max_iters is not None:
-        try:
-            config.remediation_max_iters = int(max_iters)
-        except ValueError:
-            pass
     return config

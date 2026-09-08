@@ -21,14 +21,14 @@ vi.mock("@/hooks/useRequireAuth", () => ({
 const useRolesMock = vi.hoisted(() => vi.fn(() => ({ roles: {} as Record<string, string> })));
 vi.mock("@/hooks/useRoles", () => ({ useRoles: useRolesMock }));
 
-// The page calls api() directly for fix/verify mutations.
+// The page calls api() directly for the verify mutation.
 const apiMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", () => ({ api: apiMock }));
 
 // Stub design-system. FindingCard surfaces its props so we can assert them.
 // RoleGated honors a real low->high hierarchy so gating is meaningfully tested.
 const ROLE_ORDER = ["viewer", "remediator", "approver", "admin"];
-vi.mock("@aegis/design-system", () => ({
+vi.mock("@redsim/design-system", () => ({
   FindingCard: (props: Record<string, any>) =>
     h(
       "section",
@@ -155,28 +155,29 @@ describe("FindingPage", () => {
     expect(screen.getByTestId("fc-title").textContent).toContain("f-xyz");
   });
 
-  it("hides both RBAC actions for a viewer", () => {
+  it("hides the Verify action for a viewer", () => {
     useRolesMock.mockReturnValue({ roles: { "proj-alpha": "viewer" } });
     useSWRMock.mockReturnValue({ data: finding(), error: undefined, isLoading: false, mutate: mutateMock });
     renderPage();
     expect(screen.queryByRole("button", { name: "Verify" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Apply patch + open PR" })).toBeNull();
   });
 
-  it("shows Verify (remediator) but hides Apply for a remediator", () => {
+  it("shows Verify for a remediator", () => {
     useRolesMock.mockReturnValue({ roles: { "proj-alpha": "remediator" } });
     useSWRMock.mockReturnValue({ data: finding(), error: undefined, isLoading: false, mutate: mutateMock });
     renderPage();
     expect(screen.getByRole("button", { name: "Verify" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Apply patch + open PR" })).toBeNull();
   });
 
-  it("shows both actions for an approver", () => {
+  it("never renders the removed Apply-patch (fix) action, even for an approver", () => {
+    // The /v1/findings/{id}/fix remediation route was removed with the
+    // pentest domain, so the page must not offer the action to anyone.
     useRolesMock.mockReturnValue({ roles: { "proj-alpha": "approver" } });
     useSWRMock.mockReturnValue({ data: finding(), error: undefined, isLoading: false, mutate: mutateMock });
     renderPage();
     expect(screen.getByRole("button", { name: "Verify" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Apply patch + open PR" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Apply patch/ })).toBeNull();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
   });
 
   it("triggerVerify(): POSTs the verify endpoint then revalidates", async () => {
@@ -188,24 +189,6 @@ describe("FindingPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
 
     await waitFor(() => expect(apiMock).toHaveBeenCalledWith("/v1/findings/f-7/verify", { method: "POST" }));
-    await waitFor(() => expect(mutateMock).toHaveBeenCalledTimes(1));
-  });
-
-  it("applyFix(): POSTs the fix payload then revalidates", async () => {
-    useRolesMock.mockReturnValue({ roles: { "proj-alpha": "approver" } });
-    apiMock.mockResolvedValue({});
-    useSWRMock.mockReturnValue({ data: finding({ id: "f-9" }), error: undefined, isLoading: false, mutate: mutateMock });
-
-    renderPage("f-9");
-    fireEvent.click(screen.getByRole("button", { name: "Apply patch + open PR" }));
-
-    await waitFor(() =>
-      expect(apiMock).toHaveBeenCalledWith("/v1/findings/f-9/fix", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ strategy: "patch", apply: true, open_pr: true }),
-      }),
-    );
     await waitFor(() => expect(mutateMock).toHaveBeenCalledTimes(1));
   });
 

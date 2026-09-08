@@ -14,7 +14,7 @@ vi.mock("@/hooks/useRequireAuth", () => ({
 // Stub the design-system Tooltip primitives to passthrough children so the
 // test stays isolated from Radix portal/provider plumbing. The TooltipContent
 // (full hash on hover) is rendered inline so we can assert on it.
-vi.mock("@aegis/design-system", () => ({
+vi.mock("@redsim/design-system", () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) =>
     React.createElement(React.Fragment, null, children),
   Tooltip: ({ children }: { children: React.ReactNode }) =>

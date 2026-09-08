@@ -26,7 +26,7 @@ describe("storybook main config", () => {
 
   it("stories includes design-system glob", () => {
     expect(config.stories).toContain(
-      "../../project_repos/design-system/src/**/*.stories.@(ts|tsx)",
+      "../../packages/design-system/src/**/*.stories.@(ts|tsx)",
     );
   });
 

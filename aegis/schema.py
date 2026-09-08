@@ -60,7 +60,7 @@ class AegisFinding(BaseModel):
     severity: Severity
     finding_type: FindingType
     description: str
-    source_tool: str                 # strix|cai|manual
+    source_tool: str                 # producing adapter name (e.g. an ML attack adapter) | manual
     source_run_id: str
     affected_component: str          # package name, endpoint, file path
     confidence: Confidence
@@ -87,7 +87,8 @@ class AegisFinding(BaseModel):
     installed_version: str | None = None
     fixed_version: str | None = None
 
-    # Strix pass-through fields (not in common schema but useful)
+    # Adapter pass-through fields (not in common schema but useful; retained
+    # for schema compatibility with historical findings)
     impact: str | None = None
     technical_analysis: str | None = None
     poc_description: str | None = None
