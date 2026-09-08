@@ -46,16 +46,16 @@ variable "database_allocated_storage_gib" {
 }
 
 variable "database_max_allocated_storage_gib" {
-  description = "PostgreSQL storage autoscaling ceiling in GiB."
+  description = "PostgreSQL storage autoscaling ceiling in GiB. RDS requires this to be at least 10% above allocated storage."
   type        = number
   default     = 100
 
   validation {
     condition = (
-      var.database_max_allocated_storage_gib >= var.database_allocated_storage_gib &&
+      var.database_max_allocated_storage_gib >= ceil(var.database_allocated_storage_gib * 1.1) &&
       var.database_max_allocated_storage_gib <= 65536
     )
-    error_message = "The storage autoscaling ceiling must be at least allocated storage and no more than 65536 GiB."
+    error_message = "The storage autoscaling ceiling must be at least 10% above allocated storage (ceil(allocated * 1.1) GiB) and no more than 65536 GiB."
   }
 }
 

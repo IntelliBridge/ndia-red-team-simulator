@@ -302,3 +302,14 @@ run "reject_unapproved_artifact_service" {
 
   expect_failures = [var.artifact_prefixes_by_service]
 }
+
+run "reject_insufficient_storage_autoscaling_headroom" {
+  command = plan
+
+  variables {
+    database_allocated_storage_gib     = 20
+    database_max_allocated_storage_gib = 21
+  }
+
+  expect_failures = [var.database_max_allocated_storage_gib]
+}
