@@ -29,7 +29,7 @@ RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
 # Workspace manifest + lockfile first, for layer cache efficiency.
 COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY web/package.json ./web/
-COPY project_repos/design-system/package.json ./project_repos/design-system/
+COPY packages/design-system/package.json ./packages/design-system/
 
 # Frozen install of the workspace. Both @aegis/web and
 # @aegis/design-system land in their workspace locations; design-
@@ -38,7 +38,7 @@ RUN pnpm install --frozen-lockfile --filter @aegis/web...
 
 # Now the source. Two trees, because the workspace links them.
 COPY web/ ./web/
-COPY project_repos/design-system/ ./project_repos/design-system/
+COPY packages/design-system/ ./packages/design-system/
 
 # NEXT_PUBLIC env values come from the compose stack at run-time;
 # tolerate their absence at build time.

@@ -1,0 +1,5 @@
+{
+  "routable_to_vulnfixer": false,
+  "requires_code_fix": true,
+  "reason": "Appsec finding (dast) without package version information"
+}

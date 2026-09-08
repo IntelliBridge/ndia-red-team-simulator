@@ -1,6 +1,6 @@
 {
-  "name": "@redsim/web",
-  "version": "0.1.0",
+  "name": "@aegis/web",
+  "version": "0.4.0-dev",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000",
@@ -9,20 +9,30 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "storybook": "storybook dev -p 6006",
+    "build-storybook": "storybook build",
+    "storybook:test-runner": "test-storybook"
   },
   "dependencies": {
-    "@redsim/design-system": "workspace:*",
+    "@aegis/design-system": "workspace:*",
     "@radix-ui/react-alert-dialog": "^1.1.16",
     "@radix-ui/react-dialog": "^1.1.16",
     "@radix-ui/react-tooltip": "^1.2.9",
     "cmdk": "^1.1.1",
+    "jose": "^5.2.0",
     "next": "^14.2.0",
+    "next-auth": "^4.24.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "swr": "^2.2.5"
   },
   "devDependencies": {
+    "@storybook/addon-a11y": "^8.0.0",
+    "@storybook/addon-essentials": "^8.0.0",
+    "@storybook/nextjs": "^8.0.0",
+    "@storybook/react": "^8.0.0",
+    "@storybook/test-runner": "^0.17.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^20",
@@ -32,6 +42,7 @@
     "axe-core": "^4.10.0",
     "jsdom": "^29.1.1",
     "postcss": "^8.4.0",
+    "storybook": "^8.0.0",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.4.0",
     "vitest": "^4.1.8",

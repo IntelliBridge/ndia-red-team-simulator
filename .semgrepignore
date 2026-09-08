@@ -1,0 +1,8 @@
+# Semgrep ignore list for the C2 `sast` CI gate (see SECURITY.md baseline).
+#
+# Alembic migrations are DDL: they legitimately use sqlalchemy.text() / raw SQL
+# for RLS policies, triggers, and functions the ORM cannot express. The registry
+# `avoid-sqlalchemy-text` rule flags these (17 hits in 0006_tenant_rls.py) as a
+# false positive for DDL code, so the migrations tree is excluded from SAST.
+# Application code under aegis/ is still fully scanned.
+aegis/db/migrations/
