@@ -1,3 +1,9 @@
+> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **Milestones M1/M3/M4/M6**; features **F003 Profiles** + **F004 Run Management**; MRI display in **F005/F007**.
+>
+> Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): attacks under `aegis/ml/attacks/`; scoring in `aegis/ml/scoring.py`; the MRI formula and weights are unchanged, but it attaches to `ml_campaigns`/`Finding.schema_blob.ml` (projections of the run-record Artifact); attacks run as a **Celery chain**, not a thread pool; grade text is attack-scoped and the banned-word list applies.
+>
+> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+
 # Phase P2 — Attacks & MRI scoring
 
 Status: v1, 2026-09-08. Owner: Dev B. Wave 1 (parallel). Critical path: yes.

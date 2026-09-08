@@ -1,3 +1,9 @@
+> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **Milestones M1–M6**; feature **F004 Run Management**.
+>
+> Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): no `redsim/runs.py`/`jobs.py` — orchestration is Celery tasks + `aegis/services/ml_campaigns.py`; state in Postgres (`Run.stage_table`, `jobs` via `aegis/workers/job_state.py`), not `run.json`; a campaign starts at `POST /v1/models/{id}/attacks` (no generic `POST /v1/runs`); admission is audit-first; blobs stream from `GET /v1/artifacts/{id}`.
+>
+> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+
 # Phase P4 — Orchestration & API wiring
 
 Status: v1, 2026-09-08. Owner: backend lead. Wave: scaffold in Wave 1, complete

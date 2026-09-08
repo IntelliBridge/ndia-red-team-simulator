@@ -1,3 +1,9 @@
+> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **No canonical feature** — interop was dropped in the consolidation.
+>
+> Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): **this whole phase is currently out of scope.** Croissant export, dataset endpoints, and MITRE ATLAS are absent from the canonical spec and F001–F008; ONNX survives only as an ingest loader in F002. To keep interop it must be re-proposed as a feature (see `00-master-plan.md` §6). Do not build this without that decision.
+>
+> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+
 # P6 — Interoperability (Croissant + ONNX ingest)
 
 Status: v1, 2026-09-08. Owner: rotates in after P4 (suggested Dev A, since ONNX

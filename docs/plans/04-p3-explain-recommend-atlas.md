@@ -1,3 +1,9 @@
+> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **Milestones M2/M3/M6**; features **F005 Evidence** + **F006 Findings**.
+>
+> Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): explain/recommend under `aegis/ml/{explain,recommend}/`; tasks are Celery (`explain.run`, `harden.recommend`, `verify.replay`); SHAP artifacts are `.npz` + JSON meta stored as `Artifact` rows in S3; **MITRE ATLAS tagging is NOT in the canonical spec** — see `00-master-plan.md` §6, treat as deferred; verify defenses = ART preprocessing (FeatureSqueezing/SpatialSmoothing/JpegCompression).
+>
+> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+
 # Phase P3 — Explanation, recommendations & ATLAS
 
 Status: v1, 2026-09-08. Owner: Dev C. Wave: 1 (parallel build).

@@ -1,3 +1,9 @@
+> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **Milestones M1/M4/M5b**; feature **F002 Evaluation Catalog**.
+>
+> Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): targets under `aegis/ml/targets/`; assets seeded by the `aegis ml build-assets` CLI into S3 (`ml/assets/`, `bundled/`), not baked ad-hoc; demo data is `leibnitz-lab/military_vehicles` + `lacg030175/UNSW-NB15` — **CIFAR-10 is a CI fixture only**; upload is admin-gated, ONNX/state_dict only, loaded in the sandboxed worker.
+>
+> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+
 # P1 — Targets & assets (CIFAR-10 image + tabular)
 
 Owner: Dev A. Wave: 1 (parallel). Depends on: P0 contracts. Feeds: P2, P3, P4.
