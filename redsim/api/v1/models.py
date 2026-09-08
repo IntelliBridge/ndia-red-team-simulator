@@ -15,12 +15,25 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from redsim.api.auth import CurrentUser, get_current_user
 from redsim.api.policy import Action, check, ensure_project_access
 
+# Light service module: manifest JSON reads and the ORM only, no ML imports
+# (tests/test_api_process_has_no_ml.py).
+from redsim.services.ml_models import (
+    DELETED_STATUS,
+    DatasetBindingError,
+    check_upload_dataset,
+    delete_model_target,
+    is_deleted,
+)
+
 router = APIRouter(prefix="/models", tags=["ml-models"])
 logger = logging.getLogger(__name__)
 
 _ML_KINDS = {"ml_model_artifact", "ml_model_endpoint"}
 _FORMATS = {"onnx", "torch_state_dict", "safetensors_state_dict"}
 _PICKLE_SUFFIXES = {".pkl", ".pickle", ".joblib", ".sav", ".dill"}
+# Phase A evaluates image and tabular classifiers; every other modality is a
+# named Phase B route (spec 17.3 ``not_implemented``, always with ``phase``).
+_PHASE_A_MODALITIES = {"image", "tabular"}
 
 
 def _error(code: str, message: str, **extra: Any) -> dict[str, Any]:
@@ -30,6 +43,11 @@ def _error(code: str, message: str, **extra: Any) -> dict[str, Any]:
 def _detail(target: Any) -> dict[str, Any]:
     value = getattr(target, "detail", None)
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _is_deleted(target: Any) -> bool:
+    """A soft-deleted model target: hidden from the catalog, 404 by id."""
+    return is_deleted(getattr(target, "detail", None))
 
 
 def _project_model(target: Any) -> dict[str, Any]:
@@ -97,7 +115,7 @@ def _get_registered(model_id: str) -> Any | None:
 
     with get_session() as sess:
         target = sess.get(Target, model_id)
-        if target is None or target.kind not in _ML_KINDS:
+        if target is None or target.kind not in _ML_KINDS or _is_deleted(target):
             return None
         sess.expunge(target)
         return target
@@ -118,7 +136,10 @@ def list_models(
         targets = sess.execute(
             select(Target).where(Target.project_id == project, Target.kind.in_(_ML_KINDS))
         ).scalars().all()
-        models = [_project_model(row) for row in targets]
+        # Soft-deleted targets keep their row for Run / campaign history but
+        # leave the catalog; a deleted bundled registration shows up again as
+        # the unregistered registry entry below.
+        models = [_project_model(row) for row in targets if not _is_deleted(row)]
     known = {row["id"] for row in models}
     models.extend(row for row in _bundled_rows(project) if row["id"] not in known)
     return {"models": models, "count": len(models)}
@@ -218,13 +239,18 @@ async def register_model(
         if bundled is None:
             raise HTTPException(status_code=422, detail=_error(
                 "unknown_bundled_model", "bundled_id is not in the target registry", field="bundled_id"))
+        restore = False
         with get_session() as sess:
             existing = sess.get(Target, bundled_id)
             if existing is not None:
                 if existing.project_id != project_id or existing.kind not in _ML_KINDS:
                     raise HTTPException(status_code=409, detail=_error(
                         "model_id_conflict", "the bundled model id is already in use"))
-                return _project_model(existing)
+                if not _is_deleted(existing):
+                    return _project_model(existing)
+                # The bundled id is the row id, so a soft-deleted registration
+                # is re-seeded in place instead of colliding on the primary key.
+                restore = True
         manifest = bundled["manifest"]
         authorize(
             "model.register",
@@ -239,17 +265,23 @@ async def register_model(
                 "format": manifest.get("format"),
                 "sha256": manifest.get("sha256"),
                 "bundled": True,
+                "restored": restore,
             },
         )
         with get_session() as sess:
             detail = {**bundled, "manifest": bundled["manifest"]}
-            target = Target(id=bundled_id, project_id=project_id, kind="ml_model_artifact",
-                            value=f"bundled:{bundled_id}", verified=True)
+            target = sess.get(Target, bundled_id) if restore else None
+            if target is None:
+                target = Target(id=bundled_id, project_id=project_id, kind="ml_model_artifact",
+                                value=f"bundled:{bundled_id}", verified=True)
+                sess.add(target)
+            else:
+                target.value = f"bundled:{bundled_id}"
+                target.verified = True
             # Migration 0010 supplies this mapped field in the merged P4 ORM.
             # Assignment is also harmless on an older ORM during a rolling
             # deployment and keeps the response faithful.
             target.detail = detail
-            sess.add(target)
             sess.flush()
             return _project_model(target)
 
@@ -274,6 +306,32 @@ async def register_model(
                 "architecture_missing" if architecture_id is None else "architecture_not_allowlisted",
                 f"state_dict uploads require architecture_id from {allowed}", field="architecture_id"))
 
+    # Declared licence and dataset binding are validated here, before a single
+    # byte is read towards the blob store and before any Target / Run / Job row
+    # exists (spec 9.3 steps 1 to 3, 11.1 "no license statement, no
+    # registration", 17.3 ``dataset_incompatible``). The manifest is read as
+    # JSON only; shape and class-count checks stay on the worker.
+    modality = str(fields.get("modality") or "image").strip().lower()
+    if modality not in _PHASE_A_MODALITIES:
+        raise HTTPException(status_code=501, detail=_error(
+            "not_implemented",
+            f"{modality!r} model uploads are not implemented; Phase A evaluates "
+            f"{sorted(_PHASE_A_MODALITIES)} classifiers",
+            phase="B", field="modality"))
+    license_statement = str(fields.get("license_statement") or "").strip()
+    if not license_statement:
+        raise HTTPException(status_code=422, detail=_error(
+            "license_required",
+            "license_statement is required: only models with a declared licence are registered",
+            field="license_statement"))
+    dataset_id = str(fields.get("dataset_id") or "").strip()
+    dataset_split = str(fields.get("dataset_split") or "").strip() or None
+    try:
+        binding = check_upload_dataset(dataset_id, modality=modality, dataset_split=dataset_split)
+    except DatasetBindingError as exc:
+        raise HTTPException(status_code=422, detail=_error(
+            DatasetBindingError.code, str(exc), field=exc.field)) from exc
+
     cap = int(os.environ.get("REDSIM_ML_UPLOAD_MAX_MB", "512")) * 1024 * 1024
     length = request.headers.get("content-length")
     if length and int(length) > cap:
@@ -297,11 +355,11 @@ async def register_model(
     ref = open_blob_store().put(
         f"{project_id}/models/{model_id}", data, content_type="application/octet-stream")
     manifest = {
-        "name": str(fields.get("name") or filename), "modality": str(fields.get("modality") or "image"),
+        "name": str(fields.get("name") or filename), "modality": modality,
         "format": detected, "sha256": digest, "size_bytes": size,
-        "architecture_id": architecture_id, "dataset_id": str(fields.get("dataset_id") or ""),
-        "dataset_split": str(fields.get("dataset_split") or "test"),
-        "status": "validating", "license": str(fields.get("license_statement") or ""),
+        "architecture_id": architecture_id, "dataset_id": binding.dataset_id,
+        "dataset_split": binding.split, "dataset_revision": binding.revision,
+        "status": "validating", "license": license_statement,
         "bundled": False,
     }
     run_id = f"run-{uuid.uuid4().hex[:12]}"
@@ -324,7 +382,13 @@ async def register_model(
         detail={
             "actor": f"user:{user.sub}",
             "model_id": model_id,
+            "source": "upload",
             "format": detected,
+            "declared_format": declared,
+            "architecture_id": architecture_id,
+            "modality": modality,
+            "dataset_id": binding.dataset_id,
+            "dataset_split": binding.split,
             "sha256": digest,
             "size_bytes": size,
         },
@@ -379,27 +443,45 @@ async def register_model(
 def delete_model(
     model_id: str,
     user: CurrentUser = Depends(get_current_user),
-) -> dict[str, str]:
-    from sqlalchemy import select
+) -> dict[str, Any]:
+    """Soft-delete a model target: audit, mark ``status: deleted``, drop the blob.
 
-    from redsim.db.models import Run, Target
+    The ``ml.ingest`` Run of every upload and the ``ml_campaigns`` rows
+    reference the Target, so the row itself is retained for history (spec 17,
+    "Run, Finding, Artifact and audit rows are retained"). The catalog hides it,
+    ``GET /v1/models/{id}`` answers 404 and campaign admission refuses it.
+    """
+    from redsim.audit.chain import resolve_writer
+    from redsim.config import load_config
+    from redsim.db.models import Target
     from redsim.db.session import get_session
 
     with get_session() as sess:
         target = sess.get(Target, model_id)
-        if target is None or target.kind not in _ML_KINDS:
+        if target is None or target.kind not in _ML_KINDS or _is_deleted(target):
             raise HTTPException(status_code=404, detail=_error("model_not_found", "model not found"))
         project_id = target.project_id
     ensure_project_access(user, project_id)
     check(user, Action.TARGET_MANAGE, project_id)
-    with get_session() as sess:
-        active = sess.execute(select(Run.id).where(
-            Run.target_id == model_id, Run.status.in_(["queued", "running"])).limit(1)).first()
-        if active:
-            raise HTTPException(status_code=409, detail=_error(
-                "campaign_in_flight", "an active campaign references this model"))
-        target = sess.get(Target, model_id)
-        if target is None:
-            raise HTTPException(status_code=404, detail=_error("model_not_found", "model not found"))
-        sess.delete(target)
-    return {"deleted": model_id}
+    config = load_config()
+    try:
+        result = delete_model_target(
+            target_id=model_id,
+            actor=f"user:{user.sub}",
+            config=config,
+            audit_writer=resolve_writer(config),
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=404, detail=_error("model_not_found", "model not found")) from exc
+    except ValueError as exc:
+        # The service raises ``campaign_in_flight: ...`` while a Run on the
+        # model is queued or running (spec 17.3).
+        raise HTTPException(status_code=409, detail=_error(
+            "campaign_in_flight", "an active campaign references this model",
+            reason=str(exc))) from exc
+    return {
+        "deleted": model_id,
+        "status": DELETED_STATUS,
+        "blob_deleted": result["blob_deleted"],
+    }
