@@ -20,7 +20,7 @@
 #         "sub": "...", "email": "...", "is_system": false,
 #         "project_memberships": {"<project_id>": "<role>"}
 #       },
-#       "action": "fix.apply",
+#       "action": "attack.run",
 #       "resource": {"project_id": "<project_id>"},
 #       "context": {}
 #     }
@@ -31,7 +31,9 @@ package redsim.authz
 import rego.v1
 
 # Lower-to-higher privilege ranks (mirror redsim.api.policy._ROLE_RANK).
+# viewer ranks 0: read-only membership, fails every gated action.
 role_rank := {
+	"viewer": 0,
 	"scanner": 1,
 	"remediator": 2,
 	"approver": 3,
@@ -41,15 +43,18 @@ role_rank := {
 # Minimum role per action (mirror redsim.api.policy._ACTION_MIN_ROLE).
 action_min_role := {
 	"scan.start": "scanner",
-	"agent.run": "remediator",
-	"agent.execute": "approver",
-	"fix.generate": "remediator",
-	"fix.apply": "approver",
 	"verify.replay": "remediator",
 	"target.manage": "admin",
+	"auth_profile.manage": "admin",
 	"audit.verify": "admin",
 	"run.cancel": "remediator",
-	"tool.invoke": "remediator",
+	"model.register": "remediator",
+	"attack.run": "scanner",
+	"explain.run": "scanner",
+	"harden.recommend": "remediator",
+	"finding.review": "approver",
+	"finding.annotate": "remediator",
+	"report.export": "scanner",
 }
 
 default allow := false
