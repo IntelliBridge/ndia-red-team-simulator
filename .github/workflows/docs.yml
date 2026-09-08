@@ -58,15 +58,17 @@ jobs:
         run: mkdocs build --strict
 
       - name: Upload Pages artifact
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.ENABLE_PAGES == 'true'
         uses: actions/upload-pages-artifact@v5
         with:
           path: ./site
 
+  # Pages publishing is OFF (the plan only offers public Pages and the repo is private).
+  # To turn it on: enable Pages (source: GitHub Actions) and set repo variable ENABLE_PAGES=true.
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.ENABLE_PAGES == 'true'
     runs-on: ubuntu-latest
     # Per-job perms for the Pages deploy.
     permissions:
