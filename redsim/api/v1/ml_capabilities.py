@@ -6,11 +6,24 @@ import importlib.util
 import os
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from redsim.api.auth import CurrentUser, get_current_user
 
 router = APIRouter(prefix="/ml", tags=["ml-capabilities"])
+
+
+def _catalog_unavailable(exc: ImportError, what: str) -> HTTPException:
+    """A catalog registry could not be imported in this API process.
+
+    The roster is only honest when it comes from the registries, so this is a 503
+    with the ImportError text rather than a ``200`` with empty lists.
+    """
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={
+        "code": "ml_catalog_unavailable",
+        "message": f"{what} catalog is unavailable in this API process",
+        "reason": str(exc),
+    })
 
 
 @router.get("/capabilities")
@@ -25,14 +38,14 @@ def capabilities(_user: CurrentUser = Depends(get_current_user)) -> dict[str, An
         from redsim.ml.targets.artifact import architecture_ids
 
         architectures: list[str] = architecture_ids()
-    except ImportError:
-        architectures = []
+    except ImportError as exc:
+        raise _catalog_unavailable(exc, "architecture") from exc
     try:
         from redsim.ml.defenses import list_defenses
 
         defense_ids = [str(row["id"]) for row in list_defenses()]
-    except ImportError:
-        defense_ids = []
+    except ImportError as exc:
+        raise _catalog_unavailable(exc, "defense") from exc
     try:
         from redsim.ml.targets import list_targets
 
@@ -41,8 +54,8 @@ def capabilities(_user: CurrentUser = Depends(get_current_user)) -> dict[str, An
             for item in list_targets()
             if item.metadata.get("source") == "bundled" and not item.metadata.get("fixture_only")
         ]
-    except ImportError:
-        bundled = []
+    except ImportError as exc:
+        raise _catalog_unavailable(exc, "bundled model") from exc
     return {
         "modalities": {
             "image": {"status": "available", "phase": "A"},

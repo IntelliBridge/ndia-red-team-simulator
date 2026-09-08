@@ -13,11 +13,23 @@ from redsim.api.policy import Action, check, ensure_project_access
 router = APIRouter(tags=["ml-attacks"])
 
 
-def _error(code: str, message: str, *, phase: str | None = None) -> dict[str, str]:
+def _error(code: str, message: str, *, phase: str | None = None, reason: str | None = None) -> dict[str, str]:
     detail = {"code": code, "message": message}
     if phase:
         detail["phase"] = phase
+    if reason:
+        detail["reason"] = reason
     return detail
+
+
+def _catalog_unavailable(exc: ImportError) -> HTTPException:
+    """The catalog registry could not be imported in this API process.
+
+    Say so with a 503 and the ImportError text; an empty ``200`` would present a
+    deployment that can neither list nor launch anything as a healthy one.
+    """
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_error(
+        "ml_catalog_unavailable", "attack catalog is unavailable in this API process", reason=str(exc)))
 
 
 @router.get("/attacks")
@@ -29,8 +41,8 @@ def list_attack_catalog(
         from redsim.ml.attacks import list_attacks
 
         attacks = [row.model_dump(mode="json", exclude_none=True) for row in list_attacks()]
-    except ImportError:
-        attacks = []
+    except ImportError as exc:
+        raise _catalog_unavailable(exc) from exc
     if modality:
         attacks = [row for row in attacks if row.get("domain") == modality]
     return {"attacks": attacks, "count": len(attacks)}
