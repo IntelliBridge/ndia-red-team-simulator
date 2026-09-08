@@ -1,6 +1,6 @@
 # Clarification and Decision Register
 
-Every row is **OPEN** unless a reviewer explicitly records a decision below. D001–D005 were resolved by the product owner on 2026-09-08; their records follow the register in the "Recording a resolution" format. D006, D007 and D008 remain open. The "Proposed starting point" column is kept as history so divergences are visible.
+Every row is **OPEN** unless a reviewer explicitly records a decision below. D001–D005 were resolved by the product owner on 2026-09-08; their records follow the register in the "Recording a resolution" format. D006 and D007 remain open. D008 was closed as moot on 2026-09-08 (later) when the corpus it concerned was withdrawn. The "Proposed starting point" column is kept as history so divergences are visible.
 
 | ID | Status | Decision needed | Proposed starting point (history) | Blocks | Suggested decision owner |
 | --- | --- | --- | --- | --- | --- |
@@ -11,7 +11,7 @@ Every row is **OPEN** unless a reviewer explicitly records a decision below. D00
 | D005 | RESOLVED 2026-09-08 | Evaluation definitions, benign controls, denominators, review thresholds, and explanation support | One versioned suite and one adapter; SHAP only if meaningful and supported for the selected domain | F003–F007 domain-specific acceptance | Evaluation lead + independent reviewer |
 | D006 | OPEN | Retention period, export redaction, license restrictions, and audit metadata retention | Minimize retained content; exports redacted by policy; block destructive purge until approved | F007 export policy and F008 retention operations | Data owner + security reviewer |
 | D007 | OPEN | Named feature owners and independent reviewers | Assign one accountable owner per feature; specialists may contribute across features | Team scheduling and approval, not document drafting | Project owner |
-| D008 | OPEN | Licence and redistribution of the malicious-gpt corpus (Phase B LLM-track probe material, spec 11.6) | Internal research use only until the upstream authors state a licence. No shipping, publication or redistribution | Phase B LLM-track probes (B1) beyond internal research use, and any export or report that quotes corpus prompts | Product owner + security reviewer |
+| D008 | RESOLVED 2026-09-08 (closed as moot: corpus withdrawn) | Licence and redistribution of the malicious-gpt corpus (Phase B LLM-track probe material) | Internal research use only until the upstream authors state a licence. No shipping, publication or redistribution | Nothing. The corpus was withdrawn and the Phase B LLM track uses the probe corpora garak ships (spec 11.6) | Product owner + security reviewer |
 
 ## Recording a resolution
 
@@ -39,7 +39,7 @@ All five records below are reflected in the product spec ([docs/superpowers/spec
 - **Approver:** product owner (hackathon), 2026-09-08.
 - **Affected requirements:** F002 domain validation and dataset licence fields; F003 per-modality attack sets (image: FGSM, PGD; tabular: PGD, HopSkipJump); F005 modality-appropriate explanations (image saliency overlays; tabular SHAP bar and beeswarm); F007 per-modality reports; every acceptance scenario that named a document classifier or FAQ assistant.
 - **New dependencies / changed exclusions:** the `ml` extra (CPU torch, ART, SHAP, ONNX loading, sklearn / XGBoost). A Kaggle API token is a build-time dependency of the tabular asset script only — never a runtime dependency, and CI does not need one. Exclusions unchanged: no poisoning pipeline, no operational or sensitive data, no targeting or weapons optimization.
-- **2026-09-08 (later) addendum:** the jailbreak prompts of `idllresearch/malicious-gpt` (USENIX Security '24, commit `25be7cc16ab821c7f7908641d3e433ac81671181`, 200 records combined from three files) were fetched into the gitignored asset cache as probe material for the Phase B LLM-assistant domain (garak-style probes through Pythia, D6). This does not reopen the first-domain choice. The corpus is not a Phase A dataset, not a classifier dataset and never an MRI input. The upstream repository declares no licence, so the corpus is usable internally for research only. That gap is open item D008.
+- **2026-09-08 (later) addendum:** the Phase B LLM-assistant domain (garak probes through Pythia, D6) uses the probe corpora garak ships under `garak/data` (in-the-wild jailbreak prompts, the DAN templates, HarmBench, Do-Not-Answer, RealToxicityPrompts subsets and the payload sets, spec 11.6). garak's probe classes and detectors load those files themselves. Nothing is extracted or re-packaged for this tool. The garak package is Apache-2.0 and each subset keeps its upstream terms. This does not reopen the first-domain choice. None of it is a Phase A dataset, a classifier dataset or an MRI input. A third-party jailbreak corpus fetched earlier the same day was withdrawn for lack of a licence (D008, closed as moot).
 
 ### D002 — Managed identity, owner bootstrap, invitations
 
@@ -91,7 +91,7 @@ All five records below are reflected in the product spec ([docs/superpowers/spec
 - **Approver:** product owner (hackathon), 2026-09-08.
 - **Affected requirements:** F002 bundled tabular dataset reference (Kaggle id, licence, sha256, committed CI sample); F003 profile fields (attack set, ε grid, reference budget, scoring weights, control on/off, sample size, seed); F005 panels (measurements / observations / interpretation / candidates as separate panels; scorecard always with subscores, table, and curve); F006 derived severity and candidate labels; F007 ΔMRI comparison restricted to compatible runs.
 - **New dependencies / changed exclusions:** none new. "A universal score that mixes test families or domains" remains excluded; "a per-campaign index that travels with its denominators" is included.
-- **2026-09-08 (later) addendum:** the evidence model for the Phase B LLM track, when it starts, records per probe the test context, the observed response, the criterion, the detector verdict and the reviewer assessment. SHAP is not required. The malicious-gpt jailbreak corpus (spec 11.6) is the probe material. Its prompts are untrusted data, sent only to an explicitly entitled Pythia persona with the permission-gate-only guardrail default, never to a production system. No MRI or grade is derived from LLM-track results. The licence gap is open item D008.
+- **2026-09-08 (later) addendum:** the evidence model for the Phase B LLM track, when it starts, records per probe the test context, the observed response, the criterion, the detector result and the reviewer assessment. SHAP is not required. garak's bundled probe corpora (spec 11.6), loaded by garak itself, are the probe material. Their prompts are untrusted data, sent only to an explicitly entitled Pythia persona with the permission-gate-only guardrail default, never to a production system. No MRI or grade is derived from LLM-track results.
 
 ### D006 — Retention, export redaction, licence restrictions, audit metadata retention
 
@@ -103,8 +103,13 @@ All five records below are reflected in the product spec ([docs/superpowers/spec
 
 ### D008 — Licence and redistribution of the malicious-gpt corpus
 
-- **Status:** OPEN. Raised 2026-09-08 (later). The upstream repository `idllresearch/malicious-gpt` declares no licence, so redistribution rights are unstated. Until the authors clarify, the corpus and the combined file derived from it are used internally for research only, stay in the gitignored asset cache and the team's blob store, and are not shipped, published or quoted in an exported report. This diverges from the data-handling rule (a stated licence) and is recorded rather than accepted silently (spec section 4 row 58 and section 11.6). Blocks nothing in Phase A. Decision owner per the register: product owner + security reviewer.
+- **Status:** RESOLVED 2026-09-08 (later), closed as moot. Raised earlier the same day because the upstream repository `idllresearch/malicious-gpt` declares no licence.
+- **Decision:** the corpus is withdrawn from the plan. The Phase B LLM track uses the probe corpora garak ships under `garak/data` and loads through its own probe classes and detectors (spec 11.6). Nothing is extracted or re-packaged for this tool.
+- **Rationale:** garak already ships licensed probe corpora (package Apache-2.0, upstream terms per subset, HarmBench with its own LICENSE), so a corpus without a licence is not needed and the divergence from the data-handling rule disappears.
+- **Approver:** product owner (hackathon), 2026-09-08.
+- **Affected requirements:** spec section 4 row 58, 4.4, 11.5, 11.6, 12.2 and milestone B1. The local download and the combined JSONL were deleted from the asset cache.
+- **New dependencies / changed exclusions:** none. garak remains a Phase B dependency (D6).
 
 ## Work that can begin before the open decisions close
 
-The team can implement Phase A in the product spec's demo-critical order, map evidence fields, draft UI flows, and review the redsim authorization and audit paths. Export redaction policy, destructive retention operations, endpoint connectors, and production release remain gated by D006 and by the constitution amendment approvals. Any use of the malicious-gpt corpus beyond internal research is gated by D008.
+The team can implement Phase A in the product spec's demo-critical order, map evidence fields, draft UI flows, and review the redsim authorization and audit paths. Export redaction policy, destructive retention operations, endpoint connectors, and production release remain gated by D006 and by the constitution amendment approvals.

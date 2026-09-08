@@ -142,7 +142,7 @@ section and its environment table were written before the rename commit
 | LLM env | `REDSIM_LLM_MODEL` | `REDSIM_ML_LLM_MODEL`, via Pythia only. The M0 rename landed with P0 (`4350d38`): `redsim/llm/pythia.py`, `tests/test_llm_pythia.py` and `.env.example` use the new name, and PR #11 (`5fa2d79`) keeps the old one only as a deprecated alias |
 | Services and images | two compose services | `redsim-api`, `redsim-worker` (`-Q scans`), `redsim-worker-default` (`-Q default`), `redsim-beat`, `redsim-web`, `redsim-log-ingest`; Helm chart `deploy/helm/redsim`; CI `.github/workflows/redsim-ci.yml` |
 | Web | none | `@redsim/web` (Next.js 14, `web/`), `@redsim/design-system` (`packages/design-system/`), `NEXT_PUBLIC_REDSIM_API_URL`, cookies `redsim_api_session` / `redsim_csrf` |
-| Demo data | CIFAR-10 | `leibnitz-lab/military_vehicles` (image, spec 11.3.1; `Illia56/Military-Aircraft-Detection` fallback) + Kaggle `sid321axn/malicious-urls-dataset` (tabular, CC0, spec 11.3.3); `lacg030175/UNSW-NB15` is the tabular fallback (11.3.4) and `mstz/spambase` the second fallback and CI tabular fixture (11.3.6); CIFAR-10 is the image CI fixture only (D3, D4(d)). Phase B, LLM track: the `idllresearch/malicious-gpt` jailbreak corpus (spec 11.6) as garak probe material, licence unresolved (D008) |
+| Demo data | CIFAR-10 | `leibnitz-lab/military_vehicles` (image, spec 11.3.1; `Illia56/Military-Aircraft-Detection` fallback) + Kaggle `sid321axn/malicious-urls-dataset` (tabular, CC0, spec 11.3.3); `lacg030175/UNSW-NB15` is the tabular fallback (11.3.4) and `mstz/spambase` the second fallback and CI tabular fixture (11.3.6); CIFAR-10 is the image CI fixture only (D3, D4(d)). Phase B, LLM track: garak's bundled probe corpora (spec 11.6), loaded by garak itself, Apache-2.0 packaging with upstream licences per subset |
 
 ## 3. Scope (canonical Phase A)
 
@@ -160,14 +160,15 @@ plus Pythia-written recommendations, the verify-after-harden loop with measured
 ΔMRI, hash-chained audit, evidence and reports, the web UI, and Keycloak auth
 with RLS. The spec states plainly that this scope exceeds a 1–2 day build.
 
-Phase B, LLM track, outside the scope above. The B1 milestone's garak-style
-probes through Pythia (D6) have their probe material: the jailbreak prompts
-of `idllresearch/malicious-gpt` (USENIX Security '24, commit `25be7cc`),
-200 records combined into one JSON Lines file with provenance fields, recorded
-in spec section 11.6. It is probe material only, never a classifier dataset
-and never an MRI input (D9). The upstream repository declares no licence, so
-the corpus is internal research material until the authors clarify (decision
-register D008, open). No workstream reads it in Phase A.
+Phase B, LLM track, outside the scope above. The B1 milestone's garak
+probes through Pythia (D6) use the probe corpora garak ships under
+`garak/data` (in-the-wild jailbreak prompts, the DAN templates, HarmBench,
+Do-Not-Answer, RealToxicityPrompts subsets and the payload sets), recorded
+in spec section 11.6. garak's probe classes and detectors load those files
+themselves. Nothing is extracted or re-packaged for this tool. The garak
+package is Apache-2.0 and each subset keeps its upstream terms. It is probe
+material only, never a classifier dataset and never an MRI input (D9). No
+workstream reads it in Phase A.
 
 ## 4. Workstreams for 3–4 developers
 

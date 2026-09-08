@@ -189,7 +189,7 @@ filtering off), provisioned as a separate key and persona so the hardening
 writer's `default` persona keeps its guardrails. Ask the Pythia operators for
 that persona when Phase B starts, and keep the two keys apart in `.env`
 (`PYTHIA_PERSONA` selects which one a process uses). The probe material
-for that track is the malicious-gpt jailbreak corpus recorded in spec
-section 11.6 (200 prompts, licence unresolved, decision D008): its prompts
-are untrusted data and may only be sent to that permission-gate-only
-persona, never to the `default` persona and never to a production system.
+for that track is the set of corpora garak ships and loads itself, recorded
+in spec section 11.6: those prompts are untrusted data and may only be sent
+to that permission-gate-only persona, never to the `default` persona and
+never to a production system.
