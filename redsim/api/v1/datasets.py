@@ -26,25 +26,42 @@ def _rows() -> list[dict[str, Any]]:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
-    datasets = document.get("datasets", {}) if isinstance(document, dict) else {}
-    entries = (
-        [(key, value) for key, value in datasets.items()]
-        if isinstance(datasets, dict)
-        else [(str(value.get("id", "")), value) for value in datasets if isinstance(value, dict)]
-        if isinstance(datasets, list)
-        else []
+    datasets: object = (
+        document.get("datasets", {}) if isinstance(document, dict) else {}
     )
+    entries: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(datasets, dict):
+        entries = [
+            (str(key), value)
+            for key, value in datasets.items()
+            if isinstance(value, dict)
+        ]
+    elif isinstance(datasets, list):
+        entries = [
+            (str(value.get("id", "")), value)
+            for value in datasets
+            if isinstance(value, dict)
+        ]
     rows: list[dict[str, Any]] = []
     for dataset_id, raw in entries:
         if not dataset_id or not isinstance(raw, dict):
             continue
-        splits = raw.get("splits") if isinstance(raw.get("splits"), dict) else {}
+        splits_value = raw.get("splits")
+        splits: dict[str, Any] = (
+            splits_value if isinstance(splits_value, dict) else {}
+        )
         size = raw.get("n_rows")
         if size is None:
-            size = sum(int(s.get("n", 0)) for s in splits.values() if isinstance(s, dict))
+            size = 0
+            for split in splits.values():
+                if isinstance(split, dict):
+                    size += int(split.get("n", 0))
         source = str(raw.get("source", "local"))
         classes = list(raw.get("class_names") or [])
-        preprocessing = raw.get("preprocessing") if isinstance(raw.get("preprocessing"), dict) else {}
+        preprocessing_value = raw.get("preprocessing")
+        preprocessing: dict[str, Any] = (
+            preprocessing_value if isinstance(preprocessing_value, dict) else {}
+        )
         modality = str(preprocessing.get("modality") or ("image" if classes else "tabular"))
         rows.append({
             "id": dataset_id,

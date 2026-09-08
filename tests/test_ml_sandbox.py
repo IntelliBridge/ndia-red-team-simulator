@@ -7,6 +7,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+pytest.importorskip("art")
+pytest.importorskip("torch")
+
 from redsim.ml.reporting import render_campaign_reports
 from redsim.ml.sandbox import _persist_child_artifacts, run_campaign_sandboxed
 from redsim.ml.schema import CampaignConfig, CampaignRecord

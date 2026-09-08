@@ -16,6 +16,8 @@ from redsim.config import RedsimConfig
 from redsim.safety import authorize
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from redsim.audit.chain import AuditWriter
 
 logger = logging.getLogger(__name__)
@@ -41,18 +43,18 @@ class TerminalRunError(RuntimeError):
         )
 
 
-def rollup_run_status(session: object, run_id: str) -> str:
+def rollup_run_status(session: Session, run_id: str) -> str:
     """Derive Run status from its jobs without ever reopening a terminal run."""
     from sqlalchemy import select
 
     from redsim.db.models import Job, Run
 
-    run = session.get(Run, run_id)  # type: ignore[attr-defined]
+    run = session.get(Run, run_id)
     if run is None:
         raise LookupError(f"run not found: {run_id}")
     if run.status == "cancelled":
         return run.status
-    statuses = list(session.execute(  # type: ignore[attr-defined]
+    statuses = list(session.execute(
         select(Job.status).where(Job.run_id == run_id)
     ).scalars())
     if not statuses:
