@@ -20,9 +20,10 @@ from typing import Any
 import numpy as np
 
 from redsim.ml.assets.datasets import URL_CLASS_NAMES, dedupe_urls, stratified_split
-from redsim.ml.assets.manifest import FeatureSpecEntry, FileEntry, sha256_file
+from redsim.ml.assets.manifest import FileEntry, sha256_file
 from redsim.ml.assets.train_cnn import classification_metrics
 from redsim.ml.datasets.url_features import EXTRACTOR_VERSION, FEATURE_NAMES, FEATURE_SPECS, featurize_array
+from redsim.ml.schema import FeatureSpec
 
 Log = Callable[[str], None]
 
@@ -35,9 +36,10 @@ class UrlClassifierResult:
     format: str                      # "xgboost_json" | "sklearn_joblib"
     library: str                     # "xgboost" | "scikit-learn"
     surrogate: Any
-    surrogate_agreement: float
+    surrogate_agreement: float          # agree_count / n_eval
+    surrogate_agree_count: int       # eval rows where the surrogate's label equals the ensemble's
     class_names: list[str]
-    features: list[FeatureSpecEntry]
+    features: list[FeatureSpec]
     metrics: dict[str, Any]
     training: dict[str, Any]
     train_idx: np.ndarray
@@ -59,13 +61,13 @@ def encode_labels(labels: Sequence[str], class_names: Sequence[str]) -> np.ndarr
         raise ValueError(f"unknown class label {exc.args[0]!r}; expected one of {list(class_names)}") from None
 
 
-def feature_entries(x_train: np.ndarray) -> list[FeatureSpecEntry]:
-    """Feature specs with the training-split min / max, in ``FEATURE_NAMES`` order."""
-    out: list[FeatureSpecEntry] = []
+def feature_entries(x_train: np.ndarray) -> list[FeatureSpec]:
+    """``schema.FeatureSpec`` rows with the training-split min / max, in ``FEATURE_NAMES`` order."""
+    out: list[FeatureSpec] = []
     for i, spec in enumerate(FEATURE_SPECS):
         col = x_train[:, i] if len(x_train) else np.zeros(1, dtype=np.float32)
-        out.append(FeatureSpecEntry(name=spec.name, dtype=spec.dtype, perturbable=spec.perturbable,
-                                    min=float(col.min()), max=float(col.max())))
+        out.append(FeatureSpec(name=spec.name, dtype=spec.dtype, perturbable=spec.perturbable,
+                               min=float(col.min()), max=float(col.max())))
     return out
 
 
@@ -126,7 +128,9 @@ def train_url_classifier(urls: Sequence[str], labels: Sequence[str], *, seed: in
         # Degenerate ensemble output (tiny fixtures): fit on true labels so the surrogate is still defined.
         pred_train = y_train
     surrogate.fit(x_train, pred_train)
-    agreement = float(np.mean(np.asarray(surrogate.predict(x_eval), dtype=np.int64) == pred_eval))
+    agree = np.asarray(surrogate.predict(x_eval), dtype=np.int64) == pred_eval
+    agree_count = int(agree.sum())
+    agreement = agree_count / len(pred_eval)
     log(f"surrogate ({SURROGATE_KIND}): agreement with the ensemble on the eval split {agreement:.4f}")
 
     training = {
@@ -138,6 +142,7 @@ def train_url_classifier(urls: Sequence[str], labels: Sequence[str], *, seed: in
     }
     return UrlClassifierResult(
         model=model, format=fmt, library=library, surrogate=surrogate, surrogate_agreement=agreement,
+        surrogate_agree_count=agree_count,
         class_names=names, features=feature_entries(x_train), metrics=metrics, training=training,
         train_idx=train_idx, eval_idx=eval_idx, urls=urls_d, labels=y, n_duplicates_removed=n_dupes,
     )

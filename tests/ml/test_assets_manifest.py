@@ -1,4 +1,5 @@
-"""``MANIFEST.json`` round-trips and a one-epoch ``SmallCNN`` build yields hash-verifiable weights.
+"""``MANIFEST.json`` round-trips, its model entries are ``schema.MLModelManifest`` rows, and a one-epoch
+``SmallCNN`` build yields hash-verifiable weights.
 
 ml tier: needs torch. Everything runs on 64 synthetic images in ``tmp_path``;
 no dataset download and no network.
@@ -24,12 +25,18 @@ from redsim.ml.assets.manifest import (
     FileEntry,
     ModelEntry,
     load_manifest,
+    manifest_digest,
+    model_manifest,
     sha256_bytes,
     sha256_file,
+    stamp_manifest_sha256,
+    verify_entries,
     verify_files,
+    verify_manifest,
     write_manifest,
 )
 from redsim.ml.assets.train_cnn import load_small_cnn, predict_logits
+from redsim.ml.schema import CleanAccuracy, MLModelManifest
 from redsim.ml.targets.architectures import (
     ARCHITECTURES,
     SmallCNN,
@@ -40,6 +47,18 @@ from redsim.ml.targets.architectures import (
 
 def _quiet(_: str) -> None:
     return None
+
+
+def _entry(fake: FileEntry, **over) -> ModelEntry:
+    base: dict = {
+        "id": "x", "name": "Example CNN", "modality": "image", "format": "torch_state_dict", "sha256": fake.sha256,
+        "size_bytes": fake.size_bytes, "architecture_id": "small_cnn", "input_shape": [3, 8, 8], "n_classes": 2,
+        "class_names": ["a", "b"], "file": fake, "dataset_id": "hf:example/ds", "dataset_revision": "abc123",
+        "dataset_split": "test", "train_split": "train", "seed": 0, "epochs": 3, "gradients": True,
+        "clean_accuracy": CleanAccuracy(value=0.5, n=2, split="test"), "metrics": {"clean_accuracy": 0.5, "n": 2},
+    }
+    base.update(over)
+    return ModelEntry(**base)
 
 
 def _synthetic_images(n: int = 64, image_size: int = 16, n_classes: int = 4, seed: int = 0) -> ds.ImageDataset:
@@ -111,10 +130,7 @@ def test_manifest_round_trip_and_sorted_keys(tmp_path: Path):
     fake = FileEntry(path="bundled/x/weights.pt", sha256=sha256_bytes(b"weights"), size_bytes=7)
     manifest.datasets["hf:example/ds"] = DatasetEntry(id="hf:example/ds", source="huggingface", revision="abc123",
                                                        license="mit", class_names=["a", "b"])
-    manifest.models["x"] = ModelEntry(id="x", modality="image", format="torch_state_dict", architecture_id="small_cnn",
-                                      file=fake, dataset_id="hf:example/ds", dataset_revision="abc123",
-                                      train_split="train", eval_split="test", class_names=["a", "b"], seed=0,
-                                      epochs=3, metrics={"clean_accuracy": 0.5, "n": 2})
+    manifest.models["x"] = stamp_manifest_sha256(_entry(fake))
     path = tmp_path / MANIFEST_NAME
     write_manifest(manifest, path)
     loaded = load_manifest(path)
@@ -132,6 +148,46 @@ def test_manifest_round_trip_and_sorted_keys(tmp_path: Path):
 def test_file_entry_requires_a_real_sha256():
     with pytest.raises(ValueError):
         FileEntry(path="x", sha256="nothex", size_bytes=1)
+
+
+def test_model_entry_is_an_ml_model_manifest():
+    fake = FileEntry(path="bundled/x/weights.pt", sha256=sha256_bytes(b"weights"), size_bytes=7)
+    entry = stamp_manifest_sha256(_entry(fake))
+    assert isinstance(entry, MLModelManifest)
+    # The on-disk shape (a JSON dump) validates as the frozen schema; build-only keys are ignored.
+    raw = json.loads(json.dumps(entry.model_dump(mode="json")))
+    projected = MLModelManifest.model_validate(raw)
+    assert projected == model_manifest(entry)
+    assert projected.status == "available" and projected.bundled is True and projected.refusal_reason is None
+    assert projected.sha256 == fake.sha256 and projected.size_bytes == 7
+    assert not hasattr(projected, "file") and not hasattr(projected, "train_split")
+    # manifest_sha256 is the digest of the projection and can be recomputed from the projection alone.
+    assert entry.manifest_sha256 == manifest_digest(entry) == manifest_digest(projected)
+    assert manifest_digest(_entry(fake, class_names=["b", "a"])) != entry.manifest_sha256
+    assert manifest_digest(_entry(fake, notes=["build-only"])) == entry.manifest_sha256
+
+    manifest = AssetManifest.new()
+    manifest.models["x"] = entry
+    assert verify_entries(manifest) == []
+    manifest.models["x"] = _entry(fake)                     # not stamped
+    assert any("manifest_sha256 mismatch" in p for p in verify_entries(manifest))
+
+
+def test_model_entry_refuses_inconsistent_records():
+    fake = FileEntry(path="bundled/x/weights.pt", sha256=sha256_bytes(b"weights"), size_bytes=7)
+    with pytest.raises(ValueError, match="sha256 and size_bytes"):
+        _entry(fake, sha256=sha256_bytes(b"other"))
+    with pytest.raises(ValueError, match="clean accuracy"):
+        _entry(fake, clean_accuracy=None)
+    with pytest.raises(ValueError, match="clean_accuracy.split"):
+        _entry(fake, dataset_split="eval")
+    # The frozen schema's own checks still run on the subclass.
+    with pytest.raises(ValueError, match="class_names length"):
+        _entry(fake, n_classes=3)
+    with pytest.raises(ValueError, match="refusal_reason"):
+        _entry(fake, status="refused")
+    with pytest.raises(ValueError, match="architecture_id"):
+        _entry(fake, architecture_id=None)
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +211,27 @@ def test_one_epoch_build_yields_manifest_and_hash_verifiable_weights(tmp_path: P
     assert sha256_file(weights) == record.file.sha256
     assert weights.stat().st_size == record.file.size_bytes
     assert verify_files(loaded, root) == []
+    assert verify_manifest(loaded, root) == []
+
+    # The written entry is a schema.MLModelManifest row.
+    raw_entry = json.loads((root / MANIFEST_NAME).read_text())["models"]["synthetic_cnn"]
+    projected = MLModelManifest.model_validate(raw_entry)
+    assert projected.name == "synthetic_cnn" and projected.modality == "image"
+    assert projected.format == "torch_state_dict" and projected.architecture_id == "small_cnn"
+    assert projected.input_shape == [3, 16, 16] and projected.n_classes == 4
+    assert projected.class_names == [f"class_{i}" for i in range(4)]
+    assert projected.features is None and projected.surrogate is None
+    assert projected.dataset_id == "local:synthetic-images" and projected.dataset_revision == "synthetic-v1"
+    assert projected.dataset_split == "test"
+    assert projected.clean_accuracy is not None
+    assert projected.clean_accuracy.value == record.metrics["clean_accuracy"]
+    assert projected.clean_accuracy.n == 32 and projected.clean_accuracy.split == "test"
+    assert projected.status == "available" and projected.refusal_reason is None
+    assert projected.gradients is True and projected.bundled is True
+    assert projected.license == "n/a" and projected.source_url is None
+    assert projected.sha256 == record.file.sha256 == sha256_file(weights)
+    assert projected.size_bytes == weights.stat().st_size
+    assert projected.manifest_sha256 == manifest_digest(projected) == record.manifest_sha256
 
     assert record.architecture == {"architecture_id": "small_cnn", "in_channels": 3, "n_classes": 4, "image_size": 16}
     assert record.epochs == 1 and record.seed == 0 and record.fixture_only is True
@@ -190,15 +267,24 @@ def test_one_epoch_build_yields_manifest_and_hash_verifiable_weights(tmp_path: P
     weights.write_bytes(bytes(payload))
     problems = verify_files(loaded, root)
     assert len(problems) == 1 and "sha256 mismatch" in problems[0] and record.file.path in problems[0]
+    assert verify_manifest(loaded, root) == problems
     weights.unlink()
     assert any("missing file" in p for p in verify_files(loaded, root))
+
+    # An edited entry (class names swapped) no longer matches its manifest_sha256.
+    edited = json.loads((root / MANIFEST_NAME).read_text())
+    edited["models"]["synthetic_cnn"]["class_names"] = ["class_1", "class_0", "class_2", "class_3"]
+    (root / MANIFEST_NAME).write_text(json.dumps(edited))
+    assert any("manifest_sha256 mismatch" in p for p in verify_entries(load_manifest(root / MANIFEST_NAME)))
 
 
 def test_same_seed_reproduces_identical_weights(tmp_path: Path):
     data = _synthetic_images()
     _, first = build_cnn_asset(data, model_id="cnn", root=tmp_path / "a", epochs=1, seed=7, log=_quiet)
     _, second = build_cnn_asset(data, model_id="cnn", root=tmp_path / "b", epochs=1, seed=7, log=_quiet)
-    assert first.file.sha256 == second.file.sha256
+    assert first.file.sha256 == second.file.sha256 == first.sha256
     assert first.metrics["clean_accuracy"] == second.metrics["clean_accuracy"]
+    assert first.manifest_sha256 == second.manifest_sha256
     _, other = build_cnn_asset(data, model_id="cnn", root=tmp_path / "c", epochs=1, seed=8, log=_quiet)
     assert other.file.sha256 != first.file.sha256
+    assert other.manifest_sha256 != first.manifest_sha256

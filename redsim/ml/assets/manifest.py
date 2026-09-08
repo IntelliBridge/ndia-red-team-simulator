@@ -1,10 +1,14 @@
 """``assets/MANIFEST.json``: the record every bundled model and dataset carries.
 
 The manifest is the only place clean-accuracy figures, dataset revisions and
-weight hashes are written (spec sections 11.2, 11.5, 20.1 step 3). Runs copy
-it into ``Provenance.model_manifest``; the catalog reads it for ``TargetInfo``.
-Reads are lenient (unknown keys are ignored) and validation happens at write
-time, matching the platform's convention for stored payloads.
+weight hashes are written (spec sections 11.2, 11.5, 20.1 step 3). Each
+``models[<id>]`` entry is a ``redsim.ml.schema.MLModelManifest``, the frozen P0
+shape that ``targets.detail`` stores and every loader reads, extended with the
+build's own record (constructor arguments, file paths, split names, seed,
+epochs, the training recipe, measured metrics, library versions). Runs copy
+the entry into ``Provenance.model_manifest``; the catalog reads it for
+``TargetInfo``. Reads are lenient (unknown keys are ignored) and validation
+happens at write time, matching the platform's convention for stored payloads.
 """
 
 from __future__ import annotations
@@ -21,15 +25,14 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from redsim.ml.schema import AccuracyPoint, MLModelManifest, ModelStatus, SurrogateInfo
 
 MANIFEST_NAME = "MANIFEST.json"
 BUILDER_NAME = "redsim ml build-assets"
 
 DatasetSource = Literal["huggingface", "kaggle", "local"]
-Modality = Literal["image", "tabular"]
-ModelFormat = Literal["torch_state_dict", "sklearn_joblib", "xgboost_json", "onnx"]
-FeatureDType = Literal["int", "float", "bool"]
 
 
 class _Lenient(BaseModel):
@@ -57,7 +60,7 @@ class DatasetEntry(_Lenient):
     id: str                                  # "hf:uoft-cs/cifar10", "kaggle:sid321axn/malicious-urls-dataset", "local:..."
     source: DatasetSource
     revision: str | None = None              # HF commit sha, or source-file sha256 for Kaggle
-    url: str | None = None
+    url: str | None = None                   # distribution page; recorded, never fetched by a consumer
     license: str | None = None               # as declared on the distribution page
     license_note: str | None = None          # what the declaration does and does not cover
     class_names: list[str] = Field(default_factory=list)
@@ -69,48 +72,72 @@ class DatasetEntry(_Lenient):
     splits: dict[str, SplitEntry] = Field(default_factory=dict)
     preprocessing: dict[str, Any] = Field(default_factory=dict)
     n_duplicates_removed: int | None = None
+    source_file_sha256: str | None = None    # sha256 of the file the rows were read from (Kaggle CSV, or the sample)
+    archive_sha256: str | None = None        # sha256 of the archive that file was extracted from (the Kaggle zip)
+    n_rows: int | None = None                # data rows read from that file
+    sampled_from: dict[str, Any] | None = None   # committed sample: the source digest, row indices and sampling rule
     fixture_only: bool = False               # never a demo target, never evidence (spec 11.1)
     notes: list[str] = Field(default_factory=list)
 
 
-class FeatureSpecEntry(_Lenient):
-    name: str
-    dtype: FeatureDType
-    perturbable: bool
-    min: float | None = None                 # training-split range
-    max: float | None = None
+class SurrogateEntry(SurrogateInfo):
+    """``schema.SurrogateInfo`` plus the bundled file. ``sha256`` is that file's digest.
 
+    ``agreement_clean`` is measured on the clean evaluation split: ``n`` rows,
+    ``n_correct`` of them where the surrogate's label equals the ensemble's.
+    """
 
-class SurrogateEntry(_Lenient):
-    kind: str                                # e.g. "sklearn_logistic_regression"
+    model_config = ConfigDict(extra="ignore")
+
     file: FileEntry
-    agreement_eval: float = Field(ge=0.0, le=1.0)
-    n_eval: int = Field(ge=0)
+    agreement_clean: AccuracyPoint
+
+    @model_validator(mode="after")
+    def _sha_matches_file(self) -> SurrogateEntry:
+        if self.sha256 != self.file.sha256:
+            raise ValueError("surrogate sha256 must equal file.sha256")
+        return self
 
 
-class ModelEntry(_Lenient):
+class ModelEntry(MLModelManifest):
+    """One ``models[<id>]`` entry: the frozen ``MLModelManifest`` plus the build record.
+
+    Every ``MLModelManifest`` field is present, so
+    ``MLModelManifest.model_validate(entry.model_dump(mode="json"))`` holds for
+    what is written to disk (``model_manifest`` below). The extra fields say
+    how the weights were produced and are ignored by consumers that read the
+    schema shape. ``sha256`` / ``size_bytes`` are the bundled file's, and
+    ``dataset_split`` names the split ``clean_accuracy`` was measured on.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
     id: str
-    modality: Modality
-    format: ModelFormat
-    architecture_id: str
-    architecture: dict[str, Any] = Field(default_factory=dict)
+    architecture_id: str                                    # bundled models always name their architecture
+    architecture: dict[str, Any] = Field(default_factory=dict)   # constructor arguments
     file: FileEntry
-    dataset_id: str
-    dataset_revision: str | None = None
     train_split: str
-    eval_split: str
-    class_names: list[str]
     seed: int
     epochs: int | None = None
     training: dict[str, Any] = Field(default_factory=dict)
     metrics: dict[str, Any] = Field(default_factory=dict)   # clean accuracy, per-class n / n_correct, ...
-    features: list[FeatureSpecEntry] | None = None          # tabular
     extractor_version: str | None = None                    # tabular
     surrogate: SurrogateEntry | None = None                 # tabular tree ensembles
     library_versions: dict[str, str] = Field(default_factory=dict)
     fixture_only: bool = False
-    license: str | None = None
     notes: list[str] = Field(default_factory=list)
+    status: ModelStatus = "available"
+    bundled: bool = True
+
+    @model_validator(mode="after")
+    def _file_and_measurements_agree(self) -> ModelEntry:
+        if self.sha256 != self.file.sha256 or self.size_bytes != self.file.size_bytes:
+            raise ValueError("sha256 and size_bytes must equal the bundled file's")
+        if self.clean_accuracy is None:
+            raise ValueError("a bundled model records its measured clean accuracy")
+        if self.clean_accuracy.split != self.dataset_split:
+            raise ValueError("clean_accuracy.split must equal dataset_split")
+        return self
 
 
 class AssetManifest(_Lenient):
@@ -141,6 +168,35 @@ class AssetManifest(_Lenient):
         self.python = sys.version.split()[0]
         self.platform = platform.platform()
         self.library_versions = library_versions()
+
+
+# ---------------------------------------------------------------------------
+# The MLModelManifest projection and its digest
+# ---------------------------------------------------------------------------
+
+def model_manifest(entry: MLModelManifest) -> MLModelManifest:
+    """The frozen ``MLModelManifest`` projection of an entry (what ``targets.detail`` stores).
+
+    Goes through a JSON dump so a ``ModelEntry`` loses its build-only fields
+    instead of being passed through as a subclass instance.
+    """
+    return MLModelManifest.model_validate(entry.model_dump(mode="json"))
+
+
+def manifest_digest(entry: MLModelManifest) -> str:
+    """``manifest_sha256``: sha256 of the projection's canonical JSON, ``manifest_sha256`` itself excluded.
+
+    Canonical means ``json.dumps(..., sort_keys=True, separators=(",", ":"))``
+    of ``model_dump(mode="json")``. A consumer holding only the
+    ``MLModelManifest`` shape recomputes the same digest.
+    """
+    payload = model_manifest(entry).model_dump(mode="json", exclude={"manifest_sha256"})
+    return sha256_bytes(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
+def stamp_manifest_sha256(entry: ModelEntry) -> ModelEntry:
+    """Return ``entry`` with ``manifest_sha256`` set from its projection."""
+    return entry.model_copy(update={"manifest_sha256": manifest_digest(entry)})
 
 
 # ---------------------------------------------------------------------------
@@ -249,3 +305,19 @@ def verify_files(manifest: AssetManifest, root: Path) -> list[str]:
         if actual != entry.sha256:
             problems.append(f"{label}: sha256 mismatch for {entry.path} (manifest {entry.sha256[:12]}..., file {actual[:12]}...)")
     return problems
+
+
+def verify_entries(manifest: AssetManifest) -> list[str]:
+    """Return one message per model entry whose ``manifest_sha256`` does not match its projection."""
+    problems: list[str] = []
+    for model_id, model in manifest.models.items():
+        expected = manifest_digest(model)
+        if model.manifest_sha256 != expected:
+            recorded = (model.manifest_sha256 or "unset")[:12]
+            problems.append(f"model {model_id}: manifest_sha256 mismatch (manifest {recorded}..., computed {expected[:12]}...)")
+    return problems
+
+
+def verify_manifest(manifest: AssetManifest, root: Path) -> list[str]:
+    """Files and entry digests together; a run refuses to start on any problem (spec 9.5, 11.3.3)."""
+    return verify_files(manifest, root) + verify_entries(manifest)

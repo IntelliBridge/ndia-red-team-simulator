@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 # there is one place to patch console I/O. Run-state resolution likewise moved
 # to ``redsim.cli._runstate``.
 from redsim.cli import _console
-from redsim.cli.ml import add_ml_subparser
 
 # ``json``, ``Path`` and ``open`` are referenced by the per-command sibling
 # modules via this module (e.g. ``redsim.cli.main.open``) so that the existing
@@ -193,9 +192,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_migrate.add_argument("--dry-run", dest="dry_run", action="store_true",
                            help="Print planned counts without writing")
 
-    # ml (adversarial-ML asset build; parser + body live in redsim.cli.ml)
-    add_ml_subparser(sub)
-
     return parser
 
 
@@ -275,13 +271,7 @@ def _cmd_tenants_dispatch(args: argparse.Namespace, config: RedsimConfig) -> Non
         sys.exit(2)
 
 
-def _cmd_ml_dispatch(args: argparse.Namespace, config: RedsimConfig) -> None:
-    from redsim.cli.ml import cmd_ml
-    cmd_ml(args, config)
-
-
 _COMMANDS["status"] = _cmd_status_dispatch
-_COMMANDS["ml"] = _cmd_ml_dispatch
 _COMMANDS["audit"] = _cmd_audit_dispatch
 _COMMANDS["migrate"] = _cmd_migrate_dispatch
 _COMMANDS["evidence-pack"] = _cmd_evidence_pack_dispatch

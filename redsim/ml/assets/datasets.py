@@ -1,7 +1,8 @@
 """Dataset fetchers for ``redsim ml build-assets`` (spec section 11).
 
 Every fetch pins what it got: the HuggingFace commit sha for hub datasets and
-the sha256 of ``malicious_phish.csv`` for the Kaggle tabular dataset. Nothing
+the sha256 of ``malicious_phish.csv`` (plus the zip it came in) for the Kaggle
+tabular dataset. Nothing
 here runs outside the asset build; the worker and the tests never import the
 network paths. ``huggingface_hub`` and ``datasets`` are not dependencies: the
 hub is spoken to with ``httpx`` through its public API and ``resolve`` URLs,
@@ -11,20 +12,27 @@ torchvision's Toronto mirror (unreachable through the corporate proxy).
 
 from __future__ import annotations
 
+import base64
 import csv
 import hashlib
 import io
+import json
 import os
+import random
+import shutil
+import time
 import zipfile
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import numpy as np
 
+from redsim.llm.pythia import env_file_path, resolve_env
 from redsim.ml.assets.manifest import (
     DatasetEntry,
     FileEntry,
@@ -218,21 +226,50 @@ def repo_cache_dir(cache_dir: Path, repo_id: str, sha: str) -> Path:
     return Path(cache_dir) / f"hf--{repo_id.replace('/', '--')}" / sha
 
 
-def download_hub_file(client: httpx.Client, repo_id: str, sha: str, rfilename: str, dest: Path) -> Path:
-    """Stream one repo file at a pinned sha to ``dest`` (skipped when already cached)."""
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+HUB_RETRIES = 8
+MAX_RETRY_DELAY_S = 120.0
+
+
+def retry_delay(retry_after: str | None, attempt: int, *, rng: random.Random | None = None) -> float:
+    """Seconds to wait before retry ``attempt`` (0-based): ``Retry-After`` when given, else capped exponential backoff."""
+    if retry_after:
+        try:
+            return min(max(float(retry_after), 0.0), MAX_RETRY_DELAY_S)
+        except ValueError:
+            pass
+    base = min(2.0 ** attempt, MAX_RETRY_DELAY_S)
+    return base + (rng or random).uniform(0.0, base / 2)
+
+
+def download_hub_file(client: httpx.Client, repo_id: str, sha: str, rfilename: str, dest: Path, *,
+                      retries: int = HUB_RETRIES, sleep: Callable[[float], None] = time.sleep) -> Path:
+    """Stream one repo file at a pinned sha to ``dest`` (skipped when already cached).
+
+    The hub rate-limits anonymous ``resolve`` requests; a 429 (or a 5xx) is
+    retried with the server's ``Retry-After`` or exponential backoff, up to
+    ``retries`` times, before ``DatasetUnavailable`` is raised.
+    """
     dest = Path(dest)
     if dest.exists() and dest.stat().st_size > 0:
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
     url = HF_RESOLVE.format(repo=repo_id, revision=sha, path=httpx.URL(rfilename).path)
     tmp = dest.with_suffix(dest.suffix + ".part")
-    with client.stream("GET", url) as resp:
-        if resp.status_code != 200:
-            raise DatasetUnavailable(f"{url} returned HTTP {resp.status_code}")
-        with open(tmp, "wb") as fh:
-            fh.writelines(resp.iter_bytes(1 << 20))
-    os.replace(tmp, dest)
-    return dest
+    for attempt in range(retries + 1):
+        with client.stream("GET", url) as resp:
+            if resp.status_code == 200:
+                with open(tmp, "wb") as fh:
+                    fh.writelines(resp.iter_bytes(1 << 20))
+                os.replace(tmp, dest)
+                return dest
+            status = resp.status_code
+            retry_after = resp.headers.get("retry-after")
+        if status in RETRYABLE_STATUS and attempt < retries:
+            sleep(retry_delay(retry_after, attempt))
+            continue
+        raise DatasetUnavailable(f"{url} returned HTTP {status}" + (f" after {attempt} retries" if attempt else ""))
+    raise AssertionError("unreachable")
 
 
 def hub_dataset_entry(info: HubDatasetInfo, files: Iterable[FileEntry] = (), *, license_note: str | None = None,
@@ -397,87 +434,238 @@ def fetch_imagefolder(client: httpx.Client, cache_dir: Path, repo_id: str, *, sp
 # Kaggle malicious-URLs dataset (spec 11.3.3) and the committed sample
 # ---------------------------------------------------------------------------
 
+KAGGLE_TOKEN_ENV = "KAGGLE_API_TOKEN"       # what the current kaggle client reads; sent as a bearer token
+KAGGLE_USERNAME_ENV = "KAGGLE_USERNAME"     # the older pair, sent as HTTP basic auth
+KAGGLE_KEY_ENV = "KAGGLE_KEY"
+KAGGLE_ARCHIVE_NAME = "malicious-urls-dataset.zip"
+KAGGLE_DOWNLOAD_RECORD = "download.json"
+FIXTURE_SIDECAR_NAME = "MANIFEST.json"
+_REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
+
+
 @dataclass
 class UrlTable:
     urls: list[str]
     labels: list[str]
     dataset: DatasetEntry
     source_path: Path
+    row_indices: list[int] = field(default_factory=list)   # 0-based data-row index of each row in source_path
 
 
-def kaggle_credentials() -> tuple[str, str] | None:
-    user = os.environ.get("KAGGLE_USERNAME", "").strip()
-    key = os.environ.get("KAGGLE_KEY", "").strip()
-    if user and key:
-        return user, key
+@dataclass(frozen=True, repr=False)
+class KaggleAuth:
+    """Kaggle API credentials for one build run. ``repr`` and ``str`` never contain the secret."""
+
+    kind: Literal["bearer", "basic"]
+    source: str                     # the variable name and where it was read from, never the value
+    secret: str = field(repr=False)
+    username: str | None = None
+
+    def headers(self) -> dict[str, str]:
+        if self.kind == "bearer":
+            return {"Authorization": f"Bearer {self.secret}"}
+        raw = f"{self.username}:{self.secret}".encode()
+        return {"Authorization": "Basic " + base64.b64encode(raw).decode("ascii")}
+
+    def __repr__(self) -> str:
+        return f"KaggleAuth(kind={self.kind!r}, source={self.source!r})"
+
+    __str__ = __repr__
+
+
+def kaggle_credentials(environ: Mapping[str, str] | None = None) -> KaggleAuth | None:
+    """Resolve the operator's Kaggle credentials for this call; ``None`` when there are none.
+
+    ``KAGGLE_API_TOKEN`` wins and is sent as a bearer token. The older
+    ``KAGGLE_USERNAME`` / ``KAGGLE_KEY`` pair is the basic-auth fallback. Both
+    are read from the process environment first, then from the ``.env`` file
+    ``redsim.llm.pythia`` discovers (``REDSIM_ENV_FILE``, else ``./.env``, else
+    the repo-root ``.env``). The environment wins over the file. The values are
+    never logged or written anywhere.
+    """
+    env = os.environ if environ is None else environ
+    merged = resolve_env(env)
+    env_file = env_file_path(env)
+
+    def _source(name: str) -> str:
+        if env.get(name, "").strip():
+            return f"{name} in the environment"
+        return f"{name} in {env_file}" if env_file is not None else f"{name} in a .env file"
+
+    token = merged.get(KAGGLE_TOKEN_ENV, "").strip()
+    if token:
+        return KaggleAuth(kind="bearer", source=_source(KAGGLE_TOKEN_ENV), secret=token)
+    username = merged.get(KAGGLE_USERNAME_ENV, "").strip()
+    key = merged.get(KAGGLE_KEY_ENV, "").strip()
+    if username and key:
+        return KaggleAuth(kind="basic", source=_source(KAGGLE_KEY_ENV), secret=key, username=username)
     return None
 
 
 def kaggle_missing_message() -> str:
-    return ("KAGGLE_USERNAME / KAGGLE_KEY are not set, so the full malicious-URLs dataset "
-            f"({MALICIOUS_URLS_SLUG}, {MALICIOUS_URLS_FILE}) was not downloaded. Falling back to the committed "
-            "CI sample tests/ml/fixtures/malicious_urls_sample.csv. Export a Kaggle API token for this one-off "
-            "run to build the demo tabular asset (spec 11.3.3, 20.3).")
+    return (f"{KAGGLE_TOKEN_ENV} is not set (nor the older {KAGGLE_USERNAME_ENV} / {KAGGLE_KEY_ENV} pair), in the "
+            f"environment or a .env file, so the full malicious-URLs dataset ({MALICIOUS_URLS_SLUG}, "
+            f"{MALICIOUS_URLS_FILE}) was not downloaded. Falling back to the committed CI sample "
+            "tests/ml/fixtures/malicious_urls_sample.csv. Export a Kaggle API token for this one-off run to build "
+            "the demo tabular asset (spec 11.3.3, 20.3).")
 
 
-def fetch_kaggle_malicious_urls(cache_dir: Path, *, timeout: float = 300.0, log: Log = print) -> Path | None:
-    """Download ``malicious_phish.csv`` with the operator's Kaggle token; ``None`` when no token is set.
+@dataclass
+class KaggleDownload:
+    """One authenticated fetch, as recorded in ``download.json`` beside the extracted file."""
 
-    The token is read from the environment for this call only and never logged
-    or written anywhere.
-    """
-    creds = kaggle_credentials()
-    if creds is None:
+    slug: str
+    url: str
+    fetched_at: str
+    auth_kind: str
+    archive: FileEntry | None       # the zip as served; None when Kaggle answered with the bare CSV
+    file: FileEntry                 # malicious_phish.csv; paths are relative to the download directory
+    csv_path: Path
+
+    def record(self) -> dict[str, Any]:
+        return {"slug": self.slug, "url": self.url, "fetched_at": self.fetched_at, "auth_kind": self.auth_kind,
+                "archive": self.archive.model_dump() if self.archive is not None else None,
+                "file": self.file.model_dump()}
+
+
+def kaggle_cache_dir(cache_dir: Path) -> Path:
+    return Path(cache_dir) / f"kaggle--{MALICIOUS_URLS_SLUG.replace('/', '--')}"
+
+
+def _cached_kaggle_download(dest_dir: Path) -> KaggleDownload | None:
+    """The previous download, when its record is present and the CSV still hashes to what it says."""
+    record_path = dest_dir / KAGGLE_DOWNLOAD_RECORD
+    csv_path = dest_dir / MALICIOUS_URLS_FILE
+    if not (record_path.is_file() and csv_path.is_file()):
         return None
-    dest_dir = Path(cache_dir) / f"kaggle--{MALICIOUS_URLS_SLUG.replace('/', '--')}"
-    dest = dest_dir / MALICIOUS_URLS_FILE
-    if dest.exists() and dest.stat().st_size > 0:
-        log(f"kaggle: using cached {dest}")
-        return dest
+    try:
+        data = json.loads(record_path.read_text(encoding="utf-8"))
+        file = FileEntry.model_validate(data["file"])
+        archive = FileEntry.model_validate(data["archive"]) if data.get("archive") else None
+    except (ValueError, KeyError, TypeError):
+        return None
+    if sha256_file(csv_path) != file.sha256:
+        return None
+    return KaggleDownload(slug=str(data.get("slug", MALICIOUS_URLS_SLUG)), url=str(data.get("url", "")),
+                          fetched_at=str(data.get("fetched_at", "")), auth_kind=str(data.get("auth_kind", "")),
+                          archive=archive, file=file, csv_path=csv_path)
+
+
+def _stream_to(resp: httpx.Response, path: Path) -> None:
+    with open(path, "wb") as fh:
+        fh.writelines(resp.iter_bytes(1 << 20))
+
+
+def kaggle_fetch_archive(auth: KaggleAuth, url: str, dest: Path, *, timeout: float = 300.0,
+                         transport: httpx.BaseTransport | None = None) -> None:
+    """One authenticated GET of ``url`` into ``dest``.
+
+    Kaggle answers the download endpoint with a 302 to a signed Google Cloud
+    Storage URL. That redirect is followed by a second client that carries no
+    ``Authorization`` header: the storage host rejects the bearer token, and
+    the credential must not leave Kaggle's origin in any case.
+    """
+    ua = {"User-Agent": f"redsim-build-assets/{redsim_version()}"}
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    with (httpx.Client(timeout=timeout, follow_redirects=False, headers=ua, transport=transport) as client,
+          client.stream("GET", url, headers=auth.headers()) as resp):
+        if resp.status_code == 200:
+            _stream_to(resp, tmp)
+            os.replace(tmp, dest)
+            return
+        if resp.status_code in (401, 403):
+            raise DatasetUnavailable(f"Kaggle refused the credentials read from {auth.source} (HTTP {resp.status_code})")
+        if resp.status_code not in _REDIRECT_CODES:
+            raise DatasetUnavailable(f"Kaggle download returned HTTP {resp.status_code} for {MALICIOUS_URLS_SLUG}")
+        location = resp.headers.get("location")
+        if not location:
+            raise DatasetUnavailable(f"Kaggle answered HTTP {resp.status_code} without a Location header")
+        target = resp.url.join(location)
+    with (httpx.Client(timeout=timeout, follow_redirects=True, headers=ua, transport=transport) as anonymous,
+          anonymous.stream("GET", target) as resp):
+        if resp.status_code != 200:
+            raise DatasetUnavailable(f"{target.host} returned HTTP {resp.status_code} for the Kaggle archive")
+        _stream_to(resp, tmp)
+    os.replace(tmp, dest)
+
+
+def fetch_kaggle_malicious_urls(cache_dir: Path, *, auth: KaggleAuth | None = None, timeout: float = 300.0,
+                                log: Log = print, transport: httpx.BaseTransport | None = None) -> KaggleDownload | None:
+    """Download ``malicious_phish.csv`` with the operator's Kaggle credentials; ``None`` when there are none.
+
+    A cached file that still hashes to what ``download.json`` recorded is
+    reused without credentials. Otherwise the credentials are resolved for
+    this call only and never logged or written anywhere. The zip Kaggle serves
+    is hashed before extraction and both digests land in ``download.json``
+    beside the CSV.
+    """
+    dest_dir = kaggle_cache_dir(cache_dir)
+    cached = _cached_kaggle_download(dest_dir)
+    if cached is not None:
+        log(f"kaggle: using cached {cached.csv_path} (sha256 {cached.file.sha256[:12]}...)")
+        return cached
+    auth = auth if auth is not None else kaggle_credentials()
+    if auth is None:
+        return None
     dest_dir.mkdir(parents=True, exist_ok=True)
     url = KAGGLE_DOWNLOAD.format(slug=MALICIOUS_URLS_SLUG)
-    log(f"kaggle: downloading {MALICIOUS_URLS_SLUG} (authenticated)")
-    archive = dest_dir / "download.bin"
-    headers = {"User-Agent": f"redsim-build-assets/{redsim_version()}"}
-    with (httpx.Client(timeout=timeout, follow_redirects=True, auth=creds, headers=headers) as client,
-          client.stream("GET", url) as resp):
-        if resp.status_code != 200:
-            raise DatasetUnavailable(f"Kaggle download returned HTTP {resp.status_code} for {MALICIOUS_URLS_SLUG}")
-        with open(archive, "wb") as fh:
-            fh.writelines(resp.iter_bytes(1 << 20))
-    if zipfile.is_zipfile(archive):
-        with zipfile.ZipFile(archive) as zf:
+    log(f"kaggle: downloading {MALICIOUS_URLS_SLUG} ({auth.kind} auth, {auth.source})")
+    archive_path = dest_dir / KAGGLE_ARCHIVE_NAME
+    kaggle_fetch_archive(auth, url, archive_path, timeout=timeout, transport=transport)
+    csv_path = dest_dir / MALICIOUS_URLS_FILE
+    archive: FileEntry | None = None
+    if zipfile.is_zipfile(archive_path):
+        archive = FileEntry(path=KAGGLE_ARCHIVE_NAME, sha256=sha256_file(archive_path),
+                            size_bytes=archive_path.stat().st_size)
+        with zipfile.ZipFile(archive_path) as zf:
             names = zf.namelist()
             member = next((n for n in names if n.endswith(MALICIOUS_URLS_FILE)), None)
             if member is None:
                 raise DatasetUnavailable(f"Kaggle archive holds {names}, not {MALICIOUS_URLS_FILE}")
-            with zf.open(member) as src, open(dest, "wb") as out:
-                while True:
-                    chunk = src.read(1 << 20)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-        archive.unlink()
+            tmp = csv_path.with_suffix(csv_path.suffix + ".part")
+            with zf.open(member) as src, open(tmp, "wb") as out:
+                shutil.copyfileobj(src, out, 1 << 20)
+        os.replace(tmp, csv_path)
     else:
-        os.replace(archive, dest)
-    return dest
+        os.replace(archive_path, csv_path)      # the endpoint answered with the bare CSV
+    file = FileEntry(path=MALICIOUS_URLS_FILE, sha256=sha256_file(csv_path), size_bytes=csv_path.stat().st_size)
+    download = KaggleDownload(slug=MALICIOUS_URLS_SLUG, url=url, fetched_at=datetime.now(UTC).isoformat(),
+                              auth_kind=auth.kind, archive=archive, file=file, csv_path=csv_path)
+    (dest_dir / KAGGLE_DOWNLOAD_RECORD).write_text(json.dumps(download.record(), indent=2, sort_keys=True) + "\n",
+                                                    encoding="utf-8")
+    archive_note = f", archive sha256 {archive.sha256[:12]}..." if archive is not None else ""
+    log(f"kaggle: {MALICIOUS_URLS_FILE} sha256 {file.sha256[:12]}... ({file.size_bytes} bytes{archive_note})")
+    return download
 
 
-def load_url_csv(path: Path) -> tuple[list[str], list[str]]:
-    """Read ``url,type`` rows; labels are lower-cased, blank rows skipped."""
+def read_url_rows(path: Path) -> tuple[list[int], list[str], list[str]]:
+    """Read ``url,type`` rows as ``(row_indices, urls, labels)``.
+
+    ``row_indices`` are 0-based data-row positions (header excluded) so a row
+    can be cited back to the source file. Labels are lower-cased, and rows with
+    an empty url or type are skipped, which is why the indices are kept.
+    """
+    indices: list[int] = []
     urls: list[str] = []
     labels: list[str] = []
     with open(path, newline="", encoding="utf-8", errors="replace") as fh:
         reader = csv.DictReader(fh)
         if reader.fieldnames is None or "url" not in reader.fieldnames or "type" not in reader.fieldnames:
             raise DatasetUnavailable(f"{path}: expected columns url,type, found {reader.fieldnames}")
-        for row in reader:
+        for index, row in enumerate(reader):
             url = (row.get("url") or "").strip()
             label = (row.get("type") or "").strip().lower()
             if not url or not label:
                 continue
+            indices.append(index)
             urls.append(url)
             labels.append(label)
+    return indices, urls, labels
+
+
+def load_url_csv(path: Path) -> tuple[list[str], list[str]]:
+    """Read ``url,type`` rows; labels are lower-cased, blank rows skipped."""
+    _, urls, labels = read_url_rows(path)
     return urls, labels
 
 
@@ -501,30 +689,64 @@ def committed_sample_path() -> Path | None:
     return candidate if candidate.exists() else None
 
 
-def kaggle_url_table(csv_path: Path) -> UrlTable:
-    urls, labels = load_url_csv(csv_path)
+def fixture_sidecar_entry(csv_path: Path, sidecar_path: Path | None = None) -> dict[str, Any] | None:
+    """The committed sample's sidecar record (``tests/ml/fixtures/MANIFEST.json``), when present."""
+    csv_path = Path(csv_path)
+    path = Path(sidecar_path) if sidecar_path is not None else csv_path.parent / FIXTURE_SIDECAR_NAME
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+    entry = data.get("files", {}).get(csv_path.name) if isinstance(data, dict) else None
+    return entry if isinstance(entry, dict) else None
+
+
+def kaggle_url_table(source: KaggleDownload | Path) -> UrlTable:
+    """The full Kaggle file as a ``UrlTable`` whose dataset entry pins the file (and archive) digests."""
+    csv_path = source.csv_path if isinstance(source, KaggleDownload) else Path(source)
+    indices, urls, labels = read_url_rows(csv_path)
     digest = sha256_file(csv_path)
+    size = csv_path.stat().st_size
+    source_files = [FileEntry(path=MALICIOUS_URLS_FILE, sha256=digest, size_bytes=size)]
+    archive_sha256: str | None = None
+    if isinstance(source, KaggleDownload) and source.archive is not None:
+        source_files.insert(0, source.archive)
+        archive_sha256 = source.archive.sha256
     entry = DatasetEntry(
         id=f"kaggle:{MALICIOUS_URLS_SLUG}", source="kaggle", revision=digest,
         url=f"https://www.kaggle.com/datasets/{MALICIOUS_URLS_SLUG}", license=URL_LICENSE, license_note=URL_LICENSE_NOTE,
-        class_names=list(URL_CLASS_NAMES),
-        source_files=[FileEntry(path=MALICIOUS_URLS_FILE, sha256=digest, size_bytes=csv_path.stat().st_size)],
-        size_bytes=csv_path.stat().st_size,
+        class_names=list(URL_CLASS_NAMES), source_files=source_files, size_bytes=size,
+        source_file_sha256=digest, archive_sha256=archive_sha256, n_rows=len(urls),
         notes=["Demo tabular dataset (spec 11.3.3). URL strings are data: never fetched, resolved or rendered."],
     )
-    return UrlTable(urls=urls, labels=labels, dataset=entry, source_path=csv_path)
+    return UrlTable(urls=urls, labels=labels, dataset=entry, source_path=csv_path, row_indices=indices)
 
 
-def sample_url_table(csv_path: Path) -> UrlTable:
-    urls, labels = load_url_csv(csv_path)
+SAMPLE_SIDECAR_KEYS: tuple[str, ...] = (
+    "source_dataset_id", "source_file", "source_file_sha256", "source_archive_sha256", "n_source_rows",
+    "source_row_indices_sha256", "sampling",
+)
+
+
+def sample_url_table(csv_path: Path, sidecar_path: Path | None = None) -> UrlTable:
+    """The committed CI sample as a ``UrlTable``; its sidecar says which Kaggle rows it was drawn from."""
+    csv_path = Path(csv_path)
+    indices, urls, labels = read_url_rows(csv_path)
     digest = sha256_file(csv_path)
+    sidecar = fixture_sidecar_entry(csv_path, sidecar_path) or {}
+    synthetic = bool(sidecar.get("synthetic", True))
+    sampled_from = None if synthetic else {key: sidecar.get(key) for key in SAMPLE_SIDECAR_KEYS}
+    license_note = ("Synthetic CI sample shaped like the Kaggle file; not the Kaggle data." if synthetic else
+                    "Seeded stratified sample of the Kaggle file; the source digest and row indices are in "
+                    "sampled_from. A CI fixture, not the demo dataset.")
     entry = DatasetEntry(
         id="local:tests/ml/fixtures/malicious_urls_sample.csv", source="local", revision=digest,
-        license=URL_LICENSE, license_note="Synthetic CI sample shaped like the Kaggle file; not the Kaggle data.",
-        class_names=list(URL_CLASS_NAMES),
+        license=URL_LICENSE, license_note=license_note, class_names=list(URL_CLASS_NAMES),
         source_files=[FileEntry(path=csv_path.name, sha256=digest, size_bytes=csv_path.stat().st_size)],
-        size_bytes=csv_path.stat().st_size, fixture_only=True,
-        notes=["CI fixture only (spec 11.1): never a demo target, never evidence.",
-               kaggle_missing_message()],
+        size_bytes=csv_path.stat().st_size, source_file_sha256=digest, n_rows=len(urls), sampled_from=sampled_from,
+        fixture_only=True,
+        notes=["CI fixture only (spec 11.1): never a demo target, never evidence.", kaggle_missing_message()],
     )
-    return UrlTable(urls=urls, labels=labels, dataset=entry, source_path=csv_path)
+    return UrlTable(urls=urls, labels=labels, dataset=entry, source_path=csv_path, row_indices=indices)

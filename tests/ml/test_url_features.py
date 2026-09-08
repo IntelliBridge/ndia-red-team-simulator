@@ -11,6 +11,7 @@ import csv
 import hashlib
 import json
 import math
+import re
 import socket
 from pathlib import Path
 
@@ -138,20 +139,20 @@ def test_committed_sample_shape_classes_and_sidecar():
     assert sidecar["sha256"] == hashlib.sha256(SAMPLE.read_bytes()).hexdigest()
     assert sidecar["n_rows"] == len(rows)
     assert sidecar["per_class"] == {cls: labels.count(cls) for cls in sorted(CLASSES)}
-    assert sidecar["synthetic"] is True
+    assert sidecar["synthetic"] is False
     assert sidecar["columns"] == ["url", "type"]
 
 
-def test_committed_sample_uses_only_reserved_names_and_test_nets():
-    """The sample must never point at a real host (RFC 2606 names, RFC 5737 nets, or listed shorteners)."""
-    for row in _sample_rows():
-        _, host, path, _ = uf._split_url(row["url"])
-        reserved_tld = host.endswith((".test", ".example", ".invalid"))
-        example_domain = host in {"example.com", "example.org", "example.net", "example.edu"} or host.endswith(
-            (".example.com", ".example.org", ".example.net", ".example.edu"))
-        test_net = host.startswith(("192.0.2.", "198.51.100.", "203.0.113."))
-        shortener = host in uf.SHORTENER_HOSTS and "example" in path
-        assert reserved_tld or example_domain or test_net or shortener, row["url"]
+def test_committed_sample_is_a_cited_draw_from_the_kaggle_file():
+    """Real rows, so the sidecar cites the source digest and row indices (details in test_fixture_sample).
+
+    The strings are data: the no-network test below runs the extractor over
+    every one of them with ``socket`` patched to raise.
+    """
+    sidecar = json.loads(SIDECAR.read_text(encoding="utf-8"))["files"]["malicious_urls_sample.csv"]
+    assert sidecar["source_dataset_id"] == "kaggle:sid321axn/malicious-urls-dataset"
+    assert re.fullmatch(r"[0-9a-f]{64}", sidecar["source_file_sha256"])
+    assert len(sidecar["source_row_indices"]) == len(_sample_rows())
 
 
 def test_extraction_over_sample_makes_no_network_call(monkeypatch: pytest.MonkeyPatch):
