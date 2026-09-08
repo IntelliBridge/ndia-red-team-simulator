@@ -610,7 +610,7 @@ export function hardenFinding(id: string, body: Record<string, unknown> = {}) {
 export function verifyFinding(
   id: string,
   defense: string,
-  params: Record<string, unknown> = {},
+  params: Record<string, unknown>,
   recommendationId: string,
 ) {
   return api(`/v1/findings/${encodeURIComponent(id)}/verify`, {
