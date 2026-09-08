@@ -3,7 +3,7 @@ import { RoleGated } from "./role-gated";
 
 const meta: Meta<typeof RoleGated> = {
   component: RoleGated,
-  title: "Aegis/RoleGated",
+  title: "Redsim/RoleGated",
   tags: ["autodocs"],
 };
 export default meta;

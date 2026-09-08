@@ -4,10 +4,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-COPY deploy/certs/ /usr/local/share/ca-certificates/aegis-extra/
+COPY deploy/certs/ /usr/local/share/ca-certificates/redsim-extra/
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates git curl \
-    && find /usr/local/share/ca-certificates/aegis-extra/ -type f \( -name "*.pem" -o -name "*.crt" \) \
+    && find /usr/local/share/ca-certificates/redsim-extra/ -type f \( -name "*.pem" -o -name "*.crt" \) \
          -exec sh -c 'cp "$1" "/usr/local/share/ca-certificates/$(basename "${1%.*}").crt"' _ {} \; \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -24,7 +24,7 @@ RUN pip install --upgrade pip && \
         "torch>=2.3" "torchvision>=0.18"
 
 COPY pyproject.toml ./
-COPY aegis ./aegis
+COPY redsim ./redsim
 
 # This image runs the attacks, so it carries the ml extra (torch, ART,
 # SHAP, onnxruntime, scikit-learn) on top of the Celery worker deps.
@@ -33,4 +33,4 @@ RUN pip install -e ".[worker,ml]"
 # A standalone worker consumes both queues so nothing is stranded; the compose
 # stack overrides this to run a dedicated pool per queue (-Q scans / -Q default)
 # plus a beat scheduler. See deploy/docker-compose.yml.
-CMD ["celery", "-A", "aegis.workers.celery_app", "worker", "-Q", "scans,default", "--loglevel=info"]
+CMD ["celery", "-A", "redsim.workers.celery_app", "worker", "-Q", "scans,default", "--loglevel=info"]

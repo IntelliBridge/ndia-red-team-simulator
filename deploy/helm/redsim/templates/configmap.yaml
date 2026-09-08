@@ -1,0 +1,27 @@
+{{/*
+Non-secret REDSIM_* config shared by api / worker / log-ingest, plus the
+web public env. Secret-bearing values live in secret.yaml. Mirrors the
+environment blocks in deploy/docker-compose.yml.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redsim.configMapName" . }}
+  labels:
+    {{- include "redsim.labels" . | nindent 4 }}
+data:
+  REDSIM_ENV: {{ .Values.config.env | quote }}
+  REDSIM_AUTH_MODE: {{ .Values.config.authMode | quote }}
+  REDSIM_DB_URL: {{ .Values.config.dbUrl | quote }}
+  REDSIM_BROKER_URL: {{ .Values.config.brokerUrl | quote }}
+  REDSIM_RESULT_BACKEND: {{ .Values.config.resultBackend | quote }}
+  REDSIM_BLOB_BACKEND: {{ .Values.config.blobBackend | quote }}
+  REDSIM_S3_ENDPOINT: {{ .Values.config.s3Endpoint | quote }}
+  REDSIM_S3_BUCKET: {{ .Values.config.s3Bucket | quote }}
+  REDSIM_CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+  REDSIM_OIDC_ISSUER: {{ .Values.config.oidcIssuer | quote }}
+  REDSIM_OIDC_JWKS_URL: {{ .Values.config.oidcJwksUrl | quote }}
+  REDSIM_DISABLE_LLM: {{ .Values.config.disableLlm | quote }}
+  # Web (Next.js) public config.
+  NEXT_PUBLIC_REDSIM_API_URL: {{ .Values.config.webApiUrl | quote }}
+  NEXTAUTH_URL: {{ .Values.config.nextAuthUrl | quote }}

@@ -2,13 +2,13 @@
 * @noah-behrick
 
 # Phase 3 surface owners.
-/aegis/api/            @noah-behrick
-/aegis/workers/        @noah-behrick
-/aegis/db/             @noah-behrick
-/aegis/audit/          @noah-behrick
-/aegis/scanners/       @noah-behrick
-/aegis/services/       @noah-behrick
-/aegis/llm/            @noah-behrick
+/redsim/api/            @noah-behrick
+/redsim/workers/        @noah-behrick
+/redsim/db/             @noah-behrick
+/redsim/audit/          @noah-behrick
+/redsim/scanners/       @noah-behrick
+/redsim/services/       @noah-behrick
+/redsim/llm/            @noah-behrick
 
 /web/                  @noah-behrick
 /deploy/               @noah-behrick

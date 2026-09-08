@@ -1,7 +1,7 @@
 # Release supply-chain integrity.
 #
 # Runs ONLY on version tags (v*) — never on PRs or branch pushes. The
-# existing `docker-images` job in aegis-ci.yml stays a no-push PR build;
+# existing `docker-images` job in redsim-ci.yml stays a no-push PR build;
 # this workflow is the release-only, push-and-sign counterpart.
 #
 # For each of the four service images (api, worker, web, log_ingest) it:
@@ -164,8 +164,8 @@ jobs:
 # tag; the OIDC issuer is GitHub's Actions token service. See also
 # scripts/verify-release.sh.
 #
-#   IMAGE="ghcr.io/intellibridge/aegis/<service>@<DIGEST>"
-#   IDENTITY='^https://github.com/IntelliBridge/aegis/.github/workflows/release-sign.yml@refs/tags/v.*$'
+#   IMAGE="ghcr.io/intellibridge/redsim/<service>@<DIGEST>"
+#   IDENTITY='^https://__UPSTREAM_REDSIM_URL__/.github/workflows/release-sign.yml@refs/tags/v.*$'
 #   ISSUER='https://token.actions.githubusercontent.com'
 #
 #   # 1. Verify the keyless image signature.

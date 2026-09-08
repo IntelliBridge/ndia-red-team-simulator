@@ -3,7 +3,7 @@ import { AuditChainBadge } from "./audit-chain-badge";
 
 const meta: Meta<typeof AuditChainBadge> = {
   component: AuditChainBadge,
-  title: "Aegis/AuditChainBadge",
+  title: "Redsim/AuditChainBadge",
   tags: ["autodocs"],
 };
 export default meta;

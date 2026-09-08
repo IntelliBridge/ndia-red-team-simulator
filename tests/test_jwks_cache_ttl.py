@@ -17,8 +17,8 @@ import pytest
 
 pytest.importorskip("httpx")
 
-from aegis.api.auth import _jwks_cache, _JwksCache
-from aegis.api.settings import APISettings
+from redsim.api.auth import _jwks_cache, _JwksCache
+from redsim.api.settings import APISettings
 
 
 def _counting_httpx(payload: dict[str, object]) -> tuple[MagicMock, MagicMock]:
@@ -48,10 +48,10 @@ class TestJwksCacheTtl(unittest.TestCase):
         cache = _JwksCache()
         factory, client = _counting_httpx({"keys": ["a"]})
         with patch("httpx.Client", factory):
-            with patch("aegis.api.auth.time.time", return_value=1000.0):
+            with patch("redsim.api.auth.time.time", return_value=1000.0):
                 first = cache("https://idp/jwks", 300)
                 # Well within the 300s window → no refetch.
-                with patch("aegis.api.auth.time.time", return_value=1200.0):
+                with patch("redsim.api.auth.time.time", return_value=1200.0):
                     second = cache("https://idp/jwks", 300)
         self.assertEqual(first, {"keys": ["a"]})
         self.assertEqual(second, {"keys": ["a"]})
@@ -61,10 +61,10 @@ class TestJwksCacheTtl(unittest.TestCase):
         cache = _JwksCache()
         factory, client = _counting_httpx({"keys": ["a"]})
         with patch("httpx.Client", factory):
-            with patch("aegis.api.auth.time.time", return_value=1000.0):
+            with patch("redsim.api.auth.time.time", return_value=1000.0):
                 cache("https://idp/jwks", 300)
             # 301s later — strictly past the window → refetch.
-            with patch("aegis.api.auth.time.time", return_value=1301.0):
+            with patch("redsim.api.auth.time.time", return_value=1301.0):
                 cache("https://idp/jwks", 300)
         self.assertEqual(client.get.call_count, 2)
 
@@ -73,9 +73,9 @@ class TestJwksCacheTtl(unittest.TestCase):
         cache = _JwksCache()
         factory, client = _counting_httpx({"keys": ["a"]})
         with patch("httpx.Client", factory):
-            with patch("aegis.api.auth.time.time", return_value=1000.0):
+            with patch("redsim.api.auth.time.time", return_value=1000.0):
                 cache("https://idp/jwks", 300)
-            with patch("aegis.api.auth.time.time", return_value=1300.0):
+            with patch("redsim.api.auth.time.time", return_value=1300.0):
                 cache("https://idp/jwks", 300)
         self.assertEqual(client.get.call_count, 2)
 
@@ -83,7 +83,7 @@ class TestJwksCacheTtl(unittest.TestCase):
         cache = _JwksCache()
         factory, client = _counting_httpx({"keys": []})
         with patch("httpx.Client", factory):
-            with patch("aegis.api.auth.time.time", return_value=1000.0):
+            with patch("redsim.api.auth.time.time", return_value=1000.0):
                 cache("https://idp-a/jwks", 300)
                 cache("https://idp-b/jwks", 300)
                 # Re-request A inside its window → still cached.
@@ -94,7 +94,7 @@ class TestJwksCacheTtl(unittest.TestCase):
         cache = _JwksCache()
         factory, client = _counting_httpx({"keys": ["a"]})
         with patch("httpx.Client", factory):
-            with patch("aegis.api.auth.time.time", return_value=1000.0):
+            with patch("redsim.api.auth.time.time", return_value=1000.0):
                 cache("https://idp/jwks", 300)
                 cache.cache_clear()
                 cache("https://idp/jwks", 300)
@@ -108,7 +108,7 @@ class TestJwksCacheTtl(unittest.TestCase):
         settings = APISettings(
             env="prod", auth_mode="oidc",
             oidc_jwks_url="https://idp/jwks",
-            oidc_audience="aegis",
+            oidc_audience="redsim",
             api_jwks_cache_ttl_seconds=10,
         )
         factory, client = _counting_httpx({"keys": []})
@@ -118,12 +118,12 @@ class TestJwksCacheTtl(unittest.TestCase):
                 patch("authlib.jose.jwt.decode", side_effect=JoseError("x")):
             from fastapi import HTTPException
 
-            from aegis.api.auth import _verify_jwt
-            with patch("aegis.api.auth.time.time", return_value=5000.0):
+            from redsim.api.auth import _verify_jwt
+            with patch("redsim.api.auth.time.time", return_value=5000.0):
                 with self.assertRaises(HTTPException):
                     _verify_jwt("tok", settings)
             # 11s later → past the 10s TTL → refetch.
-            with patch("aegis.api.auth.time.time", return_value=5011.0):
+            with patch("redsim.api.auth.time.time", return_value=5011.0):
                 with self.assertRaises(HTTPException):
                     _verify_jwt("tok", settings)
         self.assertEqual(client.get.call_count, 2)

@@ -23,17 +23,17 @@ pytest.importorskip("sqlalchemy")
 
 from fastapi.testclient import TestClient
 
-from aegis.api.app import create_app
-from aegis.api.auth import CurrentUser, get_current_user
-from aegis.api.security_headers import REPORT_CSP
-from aegis.api.settings import APISettings
-from aegis.report import generate_html_report
-from aegis.schema import AegisFinding
-from aegis.state import RunState
+from redsim.api.app import create_app
+from redsim.api.auth import CurrentUser, get_current_user
+from redsim.api.security_headers import REPORT_CSP
+from redsim.api.settings import APISettings
+from redsim.report import generate_html_report
+from redsim.schema import RedsimFinding
+from redsim.state import RunState
 
 
-def _malicious_finding() -> AegisFinding:
-    return AegisFinding(
+def _malicious_finding() -> RedsimFinding:
+    return RedsimFinding(
         id="vuln-xss-1",
         title="<script>alert('title')</script> SQL Injection",
         severity="critical",
@@ -77,7 +77,7 @@ class TestReportResponseHeaders(unittest.TestCase):
         def _to_text(t, c, **kw):  # noqa: ARG001
             return "TEXT"
 
-        from aegis.db.models import Base, Organization, Project, Run
+        from redsim.db.models import Base, Organization, Project, Run
 
         engine = create_engine(
             "sqlite://", future=True,
@@ -121,14 +121,14 @@ class TestReportResponseHeaders(unittest.TestCase):
                 project_memberships={"proj-a": "admin"},
             )
             client = TestClient(app)
-            from aegis.config import AegisConfig
-            cfg = AegisConfig(output_dir=tmp)
-            with patch("aegis.api.v1.reports.load_config", return_value=cfg), \
+            from redsim.config import RedsimConfig
+            cfg = RedsimConfig(output_dir=tmp)
+            with patch("redsim.api.v1.reports.load_config", return_value=cfg), \
                  patch.dict(os.environ,
-                            {"AEGIS_ENV": "dev",
-                             "AEGIS_AUTH_MODE": "dev"},
+                            {"REDSIM_ENV": "dev",
+                             "REDSIM_AUTH_MODE": "dev"},
                             clear=False), \
-                 patch("aegis.db.session.get_session", session_cm):
+                 patch("redsim.db.session.get_session", session_cm):
                 resp = client.get("/v1/runs/run-xss/report.html")
 
         self.assertEqual(resp.status_code, 200)
@@ -155,16 +155,16 @@ class TestReportResponseHeaders(unittest.TestCase):
                 project_memberships={"proj-a": "admin"},
             )
             client = TestClient(app)
-            from aegis.config import AegisConfig
-            cfg = AegisConfig(output_dir=tmp)
-            with patch("aegis.api.v1.reports.load_config", return_value=cfg), \
-                 patch("aegis.db.session.get_session", session_cm):
+            from redsim.config import RedsimConfig
+            cfg = RedsimConfig(output_dir=tmp)
+            with patch("redsim.api.v1.reports.load_config", return_value=cfg), \
+                 patch("redsim.db.session.get_session", session_cm):
                 resp = client.get("/v1/runs/run-xss/report.json")
 
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.headers["x-content-type-options"], "nosniff")
         self.assertIn("attachment", resp.headers["content-disposition"])
-        self.assertIn("aegis-run-xss-report.json",
+        self.assertIn("redsim-run-xss-report.json",
                       resp.headers["content-disposition"])
 
 

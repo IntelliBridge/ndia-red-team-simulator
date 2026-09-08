@@ -6,10 +6,10 @@ const preview: Preview = {
     controls: { matchers: { color: /(background|color)$/i, date: /Date$/ } },
     a11y: { config: { rules: [] } },
     backgrounds: {
-      default: "aegis-light",
+      default: "redsim-light",
       values: [
-        { name: "aegis-light", value: "#f8fafc" },
-        { name: "aegis-dark", value: "#0b1220" },
+        { name: "redsim-light", value: "#f8fafc" },
+        { name: "redsim-dark", value: "#0b1220" },
       ],
     },
   },

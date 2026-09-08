@@ -1,7 +1,7 @@
 """Phase 6 (Multi-tenancy) — GET /v1/orgs/{org_id}/cost dashboard.
 
 Mirrors tests/test_logs_api.py: an in-memory sqlite DB (JSONB→TEXT shim) seeds
-two orgs + projects + LLMUsage, and ``aegis.db.session.get_session`` is patched
+two orgs + projects + LLMUsage, and ``redsim.db.session.get_session`` is patched
 to the test factory. ``has_org_access`` also resolves project→org via that same
 session, so the patch covers both the gate and the aggregation.
 """
@@ -20,9 +20,9 @@ pytest.importorskip("sqlalchemy")
 
 from fastapi.testclient import TestClient
 
-from aegis.api.app import create_app
-from aegis.api.auth import CurrentUser, get_current_user
-from aegis.api.settings import APISettings
+from redsim.api.app import create_app
+from redsim.api.auth import CurrentUser, get_current_user
+from redsim.api.settings import APISettings
 from tests.conftest import make_sqlite_session_factory
 
 # DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
@@ -30,7 +30,7 @@ pytestmark = pytest.mark.integration
 
 
 def _build_app_with_costs():
-    from aegis.db.models import LLMUsage, Organization, Project
+    from redsim.db.models import LLMUsage, Organization, Project
 
     session_cm, _engine, Session = make_sqlite_session_factory()
 
@@ -77,7 +77,7 @@ class TestOrgCostApi(unittest.TestCase):
         app, session_cm = _build_app_with_costs()
         _override_user(app, _ORG1_MEMBER)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/orgs/org-1/cost?days=30")
         self.assertEqual(resp.status_code, 200, resp.text)
         body = resp.json()
@@ -101,7 +101,7 @@ class TestOrgCostApi(unittest.TestCase):
         app, session_cm = _build_app_with_costs()
         _override_user(app, _ORG1_MEMBER)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/orgs/org-1/cost")
         self.assertEqual(resp.status_code, 200, resp.text)
         body = resp.json()
@@ -114,7 +114,7 @@ class TestOrgCostApi(unittest.TestCase):
         app, session_cm = _build_app_with_costs()
         _override_user(app, _ORG2_MEMBER)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/orgs/org-2/cost")
         self.assertEqual(resp.status_code, 200, resp.text)
         body = resp.json()
@@ -126,7 +126,7 @@ class TestOrgCostApi(unittest.TestCase):
         app, session_cm = _build_app_with_costs()
         _override_user(app, _ORG2_MEMBER)  # only in org-2
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/orgs/org-1/cost")
         self.assertEqual(resp.status_code, 403)
 
@@ -138,7 +138,7 @@ class TestOrgCostApi(unittest.TestCase):
                               project_memberships={}, is_system=True)
         _override_user(app, sysuser)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/orgs/does-not-exist/cost")
         self.assertEqual(resp.status_code, 404)
 

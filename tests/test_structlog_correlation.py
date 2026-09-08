@@ -15,7 +15,7 @@ import pytest
 
 pytest.importorskip("structlog")
 
-from aegis.observability import (
+from redsim.observability import (
     _inject_correlation_ids,
     set_request_id,
 )

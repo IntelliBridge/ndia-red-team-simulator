@@ -3,7 +3,7 @@ import json
 import httpx
 import pytest
 
-from aegis.llm.pythia import PythiaSettings, _HttpxBackend, chat_text
+from redsim.llm.pythia import PythiaSettings, _HttpxBackend, chat_text
 
 
 def _settings(**kw):

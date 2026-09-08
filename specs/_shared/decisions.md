@@ -42,18 +42,18 @@ All five records below are reflected in the product spec ([docs/superpowers/spec
 ### D002 — Managed identity, owner bootstrap, invitations
 
 - **Status:** RESOLVED.
-- **Chosen option:** aegis's Keycloak OIDC (`AEGIS_AUTH_MODE=oidc`, JWKS verification, project roles from the `aegis_project_roles` claim) with NextAuth in the web app. Dev-token mode (`AEGIS_AUTH_MODE=dev`, bearer `dev:<email>`, refused when `AEGIS_ENV=prod`, the value `aegis/api/settings.py` and `aegis/config.py` test for) is allowed for the demo. Initial owner bootstrap is Keycloak realm configuration under `deploy/keycloak/`. Invitations are Keycloak-managed; the application has no invitation table and stores no invitation secrets.
+- **Chosen option:** redsim's Keycloak OIDC (`REDSIM_AUTH_MODE=oidc`, JWKS verification, project roles from the `redsim_project_roles` claim) with NextAuth in the web app. Dev-token mode (`REDSIM_AUTH_MODE=dev`, bearer `dev:<email>`, refused when `REDSIM_ENV=prod`, the value `redsim/api/settings.py` and `redsim/config.py` test for) is allowed for the demo. Initial owner bootstrap is Keycloak realm configuration under `deploy/keycloak/`. Invitations are Keycloak-managed; the application has no invitation table and stores no invitation secrets.
 - **Rationale:** the platform already ships managed authentication, role-rank RBAC, and Postgres RLS; the constitution's Principle IV is satisfied without custom password handling.
 - **Diverges from the proposal:** no.
 - **Alternatives rejected:** custom passwords or locally minted tokens; hosting-platform collaborator inheritance; the lean design's "no auth" posture.
 - **Approver:** product owner (hackathon), 2026-09-08.
 - **Affected requirements:** F001 invitation and membership-editing stories are re-scoped to Keycloak; F001 role names become `scanner` / `remediator` / `approver` / `admin` (see the architecture baseline); F008 actor identity is the OIDC `sub` / email.
-- **New dependencies / changed exclusions:** none beyond what aegis already deploys. Dev-token mode must never be enabled outside the demo.
+- **New dependencies / changed exclusions:** none beyond what redsim already deploys. Dev-token mode must never be enabled outside the demo.
 
 ### D003 — Model and dataset access, permitted formats, approval policy
 
 - **Status:** RESOLVED.
-- **Chosen option:** Phase A ingest is bundled sample models **and** white-box artifact upload: ONNX preferred; PyTorch `state_dict` with an explicit, registered architecture accepted; full pickles refused by default. Uploaded models are loaded only on the worker, inside aegis's plugin-sandbox pattern (separate process, no network, rlimits, minimal environment), never in the API process. Black-box endpoint connectors (`ml_model_endpoint`, query-only) are Phase B. Registration and upload are `admin`-gated (`target.manage`); format validation and sandboxing are the Phase A approval controls, and the independent Reviewer/Owner approval workflow for catalog versions is Phase B.
+- **Chosen option:** Phase A ingest is bundled sample models **and** white-box artifact upload: ONNX preferred; PyTorch `state_dict` with an explicit, registered architecture accepted; full pickles refused by default. Uploaded models are loaded only on the worker, inside redsim's plugin-sandbox pattern (separate process, no network, rlimits, minimal environment), never in the API process. Black-box endpoint connectors (`ml_model_endpoint`, query-only) are Phase B. Registration and upload are `admin`-gated (`target.manage`); format validation and sandboxing are the Phase A approval controls, and the independent Reviewer/Owner approval workflow for catalog versions is Phase B.
 - **Rationale:** the use case requires evaluating a user's own model; the format rules and the sandbox make this bounded execution rather than unrestricted execution of uploaded code. See constitution amendment proposal (b).
 - **Diverges from the proposal:** yes. The proposal deferred uploads and endpoints; uploads are now Phase A within these bounds. Endpoints stay deferred.
 - **Alternatives rejected:** bundled-only ingest (the lean design); accepting full pickles behind a consent checkbox in Phase A; loading in the API process.
@@ -64,12 +64,12 @@ All five records below are reflected in the product spec ([docs/superpowers/spec
 ### D004 — Runtime, isolation boundary, ceilings, timeout and cancel semantics
 
 - **Status:** RESOLVED.
-- **Chosen option:** Celery workers behind Redis (aegis's existing worker) run every attack, explanation, hardening, and verify task; model loading and inference happen inside the aegis plugin sandbox (`AEGIS_PLUGINS_SANDBOX` pattern). Resource ceilings are the sandbox rlimits plus the stale-job reaper's runtime TTL (`aegis/workers/tasks/reaper.py`, which marks a stuck job `failed` with `error = "reaped: exceeded max runtime TTL"`). Cancellation is `aegis/services/runs.py`: the run and its queued/running jobs are marked `cancelled`; terminal states are sinks (`aegis/workers/job_state.py`). OpenSandbox is not used.
+- **Chosen option:** Celery workers behind Redis (redsim's existing worker) run every attack, explanation, hardening, and verify task; model loading and inference happen inside the redsim plugin sandbox (`REDSIM_PLUGINS_SANDBOX` pattern). Resource ceilings are the sandbox rlimits plus the stale-job reaper's runtime TTL (`redsim/workers/tasks/reaper.py`, which marks a stuck job `failed` with `error = "reaped: exceeded max runtime TTL"`). Cancellation is `redsim/services/runs.py`: the run and its queued/running jobs are marked `cancelled`; terminal states are sinks (`redsim/workers/job_state.py`). OpenSandbox is not used.
 - **Rationale:** the boundary already exists, is tested, and satisfies Principle IV ("never fall back to executing untrusted work in the web process").
 - **Diverges from the proposal:** no; the proposal asked for a bounded worker separate from the web process and treated OpenSandbox as a candidate only.
 - **Alternatives rejected:** OpenSandbox; the lean design's in-process `ThreadPoolExecutor`.
 - **Approver:** product owner (hackathon), 2026-09-08.
-- **Affected requirements:** F004 isolation, timeout, and cancel requirements adopt the aegis state machine mapping in the architecture baseline; F004 acceptance scenarios for `timed_out` and `cancel_requested` are rewritten against `failed` (reaped) and immediate `cancelled`.
+- **Affected requirements:** F004 isolation, timeout, and cancel requirements adopt the redsim state machine mapping in the architecture baseline; F004 acceptance scenarios for `timed_out` and `cancel_requested` are rewritten against `failed` (reaped) and immediate `cancelled`.
 - **New dependencies / changed exclusions:** none new. GPU is out of scope; all demo models run on CPU.
 
 ### D005 — Evaluation definitions, controls, denominators, thresholds, explanations
@@ -92,7 +92,7 @@ All five records below are reflected in the product spec ([docs/superpowers/spec
 
 ### D006 — Retention, export redaction, licence restrictions, audit metadata retention
 
-- **Status:** OPEN. Not decided on 2026-09-08. Blocks F007 export policy and F008 retention operations; does not block Phase A evidence capture. aegis's WORM export and redaction paths exist and can be reviewed once a data owner and security reviewer are named.
+- **Status:** OPEN. Not decided on 2026-09-08. Blocks F007 export policy and F008 retention operations; does not block Phase A evidence capture. redsim's WORM export and redaction paths exist and can be reviewed once a data owner and security reviewer are named.
 
 ### D007 — Named feature owners and independent reviewers
 
@@ -100,4 +100,4 @@ All five records below are reflected in the product spec ([docs/superpowers/spec
 
 ## Work that can begin before the open decisions close
 
-The team can implement Phase A in the product spec's demo-critical order, map evidence fields, draft UI flows, and review the aegis authorization and audit paths. Export redaction policy, destructive retention operations, endpoint connectors, and production release remain gated by D006 and by the constitution amendment approvals.
+The team can implement Phase A in the product spec's demo-critical order, map evidence fields, draft UI flows, and review the redsim authorization and audit paths. Export redaction policy, destructive retention operations, endpoint connectors, and production release remain gated by D006 and by the constitution amendment approvals.

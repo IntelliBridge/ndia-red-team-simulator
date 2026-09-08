@@ -200,11 +200,11 @@ describe("RunPage", () => {
     expect(jobWs().protocols).toBeUndefined();
   });
 
-  it("offers the aegis.bearer.<token> subprotocol on the job socket for programmatic callers", () => {
+  it("offers the redsim.bearer.<token> subprotocol on the job socket for programmatic callers", () => {
     bearerTokenMock.mockReturnValue("tok-abc");
     useSWRMock.mockReturnValue({ data: { findings: [], count: 0 }, error: undefined, isLoading: false });
     renderPage("run-77");
-    expect(jobWs().protocols).toEqual(["aegis.bearer.tok-abc"]);
+    expect(jobWs().protocols).toEqual(["redsim.bearer.tok-abc"]);
   });
 
   it("shows the header id and report links per ext built from reportUrl", () => {

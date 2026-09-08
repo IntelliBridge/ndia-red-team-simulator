@@ -11,11 +11,11 @@ const setSpy = vi.hoisted(() => vi.fn());
 vi.mock("next/headers", () => ({ cookies: () => ({ set: setSpy }) }));
 
 const mintMock = vi.hoisted(() => vi.fn());
-vi.mock("@/server/aegis-session", () => ({
-  csrfCookieName: "aegis_csrf",
-  sessionCookieName: "aegis_api_session",
+vi.mock("@/server/redsim-session", () => ({
+  csrfCookieName: "redsim_csrf",
+  sessionCookieName: "redsim_api_session",
   sessionTtlSeconds: 900,
-  mintAegisSessionJwt: mintMock,
+  mintRedsimSessionJwt: mintMock,
   newCsrfToken: () => "csrf-token",
 }));
 
@@ -44,7 +44,7 @@ describe("POST /api/auth/refresh-api-session", () => {
         sub: "u1",
         email: "u@e.com",
         name: "U",
-        aegis_project_roles: { p1: "admin" },
+        redsim_project_roles: { p1: "admin" },
       },
     });
     mintMock.mockResolvedValue("jwt");

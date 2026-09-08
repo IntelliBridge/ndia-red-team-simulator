@@ -13,7 +13,7 @@
 web/.next
 web/storybook-static
 site
-aegis_output
+redsim_output
 .env
 .env.local
 .pytest_cache

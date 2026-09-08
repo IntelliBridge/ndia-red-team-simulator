@@ -1,0 +1,205 @@
+"""Scan orchestration service.
+
+Phase 4 v0.3.1 F6 splits this layer into two boundaries:
+
+- **Admission** (``create_scan_job``): authorize → create ``Run`` +
+  ``Job`` rows → emit a chained audit event via the supplied
+  ``audit_writer`` → enqueue the Celery task. Cheap, synchronous,
+  request-scoped. Called from API write routes and the CLI's
+  ``--api`` dispatch. The audit row's ``created_at`` precedes the
+  worker setting the job's ``celery_task_id``, so the chain remains
+  consistent even if the worker crashes mid-task.
+- **Execution** (``start_scan``): the long-running scanner-adapter run +
+  finding persistence, called from the CLI's offline path (the Celery
+  worker task dispatches through the same registry directly).
+
+Neither boundary has a default scanner: the pentest default (``strix``)
+was removed with the pentest domain, so every caller names the adapter it
+wants dispatched and the registry raises when none is registered.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
+
+from redsim.config import RedsimConfig
+from redsim.safety import authorize
+from redsim.schema import RedsimFinding
+
+if TYPE_CHECKING:
+    from redsim.audit.chain import AuditWriter
+    from redsim.state import RunStateAPI
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ScanOutcome:
+    success: bool
+    partial_success: bool
+    findings: list[RedsimFinding]
+    scanner: str
+    return_code: int | None = None
+    error: str | None = None
+    detail: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class JobHandle:
+    """Return value of admission services.
+
+    F6 contract: by the time this object exists the chain row is on
+    disk / in Postgres, the Run + Job DB rows are flushed, and the
+    Celery task has been published (or, if no broker is configured,
+    the Job sits in ``queued`` for a later worker pickup). Callers
+    can return ``status_url=/v1/runs/{run_id}`` immediately.
+    """
+    run_id: str
+    job_id: str
+
+    def to_response(self) -> dict[str, str]:
+        """The admission JSON every job endpoint returns.
+
+        One shared shape across scan / verify so clients get the same
+        ``run_id`` + ``job_id`` + pollable ``status_url`` regardless of which
+        admission route they hit.
+        """
+        return {
+            "run_id": self.run_id,
+            "job_id": self.job_id,
+            "status_url": f"/v1/runs/{self.run_id}",
+        }
+
+
+def create_scan_job(
+    *,
+    target: str,
+    scanner: str,
+    project_id: str,
+    actor: str,
+    instruction: str | None = None,
+    auth_profile_id: str | None = None,
+    config: RedsimConfig,
+    allowlist: list[str] | None = None,
+    audit_writer: AuditWriter,
+    override_authorized: bool = False,
+    enqueue: bool = True,
+) -> JobHandle:
+    """Admission boundary for ``scan.start``.
+
+    Order of operations (load-bearing):
+
+    1. ``authorize()`` — emits the chained ``scan.start`` row through
+       ``audit_writer``. If the allowlist check fails this raises
+       ``AuthorizationError`` *before* any DB row is created.
+    2. Insert ``Run`` (flush — FK precedence), insert ``Job``.
+    3. Enqueue the Celery task. ``celery_task_id`` is only stamped on
+       the Job by the worker on pickup, so the chain row's ``ts``
+       precedes the task-id assignment.
+
+    A worker crash anywhere in step 3 leaves a chained audit row + a
+    ``queued`` job — never a half-state. Idempotency for re-deliveries
+    is the worker's job (F11).
+    """
+    authorize(
+        "scan.start", target,
+        allowlist=allowlist if allowlist is not None else config.target_allowlist,
+        override_authorized=override_authorized,
+        actor=actor, writer=audit_writer,
+        project_id=project_id,
+        # auth_profile_id is a non-secret row id; the resolved secret never
+        # touches admission (it is decrypted worker-side at execution time).
+        detail={"actor": actor, "scanner": scanner, "target": target,
+                "instruction_set": bool(instruction),
+                "auth_profile_id": auth_profile_id},
+    )
+
+    from redsim.db.models import Job, Run
+    from redsim.db.session import get_session
+
+    run_id = f"run-{uuid4().hex[:12]}"
+    job_id = f"job-{uuid4().hex[:12]}"
+    with get_session() as sess:
+        sess.add(Run(
+            id=run_id, project_id=project_id, mode="api",
+            status="queued", scanner=scanner, created_by=actor,
+            stage_table={},
+        ))
+        sess.flush()
+        sess.add(Job(
+            id=job_id, run_id=run_id, project_id=project_id,
+            type="scan.start", status="queued",
+            created_by=actor,
+            detail={"target": target, "scanner": scanner,
+                    "instruction": instruction,
+                    "auth_profile_id": auth_profile_id,
+                    "override_authorized": override_authorized},
+        ))
+        sess.flush()
+
+    if enqueue:
+        try:
+            from redsim.workers.tasks.scan import scan_start
+            scan_start.delay(job_id)
+        except Exception:
+            # Broker unreachable: row stays queued, picked up next start.
+            logger.warning("enqueue failed for job %s", job_id, exc_info=True)
+
+    return JobHandle(run_id=run_id, job_id=job_id)
+
+
+def start_scan(
+    *,
+    run_state: RunStateAPI,
+    target: str,
+    scanner: str,
+    instruction: str | None = None,
+    timeout: int = 1800,
+    actor: str,
+    config: RedsimConfig,
+    override_authorized: bool = False,
+) -> ScanOutcome:
+    """Run a scan against ``target`` through the scanner-adapter registry.
+
+    Every scan is dispatched through the registry (``redsim.scanners.dispatch``);
+    the adversarial-ML attack adapters (``redsim.ml.attacks``) register there the
+    same way the removed pentest scanner adapters once did. There is no
+    events-only / no-op mode: the authorization audit row is emitted and then
+    the named adapter runs, or the call raises.
+
+    When no adapter is registered for ``scanner`` the registry raises
+    ``KeyError`` (its message names the missing adapter and points at
+    ``redsim.ml.attacks``) — an explicit, honest failure. Until the ML attack
+    adapters land there is no built-in adapter, so a live scan surfaces that
+    error rather than silently succeeding with an empty result.
+    """
+    authorize(
+        "scan.start",
+        target,
+        allowlist=config.target_allowlist,
+        run_path=run_state.run_path,
+        override_authorized=override_authorized,
+        detail={"actor": actor, "scanner": scanner, "target": target,
+                "instruction_set": bool(instruction)},
+    )
+
+    from redsim.scanners import ScanOptions, dispatch
+    scan_result = dispatch(
+        scanner, run_state,
+        ScanOptions(target=target, instruction=instruction, timeout=timeout),
+    )
+    run_state.save_findings(scan_result.findings)
+    return ScanOutcome(
+        success=(scan_result.exit_code == 0 and not scan_result.error),
+        partial_success=bool(scan_result.findings) and scan_result.exit_code not in (0, None),
+        findings=scan_result.findings,
+        scanner=scanner,
+        return_code=scan_result.exit_code,
+        error=scan_result.error,
+        detail={"command": scan_result.command_str,
+                "adapter_version": scan_result.adapter_version,
+                "duration_s": scan_result.duration_s},
+    )

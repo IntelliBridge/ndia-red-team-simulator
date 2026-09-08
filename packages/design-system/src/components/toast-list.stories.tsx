@@ -3,7 +3,7 @@ import { ToastList } from "./toast-list";
 
 const meta: Meta<typeof ToastList> = {
   component: ToastList,
-  title: "Aegis/ToastList",
+  title: "Redsim/ToastList",
   tags: ["autodocs"],
 };
 export default meta;

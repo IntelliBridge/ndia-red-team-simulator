@@ -260,7 +260,7 @@ describe("TargetsPage", () => {
     render(h(TargetsPage));
 
     expect(screen.getByRole("status").textContent).toMatch(/No attack adapter is registered/);
-    expect(screen.getByRole("status").textContent).toMatch(/aegis\.ml\.attacks/);
+    expect(screen.getByRole("status").textContent).toMatch(/redsim\.ml\.attacks/);
     const start = screen.getByRole("button", { name: "Start scan" }) as HTMLButtonElement;
     expect(start.disabled).toBe(true);
     expect((screen.getByLabelText("Scanner") as HTMLSelectElement).disabled).toBe(true);

@@ -1,23 +1,23 @@
 # Repo-specific Semgrep rules for the `sast` CI job (cluster C2).
 #
 # These run alongside the registry packs (p/python, p/security-audit) at
-# --severity ERROR. They encode bans that Aegis treats as hard errors: a
+# --severity ERROR. They encode bans that Redsim treats as hard errors: a
 # security product must never shell out unsafely, deserialize untrusted YAML,
 # or eval/exec dynamic strings. The codebase is clean today (0 findings); the
 # rules keep it that way.
 rules:
-  - id: aegis-no-subprocess-shell-true
+  - id: redsim-no-subprocess-shell-true
     patterns:
       - pattern: subprocess.$FUNC(..., shell=True, ...)
     message: >
       subprocess with shell=True invites shell injection. Pass an argv list
-      (the existing safe pattern across aegis/scanners and aegis/runners).
+      (the existing safe pattern across redsim/scanners and redsim/runners).
     languages: [python]
     severity: ERROR
     metadata:
       cwe: "CWE-78: OS Command Injection"
 
-  - id: aegis-no-os-system
+  - id: redsim-no-os-system
     patterns:
       - pattern: os.system(...)
     message: >
@@ -28,18 +28,18 @@ rules:
     metadata:
       cwe: "CWE-78: OS Command Injection"
 
-  - id: aegis-no-unsafe-yaml-load
+  - id: redsim-no-unsafe-yaml-load
     patterns:
       - pattern: yaml.load($X)
     message: >
       yaml.load without a SafeLoader can execute arbitrary objects. Use
-      yaml.safe_load (the convention everywhere else in Aegis).
+      yaml.safe_load (the convention everywhere else in Redsim).
     languages: [python]
     severity: ERROR
     metadata:
       cwe: "CWE-502: Deserialization of Untrusted Data"
 
-  - id: aegis-no-eval-exec
+  - id: redsim-no-eval-exec
     patterns:
       - pattern-either:
           - pattern: eval(...)

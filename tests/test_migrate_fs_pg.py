@@ -11,8 +11,8 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 
-from aegis.cli.migrate import cmd_migrate
-from aegis.migrate.fs_to_pg import MigrationSummary
+from redsim.cli.migrate import cmd_migrate
+from redsim.migrate.fs_to_pg import MigrationSummary
 
 
 class TestSummaryFormatting(unittest.TestCase):

@@ -45,8 +45,8 @@ const membershipData = {
     daily_llm_budget_cents: 1000,
   },
   members: [
-    { sub: "sub-1", email: "alice@aegis.local", display_name: "Alice", role: "admin" },
-    { sub: "sub-2", email: "bob@aegis.local", display_name: "Bob", role: "viewer" },
+    { sub: "sub-1", email: "alice@redsim.local", display_name: "Alice", role: "admin" },
+    { sub: "sub-2", email: "bob@redsim.local", display_name: "Bob", role: "viewer" },
   ],
 };
 
@@ -109,8 +109,8 @@ describe("ProjectSettingsPage", () => {
 
   it("renders the members table rows with email and role", () => {
     render(React.createElement(ProjectSettingsPage, { params: { slug: "demo" } }));
-    expect(screen.getByText("alice@aegis.local").textContent).toBe("alice@aegis.local");
-    expect(screen.getByText("bob@aegis.local").textContent).toBe("bob@aegis.local");
+    expect(screen.getByText("alice@redsim.local").textContent).toBe("alice@redsim.local");
+    expect(screen.getByText("bob@redsim.local").textContent).toBe("bob@redsim.local");
     expect(screen.getByText("admin").textContent).toBe("admin");
     expect(screen.getByText("viewer").textContent).toBe("viewer");
   });

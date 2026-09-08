@@ -2,10 +2,10 @@
 
 The same protected route accepts either:
 - an ``Authorization: Bearer …`` token (CLI / CI / programmatic), or
-- a valid ``aegis_api_session`` cookie minted by the NextAuth callback.
+- a valid ``redsim_api_session`` cookie minted by the NextAuth callback.
 
-Cookie verification uses the Aegis public key (RS256), **not** Keycloak's
-JWKS — NextAuth signs with the Aegis private key after the Keycloak
+Cookie verification uses the Redsim public key (RS256), **not** Keycloak's
+JWKS — NextAuth signs with the Redsim private key after the Keycloak
 code flow completes; FastAPI never sees the underlying access token.
 """
 
@@ -24,14 +24,14 @@ pytest.importorskip("cryptography")
 
 from fastapi.testclient import TestClient
 
-from aegis.api.app import create_app
-from aegis.api.session_cookie import (
+from redsim.api.app import create_app
+from redsim.api.session_cookie import (
     SessionCookieError,
     generate_keypair,
     mint_session_cookie,
     verify_session_cookie,
 )
-from aegis.api.settings import APISettings
+from redsim.api.settings import APISettings
 
 
 def _settings_with_session_keys(**overrides) -> APISettings:
@@ -80,7 +80,7 @@ class TestMintAndVerify(unittest.TestCase):
             sub="u", email="e@x", settings=settings,
         )
         import time
-        with patch("aegis.api.session_cookie.time.time",
+        with patch("redsim.api.session_cookie.time.time",
                    return_value=time.time() + 10):
             with self.assertRaises(SessionCookieError):
                 verify_session_cookie(cookie, settings)
@@ -173,7 +173,7 @@ class TestSessionKeyRotationOverlap(unittest.TestCase):
             api_session_public_key_previous=old_public,
         )
         import time
-        with patch("aegis.api.session_cookie.time.time",
+        with patch("redsim.api.session_cookie.time.time",
                    return_value=time.time() + 10):
             with self.assertRaises(SessionCookieError):
                 verify_session_cookie(cookie, rotated)
@@ -189,9 +189,9 @@ class TestParityViaTestClient(unittest.TestCase):
 
     def _env(self, settings: APISettings) -> dict[str, str]:
         return {
-            "AEGIS_ENV": "dev", "AEGIS_AUTH_MODE": "dev",
-            "AEGIS_API_SESSION_PRIVATE_KEY": settings.api_session_private_key,
-            "AEGIS_API_SESSION_PUBLIC_KEY": settings.api_session_public_key,
+            "REDSIM_ENV": "dev", "REDSIM_AUTH_MODE": "dev",
+            "REDSIM_API_SESSION_PRIVATE_KEY": settings.api_session_private_key,
+            "REDSIM_API_SESSION_PUBLIC_KEY": settings.api_session_public_key,
         }
 
     def _client(self, settings: APISettings) -> TestClient:
@@ -204,7 +204,7 @@ class TestParityViaTestClient(unittest.TestCase):
             client = self._client(settings)
             resp = client.get(
                 "/v1/runs",
-                headers={"Authorization": "Bearer dev:alice@aegis.local"},
+                headers={"Authorization": "Bearer dev:alice@redsim.local"},
             )
         # 503 = DB unavailable in unit env; auth passed. 401 would mean
         # auth rejected.
@@ -214,7 +214,7 @@ class TestParityViaTestClient(unittest.TestCase):
         settings = _settings_with_session_keys(env="dev", auth_mode="dev")
         with patch.dict(os.environ, self._env(settings), clear=False):
             cookie = mint_session_cookie(
-                sub="user-1", email="alice@aegis.local",
+                sub="user-1", email="alice@redsim.local",
                 project_memberships={"default": "admin"},
                 settings=settings,
             )
@@ -231,7 +231,7 @@ class TestParityViaTestClient(unittest.TestCase):
         settings = _settings_with_session_keys(env="dev", auth_mode="dev")
         with patch.dict(os.environ, self._env(settings), clear=False):
             cookie = mint_session_cookie(
-                sub="user-1", email="alice@aegis.local",
+                sub="user-1", email="alice@redsim.local",
                 settings=settings,
             )
             client = self._client(settings)

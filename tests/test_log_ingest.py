@@ -1,4 +1,4 @@
-"""Phase 4 v0.4.1 F20c — aegis-log-ingest service.
+"""Phase 4 v0.4.1 F20c — redsim-log-ingest service.
 
 Two ingress paths converge on the same batched writer:
 - POST /ingest (native JSON, used by the default profile)
@@ -17,10 +17,10 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient
 
-from aegis.api.auth import issue_worker_token
-from aegis.api.settings import APISettings
-from aegis.log_ingest.server import create_app
-from aegis.log_ingest.writer import (
+from redsim.api.auth import issue_worker_token
+from redsim.api.settings import APISettings
+from redsim.log_ingest.server import create_app
+from redsim.log_ingest.writer import (
     LogIngestRow,
     LogIngestWriter,
     severity_from_otlp,
@@ -106,7 +106,7 @@ class TestOtlpIngestEndpoint(unittest.TestCase):
                         "resource": {
                             "attributes": [
                                 {"key": "service.name",
-                                 "value": {"stringValue": "aegis-worker"}},
+                                 "value": {"stringValue": "redsim-worker"}},
                             ],
                         },
                         "scopeLogs": [
@@ -141,7 +141,7 @@ class TestOtlpIngestEndpoint(unittest.TestCase):
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(writer.buffered(), 1)
         row = writer._queue[0]
-        self.assertEqual(row.service, "aegis-worker")
+        self.assertEqual(row.service, "redsim-worker")
         self.assertEqual(row.severity, "error")
         self.assertEqual(row.run_id, "run-xyz")
         self.assertEqual(row.trace_id, "deadbeefcafebabe")
@@ -161,8 +161,8 @@ class TestMetricsAndHealth(unittest.TestCase):
         client = TestClient(app)
         resp = client.get("/metrics")
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("aegis_log_ingest_buffered", resp.text)
-        self.assertIn("aegis_log_ingest_inserted_total", resp.text)
+        self.assertIn("redsim_log_ingest_buffered", resp.text)
+        self.assertIn("redsim_log_ingest_inserted_total", resp.text)
 
     def test_health_returns_ok(self):
         writer = LogIngestWriter()
@@ -240,7 +240,7 @@ class TestWriteSurfaceAuth(unittest.TestCase):
             json={"resourceLogs": [{
                 "resource": {"attributes": [
                     {"key": "service.name",
-                     "value": {"stringValue": "aegis-worker"}}]},
+                     "value": {"stringValue": "redsim-worker"}}]},
                 "scopeLogs": [{"logRecords": [{
                     "timeUnixNano": "1717248000000000000",
                     "severityText": "INFO",

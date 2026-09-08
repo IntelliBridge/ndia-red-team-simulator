@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aegis.storage import FilesystemBlobStore
+from redsim.storage import FilesystemBlobStore
 
 
 class TestFilesystemBlobStore(unittest.TestCase):
@@ -39,11 +39,11 @@ class TestS3BlobStoreSmoke(unittest.TestCase):
         import boto3
         with mock_aws():
             client = boto3.client("s3", region_name="us-east-1")
-            client.create_bucket(Bucket="aegis-test")
-            from aegis.storage import S3BlobStore
-            store = S3BlobStore(bucket="aegis-test")
+            client.create_bucket(Bucket="redsim-test")
+            from redsim.storage import S3BlobStore
+            store = S3BlobStore(bucket="redsim-test")
             ref = store.put("blobs", b"hello")
-            self.assertTrue(ref.location.startswith("s3://aegis-test/"))
+            self.assertTrue(ref.location.startswith("s3://redsim-test/"))
             self.assertEqual(store.get(ref.location), b"hello")
 
 

@@ -15,9 +15,9 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from aegis.cli._console import _colored_severity, _err, _info, _warn
-from aegis.cli._runstate import _load_findings_objects, _resolve_run_state
-from aegis.cli.main import (
+from redsim.cli._console import _colored_severity, _err, _info, _warn
+from redsim.cli._runstate import _load_findings_objects, _resolve_run_state
+from redsim.cli.main import (
     build_parser,
     cmd_findings,
     cmd_report,
@@ -25,19 +25,19 @@ from aegis.cli.main import (
     cmd_verify,
     main,
 )
-from aegis.config import AegisConfig
-from aegis.schema import AegisFinding
-from aegis.state import RunState
+from redsim.config import RedsimConfig
+from redsim.schema import RedsimFinding
+from redsim.state import RunState
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_config(tmp: str) -> AegisConfig:
-    return AegisConfig(output_dir=tmp)
+def _make_config(tmp: str) -> RedsimConfig:
+    return RedsimConfig(output_dir=tmp)
 
 
-def _make_finding(**kw) -> AegisFinding:
+def _make_finding(**kw) -> RedsimFinding:
     defaults = dict(
         id="test-finding-001",
         title="SQL Injection",
@@ -53,7 +53,7 @@ def _make_finding(**kw) -> AegisFinding:
         updated_at="2026-01-01T00:00:00Z",
     )
     defaults.update(kw)
-    return AegisFinding(**defaults)
+    return RedsimFinding(**defaults)
 
 
 def _seed_state(tmp: str, run_id: str = "test-run-001",
@@ -148,12 +148,12 @@ class TestResolveRunState(unittest.TestCase):
 
 class TestLoadFindingsObjects(unittest.TestCase):
 
-    def test_returns_aegis_finding_objects(self):
+    def test_returns_redsim_finding_objects(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = _seed_state(tmp)
             result = _load_findings_objects(state)
             self.assertEqual(len(result), 1)
-            self.assertIsInstance(result[0], AegisFinding)
+            self.assertIsInstance(result[0], RedsimFinding)
 
     def test_empty_returns_empty_list(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -170,7 +170,7 @@ class TestBuildParser(unittest.TestCase):
 
     def test_scan_requires_an_explicit_scanner(self):
         # No default engine: the pentest default ("strix") and the --use-strix
-        # bypass flag were removed, so `aegis scan <url>` without --scanner is
+        # bypass flag were removed, so `redsim scan <url>` without --scanner is
         # a usage error (argparse exit 2), never a silently substituted adapter.
         parser = build_parser()
         with self.assertRaises(SystemExit) as ctx:
@@ -254,16 +254,16 @@ class TestMainNoCommand(unittest.TestCase):
 class TestMainDoctor(unittest.TestCase):
 
     def test_doctor_ok(self):
-        with patch("aegis.doctor.run_doctor", return_value=True) as mock_dr, \
-             patch("aegis.config.load_config", return_value=AegisConfig()):
+        with patch("redsim.doctor.run_doctor", return_value=True) as mock_dr, \
+             patch("redsim.config.load_config", return_value=RedsimConfig()):
             with self.assertRaises(SystemExit) as ctx:
                 main(["doctor"])
             self.assertEqual(ctx.exception.code, 0)
             mock_dr.assert_called_once()
 
     def test_doctor_failure(self):
-        with patch("aegis.doctor.run_doctor", return_value=False), \
-             patch("aegis.config.load_config", return_value=AegisConfig()):
+        with patch("redsim.doctor.run_doctor", return_value=False), \
+             patch("redsim.config.load_config", return_value=RedsimConfig()):
             with self.assertRaises(SystemExit) as ctx:
                 main(["doctor"])
             self.assertEqual(ctx.exception.code, 1)
@@ -271,25 +271,25 @@ class TestMainDoctor(unittest.TestCase):
 
 class TestMainInit(unittest.TestCase):
 
-    def test_init_creates_aegis_yaml(self):
+    def test_init_creates_redsim_yaml(self):
         with tempfile.TemporaryDirectory() as tmp:
-            # Patch Path("aegis.yaml") to write into tmp
-            with patch("aegis.cli.main.Path",
-                       side_effect=lambda p: Path(tmp) / p if p == "aegis.yaml" else Path(p)), \
-                 patch("aegis.config.load_config", return_value=AegisConfig(output_dir=tmp)):
+            # Patch Path("redsim.yaml") to write into tmp
+            with patch("redsim.cli.main.Path",
+                       side_effect=lambda p: Path(tmp) / p if p == "redsim.yaml" else Path(p)), \
+                 patch("redsim.config.load_config", return_value=RedsimConfig(output_dir=tmp)):
                 main(["init"])
             # The file may or may not have been created depending on cwd; just
             # confirm the command completes without error.
 
     def test_init_skips_if_exists(self):
-        """If aegis.yaml already exists the command warns and returns."""
+        """If redsim.yaml already exists the command warns and returns."""
         with tempfile.TemporaryDirectory() as tmp:
-            existing = Path(tmp) / "aegis.yaml"
+            existing = Path(tmp) / "redsim.yaml"
             existing.write_text("# existing\n")
-            with patch("aegis.cli.main.Path",
-                       side_effect=lambda p: Path(tmp) / p if p == "aegis.yaml" else Path(p)), \
-                 patch("aegis.config.load_config", return_value=AegisConfig(output_dir=tmp)), \
-                 patch("aegis.cli._console._warn") as mock_warn:
+            with patch("redsim.cli.main.Path",
+                       side_effect=lambda p: Path(tmp) / p if p == "redsim.yaml" else Path(p)), \
+                 patch("redsim.config.load_config", return_value=RedsimConfig(output_dir=tmp)), \
+                 patch("redsim.cli._console._warn") as mock_warn:
                 main(["init"])
                 mock_warn.assert_called()
 
@@ -300,9 +300,9 @@ class TestMainGlobalVerbose(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             _seed_state(tmp)
-            with patch("aegis.config.load_config", return_value=config), \
-                 patch("aegis.cli._console._info") as mock_info, \
-                 patch("aegis.cli.main.cmd_findings"):
+            with patch("redsim.config.load_config", return_value=config), \
+                 patch("redsim.cli._console._info") as mock_info, \
+                 patch("redsim.cli.main.cmd_findings"):
                 main(["--verbose", "findings"])
                 # _info should have been called with config= in the message
                 calls = [str(c) for c in mock_info.call_args_list]
@@ -330,17 +330,17 @@ class TestMainGlobalDryRun(unittest.TestCase):
 class TestMainGlobalApiFlag(unittest.TestCase):
 
     def test_api_flag_sets_env(self):
-        """--api should set AEGIS_MODE=api and route through api dispatch."""
+        """--api should set REDSIM_MODE=api and route through api dispatch."""
         with patch.dict("os.environ", {}, clear=True), \
-             patch("aegis.config.load_config", return_value=AegisConfig()), \
-             patch("aegis.cli.api_client.build_client") as mock_bc:
+             patch("redsim.config.load_config", return_value=RedsimConfig()), \
+             patch("redsim.cli.api_client.build_client") as mock_bc:
             mock_client = MagicMock()
             mock_client.start_scan.return_value = {
                 "run_id": "r1", "job_id": "j1", "status_url": "http://x/status"
             }
             mock_bc.return_value = mock_client
             main(["--api", "scan", "http://target.invalid", "--scanner", "fake-attack"])
-            self.assertEqual(os.environ.get("AEGIS_MODE"), "api")
+            self.assertEqual(os.environ.get("REDSIM_MODE"), "api")
 
 
 class TestMainGlobalOverrideAuthorized(unittest.TestCase):
@@ -352,8 +352,8 @@ class TestMainGlobalOverrideAuthorized(unittest.TestCase):
         def fake_cmd_scan(args, config):
             captured["override"] = getattr(args, "override_authorized", None)
 
-        with patch("aegis.config.load_config", return_value=AegisConfig()), \
-             patch.dict("aegis.cli.main._COMMANDS", {"scan": fake_cmd_scan}):
+        with patch("redsim.config.load_config", return_value=RedsimConfig()), \
+             patch.dict("redsim.cli.main._COMMANDS", {"scan": fake_cmd_scan}):
             main([
                 "--i-understand-this-target-is-authorized",
                 "scan", "http://target.invalid", "--scanner", "fake-attack",
@@ -381,22 +381,22 @@ class TestCmdScan(unittest.TestCase):
         # Real wiring, no start_scan mock: the allowlisted target passes the
         # safety gate, the live (empty) registry raises KeyError from
         # dispatch(), and cmd_scan turns that into an honest process failure:
-        # exit 1, the adapter named + the aegis.ml.attacks hint printed, and
+        # exit 1, the adapter named + the redsim.ml.attacks hint printed, and
         # no findings.json anywhere under the output dir. A CI caller can
         # never mistake "no adapter" for "clean scan".
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             args = self._args(target_url="http://localhost:3000",
                               scanner="no-such-adapter-cli")
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.cli._console._err") as mock_err, \
+            with patch("redsim.cli.api_client.is_api_mode", return_value=False), \
+                 patch("redsim.cli._console._err") as mock_err, \
                  self.assertRaises(SystemExit) as ctx:
                 cmd_scan(args, config)
             self.assertEqual(ctx.exception.code, 1)
             calls = " ".join(str(c) for c in mock_err.call_args_list)
             self.assertIn("No scanner adapter registered", calls)
             self.assertIn("no-such-adapter-cli", calls)
-            self.assertIn("aegis.ml.attacks", calls)
+            self.assertIn("redsim.ml.attacks", calls)
             self.assertEqual(list(Path(tmp).rglob("findings.json")), [])
 
     def test_scan_success(self):
@@ -408,8 +408,8 @@ class TestCmdScan(unittest.TestCase):
             outcome.partial_success = False
             outcome.findings = findings
             outcome.return_code = 0
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.services.scans.start_scan", return_value=outcome) as start:
+            with patch("redsim.cli.api_client.is_api_mode", return_value=False), \
+                 patch("redsim.services.scans.start_scan", return_value=outcome) as start:
                 cmd_scan(self._args(), config)
             # The CLI names the adapter explicitly; there is no default engine
             # and no events-only bypass flag.
@@ -426,9 +426,9 @@ class TestCmdScan(unittest.TestCase):
             outcome.partial_success = True
             outcome.findings = findings
             outcome.return_code = 1
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.services.scans.start_scan", return_value=outcome), \
-                 patch("aegis.cli._console._warn") as mock_warn:
+            with patch("redsim.cli.api_client.is_api_mode", return_value=False), \
+                 patch("redsim.services.scans.start_scan", return_value=outcome), \
+                 patch("redsim.cli._console._warn") as mock_warn:
                 cmd_scan(self._args(), config)
                 calls = [str(c) for c in mock_warn.call_args_list]
                 self.assertTrue(any("partial" in c.lower() for c in calls))
@@ -442,9 +442,9 @@ class TestCmdScan(unittest.TestCase):
             outcome.findings = []
             outcome.return_code = 2
             outcome.error = "adapter exploded"
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.services.scans.start_scan", return_value=outcome), \
-                 patch("aegis.cli._console._err") as mock_err, \
+            with patch("redsim.cli.api_client.is_api_mode", return_value=False), \
+                 patch("redsim.services.scans.start_scan", return_value=outcome), \
+                 patch("redsim.cli._console._err") as mock_err, \
                  self.assertRaises(SystemExit) as ctx:
                 cmd_scan(self._args(), config)
             self.assertEqual(ctx.exception.code, 1)
@@ -455,8 +455,8 @@ class TestCmdScan(unittest.TestCase):
     def test_scan_via_api(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=True), \
-                 patch("aegis.cli.api_client.build_client") as mock_bc:
+            with patch("redsim.cli.api_client.is_api_mode", return_value=True), \
+                 patch("redsim.cli.api_client.build_client") as mock_bc:
                 mock_client = MagicMock()
                 mock_client.start_scan.return_value = {
                     "run_id": "r1", "job_id": "j1"
@@ -466,12 +466,12 @@ class TestCmdScan(unittest.TestCase):
                 mock_client.start_scan.assert_called_once()
 
     def test_scan_api_error_exits(self):
-        from aegis.cli.api_client import ApiError
+        from redsim.cli.api_client import ApiError
 
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=True), \
-                 patch("aegis.cli.api_client.build_client") as mock_bc:
+            with patch("redsim.cli.api_client.is_api_mode", return_value=True), \
+                 patch("redsim.cli.api_client.build_client") as mock_bc:
                 mock_client = MagicMock()
                 mock_client.start_scan.side_effect = ApiError(400, "bad request")
                 mock_bc.return_value = mock_client
@@ -494,16 +494,16 @@ class TestCmdScan(unittest.TestCase):
             outcome.partial_success = False
             outcome.findings = findings
             outcome.return_code = 0
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.services.scans.start_scan", return_value=outcome):
+            with patch("redsim.cli.api_client.is_api_mode", return_value=False), \
+                 patch("redsim.services.scans.start_scan", return_value=outcome):
                 cmd_scan(self._args(), config)
 
     def test_scan_api_status_url_printed(self):
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
-            with patch("aegis.cli.api_client.is_api_mode", return_value=True), \
-                 patch("aegis.cli.api_client.build_client") as mock_bc, \
-                 patch("aegis.cli._console._info") as mock_info:
+            with patch("redsim.cli.api_client.is_api_mode", return_value=True), \
+                 patch("redsim.cli.api_client.build_client") as mock_bc, \
+                 patch("redsim.cli._console._info") as mock_info:
                 mock_client = MagicMock()
                 mock_client.start_scan.return_value = {
                     "run_id": "r1", "job_id": "j1",
@@ -537,7 +537,7 @@ class TestCmdFindings(unittest.TestCase):
             state = RunState(tmp, "empty-run")
             state.save_findings([])
             args = Namespace(run="empty-run")
-            with patch("aegis.cli._console._warn") as mock_warn:
+            with patch("redsim.cli._console._warn") as mock_warn:
                 cmd_findings(args, config)
                 mock_warn.assert_called()
 
@@ -573,7 +573,7 @@ class TestCmdVerify(unittest.TestCase):
                 finding_id="nonexistent", run=None, repo=None,
                 no_provenance_check=False, global_api=False,
             )
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
+            with patch("redsim.cli.api_client.is_api_mode", return_value=False), \
                  self.assertRaises(SystemExit) as ctx:
                 cmd_verify(args, config)
             self.assertEqual(ctx.exception.code, 1)
@@ -591,8 +591,8 @@ class TestCmdVerify(unittest.TestCase):
                 finding_id="test-finding-001", run=None, repo=None,
                 no_provenance_check=False, global_api=False,
             )
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.services.verify.verify", return_value=result), \
+            with patch("redsim.cli.api_client.is_api_mode", return_value=False), \
+                 patch("redsim.services.verify.verify", return_value=result), \
                  patch("builtins.print"):
                 cmd_verify(args, config)
 
@@ -609,14 +609,14 @@ class TestCmdVerify(unittest.TestCase):
                 finding_id="test-finding-001", run=None, repo="/tmp/r",
                 no_provenance_check=True, global_api=False,
             )
-            with patch("aegis.cli.api_client.is_api_mode", return_value=False), \
-                 patch("aegis.services.verify.verify", return_value=result), \
+            with patch("redsim.cli.api_client.is_api_mode", return_value=False), \
+                 patch("redsim.services.verify.verify", return_value=result), \
                  patch("builtins.print"):
                 cmd_verify(args, config)
 
     def test_verify_via_api(self):
-        with patch("aegis.cli.api_client.is_api_mode", return_value=True), \
-             patch("aegis.cli.api_client.build_client") as mock_bc:
+        with patch("redsim.cli.api_client.is_api_mode", return_value=True), \
+             patch("redsim.cli.api_client.build_client") as mock_bc:
             mock_client = MagicMock()
             mock_client.verify.return_value = {"job_id": "j1"}
             mock_bc.return_value = mock_client
@@ -624,14 +624,14 @@ class TestCmdVerify(unittest.TestCase):
                 finding_id="test-finding-001", run=None, repo=None,
                 no_provenance_check=False, global_api=True,
             )
-            cmd_verify(args, AegisConfig())
+            cmd_verify(args, RedsimConfig())
             mock_client.verify.assert_called_once()
 
     def test_verify_api_error_exits_1(self):
-        from aegis.cli.api_client import ApiError
+        from redsim.cli.api_client import ApiError
 
-        with patch("aegis.cli.api_client.is_api_mode", return_value=True), \
-             patch("aegis.cli.api_client.build_client") as mock_bc:
+        with patch("redsim.cli.api_client.is_api_mode", return_value=True), \
+             patch("redsim.cli.api_client.build_client") as mock_bc:
             mock_client = MagicMock()
             mock_client.verify.side_effect = ApiError(503, "unavailable")
             mock_bc.return_value = mock_client
@@ -640,7 +640,7 @@ class TestCmdVerify(unittest.TestCase):
                 no_provenance_check=False, global_api=True,
             )
             with self.assertRaises(SystemExit) as ctx:
-                cmd_verify(args, AegisConfig())
+                cmd_verify(args, RedsimConfig())
             self.assertEqual(ctx.exception.code, 1)
 
 
@@ -659,7 +659,7 @@ class TestCmdReport(unittest.TestCase):
             result.json_path = Path(tmp) / "report.json"
             result.html_path = Path(tmp) / "report.html"
             args = Namespace(run=None, no_html=False, html=True)
-            with patch("aegis.services.reports.render_reports",
+            with patch("redsim.services.reports.render_reports",
                        return_value=result):
                 cmd_report(args, config)
 
@@ -672,7 +672,7 @@ class TestCmdReport(unittest.TestCase):
             result.json_path = Path(tmp) / "report.json"
             result.html_path = None
             args = Namespace(run=None, no_html=True, html=False)
-            with patch("aegis.services.reports.render_reports",
+            with patch("redsim.services.reports.render_reports",
                        return_value=result):
                 cmd_report(args, config)
 
@@ -682,7 +682,7 @@ class TestCmdReport(unittest.TestCase):
             state = RunState(tmp, "empty-run")
             state.save_findings([])
             args = Namespace(run="empty-run", no_html=False, html=False)
-            with patch("aegis.services.reports.render_reports") as mock_rr:
+            with patch("redsim.services.reports.render_reports") as mock_rr:
                 cmd_report(args, config)
                 mock_rr.assert_not_called()
 
@@ -692,8 +692,8 @@ class TestMainDispatchWiring(unittest.TestCase):
     def test_status_subcommand_dispatches(self):
         # cmd_status is mocked, so sys.exit(0) inside it won't be called;
         # main() just returns normally after the mocked handler returns.
-        with patch("aegis.cli.status.cmd_status") as mock_status, \
-             patch("aegis.config.load_config", return_value=AegisConfig()):
+        with patch("redsim.cli.status.cmd_status") as mock_status, \
+             patch("redsim.config.load_config", return_value=RedsimConfig()):
             try:
                 main(["status"])
             except SystemExit:
@@ -701,14 +701,14 @@ class TestMainDispatchWiring(unittest.TestCase):
             mock_status.assert_called_once()
 
     def test_audit_verify_dispatches(self):
-        with patch("aegis.cli.audit.cmd_audit_verify") as mock_av, \
-             patch("aegis.config.load_config", return_value=AegisConfig()):
+        with patch("redsim.cli.audit.cmd_audit_verify") as mock_av, \
+             patch("redsim.config.load_config", return_value=RedsimConfig()):
             main(["audit", "verify"])
             mock_av.assert_called_once()
 
     def test_migrate_dispatches(self):
-        with patch("aegis.cli.migrate.cmd_migrate") as mock_mig, \
-             patch("aegis.config.load_config", return_value=AegisConfig()):
+        with patch("redsim.cli.migrate.cmd_migrate") as mock_mig, \
+             patch("redsim.config.load_config", return_value=RedsimConfig()):
             main([
                 "migrate", "--source", "/tmp/out", "--project", "p1",
             ])
@@ -716,16 +716,16 @@ class TestMainDispatchWiring(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# aegis/cli/status.py
+# redsim/cli/status.py
 # ---------------------------------------------------------------------------
 
 class TestCmdStatus(unittest.TestCase):
 
     def _run_status(self, env=None, config=None):
-        from aegis.cli.status import cmd_status
+        from redsim.cli.status import cmd_status
 
         if config is None:
-            config = AegisConfig()
+            config = RedsimConfig()
         env = env or {}
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(SystemExit) as ctx:
@@ -733,116 +733,116 @@ class TestCmdStatus(unittest.TestCase):
         self.assertEqual(ctx.exception.code, 0)
 
     def test_filesystem_mode(self):
-        self._run_status({"AEGIS_MODE": "filesystem"})
+        self._run_status({"REDSIM_MODE": "filesystem"})
 
     def test_env_shows_api_mode_warning_when_url_set_but_mode_not_api(self):
-        from aegis.cli.status import cmd_status
+        from redsim.cli.status import cmd_status
 
-        env = {"AEGIS_API_URL": "http://fake.api", "AEGIS_MODE": "filesystem"}
+        env = {"REDSIM_API_URL": "http://fake.api", "REDSIM_MODE": "filesystem"}
         with patch.dict("os.environ", env, clear=True), \
              patch("builtins.print") as mock_print:
             with self.assertRaises(SystemExit):
-                cmd_status(Namespace(), AegisConfig())
+                cmd_status(Namespace(), RedsimConfig())
             output = " ".join(str(c) for c in mock_print.call_args_list)
-            self.assertIn("AEGIS_MODE", output)
+            self.assertIn("REDSIM_MODE", output)
 
     def test_api_mode_with_no_url_shows_unset(self):
-        from aegis.cli.status import cmd_status
+        from redsim.cli.status import cmd_status
 
-        env = {"AEGIS_MODE": "api"}
+        env = {"REDSIM_MODE": "api"}
         with patch.dict("os.environ", env, clear=True), \
              patch("builtins.print") as mock_print:
             with self.assertRaises(SystemExit):
-                cmd_status(Namespace(), AegisConfig())
+                cmd_status(Namespace(), RedsimConfig())
             output = " ".join(str(c) for c in mock_print.call_args_list)
-            self.assertIn("AEGIS_API_URL is unset", output)
+            self.assertIn("REDSIM_API_URL is unset", output)
 
     def test_api_mode_with_url_healthy(self):
-        from aegis.cli.status import cmd_status
+        from redsim.cli.status import cmd_status
 
-        env = {"AEGIS_MODE": "api", "AEGIS_API_URL": "http://fake.api"}
+        env = {"REDSIM_MODE": "api", "REDSIM_API_URL": "http://fake.api"}
         mock_client = MagicMock()
         mock_client.health.return_value = {"status": "ok"}
 
         with patch.dict("os.environ", env, clear=True), \
-             patch("aegis.cli.api_client.ApiClient", return_value=mock_client), \
-             patch("aegis.cli.api_client.load_token", return_value=None), \
+             patch("redsim.cli.api_client.ApiClient", return_value=mock_client), \
+             patch("redsim.cli.api_client.load_token", return_value=None), \
              patch("builtins.print") as mock_print:
             with self.assertRaises(SystemExit):
-                cmd_status(Namespace(), AegisConfig())
+                cmd_status(Namespace(), RedsimConfig())
             output = " ".join(str(c) for c in mock_print.call_args_list)
             self.assertIn("healthy", output)
 
     def test_api_mode_with_url_unreachable(self):
-        from aegis.cli.status import cmd_status
+        from redsim.cli.status import cmd_status
 
-        env = {"AEGIS_MODE": "api", "AEGIS_API_URL": "http://fake.api"}
+        env = {"REDSIM_MODE": "api", "REDSIM_API_URL": "http://fake.api"}
         mock_client = MagicMock()
         mock_client.health.return_value = None
 
         with patch.dict("os.environ", env, clear=True), \
-             patch("aegis.cli.api_client.ApiClient", return_value=mock_client), \
-             patch("aegis.cli.api_client.load_token", return_value=None), \
+             patch("redsim.cli.api_client.ApiClient", return_value=mock_client), \
+             patch("redsim.cli.api_client.load_token", return_value=None), \
              patch("builtins.print") as mock_print:
             with self.assertRaises(SystemExit):
-                cmd_status(Namespace(), AegisConfig())
+                cmd_status(Namespace(), RedsimConfig())
             output = " ".join(str(c) for c in mock_print.call_args_list)
             self.assertIn("unreachable", output)
 
     def test_api_mode_health_not_ok_shows_raw(self):
-        from aegis.cli.status import cmd_status
+        from redsim.cli.status import cmd_status
 
-        env = {"AEGIS_MODE": "api", "AEGIS_API_URL": "http://fake.api"}
+        env = {"REDSIM_MODE": "api", "REDSIM_API_URL": "http://fake.api"}
         mock_client = MagicMock()
         mock_client.health.return_value = {"status": "degraded"}
 
         with patch.dict("os.environ", env, clear=True), \
-             patch("aegis.cli.api_client.ApiClient", return_value=mock_client), \
-             patch("aegis.cli.api_client.load_token", return_value=None), \
+             patch("redsim.cli.api_client.ApiClient", return_value=mock_client), \
+             patch("redsim.cli.api_client.load_token", return_value=None), \
              patch("builtins.print") as mock_print:
             with self.assertRaises(SystemExit):
-                cmd_status(Namespace(), AegisConfig())
+                cmd_status(Namespace(), RedsimConfig())
             output = " ".join(str(c) for c in mock_print.call_args_list)
             self.assertIn("degraded", output)
 
     def test_api_mode_health_ok_via_ok_key(self):
-        from aegis.cli.status import cmd_status
+        from redsim.cli.status import cmd_status
 
-        env = {"AEGIS_MODE": "api", "AEGIS_API_URL": "http://fake.api"}
+        env = {"REDSIM_MODE": "api", "REDSIM_API_URL": "http://fake.api"}
         mock_client = MagicMock()
         mock_client.health.return_value = {"ok": True}
 
         with patch.dict("os.environ", env, clear=True), \
-             patch("aegis.cli.api_client.ApiClient", return_value=mock_client), \
-             patch("aegis.cli.api_client.load_token", return_value=None), \
+             patch("redsim.cli.api_client.ApiClient", return_value=mock_client), \
+             patch("redsim.cli.api_client.load_token", return_value=None), \
              patch("builtins.print") as mock_print:
             with self.assertRaises(SystemExit):
-                cmd_status(Namespace(), AegisConfig())
+                cmd_status(Namespace(), RedsimConfig())
             output = " ".join(str(c) for c in mock_print.call_args_list)
             self.assertIn("healthy", output)
 
     def test_default_env_mode_is_filesystem(self):
-        from aegis.cli.status import cmd_status
+        from redsim.cli.status import cmd_status
 
         env = {}  # empty env — mode defaults to "filesystem"
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(SystemExit) as ctx:
-                cmd_status(Namespace(), AegisConfig())
+                cmd_status(Namespace(), RedsimConfig())
             self.assertEqual(ctx.exception.code, 0)
 
     def test_db_url_changes_backends(self):
-        from aegis.cli.status import cmd_status
+        from redsim.cli.status import cmd_status
 
-        env = {"AEGIS_DB_URL": "postgresql://fake/db"}
+        env = {"REDSIM_DB_URL": "postgresql://fake/db"}
         with patch.dict("os.environ", env, clear=True), \
              patch("builtins.print") as mock_print:
             with self.assertRaises(SystemExit):
-                cmd_status(Namespace(), AegisConfig())
+                cmd_status(Namespace(), RedsimConfig())
             output = " ".join(str(c) for c in mock_print.call_args_list)
             self.assertIn("postgres", output.lower())
 
     def test_kv_without_color(self):
-        from aegis.cli.status import _kv
+        from redsim.cli.status import _kv
 
         with patch("builtins.print") as mock_print:
             _kv("label", "value")
@@ -851,7 +851,7 @@ class TestCmdStatus(unittest.TestCase):
             self.assertIn("value", output)
 
     def test_kv_with_color(self):
-        from aegis.cli.status import _GREEN, _kv
+        from redsim.cli.status import _GREEN, _kv
 
         with patch("builtins.print") as mock_print:
             _kv("label", "value", color=_GREEN)
@@ -871,8 +871,8 @@ class TestCmdAuditVerify(unittest.TestCase):
         return writer
 
     def test_audit_verify_system_chain_ok(self):
-        from aegis.audit.chain import JsonlAuditWriter
-        from aegis.cli.audit import cmd_audit_verify
+        from redsim.audit.chain import JsonlAuditWriter
+        from redsim.cli.audit import cmd_audit_verify
 
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
@@ -884,14 +884,14 @@ class TestCmdAuditVerify(unittest.TestCase):
                 override=False, success=True, detail={},
             )
             args = Namespace(all=False, run=None, project=None)
-            with patch("aegis.audit.chain.resolve_writer", return_value=writer):
+            with patch("redsim.audit.chain.resolve_writer", return_value=writer):
                 with self.assertRaises(SystemExit) as ctx:
                     cmd_audit_verify(args, config)
                 self.assertEqual(ctx.exception.code, 0)
 
     def test_audit_verify_run_chain(self):
-        from aegis.audit.chain import JsonlAuditWriter
-        from aegis.cli.audit import cmd_audit_verify
+        from redsim.audit.chain import JsonlAuditWriter
+        from redsim.cli.audit import cmd_audit_verify
 
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
@@ -903,14 +903,14 @@ class TestCmdAuditVerify(unittest.TestCase):
                 run_id="run-999",
             )
             args = Namespace(all=False, run="run-999", project=None)
-            with patch("aegis.audit.chain.resolve_writer", return_value=writer):
+            with patch("redsim.audit.chain.resolve_writer", return_value=writer):
                 with self.assertRaises(SystemExit) as ctx:
                     cmd_audit_verify(args, config)
                 self.assertEqual(ctx.exception.code, 0)
 
     def test_audit_verify_project_chain(self):
-        from aegis.audit.chain import JsonlAuditWriter
-        from aegis.cli.audit import cmd_audit_verify
+        from redsim.audit.chain import JsonlAuditWriter
+        from redsim.cli.audit import cmd_audit_verify
 
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
@@ -922,26 +922,26 @@ class TestCmdAuditVerify(unittest.TestCase):
                 project_id="proj-abc",
             )
             args = Namespace(all=False, run=None, project="proj-abc")
-            with patch("aegis.audit.chain.resolve_writer", return_value=writer):
+            with patch("redsim.audit.chain.resolve_writer", return_value=writer):
                 with self.assertRaises(SystemExit) as ctx:
                     cmd_audit_verify(args, config)
                 self.assertEqual(ctx.exception.code, 0)
 
     def test_audit_verify_all_flag_empty_chains(self):
-        from aegis.cli.audit import cmd_audit_verify
+        from redsim.cli.audit import cmd_audit_verify
 
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             writer = self._make_writer(chain_ids=[])
             args = Namespace(all=True, run=None, project=None)
-            with patch("aegis.audit.chain.resolve_writer", return_value=writer):
+            with patch("redsim.audit.chain.resolve_writer", return_value=writer):
                 with self.assertRaises(SystemExit) as ctx:
                     cmd_audit_verify(args, config)
                 self.assertEqual(ctx.exception.code, 0)
 
     def test_audit_verify_all_flag_with_chains(self):
-        from aegis.audit.chain import JsonlAuditWriter
-        from aegis.cli.audit import cmd_audit_verify
+        from redsim.audit.chain import JsonlAuditWriter
+        from redsim.cli.audit import cmd_audit_verify
 
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
@@ -956,13 +956,13 @@ class TestCmdAuditVerify(unittest.TestCase):
                 override=False, success=True, detail={}, run_id="r2",
             )
             args = Namespace(all=True, run=None, project=None)
-            with patch("aegis.audit.chain.resolve_writer", return_value=writer):
+            with patch("redsim.audit.chain.resolve_writer", return_value=writer):
                 with self.assertRaises(SystemExit) as ctx:
                     cmd_audit_verify(args, config)
                 self.assertEqual(ctx.exception.code, 0)
 
     def test_audit_verify_broken_chain_exits_1(self):
-        from aegis.cli.audit import cmd_audit_verify
+        from redsim.cli.audit import cmd_audit_verify
 
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
@@ -988,22 +988,22 @@ class TestCmdAuditVerify(unittest.TestCase):
             writer.iter_chain_ids.return_value = []
             writer.read_chain.return_value = iter([bad_event])
             args = Namespace(all=False, run=None, project=None)
-            with patch("aegis.audit.chain.resolve_writer", return_value=writer):
+            with patch("redsim.audit.chain.resolve_writer", return_value=writer):
                 with self.assertRaises(SystemExit) as ctx:
                     cmd_audit_verify(args, config)
                 self.assertEqual(ctx.exception.code, 1)
 
     def test_audit_verify_no_chain_ids_from_system(self):
         """When no run/project/all, uses 'system' chain_id."""
-        from aegis.audit.chain import JsonlAuditWriter
-        from aegis.cli.audit import cmd_audit_verify
+        from redsim.audit.chain import JsonlAuditWriter
+        from redsim.cli.audit import cmd_audit_verify
 
         with tempfile.TemporaryDirectory() as tmp:
             config = _make_config(tmp)
             writer = JsonlAuditWriter(Path(tmp) / "audit")
             # No events at all — system chain is empty, verify_chain returns count=0
             args = Namespace(all=False, run=None, project=None)
-            with patch("aegis.audit.chain.resolve_writer", return_value=writer):
+            with patch("redsim.audit.chain.resolve_writer", return_value=writer):
                 with self.assertRaises(SystemExit) as ctx:
                     cmd_audit_verify(args, config)
                 self.assertEqual(ctx.exception.code, 0)
@@ -1017,7 +1017,7 @@ class TestCliMain(unittest.TestCase):
 
     def test_main_module_invocable(self):
         """The __main__ surface doesn't blow up on import."""
-        import aegis.cli.__main__ as m
+        import redsim.cli.__main__ as m
         # Just asserting the module loads is enough; it calls main() at
         # runtime which we don't want to trigger here.
         self.assertTrue(hasattr(m, "__file__"))

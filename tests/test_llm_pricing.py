@@ -5,8 +5,8 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
-from aegis.llm import pricing
-from aegis.llm.pricing import cost_cents
+from redsim.llm import pricing
+from redsim.llm.pricing import cost_cents
 
 
 class TestCostCents(unittest.TestCase):

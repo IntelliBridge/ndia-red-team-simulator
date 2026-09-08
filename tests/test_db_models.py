@@ -1,6 +1,6 @@
 """Smoke: SQLAlchemy models import cleanly and create_all on SQLite works.
 
-The real Postgres integration suite runs only when AEGIS_TEST_DB_URL is set.
+The real Postgres integration suite runs only when REDSIM_TEST_DB_URL is set.
 """
 
 import unittest
@@ -11,7 +11,7 @@ pytest.importorskip("sqlalchemy")
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from aegis.db.models import (
+from redsim.db.models import (
     Base,
     Organization,
 )

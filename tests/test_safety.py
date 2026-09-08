@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aegis.safety import (
+from redsim.safety import (
     AuthorizationError,
     authorize,
     is_loopback,
