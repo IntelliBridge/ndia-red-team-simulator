@@ -38,20 +38,20 @@ def _make_config(tmp: str) -> RedsimConfig:
 
 
 def _make_finding(**kw) -> RedsimFinding:
-    defaults = dict(
-        id="test-finding-001",
-        title="SQL Injection",
-        severity="high",
-        finding_type="dast",
-        description="Test desc",
-        source_tool="strix",
-        source_run_id="run-001",
-        affected_component="/login",
-        confidence="high",
-        status="open",
-        created_at="2026-01-01T00:00:00Z",
-        updated_at="2026-01-01T00:00:00Z",
-    )
+    defaults = {
+        "id": "test-finding-001",
+        "title": "SQL Injection",
+        "severity": "high",
+        "finding_type": "dast",
+        "description": "Test desc",
+        "source_tool": "strix",
+        "source_run_id": "run-001",
+        "affected_component": "/login",
+        "confidence": "high",
+        "status": "open",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:00:00Z",
+    }
     defaults.update(kw)
     return RedsimFinding(**defaults)
 
@@ -272,12 +272,12 @@ class TestMainDoctor(unittest.TestCase):
 class TestMainInit(unittest.TestCase):
 
     def test_init_creates_redsim_yaml(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            # Patch Path("redsim.yaml") to write into tmp
-            with patch("redsim.cli.main.Path",
-                       side_effect=lambda p: Path(tmp) / p if p == "redsim.yaml" else Path(p)), \
-                 patch("redsim.config.load_config", return_value=RedsimConfig(output_dir=tmp)):
-                main(["init"])
+        # Patch Path("redsim.yaml") to write into tmp
+        with tempfile.TemporaryDirectory() as tmp, \
+                patch("redsim.cli.main.Path",
+                      side_effect=lambda p: Path(tmp) / p if p == "redsim.yaml" else Path(p)), \
+                patch("redsim.config.load_config", return_value=RedsimConfig(output_dir=tmp)):
+            main(["init"])
             # The file may or may not have been created depending on cwd; just
             # confirm the command completes without error.
 
@@ -368,12 +368,12 @@ class TestMainGlobalOverrideAuthorized(unittest.TestCase):
 class TestCmdScan(unittest.TestCase):
 
     def _args(self, **kw):
-        defaults = dict(
-            target_url="http://target.invalid",
-            scanner="fake-attack",
-            instruction=None, timeout=1800, override_authorized=False,
-            global_api=False,
-        )
+        defaults = {
+            "target_url": "http://target.invalid",
+            "scanner": "fake-attack",
+            "instruction": None, "timeout": 1800, "override_authorized": False,
+            "global_api": False,
+        }
         defaults.update(kw)
         return Namespace(**defaults)
 
@@ -727,9 +727,8 @@ class TestCmdStatus(unittest.TestCase):
         if config is None:
             config = RedsimConfig()
         env = env or {}
-        with patch.dict("os.environ", env, clear=True):
-            with self.assertRaises(SystemExit) as ctx:
-                cmd_status(Namespace(), config)
+        with patch.dict("os.environ", env, clear=True), self.assertRaises(SystemExit) as ctx:
+            cmd_status(Namespace(), config)
         self.assertEqual(ctx.exception.code, 0)
 
     def test_filesystem_mode(self):

@@ -7,6 +7,7 @@ is exercised with a synthetic capability + mock adapter.
 """
 
 import unittest
+from typing import ClassVar
 
 from redsim.scanners import dispatch
 from redsim.scanners.registry import _REGISTRY, ScanOptions, ScanResult, register
@@ -18,7 +19,7 @@ class TestDispatch(unittest.TestCase):
         # (e.g. "sast") would shell out to whatever scanner is on PATH.
         class _Probe:
             name = "mock-cap-probe"
-            capabilities = {"__probe__"}
+            capabilities: ClassVar[set[str]] = {"__probe__"}
             default_timeout = 60
 
             def adapter_version(self):

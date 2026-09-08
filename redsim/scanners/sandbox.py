@@ -273,7 +273,7 @@ def _error_result(
     )
 
 
-def _kill_process_group(proc: "subprocess.Popen[str]") -> None:
+def _kill_process_group(proc: subprocess.Popen[str]) -> None:
     """SIGKILL the worker's whole process group (created via start_new_session).
 
     ``proc.kill()`` reaps only the direct child, so a plugin that forked its own
@@ -327,7 +327,7 @@ def run_scanner_sandboxed(
             stderr=subprocess.PIPE,
             text=True,
             env=_child_env(config),
-            preexec_fn=_rlimit_preexec(config),
+            preexec_fn=_rlimit_preexec(config),  # noqa: PLW1509 - rlimits must apply in the child
             start_new_session=True,
         )
     except (FileNotFoundError, OSError) as exc:
@@ -418,7 +418,7 @@ class SandboxedScanner:
     def __init__(self, adapter: object, entry_point: str) -> None:
         self._adapter = adapter
         self._entry_point = entry_point
-        self.name: str = getattr(adapter, "name")
+        self.name: str = getattr(adapter, "name")  # noqa: B009 - adapter is typed object
         self.capabilities: set[str] = set(getattr(adapter, "capabilities", set()))
         self.default_timeout: int = int(getattr(adapter, "default_timeout", _DEFAULT_TIMEOUT))
 

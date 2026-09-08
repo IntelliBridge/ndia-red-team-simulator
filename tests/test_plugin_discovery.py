@@ -82,12 +82,12 @@ class TestScannerPluginDiscovery(unittest.TestCase):
     def test_scanner_unknown_capability_still_registers(self):
         """An unknown capability warns but still lands in the registry."""
         self.addCleanup(scanner_registry._REGISTRY.pop, SCANNER_NAME, None)
-        factory = lambda: FakeScanner(capabilities={"totally-made-up"})  # noqa: E731
+        factory = lambda: FakeScanner(capabilities={"totally-made-up"})
         fake_ep = _fake_entry_point(SCANNER_NAME, factory)
         with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
-                patch("importlib.metadata.entry_points", return_value=[fake_ep]):
-            with self.assertLogs("redsim.scanners.registry", level="WARNING") as cm:
-                scanner_registry.maybe_load_entry_points()
+                patch("importlib.metadata.entry_points", return_value=[fake_ep]), \
+                self.assertLogs("redsim.scanners.registry", level="WARNING") as cm:
+            scanner_registry.maybe_load_entry_points()
 
         self.assertIn(SCANNER_NAME, scanner_registry._REGISTRY)
         self.assertTrue(

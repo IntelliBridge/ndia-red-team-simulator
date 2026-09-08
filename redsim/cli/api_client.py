@@ -71,8 +71,10 @@ class ApiClient:
     def start_scan(self, *, target: str, scanner: str,
                    project_id: str = "default", instruction: str | None = None,
                    override_authorized: bool = False) -> dict[str, Any]:
-        # ``scanner`` is required: the API has no default adapter (the pentest
-        # default "strix" was removed) and rejects an unnamed scanner with 400.
+        # ``POST /v1/scans`` was unmounted at M0 (spec section 17.1), so this
+        # call answers 404 until the ML campaign client replaces it
+        # (``POST /v1/models/{id}/attacks``). ``scanner`` stays required for
+        # the offline ``redsim scan`` path that shares this signature.
         body: dict[str, Any] = {"target": target, "project_id": project_id,
                                 "scanner": scanner}
         if instruction is not None:

@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Callable, MutableMapping
 from contextvars import ContextVar
-from typing import Any, Callable, MutableMapping
+from typing import Any
 
 _REQUEST_ID: ContextVar[str | None] = ContextVar("redsim_request_id", default=None)
 
@@ -58,7 +59,7 @@ def _inject_correlation_ids(
                 event_dict["trace_id"] = format(ctx.trace_id, "032x")
             if "span_id" not in event_dict:
                 event_dict["span_id"] = format(ctx.span_id, "016x")
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 - trace enrichment never breaks a log line
         pass
     return event_dict
 

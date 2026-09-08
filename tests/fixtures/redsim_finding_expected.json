@@ -49,5 +49,6 @@
   "artifact_path": null,
   "package_name": null,
   "installed_version": null,
-  "fixed_version": null
+  "fixed_version": null,
+  "ml": null
 }

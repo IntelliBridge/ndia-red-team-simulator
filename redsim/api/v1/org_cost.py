@@ -19,7 +19,7 @@ the app-layer filter and Postgres RLS agree on the same column.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
@@ -67,7 +67,7 @@ def org_cost(
     from redsim.db.models import LLMUsage, Organization
     from redsim.db.session import get_session
 
-    window_start = datetime.now(timezone.utc) - timedelta(days=days)
+    window_start = datetime.now(UTC) - timedelta(days=days)
 
     with get_session() as sess:
         org = sess.get(Organization, org_id)

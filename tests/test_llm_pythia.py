@@ -7,19 +7,19 @@ from redsim.llm.pythia import PythiaSettings, _HttpxBackend, chat_text
 
 
 def _settings(**kw):
-    base = dict(base_url="https://gw.example", api_key="pk_test", model="pythia/auto", persona="analyst")
+    base = {"base_url": "https://gw.example", "api_key": "pk_test", "model": "pythia/auto", "persona": "analyst"}
     base.update(kw)
     return PythiaSettings(**base)
 
 
 def test_from_env_requires_all_three(monkeypatch):
-    for k in ("PYTHIA_BASE_URL", "PYTHIA_API_KEY", "REDSIM_LLM_MODEL", "PYTHIA_PERSONA"):
+    for k in ("PYTHIA_BASE_URL", "PYTHIA_API_KEY", "REDSIM_ML_LLM_MODEL", "PYTHIA_PERSONA"):
         monkeypatch.delenv(k, raising=False)
     assert PythiaSettings.from_env() is None
     monkeypatch.setenv("PYTHIA_BASE_URL", "https://gw.example/")
     monkeypatch.setenv("PYTHIA_API_KEY", "pk_x")
     assert PythiaSettings.from_env() is None
-    monkeypatch.setenv("REDSIM_LLM_MODEL", "amazon/nova-lite-v1:0")
+    monkeypatch.setenv("REDSIM_ML_LLM_MODEL", "amazon/nova-lite-v1:0")
     s = PythiaSettings.from_env()
     assert s is not None and s.base_url == "https://gw.example" and s.persona is None
 

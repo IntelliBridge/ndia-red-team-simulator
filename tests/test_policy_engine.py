@@ -40,7 +40,7 @@ from redsim.policy.engine import (
     resolve_policy_engine,
 )
 
-_ROLES = ["scanner", "remediator", "approver", "admin"]
+_ROLES = ["viewer", "scanner", "remediator", "approver", "admin"]
 
 
 @pytest.fixture(autouse=True)
@@ -109,11 +109,11 @@ class TestStaticPolicyEngineMatrix:
     def test_low_role_deny_reason_mentions_role_and_action(self):
         engine = StaticPolicyEngine()
         user = _user(memberships={"p1": "scanner"})
-        req = build_request(user, Action.FIX_APPLY.value, "p1")
+        req = build_request(user, Action.FINDING_REVIEW.value, "p1")
         decision = engine.evaluate(req)
         assert decision.allowed is False
         assert "scanner" in decision.reason
-        assert Action.FIX_APPLY.value in decision.reason
+        assert Action.FINDING_REVIEW.value in decision.reason
 
     def test_unknown_role_treated_as_rank_zero(self):
         engine = StaticPolicyEngine()
@@ -132,7 +132,7 @@ class TestBuildRequest:
     def test_routes_extra_keys(self):
         user = _user(memberships={"p1": "admin"})
         req = build_request(
-            user, Action.FIX_APPLY.value, "p1",
+            user, Action.FINDING_REVIEW.value, "p1",
             target="http://localhost", run_id="r1",
             effect_class="active", override_authorized=True,
         )
@@ -273,14 +273,14 @@ class TestOPAPolicyEngine:
             engine = OPAPolicyEngine("http://opa:8181")
             decision = engine.evaluate(
                 build_request(_user(memberships={"p1": "admin"}),
-                              Action.FIX_APPLY.value, "p1")
+                              Action.FINDING_REVIEW.value, "p1")
             )
         assert decision.allowed is True
         # Request body is OPA's {"input": {...}} envelope.
         assert client.last_url == "http://opa:8181/v1/data/redsim/authz"
         assert "input" in client.last_json
         inp = client.last_json["input"]
-        assert inp["action"] == Action.FIX_APPLY.value
+        assert inp["action"] == Action.FINDING_REVIEW.value
         assert inp["resource"]["project_id"] == "p1"
         assert inp["subject"]["project_memberships"] == {"p1": "admin"}
 
@@ -292,7 +292,7 @@ class TestOPAPolicyEngine:
         with patch("redsim.policy.engine.httpx.Client", client):
             decision = OPAPolicyEngine("http://opa:8181").evaluate(
                 build_request(_user(memberships={"p1": "scanner"}),
-                              Action.FIX_APPLY.value, "p1")
+                              Action.FINDING_REVIEW.value, "p1")
             )
         assert decision.allowed is False
         assert decision.reason == "nope"
@@ -353,12 +353,12 @@ class TestCedarPolicyEngine:
         with patch("redsim.policy.engine.httpx.Client", client):
             decision = CedarPolicyEngine("http://cedar:8180").evaluate(
                 build_request(_user(memberships={"p1": "approver"}),
-                              Action.FIX_APPLY.value, "p1")
+                              Action.FINDING_REVIEW.value, "p1")
             )
         assert decision.allowed is True
         assert client.last_url == "http://cedar:8180/v1/is_authorized"
         # Cedar body carries principal/action/resource/context (no envelope).
-        assert client.last_json["action"] == Action.FIX_APPLY.value
+        assert client.last_json["action"] == Action.FINDING_REVIEW.value
         assert client.last_json["principal"]["email"] == "alice@redsim.local"
         assert client.last_json["resource"]["project_id"] == "p1"
 
@@ -370,7 +370,7 @@ class TestCedarPolicyEngine:
         with patch("redsim.policy.engine.httpx.Client", client):
             decision = CedarPolicyEngine("http://cedar:8180").evaluate(
                 build_request(_user(memberships={"p1": "scanner"}),
-                              Action.FIX_APPLY.value, "p1")
+                              Action.FINDING_REVIEW.value, "p1")
             )
         assert decision.allowed is False
         assert decision.reason == "denied by policy"
@@ -440,7 +440,7 @@ class TestCheckIntegration:
             reset_policy_engine()
             user = _user(memberships={"p1": "scanner"})
             with pytest.raises(HTTPException) as exc:
-                check(user, Action.FIX_APPLY, "p1")
+                check(user, Action.FINDING_REVIEW, "p1")
             assert exc.value.status_code == 403
             assert "scanner" in exc.value.detail
 
@@ -463,8 +463,8 @@ class TestCheckIntegration:
                 patch("redsim.policy.engine.httpx.Client", client):
             reset_policy_engine()
             user = _user(memberships={"p1": "scanner"})
-            # Static would deny FIX_APPLY for a scanner; OPA allow wins.
-            check(user, Action.FIX_APPLY, "p1")
+            # Static would deny FINDING_REVIEW for a scanner; OPA allow wins.
+            check(user, Action.FINDING_REVIEW, "p1")
 
     def test_check_opa_deny_raises_403_with_reason(self):
         from fastapi import HTTPException

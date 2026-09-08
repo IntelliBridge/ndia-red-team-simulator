@@ -40,7 +40,7 @@ def _patch_jsonb_for_sqlite() -> None:
     from sqlalchemy.ext.compiler import compiles
 
     @compiles(JSONB, "sqlite")
-    def _to_text(t, c, **kw):  # noqa: ARG001
+    def _to_text(t, c, **kw):
         return "TEXT"
 
 
@@ -61,7 +61,7 @@ def _build_app_with_sqlite():
     )
     try:
         Base.metadata.create_all(bind=engine)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - skip on any sqlite failure
         raise unittest.SkipTest(f"sqlite: {exc}")
     Session = sessionmaker(engine, expire_on_commit=False)
 
@@ -210,9 +210,8 @@ class TestResolveAuthForScan(AuthProfilesApiBase):
     def test_unknown_profile_raises_lookup_error(self):
         from redsim.services import auth_profiles as svc
 
-        with self.session_cm() as sess:
-            with self.assertRaises(LookupError):
-                svc.resolve_auth_for_scan(sess, "authprof-nope")
+        with self.session_cm() as sess, self.assertRaises(LookupError):
+            svc.resolve_auth_for_scan(sess, "authprof-nope")
 
     def test_stored_ciphertext_is_not_plaintext(self):
         from redsim.db.models import AuthProfile

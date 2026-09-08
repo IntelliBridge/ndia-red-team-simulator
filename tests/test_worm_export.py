@@ -327,9 +327,9 @@ class TestCmdAuditExport(unittest.TestCase):
 
         args = Namespace(all=True, chain=None, no_verify=False)
         buf = io.StringIO()
-        with patch.dict("os.environ", {}, clear=True), redirect_stdout(buf):
-            with self.assertRaises(SystemExit) as ctx:
-                cmd_audit_export(args, RedsimConfig())
+        with patch.dict("os.environ", {}, clear=True), redirect_stdout(buf), \
+                self.assertRaises(SystemExit) as ctx:
+            cmd_audit_export(args, RedsimConfig())
         self.assertEqual(ctx.exception.code, 1)
         self.assertIn("REDSIM_WORM_EXPORT", buf.getvalue())
 
@@ -348,9 +348,8 @@ class TestCmdAuditExport(unittest.TestCase):
             with patch.dict("os.environ", {"REDSIM_WORM_EXPORT": "1"}, clear=True), \
                  patch("redsim.storage.worm.WormArchive.from_env", return_value=archive), \
                  patch("redsim.audit.chain.resolve_writer", return_value=writer), \
-                 redirect_stdout(buf):
-                with self.assertRaises(SystemExit) as ctx:
-                    cmd_audit_export(args, config)
+                 redirect_stdout(buf), self.assertRaises(SystemExit) as ctx:
+                cmd_audit_export(args, config)
             self.assertEqual(ctx.exception.code, 0)
             out = buf.getvalue()
             self.assertIn("WORM export", out)
@@ -371,9 +370,8 @@ class TestCmdAuditExport(unittest.TestCase):
             with patch.dict("os.environ", {"REDSIM_WORM_EXPORT": "1"}, clear=True), \
                  patch("redsim.storage.worm.WormArchive.from_env", return_value=archive), \
                  patch("redsim.audit.chain.resolve_writer", return_value=writer), \
-                 redirect_stdout(buf):
-                with self.assertRaises(SystemExit) as ctx:
-                    cmd_audit_export(args, config)
+                 redirect_stdout(buf), self.assertRaises(SystemExit) as ctx:
+                cmd_audit_export(args, config)
             self.assertEqual(ctx.exception.code, 0)
             self.assertIn("archived 4 events", buf.getvalue())
 

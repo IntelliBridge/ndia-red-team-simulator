@@ -7,7 +7,7 @@ filesystem backend (Phase 2 default) keeps running.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -34,7 +34,7 @@ def open_run_state(config: RedsimConfig, *,
     from redsim.db.session import get_session, init_engine
     init_engine(db_url)
     rid = run_id or (
-        datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         + "-" + uuid4().hex[:6]
     )
     pid = project_id or "default"

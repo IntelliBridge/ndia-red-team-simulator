@@ -31,7 +31,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from redsim.audit.chain import AuditWriter, verify_chain
@@ -116,7 +116,7 @@ class WormArchive:
         self.bucket = bucket
 
     @classmethod
-    def from_env(cls) -> "WormArchive":
+    def from_env(cls) -> WormArchive:
         """Build a WORM archive from the ``REDSIM_WORM_*`` env, wrapping an
         ``S3BlobStore`` pointed at the WORM bucket (creds reused from the
         ``REDSIM_S3_*`` env)."""
@@ -188,7 +188,7 @@ class WormArchive:
                         chain_id, head_seq)
             return None
 
-        retain_until = datetime.now(timezone.utc) + timedelta(days=self.retention_days)
+        retain_until = datetime.now(UTC) + timedelta(days=self.retention_days)
         jsonl_ref = self._put(jsonl_key, jsonl, content_type="application/x-ndjson",
                               retain_until=retain_until)
 
@@ -198,7 +198,7 @@ class WormArchive:
             "head_seq": head_seq,
             "head_hash": head_hash,
             "verified": verified,
-            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "exported_at": datetime.now(UTC).isoformat(),
             "retention_until": retain_until.isoformat(),
             "lock_mode": self.lock_mode,
             "jsonl_sha256": jsonl_sha,
@@ -225,7 +225,7 @@ class WormArchive:
         try:
             self.store.get(sha)
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 - any backend error means not present
             return False
 
     def export_all(self, writer: AuditWriter, *, verify: bool = True) -> ExportSummary:

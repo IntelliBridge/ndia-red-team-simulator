@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 # httpx ships in the api/worker extras. Only the OPA/Cedar engines reach the
 # REST path; keep ``redsim.policy`` importable by pure callers (the static engine
@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 try:
     import httpx
 except ModuleNotFoundError:  # pragma: no cover - exercised in the minimal unit env
-    httpx = None
+    httpx = cast("Any", None)
 
 if TYPE_CHECKING:
     from redsim.api.auth import CurrentUser

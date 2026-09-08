@@ -21,7 +21,7 @@ import pytest
 # celery, so skip there — matching the other worker tests' importorskip guard.
 pytest.importorskip("celery")
 
-from redsim.workers.job_state import (  # noqa: E402
+from redsim.workers.job_state import (
     ALLOWED,
     IllegalJobTransition,
     set_job_status,

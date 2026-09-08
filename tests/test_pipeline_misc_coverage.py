@@ -22,7 +22,7 @@ import tempfile
 import time
 import unittest
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -252,13 +252,13 @@ class TestLogIngestServerEdgeCases(unittest.TestCase):
 
     def test_ingest_non_list_records(self):
         """records that is not a list returns 400."""
-        client, writer = self._make_client()
+        client, _writer = self._make_client()
         resp = client.post("/ingest", json={"records": "not a list"})
         self.assertEqual(resp.status_code, 400)
 
     def test_ingest_empty_list(self):
         """Empty records list is valid, returns 202 with accepted=0."""
-        client, writer = self._make_client()
+        client, _writer = self._make_client()
         resp = client.post("/ingest", json={"records": []})
         self.assertEqual(resp.status_code, 202)
         self.assertEqual(resp.json()["accepted"], 0)
@@ -272,7 +272,7 @@ class TestLogIngestWriterFlush(unittest.TestCase):
     def _make_row(self, msg="test"):
         from redsim.log_ingest.writer import LogIngestRow
         return LogIngestRow(
-            ts=datetime.now(timezone.utc),
+            ts=datetime.now(UTC),
             severity="info",
             service="test",
             message=msg,
@@ -358,7 +358,7 @@ class TestLogIngestWriterFlush(unittest.TestCase):
         from redsim.log_ingest.writer import LogIngestRow
         big_attrs = {f"key_{i}": "x" * 100 for i in range(700)}
         row = LogIngestRow(
-            ts=datetime.now(timezone.utc),
+            ts=datetime.now(UTC),
             severity="info",
             service="svc",
             message="test",
@@ -383,7 +383,7 @@ class TestLogIngestWriterFlush(unittest.TestCase):
 
         writer = LogIngestWriter(session_factory=fake_session, batch_size=100)
         writer._queue.append(LogIngestRow(
-            ts=datetime.now(timezone.utc),
+            ts=datetime.now(UTC),
             severity="info", service="svc", message="hi",
         ))
         with patch.dict(sys.modules, {
@@ -942,14 +942,13 @@ class TestDeleteTarget(unittest.TestCase):
         config = _make_config()
         writer = self._make_audit_writer()
 
-        with patch("redsim.db.session.get_session", fake_session):
-            with self.assertRaises(LookupError):
-                delete_target(
-                    target_id="nonexistent",
-                    actor="cli:alice",
-                    config=config,
-                    audit_writer=writer,
-                )
+        with patch("redsim.db.session.get_session", fake_session), self.assertRaises(LookupError):
+            delete_target(
+                target_id="nonexistent",
+                actor="cli:alice",
+                config=config,
+                audit_writer=writer,
+            )
 
     def test_delete_target_missing_on_second_get(self):
         """Target disappears between first and second session.get (race condition)."""
@@ -1062,7 +1061,7 @@ class TestLogIngestWriterFlushAutoTrigger(unittest.TestCase):
     def _make_row(self, msg="x"):
         from redsim.log_ingest.writer import LogIngestRow
         return LogIngestRow(
-            ts=datetime.now(timezone.utc),
+            ts=datetime.now(UTC),
             severity="info", service="svc", message=msg,
         )
 
@@ -1097,7 +1096,7 @@ class TestLogIngestWriterFlushAutoTrigger(unittest.TestCase):
         fake_log_cls = MagicMock(return_value=MagicMock())
         writer = LogIngestWriter(session_factory=fake_factory)
         rows = [
-            LogIngestRow(ts=datetime.now(timezone.utc), severity="info",
+            LogIngestRow(ts=datetime.now(UTC), severity="info",
                          service="svc", message="test"),
         ]
         # Patch ApplicationLog where _insert imports it from
@@ -1203,7 +1202,7 @@ class TestPostgresAuditWriter(unittest.TestCase):
         """append() with no existing head creates a new AuditChainHead row."""
         from redsim.audit.chain import AuditEvent, PostgresAuditWriter
 
-        chain_head_cls, chain_head_inst, ae_model_cls, _ = self._mock_models()
+        chain_head_cls, _chain_head_inst, ae_model_cls, _ = self._mock_models()
 
         mock_sess = MagicMock()
         mock_sess.execute.return_value.scalar_one_or_none.return_value = None

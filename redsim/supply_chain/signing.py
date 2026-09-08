@@ -395,7 +395,7 @@ def sign_plugin_distribution(
     key_bytes = Path(private_key_pem_path).read_bytes()
     private_key = serialization.load_pem_private_key(key_bytes, password=None)
     if not isinstance(private_key, Ed25519PrivateKey):
-        raise ValueError("private key is not an Ed25519 key")
+        raise TypeError("private key is not an Ed25519 key")
 
     digest = compute_factory_digest(factory)
     payload = canonical_plugin_payload(dist_name, version, digest)

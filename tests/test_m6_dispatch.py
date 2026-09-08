@@ -7,8 +7,8 @@ Covers the seams finished in M6:
   (b) an unregistered scanner surfaces a ``KeyError`` whose message names the
       missing adapter and points at ``redsim.ml.attacks`` (the pentest engines
       were removed; the ML attack adapters register in the same registry);
-  (c) ``POST /v1/scans`` with an unregistered scanner is rejected with HTTP 400
-      before any Run/Job row is created;
+  (c) ``POST /v1/scans`` is unmounted (M0): the path answers 404 and no
+      Run/Job row is created;
   (d) ``run_cli_scan`` falls back to an adapter's ``default_timeout`` when the
       caller leaves ``ScanOptions.timeout`` at its sentinel default.
 
@@ -203,13 +203,15 @@ class TestUnknownScannerRejected(unittest.TestCase):
         app.dependency_overrides[get_current_user] = lambda: user
         return TestClient(app, raise_server_exceptions=False)
 
-    def test_unknown_scanner_returns_400(self):
+    def test_scans_route_is_unmounted(self):
         client = self._client()
         r = client.post("/v1/scans",
                         json={"project_id": "proj-1", "target": "localhost",
                               "scanner": "no-such-scanner"})
-        self.assertEqual(r.status_code, 400)
-        self.assertIn("no-such-scanner", r.json()["detail"])
+        self.assertEqual(r.status_code, 404)
+        paths = set(client.app.openapi()["paths"])
+        self.assertNotIn("/v1/scans", paths)
+        self.assertIn("/v1/scanners", paths)
 
 
 if __name__ == "__main__":

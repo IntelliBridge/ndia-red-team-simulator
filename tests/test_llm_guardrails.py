@@ -10,6 +10,7 @@ domain; the guardrail primitives themselves are unchanged.)
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 from unittest.mock import patch as mpatch
 
@@ -93,7 +94,7 @@ class TestScrubSecrets(unittest.TestCase):
     def test_returns_scrubresult_frozen(self):
         result = scrub_secrets("x")
         self.assertIsInstance(result, ScrubResult)
-        with self.assertRaises(Exception):
+        with self.assertRaises(dataclasses.FrozenInstanceError):
             result.text = "mutated"  # type: ignore[misc]
 
 

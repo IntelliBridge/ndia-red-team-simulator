@@ -84,7 +84,7 @@ def _build_app(settings: APISettings) -> FastAPI:
     try:
         from redsim.api.app import create_app
         return create_app(settings)
-    except Exception:
+    except Exception:  # noqa: BLE001 - fall back to the minimal app
         app = FastAPI()
         _wire_like_create_app(app, settings)
 

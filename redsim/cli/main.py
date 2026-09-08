@@ -8,6 +8,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import builtins
 import json  # noqa: F401  (re-exported for test patch target redsim.cli.main.json)
 import sys
 from pathlib import Path  # noqa: F401  (re-exported for test patch target redsim.cli.main.Path)
@@ -26,7 +27,7 @@ from redsim.cli import _console
 # modules via this module (e.g. ``redsim.cli.main.open``) so that the existing
 # tests can monkeypatch them at ``redsim.cli.main``. ``open`` is the builtin,
 # re-bound here only to expose it as a real, importable module attribute.
-open = open  # noqa: A001  (intentional builtin re-export for the scan fixture loader)
+open = builtins.open
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +163,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_plugins_sign.add_argument("--out", default=None,
                                 help="Output directory for the .sig (default: cwd)")
 
+    # ml (adversarial-ML vertical): `redsim ml build-assets` skeleton at M0
+    from redsim.cli.ml import add_ml_subparser
+    add_ml_subparser(sub)
+
     # evidence-pack — bundle audit + controls evidence for auditors
     p_evidence = sub.add_parser(
         "evidence-pack",
@@ -198,12 +203,12 @@ def build_parser() -> argparse.ArgumentParser:
 # external importers (``redsim.cli.__init__``) and for tests that import or
 # monkeypatch the commands at ``redsim.cli.main``.
 # ---------------------------------------------------------------------------
-from redsim.cli.doctor import cmd_doctor  # noqa: E402
-from redsim.cli.findings import cmd_findings  # noqa: E402
-from redsim.cli.init import cmd_init  # noqa: E402
-from redsim.cli.report import cmd_report  # noqa: E402
-from redsim.cli.scan import cmd_scan  # noqa: E402
-from redsim.cli.verify import cmd_verify  # noqa: E402
+from redsim.cli.doctor import cmd_doctor
+from redsim.cli.findings import cmd_findings
+from redsim.cli.init import cmd_init
+from redsim.cli.report import cmd_report
+from redsim.cli.scan import cmd_scan
+from redsim.cli.verify import cmd_verify
 
 # ---------------------------------------------------------------------------
 # Main
@@ -250,6 +255,11 @@ def _cmd_plugins_dispatch(args: argparse.Namespace, config: RedsimConfig) -> Non
     cmd_plugins(args, config)
 
 
+def _cmd_ml_dispatch(args: argparse.Namespace, config: RedsimConfig) -> None:
+    from redsim.cli.ml import cmd_ml
+    cmd_ml(args, config)
+
+
 def _cmd_tenants_dispatch(args: argparse.Namespace, config: RedsimConfig) -> None:
     from redsim.cli.tenants import cmd_tenants_verify
     if args.tenants_action == "verify":
@@ -265,6 +275,7 @@ _COMMANDS["migrate"] = _cmd_migrate_dispatch
 _COMMANDS["evidence-pack"] = _cmd_evidence_pack_dispatch
 _COMMANDS["plugins"] = _cmd_plugins_dispatch
 _COMMANDS["tenants"] = _cmd_tenants_dispatch
+_COMMANDS["ml"] = _cmd_ml_dispatch
 
 
 def main(argv: list[str] | None = None) -> None:

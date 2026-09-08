@@ -37,7 +37,7 @@ def _patch_jsonb_for_sqlite() -> None:
     from sqlalchemy.ext.compiler import compiles
 
     @compiles(JSONB, "sqlite")
-    def _to_text(t, c, **kw):  # noqa: ARG001
+    def _to_text(t, c, **kw):
         return "TEXT"
 
 
@@ -95,12 +95,11 @@ class TestOriginValidation(unittest.TestCase):
         client = TestClient(app)
         with patch("redsim.db.session.get_session", session_cm), \
              patch.dict(os.environ, _env_for(settings), clear=False):
-            with self.assertRaises(WebSocketDisconnect) as cm:
-                with client.websocket_connect(
-                    "/v1/runs/run-a/events",
-                    headers={"Origin": "https://attacker.example.com"},
-                ) as ws:
-                    ws.receive_json()
+            with self.assertRaises(WebSocketDisconnect) as cm, client.websocket_connect(
+                "/v1/runs/run-a/events",
+                headers={"Origin": "https://attacker.example.com"},
+            ) as ws:
+                ws.receive_json()
             self.assertEqual(cm.exception.code, 1008)
 
     def test_no_origin_allowed_for_non_browser_callers(self):
@@ -181,12 +180,11 @@ class TestRunLookup(unittest.TestCase):
                 settings=settings,
             )
             client.cookies.set(settings.api_session_cookie_name, cookie)
-            with self.assertRaises(WebSocketDisconnect) as cm:
-                with client.websocket_connect(
-                    "/v1/runs/no-such-run/events",
-                    headers={"Origin": "http://localhost:3000"},
-                ) as ws:
-                    ws.receive_json()
+            with self.assertRaises(WebSocketDisconnect) as cm, client.websocket_connect(
+                "/v1/runs/no-such-run/events",
+                headers={"Origin": "http://localhost:3000"},
+            ) as ws:
+                ws.receive_json()
             self.assertEqual(cm.exception.code, 1008)
 
 

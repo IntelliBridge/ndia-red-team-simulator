@@ -12,8 +12,10 @@ the ``created_at >= start_of_utc_day`` range scan.
 
 from __future__ import annotations
 
-from datetime import datetime, time, timezone
-from typing import TYPE_CHECKING, Callable, ContextManager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from datetime import UTC, datetime, time
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, or_, select
 
@@ -26,15 +28,15 @@ if TYPE_CHECKING:
 
 def _start_of_utc_day(now: datetime | None = None) -> datetime:
     """Midnight (00:00:00) UTC of the current day, tz-aware."""
-    now = now or datetime.now(timezone.utc)
-    return datetime.combine(now.astimezone(timezone.utc).date(), time.min,
-                            tzinfo=timezone.utc)
+    now = now or datetime.now(UTC)
+    return datetime.combine(now.astimezone(UTC).date(), time.min,
+                            tzinfo=UTC)
 
 
 def _start_of_utc_month(now: datetime | None = None) -> datetime:
     """Midnight UTC of the first day of the current month, tz-aware."""
-    today = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).date()
-    return datetime.combine(today.replace(day=1), time.min, tzinfo=timezone.utc)
+    today = (now or datetime.now(UTC)).astimezone(UTC).date()
+    return datetime.combine(today.replace(day=1), time.min, tzinfo=UTC)
 
 
 class DbBudgetChecker:
@@ -47,7 +49,7 @@ class DbBudgetChecker:
     keeps callers terse while letting tests inject an sqlite-backed factory.
     """
 
-    def __init__(self, session_factory: Callable[[], ContextManager] | None = None):
+    def __init__(self, session_factory: Callable[[], AbstractContextManager] | None = None):
         if session_factory is None:
             from redsim.db.session import get_session
             session_factory = get_session
@@ -180,7 +182,7 @@ def enforce_budget_for_run(
                 org_remaining = org_fn(org_id)
     except BudgetExceeded:
         raise
-    except Exception as exc:  # noqa: BLE001 — see fail-closed contract above
+    except Exception as exc:
         if strict:
             raise BudgetExceeded(
                 f"project {project_id!r} budget could not be verified; "

@@ -28,13 +28,13 @@ from redsim.api.settings import APISettings
 
 def _settings_with_session_keys(**overrides) -> APISettings:
     priv, pub = generate_keypair()
-    base = dict(
-        env="dev", auth_mode="dev",
-        api_session_private_key=priv,
-        api_session_public_key=pub,
-        cors_origins=["http://localhost:3000"],
-        web_origin="http://localhost:3000",
-    )
+    base = {
+        "env": "dev", "auth_mode": "dev",
+        "api_session_private_key": priv,
+        "api_session_public_key": pub,
+        "cors_origins": ["http://localhost:3000"],
+        "web_origin": "http://localhost:3000",
+    }
     base.update(overrides)
     return APISettings(**base)
 
@@ -59,8 +59,8 @@ class TestCsrfDoubleSubmit(unittest.TestCase):
             client.cookies.set(settings.api_session_cookie_name, cookie)
             client.cookies.set(settings.api_csrf_cookie_name, issue_csrf_token())
             resp = client.post(
-                "/v1/scans",
-                json={"target": "http://localhost:3000"},
+                "/v1/targets",
+                json={"kind": "url", "value": "http://localhost:3000"},
                 # No X-Redsim-CSRF header
             )
         self.assertEqual(resp.status_code, 403)
@@ -77,8 +77,8 @@ class TestCsrfDoubleSubmit(unittest.TestCase):
             client.cookies.set(settings.api_session_cookie_name, cookie)
             client.cookies.set(settings.api_csrf_cookie_name, "abc")
             resp = client.post(
-                "/v1/scans",
-                json={"target": "http://localhost:3000"},
+                "/v1/targets",
+                json={"kind": "url", "value": "http://localhost:3000"},
                 headers={settings.api_csrf_header_name: "definitely-not-abc"},
             )
         self.assertEqual(resp.status_code, 403)
@@ -98,8 +98,8 @@ class TestCsrfDoubleSubmit(unittest.TestCase):
             client.cookies.set(settings.api_session_cookie_name, cookie)
             client.cookies.set(settings.api_csrf_cookie_name, csrf)
             resp = client.post(
-                "/v1/scans",
-                json={"target": "http://localhost:3000"},
+                "/v1/targets",
+                json={"kind": "url", "value": "http://localhost:3000"},
                 headers={settings.api_csrf_header_name: csrf},
             )
         self.assertNotEqual(resp.status_code, 403)
@@ -111,8 +111,8 @@ class TestCsrfDoubleSubmit(unittest.TestCase):
         with patch.dict(os.environ, _env_for(settings), clear=False):
             client = TestClient(create_app(settings), raise_server_exceptions=False)
             resp = client.post(
-                "/v1/scans",
-                json={"target": "http://localhost:3000"},
+                "/v1/targets",
+                json={"kind": "url", "value": "http://localhost:3000"},
                 headers={"Authorization": "Bearer dev:alice@redsim.local"},
             )
         self.assertNotEqual(resp.status_code, 403,

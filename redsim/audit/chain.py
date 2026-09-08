@@ -20,10 +20,11 @@ import hashlib
 import json
 import os
 import threading
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from redsim.audit.redact import redact_audit_detail
 
@@ -183,7 +184,7 @@ class JsonlAuditWriter:
             record = {
                 "chain_id": chain_id,
                 "seq": seq,
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "actor": actor,
                 "action": action,
                 "target": target,
@@ -266,7 +267,7 @@ class PostgresAuditWriter:
             # ``ts`` is the canonicalized event time. We must pin
             # ``created_at`` to exactly this value so the verifier
             # recomputes the same hash from the DB read.
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             ts = now.isoformat()
             record = {
                 "chain_id": chain_id, "seq": seq,
@@ -328,8 +329,7 @@ class PostgresAuditWriter:
 
         from redsim.db.models import AuditChainHead
         with self.session_factory() as sess:
-            for row in sess.execute(select(AuditChainHead.chain_id)).scalars():
-                yield row
+            yield from sess.execute(select(AuditChainHead.chain_id)).scalars()
 
 
 # ----------------------------------------------------------------------------
@@ -405,7 +405,7 @@ class InMemoryAuditWriter:
         seq = len(self._chains.get(chain_id, [])) + 1
         event = AuditEvent(
             chain_id=chain_id, seq=seq,
-            ts=datetime.now(timezone.utc).isoformat(),
+            ts=datetime.now(UTC).isoformat(),
             actor=actor, action=action, target=target,
             allowlist_check=allowlist_check, override=override,
             success=success, detail=dict(detail or {}),

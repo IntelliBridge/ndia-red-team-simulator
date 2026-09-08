@@ -18,7 +18,7 @@ import signal
 import subprocess
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 from urllib.error import URLError
@@ -49,7 +49,7 @@ class TargetRuntime:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _run(cmd: list[str], *, check: bool = True, capture: bool = True) -> subprocess.CompletedProcess[str]:
@@ -111,13 +111,13 @@ class TargetPack:
             except (ValueError, OSError):
                 pass
 
-    def _signal_handler(self, signum: int, frame: FrameType | None) -> None:  # noqa: ARG002
+    def _signal_handler(self, signum: int, frame: FrameType | None) -> None:
         self._cleanup_silent()
 
     def _cleanup_silent(self) -> None:
         try:
             self.down()
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - best-effort cleanup
             pass
 
     def _remove_existing(self) -> None:

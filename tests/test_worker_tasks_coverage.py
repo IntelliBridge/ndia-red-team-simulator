@@ -85,7 +85,7 @@ def _ctx_factory(
 def _task_context_cm(ctx):
     """Yields *ctx* — replaces ``redsim.workers.bootstrap.task_context``."""
     @contextmanager
-    def _inner(job_id, task=None):  # noqa: ARG001
+    def _inner(job_id, task=None):
         yield ctx
     return _inner
 
@@ -152,7 +152,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
         ]
         mocks = [p.start() for p in patches_list]
         try:
-            _, mock_bs, mock_cfg, mock_sess_cm, mock_init, _ = mocks
+            _, _mock_bs, mock_cfg, mock_sess_cm, mock_init, _ = mocks
             mock_cfg.return_value = MagicMock(output_dir="/tmp")
             sess = MagicMock()
             sess.get.return_value = job
@@ -339,9 +339,8 @@ class TestBootstrapTaskContext(unittest.TestCase):
             import redsim.workers.bootstrap as boot
             importlib.reload(boot)
 
-            with self.assertRaises(RuntimeError) as cm:
-                with boot.task_context("missing-job"):
-                    pass  # pragma: no cover
+            with self.assertRaises(RuntimeError) as cm, boot.task_context("missing-job"):
+                pass  # pragma: no cover
             self.assertIn("missing-job", str(cm.exception))
         finally:
             for p in patches_list:
@@ -380,9 +379,8 @@ class TestBootstrapTaskContext(unittest.TestCase):
             import redsim.workers.bootstrap as boot
             importlib.reload(boot)
 
-            with self.assertRaises(ValueError):
-                with boot.task_context("job-004"):
-                    raise ValueError("intentional task failure")
+            with self.assertRaises(ValueError), boot.task_context("job-004"):
+                raise ValueError("intentional task failure")
 
             self.assertEqual(job.status, "failed")
             self.assertIsNotNone(job.completed_at)
@@ -510,7 +508,7 @@ def _make_task_ctx(
     ctx.run_state.load_findings.return_value = findings or []
 
     @contextmanager
-    def fake_tc(job_id, task=None):  # noqa: ARG001
+    def fake_tc(job_id, task=None):
         yield ctx
 
     return ctx, sess, job, fake_tc
@@ -527,7 +525,7 @@ class TestScanStart(unittest.TestCase):
         return scan_start
 
     def test_happy_path_returns_expected_keys(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
+        _ctx, sess, job, fake_tc = _make_task_ctx(
             job_detail={"target": "10.0.0.1", "scanner": "strix",
                         "instruction": None},
         )
@@ -552,7 +550,7 @@ class TestScanStart(unittest.TestCase):
         self.assertEqual(result["exit_code"], 0)
 
     def test_authorize_called_with_scanner_and_target(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
+        _ctx, _sess, _job, fake_tc = _make_task_ctx(
             job_detail={"target": "192.168.1.1", "scanner": "trivy",
                         "instruction": "scan everything"},
         )
@@ -581,7 +579,7 @@ class TestScanStart(unittest.TestCase):
         # M1: a target authorized at admission only via the explicit override
         # must stay authorized through the worker re-check (else the job fails
         # despite a valid admission decision).
-        ctx, sess, job, fake_tc = _make_task_ctx(
+        _ctx, _sess, _job, fake_tc = _make_task_ctx(
             job_detail={"target": "10.0.0.9", "scanner": "trivy",
                         "instruction": None, "override_authorized": True},
         )
@@ -600,7 +598,7 @@ class TestScanStart(unittest.TestCase):
         self.assertIs(mock_auth.call_args.kwargs["override_authorized"], True)
 
     def test_findings_saved_on_run_state(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
+        ctx, _sess, _job, fake_tc = _make_task_ctx(
             job_detail={"target": "host", "scanner": "strix",
                         "instruction": None},
         )
@@ -624,7 +622,7 @@ class TestScanStart(unittest.TestCase):
         # fall back to (the pentest default "strix" was removed). A Job without
         # one must fail loudly before authorize / dispatch, never substitute an
         # adapter silently.
-        ctx, sess, job, fake_tc = _make_task_ctx(
+        ctx, _sess, _job, fake_tc = _make_task_ctx(
             # detail has no 'scanner' key
             job_detail={"target": "host"},
         )
@@ -666,7 +664,7 @@ class TestVerifyReplay(unittest.TestCase):
         )
 
     def test_verified_maps_to_poc_passed(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
+        _ctx, sess, job, fake_tc = _make_task_ctx(
             job_detail={"finding_id": "find-001", "repo_path": None},
         )
         finding_row = MagicMock()
@@ -685,7 +683,7 @@ class TestVerifyReplay(unittest.TestCase):
         self.assertIsNotNone(finding_row.validated_at)
 
     def test_still_vulnerable_maps_to_poc_failed(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
+        _ctx, sess, job, fake_tc = _make_task_ctx(
             job_detail={"finding_id": "find-002"},
         )
         finding_row = MagicMock()
@@ -702,7 +700,7 @@ class TestVerifyReplay(unittest.TestCase):
         self.assertEqual(result["validation_state"], "poc_failed")
 
     def test_inconclusive_maps_to_inconclusive(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
+        _ctx, sess, job, fake_tc = _make_task_ctx(
             job_detail={"finding_id": "find-003"},
         )
         finding_row = MagicMock()
@@ -720,7 +718,7 @@ class TestVerifyReplay(unittest.TestCase):
 
     def test_unknown_status_defaults_to_inconclusive(self):
         """An unmapped outcome.status falls back to 'inconclusive'."""
-        ctx, sess, job, fake_tc = _make_task_ctx(
+        _ctx, sess, job, fake_tc = _make_task_ctx(
             job_detail={"finding_id": "find-004"},
         )
         finding_row = MagicMock()
@@ -737,7 +735,7 @@ class TestVerifyReplay(unittest.TestCase):
         self.assertEqual(result["validation_state"], "inconclusive")
 
     def test_repo_path_passed_to_verify_service(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
+        _ctx, sess, job, fake_tc = _make_task_ctx(
             job_detail={"finding_id": "find-005", "repo_path": "/tmp/myrepo"},
         )
         finding_row = MagicMock()
@@ -755,7 +753,7 @@ class TestVerifyReplay(unittest.TestCase):
         self.assertEqual(str(call_kwargs["repo_path"]), "/tmp/myrepo")
 
     def test_missing_finding_raises_runtime_error(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
+        _ctx, sess, job, fake_tc = _make_task_ctx(
             job_detail={"finding_id": "find-missing"},
         )
         sess.get.side_effect = [job, None]  # finding is None
@@ -767,7 +765,7 @@ class TestVerifyReplay(unittest.TestCase):
                 self._verify_task().apply(args=["job-ver-missing"]).get()
 
     def test_return_dict_includes_all_keys(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
+        _ctx, sess, job, fake_tc = _make_task_ctx(
             job_detail={"finding_id": "find-006"},
         )
         finding_row = MagicMock()
@@ -798,7 +796,7 @@ class TestReportRender(unittest.TestCase):
         return report_render
 
     def test_happy_path_returns_paths(self):
-        ctx, sess, job, fake_tc = _make_task_ctx()
+        ctx, _sess, _job, fake_tc = _make_task_ctx()
         ctx.run_state.load_findings.return_value = []
 
         from redsim.services.reports import ReportOutcome
@@ -820,7 +818,7 @@ class TestReportRender(unittest.TestCase):
 
     def test_findings_converted_and_passed_to_render(self):
         raw = _make_finding_blob(id="find-rep-01")
-        ctx, sess, job, fake_tc = _make_task_ctx()
+        ctx, _sess, _job, fake_tc = _make_task_ctx()
         ctx.run_state.load_findings.return_value = [raw]
 
         from redsim.services.reports import ReportOutcome
@@ -846,7 +844,7 @@ class TestReportRender(unittest.TestCase):
         self.assertIsInstance(rendered_findings[0], RedsimFinding)
 
     def test_render_called_with_html_true(self):
-        ctx, sess, job, fake_tc = _make_task_ctx()
+        ctx, _sess, _job, fake_tc = _make_task_ctx()
         ctx.run_state.load_findings.return_value = []
 
         from redsim.services.reports import ReportOutcome
@@ -864,7 +862,7 @@ class TestReportRender(unittest.TestCase):
 
     def test_multiple_findings_all_passed(self):
         raws = [_make_finding_blob(id=f"find-{i}") for i in range(5)]
-        ctx, sess, job, fake_tc = _make_task_ctx()
+        ctx, _sess, _job, fake_tc = _make_task_ctx()
         ctx.run_state.load_findings.return_value = raws
 
         from redsim.services.reports import ReportOutcome

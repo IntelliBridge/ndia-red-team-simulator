@@ -53,7 +53,7 @@ def _patch_jsonb_for_sqlite() -> None:
     from sqlalchemy.ext.compiler import compiles
 
     @compiles(JSONB, "sqlite")
-    def _to_text(type_, compiler, **kw):  # noqa: ARG001
+    def _to_text(type_, compiler, **kw):
         return "TEXT"
 
 
@@ -78,7 +78,7 @@ def _make_sqlite_session():
     )
     try:
         Base.metadata.create_all(bind=engine)
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - defensive
         raise unittest.SkipTest(f"sqlite can't host the schema: {exc}")
     return sessionmaker(engine, expire_on_commit=False, future=True), engine
 
@@ -127,7 +127,7 @@ class TestTenantSeamSqlite(unittest.TestCase):
         )
         try:
             Base.metadata.create_all(bind=engine)
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover - defensive
             raise unittest.SkipTest(f"sqlite can't host the schema: {exc}")
 
         # Point the module-global session factory at the sqlite engine.
@@ -375,13 +375,12 @@ class TestTenantRLS(unittest.TestCase):
         # Scoped to org_b (non-superuser role), try to insert a finding into
         # project_a (org_a). The trigger sets org_id = org_a, which violates the
         # WITH CHECK predicate for the org_b scope -> the write is rejected.
-        with self.assertRaises(DBAPIError):
-            with self._scoped_session([self.org_b]) as s:
-                s.add(self.Finding(
-                    id="x-" + uuid4().hex[:8], scanner_finding_id="x",
-                    run_id=self.run_a, project_id=self.proj_a,
-                    schema_blob={"id": "x"}, severity="low"))
-                s.flush()
+        with self.assertRaises(DBAPIError), self._scoped_session([self.org_b]) as s:
+            s.add(self.Finding(
+                id="x-" + uuid4().hex[:8], scanner_finding_id="x",
+                run_id=self.run_a, project_id=self.proj_a,
+                schema_blob={"id": "x"}, severity="low"))
+            s.flush()
 
     def test_insert_within_scope_is_allowed(self):
         # Same-org write under the matching scope succeeds (positive control,
@@ -403,11 +402,10 @@ class TestTenantRLS(unittest.TestCase):
         # (mismatched against proj_a -> org_a) must raise.
         from sqlalchemy.exc import DBAPIError
 
-        with self.assertRaises(DBAPIError):
-            with self.sess_mod.get_session() as s:
-                fa = s.get(self.Finding, self.find_a)
-                fa.org_id = self.org_b
-                s.flush()
+        with self.assertRaises(DBAPIError), self.sess_mod.get_session() as s:
+            fa = s.get(self.Finding, self.find_a)
+            fa.org_id = self.org_b
+            s.flush()
 
         # The rejected UPDATE left the row untouched.
         with self.sess_mod.get_session() as s:
@@ -422,6 +420,47 @@ class TestTenantRLS(unittest.TestCase):
             s.flush()
         with self.sess_mod.get_session() as s:
             self.assertEqual(s.get(self.Finding, self.find_a).org_id, self.org_a)
+
+    def test_ml_campaigns_has_rls_parity_and_hides_other_orgs_rows(self):
+        """0010_ml_vertical: ``ml_campaigns`` joins the RLS-scoped tables.
+
+        Insert without ``org_id`` (the trigger backfills it), then a session
+        scoped to org B sees nothing while org A sees its row. Raw SQL because
+        the ORM model for the table lands with its service in a later slice.
+        """
+        from sqlalchemy import text
+        from sqlalchemy.exc import DBAPIError
+
+        from redsim.db.models import Target
+
+        target_id = "tgt-" + self.run_a
+        with self.sess_mod.get_session() as s:
+            s.add(Target(id=target_id, project_id=self.proj_a, kind="ml_model_artifact",
+                         value="bundled:tiny"))
+            s.flush()
+            s.execute(text(
+                "INSERT INTO ml_campaigns (run_id, project_id, target_id, kind, modality, config) "
+                "VALUES (:run_id, :project_id, :target_id, 'attack', 'image', '{}'::jsonb)"),
+                {"run_id": self.run_a, "project_id": self.proj_a, "target_id": target_id})
+        with self.sess_mod.get_session() as s:
+            org = s.execute(text("SELECT org_id FROM ml_campaigns WHERE run_id = :r"),
+                            {"r": self.run_a}).scalar_one()
+            self.assertEqual(org, self.org_a)
+            forced = s.execute(text(
+                "SELECT relforcerowsecurity FROM pg_class WHERE relname = 'ml_campaigns'")).scalar_one()
+            self.assertTrue(forced)
+        with self._scoped_session([self.org_b]) as s:
+            rows = s.execute(text("SELECT run_id FROM ml_campaigns WHERE run_id = :r"),
+                             {"r": self.run_a}).all()
+            self.assertEqual(rows, [])
+        with self._scoped_session([self.org_a]) as s:
+            rows = s.execute(text("SELECT run_id FROM ml_campaigns WHERE run_id = :r"),
+                             {"r": self.run_a}).all()
+            self.assertEqual([r[0] for r in rows], [self.run_a])
+        # The BEFORE UPDATE guard rejects org_id drift, as on the other tables.
+        with self.assertRaises(DBAPIError), self.sess_mod.get_session() as s:
+            s.execute(text("UPDATE ml_campaigns SET org_id = :o WHERE run_id = :r"),
+                      {"o": self.org_b, "r": self.run_a})
 
     def test_update_project_less_log_row_allowed(self):
         # application_logs.project_id is nullable (system-scoped logs). The 0009

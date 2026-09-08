@@ -73,6 +73,10 @@ ml = [
     "onnxruntime>=1.18",
     "scikit-learn>=1.4",
     "adversarial-robustness-toolbox>=1.18",
+    # ONNX -> torch.nn.Module for gradient attacks on uploaded ONNX models,
+    # and the pickle-free state_dict format (spec sections 8.4, 9.2).
+    "onnx2torch>=1.5",
+    "safetensors>=0.4",
     "shap>=0.46",
     "matplotlib>=3.8",
     "pillow>=10",
@@ -115,6 +119,14 @@ target-version = "py312"
 [tool.ruff.lint]
 extend-select = ["I"]  # isort
 ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI resolves these at request time, so a call in a default is the
+# documented idiom, not a shared mutable default (B008).
+extend-immutable-calls = [
+    "fastapi.Depends", "fastapi.Body", "fastapi.Query", "fastapi.Path",
+    "fastapi.Header", "fastapi.Cookie", "fastapi.Form", "fastapi.File",
+]
 
 [tool.mypy]
 python_version = "3.12"

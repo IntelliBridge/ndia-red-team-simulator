@@ -9,7 +9,7 @@ unit test with a fake checker — no DB, no CAI.
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -86,7 +86,7 @@ class TestDbBudgetChecker(unittest.TestCase):
     def test_remaining_is_cap_minus_todays_cost(self):
         session_cm, Session = _make_session_factory()
         _seed_project(Session, project_id="proj-1", cap=1000)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         _add_usage(Session, project_id="proj-1", cost_cents=300, created_at=now)
         _add_usage(Session, project_id="proj-1", cost_cents=150, created_at=now)
         checker = DbBudgetChecker(session_factory=session_cm)
@@ -96,7 +96,7 @@ class TestDbBudgetChecker(unittest.TestCase):
     def test_remaining_excludes_previous_days(self):
         session_cm, Session = _make_session_factory()
         _seed_project(Session, project_id="proj-1", cap=1000)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         yesterday = now - timedelta(days=1)
         _add_usage(Session, project_id="proj-1", cost_cents=900,
                    created_at=yesterday)  # excluded
@@ -108,7 +108,7 @@ class TestDbBudgetChecker(unittest.TestCase):
     def test_remaining_can_go_non_positive(self):
         session_cm, Session = _make_session_factory()
         _seed_project(Session, project_id="proj-1", cap=100)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         _add_usage(Session, project_id="proj-1", cost_cents=250, created_at=now)
         checker = DbBudgetChecker(session_factory=session_cm)
         self.assertEqual(checker.remaining("proj-1"), -150)
@@ -120,7 +120,7 @@ class TestDbBudgetChecker(unittest.TestCase):
             s.add(Project(id="proj-2", org_id="org-1", name="Q", slug="q",
                           daily_llm_budget_cents=1000))
             s.commit()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         _add_usage(Session, project_id="proj-2", cost_cents=400, created_at=now)
         checker = DbBudgetChecker(session_factory=session_cm)
         # proj-2's spend must not count against proj-1
@@ -153,7 +153,7 @@ class TestDbBudgetCheckerOrg(unittest.TestCase):
     def test_remaining_org_under_cap(self):
         session_cm, Session = _make_session_factory()
         _seed_org(Session, org_id="org-1", monthly_cap=5000, project_id="p1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         _add_usage(Session, project_id="p1", org_id="org-1",
                    cost_cents=1200, created_at=now)
         _add_usage(Session, project_id="p1", org_id="org-1",
@@ -165,7 +165,7 @@ class TestDbBudgetCheckerOrg(unittest.TestCase):
     def test_remaining_org_over_cap_goes_non_positive(self):
         session_cm, Session = _make_session_factory()
         _seed_org(Session, org_id="org-1", monthly_cap=1000, project_id="p1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         _add_usage(Session, project_id="p1", org_id="org-1",
                    cost_cents=1500, created_at=now)
         checker = DbBudgetChecker(session_factory=session_cm)
@@ -175,7 +175,7 @@ class TestDbBudgetCheckerOrg(unittest.TestCase):
         session_cm, Session = _make_session_factory()
         _seed_org(Session, org_id="org-1", monthly_cap=1000, project_id="p1")
         _seed_org(Session, org_id="org-2", monthly_cap=1000, project_id="p2")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         _add_usage(Session, project_id="p2", org_id="org-2",
                    cost_cents=400, created_at=now)
         checker = DbBudgetChecker(session_factory=session_cm)
@@ -185,7 +185,7 @@ class TestDbBudgetCheckerOrg(unittest.TestCase):
     def test_remaining_org_excludes_previous_months(self):
         session_cm, Session = _make_session_factory()
         _seed_org(Session, org_id="org-1", monthly_cap=1000, project_id="p1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # A point firmly inside the previous month.
         last_month = (now.replace(day=1) - timedelta(days=2))
         _add_usage(Session, project_id="p1", org_id="org-1",
@@ -200,7 +200,7 @@ class TestDbBudgetCheckerOrg(unittest.TestCase):
         # count via the owning project's org_id.
         session_cm, Session = _make_session_factory()
         _seed_org(Session, org_id="org-1", monthly_cap=1000, project_id="p1")
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         _add_usage(Session, project_id="p1", org_id=None,
                    cost_cents=300, created_at=now)
         checker = DbBudgetChecker(session_factory=session_cm)

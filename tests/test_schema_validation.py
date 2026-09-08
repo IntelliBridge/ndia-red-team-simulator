@@ -12,14 +12,14 @@ import unittest
 
 from pydantic import ValidationError
 
-from redsim.schema import RedsimFinding, CodeLocation
+from redsim.schema import CodeLocation, RedsimFinding
 
-_VALID = dict(
-    id="f1", title="t", severity="high", finding_type="sast",
-    description="d", source_tool="bandit", source_run_id="r1",
-    affected_component="x.py", confidence="high", status="open",
-    created_at="2026-01-01T00:00:00Z", updated_at="2026-01-01T00:00:00Z",
-)
+_VALID = {
+    "id": "f1", "title": "t", "severity": "high", "finding_type": "sast",
+    "description": "d", "source_tool": "bandit", "source_run_id": "r1",
+    "affected_component": "x.py", "confidence": "high", "status": "open",
+    "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+}
 
 
 class TestConstructionValidation(unittest.TestCase):

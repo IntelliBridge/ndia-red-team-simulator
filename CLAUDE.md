@@ -61,11 +61,10 @@ them.
 Exists and importable (verified with `.venv/bin/python`):
 
 - `redsim.api.app:create_app()` builds and mounts 21 routes: `health`,
-  `runs`, `runs_cancel`, `findings`, `audit`, `reports`, `scans`,
+  `runs`, `runs_cancel`, `findings`, `audit`, `reports`,
   `scanners`, `verify`, `targets`, `auth_profiles`, `projects`, `logs`,
   `org_cost`, the WebSocket `runs/{id}/events` and `/v1/__settings`.
-  `POST /v1/scans` is mounted but inert (no scanner adapters remain) and the
-  spec unmounts it at M0.
+  `POST /v1/scans` was unmounted at M0 and answers 404.
 - `redsim.workers.celery_app` loads with tasks `scan`, `verify`, `report`,
   `reaper`, `tenant_reconcile`, `worm_export` on queues `scans` and
   `default`.
@@ -180,7 +179,7 @@ in `.env.example` are aegis leftovers and are unused by the ML vertical.
 | `PYTHIA_API_KEY` | `pk_...` key sent as `Authorization: Bearer`. |
 | `PYTHIA_PERSONA` | Optional, sent as `X-Pythia-Persona`. |
 | `PYTHIA_TIMEOUT_S` | Optional, default 60. |
-| `REDSIM_ML_LLM_MODEL` | Canonical model id (`<vendor>/<model>` or `pythia/auto`). The code, `redsim/ml/schema.py` comment and `tests/test_llm_pythia.py` still use `REDSIM_LLM_MODEL`. The rename is an M0 task, change all three together. |
+| `REDSIM_ML_LLM_MODEL` | Canonical model id (`<vendor>/<model>` or `pythia/auto`). Renamed from `REDSIM_LLM_MODEL` at M0 in `redsim/llm/pythia.py`, the `redsim/ml/schema.py` comment and `tests/test_llm_pythia.py`. The spec text still says `AEGIS_ML_LLM_MODEL`, the namespace rename made it `REDSIM_*`. |
 
 If any required variable is missing, `PythiaSettings.from_env()` returns
 `None`, the recommendation keeps `narrative = None` and
