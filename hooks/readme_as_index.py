@@ -14,9 +14,9 @@ in both places.
 Rewrites:
 - ``](docs/X)`` → ``](X)`` so links to docs/-internal pages resolve
   against the mkdocs serve root.
-- ``](CONTRIBUTING.md|SECURITY.md|CHANGELOG.md|project_repos/…|
-  .github/…)`` → absolute GitHub URL using ``repo_url`` from
-  mkdocs.yml.
+- ``](CONTRIBUTING.md|SECURITY.md|CHANGELOG.md|CLAUDE.md|specs/…|
+  .specify/…|examples/…|.github/…)`` → absolute GitHub URL using
+  ``repo_url`` from mkdocs.yml (repo-root files the docs site does not own).
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ from pathlib import Path
 # Cross-tree paths that live outside ``docs/`` and must be rewritten
 # to absolute GitHub URLs in the docs-site rendering.
 _CROSS_TREE = re.compile(
-    r"\]\((CONTRIBUTING\.md|SECURITY\.md|CHANGELOG\.md|"
-    r"project_repos/[^)]+|\.github/[^)]+)\)"
+    r"\]\((CONTRIBUTING\.md|SECURITY\.md|CHANGELOG\.md|CLAUDE\.md|"
+    r"specs/[^)]+|\.specify/[^)]+|examples/[^)]+|\.github/[^)]+)\)"
 )
 
 

@@ -16,7 +16,6 @@
 #   - aegis/cli/api_client.py        -> the operator's configured Aegis API
 #   - aegis/doctor.py                -> OIDC issuer .well-known discovery
 #   - aegis/targets.py               -> http(s) target liveness probe
-#   - aegis/tools/kali_client.py     -> the configured mcp-kali server
 #   - aegis/verify.py                -> PoC HTTP replay against a parsed URL
 # Switching to requests/httpx here is tracked separately; until then B310 is
 # skipped wholesale rather than scattering #nosec across these modules.
