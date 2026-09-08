@@ -231,12 +231,14 @@ Fargate)</a></li>
 <li><a href="#13-security-and-trust-notes"
 id="toc-13-security-and-trust-notes">13. Security and trust
 notes</a></li>
-<li><a href="#14-build-sequence-and-milestones"
-id="toc-14-build-sequence-and-milestones">14. Build sequence and
+<li><a href="#14-interoperability" id="toc-14-interoperability">14.
+Interoperability</a></li>
+<li><a href="#15-build-sequence-and-milestones"
+id="toc-15-build-sequence-and-milestones">15. Build sequence and
 milestones</a></li>
-<li><a href="#15-demo-script-target" id="toc-15-demo-script-target">15.
+<li><a href="#16-demo-script-target" id="toc-16-demo-script-target">16.
 Demo script (target)</a></li>
-<li><a href="#16-open-risks" id="toc-16-open-risks">16. Open
+<li><a href="#17-open-risks" id="toc-17-open-risks">17. Open
 risks</a></li>
 </ul></li>
 </ul>
@@ -400,7 +402,7 @@ shape. No new core tables are required for Phase A.</p>
 <tr>
 <td><code>Finding.schema_blob</code> (<code>AegisFinding</code>)</td>
 <td>Carries attack name, ε, success rate, confidence drop, SHAP artifact
-ids.</td>
+ids, MITRE ATLAS technique.</td>
 </tr>
 <tr>
 <td><code>Finding.validation_state</code></td>
@@ -942,7 +944,72 @@ proves the campaign trail.</li>
 <li><strong>Data.</strong> Ship only unclassified, open sample data.
 Document this in the UI.</li>
 </ul>
-<h2 id="14-build-sequence-and-milestones">14. Build sequence and
+<h2 id="14-interoperability">14. Interoperability</h2>
+<p>The tool is scored on interoperability: it should contribute datasets
+other teams consume and consume datasets other teams contribute. redsim
+addresses this three ways, all opt-in and off by default.</p>
+<h3 id="141-contribute-an-adversarial-dataset">14.1 Contribute an
+adversarial dataset</h3>
+<p>Every attack campaign generates perturbed inputs with their true and
+predicted labels. redsim publishes this as a versioned
+<strong>adversarial dataset</strong> that other teams consume: a defense
+team adversarially trains on it, a model team adds it to a regression
+suite.</p>
+<ul>
+<li><strong>Format.</strong> An open ML-dataset standard. Primary is
+<strong>Croissant</strong>, the MLCommons JSON-LD metadata standard,
+over a Parquet payload. A Hugging Face <code>datasets</code> bundle is
+the same payload with a dataset card.</li>
+<li><strong>Contents.</strong> Adversarial and clean tensors, true and
+predicted labels, the per-sample attack id and ε, the source-slice
+indices for reproducibility, and a manifest with model provenance and
+library versions.</li>
+<li><strong>Location.</strong> Written to the shared S3 bucket under
+<code>datasets/&lt;run-id&gt;/</code>, with a content-addressed manifest
+so a consumer verifies integrity.</li>
+<li><strong>Consume side.</strong> redsim accepts another team's model
+as <strong>ONNX</strong> and another team's evaluation slice as
+Croissant or Parquet, so the exchange runs both directions.</li>
+<li><strong>Endpoints.</strong> <code>POST /v1/runs/{id}/dataset</code>
+builds and registers the dataset. <code>GET /v1/datasets/{id}</code>
+returns the Croissant manifest.</li>
+</ul>
+<h3 id="142-mitre-atlas-mapping">14.2 MITRE ATLAS mapping</h3>
+<p>Every finding is tagged with the <strong>MITRE ATLAS</strong>
+technique it demonstrates, the adversarial-ML companion to ATT&amp;CK.
+An FGSM or PGD evasion maps to
+<code>AML.T0043 Craft Adversarial Data</code>. A black-box query attack
+maps to <code>AML.T0040 ML Model Inference API Access</code>.</p>
+<ul>
+<li>The tag is stored on
+<code>Finding.schema_blob.atlas_technique</code> and shown in the
+findings table, the report, and the dataset manifest.</li>
+<li>It gives every team a shared vocabulary for the vulnerability, and
+it lets a program contribute a sanitized case study back to the ATLAS
+community database.</li>
+<li>A per-campaign ATLAS coverage view shows which techniques were
+exercised.</li>
+</ul>
+<h3 id="143-platform-integrations">14.3 Platform integrations</h3>
+<p>Two integrations push redsim results into platforms other DoD teams
+already operate. Both are env-selected, off by default, and hold no
+standing credential beyond the connection each is configured with.</p>
+<ul>
+<li><strong>Palantir Foundry (primary).</strong> redsim writes the
+robustness scorecard and the adversarial dataset back to Foundry as a
+dataset through the Foundry REST API, keyed to the model's ontology
+object. A Foundry team then sees the Model Robustness Index alongside
+the model it governs. redsim can also read a model or evaluation dataset
+registered in Foundry as a target.</li>
+<li><strong>Anduril Lattice (exploratory).</strong> For a fielded edge
+model, redsim posts a <strong>robustness attestation</strong> as an
+attribute on the Lattice entity that runs the model, so the operating
+picture shows that an asset's model was red-teamed, with its current MRI
+and grade. Lattice models entities and tasking rather than datasets, so
+this is a narrative integration, gated on SDK access, and marked
+exploratory.</li>
+</ul>
+<h2 id="15-build-sequence-and-milestones">15. Build sequence and
 milestones</h2>
 <p>Ordered for a 2-day hackathon. Each milestone is demo-able on its
 own.</p>
@@ -1009,9 +1076,15 @@ end.</td>
 <td>Black-box connector, text and detection modalities,
 adversarial-training defense.</td>
 </tr>
+<tr>
+<td>B2</td>
+<td>Interop</td>
+<td>Croissant adversarial-dataset export + ONNX ingest; MITRE ATLAS
+tagging; Foundry push (Lattice exploratory).</td>
+</tr>
 </tbody>
 </table>
-<h2 id="15-demo-script-target">15. Demo script (target)</h2>
+<h2 id="16-demo-script-target">16. Demo script (target)</h2>
 <ol type="1">
 <li>Open <code>/models</code>. Pick the bundled aerial-target CNN.</li>
 <li>Click <strong>Run attack</strong>. Select FGSM + PGD, ε slider at
@@ -1031,7 +1104,7 @@ of +33 shows on the scorecard, and the finding flips to
 <li>Open <code>/audit</code>. Show the tamper-evident chain of the whole
 campaign.</li>
 </ol>
-<h2 id="16-open-risks">16. Open risks</h2>
+<h2 id="17-open-risks">17. Open risks</h2>
 <ul>
 <li><strong>ART + SHAP + torch image size.</strong> Keep it in the
 worker image only. Use the CPU torch wheel. Pin versions early.</li>
