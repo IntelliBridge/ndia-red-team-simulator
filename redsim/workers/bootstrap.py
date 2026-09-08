@@ -83,8 +83,8 @@ def _transient_errors() -> tuple[type[BaseException], ...]:
     try:
         from sqlalchemy.exc import InterfaceError, OperationalError
         errs += [OperationalError, InterfaceError]
-    except Exception:  # noqa: BLE001, S110 — sqlalchemy optional in minimal envs
-        pass
+    except Exception:  # SQLAlchemy is optional in minimal environments
+        logger.debug("SQLAlchemy retryable exceptions unavailable", exc_info=True)
     return tuple(errs)
 
 
@@ -93,7 +93,7 @@ def _publish(run_id: str, job_id: str, status: str) -> None:
     try:
         from redsim.workers.events import publish_job_event
         publish_job_event(run_id, job_id, status)
-    except Exception:
+    except Exception:  # telemetry must never break the task
         logger.debug("event publish hook failed", exc_info=True)
 
 
@@ -106,7 +106,7 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
     """
     from redsim.audit.chain import PostgresAuditWriter
     from redsim.config import load_config
-    from redsim.db.models import Job
+    from redsim.db.models import Job, Run
     from redsim.db.session import get_session, init_engine
     from redsim.state import PostgresRunState
     from redsim.storage import open_blob_store
@@ -122,6 +122,7 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
         job = sess.get(Job, job_id)
         if job is None:
             raise RuntimeError(f"job {job_id} not found")
+        job_type = getattr(job, "type", "unknown")
 
         # Redelivery / cancellation guard. ``task_acks_late=True`` means a task
         # whose worker was revoked (``cancel_run``) or died mid-run can be
@@ -143,6 +144,14 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
 
         set_job_status(job, "running")
         job.started_at = _now()
+        run = sess.get(Run, job.run_id)
+        if run is not None and run.status not in {"succeeded", "failed", "cancelled"}:
+            run.status = "running"
+            table = dict(getattr(run, "stage_table", None) or {})
+            jobs = dict(table.get("jobs") or {})
+            jobs[job_id] = {"type": job_type, "status": "running"}
+            table["jobs"] = jobs
+            run.stage_table = table
         sess.flush()
         run_id = job.run_id
         project_id = job.project_id
@@ -160,8 +169,48 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
         _publish(run_id, job_id, "running")
         try:
             yield ctx
+            # A cancellation may commit from another session while the body is
+            # running. Flush body results, then refresh and lock only Job/Run:
+            # expiring the whole identity map here would discard pending
+            # Finding/artifact projection mutations from a successful task.
+            sess.flush()
+            job = sess.get(
+                Job,
+                job_id,
+                populate_existing=True,
+                with_for_update=True,
+            )
+            run = sess.get(
+                Run,
+                run_id,
+                populate_existing=True,
+                with_for_update=True,
+            )
+            if (
+                job is None
+                or run is None
+                or job.status == "cancelled"
+                or run.status == "cancelled"
+            ):
+                logger.info(
+                    "task_context: suppressing stale success for cancelled job %s",
+                    job_id,
+                )
+                sess.rollback()
+                return
             set_job_status(job, "succeeded")
             job.completed_at = _now()
+            from redsim.services.runs import rollup_run_status
+            table = dict((getattr(run, "stage_table", None) if run is not None else {}) or {})
+            jobs = dict(table.get("jobs") or {})
+            jobs[job_id] = {
+                **dict(jobs.get(job_id) or {}),
+                "type": job_type, "status": "succeeded",
+            }
+            table["jobs"] = jobs
+            if run is not None:
+                run.stage_table = table
+            rollup_run_status(sess, run_id)
         except Exception as exc:
             from celery.exceptions import Retry
             if isinstance(exc, Retry):
@@ -198,6 +247,19 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
                 set_job_status(failed, "failed")
                 failed.completed_at = _now()
                 failed.error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
+                failed_run = sess.get(Run, run_id)
+                if failed_run is not None:
+                    table = dict(getattr(failed_run, "stage_table", None) or {})
+                    jobs = dict(table.get("jobs") or {})
+                    jobs[job_id] = {
+                        "type": getattr(failed, "type", job_type), "status": "failed",
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                    table["jobs"] = jobs
+                    table["error"] = f"{type(exc).__name__}: {exc}"
+                    failed_run.stage_table = table
+                from redsim.services.runs import rollup_run_status
+                rollup_run_status(sess, run_id)
                 sess.commit()
             _publish(run_id, job_id, "failed")
             raise

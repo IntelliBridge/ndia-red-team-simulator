@@ -11,7 +11,7 @@ from redsim.api.policy import Action, check
 from redsim.audit.chain import resolve_writer
 from redsim.config import load_config
 from redsim.safety import AuthorizationError
-from redsim.services.runs import cancel_run
+from redsim.services.runs import TerminalRunError, cancel_run
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -44,5 +44,15 @@ def cancel(run_id: str,
     except LookupError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="run not found") from exc
+    except TerminalRunError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": exc.code,
+                "message": str(exc),
+                "run_id": exc.run_id,
+                "status": exc.run_status,
+            },
+        ) from exc
     return {"run_id": outcome.run_id, "status": outcome.status,
             "jobs_cancelled": outcome.jobs_cancelled}

@@ -457,7 +457,7 @@ export type MRIRecord = {
     mri_before: number;
     mri_after: number;
     delta: number;
-    delta_acc_clean?: number;
+    delta_acc_clean?: MRIDelta["delta_acc_clean"];
   } | null;
   subscores?: Record<
     "S_acc" | "S_asr" | "S_eps" | "S_conf" | "S_expl",
@@ -470,25 +470,44 @@ export type MRIRecord = {
   eps_grid?: number[];
   attack_ids?: string[];
   measurements?: Measurement[];
-  curve?: CampaignCurvePoint[];
+  curve?: RobustnessSeries[];
 };
 export type CampaignCurvePoint = {
-  attack_id?: string;
-  family: "clean" | "evasion" | "control";
   eps: number;
   accuracy: number;
   n: number;
   n_correct: number;
+  n_clean_correct?: number | null;
+  n_flipped_from_clean?: number | null;
+  asr?: number | null;
+};
+export type RobustnessSeries = {
+  attack_id: string;
+  norm: "linf" | "l2";
+  eps_grid: number[];
+  reference_eps: number;
+  clean: Omit<CampaignCurvePoint, "eps">;
+  points: CampaignCurvePoint[];
+  control: CampaignCurvePoint[];
+};
+export type CampaignTarget = {
+  id: string;
+  name: string;
+  domain: "image" | "tabular" | "llm";
+  status: "available" | "not_implemented" | "refused";
+  reason?: string | null;
+  metadata: TargetMetadata;
 };
 export type Campaign = {
   run_id: string;
+  project_id: string;
   status: string;
   stage?: string;
   stages_done: string[];
   error?: string | null;
   settings_hash?: string | null;
   config: CampaignConfig;
-  target: ModelTarget;
+  target: CampaignTarget;
   attacks: AttackInfo[];
   provenance?: Record<string, unknown> | null;
   measurements: Measurement[];
@@ -498,10 +517,11 @@ export type Campaign = {
   limitations: string[];
   reviewer_notes?: string | null;
   score?: MRIRecord | null;
-  curve?: CampaignCurvePoint[];
+  curve?: RobustnessSeries[];
   findings?: Finding[];
-  completeness: { status: "complete" | "partial"; missing: string[] };
-  score_status?: { status: "pending" | "unavailable"; reason?: string };
+  completeness: "complete" | "partial";
+  missing: string[];
+  score_status?: { state: "pending" | "unavailable"; reason?: string };
   audit?: { state: "verified" | "broken" | "pending"; events?: number };
 };
 export type ArtifactRow = {
@@ -515,13 +535,14 @@ export type Comparison = {
   mode: "verify_delta" | "side_by_side";
   delta_mri?: number | null;
   delta_dimensions?: Record<string, number>;
-  delta_acc_clean?: number;
+  delta_acc_clean?: MRIDelta["delta_acc_clean"];
   delta_families?: Array<{
     family: string;
-    before: number;
-    after: number;
+    before: number | null;
+    after: number | null;
     n_before: number;
     n_after: number;
+    delta?: number | null;
   }>;
   delta?: null;
   scorecards?: MRIRecord[];
@@ -590,11 +611,16 @@ export function verifyFinding(
   id: string,
   defense: string,
   params: Record<string, unknown> = {},
+  recommendationId: string,
 ) {
   return api(`/v1/findings/${encodeURIComponent(id)}/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ defense, params }),
+    body: JSON.stringify({
+      defense,
+      params,
+      recommendation_id: recommendationId,
+    }),
   });
 }
 export function dismissFinding(

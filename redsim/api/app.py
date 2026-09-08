@@ -10,17 +10,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from redsim import __version__
 from redsim.api.settings import APISettings, load_settings
 from redsim.api.v1 import (
+    artifacts,
+    attacks,
     audit,
     auth_profiles,
+    compare,
+    datasets,
+    defenses,
     findings,
     health,
     logs,
+    ml_capabilities,
+    ml_findings,
+    models,
     org_cost,
     projects,
     reports,
     runs,
     runs_cancel,
     scanners,
+    scans,
     targets,
     verify,
 )
@@ -86,11 +95,20 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.get("/metrics")(metrics_handler())
 
     app.include_router(health.router, prefix="")
+    app.include_router(ml_capabilities.router, prefix="/v1")
+    app.include_router(attacks.router, prefix="/v1")
+    app.include_router(datasets.router, prefix="/v1")
+    app.include_router(defenses.router, prefix="/v1")
+    app.include_router(models.router, prefix="/v1")
+    app.include_router(artifacts.router, prefix="/v1")
+    app.include_router(compare.router, prefix="/v1")
+    app.include_router(ml_findings.router, prefix="/v1")
     app.include_router(runs.router, prefix="/v1")
     app.include_router(runs_cancel.router, prefix="/v1")
     app.include_router(findings.router, prefix="/v1")
     app.include_router(audit.router, prefix="/v1")
     app.include_router(reports.router, prefix="/v1")
+    app.include_router(scans.router, prefix="/v1")
     app.include_router(scanners.router, prefix="/v1")
     app.include_router(verify.router, prefix="/v1")
     app.include_router(targets.router, prefix="/v1")

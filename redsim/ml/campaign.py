@@ -31,6 +31,7 @@ import importlib
 import inspect
 import io
 import json
+import logging
 import math
 import os
 import platform
@@ -38,6 +39,7 @@ import socket
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
@@ -77,6 +79,8 @@ from redsim.ml.scoring import (
 )
 from redsim.ml.targets.base import Sample, Target
 from redsim.ml.targets.registry import TARGETS
+
+logger = logging.getLogger(__name__)
 
 CONTROL_ATTACK_ID = "noise_control"
 DEFAULT_MAX_ADV_ARTIFACT_MB = 64.0                   # spec 12.8
@@ -311,7 +315,9 @@ def _attack_params(config: CampaignConfig, adapters: list[Any]) -> dict[str, dic
 
 def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = True,
                  narrative_settings: Any | None = None, baseline_run_id: str | None = None,
-                 parent_run_id: str | None = None) -> CampaignRecord:
+                  parent_run_id: str | None = None,
+                  on_stage: Callable[[str], None] | None = None,
+                  target_override: Target | None = None) -> CampaignRecord:
     """Run the campaign described by ``config`` and return its record (status ``succeeded``).
 
     Raises ``TargetUnavailable`` / ``AttackNotApplicable`` / ``ValueError`` for configuration
@@ -329,8 +335,32 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
     interpretation: list[Interpretation] = []
     recommendations: list[CandidateRecommendation] = []
 
+    def stage_done(stage: str) -> None:
+        """Record a completed stage and best-effort live progress callback."""
+        stages_done.append(stage)
+        if on_stage is not None:
+            try:
+                on_stage(stage)
+            except Exception:  # progress cannot invalidate evidence
+                logger.debug("live campaign stage callback failed", exc_info=True)
+
     # --- load_target -------------------------------------------------------------------------
-    target = _resolve_target(config)
+    target = target_override or _resolve_target(config)
+    if target_override is not None:
+        info = target.info()
+        if info.status != "available":
+            raise TargetUnavailable(info.reason or f"target {config.target_id!r} is {info.status}")
+        if info.domain != config.modality:
+            raise ValueError(
+                f"config.modality {config.modality!r} does not match "
+                f"the target domain {info.domain!r}"
+            )
+        target.load()
+        if config.defense is not None:
+            defenses = importlib.import_module("redsim.ml.defenses")
+            target = defenses.apply_defense(
+                target, config.defense.id, dict(config.defense.params),
+            )
     info = target.info()
     domain = info.domain
     manifest = dict(target.manifest() or {})
@@ -347,7 +377,7 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
             else:
                 a.resolve_params(params_by_attack[a.id])
     shash = settings_hash(config, None if model_sha256 is None else str(model_sha256))
-    stages_done.append("load_target")
+    stage_done("load_target")
 
     # --- sample ------------------------------------------------------------------------------
     sample: Sample = target.sample(config.n_samples, config.seed)
@@ -360,7 +390,7 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
     dataset_revision = config.dataset_revision or _manifest_get(manifest, "dataset_revision", "revision")
     slice_note = (f"slice: dataset={dataset_name}, split={config.dataset_split}, n_samples={n}, "
                   f"seed={config.seed}, selection=target.sample(n, seed)")
-    stages_done.append("sample")
+    stage_done("sample")
 
     # --- clean_eval --------------------------------------------------------------------------
     t0 = time.perf_counter()
@@ -371,7 +401,7 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
     measurements.append(m_clean)
     acc_clean = m_clean.accuracy
     n_clean_correct = m_clean.n_correct
-    stages_done.append("clean_eval")
+    stage_done("clean_eval")
 
     # --- attack ------------------------------------------------------------------------------
     x_adv_ref: dict[str, np.ndarray] = {}
@@ -461,7 +491,7 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
             elif m.attack_success_rate is not None and m.attack_success_rate >= config.finding_asr_threshold:
                 m.notes.append(f"attack_success_rate {m.attack_success_rate:.4f} crosses finding_asr_threshold "
                                f"{config.finding_asr_threshold:g} (first success at eps={fi.first_success_eps:g})")
-        stages_done.append(f"attack:{aid}")
+        stage_done(f"attack:{aid}")
 
     # --- control -----------------------------------------------------------------------------
     x_ctrl_ref: np.ndarray | None = None   # control slice at the reference eps: the explainer's noise floor (13.5)
@@ -489,7 +519,7 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
                                    f"accuracy by more than {control_drop:g}, so evasion results at this eps are not "
                                    "attributable to adversarial alignment alone.")
             measurements.append(m)
-        stages_done.append("control")
+        stage_done("control")
     else:
         limitations.append("The benign noise control was disabled for this run (include_control=false); "
                            "gradient-aligned failure cannot be separated from general noise sensitivity.")
@@ -579,7 +609,7 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
         if not explainer_stated_limitations:
             limitations.append(f"Up to {config.explain_k} flipped and {config.explain_k} unflipped samples were "
                                f"explained out of n={n}, at the reference budget eps={ref:g} only.")
-        stages_done.append("explain")
+        stage_done("explain")
 
     # --- score -------------------------------------------------------------------------------
     score, score_reason = score_run(config=config, measurements=measurements, settings_hash=shash,
@@ -588,7 +618,7 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
         limitations.append(score_reason)
     if len(grid) == 1:
         limitations.append(ONE_POINT_GRID_LIMITATION)
-    stages_done.append("score")
+    stage_done("score")
 
     # --- interpret / recommend ---------------------------------------------------------------
     standing = _standing(dataset_name, grid, [a.id for a in adapters])
@@ -605,7 +635,8 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
             basis=["m.clean"]))
         limitations.append("Rule layer unavailable: no interpretation rules ran and no candidate recommendations "
                            "were produced.")
-        stages_done.extend(["interpret", "recommend"])
+        stage_done("interpret")
+        stage_done("recommend")
     else:
         # Base contracts: interpret(measurements, observations, score) and
         # recommend(measurements, observations, score, *, interpretation=...). The extra keywords
@@ -629,7 +660,7 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
             rules = None
         interpretation.extend(_drop_dangling(produced, measurements, observations, interpretation, limitations,
                                              "interpretation"))
-        stages_done.append("interpret")
+        stage_done("interpret")
         if rules is not None and config.auto_recommend:
             try:
                 produced_recs = list(_call_supported(
@@ -643,7 +674,7 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
                                    "candidate recommendations were produced.")
             recommendations = _drop_dangling(produced_recs, measurements, observations, interpretation,
                                              limitations, "recommendation")
-            stages_done.append("recommend")
+            stage_done("recommend")
         elif rules is not None:
             limitations.append("auto_recommend=false: no candidate recommendations were generated in this run; "
                                "the harden step can create them later under the same run.")
@@ -711,7 +742,7 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
         hostname=socket.gethostname(), device=str(manifest.get("device") or "cpu"),
         nondeterminism=_uniq(nondeterminism),
     )
-    stages_done.append("report")
+    stage_done("report")
 
     record = CampaignRecord(
         run_id=run_id, status="succeeded", stage="report", stages_done=stages_done, created_at=started_at,

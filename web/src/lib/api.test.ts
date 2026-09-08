@@ -204,13 +204,17 @@ describe("typed client helpers", () => {
 
   it("verifyFinding nests defense params under params", async () => {
     fetchMock.mockResolvedValue(ok("{}"));
-    await verifyFinding("finding/1", "jpeg", { quality: 80 });
+    await verifyFinding("finding/1", "jpeg", { quality: 80 }, "r.R2");
     expect(lastUrl()).toBe(
       "http://localhost:8000/v1/findings/finding%2F1/verify",
     );
     expect(lastInit().method).toBe("POST");
     expect(lastInit().body).toBe(
-      JSON.stringify({ defense: "jpeg", params: { quality: 80 } }),
+      JSON.stringify({
+        defense: "jpeg",
+        params: { quality: 80 },
+        recommendation_id: "r.R2",
+      }),
     );
   });
 
