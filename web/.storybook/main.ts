@@ -5,7 +5,7 @@ const config: StorybookConfig = {
   framework: { name: "@storybook/nextjs", options: {} },
   // Stories live in the design-system workspace so they're co-located
   // with the component they exercise; the web app re-exports the
-  // configuration so ``pnpm --filter @aegis/web storybook`` is the
+  // configuration so ``pnpm --filter @redsim/web storybook`` is the
   // single entry point.
   stories: [
     "../../packages/design-system/src/**/*.stories.@(ts|tsx)",
@@ -23,8 +23,8 @@ const config: StorybookConfig = {
     cfg.resolve = cfg.resolve ?? {};
     cfg.resolve.alias = {
       ...(cfg.resolve.alias as Record<string, string> | undefined),
-      "@aegis/design-system": path.resolve(
-        __dirname, "..", "..", "project_repos", "design-system", "src",
+      "@redsim/design-system": path.resolve(
+        __dirname, "..", "..", "packages", "design-system", "src",
       ),
     };
     return cfg;

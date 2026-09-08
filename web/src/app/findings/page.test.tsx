@@ -14,7 +14,7 @@ vi.mock("@/lib/api", () => ({ api: vi.fn() }));
 
 // Stub the design-system table/severity primitives down to plain elements so
 // the test asserts page behaviour, not primitive styling.
-vi.mock("@aegis/design-system", () => ({
+vi.mock("@redsim/design-system", () => ({
   SeverityChip: ({ level }: { level: string }) =>
     h("span", { "data-testid": "sev" }, level),
   Table: ({ children }: any) => h("table", null, children),

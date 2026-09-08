@@ -20,17 +20,23 @@ ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     PIP_CERT=/etc/ssl/certs/ca-certificates.crt
 
 # Install the CPU-only torch/torchvision first, so the ART/SHAP stack that
-# `pip install -e .` resolves reuses them instead of pulling the multi-GB
-# CUDA wheels. The demo runs on CPU (see the spec: no GPU).
+# the ml extra resolves reuses them instead of pulling the multi-GB CUDA
+# wheels. The demo runs on CPU (see the spec: no GPU).
 RUN pip install --upgrade pip && \
     pip install --index-url https://download.pytorch.org/whl/cpu \
         "torch>=2.3" "torchvision>=0.18"
 
 COPY pyproject.toml ./
-COPY redsim ./redsim
+COPY aegis ./aegis
+COPY alembic.ini ./
 
-RUN pip install -e .
+# api + worker give the API its SQLAlchemy/alembic side and the Celery
+# client it enqueues jobs with. ml keeps this image on the same dependency
+# set as the worker (torch/torchvision come from the CPU wheels above).
+RUN pip install -e ".[api,worker,ml]"
 
 EXPOSE 8000
-# Entrypoint is the redsim FastAPI factory (docs/superpowers/specs/2026-09-08-redsim-design.md).
-CMD ["uvicorn", "redsim.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+# Apply pending migrations (alembic.ini -> aegis/db/migrations, URL from
+# AEGIS_DB_URL) and start the aegis FastAPI factory. Spec:
+# docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn aegis.api.app:create_app --factory --host 0.0.0.0 --port 8000"]

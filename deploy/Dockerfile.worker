@@ -16,19 +16,19 @@ ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     PIP_CERT=/etc/ssl/certs/ca-certificates.crt
 
+# Install the CPU-only torch/torchvision first, so the ART/SHAP stack that
+# the ml extra resolves reuses them instead of pulling the multi-GB CUDA
+# wheels. Attacks run on CPU (see the spec: no GPU).
+RUN pip install --upgrade pip && \
+    pip install --index-url https://download.pytorch.org/whl/cpu \
+        "torch>=2.3" "torchvision>=0.18"
+
 COPY pyproject.toml ./
 COPY aegis ./aegis
-# project_repos/ is optional in the build context — when the submodules
-# haven't been initialised the worker still runs (subprocesses + golden
-# patch path). We `|| true` the editable installs so the image build is
-# tolerant of partial submodule state.
-COPY project_repos/ ./project_repos/
 
-RUN pip install --upgrade pip && pip install -e ".[worker]" && \
-    ( [ -d project_repos/strix ] && pip install -e project_repos/strix || true ) && \
-    ( [ -d project_repos/cai ]   && pip install -e project_repos/cai   || true ) && \
-    ( git -C project_repos/strix rev-parse HEAD > /app/STRIX.sha 2>/dev/null || true ) && \
-    ( git -C project_repos/cai   rev-parse HEAD > /app/CAI.sha   2>/dev/null || true )
+# This image runs the attacks, so it carries the ml extra (torch, ART,
+# SHAP, onnxruntime, scikit-learn) on top of the Celery worker deps.
+RUN pip install -e ".[worker,ml]"
 
 # A standalone worker consumes both queues so nothing is stranded; the compose
 # stack overrides this to run a dedicated pool per queue (-Q scans / -Q default)

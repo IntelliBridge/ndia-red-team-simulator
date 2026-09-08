@@ -181,117 +181,7 @@ export async function deleteTarget(targetId: string): Promise<void> {
   );
 }
 
-// ── Agent invocation ───────────────────────────────────────────────
-export type RunAgentBody = {
-  prompt: string;
-  project_id?: string;
-  execute?: boolean;
-  target?: string;
-  finding_id?: string;
-  repo_path?: string;
-  override_authorized?: boolean;
-};
-
-// The agent admission route returns the shared JobHandle shape
-// ({run_id, job_id, status_url, status}). Active/offensive agents run
-// with execute=false return a proposal; execute=true performs the
-// state-changing step (approver-gated server-side).
-export type AgentRunResult = {
-  run_id: string;
-  job_id: string;
-  status_url?: string;
-  status?: string;
-};
-
-export function runAgent(
-  name: string,
-  body: RunAgentBody,
-): Promise<AgentRunResult> {
-  return api<AgentRunResult>(
-    `/v1/agents/${encodeURIComponent(name)}/run`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-  );
-}
-
-// ── Agent catalog (GET /v1/agents) ─────────────────────────────────
-// Read-only roster mirroring aegis/agents/registry.py::list_agents.
-// `effect` ("read"/"active"/"external") is the human gate: active/
-// external agents need the approver role + execute=true server-side.
-export type AgentEffect = "read" | "active" | "external";
-
-export type AgentSpec = {
-  name: string;
-  domain: string;
-  effect: AgentEffect;
-  wired: boolean;
-};
-
-export async function listAgents(): Promise<AgentSpec[]> {
-  const out = await api<{ agents: AgentSpec[] }>("/v1/agents");
-  return out.agents ?? [];
-}
-
-// ── Tool catalog (GET /v1/tools) ───────────────────────────────────
-// Read-only roster mirroring aegis/tools/catalog.py::list_tools. Same
-// effect semantics as agents; the Kali pass-through enforces the gate.
-export type ToolEffect = "read" | "active" | "external";
-
-export type ToolSpec = {
-  name: string;
-  category: string;
-  source: string;
-  effect: ToolEffect;
-  description: string;
-};
-
-export async function listTools(): Promise<ToolSpec[]> {
-  const out = await api<{ tools: ToolSpec[] }>("/v1/tools");
-  return out.tools ?? [];
-}
-
-// ── Kali tool pass-through ─────────────────────────────────────────
-export type KaliRunBody = {
-  execute?: boolean;
-  params?: Record<string, unknown>;
-};
-
-// Active tools (sqlmap/hydra/metasploit/wpscan) without execute=true
-// come back as {tool, status:"pending_approval", effect, params,
-// message}; a real run returns the ToolOutcome fields. The union keeps
-// both observable to the page.
-export type ToolOutcome = {
-  tool: string;
-  success?: boolean;
-  return_code?: number | null;
-  stdout?: string | null;
-  stderr?: string | null;
-  error?: string | null;
-  status?: string;
-  effect?: string;
-  message?: string;
-  params?: Record<string, unknown>;
-};
-
-export function runKaliTool(
-  tool: string,
-  body: KaliRunBody,
-  project = "default",
-): Promise<ToolOutcome> {
-  return api<ToolOutcome>(
-    `/v1/tools/kali/${encodeURIComponent(tool)}?project=${encodeURIComponent(project)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    },
-  );
-}
-
-// ── Report / export downloads ──────────────────────────────────────
+// ── Report downloads ───────────────────────────────────────────────
 // These are plain authenticated GETs: the browser sends the
 // aegis_api_session cookie (the API CSP-hardens HTML and serves
 // json/md as nosniff downloads — see aegis/api/v1/reports.py). They
@@ -301,10 +191,6 @@ export type ReportExt = "html" | "json" | "md";
 
 export function reportUrl(runId: string, ext: ReportExt): string {
   return `${BASE}/v1/runs/${encodeURIComponent(runId)}/report.${ext}`;
-}
-
-export function exportVulnfixerUrl(runId: string): string {
-  return `${BASE}/v1/runs/${encodeURIComponent(runId)}/exports/vulnfixer`;
 }
 
 // --- Per-tenant cost (multi-tenancy) ---
@@ -428,4 +314,26 @@ export function startScan(req: StartScanRequest): Promise<{ run_id: string }> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(req),
   });
+}
+
+export type ScannerInfo = {
+  name: string;
+  /** Capability vocabulary from aegis.scanners.registry (e.g. "dast"). */
+  capabilities: string[];
+};
+
+/**
+ * The registered scanner / attack adapter roster (GET /v1/scanners).
+ *
+ * Drives the scanner picker so the UI never hardcodes adapter names: the
+ * pentest built-ins were removed with the pentest domain, and until an ML
+ * attack adapter (aegis.ml.attacks) or a signed plugin registers, the roster
+ * is empty. POST /v1/scans rejects any name not in this list with 400, so an
+ * empty roster must render as "no adapter registered", never as a scan that
+ * can be started.
+ */
+export function listScanners(): Promise<ScannerInfo[]> {
+  return api<{ scanners: ScannerInfo[]; count: number }>("/v1/scanners").then(
+    (r) => (Array.isArray(r.scanners) ? r.scanners : []),
+  );
 }
