@@ -185,7 +185,8 @@ ids that fired them and print their thresholds. They are on `main` in
 Every dataset is open, unclassified, public, and carries a stated license
 (spec 11). The demo and fixture sets have been fetched and the bundled
 models trained locally by the one-off `redsim ml build-assets` run. Nothing
-is committed.
+is committed. The last row is Phase B material with no stated license,
+listed so the gap stays visible.
 
 | Role | Dataset | License | Notes |
 |---|---|---|---|
@@ -193,6 +194,7 @@ is committed.
 | CI image fixture | `uoft-cs/cifar10` (HF), pinned 500-image subset | unknown on the card | Fixture only, never presented as results. |
 | Demo tabular | Kaggle `sid321axn/malicious-urls-dataset` | CC0 | The download needs a Kaggle token (`KAGGLE_API_TOKEN`) at build time only. A committed stratified sample under `tests/ml/fixtures/` serves CI. URL strings are data: never fetched, resolved or rendered as links. |
 | Tabular fallback | `lacg030175/UNSW-NB15` (HF, config `standard`) | CC-BY-4.0 | Used only if the Kaggle download cannot be completed. |
+| Phase B LLM-track probe corpus | `idllresearch/malicious-gpt` jailbreak prompts (GitHub, commit `25be7cc`), 200 records combined into one JSON Lines file in the gitignored cache | none declared upstream (unresolved, D008) | Phase B only (spec 11.6): probe material for garak-style probes through Pythia, never a classifier dataset, never an MRI input. Prompts are untrusted data and go only to the permission-gate-only Pythia persona. Internal research use until the authors clarify. |
 
 Rules that apply to all of them: bytes are fetched once by
 `redsim ml build-assets` and written to the blob store under
