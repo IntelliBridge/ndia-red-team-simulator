@@ -7,7 +7,8 @@ Distinct from ``redsim.registry.Registry`` (name-keyed, entry-point discovery).
 
 from __future__ import annotations
 
-from typing import Generic, Iterator, Protocol, TypeVar, runtime_checkable
+from collections.abc import Iterator
+from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -15,14 +16,11 @@ class _Identified(Protocol):
     id: str
 
 
-T = TypeVar("T", bound=_Identified)
-
-
 class DuplicateRegistration(ValueError):
     """Two items registered under the same ``id``."""
 
 
-class Registry(Generic[T]):
+class Registry[T: _Identified]:
     def __init__(self, kind: str, protocol: type | None = None) -> None:
         self._kind = kind
         self._protocol = protocol
