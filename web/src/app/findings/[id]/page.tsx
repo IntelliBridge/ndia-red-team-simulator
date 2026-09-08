@@ -146,6 +146,17 @@ export default function FindingPage({ params }: { params: { id: string } }) {
   const ml = data.schema_blob.ml;
   const role = roles[data.project_id];
   const observation = ml?.observations[0];
+  // The aggregate explanation shift, its denominator and its noise floor
+  // all live on the evasion measurement at reference_eps for this attack.
+  // Per-observation expl_shift is a single sample and is shown separately.
+  const referenceMeasurement = ml
+    ? ml.measurements.find(
+        (row: Measurement) =>
+          row.family === "evasion" &&
+          (row.attack_id == null || row.attack_id === ml.attack_id) &&
+          Number(row.params.eps) === ml.reference_eps,
+      )
+    : undefined;
   const act = async (
     name: typeof pending,
     action: () => Promise<unknown>,
@@ -303,12 +314,34 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                 {observation.center_mass_ratio_clean ?? "—"} →{" "}
                 {observation.center_mass_ratio_adv ?? "—"}
                 <br />
-                explanation shift {observation.expl_shift ?? "—"} · n=
-                {ml.measurements.find(
-                  (row: Measurement) => row.expl_shift_n != null,
-                )?.expl_shift_n ?? "not recorded"}
+                this sample: explanation shift {observation.expl_shift ?? "—"}
               </div>
             )}
+            <div className="mt-2 text-xs">
+              <span className="redsim-kicker">
+                reference ε {ml.reference_eps} aggregate
+              </span>
+              <br />
+              {referenceMeasurement ? (
+                <>
+                  mean explanation shift{" "}
+                  {referenceMeasurement.expl_shift_mean ?? "not recorded"} ·
+                  n={referenceMeasurement.expl_shift_n ?? "not recorded"}
+                  {referenceMeasurement.expl_shift_n_excluded != null
+                    ? ` · excluded ${referenceMeasurement.expl_shift_n_excluded}`
+                    : ""}
+                  <br />
+                  noise floor{" "}
+                  {referenceMeasurement.expl_shift_noise_floor ??
+                    "not recorded"}{" "}
+                  · n=
+                  {referenceMeasurement.expl_shift_noise_floor_n ??
+                    "not recorded"}
+                </>
+              ) : (
+                "Aggregate explanation shift unavailable: no evasion measurement is recorded at the reference ε."
+              )}
+            </div>
             <p className="mt-3 text-sm">
               Attribution describes model sensitivity; it is not causal proof.
             </p>

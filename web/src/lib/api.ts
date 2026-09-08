@@ -389,6 +389,9 @@ export type Measurement = {
   conf_gap_n?: number | null;
   expl_shift_mean?: number | null;
   expl_shift_n?: number | null;
+  expl_shift_n_excluded?: number | null;
+  expl_shift_noise_floor?: number | null;
+  expl_shift_noise_floor_n?: number | null;
   queries_mean?: number | null;
   linf_norm_mean?: number | null;
   l2_norm_mean?: number | null;
