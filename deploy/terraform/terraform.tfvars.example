@@ -1,0 +1,50 @@
+# Synthetic documentation values only. Replace from approved live inventory.
+# Never commit a populated tfvars file or secret values.
+account_id  = "123456789012"
+region      = "us-east-1"
+environment = "example"
+
+network = {
+  vpc_id = "vpc-00000000000000000"
+  public_subnet_ids = [
+    "subnet-00000000000000011",
+    "subnet-00000000000000012",
+  ]
+  private_subnet_ids = [
+    "subnet-00000000000000021",
+    "subnet-00000000000000022",
+  ]
+}
+
+reviewer_ipv4_cidrs = ["203.0.113.10/32"]
+
+# Empty by default. Approval and existing routing are required before use.
+pythia_ipv4_cidrs = []
+
+existing_ecr_repository_names = {
+  api    = "ndia-red-team/api"
+  worker = "ndia-red-team/worker"
+  web    = "ndia-red-team/web"
+}
+
+existing_deploy_role_name = "ndia-red-team-gha-deploy"
+
+# External Secrets Manager ARNs only. Never put secret values here.
+runtime_secret_arns         = {}
+runtime_secret_kms_key_arns = {}
+
+# Deny business S3 access until the owner confirms prefixes from actual code.
+# A future reviewed map may use only api, scans, default, and assets keys.
+# Example syntax only: artifact_prefixes_by_service = { api = ["confirmed-prefix"] }
+artifact_prefixes_by_service = {}
+
+database_name                      = "redsim"
+database_master_username           = "foundation_admin"
+database_instance_class            = "db.t4g.small"
+database_allocated_storage_gib     = 20
+database_max_allocated_storage_gib = 100
+database_multi_az                  = true
+
+redis_node_type          = "cache.t4g.small"
+redis_num_cache_clusters = 2
+redis_user_group_id      = "redsim-approved-example"
