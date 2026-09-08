@@ -1,8 +1,8 @@
 # Kubernetes (Helm)
 
-The Helm chart at `deploy/helm/aegis/` deploys the full Aegis stack to a
+The Helm chart at `deploy/helm/redsim/` deploys the full Redsim stack to a
 real Kubernetes cluster. It mirrors the service topology in
-`deploy/docker-compose.yml` — the four Aegis services (`api`, `worker`,
+`deploy/docker-compose.yml` — the four Redsim services (`api`, `worker`,
 `web`, `log-ingest`) plus the optional stateful dependencies
 (Postgres, Redis, Keycloak, MinIO) and the Kali tool shim — but adds the
 production hardening that compose doesn't carry: non-root pods, dropped
@@ -27,13 +27,13 @@ The chart lives in-repo; install it by path.
 
 ```bash
 # First install into its own namespace.
-helm install aegis deploy/helm/aegis \
-  --namespace aegis --create-namespace \
+helm install redsim deploy/helm/redsim \
+  --namespace redsim --create-namespace \
   -f prod-values.yaml
 
 # Subsequent upgrades.
-helm upgrade aegis deploy/helm/aegis \
-  --namespace aegis \
+helm upgrade redsim deploy/helm/redsim \
+  --namespace redsim \
   -f prod-values.yaml
 ```
 
@@ -67,7 +67,7 @@ global:
 
 Per-service `*.image.repository` / `*.image.tag` override individual
 images (default tags track the chart's `appVersion`). Leave
-`imageRegistry` blank for local dev image names (`aegis-api:dev`, …).
+`imageRegistry` blank for local dev image names (`redsim-api:dev`, …).
 
 ### Replicas
 
@@ -94,14 +94,14 @@ minio:    { enabled: false }
 keycloak: { enabled: true }
 
 config:
-  dbUrl: postgresql+psycopg://aegis_app:…@rds.internal:5432/aegis
+  dbUrl: postgresql+psycopg://redsim_app:…@rds.internal:5432/redsim
   brokerUrl: redis://elasticache.internal:6379/0
   s3Endpoint: https://s3.us-gov-west-1.amazonaws.com
-  oidcIssuer: https://idp.example.com/realms/aegis
+  oidcIssuer: https://idp.example.com/realms/redsim
 ```
 
 When `postgres.enabled=true` the chart still expects you to provision the
-`aegis_app` / `aegis_owner` role split and run migrations as the owner —
+`redsim_app` / `redsim_owner` role split and run migrations as the owner —
 see the [first-deploy checklist](deploy.md#first-deploy-checklist).
 
 ### Ingress
@@ -115,20 +115,20 @@ ingress:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt
   hosts:
-    - host: aegis.example.com
+    - host: redsim.example.com
       paths:
         - { path: /,    pathType: Prefix, service: web }
         - { path: /api, pathType: Prefix, service: api }
   tls:
-    - secretName: aegis-tls
-      hosts: [aegis.example.com]
+    - secretName: redsim-tls
+      hosts: [redsim.example.com]
 ```
 
 ---
 
 ## Security hardening defaults
 
-Every Aegis pod renders with a hardened security posture out of the box
+Every Redsim pod renders with a hardened security posture out of the box
 (see `templates/_helpers.tpl`):
 
 - **Non-root.** Pod `securityContext` sets `runAsNonRoot: true`,
@@ -208,7 +208,7 @@ keycloak:
     replicas. See the inline comment in `templates/keycloak.yaml` and
     `values.yaml` for the exact knobs.
 
-If you front Aegis with an external/managed IdP instead, set
+If you front Redsim with an external/managed IdP instead, set
 `keycloak.enabled=false` and point `config.oidcIssuer` /
 `config.oidcJwksUrl` at it.
 
@@ -216,7 +216,7 @@ If you front Aegis with an external/managed IdP instead, set
 
 ## CI
 
-A `helm-lint` job in `.github/workflows/aegis-ci.yml` runs `helm lint`
+A `helm-lint` job in `.github/workflows/redsim-ci.yml` runs `helm lint`
 on the chart and `helm template` twice — once with default values and
 once with `--set sandbox.enabled=true --set ingress.enabled=true` — so
 the gated RuntimeClass and Ingress paths are exercised on every PR.

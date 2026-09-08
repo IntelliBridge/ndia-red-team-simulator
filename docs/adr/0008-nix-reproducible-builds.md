@@ -1,5 +1,7 @@
 # ADR 0008 — Nix reproducible builds
 
+> Inherited from the upstream `IntelliBridge/aegis` project and kept as history. Names below are the upstream `aegis` identifiers at the time of the decision. In this fork the package is `redsim/`, environment variables are `REDSIM_*`, the console script is `redsim` and the chart is `deploy/helm/redsim`.
+
 - **Status:** Proposed (spike)
 - **Date:** 2026-06-18
 - **Scope:** the build/release pipeline (`deploy/Dockerfile.*`, the release

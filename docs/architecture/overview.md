@@ -1,6 +1,6 @@
 # Architecture overview
 
-This doc is the entry point to "how does Aegis fit together." For the
+This doc is the entry point to "how does Redsim fit together." For the
 auth flow, audit chain, observability pipeline, and HTTP API each get
 their own dedicated doc; this file is the shared mental model.
 
@@ -21,11 +21,11 @@ flowchart LR
     gh["GitHub<br/>PR webhooks"]
   end
 
-  subgraph aegis["Aegis"]
-    api["aegis-api<br/>FastAPI: RBAC, admission,<br/>audit, read/stream"]
-    worker["aegis-worker<br/>Celery: scanner and CAI<br/>execution + status"]
-    web["@aegis/web<br/>Next.js 14 dashboard"]
-    li["aegis-log-ingest<br/>OTLP/Logs to Postgres"]
+  subgraph redsim["Redsim"]
+    api["redsim-api<br/>FastAPI: RBAC, admission,<br/>audit, read/stream"]
+    worker["redsim-worker<br/>Celery: scanner and CAI<br/>execution + status"]
+    web["@redsim/web<br/>Next.js 14 dashboard"]
+    li["redsim-log-ingest<br/>OTLP/Logs to Postgres"]
   end
 
   subgraph ext["External systems"]
@@ -65,10 +65,10 @@ Three compose profiles ship out of the box:
 flowchart TB
   subgraph p_default["compose profile: default"]
     direction LR
-    api[aegis-api]
-    worker[aegis-worker]
-    web[aegis-web]
-    li[aegis-log-ingest]
+    api[redsim-api]
+    worker[redsim-worker]
+    web[redsim-web]
+    li[redsim-log-ingest]
     pg[(Postgres)]
     redis[(Redis)]
     kc[Keycloak]
@@ -91,8 +91,8 @@ flowchart TB
     col[otel-collector]
     loki[(Loki)]
     jaeger[Jaeger]
-    api2[aegis-api]
-    worker2[aegis-worker]
+    api2[redsim-api]
+    worker2[redsim-worker]
     api2 -. "OTLP" .-> col
     worker2 -. "OTLP" .-> col
     col -. "logs" .-> loki
@@ -112,11 +112,11 @@ flowchart TB
 ```
 
 - **default** — everything you need to demo the platform locally.
-  `aegis-log-ingest` runs in this profile so
+  `redsim-log-ingest` runs in this profile so
   `SELECT * FROM application_logs WHERE run_id = '…'` works even
   without Loki up.
 - **`obs`** — adds the OTel Collector + Loki + Jaeger. Logs fan out:
-  Loki for ad-hoc kibana-style queries, `aegis-log-ingest` for the
+  Loki for ad-hoc kibana-style queries, `redsim-log-ingest` for the
   Postgres mirror, Jaeger for traces. A dedicated `logs/security` pipeline
   ingests host/OS audit sources (`filelog`, `journald`, `syslog`,
   `k8sobjects`) and runs them through two redaction stages — the `redaction`
@@ -135,28 +135,28 @@ deployment runbook (env vars, key rotation, image build), see
 
 | Service             | Language | What it owns                                                   |
 |---------------------|----------|----------------------------------------------------------------|
-| `aegis-api`         | Python   | FastAPI app: RBAC, admission services, read/stream routes      |
-| `aegis-worker`      | Python   | Celery: scanner + CAI execution; persists `Finding.status` etc. |
-| `aegis-log-ingest`  | Python   | OTLP/Logs receiver → `application_logs` Postgres rows           |
-| `@aegis/web`        | TS/Next  | App-router UI; cookie-aware `api()` helper                     |
-| `@aegis/design-system` | TS    | Workspace package: shadcn base primitives in `src/primitives/` (table/card/alert/input/…) under Aegis-branded domain compositions |
+| `redsim-api`         | Python   | FastAPI app: RBAC, admission services, read/stream routes      |
+| `redsim-worker`      | Python   | Celery: scanner + CAI execution; persists `Finding.status` etc. |
+| `redsim-log-ingest`  | Python   | OTLP/Logs receiver → `application_logs` Postgres rows           |
+| `@redsim/web`        | TS/Next  | App-router UI; cookie-aware `api()` helper                     |
+| `@redsim/design-system` | TS    | Workspace package: shadcn base primitives in `src/primitives/` (table/card/alert/input/…) under Redsim-branded domain compositions |
 | `mcp-kali`          | (image)  | nmap / nikto / sqlmap host                                     |
 
-The Python services share `aegis/services/` so the same admission +
+The Python services share `redsim/services/` so the same admission +
 execution code paths run regardless of which entry point invoked them
 (CLI, API, worker).
 
-## Request flow: `aegis scan` (admission + execution)
+## Request flow: `redsim scan` (admission + execution)
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant U as Caller (CLI / UI / GitHub)
-    participant API as aegis-api
+    participant API as redsim-api
     participant Wr as PostgresAuditWriter
     participant DB as Postgres
     participant Q as Redis broker
-    participant W as aegis-worker
+    participant W as redsim-worker
     participant S as Scanner (Strix)
 
     U->>API: POST /v1/scans
@@ -246,12 +246,12 @@ Two design choices worth highlighting:
 ```mermaid
 flowchart TB
   subgraph Entry["Entry points"]
-    cli["aegis CLI"]
+    cli["redsim CLI"]
     api["/v1/* HTTP routes"]
     worker["Celery tasks"]
   end
 
-  subgraph Services["aegis/services/ — admission + execution"]
+  subgraph Services["redsim/services/ — admission + execution"]
     direction LR
     create["create_*_job<br/>admission"]
     execute["start_scan / generate_fix /<br/>verify / render_reports<br/>execution"]
@@ -263,7 +263,7 @@ flowchart TB
     chain["audit/chain.py<br/>JsonlAuditWriter,<br/>PostgresAuditWriter"]
     state["state/<br/>RunStateAPI Protocol,<br/>filesystem + postgres,<br/>open_run_state"]
     storage["storage/<br/>BlobStore Protocol,<br/>filesystem + s3,<br/>open_blob_store"]
-    schema["schema.AegisFinding"]
+    schema["schema.RedsimFinding"]
     scanners["scanners/<br/>Strix, Trivy, ..."]
     remediate["remediate/<br/>cai_runner, patch_workflow"]
   end
@@ -289,19 +289,19 @@ request-scoped; execution is the long-running scanner / CAI work.
 
 ## Execution surface: scanners, capabilities, and agents
 
-Aegis discovers two kinds of pluggable component at startup, both backed
-by the same generic `aegis.registry.Registry[T]` (see
+Redsim discovers two kinds of pluggable component at startup, both backed
+by the same generic `redsim.registry.Registry[T]` (see
 [ADR 0002](../adr/0002-registry-seam-and-runners.md) and
-[Extending Aegis](../dev/extending.md)): **scanner adapters** wrap a
-security tool and emit `AegisFinding`s; **agent adapters** wrap a CAI
+[Extending Redsim](../dev/extending.md)): **scanner adapters** wrap a
+security tool and emit `RedsimFinding`s; **agent adapters** wrap a CAI
 agent. First-party adapters register eagerly at import; third-party
-adapters register through the entry-point groups `aegis.scanners` /
-`aegis.agents`, discovered only when `AEGIS_PLUGINS=1` (off by default,
+adapters register through the entry-point groups `redsim.scanners` /
+`redsim.agents`, discovered only when `REDSIM_PLUGINS=1` (off by default,
 so the offline test path stays deterministic). This seam is the
 **scanner-adapter marketplace**: discovered plugins are validated against
 their Protocol (a bad one is rejected, never fatal) and gated by the
-`AEGIS_PLUGINS_ALLOW` distribution allowlist; `aegis plugins list` shows
-what loaded. See [Extending Aegis](../dev/extending.md) §
+`REDSIM_PLUGINS_ALLOW` distribution allowlist; `redsim plugins list` shows
+what loaded. See [Extending Redsim](../dev/extending.md) §
 "Third-party plugins (marketplace)".
 
 ### Scanner adapters (14)
@@ -349,7 +349,7 @@ without patching core. Promoting one to first-party is a one-line append
 
 Agent adapters dispatch by name. Every registered agent is **wired**
 (executable, not a stub), spanning all six `Domain` values. The roster comes
-from three sources, all in `aegis/agents/cai/`:
+from three sources, all in `redsim/agents/cai/`:
 
 - **The original 16 wrapped CAI agents** (`builtins.py`, `by_name=False`) —
   each resolves off a typed `CAIBundle` field.
@@ -360,7 +360,7 @@ from three sources, all in `aegis/agents/cai/`:
   `app_logic_mapper`, `dns_smtp_agent`, `flag_discriminator`,
   `prompt_injection_detector`, `thought_agent`, `usecase_agent`,
   `memory_query`.
-- **12 Aegis-native authored specialists** (`authored.py`) — where the
+- **12 Redsim-native authored specialists** (`authored.py`) — where the
   builtins *wrap* agents CAI ships, these *compose* brand-new specialists
   from the vendored CAI tool catalog: each is a substantive scoped system
   prompt plus a real toolbelt drawn from `cai.tools.*` (and the Camoufox
@@ -422,19 +422,19 @@ roles).
 
 ### The unified tool catalog (42 tools)
 
-`aegis/tools/catalog.py` (`TOOL_CATALOG` / `list_tools()`) is the single,
+`redsim/tools/catalog.py` (`TOOL_CATALOG` / `list_tools()`) is the single,
 honest registry of every tool the platform can expose to agents — **42
 today**, drawn from four sources:
 
 | Source | Count | What it is |
 |--------|-------|------------|
-| `kali` | 10 | The mcp-kali allowlist (above), categorized; effect comes authoritatively from `aegis.effects.kali_tool_effect`. |
+| `kali` | 10 | The mcp-kali allowlist (above), categorized; effect comes authoritatively from `redsim.effects.kali_tool_effect`. |
 | `scanner` | 14 | The registered scanner adapters from `list_scanners()`. `read` except the DAST adapters (`zap`/`nuclei`/`strix`), which actively probe → `active`. |
 | `cai` | 17 | The real `@function_tool`s vendored under `project_repos/cai/src/cai/tools/` (recon/web/network/crypto/misc). Catalog names are namespaced `cai_*` to stay unique alongside the bare Kali `nmap` etc.; the bare CAI name is recorded in `CAI_TOOL_NAMES` for toolbelt wiring. |
 | `osint` | 1 | The Camoufox OSINT search tool (below). |
 
 Each tool carries an **effect** (`read` / `active` / `external`) that is
-authoritative in the catalog: `aegis.effects.tool_effect()` consults it
+authoritative in the catalog: `redsim.effects.tool_effect()` consults it
 (falling back to the Kali map), so the catalog and the human gate never
 drift. Effects are classified conservatively — enumeration/analysis is
 `read`, command execution or active probing is `active`, and anything that
@@ -445,7 +445,7 @@ independent of whether the optional CAI / Camoufox stacks are installed.
 
 ### Camoufox OSINT search (web search, `external`)
 
-`aegis/tools/osint_search.py` provides live web OSINT **instead of** a
+`redsim/tools/osint_search.py` provides live web OSINT **instead of** a
 Google / SerpAPI search tool. It drives **DuckDuckGo's HTML-only endpoint**
 through **Camoufox** — a patched, anti-fingerprint Firefox — and extracts
 article text with trafilatura. DuckDuckGo + Camoufox is chosen over a Google
@@ -482,7 +482,7 @@ slots into without diverging from the architecture (most recently the
 | Scanners | 8 capabilities | 14 adapters | `scan_start` Celery task | one adapter per job via `dispatch(name \| capability)`; defaults to `strix` |
 | Agents | 6 `Domain`s | 41 adapters (36 agents + 5 patterns) | `agent_run` Celery task | `POST /v1/agents/{name}/run` → admission → task → `dispatch(name)`; remediation may still call `cai.Runner` directly for `codeagent` / `blueteam_agent` |
 | Kali tools | 10 named tools | 10 (over MCP) | `run_kali_tool` service | per-tool REST call, audited at the service boundary |
-| Tool catalog | 4 sources (kali/scanner/cai/osint), 3 effects | 42 tools | agent toolbelts + `tool_effect()` gate | `TOOL_CATALOG` / `list_tools()`; effect is authoritative here and consulted by `aegis.effects.tool_effect` |
+| Tool catalog | 4 sources (kali/scanner/cai/osint), 3 effects | 42 tools | agent toolbelts + `tool_effect()` gate | `TOOL_CATALOG` / `list_tools()`; effect is authoritative here and consulted by `redsim.effects.tool_effect` |
 
 One interconnection fact the matrix still makes explicit, tracked as a
 gap rather than intent: scanners run **one adapter per job** (there is
@@ -495,9 +495,9 @@ and calls `dispatch(name)`, so every registered adapter is reachable.
 
 ### The human-in-the-loop gate (effect classes)
 
-Aegis's purpose is the full loop — **scan → pentest → remediate** — with
+Redsim's purpose is the full loop — **scan → pentest → remediate** — with
 a human in the loop on anything that changes the world. Since v0.8.0 that
-gate is **one** abstraction, the *effect class* (`aegis/effects.py`,
+gate is **one** abstraction, the *effect class* (`redsim/effects.py`,
 [ADR 0004](../adr/0004-unified-effect-class-gate.md)), applied at every
 seam above rather than re-invented per adapter:
 
@@ -534,7 +534,7 @@ engine open the **human-reviewed PR itself** (the PR review *is* the gate).
 
 The effect-class gate decides *whether* a model-driven action runs; the LLM
 guardrails govern *what crosses the LLM trust boundary* in either direction.
-Two layers live in `aegis/llm/guardrails.py`, applied at the points where
+Two layers live in `redsim/llm/guardrails.py`, applied at the points where
 untrusted text reaches a model and where model output leaves the platform.
 Both are config-gated and fail **safe** (default on; on any guardrail error
 the input is treated as unsafe), and every log line / raised error is
@@ -542,7 +542,7 @@ secret-free — a block never echoes the offending text or a matched secret.
 
 | Layer | What it does | Where |
 |-------|--------------|-------|
-| **Secret scrubbing** | Runs generated diffs/patches and LLM outputs through the audit redactor's secret/token regex (`aegis/audit/redact.py`), replacing matches with `***REDACTED***` | the canonical diff in `extract_unified_diff` (so the persisted `.diff`, PR body, and remediation log all inherit it) + the remediation/agent output chokepoints |
+| **Secret scrubbing** | Runs generated diffs/patches and LLM outputs through the audit redactor's secret/token regex (`redsim/audit/redact.py`), replacing matches with `***REDACTED***` | the canonical diff in `extract_unified_diff` (so the persisted `.diff`, PR body, and remediation log all inherit it) + the remediation/agent output chokepoints |
 | **Prompt-injection detection** | Scores untrusted input for injection — tiered risk (`none`/`low`/`medium`/`high`) with categories (`instruction_override`, `role_switch`, `exfiltration`, …); at/above the block threshold the input is rejected | finding title/description/remediation-steps/PoC/code-snippets + agent prompts, scored **before** the model call |
 
 **Trust boundaries / hook points.** Scanner-derived findings, PR diffs, and
@@ -550,12 +550,12 @@ caller prompts are all *untrusted input*; model-authored diffs and responses
 are *untrusted output*. The guardrails are wired at three chokepoints so a
 new caller inherits them for free:
 
-- **Remediation LLM boundary** — `aegis/remediate/cai_runner.py` (input
+- **Remediation LLM boundary** — `redsim/remediate/cai_runner.py` (input
   detection + output filter on the fix path).
-- **Diff extraction** — `aegis/remediate/patch_workflow.py`
+- **Diff extraction** — `redsim/remediate/patch_workflow.py`
   (`extract_unified_diff` scrubs the canonical diff once, upstream of every
   consumer).
-- **Agent API boundary** — `aegis/agents/cai/builtins.py` /
+- **Agent API boundary** — `redsim/agents/cai/builtins.py` /
   `patterns.py` (prompt detection before dispatch).
 
 A blocked input surfaces as a clean, secret-free error: a **failed
@@ -567,11 +567,11 @@ whole layer off for debugging only.
 
 | Var | Default | Effect |
 |-----|---------|--------|
-| `AEGIS_LLM_GUARDRAILS` | on | Master switch for both layers |
-| `AEGIS_LLM_SCRUB_DIFF` | on | Secret-scrub generated diffs/patches |
-| `AEGIS_LLM_DETECT_INJECTION` | on | Prompt-injection detection on untrusted input |
-| `AEGIS_LLM_FILTER_OUTPUT` | on | Secret-scrub LLM output |
-| `AEGIS_LLM_INJECTION_BLOCK_RISK` | `high` | Block threshold; `off` = detect-and-log only |
+| `REDSIM_LLM_GUARDRAILS` | on | Master switch for both layers |
+| `REDSIM_LLM_SCRUB_DIFF` | on | Secret-scrub generated diffs/patches |
+| `REDSIM_LLM_DETECT_INJECTION` | on | Prompt-injection detection on untrusted input |
+| `REDSIM_LLM_FILTER_OUTPUT` | on | Secret-scrub LLM output |
+| `REDSIM_LLM_INJECTION_BLOCK_RISK` | `high` | Block threshold; `off` = detect-and-log only |
 
 ## Release map
 
@@ -625,7 +625,7 @@ flowchart TD
 
     subgraph v050["v0.5.0 — Registry seam hardening"]
       r1["generic Registry[T]"]
-      r2["entry-point plugin discovery<br/>(AEGIS_PLUGINS=1)"]
+      r2["entry-point plugin discovery<br/>(REDSIM_PLUGINS=1)"]
       r3["KNOWN_CAPABILITIES open vocab"]
       r4["wired_in_phase_3 → wired"]
       r5["adapters/ → runners/"]

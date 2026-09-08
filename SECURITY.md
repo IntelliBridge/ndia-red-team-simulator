@@ -30,18 +30,18 @@ reporters who request it.
 
 ### Auth + authorization
 
-- Browser sessions: NextAuth + Keycloak code flow; the Aegis-signed
-  `aegis_api_session` cookie (RS256) is the only token FastAPI
+- Browser sessions: NextAuth + Keycloak code flow; the Redsim-signed
+  `redsim_api_session` cookie (RS256) is the only token FastAPI
   trusts on the cookie path.
 - CLI / CI: bearer tokens only; bearer wins when both are present.
 - Worker → API: **only** time-bound, versioned tokens with key-rotation
   overlap. **Breaking change:** the legacy non-expiring `worker:<hex>`
   token has been **removed** — it is no longer accepted, and
-  `AEGIS_WORKER_SIGNING_KEY` is now **mandatory** for worker auth (a
+  `REDSIM_WORKER_SIGNING_KEY` is now **mandatory** for worker auth (a
   worker can't authenticate without it).
-- Every protected route runs `aegis.api.policy.check` server-side;
+- Every protected route runs `redsim.api.policy.check` server-side;
   the web `<RoleGated>` component is **UX only**.
-- The role-gate decision is **pluggable** (`AEGIS_POLICY_ENGINE`):
+- The role-gate decision is **pluggable** (`REDSIM_POLICY_ENGINE`):
   the default `static` engine is the built-in role-rank table, while
   `opa` / `cedar` delegate to an external policy service. External
   engines **fail closed** — any error or timeout denies.
@@ -57,15 +57,15 @@ Rotated or revoked keys are picked up without a forced restart or a
 re-create, and rotations get a graceful overlap window:
 
 - **IdP keys (JWKS).** The Keycloak JWKS is now a **time-boxed cache**
-  (`AEGIS_API_JWKS_CACHE_TTL_SECONDS`, default `300`) rather than pinned
+  (`REDSIM_API_JWKS_CACHE_TTL_SECONDS`, default `300`) rather than pinned
   for the process lifetime, so a rotated or revoked IdP signing key is
   picked up after at most one TTL with no restart.
 - **API session cookie.** During a cookie-signing-key rotation the API
   accepts a **previous** public key
-  (`AEGIS_API_SESSION_PUBLIC_KEY_PREVIOUS`) alongside the current one, so
+  (`REDSIM_API_SESSION_PUBLIC_KEY_PREVIOUS`) alongside the current one, so
   in-flight sessions keep validating across the cutover.
 - **DAST auth-profile secrets.** The Fernet key supports **MultiFernet**
-  rotation (`AEGIS_AUTH_PROFILES_KEY_PREVIOUS`): the previous key still
+  rotation (`REDSIM_AUTH_PROFILES_KEY_PREVIOUS`): the previous key still
   decrypts existing profiles while new writes use the current key, so
   rotation no longer requires re-creating every profile.
 
@@ -73,11 +73,11 @@ See [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Rotation runbook".
 
 ### CSRF, CORS, WebSocket
 
-- Cookie-authenticated mutations require an `X-Aegis-CSRF` header
-  matching the `aegis_csrf` cookie (double-submit pattern).
+- Cookie-authenticated mutations require an `X-Redsim-CSRF` header
+  matching the `redsim_csrf` cookie (double-submit pattern).
   Bearer-only callers are exempt.
 - CORS exposes `allow_credentials=True` only against an explicit
-  origin list (`AEGIS_CORS_ORIGINS` + `AEGIS_WEB_ORIGIN`); methods +
+  origin list (`REDSIM_CORS_ORIGINS` + `REDSIM_WEB_ORIGIN`); methods +
   headers are enumerated.
 - WebSocket upgrades validate `Origin` and resolve auth from
   subprotocol → header → cookie; policy
@@ -96,7 +96,7 @@ See [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Rotation runbook".
 
 ### Audit chain
 
-- Every active operation runs through `aegis.safety.authorize` and
+- Every active operation runs through `redsim.safety.authorize` and
   lands a hash-chained event via the configured `AuditWriter`
   (`PostgresAuditWriter` in api/worker mode; `JsonlAuditWriter`
   offline; `InMemoryAuditWriter` for tests).
@@ -107,13 +107,13 @@ See [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Rotation runbook".
 - **Append-only at the database** (migration `0004`): a row-immutability
   trigger `RAISE EXCEPTION`s on `UPDATE`/`DELETE`/`TRUNCATE` of
   `audit_events` for everyone (owner + superuser included), so the chain
-  can't be re-signed by editing rows. The runtime `aegis_app` role is
+  can't be re-signed by editing rows. The runtime `redsim_app` role is
   granted only `INSERT, SELECT` on it; DDL (dropping the trigger) needs the
-  separate `aegis_owner` role, and `pgaudit` logs such changes out-of-band.
-- **WORM / Object-Lock archival** (`aegis/storage/worm.py`): chains export
+  separate `redsim_owner` role, and `pgaudit` logs such changes out-of-band.
+- **WORM / Object-Lock archival** (`redsim/storage/worm.py`): chains export
   off-DB to an S3 / MinIO bucket with **Object Lock** (`COMPLIANCE` mode,
   default 7-year retention) — a daily `celery beat` task (self-gated on
-  `AEGIS_WORM_EXPORT`) plus on-demand `aegis audit export`. The sealed copy
+  `REDSIM_WORM_EXPORT`) plus on-demand `redsim audit export`. The sealed copy
   can't be overwritten or deleted before retention expires, even by an
   attacker who owns the database or the bucket credentials, so the chain is
   tamper-*resistant* off-DB and not merely tamper-*evident*. Re-verify by
@@ -147,7 +147,7 @@ See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
   `--i-understand-this-target-is-authorized` flag (CLI) /
   `override_authorized=true` (API). Either path also emits an
   audit event with `override=true` so it shows up forensically.
-- CIDR ranges supported (`aegis.safety.is_target_allowed`).
+- CIDR ranges supported (`redsim.safety.is_target_allowed`).
 
 ### Target ownership verification
 
@@ -163,7 +163,7 @@ See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
 
 ### Deployment hardening (Helm / k8s)
 
-- The Helm chart (`deploy/helm/aegis/`) renders every Aegis pod
+- The Helm chart (`deploy/helm/redsim/`) renders every Redsim pod
   hardened by default: non-root `securityContext`
   (`runAsNonRoot`, uid/gid 1000), all Linux capabilities dropped,
   `allowPrivilegeEscalation: false`, and `seccompProfile:
@@ -177,15 +177,15 @@ See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
 
 ### Air-gapped installs
 
-- `AEGIS_OFFLINE_VENDOR_HOST` names the internal package / artifact
-  mirror for air-gapped installs and surfaces in `aegis doctor` and the
+- `REDSIM_OFFLINE_VENDOR_HOST` names the internal package / artifact
+  mirror for air-gapped installs and surfaces in `redsim doctor` and the
   evidence pack. (The vendored pentest submodules and the URL-rewrite
   helper that used this setting were removed with the pentest domain.)
   See [`docs/ops/deploy.md`](docs/ops/deploy.md#air-gapped-offline-vendor-mirror).
 
 ### Compliance evidence
 
-- `aegis evidence-pack --out DIR` produces a self-contained,
+- `redsim evidence-pack --out DIR` produces a self-contained,
   **secret-free** bundle for auditors: exported audit chains + their
   `verify_chain` integrity verdicts, a SOC 2 / ISO 27001 / FedRAMP
   controls crosswalk (partial coverage flagged honestly), a system
@@ -195,14 +195,14 @@ See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
 ### LLM guardrails
 
 Two fail-safe layers sit at every point where untrusted text reaches an
-LLM or where model output leaves the platform (`aegis/llm/guardrails.py`).
+LLM or where model output leaves the platform (`redsim/llm/guardrails.py`).
 Both are config-gated and default **on**; logs and raised exceptions are
 secret-free (a blocked input surfaces a clean error, never the offending
 text or any matched secret).
 
 - **Diff / output secret scrubbing.** Unified diffs (`extract_unified_diff`)
   and LLM outputs are passed through the same secret/token regex set used
-  by the audit redactor (`aegis/audit/redact.py`), with matches replaced by
+  by the audit redactor (`redsim/audit/redact.py`), with matches replaced by
   `***REDACTED***`, so every downstream consumer of a scrubbed text
   inherits the scrub.
 - **Prompt-injection detection.** Untrusted finding fields (title,
@@ -210,17 +210,17 @@ text or any matched secret).
   are scored for injection before they reach the model: a tiered risk
   (`none` / `low` / `medium` / `high`) with categories
   (`instruction_override`, `role_switch`, `exfiltration`, …). At or above a
-  configurable risk threshold (`AEGIS_LLM_INJECTION_BLOCK_RISK`, default
+  configurable risk threshold (`REDSIM_LLM_INJECTION_BLOCK_RISK`, default
   `high`) the input is **blocked** with a clean error. `off` detects + logs
   only.
-- The guardrail surface is `aegis/llm/guardrails.py` alone in this fork.
+- The guardrail surface is `redsim/llm/guardrails.py` alone in this fork.
   The pentest remediation / agent chokepoints that wired it were removed
   with the pentest domain; the adversarial-ML explain / recommend stages
-  (`aegis/ml/`) call the same functions at their LLM boundary.
-- Config (env vars): `AEGIS_LLM_GUARDRAILS` (master, default on),
-  `AEGIS_LLM_SCRUB_DIFF`, `AEGIS_LLM_DETECT_INJECTION`,
-  `AEGIS_LLM_FILTER_OUTPUT` (all default on), and
-  `AEGIS_LLM_INJECTION_BLOCK_RISK` (default `high`; `off` = detect-and-log).
+  (`redsim/ml/`) call the same functions at their LLM boundary.
+- Config (env vars): `REDSIM_LLM_GUARDRAILS` (master, default on),
+  `REDSIM_LLM_SCRUB_DIFF`, `REDSIM_LLM_DETECT_INJECTION`,
+  `REDSIM_LLM_FILTER_OUTPUT` (all default on), and
+  `REDSIM_LLM_INJECTION_BLOCK_RISK` (default `high`; `off` = detect-and-log).
 
 See [`docs/architecture/overview.md`](docs/architecture/overview.md)
 § "LLM guardrails" and [`docs/ops/deploy.md`](docs/ops/deploy.md) for the
@@ -228,7 +228,7 @@ env knobs.
 
 ### LLM budget (fail-closed)
 
-Budget enforcement is now **fail-closed** (`AEGIS_LLM_BUDGET_STRICT`,
+Budget enforcement is now **fail-closed** (`REDSIM_LLM_BUDGET_STRICT`,
 default **on** in prod). A DB-backed run that reaches an LLM call
 **without** a budget checker is **denied** rather than billed silently, so
 a missing or misconfigured budget hook can no longer let an ungoverned run
@@ -237,24 +237,24 @@ spend. Set the knob off only in dev where cost isn't a concern.
 ### Secrets handling
 
 - Four distinct secret materials:
-  - `AEGIS_API_SESSION_PRIVATE_KEY` (NextAuth side, RS256); the API
-    verifies with `AEGIS_API_SESSION_PUBLIC_KEY` and accepts
-    `AEGIS_API_SESSION_PUBLIC_KEY_PREVIOUS` during rotation.
-  - `AEGIS_WORKER_SIGNING_KEY` (shared HMAC, rotation overlap) — now
+  - `REDSIM_API_SESSION_PRIVATE_KEY` (NextAuth side, RS256); the API
+    verifies with `REDSIM_API_SESSION_PUBLIC_KEY` and accepts
+    `REDSIM_API_SESSION_PUBLIC_KEY_PREVIOUS` during rotation.
+  - `REDSIM_WORKER_SIGNING_KEY` (shared HMAC, rotation overlap) — now
     **mandatory** for worker auth (the legacy static token is gone).
-  - `AEGIS_GITHUB_PRIVATE_KEY` (GitHub App).
-  - `AEGIS_AUTH_PROFILES_KEY` (Fernet, api + worker) — encrypts DAST
-    auth-profile secrets at rest; `AEGIS_AUTH_PROFILES_KEY_PREVIOUS`
+  - `REDSIM_GITHUB_PRIVATE_KEY` (GitHub App).
+  - `REDSIM_AUTH_PROFILES_KEY` (Fernet, api + worker) — encrypts DAST
+    auth-profile secrets at rest; `REDSIM_AUTH_PROFILES_KEY_PREVIOUS`
     enables MultiFernet rotation.
 - DAST auth-profile secrets (`auth_profiles.secret_ciphertext`) are
   Fernet-encrypted before any row or audit event is written, never
   returned by any endpoint, and redacted (`***`) from recorded command
   strings; a missing key fails closed. The key supports **MultiFernet**
-  rotation via `AEGIS_AUTH_PROFILES_KEY_PREVIOUS` (the previous key still
+  rotation via `REDSIM_AUTH_PROFILES_KEY_PREVIOUS` (the previous key still
   decrypts existing profiles during the overlap), so rotation no longer
   requires re-creating profiles — see
   [`docs/ops/authenticated-dast.md`](docs/ops/authenticated-dast.md).
-- `NEXTAUTH_SECRET` is opaque to Aegis (NextAuth's own).
+- `NEXTAUTH_SECRET` is opaque to Redsim (NextAuth's own).
 - Generated **diffs / patches and LLM I/O** are secret-scrubbed before
   they are persisted, surfaced in a PR, or logged — see § "LLM guardrails"
   above. Secrets that leak into a model-authored diff or a model response
@@ -264,8 +264,8 @@ spend. Set the knob off only in dev where cost isn't a concern.
   [`docs/ops/authenticated-dast.md`](docs/ops/authenticated-dast.md)
   § "Key rotation".
 - Integration secrets — the ticket-provider credentials
-  (`AEGIS_JIRA_*` / `AEGIS_SERVICENOW_*` / `AEGIS_LINEAR_*`) and the
-  target-verification salt `AEGIS_VERIFY_SECRET` — are env-configured
+  (`REDSIM_JIRA_*` / `REDSIM_SERVICENOW_*` / `REDSIM_LINEAR_*`) and the
+  target-verification salt `REDSIM_VERIFY_SECRET` — are env-configured
   only. They are never accepted in an API body, persisted to a row, or
   written to an audit detail; provider HTTP errors are wrapped to carry
   only the provider name + status code, never the body or auth header.
@@ -273,11 +273,11 @@ spend. Set the knob off only in dev where cost isn't a concern.
 ### Supply-chain integrity
 
 - **Signed third-party plugins.** Marketplace plugin discovery supports
-  opt-in **Ed25519** signature enforcement (`AEGIS_PLUGINS_REQUIRE_SIGNATURE`
-  + `AEGIS_PLUGINS_TRUSTED_KEYS`). The signature binds to the SHA-256 of the
+  opt-in **Ed25519** signature enforcement (`REDSIM_PLUGINS_REQUIRE_SIGNATURE`
+  + `REDSIM_PLUGINS_TRUSTED_KEYS`). The signature binds to the SHA-256 of the
   factory module's source — it authorises only the code that runs. When
   enforcement is on, an unsigned or invalid plugin is **rejected** before
-  registration; `aegis plugins sign` produces the detached signature.
+  registration; `redsim plugins sign` produces the detached signature.
 - **Signed + attested release images.** Release builds (on `v*` tags) push
   the four service images to GHCR and **keyless cosign-sign** each by digest
   (GitHub OIDC, no stored keys), attaching a **CycloneDX SBOM** (Syft) and
@@ -293,7 +293,7 @@ spend. Set the knob off only in dev where cost isn't a concern.
 ### Plugin sandbox
 
 Third-party plugin scanners run **out-of-process by default**
-(`AEGIS_PLUGINS_SANDBOX=1`). The child process gets a **minimal allowlisted
+(`REDSIM_PLUGINS_SANDBOX=1`). The child process gets a **minimal allowlisted
 environment** — the parent's secrets are **never** passed to plugin code —
 plus **POSIX rlimits** (CPU, address space, file size, and `RLIMIT_NPROC`),
 its **own process group** with a **group-kill on timeout** (so a fork-bomb
@@ -313,7 +313,7 @@ There is also a **pre-existing load-then-verify limitation**: the plugin
 signature is verified **after** the factory module is imported, so importing
 a malicious module already executes its top-level code before the signature
 gate runs. The sandbox does not close that gap. **Only run vetted, signed
-plugins**, and keep `AEGIS_PLUGINS_ALLOW` / signature enforcement on. See
+plugins**, and keep `REDSIM_PLUGINS_ALLOW` / signature enforcement on. See
 [`docs/ops/deploy.md`](docs/ops/deploy.md) § "Plugin sandbox" for the env
 knobs.
 
@@ -324,7 +324,7 @@ against drift. A **`BEFORE UPDATE` trigger** (migration `0009`) **rejects**
 any change to `org_id` on the eight org-scoped tables, so a row can't be
 silently re-homed into another tenant by an `UPDATE`. An hourly
 `verify_tenant_integrity` reconciliation task and an
-`aegis tenants verify` CLI command **detect** drift (a row whose `org_id`
+`redsim tenants verify` CLI command **detect** drift (a row whose `org_id`
 disagrees with its parent project's) out of band, so a gap is caught even
 if a future code path bypasses the trigger.
 
@@ -366,7 +366,7 @@ prod. See [`docs/ops/kubernetes.md`](docs/ops/kubernetes.md).
 
 ## Out of scope
 
-- Findings produced **by** Aegis against deliberately-vulnerable or
+- Findings produced **by** Redsim against deliberately-vulnerable or
   deliberately-weak targets (test models, reference datasets). Those are
   by design.
 - Vulnerabilities in bundled upstream components. Report those to the
@@ -377,8 +377,8 @@ prod. See [`docs/ops/kubernetes.md`](docs/ops/kubernetes.md).
   malicious finding fixture (the CLI is single-process; trust the
   fixture source).
 - Cost / budget exhaustion via LLM-routed stages — now mitigated by
-  fail-closed budget enforcement (`AEGIS_LLM_BUDGET_STRICT`; see § "LLM
-  budget" above and the `BudgetChecker` hook in `aegis/llm/router.py`).
+  fail-closed budget enforcement (`REDSIM_LLM_BUDGET_STRICT`; see § "LLM
+  budget" above and the `BudgetChecker` hook in `redsim/llm/router.py`).
 
 ## Known gaps (tracked)
 

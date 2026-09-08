@@ -1,10 +1,10 @@
-# Extending Aegis
+# Extending Redsim
 
-Aegis discovers two kinds of pluggable component at startup: **scanner
-adapters** (wrap a security tool, emit `AegisFinding`s) and **agent
+Redsim discovers two kinds of pluggable component at startup: **scanner
+adapters** (wrap a security tool, emit `RedsimFinding`s) and **agent
 adapters** (wrap a CAI agent). Both are kept in a generic
-`name -> item` table — `aegis.registry.Registry[T]` — that backs the
-scanner registry ([`aegis/scanners/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/registry.py))
+`name -> item` table — `redsim.registry.Registry[T]` — that backs the
+scanner registry ([`redsim/scanners/registry.py`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/redsim/scanners/registry.py))
 and the agent registry ([`aegis/agents/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/registry.py)).
 
 This page covers how to add your own.
@@ -13,17 +13,17 @@ This page covers how to add your own.
 
 | Path | How it registers | When to use |
 |------|------------------|-------------|
-| **First-party** | Eager `import` in the subsystem `__init__.py`, which runs `register(...)` at module import. Fast, explicit, always present. | Adapters that ship inside the `aegis` package. |
-| **Third-party** | A Python **entry point** that Aegis discovers at startup — opt-in via `AEGIS_PLUGINS=1`. | Adapters shipped from a separate downstream package, with no edit to `aegis`. |
+| **First-party** | Eager `import` in the subsystem `__init__.py`, which runs `register(...)` at module import. Fast, explicit, always present. | Adapters that ship inside the `redsim` package. |
+| **Third-party** | A Python **entry point** that Redsim discovers at startup — opt-in via `REDSIM_PLUGINS=1`. | Adapters shipped from a separate downstream package, with no edit to `redsim`. |
 
 ### First-party (in-tree)
 
 The built-ins are imported eagerly so callers never have to import each
 adapter module by hand. For example,
-[`aegis/scanners/__init__.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/__init__.py)
+[`redsim/scanners/__init__.py`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/redsim/scanners/__init__.py)
 imports `strix_adapter`, `trivy_adapter`, and the rest; each module ends
 with a top-level `register(MyAdapter())`. Adding a first-party adapter is
-two steps: write `aegis/scanners/<tool>_adapter.py` ending in
+two steps: write `redsim/scanners/<tool>_adapter.py` ending in
 `register(...)`, then add it to the import list in `__init__.py`.
 
 ### Third-party (entry points)
@@ -42,7 +42,7 @@ surfaces later at dispatch, not at load.
 
 ### `ScannerAdapter`
 
-Defined in [`aegis/scanners/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/registry.py):
+Defined in [`redsim/scanners/registry.py`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/redsim/scanners/registry.py):
 
 | Member | Type | Purpose |
 |--------|------|---------|
@@ -66,7 +66,7 @@ is the reference implementation.
 Most adapters wrap a CLI tool, and the wrapping boilerplate (start the
 timer, `subprocess.run`, the `TimeoutExpired` / `FileNotFoundError`
 envelope, persist the raw payload, assemble the `ScanResult`) is
-identical from adapter to adapter. [`aegis/scanners/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/registry.py)
+identical from adapter to adapter. [`redsim/scanners/registry.py`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/redsim/scanners/registry.py)
 provides three reuse seams so a new adapter supplies only what genuinely
 varies. Reach for them in this order — write a fully custom `scan()`
 only when none fits.
@@ -80,8 +80,8 @@ parsed**:
 
 | Helper | Tool output shape | Parse callback | Malformed input |
 |--------|-------------------|----------------|-----------------|
-| `run_cli_scan(...)` | A **single JSON document** on stdout (one object/array for the whole scan). | `parse(proc, run_id) -> list[AegisFinding]` — gets the whole `CompletedProcess`. | May raise `json.JSONDecodeError`; with `parse_error_label` set that becomes a `"failed to parse <label>"` error result. |
-| `run_cli_scan_jsonl(...)` | **Line-oriented JSONL / NDJSON** — one JSON object per line. | `convert(record, run_id) -> AegisFinding \| None` — invoked once per parsed line. | A line that isn't valid JSON is **silently skipped**; the scan never fails on a bad line, so there is no parse-error envelope. |
+| `run_cli_scan(...)` | A **single JSON document** on stdout (one object/array for the whole scan). | `parse(proc, run_id) -> list[RedsimFinding]` — gets the whole `CompletedProcess`. | May raise `json.JSONDecodeError`; with `parse_error_label` set that becomes a `"failed to parse <label>"` error result. |
+| `run_cli_scan_jsonl(...)` | **Line-oriented JSONL / NDJSON** — one JSON object per line. | `convert(record, run_id) -> RedsimFinding \| None` — invoked once per parsed line. | A line that isn't valid JSON is **silently skipped**; the scan never fails on a bad line, so there is no parse-error envelope. |
 
 The JSONL helper's per-line `convert` callback returning `None` **filters
 that line out**. That is how `bumblebee` keeps only its finding records:
@@ -102,7 +102,7 @@ matching `adapter_version()` / `health_check()` boilerplate.
 ### Runner-backed adapters: `ScanResult.from_runner(...)`
 
 `strix` and `trivy` don't shell out directly from the adapter — they
-delegate to a subprocess **runner** in `aegis/runners/` (see below) that
+delegate to a subprocess **runner** in `redsim/runners/` (see below) that
 returns a `*RunResult`. Rather than hand-roll the re-wrap, map that
 result into a `ScanResult` with the classmethod:
 
@@ -140,7 +140,7 @@ helpers, and its module docstring spells out why:
   it runs as `pnpm deepsec <subcmd>` from `config.deepsec_path`. That
   argv-with-cwd shape is something `cli_version` / `which_available`
   can't express, so `adapter_version()` and `health_check()` stay custom.
-- **`_convert(record, run_id) -> AegisFinding | None` verdict filtering.**
+- **`_convert(record, run_id) -> RedsimFinding | None` verdict filtering.**
   Like the JSONL `convert` callback, `_convert` returns `None` to drop a
   record — here for non-actionable revalidation verdicts
   (`false-positive` / `fixed` / `duplicate`) — but it's wired into the
@@ -151,8 +151,8 @@ helpers, and its module docstring spells out why:
 ## Findings are validated at construction (Pydantic v2)
 
 As of the architecture-hardening pass,
-[`aegis/schema.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/schema.py)'s
-`AegisFinding` and `CodeLocation` are **Pydantic v2 `BaseModel`s**, not
+[`redsim/schema.py`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/redsim/schema.py)'s
+`RedsimFinding` and `CodeLocation` are **Pydantic v2 `BaseModel`s**, not
 dataclasses. The fields `severity`, `finding_type`, `status`, and
 `confidence` are typed as `Literal` vocabularies, so construction is
 validated at runtime: an adapter that emits an out-of-vocabulary
@@ -189,7 +189,7 @@ Defined in [`aegis/agents/registry.py`](https://github.com/IntelliBridge/aegis/b
 
 Each agent also declares an **effect** (`read` / `active` / `external`) — see
 "The tool catalog and effect classification" below — which drives the unified
-human-in-the-loop gate in `aegis/effects.py`. Effect is a per-agent property,
+human-in-the-loop gate in `redsim/effects.py`. Effect is a per-agent property,
 not a function of domain.
 
 ## Authoring a native specialist agent
@@ -203,7 +203,7 @@ and `register()`ed at import. Adding one is a single list entry:
 
 ```python
 AuthoredSpec(
-    name="my_specialist",          # Aegis registry key (dispatch by name)
+    name="my_specialist",          # Redsim registry key (dispatch by name)
     cai_name="MySpecialist",       # the CAI Agent's own name
     domain="recon",                # one of the six Domain values
     effect="external",             # read / active / external — drives the gate
@@ -256,7 +256,7 @@ Camoufox web search). The module is import-light, so it lists what the platform
 installed.
 
 Each `ToolSpec` carries an **effect** that is **authoritative in the catalog**:
-`aegis.effects.tool_effect()` consults it (falling back to the Kali map), so
+`redsim.effects.tool_effect()` consults it (falling back to the Kali map), so
 the catalog and the gate never drift. Classify conservatively:
 
 | Effect | Use for | Gate |
@@ -272,7 +272,7 @@ name, category, effect, description); the bare name is recorded in
 
 ## Capabilities are an open vocabulary
 
-`aegis/scanners/registry.py` defines the known capability set:
+`redsim/scanners/registry.py` defines the known capability set:
 
 ```python
 KNOWN_CAPABILITIES: set[str] = {"dast", "sast", "dependency", "iac", "secret", "sbom", "supply_chain", "code_audit"}
@@ -290,35 +290,35 @@ To promote a capability to first-party (so it no longer warns), it's a
 
 ## Third-party plugins (marketplace)
 
-The entry-point seam is Aegis's **community scanner-adapter marketplace**:
+The entry-point seam is Redsim's **community scanner-adapter marketplace**:
 a downstream package ships a scanner (or agent) adapter, declares an entry
-point, and an Aegis operator installs and enables it with **no edit to the
-`aegis` package**. Discovery is opt-in, validated, and gated behind an
+point, and an Redsim operator installs and enables it with **no edit to the
+`redsim` package**. Discovery is opt-in, validated, and gated behind an
 allowlist — the three controls below let an operator run third-party
 adapters without surrendering the deterministic offline path or running
 arbitrary code unconditionally.
 
 A complete, installable reference plugin lives at
-[`examples/aegis-plugin-example/`](https://github.com/IntelliBridge/aegis/tree/main/examples/aegis-plugin-example)
+[`examples/redsim-plugin-example/`](https://github.com/IntelliBridge/ndia-red-team-simulator/tree/main/examples/redsim-plugin-example)
 — copy it as your starting point.
 
 ### The entry-point contract
 
 A plugin declares an entry point in its own `pyproject.toml`. The
-**group** selects the registry (`aegis.scanners` or `aegis.agents`); the
+**group** selects the registry (`redsim.scanners` or `redsim.agents`); the
 **value** is a module path to a **zero-arg factory callable** that returns
 the adapter instance:
 
 ```toml
-# In the plugin's own pyproject.toml — nothing in aegis changes.
-[project.entry-points."aegis.scanners"]
+# In the plugin's own pyproject.toml — nothing in redsim changes.
+[project.entry-points."redsim.scanners"]
 myscanner = "my_pkg:create_scanner"
 
-[project.entry-points."aegis.agents"]
+[project.entry-points."redsim.agents"]
 myagent = "my_pkg:create_agent"
 ```
 
-Aegis imports the value, calls `create_scanner()` with **no arguments**,
+Redsim imports the value, calls `create_scanner()` with **no arguments**,
 and registers the returned object. A class works too (calling it with no
 args constructs an instance), but a factory function keeps construction
 explicit. The returned object must satisfy the relevant Protocol —
@@ -332,8 +332,8 @@ a complete, copy-pasteable `my_pkg/__init__.py` that mirrors the Protocol
 exactly:
 
 ```python
-"""my_pkg — a minimal third-party Aegis scanner adapter."""
-from aegis.scanners.registry import ScanOptions, ScanResult
+"""my_pkg — a minimal third-party Redsim scanner adapter."""
+from redsim.scanners.registry import ScanOptions, ScanResult
 
 
 class MyScanner:
@@ -349,7 +349,7 @@ class MyScanner:
 
     def scan(self, run_state, options: ScanOptions) -> ScanResult:
         # Run your tool against options.target, convert its output to
-        # AegisFinding objects, and return them in a ScanResult.
+        # RedsimFinding objects, and return them in a ScanResult.
         return ScanResult(
             findings=[],
             adapter_name=self.name,
@@ -362,23 +362,23 @@ def create_scanner() -> MyScanner:   # the zero-arg factory the entry point name
     return MyScanner()
 ```
 
-For a real conversion pattern — building `AegisFinding`s from tool output
+For a real conversion pattern — building `RedsimFinding`s from tool output
 and the `run_cli_scan` subprocess helper — read the in-tree
 [`grype_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/grype_adapter.py),
 the simplest registered adapter.
 
-### Enabling discovery: `AEGIS_PLUGINS=1`
+### Enabling discovery: `REDSIM_PLUGINS=1`
 
 Third-party discovery is **off by default**. Built-in adapters always
-load; third-party ones load **only** when `AEGIS_PLUGINS=1` is set.
+load; third-party ones load **only** when `REDSIM_PLUGINS=1` is set.
 
-!!! warning "Set `AEGIS_PLUGINS=1` on every process that needs the plugin"
+!!! warning "Set `REDSIM_PLUGINS=1` on every process that needs the plugin"
     Discovery is per-process. To use a third-party adapter end to end,
-    set `AEGIS_PLUGINS=1` in the environment of **all three**:
+    set `REDSIM_PLUGINS=1` in the environment of **all three**:
 
     - the **API** (so `POST /v1/scans` accepts the adapter's name),
     - the **worker** (so the scan actually dispatches to it), and
-    - the **CLI** (so `aegis scan --scanner …` and `aegis plugins list`
+    - the **CLI** (so `redsim scan --scanner …` and `redsim plugins list`
       see it).
 
     A common failure mode is enabling it on the API but not the worker:
@@ -386,79 +386,79 @@ load; third-party ones load **only** when `AEGIS_PLUGINS=1` is set.
     flag — can't find the adapter.
 
 This gate is deliberate. The offline test path must stay deterministic:
-`pytest` runs without `AEGIS_PLUGINS`, so a plugin installed in the same
+`pytest` runs without `REDSIM_PLUGINS`, so a plugin installed in the same
 environment can never perturb the built-in registry during tests. The
 seam is wired in `Registry.maybe_load_entry_points`, which returns
 immediately unless the flag is `"1"`. Each subsystem exposes a no-arg
-wrapper — `aegis.scanners.maybe_load_entry_points()` and
-`aegis.agents.maybe_load_entry_points()` — that the package `__init__`
+wrapper — `redsim.scanners.maybe_load_entry_points()` and
+`redsim.agents.maybe_load_entry_points()` — that the package `__init__`
 calls **after** the built-ins are imported, so first-party adapters are
 always present and plugins layer on top.
 
-### Security: the `AEGIS_PLUGINS_ALLOW` allowlist
+### Security: the `REDSIM_PLUGINS_ALLOW` allowlist
 
 !!! danger "Loading a plugin runs its code in your process"
     A discovered plugin's factory and `scan`/`invoke` methods execute
     **in-process** inside the API and worker — same privileges, same
-    secrets, same network. Treat installing an Aegis plugin as installing
+    secrets, same network. Treat installing an Redsim plugin as installing
     any other dependency: only enable distributions you trust.
 
-`AEGIS_PLUGINS_ALLOW` is a comma-separated list of **distribution** names
+`REDSIM_PLUGINS_ALLOW` is a comma-separated list of **distribution** names
 (the installed package/project name, not the entry-point name) that acts
 as an allowlist:
 
 ```bash
 # Only load plugins from these two distributions; skip everything else.
-export AEGIS_PLUGINS=1
-export AEGIS_PLUGINS_ALLOW="aegis-plugin-example,acme-scanners"
+export REDSIM_PLUGINS=1
+export REDSIM_PLUGINS_ALLOW="redsim-plugin-example,acme-scanners"
 ```
 
 - **Allowlist set** — only plugins whose providing distribution is named
   in the list load. Every other discovered plugin is **skipped** (status
-  `skipped` in `aegis plugins list`), even though discovery is on.
-- **Allowlist unset** (with `AEGIS_PLUGINS=1`) — **all** discovered
-  plugins load, and Aegis **logs a warning** that an unpinned plugin set
+  `skipped` in `redsim plugins list`), even though discovery is on.
+- **Allowlist unset** (with `REDSIM_PLUGINS=1`) — **all** discovered
+  plugins load, and Redsim **logs a warning** that an unpinned plugin set
   is active. This is convenient for development but not recommended for
   production: pin the distributions you trust.
 
 Treat the allowlist as a production control. Combined with pinning plugin
 versions in your lockfile, it bounds exactly which third-party code runs.
 
-### Signature enforcement: `AEGIS_PLUGINS_REQUIRE_SIGNATURE`
+### Signature enforcement: `REDSIM_PLUGINS_REQUIRE_SIGNATURE`
 
 The allowlist bounds *which distributions* may load; **signature
 enforcement** adds cryptographic proof of *who authored the code*, bound to
 the exact factory module that runs. It is opt-in and **off by default** —
 the allowlist behaviour above is unchanged until you turn it on.
 
-When `AEGIS_PLUGINS_REQUIRE_SIGNATURE=1` is set, every discovered plugin
+When `REDSIM_PLUGINS_REQUIRE_SIGNATURE=1` is set, every discovered plugin
 must carry a valid **Ed25519** signature, verifying under a trusted public
 key, **before** it is registered. An unsigned or invalid plugin is
-**rejected** (status `rejected` in `aegis plugins list`, with the reason in
+**rejected** (status `rejected` in `redsim plugins list`, with the reason in
 the detail column); a valid one loads and the new **SIGNED** column shows
 `yes:<key_id>` so an operator can see which trusted key vouched for it. One
 bad signature never crashes discovery.
 
 | Var | Purpose |
 |-----|---------|
-| `AEGIS_PLUGINS_REQUIRE_SIGNATURE` | `1`/truthy to require a valid signature; unset = no signature check. |
-| `AEGIS_PLUGINS_TRUSTED_KEYS` | Colon/comma-separated `*.pem` **public-key** files and/or dirs. |
-| `AEGIS_PLUGINS_SIG_DIR` | Dirs holding `<dist>-<version>.sig` files (falls back to trusted-key dirs + the plugin's module dir). |
+| `REDSIM_PLUGINS_REQUIRE_SIGNATURE` | `1`/truthy to require a valid signature; unset = no signature check. |
+| `REDSIM_PLUGINS_TRUSTED_KEYS` | Colon/comma-separated `*.pem` **public-key** files and/or dirs. |
+| `REDSIM_PLUGINS_SIG_DIR` | Dirs holding `<dist>-<version>.sig` files (falls back to trusted-key dirs + the plugin's module dir). |
 
 A plugin author signs their own distribution with the CLI — it digests the
 factory module's source, signs the canonical payload, and writes the
 detached `<dist>-<version>.sig`:
 
 ```bash
-aegis plugins sign \
-  --dist aegis-plugin-example --version 0.1.0 \
-  --entry-point aegis.scanners:example \
+redsim plugins sign \
+  --dist redsim-plugin-example --version 0.1.0 \
+  --entry-point redsim.scanners:example \
   --key your-ed25519-private-key.pem \
   --out ./signing
 ```
 
 The reference example at
-[`examples/aegis-plugin-example/signing/`](https://github.com/IntelliBridge/aegis/tree/main/examples/aegis-plugin-example/signing)
+[`examples/redsim-plugin-example/signing/`](https://github.com/IntelliBridge/ndia-red-team-simulator/tree/main/examples/redsim-plugin-example/signing)
 ships a working trusted public key + signature. For the full trust model,
 the payload format, and the operator runbook, see
 [Supply-chain integrity](../security/supply-chain.md#signed-third-party-plugins).
@@ -474,21 +474,21 @@ discovery or affecting any other plugin or built-in — when:
   `scan`, or no `name`), or
 - its `name` is **empty**.
 
-A rejection is logged and surfaces as status `rejected` in `aegis plugins
+A rejection is logged and surfaces as status `rejected` in `redsim plugins
 list` (with the reason in the detail column). One broken plugin can never
 take down discovery or sideline a healthy one.
 
-### Inspecting plugins: `aegis plugins list`
+### Inspecting plugins: `redsim plugins list`
 
-`aegis plugins list` prints what discovery found — built-in and
+`redsim plugins list` prints what discovery found — built-in and
 third-party alike — so an operator can confirm a plugin loaded (or see why
 it didn't) without reading logs:
 
 ```text
-$ AEGIS_PLUGINS=1 aegis plugins list
+$ REDSIM_PLUGINS=1 redsim plugins list
 NAME         KIND      DISTRIBUTION           VERSION  STATUS    DETAIL
-myscanner    scanner   aegis-plugin-example   1.0.0    loaded
-acme-dast    scanner   acme-scanners          2.3.0    skipped   not in AEGIS_PLUGINS_ALLOW
+myscanner    scanner   redsim-plugin-example   1.0.0    loaded
+acme-dast    scanner   acme-scanners          2.3.0    skipped   not in REDSIM_PLUGINS_ALLOW
 brokenone    scanner   broken-pkg             —        rejected  factory raised: ValueError
 ```
 
@@ -504,40 +504,40 @@ brokenone    scanner   broken-pkg             —        rejected  factory raise
 Add `--json` to emit the same data as a JSON array for scripting:
 
 ```bash
-AEGIS_PLUGINS=1 aegis plugins list --json
+REDSIM_PLUGINS=1 redsim plugins list --json
 ```
 
-With discovery **disabled**, `aegis plugins list` prints a hint to set
-`AEGIS_PLUGINS=1` rather than an empty table, so the off-by-default
+With discovery **disabled**, `redsim plugins list` prints a hint to set
+`REDSIM_PLUGINS=1` rather than an empty table, so the off-by-default
 behaviour is never mistaken for "no plugins installed."
 
 ## Runners vs. converters vs. registered adapters
 
 The single most confusing distinction for a new contributor: not
 everything named `*_adapter.py` is a registered adapter, and the
-`aegis/runners/` package holds none of the registered scanner adapters.
+`redsim/runners/` package holds none of the registered scanner adapters.
 
-Only the `*_adapter.py` modules under **`aegis/scanners/`** implement
+Only the `*_adapter.py` modules under **`redsim/scanners/`** implement
 the `ScannerAdapter` Protocol and call `register(...)`. Everything in
-**`aegis/runners/`** is plumbing those adapters call into — it is *not*
+**`redsim/runners/`** is plumbing those adapters call into — it is *not*
 registered.
 
 | Module | Role | Registered? |
 |--------|------|-------------|
-| `aegis/scanners/strix_adapter.py` (`StrixAdapter`) | The registered `ScannerAdapter`; `register()`ed into the scanner registry. | **Yes** |
-| `aegis/runners/strix_runner.py` | Subprocess **runner** — discovers + launches the Strix CLI, tails `events.jsonl`. | No |
-| `aegis/runners/trivy_runner.py` | Subprocess **runner** for Trivy. | No |
-| `aegis/runners/strix_converter.py` | **Converter** — turns raw Strix events into `AegisFinding`s (`convert_strix_finding`). | No |
-| `aegis/runners/vulnfixer_converter.py` | **Exporter** — maps an `AegisFinding` to the vulnerability-fixer payload. | No |
-| `aegis/runners/vulnfixer_runner.py` | **Runner** — drives the vendored vulnerability-fixer engine for the agentic remediation strategy. | No |
+| `redsim/scanners/strix_adapter.py` (`StrixAdapter`) | The registered `ScannerAdapter`; `register()`ed into the scanner registry. | **Yes** |
+| `redsim/runners/strix_runner.py` | Subprocess **runner** — discovers + launches the Strix CLI, tails `events.jsonl`. | No |
+| `redsim/runners/trivy_runner.py` | Subprocess **runner** for Trivy. | No |
+| `redsim/runners/strix_converter.py` | **Converter** — turns raw Strix events into `RedsimFinding`s (`convert_strix_finding`). | No |
+| `redsim/runners/vulnfixer_converter.py` | **Exporter** — maps an `RedsimFinding` to the vulnerability-fixer payload. | No |
+| `redsim/runners/vulnfixer_runner.py` | **Runner** — drives the vendored vulnerability-fixer engine for the agentic remediation strategy. | No |
 
 !!! note "Why the rename"
-    The package `aegis/adapters/` was renamed to `aegis/runners/`, and
+    The package `redsim/adapters/` was renamed to `redsim/runners/`, and
     its finding-converter members were renamed with it
     (`strix_adapter.py` → `strix_converter.py`,
     `vulnfixer_adapter.py` → `vulnfixer_converter.py`). The old
     name collided with the genuinely registered
-    `aegis/scanners/strix_adapter.py`. The new name says what the
+    `redsim/scanners/strix_adapter.py`. The new name says what the
     module is: a runner package whose Strix member is a *converter*, not
     a registered adapter. See
     [ADR 0002](../adr/0002-registry-seam-and-runners.md).

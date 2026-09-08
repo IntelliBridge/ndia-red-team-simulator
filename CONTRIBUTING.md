@@ -1,4 +1,4 @@
-# Contributing to Aegis
+# Contributing to Redsim
 
 Welcome. This guide covers the dev setup, the conventions every PR is
 expected to follow, and the gates a change has to pass before merge.
@@ -18,17 +18,17 @@ Python 3.12 or 3.13 is required. The default macOS `python3` (3.9)
 won't work — use Homebrew's `python3.12` or `python3.13`.
 
 `pydantic>=2.7` is a **core runtime dependency** (the finding schema in
-`aegis/schema.py` is now Pydantic v2), so it's pulled in by the base
+`redsim/schema.py` is now Pydantic v2), so it's pulled in by the base
 install — not gated behind an extra.
 
 For frontend work, the repo is a pnpm workspace:
 
 ```bash
 pnpm install --frozen-lockfile          # honours web/pnpm-lock.yaml
-pnpm --filter @aegis/web dev            # next dev -p 3000
-pnpm --filter @aegis/web typecheck
-pnpm --filter @aegis/web build
-pnpm --filter @aegis/web storybook      # design-system stories
+pnpm --filter @redsim/web dev            # next dev -p 3000
+pnpm --filter @redsim/web typecheck
+pnpm --filter @redsim/web build
+pnpm --filter @redsim/web storybook      # design-system stories
 ```
 
 See [`docs/dev/frontend.md`](docs/dev/frontend.md) for the design-
@@ -40,7 +40,7 @@ system + Storybook conventions.
 pytest -q                                          # default ~1288 passing, 20 skipped offline
 pytest -m "not slow"                                # excludes long-running
 pytest -m "integration" tests/integration/         # integration suite (Postgres / Redis required)
-AEGIS_E2E=1 AEGIS_DISABLE_LLM=1 pytest -q tests/e2e/   # deterministic E2E
+REDSIM_E2E=1 REDSIM_DISABLE_LLM=1 pytest -q tests/e2e/   # deterministic E2E
 ```
 
 Markers (defined in `pyproject.toml`):
@@ -50,7 +50,7 @@ Markers (defined in `pyproject.toml`):
 | `unit`            | Pure-Python; runs by default.                                  |
 | `integration`     | May hit Postgres / Redis; runs by default but needs services.  |
 | `docker`          | Needs Docker (gated to `workflow_dispatch` in CI).             |
-| `e2e`             | Live stack; opt-in via `AEGIS_E2E=1`.                          |
+| `e2e`             | Live stack; opt-in via `REDSIM_E2E=1`.                          |
 | `slow`            | Long-running; excluded by default.                             |
 | `auth_required`   | Needs Keycloak / cookie flow; skipped by default.              |
 
@@ -63,20 +63,20 @@ The Phase 2 offline path is sacred — every PR must keep
   (`disallow_untyped_defs`, `disallow_incomplete_defs`, et al. — see
   `[tool.mypy]` in `pyproject.toml`), so **new code must be fully
   annotated**, not just public APIs.
-- `ruff check aegis tests` — non-blocking but encouraged.
+- `ruff check redsim tests` — non-blocking but encouraged.
 - Run the CI gate locally before pushing: `make check`
-  (lint → typecheck → test), or just `make typecheck` (`mypy aegis`)
+  (lint → typecheck → test), or just `make typecheck` (`mypy redsim`)
   while iterating.
 - Tests use `unittest`; fixtures via `unittest.mock`.
 - Frontend: TypeScript strict mode; Tailwind via `cn()` from
-  `@aegis/design-system`. No inline scripts (CSP).
+  `@redsim/design-system`. No inline scripts (CSP).
 - Don't add error handling for impossible cases — boundary code
   validates, internal code trusts framework guarantees.
 
 ## Pull request flow
 
-1. Branch off `main`. Use `aegis/<topic>` for features;
-   `aegis/fix/<finding_id>` is reserved for Aegis-generated fix PRs.
+1. Branch off `main`. Use `redsim/<topic>` for features;
+   `redsim/fix/<finding_id>` is reserved for Redsim-generated fix PRs.
 2. Write tests with the change. Don't ship behaviour without coverage.
 3. Keep `pytest -q` green at every commit. Run the deterministic E2E
    if your change touches the demo path.
@@ -84,13 +84,13 @@ The Phase 2 offline path is sacred — every PR must keep
    user-visible.
 5. CI gates that must pass:
    - `pytest -q` on Python 3.12 + 3.13.
-   - `mypy aegis` — strict type-check. **This now blocks merge** (the
+   - `mypy redsim` — strict type-check. **This now blocks merge** (the
      step is no longer `continue-on-error`); mirror it locally with
      `make typecheck`.
    - `uv lock --check` — no drift in `uv.lock`.
    - `pnpm install --frozen-lockfile` — no drift in
      `web/pnpm-lock.yaml`.
-   - `pnpm --filter @aegis/web typecheck && build`.
+   - `pnpm --filter @redsim/web typecheck && build`.
 
 ## Service-layer contract (v0.3.1+)
 
@@ -99,7 +99,7 @@ only** (`services.scans.create_scan_job`,
 `services.fixes.create_fix_job`, etc.) and **Celery tasks call
 execution services only**. A grep gate fails any new
 `add_route(..., methods=["POST"|"PUT"|"PATCH"|"DELETE"], ...)` whose
-handler doesn't go through `aegis.services.*`. See
+handler doesn't go through `redsim.services.*`. See
 [`docs/architecture/overview.md`](docs/architecture/overview.md) §
 "Layered service architecture."
 
@@ -120,8 +120,8 @@ checked in.
 
 ## Security
 
-Found a vulnerability in Aegis itself? See
-[`SECURITY.md`](https://github.com/IntelliBridge/aegis/blob/main/SECURITY.md). Do not file a public issue.
+Found a vulnerability in Redsim itself? See
+[`SECURITY.md`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/SECURITY.md). Do not file a public issue.
 
 For changes to the auth / audit / cookie / CSRF / WS path, the PR
 description should reference the relevant section of
