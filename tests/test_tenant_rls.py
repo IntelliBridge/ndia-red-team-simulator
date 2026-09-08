@@ -14,15 +14,15 @@ Two test surfaces:
 
   IMPORTANT — RLS and superusers: a Postgres **superuser always bypasses RLS**,
   even with ``FORCE ROW LEVEL SECURITY`` (FORCE only subjects the table *owner*,
-  not superusers). The CI/dev Postgres connects as the ``aegis`` superuser, so to
+  not superusers). The CI/dev Postgres connects as the ``redsim`` superuser, so to
   exercise the policies faithfully these tests ``SET ROLE`` to a dedicated
-  NON-superuser, non-owner role (``aegis_rls_test``) before the tenant-scoped
+  NON-superuser, non-owner role (``redsim_rls_test``) before the tenant-scoped
   queries — which is exactly the production posture: the app must connect as the
-  restricted ``aegis_app`` role (see migration 0004 + the deploy runbook) or RLS
+  restricted ``redsim_app`` role (see migration 0004 + the deploy runbook) or RLS
   is a no-op. The GUC set by ``get_session`` survives ``SET ROLE`` within the
   same transaction.
 
-NB: sqlalchemy / aegis.db imports are deferred into methods. The offline unit
+NB: sqlalchemy / redsim.db imports are deferred into methods. The offline unit
 job installs without the api/worker extras (no sqlalchemy), and a module-level
 import would fail at *collection* time — the class-level skipUnless only guards
 execution. Mirror tests/test_state_pg_coverage.py.
@@ -39,7 +39,7 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
-AEGIS_DB = os.environ.get("AEGIS_DB_URL")
+REDSIM_DB = os.environ.get("REDSIM_DB_URL")
 
 # Tables that gained a denormalized org_id + RLS in 0005.
 _SCOPED_TABLES = (
@@ -70,7 +70,7 @@ def _make_sqlite_session():
     from sqlalchemy.pool import StaticPool
 
     _patch_jsonb_for_sqlite()
-    from aegis.db.models import Base
+    from redsim.db.models import Base
 
     engine = create_engine(
         "sqlite://", future=True,
@@ -88,7 +88,7 @@ class TestTenantSeamSqlite(unittest.TestCase):
     org_id. Runs on the offline unit job (no DB required)."""
 
     def test_models_declare_org_id_on_scoped_tables(self):
-        from aegis.db.models import Base
+        from redsim.db.models import Base
         for table in _SCOPED_TABLES:
             cols = Base.metadata.tables[table].columns
             self.assertIn("org_id", cols, f"{table} missing org_id")
@@ -96,7 +96,7 @@ class TestTenantSeamSqlite(unittest.TestCase):
             self.assertTrue(cols["org_id"].nullable, f"{table}.org_id not nullable")
 
     def test_set_current_tenants_normalizes_and_roundtrips(self):
-        from aegis.db import session as sess_mod
+        from redsim.db import session as sess_mod
         # None and empty both mean system; a real list is preserved.
         tok = sess_mod.set_current_tenants(None)
         self.assertIsNone(sess_mod.current_tenants())
@@ -118,8 +118,8 @@ class TestTenantSeamSqlite(unittest.TestCase):
         from sqlalchemy.pool import StaticPool
 
         _patch_jsonb_for_sqlite()
-        from aegis.db import session as sess_mod
-        from aegis.db.models import Base, Organization, Project
+        from redsim.db import session as sess_mod
+        from redsim.db.models import Base, Organization, Project
 
         engine = create_engine(
             "sqlite://", future=True,
@@ -152,12 +152,12 @@ class TestTenantSeamSqlite(unittest.TestCase):
 
 class TestTenantReconcileSqlite(unittest.TestCase):
     """Offline coverage of the ``verify_tenant_integrity`` reconciliation logic
-    (``aegis.workers.tasks.tenant_reconcile``). Runs on the DB-less unit job:
+    (``redsim.workers.tasks.tenant_reconcile``). Runs on the DB-less unit job:
     the scan is plain SQL (``IS DISTINCT FROM`` works on sqlite), and the lack
     of the 0009 trigger lets us seed a drifted row to detect."""
 
     def setUp(self):
-        from aegis.db.models import Finding, Organization, Project, Run
+        from redsim.db.models import Finding, Organization, Project, Run
 
         self.Session, self.engine = _make_sqlite_session()
         self.Finding = Finding
@@ -179,7 +179,7 @@ class TestTenantReconcileSqlite(unittest.TestCase):
             s.commit()
 
     def test_clean_db_reports_no_drift(self):
-        from aegis.workers.tasks.tenant_reconcile import (
+        from redsim.workers.tasks.tenant_reconcile import (
             verify_tenant_integrity_in_session,
         )
         with self.Session() as s:
@@ -191,7 +191,7 @@ class TestTenantReconcileSqlite(unittest.TestCase):
         self.assertTrue(all(v == 0 for v in report.per_table.values()))
 
     def test_reconciliation_finds_seeded_mismatch(self):
-        from aegis.workers.tasks.tenant_reconcile import (
+        from redsim.workers.tasks.tenant_reconcile import (
             verify_tenant_integrity_in_session,
         )
         # Drive run-a's org_id out of sync with its project (proj-a -> org-a).
@@ -213,7 +213,7 @@ class TestTenantReconcileSqlite(unittest.TestCase):
         self.assertEqual(drift.expected_org_id, "org-a")
 
     def test_repair_backfills_org_id_from_project(self):
-        from aegis.workers.tasks.tenant_reconcile import (
+        from redsim.workers.tasks.tenant_reconcile import (
             verify_tenant_integrity_in_session,
         )
         with self.Session() as s:
@@ -237,7 +237,7 @@ class TestTenantReconcileSqlite(unittest.TestCase):
     def test_to_dict_is_serializable_and_secret_free(self):
         import json
 
-        from aegis.workers.tasks.tenant_reconcile import (
+        from redsim.workers.tasks.tenant_reconcile import (
             verify_tenant_integrity_in_session,
         )
         with self.Session() as s:
@@ -251,13 +251,13 @@ class TestTenantReconcileSqlite(unittest.TestCase):
         self.assertEqual(payload["drifts"][0]["table"], "runs")
 
 
-@unittest.skipUnless(AEGIS_DB, "needs Postgres (AEGIS_DB_URL)")
+@unittest.skipUnless(REDSIM_DB, "needs Postgres (REDSIM_DB_URL)")
 class TestTenantRLS(unittest.TestCase):
     def setUp(self):
-        from aegis.db import session as sess_mod
-        from aegis.db.models import Finding, Organization, Project, Run
+        from redsim.db import session as sess_mod
+        from redsim.db.models import Finding, Organization, Project, Run
 
-        sess_mod.init_engine(AEGIS_DB)
+        sess_mod.init_engine(REDSIM_DB)
         self.sess_mod = sess_mod
         self.Finding = Finding
         self.Run = Run
@@ -295,8 +295,8 @@ class TestTenantRLS(unittest.TestCase):
                 severity="high"))
 
     # A non-superuser, non-owner role so RLS actually binds (superusers bypass
-    # it). Mirrors the production posture where the app runs as ``aegis_app``.
-    _RLS_ROLE = "aegis_rls_test"
+    # it). Mirrors the production posture where the app runs as ``redsim_app``.
+    _RLS_ROLE = "redsim_rls_test"
 
     def _ensure_rls_role(self):
         from sqlalchemy import text
@@ -460,7 +460,7 @@ class TestTenantRLS(unittest.TestCase):
         # then assert the reconciler reports exactly that row.
         from sqlalchemy import text
 
-        from aegis.workers.tasks.tenant_reconcile import (
+        from redsim.workers.tasks.tenant_reconcile import (
             verify_tenant_integrity_in_session,
         )
 

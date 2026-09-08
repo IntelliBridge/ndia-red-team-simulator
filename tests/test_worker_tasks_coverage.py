@@ -1,10 +1,10 @@
 """Behavioral unit tests for Celery worker modules.
 
 Covers:
-  aegis/workers/bootstrap.py
-  aegis/workers/tasks/scan.py
-  aegis/workers/tasks/verify.py
-  aegis/workers/tasks/report.py
+  redsim/workers/bootstrap.py
+  redsim/workers/tasks/scan.py
+  redsim/workers/tasks/verify.py
+  redsim/workers/tasks/report.py
 
 (The pentest fix / parallel_fix / exports / ci_gate task modules were removed
 with the pentest domain.)
@@ -34,7 +34,7 @@ pytest.importorskip("celery")
 # ---------------------------------------------------------------------------
 
 def _make_finding_blob(**overrides) -> dict:
-    """Minimal AegisFinding-shaped dict suitable for AegisFinding.from_dict."""
+    """Minimal RedsimFinding-shaped dict suitable for RedsimFinding.from_dict."""
     base = {
         "id": "find-001",
         "title": "SQL Injection",
@@ -83,7 +83,7 @@ def _ctx_factory(
 
 @contextmanager
 def _task_context_cm(ctx):
-    """Yields *ctx* — replaces ``aegis.workers.bootstrap.task_context``."""
+    """Yields *ctx* — replaces ``redsim.workers.bootstrap.task_context``."""
     @contextmanager
     def _inner(job_id, task=None):  # noqa: ARG001
         yield ctx
@@ -95,20 +95,20 @@ def _task_context_cm(ctx):
 # ---------------------------------------------------------------------------
 
 class TestBootstrapTaskContext(unittest.TestCase):
-    """Tests for ``aegis.workers.bootstrap.task_context``."""
+    """Tests for ``redsim.workers.bootstrap.task_context``."""
 
     def _patch_all(self, job=None, db_url: str | None = "sqlite://"):
         """Return a list of context managers that stub every real dependency."""
         # Use real __enter__/__exit__ via patch.multiple approach
         patches = [
-            patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.storage.open_blob_store"),
-            patch("aegis.config.load_config"),
-            patch("aegis.db.session.get_session"),
-            patch("aegis.db.session.init_engine"),
-            patch("aegis.state.PostgresRunState"),
+            patch("redsim.audit.chain.PostgresAuditWriter"),
+            patch("redsim.storage.open_blob_store"),
+            patch("redsim.config.load_config"),
+            patch("redsim.db.session.get_session"),
+            patch("redsim.db.session.init_engine"),
+            patch("redsim.state.PostgresRunState"),
         ]
-        env = {"AEGIS_DB_URL": db_url} if db_url else {}
+        env = {"REDSIM_DB_URL": db_url} if db_url else {}
         return patches, env
 
     def _apply_patches(self, patches, db_url="sqlite://"):
@@ -143,12 +143,12 @@ class TestBootstrapTaskContext(unittest.TestCase):
         job.created_by = "user:alice"
 
         patches_list = [
-            patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.storage.open_blob_store"),
-            patch("aegis.config.load_config"),
-            patch("aegis.db.session.get_session"),
-            patch("aegis.db.session.init_engine"),
-            patch("aegis.state.PostgresRunState"),
+            patch("redsim.audit.chain.PostgresAuditWriter"),
+            patch("redsim.storage.open_blob_store"),
+            patch("redsim.config.load_config"),
+            patch("redsim.db.session.get_session"),
+            patch("redsim.db.session.init_engine"),
+            patch("redsim.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -163,10 +163,10 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
             mock_sess_cm.side_effect = fake_session
 
-            with patch.dict(os.environ, {"AEGIS_DB_URL": "sqlite://"}):
+            with patch.dict(os.environ, {"REDSIM_DB_URL": "sqlite://"}):
                 import importlib
 
-                import aegis.workers.bootstrap as boot
+                import redsim.workers.bootstrap as boot
                 importlib.reload(boot)
 
                 with boot.task_context("job-001"):
@@ -179,7 +179,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
             # After exiting normally, status becomes 'succeeded'
             self.assertEqual(job.status, "succeeded")
             self.assertIsNotNone(job.completed_at)
-            # init_engine was called because AEGIS_DB_URL was set
+            # init_engine was called because REDSIM_DB_URL was set
             mock_init.assert_called_once_with("sqlite://")
         finally:
             for p in patches_list:
@@ -196,12 +196,12 @@ class TestBootstrapTaskContext(unittest.TestCase):
         job.created_by = "user:alice"
 
         patches_list = [
-            patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.storage.open_blob_store"),
-            patch("aegis.config.load_config"),
-            patch("aegis.db.session.get_session"),
-            patch("aegis.db.session.init_engine"),
-            patch("aegis.state.PostgresRunState"),
+            patch("redsim.audit.chain.PostgresAuditWriter"),
+            patch("redsim.storage.open_blob_store"),
+            patch("redsim.config.load_config"),
+            patch("redsim.db.session.get_session"),
+            patch("redsim.db.session.init_engine"),
+            patch("redsim.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -216,10 +216,10 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
             mock_sess_cm.side_effect = fake_session
 
-            with patch.dict(os.environ, {"AEGIS_DB_URL": "sqlite://"}):
+            with patch.dict(os.environ, {"REDSIM_DB_URL": "sqlite://"}):
                 import importlib
 
-                import aegis.workers.bootstrap as boot
+                import redsim.workers.bootstrap as boot
                 importlib.reload(boot)
 
                 with boot.task_context("job-007") as ctx:
@@ -240,12 +240,12 @@ class TestBootstrapTaskContext(unittest.TestCase):
         job.created_by = "user:bob"
 
         patches_list = [
-            patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.storage.open_blob_store"),
-            patch("aegis.config.load_config"),
-            patch("aegis.db.session.get_session"),
-            patch("aegis.db.session.init_engine"),
-            patch("aegis.state.PostgresRunState"),
+            patch("redsim.audit.chain.PostgresAuditWriter"),
+            patch("redsim.storage.open_blob_store"),
+            patch("redsim.config.load_config"),
+            patch("redsim.db.session.get_session"),
+            patch("redsim.db.session.init_engine"),
+            patch("redsim.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -262,7 +262,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
             import importlib
 
-            import aegis.workers.bootstrap as boot
+            import redsim.workers.bootstrap as boot
             importlib.reload(boot)
 
             with boot.task_context("job-002") as ctx:
@@ -281,12 +281,12 @@ class TestBootstrapTaskContext(unittest.TestCase):
         job.created_by = None  # trigger the default
 
         patches_list = [
-            patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.storage.open_blob_store"),
-            patch("aegis.config.load_config"),
-            patch("aegis.db.session.get_session"),
-            patch("aegis.db.session.init_engine"),
-            patch("aegis.state.PostgresRunState"),
+            patch("redsim.audit.chain.PostgresAuditWriter"),
+            patch("redsim.storage.open_blob_store"),
+            patch("redsim.config.load_config"),
+            patch("redsim.db.session.get_session"),
+            patch("redsim.db.session.init_engine"),
+            patch("redsim.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -303,7 +303,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
             import importlib
 
-            import aegis.workers.bootstrap as boot
+            import redsim.workers.bootstrap as boot
             importlib.reload(boot)
 
             with boot.task_context("job-003") as ctx:
@@ -314,12 +314,12 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
     def test_missing_job_raises_runtime_error(self):
         patches_list = [
-            patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.storage.open_blob_store"),
-            patch("aegis.config.load_config"),
-            patch("aegis.db.session.get_session"),
-            patch("aegis.db.session.init_engine"),
-            patch("aegis.state.PostgresRunState"),
+            patch("redsim.audit.chain.PostgresAuditWriter"),
+            patch("redsim.storage.open_blob_store"),
+            patch("redsim.config.load_config"),
+            patch("redsim.db.session.get_session"),
+            patch("redsim.db.session.init_engine"),
+            patch("redsim.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -336,7 +336,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
             import importlib
 
-            import aegis.workers.bootstrap as boot
+            import redsim.workers.bootstrap as boot
             importlib.reload(boot)
 
             with self.assertRaises(RuntimeError) as cm:
@@ -355,12 +355,12 @@ class TestBootstrapTaskContext(unittest.TestCase):
         job.created_by = "user:alice"
 
         patches_list = [
-            patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.storage.open_blob_store"),
-            patch("aegis.config.load_config"),
-            patch("aegis.db.session.get_session"),
-            patch("aegis.db.session.init_engine"),
-            patch("aegis.state.PostgresRunState"),
+            patch("redsim.audit.chain.PostgresAuditWriter"),
+            patch("redsim.storage.open_blob_store"),
+            patch("redsim.config.load_config"),
+            patch("redsim.db.session.get_session"),
+            patch("redsim.db.session.init_engine"),
+            patch("redsim.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -377,7 +377,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
             import importlib
 
-            import aegis.workers.bootstrap as boot
+            import redsim.workers.bootstrap as boot
             importlib.reload(boot)
 
             with self.assertRaises(ValueError):
@@ -393,7 +393,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
                 p.stop()
 
     def test_no_init_engine_when_db_url_not_set(self):
-        """AEGIS_DB_URL absent → init_engine must NOT be called."""
+        """REDSIM_DB_URL absent → init_engine must NOT be called."""
         job = MagicMock()
         job.status = "queued"
         job.run_id = "run-005"
@@ -401,12 +401,12 @@ class TestBootstrapTaskContext(unittest.TestCase):
         job.created_by = "user:alice"
 
         patches_list = [
-            patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.storage.open_blob_store"),
-            patch("aegis.config.load_config"),
-            patch("aegis.db.session.get_session"),
-            patch("aegis.db.session.init_engine"),
-            patch("aegis.state.PostgresRunState"),
+            patch("redsim.audit.chain.PostgresAuditWriter"),
+            patch("redsim.storage.open_blob_store"),
+            patch("redsim.config.load_config"),
+            patch("redsim.db.session.get_session"),
+            patch("redsim.db.session.init_engine"),
+            patch("redsim.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -421,13 +421,13 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
             mock_sess_cm.side_effect = fake_session
 
-            # Ensure AEGIS_DB_URL is absent
+            # Ensure REDSIM_DB_URL is absent
             env_without = {k: v for k, v in os.environ.items()
-                           if k != "AEGIS_DB_URL"}
+                           if k != "REDSIM_DB_URL"}
             with patch.dict(os.environ, env_without, clear=True):
                 import importlib
 
-                import aegis.workers.bootstrap as boot
+                import redsim.workers.bootstrap as boot
                 importlib.reload(boot)
                 with boot.task_context("job-005") as ctx:
                     self.assertEqual(ctx.job_id, "job-005")
@@ -445,12 +445,12 @@ class TestBootstrapTaskContext(unittest.TestCase):
         job.created_by = "user:carol"
 
         patches_list = [
-            patch("aegis.audit.chain.PostgresAuditWriter"),
-            patch("aegis.storage.open_blob_store"),
-            patch("aegis.config.load_config"),
-            patch("aegis.db.session.get_session"),
-            patch("aegis.db.session.init_engine"),
-            patch("aegis.state.PostgresRunState"),
+            patch("redsim.audit.chain.PostgresAuditWriter"),
+            patch("redsim.storage.open_blob_store"),
+            patch("redsim.config.load_config"),
+            patch("redsim.db.session.get_session"),
+            patch("redsim.db.session.init_engine"),
+            patch("redsim.state.PostgresRunState"),
         ]
         mocks = [p.start() for p in patches_list]
         try:
@@ -467,7 +467,7 @@ class TestBootstrapTaskContext(unittest.TestCase):
 
             import importlib
 
-            import aegis.workers.bootstrap as boot
+            import redsim.workers.bootstrap as boot
             importlib.reload(boot)
 
             with boot.task_context("job-006") as ctx:
@@ -523,7 +523,7 @@ def _make_task_ctx(
 class TestScanStart(unittest.TestCase):
 
     def _scan_task(self):
-        from aegis.workers.tasks.scan import scan_start
+        from redsim.workers.tasks.scan import scan_start
         return scan_start
 
     def test_happy_path_returns_expected_keys(self):
@@ -537,11 +537,11 @@ class TestScanStart(unittest.TestCase):
         disp_result.exit_code = 0
         sess.get.return_value = job  # second get() inside task body
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.safety.authorize"), \
-             patch("aegis.scanners.dispatch", return_value=disp_result), \
-             patch("aegis.scanners.registry.ScanOptions"):
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.config.load_config") as mock_cfg, \
+             patch("redsim.safety.authorize"), \
+             patch("redsim.scanners.dispatch", return_value=disp_result), \
+             patch("redsim.scanners.registry.ScanOptions"):
             mock_cfg.return_value = MagicMock(target_allowlist=[])
 
             result = self._scan_task().apply(args=["job-scan-001"]).get()
@@ -561,11 +561,11 @@ class TestScanStart(unittest.TestCase):
         disp_result.findings = []
         disp_result.exit_code = 0
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.safety.authorize") as mock_auth, \
-             patch("aegis.scanners.dispatch", return_value=disp_result), \
-             patch("aegis.scanners.registry.ScanOptions"):
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.config.load_config") as mock_cfg, \
+             patch("redsim.safety.authorize") as mock_auth, \
+             patch("redsim.scanners.dispatch", return_value=disp_result), \
+             patch("redsim.scanners.registry.ScanOptions"):
             mock_cfg.return_value = MagicMock(target_allowlist=["192.168.1.1"])
 
             self._scan_task().apply(args=["job-scan-002"]).get()
@@ -589,11 +589,11 @@ class TestScanStart(unittest.TestCase):
         disp_result.findings = []
         disp_result.exit_code = 0
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.safety.authorize") as mock_auth, \
-             patch("aegis.scanners.dispatch", return_value=disp_result), \
-             patch("aegis.scanners.registry.ScanOptions"):
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.config.load_config") as mock_cfg, \
+             patch("redsim.safety.authorize") as mock_auth, \
+             patch("redsim.scanners.dispatch", return_value=disp_result), \
+             patch("redsim.scanners.registry.ScanOptions"):
             mock_cfg.return_value = MagicMock(target_allowlist=[])  # off-allowlist
             self._scan_task().apply(args=["job-scan-ovr"]).get()
 
@@ -609,11 +609,11 @@ class TestScanStart(unittest.TestCase):
         disp_result.findings = [MagicMock()]
         disp_result.exit_code = 0
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.safety.authorize"), \
-             patch("aegis.scanners.dispatch", return_value=disp_result), \
-             patch("aegis.scanners.registry.ScanOptions"):
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.config.load_config") as mock_cfg, \
+             patch("redsim.safety.authorize"), \
+             patch("redsim.scanners.dispatch", return_value=disp_result), \
+             patch("redsim.scanners.registry.ScanOptions"):
             mock_cfg.return_value = MagicMock(target_allowlist=[])
             self._scan_task().apply(args=["job-scan-003"]).get()
 
@@ -629,17 +629,17 @@ class TestScanStart(unittest.TestCase):
             job_detail={"target": "host"},
         )
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.safety.authorize") as mock_auth, \
-             patch("aegis.scanners.dispatch") as mock_dispatch, \
-             patch("aegis.scanners.registry.ScanOptions"):
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.config.load_config") as mock_cfg, \
+             patch("redsim.safety.authorize") as mock_auth, \
+             patch("redsim.scanners.dispatch") as mock_dispatch, \
+             patch("redsim.scanners.registry.ScanOptions"):
             mock_cfg.return_value = MagicMock(target_allowlist=[])
             with self.assertRaises(RuntimeError) as cm:
                 self._scan_task().apply(args=["job-scan-004"]).get()
 
         self.assertIn("no scanner", str(cm.exception))
-        self.assertIn("aegis.ml.attacks", str(cm.exception))
+        self.assertIn("redsim.ml.attacks", str(cm.exception))
         mock_auth.assert_not_called()
         mock_dispatch.assert_not_called()
         ctx.run_state.save_findings.assert_not_called()
@@ -652,11 +652,11 @@ class TestScanStart(unittest.TestCase):
 class TestVerifyReplay(unittest.TestCase):
 
     def _verify_task(self):
-        from aegis.workers.tasks.verify import verify_replay
+        from redsim.workers.tasks.verify import verify_replay
         return verify_replay
 
     def _make_outcome(self, status="verified", strategy="poc"):
-        from aegis.services.verify import VerifyOutcome
+        from redsim.services.verify import VerifyOutcome
         return VerifyOutcome(
             finding_id="find-001",
             status=status,
@@ -673,9 +673,9 @@ class TestVerifyReplay(unittest.TestCase):
         finding_row.schema_blob = _make_finding_blob()
         sess.get.side_effect = [job, finding_row]
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.services.verify.verify",
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.config.load_config") as mock_cfg, \
+             patch("redsim.services.verify.verify",
                    return_value=self._make_outcome("verified")):
             mock_cfg.return_value = MagicMock(target_allowlist=[])
             result = self._verify_task().apply(args=["job-ver-001"]).get()
@@ -692,9 +692,9 @@ class TestVerifyReplay(unittest.TestCase):
         finding_row.schema_blob = _make_finding_blob(id="find-002")
         sess.get.side_effect = [job, finding_row]
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.services.verify.verify",
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.config.load_config") as mock_cfg, \
+             patch("redsim.services.verify.verify",
                    return_value=self._make_outcome("still_vulnerable")):
             mock_cfg.return_value = MagicMock(target_allowlist=[])
             result = self._verify_task().apply(args=["job-ver-002"]).get()
@@ -709,9 +709,9 @@ class TestVerifyReplay(unittest.TestCase):
         finding_row.schema_blob = _make_finding_blob(id="find-003")
         sess.get.side_effect = [job, finding_row]
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.services.verify.verify",
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.config.load_config") as mock_cfg, \
+             patch("redsim.services.verify.verify",
                    return_value=self._make_outcome("inconclusive")):
             mock_cfg.return_value = MagicMock(target_allowlist=[])
             result = self._verify_task().apply(args=["job-ver-003"]).get()
@@ -727,9 +727,9 @@ class TestVerifyReplay(unittest.TestCase):
         finding_row.schema_blob = _make_finding_blob(id="find-004")
         sess.get.side_effect = [job, finding_row]
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.services.verify.verify",
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.config.load_config") as mock_cfg, \
+             patch("redsim.services.verify.verify",
                    return_value=self._make_outcome("totally_new_status")):
             mock_cfg.return_value = MagicMock(target_allowlist=[])
             result = self._verify_task().apply(args=["job-ver-004"]).get()
@@ -744,9 +744,9 @@ class TestVerifyReplay(unittest.TestCase):
         finding_row.schema_blob = _make_finding_blob(id="find-005")
         sess.get.side_effect = [job, finding_row]
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.services.verify.verify",
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.config.load_config") as mock_cfg, \
+             patch("redsim.services.verify.verify",
                    return_value=self._make_outcome()) as mock_ver:
             mock_cfg.return_value = MagicMock(target_allowlist=[])
             self._verify_task().apply(args=["job-ver-005"]).get()
@@ -760,8 +760,8 @@ class TestVerifyReplay(unittest.TestCase):
         )
         sess.get.side_effect = [job, None]  # finding is None
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg:
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.config.load_config") as mock_cfg:
             mock_cfg.return_value = MagicMock(target_allowlist=[])
             with self.assertRaises(RuntimeError):
                 self._verify_task().apply(args=["job-ver-missing"]).get()
@@ -774,9 +774,9 @@ class TestVerifyReplay(unittest.TestCase):
         finding_row.schema_blob = _make_finding_blob(id="find-006")
         sess.get.side_effect = [job, finding_row]
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.services.verify.verify",
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.config.load_config") as mock_cfg, \
+             patch("redsim.services.verify.verify",
                    return_value=self._make_outcome(strategy="replay")):
             mock_cfg.return_value = MagicMock(target_allowlist=[])
             result = self._verify_task().apply(args=["job-ver-006"]).get()
@@ -794,22 +794,22 @@ class TestVerifyReplay(unittest.TestCase):
 class TestReportRender(unittest.TestCase):
 
     def _rep_task(self):
-        from aegis.workers.tasks.report import report_render
+        from redsim.workers.tasks.report import report_render
         return report_render
 
     def test_happy_path_returns_paths(self):
         ctx, sess, job, fake_tc = _make_task_ctx()
         ctx.run_state.load_findings.return_value = []
 
-        from aegis.services.reports import ReportOutcome
+        from redsim.services.reports import ReportOutcome
         outcome = ReportOutcome(
             markdown_path="/run/report.md",
             json_path="/run/findings.json",
             html_path="/run/report.html",
         )
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.services.reports.render_reports",
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.services.reports.render_reports",
                    return_value=outcome):
             result = self._rep_task().apply(args=["job-rep-001"]).get()
 
@@ -823,7 +823,7 @@ class TestReportRender(unittest.TestCase):
         ctx, sess, job, fake_tc = _make_task_ctx()
         ctx.run_state.load_findings.return_value = [raw]
 
-        from aegis.services.reports import ReportOutcome
+        from redsim.services.reports import ReportOutcome
         outcome = ReportOutcome(
             markdown_path="/run/report.md",
             json_path="/run/findings.json",
@@ -836,26 +836,26 @@ class TestReportRender(unittest.TestCase):
             rendered_findings.extend(findings)
             return outcome
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.services.reports.render_reports",
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.services.reports.render_reports",
                    side_effect=_capture_render):
             self._rep_task().apply(args=["job-rep-002"]).get()
 
-        from aegis.schema import AegisFinding
+        from redsim.schema import RedsimFinding
         self.assertEqual(len(rendered_findings), 1)
-        self.assertIsInstance(rendered_findings[0], AegisFinding)
+        self.assertIsInstance(rendered_findings[0], RedsimFinding)
 
     def test_render_called_with_html_true(self):
         ctx, sess, job, fake_tc = _make_task_ctx()
         ctx.run_state.load_findings.return_value = []
 
-        from aegis.services.reports import ReportOutcome
+        from redsim.services.reports import ReportOutcome
         outcome = ReportOutcome(
             markdown_path="/r.md", json_path="/r.json", html_path="/r.html"
         )
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.services.reports.render_reports",
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.services.reports.render_reports",
                    return_value=outcome) as mock_render:
             self._rep_task().apply(args=["job-rep-003"]).get()
 
@@ -867,7 +867,7 @@ class TestReportRender(unittest.TestCase):
         ctx, sess, job, fake_tc = _make_task_ctx()
         ctx.run_state.load_findings.return_value = raws
 
-        from aegis.services.reports import ReportOutcome
+        from redsim.services.reports import ReportOutcome
         outcome = ReportOutcome(
             markdown_path="/r.md", json_path="/r.json", html_path="/r.html"
         )
@@ -877,8 +877,8 @@ class TestReportRender(unittest.TestCase):
             passed_count.append(len(findings))
             return outcome
 
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.services.reports.render_reports",
+        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
+             patch("redsim.services.reports.render_reports",
                    side_effect=_cap):
             self._rep_task().apply(args=["job-rep-004"]).get()
 
@@ -902,25 +902,25 @@ class TestCeleryAppBootstrap(unittest.TestCase):
         with patch.dict(os.environ, env_overrides, clear=False):
             import importlib
 
-            import aegis.workers.celery_app as m
+            import redsim.workers.celery_app as m
             importlib.reload(m)
             return m
 
     def test_broker_url_taken_from_env(self):
         m = self._fresh_import(
-            {"AEGIS_BROKER_URL": "redis://broker-host:9999/3"}
+            {"REDSIM_BROKER_URL": "redis://broker-host:9999/3"}
         )
         self.assertEqual(m.app.conf.broker_url, "redis://broker-host:9999/3")
 
     def test_result_backend_taken_from_env(self):
         m = self._fresh_import(
-            {"AEGIS_RESULT_BACKEND": "redis://result-host:8888/7"}
+            {"REDSIM_RESULT_BACKEND": "redis://result-host:8888/7"}
         )
         self.assertEqual(m.app.conf.result_backend, "redis://result-host:8888/7")
 
     def test_defaults_when_env_not_set(self):
         env_without = {k: v for k, v in os.environ.items()
-                       if k not in ("AEGIS_BROKER_URL", "AEGIS_RESULT_BACKEND")}
+                       if k not in ("REDSIM_BROKER_URL", "REDSIM_RESULT_BACKEND")}
         for key in list(sys.modules.keys()):
             if "celery_app" in key:
                 del sys.modules[key]
@@ -928,7 +928,7 @@ class TestCeleryAppBootstrap(unittest.TestCase):
         with patch.dict(os.environ, env_without, clear=True):
             import importlib
 
-            import aegis.workers.celery_app as m
+            import redsim.workers.celery_app as m
             importlib.reload(m)
 
         self.assertEqual(m.app.conf.broker_url, "redis://localhost:6379/0")
@@ -959,9 +959,9 @@ class TestCeleryAppBootstrap(unittest.TestCase):
         m = self._fresh_import({})
         self.assertEqual(m.app.conf.task_default_retry_delay, 10)
 
-    def test_app_name_is_aegis(self):
+    def test_app_name_is_redsim(self):
         m = self._fresh_import({})
-        self.assertEqual(m.app.main, "aegis")
+        self.assertEqual(m.app.main, "redsim")
 
     def test_task_modules_registered(self):
         m = self._fresh_import({})
@@ -969,9 +969,9 @@ class TestCeleryAppBootstrap(unittest.TestCase):
         # removed with the pentest domain; the surviving task set is what
         # celery_app now includes.
         expected_tasks = [
-            "aegis.workers.tasks.scan",
-            "aegis.workers.tasks.verify",
-            "aegis.workers.tasks.report",
+            "redsim.workers.tasks.scan",
+            "redsim.workers.tasks.verify",
+            "redsim.workers.tasks.report",
         ]
         registered = list(m.app.conf.include)
         for module in expected_tasks:
@@ -987,7 +987,7 @@ class TestVerifyStateMapConstants(unittest.TestCase):
     test_worker_status_persistence; included here for completeness."""
 
     def test_all_three_states_mapped(self):
-        from aegis.workers.tasks.verify import _STATE_MAP
+        from redsim.workers.tasks.verify import _STATE_MAP
         self.assertEqual(_STATE_MAP["verified"], "poc_passed")
         self.assertEqual(_STATE_MAP["still_vulnerable"], "poc_failed")
         self.assertEqual(_STATE_MAP["inconclusive"], "inconclusive")

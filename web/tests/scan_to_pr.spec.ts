@@ -1,14 +1,14 @@
 // Playwright scaffold for the stack-E2E job (M12).
-// Runs only inside the docker-compose stack; gated by AEGIS_E2E_STACK=1.
+// Runs only inside the docker-compose stack; gated by REDSIM_E2E_STACK=1.
 
 import { test, expect } from "@playwright/test";
 
-const TOKEN = "dev:admin@aegis.local";
-const API = process.env.AEGIS_API_URL ?? "http://localhost:8000";
-const WEB = process.env.AEGIS_WEB_URL ?? "http://localhost:3000";
+const TOKEN = "dev:admin@redsim.local";
+const API = process.env.REDSIM_API_URL ?? "http://localhost:8000";
+const WEB = process.env.REDSIM_WEB_URL ?? "http://localhost:3000";
 
-test.skip(process.env.AEGIS_E2E_STACK !== "1",
-  "stack E2E disabled — set AEGIS_E2E_STACK=1 to enable");
+test.skip(process.env.REDSIM_E2E_STACK !== "1",
+  "stack E2E disabled — set REDSIM_E2E_STACK=1 to enable");
 
 test("scan → finding → PR happy path", async ({ page, request }) => {
   // 1. API auth check.

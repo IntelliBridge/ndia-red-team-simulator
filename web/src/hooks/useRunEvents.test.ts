@@ -45,10 +45,10 @@ describe("useRunEvents", () => {
     expect(wsInstances[0].protocols).toBeUndefined();
   });
 
-  it("offers the aegis.bearer.<token> subprotocol for programmatic callers", () => {
+  it("offers the redsim.bearer.<token> subprotocol for programmatic callers", () => {
     bearerTokenMock.mockReturnValue("tok-xyz");
     renderHook(() => useRunEvents("run-1", vi.fn()));
-    expect(wsInstances[0].protocols).toEqual(["aegis.bearer.tok-xyz"]);
+    expect(wsInstances[0].protocols).toEqual(["redsim.bearer.tok-xyz"]);
   });
 
   it("invokes onJob for a job-lifecycle frame with the parsed payload", () => {

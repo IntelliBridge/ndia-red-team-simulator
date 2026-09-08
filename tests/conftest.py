@@ -1,4 +1,4 @@
-"""Shared pytest fixtures + DB-test helpers for the Aegis suite.
+"""Shared pytest fixtures + DB-test helpers for the Redsim suite.
 
 Historically every DB-backed test re-declared its own copy of
 ``_patch_jsonb_for_sqlite`` (compile postgres ``JSONB`` → sqlite ``TEXT``)
@@ -84,14 +84,14 @@ class SqliteSessionFactory(NamedTuple):
 
 
 def make_sqlite_session_factory() -> SqliteSessionFactory:
-    """Build an in-memory sqlite engine hosting the full Aegis schema.
+    """Build an in-memory sqlite engine hosting the full Redsim schema.
 
     Returns a :class:`SqliteSessionFactory` (a ``NamedTuple`` that unpacks to
     ``(session_cm, engine, Session)``):
 
     * ``session_cm`` — a ``contextmanager`` yielding a ``Session`` that
       commits on clean exit and rolls back on exception. This is the shape
-      ``aegis.db.session.get_session`` has, so tests patch it straight in.
+      ``redsim.db.session.get_session`` has, so tests patch it straight in.
     * ``engine`` — the underlying sqlite ``Engine``.
     * ``Session`` — the ``sessionmaker``; call it for ad-hoc seeding.
 
@@ -105,7 +105,7 @@ def make_sqlite_session_factory() -> SqliteSessionFactory:
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
 
-    from aegis.db.models import Base
+    from redsim.db.models import Base
 
     engine = create_engine(
         "sqlite://",

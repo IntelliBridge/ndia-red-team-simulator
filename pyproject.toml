@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aegis-platform"
+name = "redsim-platform"
 version = "0.13.0"
-description = "Aegis platform + adversarial-ML red-team vertical: ART attacks, SHAP evidence, hardening recommendations."
+description = "Redsim platform + adversarial-ML red-team vertical: ART attacks, SHAP evidence, hardening recommendations."
 requires-python = ">=3.12"
 dependencies = [
     "PyYAML>=6.0",
@@ -80,17 +80,17 @@ ml = [
     "httpx>=0.27",
 ]
 llm = [
-    # Optional: the official Pythia SDK (private IntelliBridge repo). aegis.llm.pythia
+    # Optional: the official Pythia SDK (private IntelliBridge repo). redsim.llm.pythia
     # falls back to an in-repo httpx client speaking the same OpenAI-compatible contract.
     "pythia-sdk @ git+https://github.com/IntelliBridge/pythia.git#subdirectory=packages/pythia-sdk-python",
 ]
 garak = ["garak>=0.9"]
 
 [project.scripts]
-aegis = "aegis.cli:main"
+redsim = "redsim.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["aegis*"]
+include = ["redsim*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -102,7 +102,7 @@ markers = [
     "unit: pure-Python unit test (default)",
     "integration: integration test that may hit Postgres/Redis but not Docker",
     "docker: needs Docker; gated in CI behind workflow_dispatch",
-    "e2e: end-to-end against a live stack; gated by AEGIS_E2E env",
+    "e2e: end-to-end against a live stack; gated by REDSIM_E2E env",
     "slow: long-running test; excluded by default",
     "auth_required: needs Keycloak/cookie flow; lands in v0.4.0",
 ]

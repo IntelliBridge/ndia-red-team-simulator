@@ -3,7 +3,7 @@
 // useRunEvents — subscribe to a run's live job-lifecycle events.
 //
 // The worker publishes one frame per job transition over the WS endpoint
-// GET /v1/runs/{run_id}/events (aegis/api/ws.py):
+// GET /v1/runs/{run_id}/events (redsim/api/ws.py):
 //
 //   { "type": "job", "run_id": "<id>", "job_id": "<id>",
 //     "status": "running" | "succeeded" | "failed" }
@@ -16,16 +16,16 @@
 // fetch or shape status itself — the existing SWR data path stays the single
 // source of truth, with a slow poll as the fallback when the socket is down.
 //
-// Auth mirrors the api() client (src/lib/api.ts): the aegis_api_session cookie
+// Auth mirrors the api() client (src/lib/api.ts): the redsim_api_session cookie
 // rides the upgrade automatically, and a programmatic bearer token (localStorage
-// aegis_token) is offered via the `aegis.bearer.<token>` subprotocol, which the
+// redsim_token) is offered via the `redsim.bearer.<token>` subprotocol, which the
 // server echoes back (RFC 6455).
 
 import { useEffect, useRef } from "react";
 
 import { apiWsBase, bearerToken } from "@/lib/api";
 
-const BEARER_SUBPROTOCOL_PREFIX = "aegis.bearer.";
+const BEARER_SUBPROTOCOL_PREFIX = "redsim.bearer.";
 
 export type JobEvent = {
   type: "job";

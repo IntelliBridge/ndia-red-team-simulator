@@ -46,7 +46,7 @@ def test_make_factory_unpacks_as_triple_and_by_name() -> None:
 
 
 def test_factory_session_cm_commits_and_persists() -> None:
-    from aegis.db.models import Organization
+    from redsim.db.models import Organization
 
     session_cm, _engine, Session = make_sqlite_session_factory()
     with session_cm() as sess:
@@ -57,7 +57,7 @@ def test_factory_session_cm_commits_and_persists() -> None:
 
 
 def test_factory_session_cm_rolls_back_on_error() -> None:
-    from aegis.db.models import Organization
+    from redsim.db.models import Organization
 
     session_cm, _engine, Session = make_sqlite_session_factory()
     with pytest.raises(RuntimeError):
@@ -69,7 +69,7 @@ def test_factory_session_cm_rolls_back_on_error() -> None:
 
 
 def test_each_factory_call_is_isolated() -> None:
-    from aegis.db.models import Organization
+    from redsim.db.models import Organization
 
     first = make_sqlite_session_factory()
     with first.session_cm() as sess:
@@ -92,7 +92,7 @@ def test_sqlite_session_factory_fixture(sqlite_session_factory: SqliteSessionFac
 
 
 def test_db_session_fixture_is_usable(db_session: SASession) -> None:
-    from aegis.db.models import Organization
+    from redsim.db.models import Organization
 
     db_session.add(Organization(id="org-fix", name="A", slug="a"))
     db_session.flush()

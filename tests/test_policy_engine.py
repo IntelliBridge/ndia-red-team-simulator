@@ -5,11 +5,11 @@ Covers:
   across an (Action x role x is_system) matrix, cross-checked against the
   shared ``_ROLE_RANK`` / ``_ACTION_MIN_ROLE`` tables.
 - ``resolve_policy_engine`` selects the right class per
-  ``AEGIS_POLICY_ENGINE`` and resets cleanly.
+  ``REDSIM_POLICY_ENGINE`` and resets cleanly.
 - OPA / Cedar engines parse allow/deny and fail closed on transport
   errors, non-200, and malformed bodies; the request body shape is
   asserted.
-- ``aegis.api.policy.check`` still raises 403 identically under the
+- ``redsim.api.policy.check`` still raises 403 identically under the
   static default, and honours OPA allow/deny when configured.
 """
 
@@ -24,13 +24,13 @@ pytest.importorskip("httpx")
 
 import httpx
 
-from aegis.api.auth import CurrentUser
-from aegis.api.policy import (
+from redsim.api.auth import CurrentUser
+from redsim.api.policy import (
     _ACTION_MIN_ROLE,
     _ROLE_RANK,
     Action,
 )
-from aegis.policy.engine import (
+from redsim.policy.engine import (
     CedarPolicyEngine,
     OPAPolicyEngine,
     PolicyRequest,
@@ -54,7 +54,7 @@ def _reset_engine_singleton():
 def _user(*, memberships=None, is_system=False) -> CurrentUser:
     return CurrentUser(
         sub="u-1",
-        email="alice@aegis.local",
+        email="alice@redsim.local",
         project_memberships=memberships or {},
         is_system=is_system,
     )
@@ -163,23 +163,23 @@ class TestBuildRequest:
 class TestResolvePolicyEngine:
     def test_defaults_to_static(self):
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AEGIS_POLICY_ENGINE", None)
+            os.environ.pop("REDSIM_POLICY_ENGINE", None)
             reset_policy_engine()
             assert isinstance(resolve_policy_engine(), StaticPolicyEngine)
 
     def test_selects_opa(self):
-        with patch.dict(os.environ, {"AEGIS_POLICY_ENGINE": "opa",
-                                     "AEGIS_OPA_URL": "http://opa:8181"},
+        with patch.dict(os.environ, {"REDSIM_POLICY_ENGINE": "opa",
+                                     "REDSIM_OPA_URL": "http://opa:8181"},
                         clear=False):
             reset_policy_engine()
             engine = resolve_policy_engine()
             assert isinstance(engine, OPAPolicyEngine)
-            assert engine.url == "http://opa:8181/v1/data/aegis/authz"
+            assert engine.url == "http://opa:8181/v1/data/redsim/authz"
 
     def test_selects_opa_with_custom_path(self):
-        with patch.dict(os.environ, {"AEGIS_POLICY_ENGINE": "opa",
-                                     "AEGIS_OPA_URL": "http://opa:8181/",
-                                     "AEGIS_OPA_PATH": "v1/data/custom"},
+        with patch.dict(os.environ, {"REDSIM_POLICY_ENGINE": "opa",
+                                     "REDSIM_OPA_URL": "http://opa:8181/",
+                                     "REDSIM_OPA_PATH": "v1/data/custom"},
                         clear=False):
             reset_policy_engine()
             engine = resolve_policy_engine()
@@ -187,8 +187,8 @@ class TestResolvePolicyEngine:
             assert engine.url == "http://opa:8181/v1/data/custom"
 
     def test_selects_cedar(self):
-        with patch.dict(os.environ, {"AEGIS_POLICY_ENGINE": "cedar",
-                                     "AEGIS_CEDAR_URL": "http://cedar:8180"},
+        with patch.dict(os.environ, {"REDSIM_POLICY_ENGINE": "cedar",
+                                     "REDSIM_CEDAR_URL": "http://cedar:8180"},
                         clear=False):
             reset_policy_engine()
             engine = resolve_policy_engine()
@@ -196,25 +196,25 @@ class TestResolvePolicyEngine:
             assert engine.url == "http://cedar:8180/v1/is_authorized"
 
     def test_unknown_backend_falls_back_to_static(self):
-        with patch.dict(os.environ, {"AEGIS_POLICY_ENGINE": "bogus"},
+        with patch.dict(os.environ, {"REDSIM_POLICY_ENGINE": "bogus"},
                         clear=False):
             reset_policy_engine()
             assert isinstance(resolve_policy_engine(), StaticPolicyEngine)
 
     def test_config_used_when_env_absent(self):
-        from aegis.config import AegisConfig
-        cfg = AegisConfig(policy_engine="opa", opa_url="http://cfg:8181")
+        from redsim.config import RedsimConfig
+        cfg = RedsimConfig(policy_engine="opa", opa_url="http://cfg:8181")
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AEGIS_POLICY_ENGINE", None)
-            os.environ.pop("AEGIS_OPA_URL", None)
+            os.environ.pop("REDSIM_POLICY_ENGINE", None)
+            os.environ.pop("REDSIM_OPA_URL", None)
             reset_policy_engine()
             engine = resolve_policy_engine(cfg)
             assert isinstance(engine, OPAPolicyEngine)
-            assert engine.url == "http://cfg:8181/v1/data/aegis/authz"
+            assert engine.url == "http://cfg:8181/v1/data/redsim/authz"
 
     def test_singleton_cached_until_reset(self):
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AEGIS_POLICY_ENGINE", None)
+            os.environ.pop("REDSIM_POLICY_ENGINE", None)
             reset_policy_engine()
             first = resolve_policy_engine()
             second = resolve_policy_engine()
@@ -269,7 +269,7 @@ class TestOPAPolicyEngine:
         client = _CapturingClient(
             lambda url, body: _resp(200, {"result": {"allow": True}})
         )
-        with patch("aegis.policy.engine.httpx.Client", client):
+        with patch("redsim.policy.engine.httpx.Client", client):
             engine = OPAPolicyEngine("http://opa:8181")
             decision = engine.evaluate(
                 build_request(_user(memberships={"p1": "admin"}),
@@ -277,7 +277,7 @@ class TestOPAPolicyEngine:
             )
         assert decision.allowed is True
         # Request body is OPA's {"input": {...}} envelope.
-        assert client.last_url == "http://opa:8181/v1/data/aegis/authz"
+        assert client.last_url == "http://opa:8181/v1/data/redsim/authz"
         assert "input" in client.last_json
         inp = client.last_json["input"]
         assert inp["action"] == Action.FIX_APPLY.value
@@ -289,7 +289,7 @@ class TestOPAPolicyEngine:
             lambda url, body: _resp(
                 200, {"result": {"allow": False, "reason": "nope"}})
         )
-        with patch("aegis.policy.engine.httpx.Client", client):
+        with patch("redsim.policy.engine.httpx.Client", client):
             decision = OPAPolicyEngine("http://opa:8181").evaluate(
                 build_request(_user(memberships={"p1": "scanner"}),
                               Action.FIX_APPLY.value, "p1")
@@ -302,7 +302,7 @@ class TestOPAPolicyEngine:
             raise httpx.ConnectError("refused")
 
         client = _CapturingClient(_boom)
-        with patch("aegis.policy.engine.httpx.Client", client):
+        with patch("redsim.policy.engine.httpx.Client", client):
             decision = OPAPolicyEngine("http://opa:8181").evaluate(
                 build_request(_user(memberships={"p1": "admin"}),
                               Action.SCAN_START.value, "p1")
@@ -312,7 +312,7 @@ class TestOPAPolicyEngine:
 
     def test_500_fails_closed(self):
         client = _CapturingClient(lambda url, body: _resp(500, {}))
-        with patch("aegis.policy.engine.httpx.Client", client):
+        with patch("redsim.policy.engine.httpx.Client", client):
             decision = OPAPolicyEngine("http://opa:8181").evaluate(
                 build_request(_user(memberships={"p1": "admin"}),
                               Action.SCAN_START.value, "p1")
@@ -324,7 +324,7 @@ class TestOPAPolicyEngine:
         client = _CapturingClient(
             lambda url, body: _resp(200, raise_json=True)
         )
-        with patch("aegis.policy.engine.httpx.Client", client):
+        with patch("redsim.policy.engine.httpx.Client", client):
             decision = OPAPolicyEngine("http://opa:8181").evaluate(
                 build_request(_user(memberships={"p1": "admin"}),
                               Action.SCAN_START.value, "p1")
@@ -336,7 +336,7 @@ class TestOPAPolicyEngine:
         client = _CapturingClient(
             lambda url, body: _resp(200, {"result": {}})
         )
-        with patch("aegis.policy.engine.httpx.Client", client):
+        with patch("redsim.policy.engine.httpx.Client", client):
             decision = OPAPolicyEngine("http://opa:8181").evaluate(
                 build_request(_user(memberships={"p1": "admin"}),
                               Action.SCAN_START.value, "p1")
@@ -350,7 +350,7 @@ class TestCedarPolicyEngine:
         client = _CapturingClient(
             lambda url, body: _resp(200, {"decision": "Allow"})
         )
-        with patch("aegis.policy.engine.httpx.Client", client):
+        with patch("redsim.policy.engine.httpx.Client", client):
             decision = CedarPolicyEngine("http://cedar:8180").evaluate(
                 build_request(_user(memberships={"p1": "approver"}),
                               Action.FIX_APPLY.value, "p1")
@@ -359,7 +359,7 @@ class TestCedarPolicyEngine:
         assert client.last_url == "http://cedar:8180/v1/is_authorized"
         # Cedar body carries principal/action/resource/context (no envelope).
         assert client.last_json["action"] == Action.FIX_APPLY.value
-        assert client.last_json["principal"]["email"] == "alice@aegis.local"
+        assert client.last_json["principal"]["email"] == "alice@redsim.local"
         assert client.last_json["resource"]["project_id"] == "p1"
 
     def test_deny_with_reason(self):
@@ -367,7 +367,7 @@ class TestCedarPolicyEngine:
             lambda url, body: _resp(
                 200, {"decision": "Deny", "reason": "denied by policy"})
         )
-        with patch("aegis.policy.engine.httpx.Client", client):
+        with patch("redsim.policy.engine.httpx.Client", client):
             decision = CedarPolicyEngine("http://cedar:8180").evaluate(
                 build_request(_user(memberships={"p1": "scanner"}),
                               Action.FIX_APPLY.value, "p1")
@@ -380,7 +380,7 @@ class TestCedarPolicyEngine:
             raise httpx.ConnectTimeout("timeout")
 
         client = _CapturingClient(_boom)
-        with patch("aegis.policy.engine.httpx.Client", client):
+        with patch("redsim.policy.engine.httpx.Client", client):
             decision = CedarPolicyEngine("http://cedar:8180").evaluate(
                 build_request(_user(memberships={"p1": "admin"}),
                               Action.SCAN_START.value, "p1")
@@ -392,7 +392,7 @@ class TestCedarPolicyEngine:
         client = _CapturingClient(
             lambda url, body: _resp(200, {"verdict": "Allow"})
         )
-        with patch("aegis.policy.engine.httpx.Client", client):
+        with patch("redsim.policy.engine.httpx.Client", client):
             decision = CedarPolicyEngine("http://cedar:8180").evaluate(
                 build_request(_user(memberships={"p1": "admin"}),
                               Action.SCAN_START.value, "p1")
@@ -402,7 +402,7 @@ class TestCedarPolicyEngine:
 
 
 # ----------------------------------------------------------------------------
-# Integration: aegis.api.policy.check() through the engine seam
+# Integration: redsim.api.policy.check() through the engine seam
 # ----------------------------------------------------------------------------
 
 
@@ -410,9 +410,9 @@ class TestCheckIntegration:
     """check() must keep its exact 403 behaviour under the static default."""
 
     def test_check_static_allows_admin(self):
-        from aegis.api.policy import check
+        from redsim.api.policy import check
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AEGIS_POLICY_ENGINE", None)
+            os.environ.pop("REDSIM_POLICY_ENGINE", None)
             reset_policy_engine()
             user = _user(memberships={"p1": "admin"})
             # Should not raise.
@@ -421,9 +421,9 @@ class TestCheckIntegration:
     def test_check_static_denies_no_membership_403(self):
         from fastapi import HTTPException
 
-        from aegis.api.policy import check
+        from redsim.api.policy import check
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AEGIS_POLICY_ENGINE", None)
+            os.environ.pop("REDSIM_POLICY_ENGINE", None)
             reset_policy_engine()
             user = _user(memberships={})
             with pytest.raises(HTTPException) as exc:
@@ -434,9 +434,9 @@ class TestCheckIntegration:
     def test_check_static_denies_low_role_403(self):
         from fastapi import HTTPException
 
-        from aegis.api.policy import check
+        from redsim.api.policy import check
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AEGIS_POLICY_ENGINE", None)
+            os.environ.pop("REDSIM_POLICY_ENGINE", None)
             reset_policy_engine()
             user = _user(memberships={"p1": "scanner"})
             with pytest.raises(HTTPException) as exc:
@@ -445,22 +445,22 @@ class TestCheckIntegration:
             assert "scanner" in exc.value.detail
 
     def test_check_static_system_bypasses(self):
-        from aegis.api.policy import check
+        from redsim.api.policy import check
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AEGIS_POLICY_ENGINE", None)
+            os.environ.pop("REDSIM_POLICY_ENGINE", None)
             reset_policy_engine()
             user = _user(memberships={}, is_system=True)
             check(user, Action.AUDIT_VERIFY, "p1")  # no raise
 
     def test_check_opa_allow_permits(self):
-        from aegis.api.policy import check
+        from redsim.api.policy import check
         client = _CapturingClient(
             lambda url, body: _resp(200, {"result": {"allow": True}})
         )
-        with patch.dict(os.environ, {"AEGIS_POLICY_ENGINE": "opa",
-                                     "AEGIS_OPA_URL": "http://opa:8181"},
+        with patch.dict(os.environ, {"REDSIM_POLICY_ENGINE": "opa",
+                                     "REDSIM_OPA_URL": "http://opa:8181"},
                         clear=False), \
-                patch("aegis.policy.engine.httpx.Client", client):
+                patch("redsim.policy.engine.httpx.Client", client):
             reset_policy_engine()
             user = _user(memberships={"p1": "scanner"})
             # Static would deny FIX_APPLY for a scanner; OPA allow wins.
@@ -469,15 +469,15 @@ class TestCheckIntegration:
     def test_check_opa_deny_raises_403_with_reason(self):
         from fastapi import HTTPException
 
-        from aegis.api.policy import check
+        from redsim.api.policy import check
         client = _CapturingClient(
             lambda url, body: _resp(
                 200, {"result": {"allow": False, "reason": "opa says no"}})
         )
-        with patch.dict(os.environ, {"AEGIS_POLICY_ENGINE": "opa",
-                                     "AEGIS_OPA_URL": "http://opa:8181"},
+        with patch.dict(os.environ, {"REDSIM_POLICY_ENGINE": "opa",
+                                     "REDSIM_OPA_URL": "http://opa:8181"},
                         clear=False), \
-                patch("aegis.policy.engine.httpx.Client", client):
+                patch("redsim.policy.engine.httpx.Client", client):
             reset_policy_engine()
             user = _user(memberships={"p1": "admin"})
             with pytest.raises(HTTPException) as exc:
@@ -488,16 +488,16 @@ class TestCheckIntegration:
     def test_check_opa_unreachable_fails_closed_403(self):
         from fastapi import HTTPException
 
-        from aegis.api.policy import check
+        from redsim.api.policy import check
 
         def _boom(url, body):
             raise httpx.ConnectError("refused")
 
         client = _CapturingClient(_boom)
-        with patch.dict(os.environ, {"AEGIS_POLICY_ENGINE": "opa",
-                                     "AEGIS_OPA_URL": "http://opa:8181"},
+        with patch.dict(os.environ, {"REDSIM_POLICY_ENGINE": "opa",
+                                     "REDSIM_OPA_URL": "http://opa:8181"},
                         clear=False), \
-                patch("aegis.policy.engine.httpx.Client", client):
+                patch("redsim.policy.engine.httpx.Client", client):
             reset_policy_engine()
             user = _user(memberships={"p1": "admin"})
             with pytest.raises(HTTPException) as exc:

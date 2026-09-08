@@ -3,7 +3,7 @@ import { RunStatusBadge } from "./run-status-badge";
 
 const meta: Meta<typeof RunStatusBadge> = {
   component: RunStatusBadge,
-  title: "Aegis/RunStatusBadge",
+  title: "Redsim/RunStatusBadge",
   tags: ["autodocs"],
 };
 export default meta;

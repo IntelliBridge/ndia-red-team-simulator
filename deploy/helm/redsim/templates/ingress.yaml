@@ -1,0 +1,40 @@
+{{/*
+Ingress routing external traffic to the web UI and the api. Rendered only
+when ingress.enabled=true. Each path entry names the target component
+("web"/"api"); the backend Service name is derived from that component.
+*/}}
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "redsim.fullname" . }}
+  labels:
+    {{- include "redsim.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "redsim.componentName" (dict "ctx" $ "component" .service) }}
+                port:
+                  number: {{ if eq .service "web" }}{{ $.Values.web.service.port }}{{ else }}{{ $.Values.api.service.port }}{{ end }}
+          {{- end }}
+    {{- end }}
+{{- end }}

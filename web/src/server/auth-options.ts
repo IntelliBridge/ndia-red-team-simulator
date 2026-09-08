@@ -1,7 +1,7 @@
-// NextAuth options — Keycloak provider + Aegis cookie minting.
+// NextAuth options — Keycloak provider + Redsim cookie minting.
 //
-// Lives in /server/ because the file references the Aegis session
-// private key via `mintAegisSessionJwt`. It must never be bundled
+// Lives in /server/ because the file references the Redsim session
+// private key via `mintRedsimSessionJwt`. It must never be bundled
 // into the client. Next.js 14's App Router only allows specific
 // HTTP-verb exports (GET, POST, …) from a route.ts file, so this
 // configuration cannot live alongside the route handler — hence the
@@ -13,18 +13,18 @@ import KeycloakProvider from "next-auth/providers/keycloak";
 
 import {
   csrfCookieName,
-  mintAegisSessionJwt,
+  mintRedsimSessionJwt,
   newCsrfToken,
   sessionCookieName,
   sessionTtlSeconds,
-} from "./aegis-session";
+} from "./redsim-session";
 
-const isProd = (process.env.AEGIS_ENV ?? "dev") === "prod";
+const isProd = (process.env.REDSIM_ENV ?? "dev") === "prod";
 
 export const authOptions: NextAuthOptions = {
   providers: [
     KeycloakProvider({
-      clientId: process.env.KEYCLOAK_CLIENT_ID ?? "aegis-web",
+      clientId: process.env.KEYCLOAK_CLIENT_ID ?? "redsim-web",
       clientSecret: process.env.KEYCLOAK_CLIENT_SECRET ?? "",
       issuer: process.env.KEYCLOAK_ISSUER,
     }),
@@ -39,24 +39,24 @@ export const authOptions: NextAuthOptions = {
         token.email = (profile as { email?: string }).email ?? token.email;
         token.name = (profile as { name?: string }).name ?? token.name;
         const rolesClaim = (profile as Record<string, unknown>)[
-          "aegis_project_roles"
+          "redsim_project_roles"
         ];
         if (rolesClaim && typeof rolesClaim === "object") {
-          token.aegisProjectRoles = rolesClaim as Record<string, string>;
+          token.redsimProjectRoles = rolesClaim as Record<string, string>;
         }
       }
       return token;
     },
     async session({ session, token }) {
-      // Mint the Aegis-signed cookies on every session refresh so the
+      // Mint the Redsim-signed cookies on every session refresh so the
       // SPA can fetch a fresh CSRF token without a full re-login.
       try {
-        const jwt = await mintAegisSessionJwt({
+        const jwt = await mintRedsimSessionJwt({
           sub: String(token.sub ?? ""),
           email: String(token.email ?? ""),
           name: String(token.name ?? ""),
           projectMemberships:
-            (token.aegisProjectRoles as Record<string, string> | undefined) ??
+            (token.redsimProjectRoles as Record<string, string> | undefined) ??
             {},
         });
         const csrf = newCsrfToken();
@@ -77,10 +77,10 @@ export const authOptions: NextAuthOptions = {
           maxAge,
         });
       } catch (err) {
-        // If mint fails (e.g. AEGIS_API_SESSION_PRIVATE_KEY missing in
+        // If mint fails (e.g. REDSIM_API_SESSION_PRIVATE_KEY missing in
         // local dev), keep the NextAuth session intact so the user
         // still sees the UI shell — API calls will surface a 401.
-        console.warn("aegis: failed to mint API session cookie", err);
+        console.warn("redsim: failed to mint API session cookie", err);
       }
       return session;
     },

@@ -9,10 +9,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from aegis.config import AegisConfig
-from aegis.scanners.registry import ScanResult
-from aegis.services.scans import start_scan
-from aegis.state import RunState
+from redsim.config import RedsimConfig
+from redsim.scanners.registry import ScanResult
+from redsim.services.scans import start_scan
+from redsim.state import RunState
 
 
 class TestStartScanAuthorizes(unittest.TestCase):
@@ -23,11 +23,11 @@ class TestStartScanAuthorizes(unittest.TestCase):
                 findings=[], adapter_name="fake", adapter_version="0",
                 command_str="fake", exit_code=0,
             )
-            with patch("aegis.scanners.dispatch", return_value=result):
+            with patch("redsim.scanners.dispatch", return_value=result):
                 outcome = start_scan(
                     run_state=state, target="http://localhost:3000",
                     scanner="fake",
-                    actor="cli:test", config=AegisConfig(output_dir=tmp),
+                    actor="cli:test", config=RedsimConfig(output_dir=tmp),
                 )
             self.assertTrue(outcome.success)
             audit = (state.run_path / "audit.jsonl").read_text().strip().splitlines()

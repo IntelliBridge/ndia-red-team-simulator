@@ -1,5 +1,5 @@
 """Unit tests for the ``jobs.status`` transition guard
-(``aegis.workers.job_state``).
+(``redsim.workers.job_state``).
 
 Fully offline and DB-free: ``set_job_status`` operates structurally on
 anything carrying a ``status`` attribute, so a tiny ``SimpleNamespace`` stands
@@ -16,12 +16,12 @@ from types import SimpleNamespace
 
 import pytest
 
-# job_state itself is celery-free, but importing it runs aegis/workers/__init__,
+# job_state itself is celery-free, but importing it runs redsim/workers/__init__,
 # which imports the Celery app. The minimal unit-CI env (.[test,dev]) has no
 # celery, so skip there — matching the other worker tests' importorskip guard.
 pytest.importorskip("celery")
 
-from aegis.workers.job_state import (  # noqa: E402
+from redsim.workers.job_state import (  # noqa: E402
     ALLOWED,
     IllegalJobTransition,
     set_job_status,

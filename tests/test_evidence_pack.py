@@ -15,9 +15,9 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
-from aegis.audit.chain import JsonlAuditWriter
-from aegis.config import AegisConfig
-from aegis.services.evidence import (
+from redsim.audit.chain import JsonlAuditWriter
+from redsim.config import RedsimConfig
+from redsim.services.evidence import (
     build_controls_matrix,
     generate_evidence_pack,
 )
@@ -49,9 +49,9 @@ def _seed_writer(output_dir: Path) -> JsonlAuditWriter:
 
 class TestEvidencePackContents(unittest.TestCase):
     def _generate(self, tmp: str):
-        out_root = Path(tmp) / "aegis_output"
+        out_root = Path(tmp) / "redsim_output"
         _seed_writer(out_root)
-        config = AegisConfig(output_dir=str(out_root))
+        config = RedsimConfig(output_dir=str(out_root))
         pack_dir = Path(tmp) / "pack"
         with patch.dict("os.environ", {}, clear=True):
             manifest = generate_evidence_pack(pack_dir, config=config)
@@ -86,7 +86,7 @@ class TestEvidencePackContents(unittest.TestCase):
 
     def test_verification_detects_tampered_chain(self):
         with tempfile.TemporaryDirectory() as tmp:
-            out_root = Path(tmp) / "aegis_output"
+            out_root = Path(tmp) / "redsim_output"
             _seed_writer(out_root)
             # Tamper with a record in run-1's chain on disk.
             chain_file = out_root / "audit" / "run__run-1.jsonl"
@@ -96,7 +96,7 @@ class TestEvidencePackContents(unittest.TestCase):
             lines[1] = json.dumps(rec)
             chain_file.write_text("\n".join(lines) + "\n")
 
-            config = AegisConfig(output_dir=str(out_root))
+            config = RedsimConfig(output_dir=str(out_root))
             pack_dir = Path(tmp) / "pack"
             with patch.dict("os.environ", {}, clear=True):
                 generate_evidence_pack(pack_dir, config=config)
@@ -126,7 +126,7 @@ class TestEvidencePackContents(unittest.TestCase):
                     (pack_dir / rel).read_bytes()
                 ).hexdigest()
             # Recompute the pack hash the same way the service does.
-            from aegis.services.evidence import _compute_pack_hash
+            from redsim.services.evidence import _compute_pack_hash
             self.assertEqual(_compute_pack_hash(recomputed), manifest.pack_hash)
             # Mutate one file -> different hash.
             recomputed[next(iter(recomputed))] = "0" * 64
@@ -146,7 +146,7 @@ class TestEvidencePackContents(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             pack_dir, _ = self._generate(tmp)
             system = json.loads((pack_dir / "system.json").read_text())
-            self.assertIn("aegis_version", system)
+            self.assertIn("redsim_version", system)
             self.assertIn("features", system)
             features = system["features"]
             # Backend names + booleans only — no token-ish keys.
@@ -183,12 +183,12 @@ class TestControlsMatrix(unittest.TestCase):
 
 class TestEvidencePackCli(unittest.TestCase):
     def test_cmd_evidence_pack_smoke(self):
-        from aegis.cli.evidence import cmd_evidence_pack
+        from redsim.cli.evidence import cmd_evidence_pack
 
         with tempfile.TemporaryDirectory() as tmp:
-            out_root = Path(tmp) / "aegis_output"
+            out_root = Path(tmp) / "redsim_output"
             _seed_writer(out_root)
-            config = AegisConfig(output_dir=str(out_root))
+            config = RedsimConfig(output_dir=str(out_root))
             pack_dir = Path(tmp) / "pack"
             args = Namespace(out=str(pack_dir), project=None)
             with patch.dict("os.environ", {}, clear=True):
@@ -198,11 +198,11 @@ class TestEvidencePackCli(unittest.TestCase):
             self.assertTrue((pack_dir / "manifest.json").exists())
 
     def test_cli_requires_out(self):
-        from aegis.cli.evidence import cmd_evidence_pack
+        from redsim.cli.evidence import cmd_evidence_pack
 
         args = Namespace(out=None, project=None)
         with self.assertRaises(SystemExit) as cm:
-            cmd_evidence_pack(args, AegisConfig())
+            cmd_evidence_pack(args, RedsimConfig())
         self.assertEqual(cm.exception.code, 2)
 
 

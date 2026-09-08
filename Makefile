@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 
 # Repo-root Makefile for redsim (Adversarial ML Red-Team Simulator): the
-# aegis Python package (aegis/: FastAPI API, Celery workers, alembic
+# redsim Python package (redsim/: FastAPI API, Celery workers, alembic
 # migrations) plus the Next.js app in web/ (@redsim/web) and
 # packages/design-system (@redsim/design-system), joined by
 # pnpm-workspace.yaml. The full stack (Postgres, Redis, Keycloak, MinIO,
@@ -65,18 +65,18 @@ require-install:
 # child. Note that -j returns as soon as the first child exits, so a server
 # that dies on startup shows up as a partial teardown rather than an error.
 #
-# Environment for dev-api (read by aegis/api/settings.py, all optional):
-#   AEGIS_ENV=dev, AEGIS_AUTH_MODE=dev      defaults. dev auth accepts
+# Environment for dev-api (read by redsim/api/settings.py, all optional):
+#   REDSIM_ENV=dev, REDSIM_AUTH_MODE=dev      defaults. dev auth accepts
 #                                            `Bearer dev:<email>`
-#   AEGIS_DB_URL                            postgresql+psycopg://... Unset
+#   REDSIM_DB_URL                            postgresql+psycopg://... Unset
 #                                            is allowed: the app starts,
 #                                            /health reports
 #                                            db_configured=false, and any
 #                                            DB-backed route raises
-#                                            "AEGIS_DB_URL is not set"
-#   AEGIS_CORS_ORIGINS / AEGIS_WEB_ORIGIN   default http://localhost:3000
-#   AEGIS_BLOB_BACKEND=fs, AEGIS_OUTPUT_DIR  default ./aegis_output
-#   AEGIS_BROKER_URL / AEGIS_RESULT_BACKEND redis://... Needed only when
+#                                            "REDSIM_DB_URL is not set"
+#   REDSIM_CORS_ORIGINS / REDSIM_WEB_ORIGIN   default http://localhost:3000
+#   REDSIM_BLOB_BACKEND=fs, REDSIM_OUTPUT_DIR  default ./redsim_output
+#   REDSIM_BROKER_URL / REDSIM_RESULT_BACKEND redis://... Needed only when
 #                                            a request enqueues Celery work
 # So dev-api boots with no Postgres or Redis running, but anything beyond
 # /health, /docs and /metrics needs `make up` (or at least postgres +
@@ -84,7 +84,7 @@ require-install:
 # .env.example to .env and `set -a; source .env; set +a` for a quick start.
 #
 # dev-worker is deliberately NOT on the default `dev` line: it needs Redis
-# (AEGIS_BROKER_URL, AEGIS_RESULT_BACKEND) and Postgres (AEGIS_DB_URL) up
+# (REDSIM_BROKER_URL, REDSIM_RESULT_BACKEND) and Postgres (REDSIM_DB_URL) up
 # front and the ml extra installed. Run it in a second terminal, or use
 # `make -j dev-api dev-web dev-worker` once the stack is up.
 
@@ -95,13 +95,13 @@ dev: require-install
 	$(MAKE) -j dev-api dev-web
 
 dev-api: require-install
-	$(PY) -m uvicorn aegis.api.app:create_app --factory --reload --port 8000
+	$(PY) -m uvicorn redsim.api.app:create_app --factory --reload --port 8000
 
 dev-web: require-install
 	pnpm --filter $(WEB) dev
 
 dev-worker: require-install
-	$(PY) -m celery -A aegis.workers.celery_app worker -Q scans,default -l info
+	$(PY) -m celery -A redsim.workers.celery_app worker -Q scans,default -l info
 
 # ---------------------------------------------------------------------
 # Tests
@@ -112,12 +112,12 @@ test: require-install
 	pnpm --filter $(WEB) test
 
 test-cov: require-install
-	$(PY) -m pytest -q --cov=aegis --cov-report=term-missing
+	$(PY) -m pytest -q --cov=redsim --cov-report=term-missing
 
 lint: lint-py lint-web
 
 lint-py: require-install
-	$(VENV)/bin/ruff check aegis tests
+	$(VENV)/bin/ruff check redsim tests
 
 # web/ has no ESLint config yet, and `next lint` with no config stops to ask
 # how to set one up, which would hang `make lint` and `make check` in a
@@ -134,13 +134,13 @@ lint-web: require-install
 typecheck: typecheck-py typecheck-web
 
 typecheck-py: require-install
-	$(VENV)/bin/mypy aegis
+	$(VENV)/bin/mypy redsim
 
 typecheck-web: require-install
 	pnpm --filter $(WEB) typecheck
 
 # Full local gate, mirroring the lint/typecheck/test jobs in
-# .github/workflows/aegis-ci.yml. deploy-aws.yml does not run it: that
+# .github/workflows/redsim-ci.yml. deploy-aws.yml does not run it: that
 # workflow only builds images and rolls ECS services.
 check: lint typecheck test
 
@@ -149,9 +149,9 @@ check: lint typecheck test
 # ---------------------------------------------------------------------
 #
 # deploy/docker-compose.yml brings up postgres, redis, keycloak, minio,
-# aegis-api (runs `alembic upgrade head` on start), aegis-worker (-Q scans),
-# aegis-worker-default (-Q default), aegis-beat, aegis-web (host port 3300)
-# and aegis-log-ingest. Optional profiles: --profile obs, obs-search, policy.
+# redsim-api (runs `alembic upgrade head` on start), redsim-worker (-Q scans),
+# redsim-worker-default (-Q default), redsim-beat, redsim-web (host port 3300)
+# and redsim-log-ingest. Optional profiles: --profile obs, obs-search, policy.
 # deploy/Makefile has the finer-grained helpers (seed, psql, logs, rebuild).
 
 up:

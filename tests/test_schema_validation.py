@@ -1,4 +1,4 @@
-"""Runtime-validation behaviour of the Pydantic-v2 ``AegisFinding`` schema.
+"""Runtime-validation behaviour of the Pydantic-v2 ``RedsimFinding`` schema.
 
 Companion to ``test_schema.py`` (which covers from_dict/round-trip on the golden
 fixture). These tests pin the new guarantees introduced by the dataclass ->
@@ -12,7 +12,7 @@ import unittest
 
 from pydantic import ValidationError
 
-from aegis.schema import AegisFinding, CodeLocation
+from redsim.schema import RedsimFinding, CodeLocation
 
 _VALID = dict(
     id="f1", title="t", severity="high", finding_type="sast",
@@ -24,30 +24,30 @@ _VALID = dict(
 
 class TestConstructionValidation(unittest.TestCase):
     def test_valid_construction(self):
-        f = AegisFinding(**_VALID)
+        f = RedsimFinding(**_VALID)
         self.assertEqual(f.severity, "high")
 
     def test_bad_severity_rejected(self):
         with self.assertRaises(ValidationError):
-            AegisFinding(**{**_VALID, "severity": "informational"})
+            RedsimFinding(**{**_VALID, "severity": "informational"})
 
     def test_bad_finding_type_rejected(self):
         with self.assertRaises(ValidationError):
-            AegisFinding(**{**_VALID, "finding_type": "malware"})
+            RedsimFinding(**{**_VALID, "finding_type": "malware"})
 
     def test_missing_required_field_rejected(self):
         incomplete = {k: v for k, v in _VALID.items() if k != "title"}
         with self.assertRaises(ValidationError):
-            AegisFinding(**incomplete)
+            RedsimFinding(**incomplete)
 
 
 class TestSerializationRoundTrip(unittest.TestCase):
     def test_to_dict_from_dict_round_trip(self):
-        f = AegisFinding(**_VALID)
-        self.assertEqual(AegisFinding.from_dict(f.to_dict()), f)
+        f = RedsimFinding(**_VALID)
+        self.assertEqual(RedsimFinding.from_dict(f.to_dict()), f)
 
     def test_nested_code_locations_coerced(self):
-        f = AegisFinding.from_dict({
+        f = RedsimFinding.from_dict({
             **_VALID,
             "code_locations": [{"file": "a.py", "start_line": 1, "end_line": 2}],
         })
@@ -55,18 +55,18 @@ class TestSerializationRoundTrip(unittest.TestCase):
         self.assertEqual(f.code_locations[0].file, "a.py")
 
     def test_extra_keys_tolerated(self):
-        f = AegisFinding.from_dict({**_VALID, "unknown_future_field": 123})
+        f = RedsimFinding.from_dict({**_VALID, "unknown_future_field": 123})
         self.assertFalse(hasattr(f, "unknown_future_field"))
 
 
 class TestGuardedAssignment(unittest.TestCase):
     def test_valid_status_transition(self):
-        f = AegisFinding(**_VALID)
+        f = RedsimFinding(**_VALID)
         f.status = "fixing"
         self.assertEqual(f.status, "fixing")
 
     def test_invalid_assignment_rejected(self):
-        f = AegisFinding(**_VALID)
+        f = RedsimFinding(**_VALID)
         with self.assertRaises(ValidationError):
             f.status = "not-a-status"
 
@@ -76,8 +76,8 @@ class TestLenientLegacyRead(unittest.TestCase):
         """Old dataclasses never validated; a blob with an out-of-vocabulary
         severity must still load (best-effort) rather than break the read."""
         legacy = {**_VALID, "severity": "informational"}
-        with self.assertLogs("aegis.schema", level=logging.WARNING):
-            f = AegisFinding.from_dict(legacy)
+        with self.assertLogs("redsim.schema", level=logging.WARNING):
+            f = RedsimFinding.from_dict(legacy)
         # value preserved verbatim, matching pre-migration (unvalidated) behaviour
         self.assertEqual(f.severity, "informational")
 
@@ -86,7 +86,7 @@ class TestLenientLegacyRead(unittest.TestCase):
             **_VALID, "severity": "informational",
             "code_locations": [{"file": "a.py", "start_line": 1, "end_line": 2}],
         }
-        f = AegisFinding.from_dict(legacy)
+        f = RedsimFinding.from_dict(legacy)
         self.assertIsInstance(f.code_locations[0], CodeLocation)
 
 

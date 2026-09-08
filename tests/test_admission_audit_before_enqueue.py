@@ -20,12 +20,12 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from aegis.audit.chain import InMemoryAuditWriter
-from aegis.config import AegisConfig
-from aegis.db.models import Organization, Project, Run
-from aegis.services.runs import cancel_run
-from aegis.services.scans import create_scan_job
-from aegis.services.verify import create_verify_job
+from redsim.audit.chain import InMemoryAuditWriter
+from redsim.config import RedsimConfig
+from redsim.db.models import Organization, Project, Run
+from redsim.services.runs import cancel_run
+from redsim.services.scans import create_scan_job
+from redsim.services.verify import create_verify_job
 from tests.conftest import make_sqlite_session_factory as _make_session_factory
 
 # DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
@@ -52,14 +52,14 @@ class TestAdmissionAuditBeforeEnqueue(unittest.TestCase):
                              "audit row must exist before enqueue")
             enqueue_calls.append(job_id)
 
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.workers.tasks.scan.scan_start") as scan_start:
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.workers.tasks.scan.scan_start") as scan_start:
             scan_start.delay = fake_delay
             handle = create_scan_job(
                 target="http://localhost:3000",
                 scanner="fake-attack", project_id="proj-1",
                 actor="user:test",
-                config=AegisConfig(target_allowlist=["localhost"]),
+                config=RedsimConfig(target_allowlist=["localhost"]),
                 audit_writer=writer,
             )
 
@@ -75,7 +75,7 @@ class TestAdmissionAuditBeforeEnqueue(unittest.TestCase):
             run = s.get(Run, handle.run_id)
             self.assertIsNotNone(run)
             self.assertEqual(run.status, "queued")
-            from aegis.db.models import Job
+            from redsim.db.models import Job
             job = s.get(Job, handle.job_id)
             self.assertIsNotNone(job)
             self.assertEqual(job.status, "queued")
@@ -91,14 +91,14 @@ class TestAdmissionAuditBeforeEnqueue(unittest.TestCase):
         _seed_project(Session)
         writer = InMemoryAuditWriter()
 
-        from aegis.safety import AuthorizationError
-        with patch("aegis.db.session.get_session", session_cm):
+        from redsim.safety import AuthorizationError
+        with patch("redsim.db.session.get_session", session_cm):
             with self.assertRaises(AuthorizationError):
                 create_scan_job(
                     target="http://attacker.example.com",
                     scanner="fake-attack", project_id="proj-1",
                     actor="user:test",
-                    config=AegisConfig(target_allowlist=["localhost"]),
+                    config=RedsimConfig(target_allowlist=["localhost"]),
                     audit_writer=writer,
                 )
 
@@ -127,12 +127,12 @@ class TestAdmissionAuditBeforeEnqueue(unittest.TestCase):
             self.assertEqual(len(writer.events), 1)
             enqueue_calls.append(job_id)
 
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.workers.tasks.verify.verify_replay") as verify_replay:
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.workers.tasks.verify.verify_replay") as verify_replay:
             verify_replay.delay = fake_delay
             handle = create_verify_job(
                 finding_id="f-1", project_id="proj-1", run_id="run-1",
-                actor="user:test", config=AegisConfig(),
+                actor="user:test", config=RedsimConfig(),
                 audit_writer=writer,
             )
 
@@ -142,7 +142,7 @@ class TestAdmissionAuditBeforeEnqueue(unittest.TestCase):
     def test_cancel_emits_chain_row_then_marks_cancelled(self):
         session_cm, _, Session = _make_session_factory()
         _seed_project(Session)
-        from aegis.db.models import Job
+        from redsim.db.models import Job
         with Session() as s:
             s.add(Run(id="run-1", project_id="proj-1",
                       mode="api", status="running", stage_table={}))
@@ -151,10 +151,10 @@ class TestAdmissionAuditBeforeEnqueue(unittest.TestCase):
             s.commit()
 
         writer = InMemoryAuditWriter()
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             outcome = cancel_run(
                 run_id="run-1", actor="user:test",
-                config=AegisConfig(), audit_writer=writer,
+                config=RedsimConfig(), audit_writer=writer,
             )
 
         self.assertEqual(outcome.status, "cancelled")
