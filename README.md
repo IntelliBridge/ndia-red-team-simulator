@@ -135,46 +135,76 @@ enqueued — a worker crash mid-enqueue can never produce a half-state.
 
 ## Get started
 
-### Offline CLI (Python only, no Docker)
+### Prerequisites
+
+| Tool | Version | Notes |
+|---|---|---|
+| Python | 3.12.x | `torch` and `adversarial-robustness-toolbox` do not publish wheels for 3.14 yet. `make install` finds a 3.12 for you. |
+| Node.js | 20 or newer | |
+| pnpm | 10 or newer | Workspaces are declared in `pnpm-workspace.yaml`. |
+
+### Install
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[test,dev]"
-aegis init                          # write a default aegis.yaml
-aegis demo --repo /path/to/juice-shop --apply
-aegis audit verify --all            # ✓
+make install
 ```
 
-The offline path needs no Postgres, Keycloak, or Redis. Findings +
-reports land in `./aegis_output/runs/<run-id>/`; audit events on a
-local JSONL chain alongside.
+Creates `.venv` when it is missing, picking an interpreter in this order:
+pyenv's newest 3.12.x, then `python3.12` on `PATH`, then `python3`. It then
+runs `pip install -e ".[dev]"` and `pnpm install` for the `web` and
+`packages/design-system` workspaces. Re-running it is safe and does not
+recreate an existing venv.
 
-### Full stack (Postgres, Keycloak, MinIO, API, worker, web)
+### Run
 
 ```bash
-cd deploy
-make up            # default profile — API on :8000, web on :3300
-make seed          # optional: Keycloak realm + sample project
+make dev
 ```
 
-Opt-in observability:
+Runs the Python test suite once as a sanity check, then serves the Next.js app
+on <http://localhost:3000> in the foreground.
 
-```bash
-docker compose --profile obs up         # + OTel Collector + Loki + Jaeger
-docker compose --profile obs-search up  # + Elasticsearch + Kibana
+There is no backend process to start yet. `redsim/api/__init__.py` is a
+one-line stub with no FastAPI app, and `redsim/cli.py` does not exist, so the
+`redsim` console script declared in `pyproject.toml` is a dangling entry point.
+The recipe already runs its services under `make -j`, so adding the API later
+is a `dev-api` target plus one word on that line. `web/src/lib/api.ts` defaults
+to `http://localhost:8000`, which is the port it will expect.
+
+### Targets
+
+| Target | What it runs |
+|---|---|
+| `make install` | Venv, `pip install -e ".[dev]"`, `pnpm install` |
+| `make dev` | pytest, then the web dev server on :3000 |
+| `make test` | `pytest -q` plus `pnpm --filter @redsim/web test` |
+| `make test-cov` | pytest with `--cov=redsim --cov-report=term-missing` |
+| `make lint` | `ruff check redsim tests`, then `next lint` |
+| `make typecheck` | `mypy redsim`, then `tsc --noEmit` |
+| `make check` | lint, typecheck, test |
+
+Both halves of `lint` and `typecheck` are available on their own as `lint-py`,
+`lint-web`, `typecheck-py` and `typecheck-web`. Recipes call the venv
+interpreter by path, so no target needs an activated shell.
+
+Every target except `install` stops immediately when the tree is not installed:
+
+```
+error: .venv is missing. Run 'make install' first.
 ```
 
-Sign in via Keycloak (`admin/adminpass` in dev), or — for scripted
-access — set `AEGIS_TOKEN=dev:<email>` and run `aegis --api <cmd>`.
+### Known gaps
 
-### Tests
+`make lint` does not pass on a clean checkout, and `make check` inherits that.
+`lint-py` reports nine pre-existing ruff findings, seven of them fixable with
+`.venv/bin/ruff check redsim tests --fix`. `lint-web` runs `next lint` in a
+workspace that has no ESLint config, which drops into Next's interactive setup
+prompt, so it needs `eslint` and `eslint-config-next` added as dev dependencies
+before it can work unattended.
 
-```bash
-pytest -q                                              # 1288 passed, 20 skipped offline
-AEGIS_E2E=1 AEGIS_DISABLE_LLM=1 pytest -q tests/e2e/   # deterministic E2E
-pnpm --filter @aegis/web test                          # web unit suite (vitest)
-pnpm --filter @aegis/web storybook                     # design-system stories
-```
+`make test` and `make typecheck` both pass. The pytest suite currently covers
+only the Pythia client, not the suite described in section 7 of the design
+spec.
 
 ---
 
@@ -262,17 +292,19 @@ for the manifest and the
 
 ## Documentation
 
-A browseable docs site is built from the same markdown via MkDocs
-Material:
+The `docs-serve`, `docs-build`, `docs-build-strict` and `docs-clean` targets
+are still in the Makefile, but nothing backs them yet. There is no `mkdocs.yml`
+in the tree and `mkdocs` is not a dependency in `pyproject.toml`, so all four
+fail until both are added. Section 6 of the design spec lists `mkdocs.yml`
+among the files removed when redsim was stripped out of aegis.
 
-```bash
-pip install -e ".[docs]"
-make docs-serve              # http://localhost:8001
-make docs-build-strict       # fail on broken links / unreffed pages
-```
+The docs that do exist:
 
-Pushes to `main` deploy to GitHub Pages via
-[`.github/workflows/docs.yml`](.github/workflows/docs.yml).
+| Doc | What it is |
+|---|---|
+| [`docs/brief.md`](docs/brief.md) | The team project brief. Authoritative: where it and the design spec disagree, the brief wins. |
+| [`docs/superpowers/specs/2026-09-08-redsim-design.md`](docs/superpowers/specs/2026-09-08-redsim-design.md) | The design spec that every stub in `redsim/` defers to. |
+| [`docs/adversarial-ml-redteam-spec.md`](docs/adversarial-ml-redteam-spec.md) | An earlier hackathon spec, also rendered as `.html`. It assumes building on the Aegis platform and audit chain, which the brief drops, so read it for the ART and SHAP framing rather than for architecture. |
 
 ### Topic map
 
