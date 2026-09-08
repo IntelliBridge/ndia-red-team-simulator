@@ -31,8 +31,8 @@ export default function ModelsPage() {
     error instanceof ApiError
       ? ({
           403: "Unauthorized for this project.",
-          404: "Model catalog is not implemented in this deployment.",
-          501: "Model catalog is not implemented in this deployment.",
+          404: "Model catalog not_implemented: GET /v1/models is not mounted in this deployment.",
+          501: "Model catalog not_implemented: the server reports the catalog as not implemented.",
           503: "Model service unavailable. Retry when the service is restored.",
         }[error.status] ?? `Model catalog refused (${error.status}).`)
       : "Model catalog unavailable. Retry.";

@@ -272,7 +272,7 @@ export default function ModelPage({ params }: { params: { id: string } }) {
                       {dataset.name} · {dataset.revision}
                       {model &&
                       !dataset.compatible_modalities.includes(model.modality)
-                        ? ` · incompatible with ${model.modality}`
+                        ? ` · not compatible with ${model.modality} targets`
                         : ""}
                       {dataset.role === "ci_fixture"
                         ? " · CI fixture — not the demo dataset"
@@ -429,6 +429,14 @@ export default function ModelPage({ params }: { params: { id: string } }) {
                 Select a compatible dataset before launching.
               </p>
             )}
+            {selectedDataset &&
+              model &&
+              !selectedDataset.compatible_modalities.includes(model.modality) && (
+                <p className="text-xs text-destructive" role="alert">
+                  {selectedDataset.name} does not support {model.modality} targets. Choose a
+                  dataset whose compatible modalities include {model.modality}.
+                </p>
+              )}
             {defenses.length > 0 && (
               <p className="text-xs text-muted-foreground">
                 Verify defenses available:{" "}
