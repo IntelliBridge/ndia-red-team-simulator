@@ -1,186 +1,254 @@
 # Architecture overview
 
-This doc is the entry point to "how does Redsim fit together." For the
-auth flow, audit chain, observability pipeline, and HTTP API each get
-their own dedicated doc; this file is the shared mental model.
+This doc is the entry point to "how does redsim fit together". Auth, the
+audit chain, multi-tenancy, observability, the ML vertical and the HTTP
+API each have their own page. This file is the shared mental model.
 
 - [Auth flows](auth.md)
 - [Audit chain](audit-chain.md)
+- [Multi-tenancy](multi-tenancy.md)
 - [Observability](observability.md)
+- [ML vertical](ml-vertical.md)
 - [`/v1/*` HTTP API](../api/v1.md)
 
----
+Status as of 2026-09-08. Sections that describe the ML campaign flow say
+which parts exist on `main` and which are planned. The
+[product spec](../superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md)
+is the authority where this page is silent or stale.
+
+## Purpose
+
+redsim is the Adversarial ML Red-Team Simulator. A user registers a
+classifier (a bundled sample or an uploaded ONNX or PyTorch `state_dict`
+artifact), launches an attack campaign (ART evasion attacks such as FGSM,
+PGD and HopSkipJump across an ε sweep, each paired with a benign
+random-noise control), and reads the SHAP explanations, the Model
+Robustness Index and the candidate hardening recommendations side by side,
+with every mutating step recorded on a hash-chained audit log. A verify
+campaign measures a preprocessing defense on an evaluation copy and reports
+the delta. Nothing is ever applied to the stored model.
+
+It is a non-operational proof of concept on open, unclassified, public
+data. It evaluates and hardens the robustness of a classifier and nothing
+else: it never trains, optimises or deploys targeting or weapons models, it
+connects to no mission system, and no score or grade it produces is a
+safety, readiness or certification statement. The product is one new
+vertical, `redsim/ml/`, on top of a platform inherited from IntelliBridge's
+aegis security scanner: the repository is a fork of
+`github.com/IntelliBridge/aegis` with the penetration-testing domain
+removed and every identifier renamed to redsim.
+
+## Diagrams
+
+Three rendered diagrams accompany this page. Open them in a browser:
+
+- [Platform architecture](diagrams/redsim-platform.architecture.html)
+- [Attack campaign sequence](diagrams/attack-campaign.sequence.html)
+- [Campaign run lifecycle](diagrams/campaign-run.lifecycle.html)
 
 ## System context
 
 ```mermaid
 flowchart LR
   subgraph callers["Callers"]
-    dev["Developer<br/>CLI user"]
-    approver["Approver<br/>web UI"]
-    gh["GitHub<br/>PR webhooks"]
+    analyst["Analyst / reviewer<br/>web UI"]
+    cli["CLI / CI<br/>bearer token"]
   end
 
-  subgraph redsim["Redsim"]
+  subgraph redsim["redsim"]
+    web["redsim-web<br/>@redsim/web, Next.js 14"]
     api["redsim-api<br/>FastAPI: RBAC, admission,<br/>audit, read/stream"]
-    worker["redsim-worker<br/>Celery: scanner and CAI<br/>execution + status"]
-    web["@redsim/web<br/>Next.js 14 dashboard"]
-    li["redsim-log-ingest<br/>OTLP/Logs to Postgres"]
+    worker["redsim-worker (-Q scans)<br/>scan, verify today<br/>attack, explain, validate (WS4)"]
+    wdef["redsim-worker-default (-Q default)<br/>reports, reaper, tenant check,<br/>WORM export, harden narrative (WS4)"]
+    beat["redsim-beat"]
+    li["redsim-log-ingest<br/>OTLP / JSON logs to Postgres"]
+    child["sandbox child (WS4)<br/>model load, attacks, SHAP"]
   end
 
   subgraph ext["External systems"]
     kc["Keycloak<br/>OIDC identity"]
-    llm["LLM providers<br/>via CAI"]
+    pythia["Pythia gateway<br/>the only LLM egress"]
   end
 
   subgraph data["Data plane"]
-    pg[("Postgres<br/>runs / jobs / findings<br/>audit_events<br/>application_logs")]
-    s3[("MinIO / S3<br/>artifacts + reports")]
+    pg[("Postgres<br/>runs / jobs / findings<br/>ml_campaigns / audit_events<br/>application_logs")]
+    s3[("MinIO / S3<br/>models, artifacts, reports<br/>+ WORM bucket")]
     redis[("Redis<br/>broker + pub/sub")]
-    kali["MCP Kali Server<br/>nmap / nikto / sqlmap"]
   end
 
-  dev -- "bearer" --> api
-  approver -- "browser" --> web
+  analyst -- "browser" --> web
   web -- "cookie + CSRF" --> api
-  gh -- "HMAC webhook" --> api
+  cli -- "bearer" --> api
   api -- "JWKS" --> kc
   api -- "enqueue" --> redis
   worker -- "consume" --> redis
-  worker -- "REST" --> kali
-  worker -- "via CAI" --> llm
+  wdef -- "consume" --> redis
+  beat -- "schedule" --> redis
+  worker -- "spawn" --> child
+  wdef -- "text only" --> pythia
   api -- "read/write" --> pg
   worker -- "read/write" --> pg
-  worker -- "artifacts" --> s3
+  wdef -- "read/write" --> pg
+  worker -- "model bytes + artifacts" --> s3
   api -- "stream reports" --> s3
-  worker -- "OTel logs" --> li
+  api -. "POST /ingest" .-> li
+  worker -. "POST /ingest" .-> li
   li -- "batched INSERT" --> pg
 ```
 
+Three boundaries the diagram encodes:
+
+- **The API never opens a model.** It streams uploaded bytes to the blob
+  store, records the sha256 and writes rows. Model loading, attacks and
+  SHAP run only on the worker, inside a sandbox child built on the
+  plugin-sandbox pattern of `redsim/scanners/sandbox.py` (spec section 9).
+  The API image stays free of the `ml` extra.
+- **Pythia is the only LLM egress.** redsim holds one `pk_…` gateway key
+  and no provider key. The only outbound call a campaign makes is the
+  optional hardening narrative from the `default` pool, and it carries
+  metrics and a SHAP text summary, never images, model bytes or dataset
+  rows (see [ops/pythia.md](../ops/pythia.md)).
+- **Audit before enqueue.** Every admission service emits its chained
+  audit event before any `Run` or `Job` row exists and before Celery is
+  touched. `tests/test_admission_audit_before_enqueue.py` asserts the
+  ordering for the live services, and the ML admission services are to
+  join that test when they land (spec 8.2).
+
 ## Deployment topology
 
-Three compose profiles ship out of the box:
+`deploy/docker-compose.yml` runs the developer stack. Everything below is
+in the default profile unless marked:
+
+| Service | Role |
+|---|---|
+| `postgres` | Postgres 16 with pgaudit (`deploy/Dockerfile.postgres`) |
+| `redis` | Celery broker, result backend, run-event pub/sub |
+| `keycloak` | OIDC identity, realm imported from `deploy/keycloak/realm-export.json` |
+| `minio` | S3-compatible blob store (host port 9100) |
+| `redsim-api` | FastAPI on 8000, dev auth mode, Pythia variables passed through from the host shell |
+| `redsim-worker` | Celery `-Q scans` |
+| `redsim-worker-default` | Celery `-Q default` |
+| `redsim-beat` | Celery beat scheduler |
+| `redsim-web` | Next.js on host port 3300 |
+| `redsim-log-ingest` | log receiver on 4319, always on |
+| `opa` | profile `policy`: external OPA policy engine for the role gate |
+| `otel-collector`, `loki`, `jaeger` | profile `obs`: traces and ad-hoc log queries |
+| `elasticsearch`, `kibana` | profile `obs-search`: full-text search on top of `obs` |
 
 ```mermaid
-flowchart TB
-  subgraph p_default["compose profile: default"]
-    direction LR
-    api[redsim-api]
-    worker[redsim-worker]
-    web[redsim-web]
-    li[redsim-log-ingest]
-    pg[(Postgres)]
-    redis[(Redis)]
-    kc[Keycloak]
-    minio[(MinIO)]
-    kali[mcp-kali]
-    api --- pg
-    worker --- pg
-    li --- pg
-    api --- redis
-    worker --- redis
-    web --- api
-    api --- minio
-    api --- kc
-    worker --- kali
-    api -. "POST /ingest" .-> li
-    worker -. "POST /ingest" .-> li
-  end
-
-  subgraph p_obs["+ profile: obs"]
-    col[otel-collector]
-    loki[(Loki)]
-    jaeger[Jaeger]
-    api2[redsim-api]
-    worker2[redsim-worker]
-    api2 -. "OTLP" .-> col
-    worker2 -. "OTLP" .-> col
-    col -. "logs" .-> loki
-    col -. "logs" .-> li
-    col -. "traces" .-> jaeger
-  end
-
-  subgraph p_search["+ profile: obs-search"]
-    es[(Elasticsearch)]
-    kibana[Kibana]
-    col2[otel-collector]
-    col2 -. "logs" .-> es
-    kibana --- es
-  end
-
-  p_default --> p_obs --> p_search
+flowchart LR
+  d["default<br/>api · workers · beat · web · log-ingest<br/>postgres · redis · keycloak · minio"]
+  p["+ policy<br/>opa"]
+  o["+ obs<br/>otel-collector · loki · jaeger"]
+  s["+ obs-search<br/>elasticsearch · kibana"]
+  d --> p
+  d --> o --> s
 ```
 
-- **default** — everything you need to demo the platform locally.
-  `redsim-log-ingest` runs in this profile so
-  `SELECT * FROM application_logs WHERE run_id = '…'` works even
-  without Loki up.
-- **`obs`** — adds the OTel Collector + Loki + Jaeger. Logs fan out:
-  Loki for ad-hoc kibana-style queries, `redsim-log-ingest` for the
-  Postgres mirror, Jaeger for traces. A dedicated `logs/security` pipeline
-  ingests host/OS audit sources (`filelog`, `journald`, `syslog`,
-  `k8sobjects`) and runs them through two redaction stages — the `redaction`
-  processor masks secret-like attribute values and a `transform/redact_body`
-  processor scrubs secrets from the raw log body — **before** batch or export,
-  so secrets never leave the collector, then fans the result out to the
-  Postgres mirror + Loki.
-- **`obs-search`** — adds Elasticsearch + Kibana on top of `obs`.
+The Helm chart `deploy/helm/redsim` mirrors the compose stack for a real
+cluster: `api`, `worker`, `web` and `logIngest` Deployments, in-cluster
+Postgres, Redis, Keycloak and MinIO that can each be switched off for
+managed equivalents, an optional gVisor `RuntimeClass` for the worker pod
+(`sandbox.enabled`), and a secret guard that refuses to render the dev
+placeholders when `config.env=prod`. The chart renders one worker
+Deployment. The compose split into `scans` and `default` pools and the beat
+process is not mirrored in it. The ECS Fargate target of spec section 20.4
+is WS7 and is not on `main`.
 
-For a per-service walkthrough of the compose stack, see
+For a per-service walkthrough of the compose stack see
 [`docs/dev/local-stack.md`](../dev/local-stack.md). For the production
-deployment runbook (env vars, key rotation, image build), see
-[`docs/ops/deploy.md`](../ops/deploy.md).
+runbook (env vars, key rotation, image build) see
+[`docs/ops/deploy.md`](../ops/deploy.md) and
+[`docs/ops/kubernetes.md`](../ops/kubernetes.md).
 
 ## Service shapes
 
-| Service             | Language | What it owns                                                   |
-|---------------------|----------|----------------------------------------------------------------|
-| `redsim-api`         | Python   | FastAPI app: RBAC, admission services, read/stream routes      |
-| `redsim-worker`      | Python   | Celery: scanner + CAI execution; persists `Finding.status` etc. |
-| `redsim-log-ingest`  | Python   | OTLP/Logs receiver → `application_logs` Postgres rows           |
-| `@redsim/web`        | TS/Next  | App-router UI; cookie-aware `api()` helper                     |
-| `@redsim/design-system` | TS    | Workspace package: shadcn base primitives in `src/primitives/` (table/card/alert/input/…) under Redsim-branded domain compositions |
-| `mcp-kali`          | (image)  | nmap / nikto / sqlmap host                                     |
+| Service | Language | What it owns |
+|---|---|---|
+| `redsim-api` | Python | FastAPI app factory `redsim.api.app:create_app`: RBAC, admission services, read and stream routes, the run-events WebSocket. Never imports torch, ART, onnxruntime or SHAP. |
+| `redsim-worker` | Python | Celery `-Q scans`: `redsim.scan_start` and `redsim.verify_replay` today. The ML `attack.run`, `explain.run` and `model.validate` tasks land here with WS4. Installs the `ml` extra. |
+| `redsim-worker-default` | Python | Celery `-Q default`: `redsim.report_render`, `redsim.reap_stale_jobs`, `redsim.verify_tenant_integrity`, `redsim.export_chains_to_worm`. `harden.recommend` (rules plus the optional Pythia narrative) lands here with WS4. |
+| `redsim-beat` | Python | Fires the beat schedule: the stale-job reaper every 5 minutes, the tenant integrity check hourly, the WORM export daily. |
+| `redsim-log-ingest` | Python | OTLP/Logs and JSON batch receiver writing `application_logs` rows. |
+| `@redsim/web` | TS / Next | App-router UI with NextAuth and the cookie-aware `api()` helper. Pages today: `/`, `/login`, `/dashboard`, `/runs`, `/runs/[id]`, `/findings`, `/findings/[id]`, `/projects`, `/projects/[slug]/settings`, `/targets`, `/auth-profiles`, `/logs`, `/audit`, `/cost`. |
+| `@redsim/design-system` | TS | Workspace package: shadcn base primitives under redsim-branded compositions, including `RoleGated`. |
 
-The Python services share `redsim/services/` so the same admission +
-execution code paths run regardless of which entry point invoked them
-(CLI, API, worker).
+The Python entry points (CLI, API, worker) share `redsim/services/`, so
+the same admission and execution code runs regardless of who invoked it.
 
-## Request flow: `redsim scan` (admission + execution)
+## Campaign lifecycle
+
+The product loop is **campaign, attacks, explain, score, recommend, verify
+after harden**. The sequence below is the target design of spec sections
+10.2 and 10.3. What exists on `main` is the admission pattern (audit
+before enqueue, shown for the live services in
+`services/scans.py`, `services/verify.py`, `services/runs.py`), the job
+state machine in `redsim/workers/job_state.py`, the `task_context`
+wrapper in `redsim/workers/bootstrap.py`, the run-event publisher, the
+`ml_campaigns` table and the frozen `redsim/ml/schema.py` contracts. The
+ML tasks, routes and sandbox child are WS4.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U as Caller (CLI / UI / GitHub)
+    participant U as Caller (web / CLI)
     participant API as redsim-api
     participant Wr as PostgresAuditWriter
     participant DB as Postgres
     participant Q as Redis broker
-    participant W as redsim-worker
-    participant S as Scanner (Strix)
+    participant W as redsim-worker (scans)
+    participant C as sandbox child
+    participant D as redsim-worker-default
 
-    U->>API: POST /v1/scans
-    API->>API: policy.check SCAN_START
-    API->>Wr: authorize scan.start
-    Wr->>DB: INSERT audit_events (chained)
-    API->>DB: INSERT runs, INSERT jobs
-    API->>Q: scan_start.delay(job_id)
-    API-->>U: run_id, job_id, status_url
+    U->>API: POST /v1/models/{id}/attacks
+    API->>API: policy.check ATTACK_RUN
+    API->>Wr: authorize attack.run
+    Wr->>DB: INSERT audit_events (project chain)
+    API->>DB: INSERT run, ml_campaigns, jobs (one attack.run per attack, explain.run, harden.recommend)
+    API->>Q: attack_run.delay(first job)
+    API-->>U: 202 run_id, job_ids, status_url
 
-    W->>Q: pull task
-    W->>DB: UPDATE jobs status running
-    W->>Wr: authorize scan.execute.strix
-    Wr->>DB: INSERT audit_events (run-scoped)
-    W->>S: dispatch strix
-    S-->>W: findings + exit_code
-    W->>DB: INSERT findings
-    W->>DB: UPDATE jobs status succeeded
+    W->>Q: pull attack.run
+    W->>Wr: authorize model.load, attack.execute.<attack_id>
+    W->>C: spawn --stage attack (load, sample, clean_eval, control, attack x eps)
+    C-->>W: envelope: measurements, artifacts
+    W->>DB: findings, artifacts, campaign record, stage_table
+    W->>Q: next attack.run, then explain.run
+    W->>C: spawn --stage explain (SHAP at reference eps)
+    C-->>W: observations, S_expl
+    W->>DB: MRIRecord (campaign.score), enqueue harden.recommend
+    D->>Q: pull harden.recommend
+    D->>D: interpret, recommend (rules), Pythia narrative (optional), report
+    D->>DB: recommendations, reports, Run.status = succeeded
 ```
 
-The load-bearing invariant: the audit row for `scan.start` is on the
-chain **before** Redis is touched. A worker crash mid-enqueue leaves a
-chained audit event plus a `queued` job — never a half-state where the
-job ran without a matching audit trail.
+Rules that govern the chain:
+
+- Every campaign `Job` row is created at admission so each has an audit
+  row before it can run. The first attack job also samples the slice and
+  writes the clean and control rows, and every later job reuses the same
+  indices, so all denominators in a campaign are comparable.
+- `score` runs at the end of the explain stage because `S_expl` needs
+  SHAP. An MRI is written only when all five subscores are present.
+  Otherwise the record is `partial` and names what is missing. Weights are
+  never renormalised.
+- A failed task cancels the remaining queued jobs of its chain and sets
+  `Run.status=failed`. Nothing downstream runs on partial inputs. A retry
+  is a new linked run (`ml_campaigns.parent_run_id`), never an edit.
+- Stage transitions are published on `run:{run_id}:events` next to the
+  job transitions the platform already emits, and the WebSocket
+  `GET /v1/runs/{run_id}/events` streams them to the browser.
+
+**Verify after harden.** A recommendation whose ART link is a Phase A
+preprocessing defense (feature squeezing, spatial smoothing, JPEG
+compression) can be verified. `POST /v1/findings/{id}/verify` enqueues
+`verify.replay` with `baseline_run_id` and the defense, the worker
+re-runs the identical attack set, ε grid, seed and slice with the ART
+preprocessor in front of an evaluation copy, and the verify run's score
+record carries the measured ΔMRI beside the change in clean accuracy. The
+`MeasuredDelta` attaches to the one recommendation whose defense was
+applied. The stored model is never modified and nothing is deployed. The
+details are in [ml-vertical.md](ml-vertical.md).
 
 ## Data model (Postgres)
 
@@ -190,25 +258,51 @@ erDiagram
     projects ||--o{ project_memberships : grants
     users ||--o{ project_memberships : member_of
     projects ||--o{ targets : registers
+    projects ||--o{ auth_profiles : holds
     projects ||--o{ runs : owns
     runs ||--o{ jobs : tracks
     runs ||--o{ findings : produces
+    runs ||--o| ml_campaigns : scores
+    findings ||--o{ finding_tickets : links
     findings ||--o{ remediation_attempts : has
     runs ||--o{ artifacts : emits
+    projects ||--o{ llm_usage : spends
     audit_chain_heads ||--o{ audit_events : tracks
     application_logs }o--|| projects : project_id
     application_logs }o--|| runs : run_id
 
+    targets {
+        STRING id PK
+        STRING kind "url, github_repo, image, ml_model_artifact, ml_model_endpoint"
+        STRING value
+        JSONB detail "MLModelManifest for ml_model_* kinds (0010)"
+        STRING org_id "RLS key"
+    }
+    ml_campaigns {
+        STRING run_id PK "also FK runs.id"
+        STRING target_id FK
+        STRING kind "attack, verify, ingest"
+        STRING modality "image, tabular"
+        STRING baseline_run_id "verify runs"
+        STRING parent_run_id "reruns"
+        STRING settings_hash "comparability key"
+        JSONB config "CampaignConfig"
+        JSONB provenance
+        JSONB score "MRIRecord"
+        JSONB limitations
+        TEXT reviewer_notes
+        STRING org_id "RLS key"
+    }
     findings {
         UUID id PK
         STRING scanner_finding_id "uniq per run"
         STRING run_id FK
-        JSONB schema_blob
+        JSONB schema_blob "ml sub-object for ML findings"
         STRING status
         STRING validation_state
     }
     audit_events {
-        STRING chain_id "run-scoped or project-scoped"
+        STRING chain_id "run, project or system scoped"
         INT seq
         BYTEA prev_hash
         BYTEA this_hash
@@ -230,16 +324,24 @@ erDiagram
     }
 ```
 
-Two design choices worth highlighting:
+Design choices worth highlighting:
 
-- **Finding PK is an internal UUID** (since v0.3.1 F9). The scanner's
-  upstream identifier lives in `scanner_finding_id`, uniquely
-  constrained per-run. Two parallel runs can both emit
-  `vuln-0001` from Strix without colliding.
+- **Finding PK is an internal UUID.** The producer's own identifier lives
+  in `scanner_finding_id`, uniquely constrained per run, so two parallel
+  runs can both emit the same upstream id without colliding.
 - **`audit_events.chain_id` is the partition key**, not a project id.
-  Chains are tracked at the run level (most common), the project
-  level (admission), and a single `system` chain for global events.
-  This makes verification a per-chain walk; no global lock is needed.
+  Chains are tracked at the run level (most events), the project level
+  (admission) and a single `system` chain for global events. Verification
+  is a per-chain walk with no global lock.
+- **`ml_campaigns` is one row per ML run** and carries the frozen
+  `CampaignConfig`, the provenance, the `MRIRecord`, the limitations and
+  the lineage columns. Migration `0010_ml_vertical` creates it with the
+  same RLS policy and trigger pair as the other scoped tables. The ORM
+  mapping for it and for `targets.detail` is not on `main` yet.
+- **Alembic migrations `0001` to `0010`** are the schema history:
+  initial, findings UUID PK, `application_logs`, append-only audit
+  trigger, auth profiles, tenant RLS, org cost and routing, finding
+  tickets, the `org_id` update guard, and the ML vertical.
 
 ## Layered service architecture
 
@@ -251,21 +353,21 @@ flowchart TB
     worker["Celery tasks"]
   end
 
-  subgraph Services["redsim/services/ — admission + execution"]
+  subgraph Services["redsim/services/ (admission + execution)"]
     direction LR
     create["create_*_job<br/>admission"]
-    execute["start_scan / generate_fix /<br/>verify / render_reports<br/>execution"]
+    execute["start_scan / verify /<br/>render_reports<br/>execution"]
   end
 
   subgraph Primitives["Primitives"]
     direction LR
-    safety["safety.authorize<br/>emits audit"]
+    safety["safety.authorize<br/>allowlist + audit"]
     chain["audit/chain.py<br/>JsonlAuditWriter,<br/>PostgresAuditWriter"]
-    state["state/<br/>RunStateAPI Protocol,<br/>filesystem + postgres,<br/>open_run_state"]
-    storage["storage/<br/>BlobStore Protocol,<br/>filesystem + s3,<br/>open_blob_store"]
-    schema["schema.RedsimFinding"]
-    scanners["scanners/<br/>Strix, Trivy, ..."]
-    remediate["remediate/<br/>cai_runner, patch_workflow"]
+    state["state/<br/>RunStateAPI Protocol,<br/>filesystem + postgres"]
+    storage["storage/<br/>BlobStore Protocol,<br/>fs + s3 + WORM"]
+    schema["schema.RedsimFinding<br/>ml/schema.py (frozen)"]
+    scanners["scanners/<br/>registry + sandbox<br/>(no adapters registered)"]
+    llm["llm/<br/>router, budget,<br/>guardrails, pythia"]
   end
 
   cli --> create
@@ -280,422 +382,96 @@ flowchart TB
   execute --> storage
   execute --> schema
   execute --> scanners
-  execute --> remediate
+  execute --> llm
 ```
 
-The split is the v0.3.1 F6 contract: **API routes call admission
-only**; **Celery tasks call execution only**. Admission is cheap and
-request-scoped; execution is the long-running scanner / CAI work.
-
-## Execution surface: scanners, capabilities, and agents
-
-Redsim discovers two kinds of pluggable component at startup, both backed
-by the same generic `redsim.registry.Registry[T]` (see
-[ADR 0002](../adr/0002-registry-seam-and-runners.md) and
-[Extending Redsim](../dev/extending.md)): **scanner adapters** wrap a
-security tool and emit `RedsimFinding`s; **agent adapters** wrap a CAI
-agent. First-party adapters register eagerly at import; third-party
-adapters register through the entry-point groups `redsim.scanners` /
-`redsim.agents`, discovered only when `REDSIM_PLUGINS=1` (off by default,
-so the offline test path stays deterministic). This seam is the
-**scanner-adapter marketplace**: discovered plugins are validated against
-their Protocol (a bad one is rejected, never fatal) and gated by the
-`REDSIM_PLUGINS_ALLOW` distribution allowlist; `redsim plugins list` shows
-what loaded. See [Extending Redsim](../dev/extending.md) §
-"Third-party plugins (marketplace)".
-
-### Scanner adapters (14)
-
-Each adapter declares one or more **capabilities**; `dispatch` accepts
-either an adapter name or a capability tag.
-
-| Adapter | Capability | Wraps |
-|---------|------------|-------|
-| `strix` | `dast` | AI-driven pentester (the reference adapter) |
-| `nuclei` | `dast` | Template-based vulnerability scanner |
-| `zap` | `dast` | OWASP ZAP web-app scanner |
-| `semgrep` | `sast` | Pattern-based static analysis |
-| `codeql` | `sast` | Semantic code analysis (SARIF) |
-| `bandit` | `sast` | Python security linter |
-| `sonarqube` | `sast` | Code-quality + security analysis |
-| `trivy` | `dependency` | Vulnerability + dependency scanner |
-| `grype` | `dependency` | Dependency vulnerability scanner |
-| `checkov` | `iac` | IaC misconfiguration scanner |
-| `trufflehog` | `secret` | Secret scanner (raw material redacted) |
-| `syft` | `sbom` | SBOM generator (CycloneDX; inventory, not findings) |
-| `bumblebee` | `supply_chain` | Supply-chain / MCP-host exposure scanner |
-| `deepsec` | `code_audit` | AI whole-repo code auditor (owner PII stripped) |
-
-The reference `strix` adapter surfaces the vendored CLI's deeper code-scan
-controls as optional `ScanOptions` fields: `targets` (a multi-target sweep
-alongside the single `target`), `instruction_file` (read in lieu of an inline
-`instruction`), and `scope_mode` (`auto | diff | full`) + `diff_base` for
-PR-diff-scoped review. White-box source review needs no flag — strix derives
-it from local-path targets. All are optional and soft-degrade; the
-single-target default path is unchanged. These knobs live on `ScanOptions`
-(programmatic / registry-dispatch callers); the HTTP `POST /v1/scans` body
-forwards only `target` + `instruction`, as it does for `scan_mode`.
-
-### Capabilities (8)
-
-`KNOWN_CAPABILITIES` is an **open vocabulary** validated at
-registration: `dast`, `sast`, `dependency`, `iac`, `secret`, `sbom`,
-`supply_chain`, `code_audit`. A declared capability outside the set logs
-a warning but still registers, so a third-party plugin can add its own
-without patching core. Promoting one to first-party is a one-line append
-— how `supply_chain` landed in v0.5.1 and `code_audit` in v0.7.0.
-
-### CAI agents (36 wired + 5 multi-agent patterns)
-
-Agent adapters dispatch by name. Every registered agent is **wired**
-(executable, not a stub), spanning all six `Domain` values. The roster comes
-from three sources, all in `redsim/agents/cai/`:
-
-- **The original 16 wrapped CAI agents** (`builtins.py`, `by_name=False`) —
-  each resolves off a typed `CAIBundle` field.
-- **8 newly-wired breadth CAI agents** (`builtins.py`, `by_name=True`) —
-  resolved generically by their upstream registry key via
-  `resolve_cai_agent` (CAI's `get_agent_by_name`), so wiring an additional
-  CAI agent needs no per-agent `CAIBundle` field: `ctf_agent`,
-  `app_logic_mapper`, `dns_smtp_agent`, `flag_discriminator`,
-  `prompt_injection_detector`, `thought_agent`, `usecase_agent`,
-  `memory_query`.
-- **12 Redsim-native authored specialists** (`authored.py`) — where the
-  builtins *wrap* agents CAI ships, these *compose* brand-new specialists
-  from the vendored CAI tool catalog: each is a substantive scoped system
-  prompt plus a real toolbelt drawn from `cai.tools.*` (and the Camoufox
-  OSINT search tool, below). Each carries its own `domain` + `effect`.
-
-| Domain | Agents |
-|--------|--------|
-| `offensive` | `bug_bounter`, `red_teamer`, `web_pentester`, `android_sast_agent`, `subghz_sdr_agent`, `wifi_security_tester`, `replay_attack_agent`, `ctf_agent`, `app_logic_mapper`, `api_security_tester`, `web_surface_mapper`, `ssl_tls_auditor` |
-| `forensic` | `dfir`, `memory_analysis`, `network_traffic_analyzer`, `reverse_engineering`, `memory_query`, `secrets_hunter`, `crypto_analyst`, `log_triage` |
-| `audit` | `retester`, `reporter`, `flag_discriminator`, `thought_agent`, `usecase_agent` |
-| `defensive` | `blueteam_agent`, `prompt_injection_detector`, `iac_auditor`, `container_security` |
-| `remediation` | `codeagent` |
-| `recon` | `recon` (read-only: nmap, shodan, curl, netcat, netstat), `dns_smtp_agent`, `cloud_recon`, `osint_collector`, `threat_intel`, `dns_enumerator` |
-
-Beyond the 36 single agents, five **multi-agent patterns** join the
-registry as explicitly-dispatchable entries — `offsec_pattern` (a parallel
-offensive sweep), the `redteam_swarm` / `bb_triage_swarm` handoff swarms,
-and two red/blue parallel patterns (`red_blue_shared_context`,
-`red_blue_split_context`) that coordinate a red-team attack alongside a
-blue-team responder — for **41** dispatchable entries in all. A pattern runs
-**only when dispatched by name**; a normal single-agent run never triggers
-one (no auto-swarm). All five are `active`-effect, so they clear the same
-gate as any offensive agent. When executed (post-approval), the active
-offensive specialists (`bug_bounter`, `red_teamer`, `web_pentester`) reach
-the live Kali tool belt over an SSE MCP connection to `config.mcp_kali_url`;
-the read-only `recon` agent is excluded by design (the belt carries active
-tools, and recon stays read-only).
-
-**Effect is per-agent, not per-domain.** The breadth and authored agents are
-classified conservatively: a `recon`-domain agent that egresses to a
-third-party (DNS/SMTP/Shodan/web) is `external`; one that runs shell/exec
-tools against a target is `active`; pure analysis, classification, and
-read-only filesystem work is `read`. So `dns_smtp_agent` (recon) is
-`external`, `prompt_injection_detector` (defensive) is `read`, and
-`container_security` (defensive) is `active`.
-
-### Kali toolbelt (10, via MCP)
-
-Beyond the registered scanners, the worker reaches a Kali host over MCP
-for classic offensive tooling: `nmap`, `sqlmap`, `nikto`, `hydra`,
-`gobuster`, `dirb`, `john`, `wpscan`, `enum4linux`, `metasploit`. Every
-invocation lands on the audit chain at the service boundary (see
-[Audit chain](audit-chain.md)). Each tool carries an effect class (below):
-the `read` recon tools run at `remediator`, while the `active` ones
-(`sqlmap`, `hydra`, `metasploit`, `wpscan`) are gated behind
-`execute=true` + `approver`. The Kali allowlist is deliberately **not**
-expanded beyond these 10 — the bundled *mcp-kali* server only routes those
-names, so adding more would mint non-functional tools. Breadth comes from
-the unified tool catalog instead (below).
-
-Each wrapper sends the exact parameter keys the vendored mcp-kali server
-reads (gobuster/dirb use `url`; hydra uses `username_file`/`password_file`;
-metasploit folds `RHOSTS` into `options`) and exposes structured subcommand
-controls — gobuster `mode` (`dir | dns | vhost | fuzz`), hydra user/password
-values and list files, metasploit `module` + `options`, john `format`. Every
-value still passes the allowlist `_check`, and no wrapper exposes a freeform
-argument passthrough: the generic `command` surface stays closed (403, all
-roles).
-
-### The unified tool catalog (42 tools)
-
-`redsim/tools/catalog.py` (`TOOL_CATALOG` / `list_tools()`) is the single,
-honest registry of every tool the platform can expose to agents — **42
-today**, drawn from four sources:
-
-| Source | Count | What it is |
-|--------|-------|------------|
-| `kali` | 10 | The mcp-kali allowlist (above), categorized; effect comes authoritatively from `redsim.effects.kali_tool_effect`. |
-| `scanner` | 14 | The registered scanner adapters from `list_scanners()`. `read` except the DAST adapters (`zap`/`nuclei`/`strix`), which actively probe → `active`. |
-| `cai` | 17 | The real `@function_tool`s vendored under `project_repos/cai/src/cai/tools/` (recon/web/network/crypto/misc). Catalog names are namespaced `cai_*` to stay unique alongside the bare Kali `nmap` etc.; the bare CAI name is recorded in `CAI_TOOL_NAMES` for toolbelt wiring. |
-| `osint` | 1 | The Camoufox OSINT search tool (below). |
-
-Each tool carries an **effect** (`read` / `active` / `external`) that is
-authoritative in the catalog: `redsim.effects.tool_effect()` consults it
-(falling back to the Kali map), so the catalog and the human gate never
-drift. Effects are classified conservatively — enumeration/analysis is
-`read`, command execution or active probing is `active`, and anything that
-reaches a third party is `external` (e.g. `cai_shodan_search`, `osint_search`).
-An unknown name fails **safe** to `active`. The module is import-light so it
-never pulls in CAI at import time: it lists what the platform *can* expose,
-independent of whether the optional CAI / Camoufox stacks are installed.
-
-### Camoufox OSINT search (web search, `external`)
-
-`redsim/tools/osint_search.py` provides live web OSINT **instead of** a
-Google / SerpAPI search tool. It drives **DuckDuckGo's HTML-only endpoint**
-through **Camoufox** — a patched, anti-fingerprint Firefox — and extracts
-article text with trafilatura. DuckDuckGo + Camoufox is chosen over a Google
-API because it needs **no API key** and carries low detection risk. Vendored
-and adapted from `c3-e/c3cdao-pipeassist`.
-
-Because Camoufox ships a patched Firefox binary that must be fetched out of
-band, it lives behind the optional `osint` extra:
-
-```bash
-pip install -e ".[osint]" && camoufox fetch
-```
-
-Every entry point **degrades to a clear, structured error** when Camoufox or
-trafilatura is absent, so importing the module is always safe and the offline
-test path never launches a browser. The search tool is classified
-`external` (it reaches third-party sites), so it clears the same
-human-in-the-loop gate as any other external-effect capability.
-`build_osint_search_tool()` returns the CAI `@function_tool` the authored
-recon/OSINT specialists add to their toolbelt in place of a Google search,
-or `None` when the CAI SDK isn't importable (offline) — in which case
-composition simply skips it.
-
-### Capability matrix
-
-The three seams above each reach the runtime through a different dispatch
-path. This matrix is the single view of *what exists*, *what consumes
-it*, and *where the wiring is still thin* — the map a new capability
-slots into without diverging from the architecture (most recently the
-`code_audit` adapter `deepsec`, added through this seam in v0.7.0).
-
-| Seam | Vocabulary | Registered | Runtime consumer | Dispatch |
-|------|-----------|-----------|------------------|----------|
-| Scanners | 8 capabilities | 14 adapters | `scan_start` Celery task | one adapter per job via `dispatch(name \| capability)`; defaults to `strix` |
-| Agents | 6 `Domain`s | 41 adapters (36 agents + 5 patterns) | `agent_run` Celery task | `POST /v1/agents/{name}/run` → admission → task → `dispatch(name)`; remediation may still call `cai.Runner` directly for `codeagent` / `blueteam_agent` |
-| Kali tools | 10 named tools | 10 (over MCP) | `run_kali_tool` service | per-tool REST call, audited at the service boundary |
-| Tool catalog | 4 sources (kali/scanner/cai/osint), 3 effects | 42 tools | agent toolbelts + `tool_effect()` gate | `TOOL_CATALOG` / `list_tools()`; effect is authoritative here and consulted by `redsim.effects.tool_effect` |
-
-One interconnection fact the matrix still makes explicit, tracked as a
-gap rather than intent: scanners run **one adapter per job** (there is
-no capability-sweep that fans a target across every adapter claiming a
-capability). The former agent-registry gap is now **closed** — as of
-v0.6.0 the registry has a runtime dispatch path: `POST
-/v1/agents/{name}/run` admits the job (authorize → audit-before-enqueue
-→ Run/Job rows → enqueue) and the `agent_run` Celery task re-authorizes
-and calls `dispatch(name)`, so every registered adapter is reachable.
-
-### The human-in-the-loop gate (effect classes)
-
-Redsim's purpose is the full loop — **scan → pentest → remediate** — with
-a human in the loop on anything that changes the world. Since v0.8.0 that
-gate is **one** abstraction, the *effect class* (`redsim/effects.py`,
-[ADR 0004](../adr/0004-unified-effect-class-gate.md)), applied at every
-seam above rather than re-invented per adapter:
-
-| Effect | Meaning | Gate |
-|--------|---------|------|
-| `read` | recon, enumeration, static analysis, SBOM, generating a diff/plan, dry-run | none beyond the target allowlist — runs freely |
-| `active` | attack / state-changing against a live system: exploitation, brute-force, an exploit module, live hardening | gated |
-| `external` | leaves the sandbox: pushing a branch, opening a PR, egress | gated |
-
-The gate is one rule: an `active` / `external` capability performs its
-irreversible step **only** when the caller explicitly opts in
-(`execute=true` / `apply=true` / `open_pr=true`) **and** holds the
-`approver` role; otherwise it returns a reviewable **proposal** (an attack
-plan, a hardening plan, or a diff) and the underlying agent/tool is never
-run. It is enforced at the **chokepoints** — `agents.registry.dispatch()`
-(covers built-ins *and* plugins), the Kali tool route, and the fix
-service — so a new adapter inherits the gate for free.
-
-**Effect is not a function of domain.** An `android_sast_agent` is
-offensive-by-domain but only reads bytecode → `read`; a `retester` is
-audit-by-domain but re-fires exploits → `active`. So effect is an explicit
-per-agent column in the wiring table, with `domain_default_effect()` as
-the fallback; an unknown domain or unlisted Kali tool defaults to `active`
-— it fails **safe** (gated), never open.
-
-**Remediation engines, all behind the same gate:** `codeagent` produces
-code-fix diffs (`patch`/`deps` strategies); `blueteam_agent` applies live
-hardening (`live` strategy, gated on `apply`); the vendored
-vulnerability-fixer drives the `agentic` strategy — propose → diff, then
-`apply` for a rollback-safe local commit, then `apply + open_pr` to let the
-engine open the **human-reviewed PR itself** (the PR review *is* the gate).
-
-## LLM guardrails
-
-The effect-class gate decides *whether* a model-driven action runs; the LLM
-guardrails govern *what crosses the LLM trust boundary* in either direction.
-Two layers live in `redsim/llm/guardrails.py`, applied at the points where
-untrusted text reaches a model and where model output leaves the platform.
-Both are config-gated and fail **safe** (default on; on any guardrail error
-the input is treated as unsafe), and every log line / raised error is
-secret-free — a block never echoes the offending text or a matched secret.
-
-| Layer | What it does | Where |
-|-------|--------------|-------|
-| **Secret scrubbing** | Runs generated diffs/patches and LLM outputs through the audit redactor's secret/token regex (`redsim/audit/redact.py`), replacing matches with `***REDACTED***` | the canonical diff in `extract_unified_diff` (so the persisted `.diff`, PR body, and remediation log all inherit it) + the remediation/agent output chokepoints |
-| **Prompt-injection detection** | Scores untrusted input for injection — tiered risk (`none`/`low`/`medium`/`high`) with categories (`instruction_override`, `role_switch`, `exfiltration`, …); at/above the block threshold the input is rejected | finding title/description/remediation-steps/PoC/code-snippets + agent prompts, scored **before** the model call |
-
-**Trust boundaries / hook points.** Scanner-derived findings, PR diffs, and
-caller prompts are all *untrusted input*; model-authored diffs and responses
-are *untrusted output*. The guardrails are wired at three chokepoints so a
-new caller inherits them for free:
-
-- **Remediation LLM boundary** — `redsim/remediate/cai_runner.py` (input
-  detection + output filter on the fix path).
-- **Diff extraction** — `redsim/remediate/patch_workflow.py`
-  (`extract_unified_diff` scrubs the canonical diff once, upstream of every
-  consumer).
-- **Agent API boundary** — `redsim/agents/cai/builtins.py` /
-  `patterns.py` (prompt detection before dispatch).
-
-A blocked input surfaces as a clean, secret-free error: a **failed
-`FixOutcome`** in the fix flow, a **blocked `AgentResult`** in the agent
-flow — never a half-run against a poisoned prompt.
-
-**Config knobs (env vars).** All default on; the master switch turns the
-whole layer off for debugging only.
-
-| Var | Default | Effect |
-|-----|---------|--------|
-| `REDSIM_LLM_GUARDRAILS` | on | Master switch for both layers |
-| `REDSIM_LLM_SCRUB_DIFF` | on | Secret-scrub generated diffs/patches |
-| `REDSIM_LLM_DETECT_INJECTION` | on | Prompt-injection detection on untrusted input |
-| `REDSIM_LLM_FILTER_OUTPUT` | on | Secret-scrub LLM output |
-| `REDSIM_LLM_INJECTION_BLOCK_RISK` | `high` | Block threshold; `off` = detect-and-log only |
-
-## Release map
-
-```mermaid
-flowchart TD
-    subgraph v031["v0.3.1 — Stabilization"]
-      f1["F1 detach CIGate"]
-      f2["F2 lock files + markers"]
-      f5["F5 cmd_migrate fix"]
-      f9["F9 Finding PK UUID"]
-      f7["F7 retire _append_audit"]
-      f8["F8 retire tool-calls.jsonl"]
-      f3["F3 CLI thru services"]
-      f6["F6 admission + audit-before-enqueue"]
-      f11["F11 worker persists status"]
-      f4["F4 --api dispatch"]
-      f12["F12 project-access on read"]
-      f10["F10 cai_loader + llm.router"]
-      fw["FW worker SA + rotation"]
-      fp["FP membership endpoints"]
-    end
-
-    subgraph v040["v0.4.0 — Identity & UX"]
-      f14a["F14a session cookie"]
-      f14b["F14b CSRF + CORS"]
-      f14c["F14c WS Origin + subproto"]
-      f14d["F14d report CSP"]
-      f13["F13 NextAuth"]
-      f15["F15 vendor shadcn/ui"]
-      f16["F16 design-system + Storybook"]
-      f17["F17 pages rebuilt"]
-      f18["F18 api() helper + useRoles"]
-    end
-
-    subgraph v041["v0.4.1 — Observability & GitHub"]
-      f19["F19 vendor OTel contrib"]
-      f20a["F20a obs profile"]
-      f20c["F20c log-ingest"]
-      f21["F21 structlog to OTel"]
-      f22["F22 /v1/logs"]
-      f23a["F23a PRScope"]
-      f23b["F23b PR scans"]
-      f23c["F23c fork restricted"]
-    end
-
-    subgraph v042["v0.4.2 — Agent + scanner breadth"]
-      a1["7 agents wired (8 → 15)"]
-      a2["8 scanner adapters: zap, codeql,<br/>bandit, grype, checkov,<br/>trufflehog, sonarqube, syft"]
-      a3["sbom capability"]
-    end
-
-    subgraph v050["v0.5.0 — Registry seam hardening"]
-      r1["generic Registry[T]"]
-      r2["entry-point plugin discovery<br/>(REDSIM_PLUGINS=1)"]
-      r3["KNOWN_CAPABILITIES open vocab"]
-      r4["wired_in_phase_3 → wired"]
-      r5["adapters/ → runners/"]
-    end
-
-    subgraph v051["v0.5.1 — Supply chain"]
-      b1["bumblebee adapter (13th)"]
-      b2["supply_chain capability"]
-    end
-
-    subgraph v052["v0.5.2 — Scanner bug fixes"]
-      c1["bumblebee speaks real CLI/NDJSON"]
-      c2["strix reads strix_runs/ events<br/>+ scan_mode"]
-    end
-
-    subgraph v060["v0.6.0 — Agent seam end-to-end"]
-      d1["6 specialists un-fallbacked<br/>+ recon agent (16th)"]
-      d2["POST /agents/{name}/run<br/>(admission-only)"]
-      d3["agent_run task (execution-only)"]
-      d4["Kali wrappers 3 → 10"]
-    end
-
-    subgraph v070["v0.7.0 — AI code audit"]
-      e1["deepsec adapter (14th)"]
-      e2["code_audit capability"]
-      e3["owner PII stripped<br/>+ AI process opt-in"]
-    end
-
-    subgraph v080["v0.8.0 — Unified human gate"]
-      g1["effect-class gate spine<br/>(read/active/external)"]
-      g2["agent + Kali tool gate<br/>(execute=true + approver)"]
-      g3["agentic remediation strategy<br/>(vuln-fixer opens the PR)"]
-      g4["multi-format finding ingestion<br/>(Snyk/Veracode/Trivy/SARIF)"]
-    end
-
-    subgraph v090["v0.9.0 — Live belt + multi-agent"]
-      h1["live Kali belt over MCP<br/>(active specialists)"]
-      h2["3 multi-agent patterns<br/>(16 → 19, no auto-swarm)"]
-    end
-
-    subgraph v0100["v0.10.0 — Deeper scan surfaces"]
-      i1["strix code-scope depth<br/>(multi-target / scope-mode / diff-base)"]
-      i2["Kali wrappers speak real<br/>mcp-kali args (gobuster/hydra/msf)"]
-    end
-
-    subgraph v0110["v0.11.0 — Security telemetry + UI primitives"]
-      j1["OTel logs/security pipeline<br/>(host audit -> redact -> mirror+Loki)"]
-      j2["design-system base primitives<br/>(shadcn table/card/alert/input/…)"]
-    end
-
-    v031 --> v040 --> v041 --> v042 --> v050 --> v051 --> v052 --> v060 --> v070 --> v080 --> v090 --> v0100 --> v0110
-```
-
-## What's deferred
-
-The upstream aegis roadmap (`docs/roadmap.md`, removed in this fork) held the full
-forward-looking list organized by milestone. The Phase-4 plan called
-out items intentionally pushed past v0.4.1. Live-current list:
-
-- Firecracker microVM sandbox per scan (the gVisor `RuntimeClass`
-  sandbox for the worker / kali pods has shipped — see the Helm chart and
-  [`ops/kubernetes.md`](../ops/kubernetes.md)).
-- Iterative agent loops with test execution.
-- Native MCP protocol.
-- Worker autoscaling / multi-region DR.
-
-Cross-org multi-tenancy, per-tenant cost dashboards, PII / content
-scrubbing, LLM prompt-injection / output filtering, the gVisor sandbox,
-and the SOC 2 / ISO 27001 / FedRAMP evidence pack — previously listed here
-— have all shipped (see `CHANGELOG.md`; the upstream roadmap page is removed in this fork).
-
-The CHANGELOG entry for each release also enumerates its deferred
-items if they were called out at the time.
+The split is the platform contract: **API routes call admission only**
+and **Celery tasks call execution only**. Admission is cheap and
+request-scoped (authorize, insert `Run` and `Job` rows, enqueue).
+Execution is the long-running work. The ML vertical adds
+`services/ml_models.py`, `services/ml_campaigns.py` and
+`services/ml_findings.py` in the same shape (spec 8.3), and the `redsim
+ml` CLI mirrors `services.scans.start_scan` for the offline path
+(filesystem `RunState`, `JsonlAuditWriter`, the same sandbox child).
+
+## Execution surface
+
+Redsim discovers pluggable adapters at startup through the generic
+`redsim.registry.Registry[T]` ([ADR 0002](../adr/0002-registry-seam-and-runners.md),
+[Extending Redsim](../dev/extending.md)). The scanner registry in
+`redsim/scanners/registry.py` keeps the `ScannerAdapter` protocol, the
+open `KNOWN_CAPABILITIES` vocabulary (`dast`, `sast`, `dependency`,
+`iac`, `secret`, `sbom`, `supply_chain`, `code_audit`, with a warning
+rather than a rejection for an unknown capability), entry-point discovery
+under `redsim.scanners` gated by `REDSIM_PLUGINS=1`, the
+`REDSIM_PLUGINS_ALLOW` distribution allowlist, the optional Ed25519
+signature gate ([supply chain](../security/supply-chain.md)) and the
+out-of-process plugin sandbox. No adapter is registered on `main`: the
+pentest built-ins left with the pentest domain, `GET /v1/scanners`
+returns an empty roster, and `POST /v1/scans` was unmounted at M0.
+Campaigns start with `POST /v1/models/{id}/attacks` once WS4 lands.
+
+The ML attack adapters (`fgsm`, `pgd`, `noise_control`, `hopskipjump` on
+PR #8) implement the `AttackAdapter` protocol of
+`redsim/ml/attacks/base.py` and register through the same generic
+registry under the entry-point group `redsim.ml.attacks`, so
+`redsim plugins list` and the signature gate cover them too. A
+`CampaignScannerAdapter` façade (`name="ml-campaign"`, capabilities
+`adversarial_ml` and `explainability`) is planned so that
+`list_scanners()` and the offline CLI see the vertical (spec 8.3).
+
+## LLM path
+
+Every LLM call goes through `redsim/llm/pythia.py`. There is no litellm
+path and no provider client. The layers, bottom up:
+
+| Layer | Module | What it does |
+|---|---|---|
+| Transport | `redsim/llm/pythia.py` | `PythiaSettings.from_env()` (environment layered over `.env`, TLS through the OS trust store or a PEM bundle), `chat_text` for one non-streaming completion, `list_models`. `python -m redsim.llm.pythia_check` proves connectivity. |
+| Routing and budgets | `redsim/llm/router.py`, `redsim/llm/budget.py`, `redsim/llm/pricing.py` | `route(task, ...)` picks the model per task with the organisation override winning, then enforces the project daily cap and the organisation monthly cap through `DbBudgetChecker`. Usage lands in `llm_usage` and the `/cost` page. |
+| Guardrails | `redsim/llm/guardrails.py` | `guard_input` (prompt-injection detection), `guard_output` and `filter_output` (secret scrubbing with the audit redactor's signatures), `scrub_secrets`, `detect_prompt_injection`. Gated by `RedsimConfig` (`REDSIM_LLM_GUARDRAILS`, `REDSIM_LLM_DETECT_INJECTION`, `REDSIM_LLM_FILTER_OUTPUT`, `REDSIM_LLM_INJECTION_BLOCK_RISK`) and fail safe. |
+| Consumer | `harden.recommend` (WS4) | The hardening narrative, task `ml.harden_narrative`, model from `REDSIM_ML_LLM_MODEL`. Text only, rule output in, prose out, never a new claim or number. Skipped and recorded as `narrative_source="rules"` when Pythia is unset, `REDSIM_DISABLE_LLM=1`, the budget is exhausted or a post-check rejects the text. |
+
+## Security and isolation
+
+- **Identity and RBAC.** Keycloak OIDC for the web (NextAuth mints the
+  `redsim_api_session` cookie), bearer JWTs for CLI and CI, rotating HMAC
+  tokens for workers. Five ranked roles (`viewer` through `admin`) and
+  thirteen actions in `redsim/api/policy.py`, pluggable across static,
+  OPA and Cedar engines. See [auth.md](auth.md).
+- **Tenancy.** Postgres RLS on `projects`, the eight scoped tables and
+  `ml_campaigns`, keyed on a transaction-local GUC the API sets per
+  request. See [multi-tenancy.md](multi-tenancy.md).
+- **Audit.** Hash-chained events, append-only at the database, exported
+  to an Object Lock bucket. See [audit-chain.md](audit-chain.md).
+- **Untrusted model files.** ONNX and `weights_only` state dicts only,
+  pickles refused, loading confined to the sandbox child on the worker.
+  See [ml-vertical.md](ml-vertical.md#model-loading).
+- **Supply chain.** Signed plugins, cosign-signed release images with a
+  CycloneDX SBOM and SLSA provenance. See
+  [supply-chain.md](../security/supply-chain.md).
+
+## History and what is deferred
+
+The platform came from IntelliBridge's aegis, whose release history is in
+the
+[CHANGELOG](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CHANGELOG.md)
+and whose architecture decisions are kept as history under `docs/adr/`
+with a provenance banner on each. ADR 0001 (vendored submodules) and ADR
+0004 (the effect-class gate on agents and tools) describe upstream
+mechanisms that left with the pentest domain. ADR 0002 (the registry seam)
+still describes the code. ADR 0005 (worker autoscaling and DR) and ADR
+0008 (Nix reproducible builds) remain open spikes.
+
+Not on `main` as of 2026-09-08:
+
+- WS4: the ML Celery tasks, the sandbox child and the `/v1/models`,
+  `/v1/attacks`, campaign, artifact and compare routes.
+- WS5: the `/models` pages and the campaign and finding review panels
+  (proposed in PR #16).
+- WS7: the ECS Fargate deployment (a Terraform-only foundation in draft
+  PR #19).
+- Datasets and bundled models: none fetched or trained yet.
+- Phase B of the spec: black-box endpoint targets, further attacks and
+  modalities, adversarial-training defenses, ATLAS tagging and the
+  interoperability work of section 27.

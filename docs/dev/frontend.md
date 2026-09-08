@@ -1,252 +1,205 @@
 # Frontend development
 
-This doc covers the Next.js app, the design-system workspace, and
-Storybook. For the deep auth flow (NextAuth + Redsim-signed cookie),
-see [`docs/architecture/auth.md`](../architecture/auth.md); for the
-API surface the SPA consumes, see
-[`docs/api/v1.md`](../api/v1.md).
+This doc covers the Next.js app, the design-system workspace and Storybook.
+For the auth flow (NextAuth plus the redsim-signed cookie) see
+[`docs/architecture/auth.md`](../architecture/auth.md). For the API surface
+the app consumes see [`docs/api/v1.md`](../api/v1.md). The target ML pages
+are section 18 of the
+[product spec](../superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md).
 
 ## Workspace layout
 
 ```
-pnpm-workspace.yaml             # root manifest
-web/                            # @redsim/web — Next.js 14 app
+pnpm-workspace.yaml             # root manifest: web, packages/design-system
+pnpm-lock.yaml                  # the single lockfile, at the repo root
+web/                            # @redsim/web, Next.js 14 app
   src/
     app/                        # App Router pages
-    lib/                        # api(), auth helpers
-    hooks/                      # useRoles, …
-    server/                     # server-only modules (RSA mint)
+    components/                 # app-level compositions
+    lib/                        # api(), auth helpers (+ tests)
+    hooks/                      # useRoles, useRequireAuth, useRunEvents (+ tests)
+    server/                     # server-only modules (RSA cookie mint)
   .storybook/                   # main.ts, preview.ts
-  components.json               # shadcn registry config (points at vendored clone)
-  tsconfig.json
-  package.json
-project_repos/
-  design-system/                # @redsim/design-system — shared components
-    src/
-      components/               # Redsim-branded compositions + .stories.tsx
-      primitives/               # dependency-free shadcn leaves (table/card/skeleton/alert/input/textarea)
-      lib/utils.ts              # cn(...)
-      index.ts                  # public surface
-  shadcn-ui/                    # vendored upstream, pinned SHA (F15)
+  tests/                        # Playwright stack E2E (workflow_dispatch only in CI)
+  components.json               # shadcn config (aliases point at the design system)
+packages/design-system/         # @redsim/design-system
+  src/
+    components/                 # redsim compositions + .stories.tsx
+    primitives/                 # shadcn leaves: table, card, skeleton, alert, input, textarea, alert-dialog, tooltip, command
+    lib/utils.ts                # cn(...)
+    index.ts                    # public surface
+  tsconfig.build.json           # typecheck without stories (the CI gate)
 ```
 
 Everything is one workspace. From the repo root:
 
 ```bash
-pnpm install --frozen-lockfile      # honours web/pnpm-lock.yaml
-pnpm --filter @redsim/web dev        # next dev -p 3000
+pnpm install --frozen-lockfile
+pnpm --filter @redsim/web dev              # next dev -p 3000
 pnpm --filter @redsim/web typecheck
+pnpm --filter @redsim/web test             # vitest
 pnpm --filter @redsim/web build
 pnpm --filter @redsim/web storybook
+pnpm --filter @redsim/design-system typecheck
 ```
 
-The web tsconfig's `paths` resolves `@redsim/design-system` to the
-source folder so a `next dev` hot-reload picks up DS edits without a
-build step.
+The web tsconfig `paths` resolve `@redsim/design-system` to the source
+folder, so a `next dev` hot reload picks up design-system edits without a
+build step. `web/components.json` still names a `registry` under the deleted
+`project_repos/shadcn-ui`, so `shadcn add` needs a registry override until
+that entry is updated. The web app reads
+`NEXT_PUBLIC_REDSIM_API_URL` (default `http://localhost:8000`) and the
+`NEXT_PUBLIC_REDSIM_*` cookie names.
 
 ## Design-system principles
 
 - **Composed, not imported.** shadcn primitives live in
-  `project_repos/design-system/src/primitives/`, then are wrapped by
-  Redsim-branded compositions in `src/components/`. The web app imports
-  only from `@redsim/design-system`'s public surface (`src/index.ts`),
-  never from the vendored upstream directly.
-
-- **Base primitive set.** The dependency-free shadcn leaves —
-  `table`, `card`, `skeleton`, `alert`, `input`, `textarea` — are
-  ported into `src/primitives/` and re-exported from `index.ts`
-  alongside `ComponentProps<…>` type aliases (`TableProps`,
-  `CardProps`, …). Their imports are rewritten to the workspace-local
-  `../lib/utils`.
-
-- **Radix / `cmdk` primitives.** The interactive leaves that pull a
-  runtime dependency — `alert-dialog` and `tooltip`
-  (`@radix-ui/react-alert-dialog`, `@radix-ui/react-dialog`,
-  `@radix-ui/react-tooltip`) and `command` (`cmdk`) — now ship too.
-  Those packages are in `web/pnpm-lock.yaml`, so `pnpm install
-  --frozen-lockfile` resolves them in CI; the old lockfile gate is
-  lifted. They back the confirm dialogs on destructive actions, the
-  hover `Tooltip`s, and the Cmd/Ctrl-K command palette.
-
-- **Storybook is the spec.** Every component exported from
-  `index.ts` must have a story file co-located (`*.stories.tsx`). The
-  CI `web-build` job now enforces a blocking `@redsim/design-system`
-  typecheck plus the `@redsim/web` vitest suite, so the component layer
-  must type-check and pass tests on every PR.
-
-- **CSP-friendly.** No inline scripts in components. CSS-only badges
-  and visual states pair with the v0.4.0 F14d report CSP that
-  disallows script sources entirely.
-
-```mermaid
-flowchart LR
-  upstream["project_repos/shadcn-ui<br/>vendored, pinned SHA"]
-  cmd["pnpm dlx shadcn add"]
-  prims["design-system/src/primitives/"]
-  comps["design-system/src/components/"]
-  index["design-system/src/index.ts"]
-  web["web/src/app/"]
-
-  upstream -- "registry read" --> cmd
-  cmd -- "scripted copy" --> prims
-  prims -- "imported by" --> comps
-  comps -- "re-exported via" --> index
-  index -- "imported by" --> web
-```
+  `packages/design-system/src/primitives/` and are wrapped by redsim
+  compositions in `src/components/`. The web app imports only from the public
+  surface (`src/index.ts`).
+- **Primitive set.** The dependency-free leaves (`table`, `card`, `skeleton`,
+  `alert`, `input`, `textarea`) plus the Radix and `cmdk` leaves
+  (`alert-dialog`, `tooltip`, `command`) are re-exported from `index.ts`
+  alongside `ComponentProps<…>` type aliases.
+- **Storybook is the spec.** Every component exported from `index.ts` has a
+  co-located `*.stories.tsx`. CI runs a blocking `@redsim/design-system`
+  typecheck (`tsconfig.build.json`, stories excluded) plus the `@redsim/web`
+  vitest suite.
+- **CSP-friendly.** No inline scripts in components. CSS-only badges and
+  visual states pair with the report CSP that disallows script sources.
 
 ## Component inventory
 
-The first eight components shipped in `@redsim/design-system`. Each has
-a story; every page in the web app uses at least one of them:
+| Component | Where it appears |
+|---|---|
+| `SeverityChip` | dashboard, runs, findings |
+| `RunStatusBadge` | dashboard, runs |
+| `AuditChainBadge` | audit |
+| `FindingCard` | findings detail |
+| `StageTimeline` | runs detail (driven by the WS event stream) |
+| `EvidenceDiff` | findings detail |
+| `RoleGated` | every mutating control |
+| `ToastList` | global transient notifications |
+| `AlertDialog` | confirm dialogs on destructive actions (cancel run, delete target) |
+| `Tooltip` | header controls, gated-button affordances |
+| `Command` | the Cmd/Ctrl-K command palette |
 
-| Component         | Where it appears                                  |
-|-------------------|---------------------------------------------------|
-| `SeverityChip`    | dashboard, runs, findings                         |
-| `RunStatusBadge`  | dashboard, runs                                   |
-| `AuditChainBadge` | audit                                             |
-| `FindingCard`     | findings detail                                   |
-| `StageTimeline`   | runs detail (driven by the WS event stream)       |
-| `EvidenceDiff`    | findings detail (when a patch is generated)       |
-| `RoleGated`       | findings detail (Apply Patch / Verify buttons)    |
-| `ToastList`       | global transient notifications                    |
+The ML pages add `MriScorecard`, `DimensionBars`, `RobustnessCurve`,
+`MeasurementTable` and `ObservationCard` (master plan WS5, spec section 18).
+None of them is on `main`.
 
-The Radix / `cmdk` primitive leaves now back the interactive surfaces
-added in the frontend-completion batch:
+## Page inventory (on `main`)
 
-| Primitive     | Backing package(s)                                 | Where it appears                                              |
-|---------------|----------------------------------------------------|--------------------------------------------------------------|
-| `AlertDialog` | `@radix-ui/react-alert-dialog`, `react-dialog`     | confirm dialogs on destructive/active actions (cancel run, delete target, active agents/Kali tools) |
-| `Tooltip`     | `@radix-ui/react-tooltip`                          | header controls, gated-button affordances                    |
-| `Command`     | `cmdk`                                             | the Cmd/Ctrl-K command palette                               |
+| Page | Surfaces |
+|---|---|
+| `/`, `/login` | landing and sign-in |
+| `/dashboard` | run and finding overview |
+| `/runs`, `/runs/[id]` | run list and detail, **Cancel run** (`POST /v1/runs/{id}/cancel`, `remediator`), `report.json` / `report.md` / `report.html` links, stage timeline from `WS /v1/runs/{id}/events` |
+| `/findings`, `/findings/[id]` | finding list and detail, **Verify** (`POST /v1/findings/{id}/verify`, `remediator`) |
+| `/targets` | target list, **Delete target** (`DELETE /v1/targets/{id}`, `admin`, confirm dialog). The Start scan control is disabled behind a notice because no adapter is registered. |
+| `/auth-profiles` | auth-profile list, create and delete (`admin`) |
+| `/audit` | audit-chain visualization, each chain as linked blocks with valid / broken status and per-event hashes |
+| `/projects`, `/projects/[slug]/settings` | project list and per-project settings (daily LLM budget) |
+| `/logs` | terminal-style log viewer over `/v1/logs` |
+| `/cost` | per-org LLM cost dashboard over `/v1/orgs/{id}/cost` |
 
-Each component carries `forwardRef`-free signatures and accepts
-`className` for last-wins Tailwind merging via the `cn()` helper.
+Planned for the ML vertical (WS5, PR #16 is open): `/models` with
+the Add model dialog (bundled picker, ONNX / `state_dict` upload with the
+refusal rules shown before a file is chosen, endpoint tab disabled with the
+Phase B reason), `/models/[id]` with the campaign launcher rendered from
+`GET /v1/attacks` `params_schema`, the 13-panel `/runs/[id]` (MRI scorecard
+with subscores, per-family table with denominators, ε curve, observations,
+interpretation, candidate recommendations, limitations, provenance), the
+three-pane `/findings/[id]`, and a `/targets` redirect. Every ML page reads
+`GET /v1/ml/capabilities` once per session to render honest disabled states.
 
-## Page inventory
-
-| Page                       | Surfaces                                                                                                  |
-|----------------------------|-----------------------------------------------------------------------------------------------------------|
-| `/dashboard`               | run + finding overview                                                                                     |
-| `/runs`, `/runs/[id]`      | run list + detail; **Cancel run** (`POST /v1/runs/{id}/cancel`, `remediator`); `report.json` / `report.md` download links + **Vulnfixer export** (`GET /v1/runs/{id}/exports/vulnfixer`) |
-| `/findings`, detail        | finding list + detail; Apply Patch / Verify (`RoleGated`)                                                  |
-| `/targets`                 | target list; **Delete target** (`DELETE /v1/targets/{id}`, `admin`, confirm dialog)                        |
-| `/agents`                  | invoke a wired agent with a prompt (`POST /v1/agents/{name}/run`); `read` agents need `remediator`, active/offensive agents need `approver` + an explicit confirm |
-| `/tools`                   | run a Kali tool (`POST /v1/tools/kali/{tool}`); `read` tools need `remediator`, active tools (`sqlmap`/`hydra`/`metasploit`/`wpscan`) need `approver` + an **Execute** toggle + confirm |
-| `/audit`                   | audit-chain visualization — each chain rendered as linked blocks with valid/broken status + per-event hashes (`AuditChainBadge`) |
-| `/projects`, settings      | project list + per-project settings                                                                       |
-| `/logs`                    | terminal-style log viewer (`/v1/logs`)                                                                     |
-
-Two cross-cutting UX affordances live in the app shell:
-
-- **Dark mode.** A header theme toggle flips a `class`-strategy
-  Tailwind dark theme, persisted to `localStorage`. (This is the app's
-  own toggle; the MkDocs docs site has a separate Material toggle.)
-- **Command palette.** Cmd/Ctrl-K opens a `cmdk`-backed palette for
-  quick navigation between the pages above.
-
-Destructive and active actions (cancel run, delete target, active
-agents, active Kali tools) confirm through an `AlertDialog` before the
-mutating call fires. Every such control is also wrapped in
-`<RoleGated>`, and the server re-checks RBAC — the client gate is
+Two cross-cutting affordances live in the app shell: a header dark-mode
+toggle (class-strategy Tailwind, persisted to `localStorage`) and the
+Cmd/Ctrl-K palette. Destructive actions confirm through `AlertDialog`, are
+wrapped in `<RoleGated>`, and the server re-checks RBAC. The client gate is
 cosmetic.
 
 ## `api()` helper
 
 `web/src/lib/api.ts` is the single fetch wrapper every page uses.
-Behaviour summary:
 
 ```ts
 api<T>(path, init?)         // GET by default
 api<T>(path, { method: "POST", body: JSON.stringify(...), headers: {…} })
 ```
 
-- Auto-attaches `X-Redsim-Request-ID` per call.
-- Bearer wins: when `localStorage.redsim_token` (or `init.token`) is
-  set, `Authorization: Bearer …` is sent and `credentials: omit`.
-- Otherwise `credentials: include` so the cookie rides, and on
-  mutating methods the `X-Redsim-CSRF` header is auto-attached from
-  the `redsim_csrf` cookie.
-- Non-2xx surfaces as `ApiError(status, body)` — pages render the
-  detail directly.
+- Attaches `X-Redsim-Request-ID` per call.
+- Bearer wins: when `localStorage.redsim_token` (or `init.token`) is set,
+  `Authorization: Bearer …` is sent with `credentials: omit`.
+- Otherwise `credentials: include` so the cookie rides, and on mutating
+  methods the `X-Redsim-CSRF` header is attached from the `redsim_csrf`
+  cookie.
+- Non-2xx surfaces as `ApiError(status, body)`. Pages render the detail.
 
-`useRoles()` (in `web/src/hooks/useRoles.ts`) wraps SWR around
-`/v1/projects` and returns a `{roles, projects}` pair. `<RoleGated
-minRole="approver" callerRole={roles[projectId]}>` is the canonical
-gate the pages use.
+`useRoles()` wraps SWR around `/v1/projects` and returns `{roles, projects}`.
+`<RoleGated minRole="approver" callerRole={roles[projectId]}>` is the
+canonical gate. `useRunEvents()` subscribes to the run WebSocket.
 
 ## NextAuth
 
-The Keycloak code flow lives at
-`web/src/app/api/auth/[...nextauth]/route.ts`. The session callback
-mints two cookies via the server-only `web/src/server/redsim-session.ts`:
+The Keycloak code flow lives at `web/src/app/api/auth/[...nextauth]/route.ts`.
+The session callback mints two cookies via the server-only
+`web/src/server/redsim-session.ts`:
 
-- `redsim_api_session` — httpOnly + secure-in-prod + sameSite=Lax;
-  RS256-signed via `jose`.
-- `redsim_csrf` — NOT httpOnly so the SPA can read it.
+- `redsim_api_session`: httpOnly, secure in prod, sameSite=Lax, RS256-signed
+  via `jose`.
+- `redsim_csrf`: not httpOnly so the SPA can read it.
 
-There's also `/api/auth/refresh-api-session` (POST) for re-minting
-without bouncing through Keycloak, and `/api/auth/signout-redsim`
-(POST) for clearing both cookies during logout.
+`/api/auth/refresh-api-session` (POST) re-mints without bouncing through
+Keycloak, and `/api/auth/signout-redsim` (POST) clears both cookies on logout.
 
 ## Adding a new page
 
-1. Add the route file under `web/src/app/<route>/page.tsx`. Mark it
-   `"use client"` if it uses hooks.
-2. Use `requireAuth(router)` at the top to bounce unauthenticated
-   visitors to `/login`.
+1. Add `web/src/app/<route>/page.tsx`. Mark it `"use client"` if it uses
+   hooks.
+2. Use `useRequireAuth()` at the top to bounce unauthenticated visitors to
+   `/login`.
 3. Fetch via `useSWR(authed ? "/v1/…" : null, fetcher)`.
-4. Compose UI from `@redsim/design-system` — don't write a one-off
-   badge inline.
-5. Wrap any mutating control in `<RoleGated minRole=… callerRole=
-   {roles[projectId]}>`.
+4. Compose UI from `@redsim/design-system`. Do not write a one-off badge
+   inline.
+5. Wrap any mutating control in `<RoleGated minRole=… callerRole={roles[projectId]}>`.
+6. Render unimplemented server paths as unavailable with the reason from the
+   API. Never fake a result on the client.
 
-## Adding a new design-system component
+## Adding a design-system component
 
-1. If it's a primitive shadcn already ships, generate it:
-
-   ```bash
-   pnpm --filter @redsim/design-system exec shadcn add <component>
-   ```
-
-   This drops a file under `src/primitives/`.
-
-   If the primitive pulls a runtime dependency (Radix, `cmdk`, …), add
-   that package to the workspace **first** — CI installs with
-   `--frozen-lockfile` and can't fetch anything the lockfile is missing.
-   `@radix-ui/react-alert-dialog`, `@radix-ui/react-dialog`,
-   `@radix-ui/react-tooltip`, and `cmdk` are already in the lockfile
-   (they back `AlertDialog` / `Tooltip` / `Command`).
-
-2. Compose the Redsim-branded wrapper under `src/components/`; export
-   from `src/index.ts`. Co-locate a `*.stories.tsx` file.
-
+1. If it is a primitive shadcn ships, generate it under `src/primitives/`
+   with `pnpm --filter @redsim/design-system exec shadcn add <component>`
+   (pass a registry, see above). If the primitive pulls a runtime dependency,
+   add the package to the workspace first: CI installs with
+   `--frozen-lockfile` and cannot fetch anything the lockfile is missing.
+2. Compose the redsim wrapper under `src/components/`, export it from
+   `src/index.ts`, co-locate a `*.stories.tsx`.
 3. Update the table in this doc.
+4. `pnpm --filter @redsim/design-system typecheck` (the blocking CI gate).
+5. `pnpm --filter @redsim/web storybook` to preview.
 
-4. Type-check: `pnpm --filter @redsim/design-system run typecheck`
-   (`tsconfig.build.json`, stories excluded). This is the blocking CI
-   gate in `web-build`; the real component + primitive source must
-   compile clean.
+## Lock-file discipline
 
-5. Storybook: `pnpm --filter @redsim/web storybook` to preview.
-
-## Lock-file discipline (F2)
-
-`web/pnpm-lock.yaml` is committed. CI re-derives it with
-`pnpm install --frozen-lockfile`; drift fails the build. To add a
-dependency:
+The root `pnpm-lock.yaml` is committed. CI installs with
+`pnpm install --frozen-lockfile`, and drift fails the `Next.js build` job.
+When you change any `package.json`, regenerate the lockfile in the same
+commit:
 
 ```bash
 pnpm --filter @redsim/web add <pkg>
-pnpm --filter @redsim/design-system add <pkg>
-git add web/pnpm-lock.yaml web/package.json …/package.json
+git add pnpm-lock.yaml web/package.json
 ```
+
+On 2026-09-08 that job is red on `main` for exactly this reason: dependabot
+#15 bumped `web/package.json` without the lockfile. The web image build is
+also red because `deploy/Dockerfile.web` runs `corepack prepare pnpm` on the
+`node:26` base image that dependabot #13 introduced, which no longer ships
+corepack. Both fixes belong to the web workstream.
 
 ## What's deferred
 
 - Per-finding HTML report (smaller than the run-level).
-- Storybook test-runner CI gate flip (after the second batch).
-- Storybook a11y "serious-or-worse" gate.
-
-Dark mode, the command palette, the `/agents` and `/tools` surfaces,
-and the audit-chain visualization page have all shipped — see the
-page inventory above.
+- Storybook test-runner CI gate and the a11y "serious-or-worse" gate.
+- ESLint in `web/` (`make lint-web` prints a skip line until a config and
+  `eslint-config-next` land).

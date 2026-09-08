@@ -188,6 +188,7 @@ nav:
       - Audit chain: architecture/audit-chain.md
       - Multi-tenancy: architecture/multi-tenancy.md
       - Observability: architecture/observability.md
+      - ML vertical: architecture/ml-vertical.md
   - API reference: api/v1.md
   - Operations:
       - Production deployment: ops/deploy.md

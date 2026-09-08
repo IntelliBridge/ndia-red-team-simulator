@@ -1,8 +1,9 @@
 # Audit chain
 
-Every operation Redsim takes — start a scan, apply a fix, run a Kali
-tool, query the log mirror — lands as an event on a **hash-chained**
-audit log. Each event commits to the previous event's hash, so any
+Every mutating operation Redsim takes (start a scan, cancel a run,
+manage a target, query the log mirror and, as the ML vertical lands,
+register a model, run an attack, explain, harden and verify) lands as an
+event on a **hash-chained** audit log. Each event commits to the previous event's hash, so any
 tampering with history breaks every event downstream.
 
 ```
@@ -28,34 +29,49 @@ The chain has three load-bearing properties:
 
 ```jsonc
 {
-  "chain_id": "run:run-abc123",
+  "chain_id": "project:proj-a",
   "seq": 42,
-  "ts": "2026-05-28T12:34:56.789+00:00",
+  "ts": "2026-09-08T12:34:56.789+00:00",
   "actor": "user:alice@example.com",
-  "action": "scan.start",
-  "target": "http://localhost:3000",
-  "allowlist_check": "pass",
+  "action": "attack.run",
+  "target": null,
+  "allowlist_check": "n/a",
   "override": false,
   "success": true,
   "detail": {
-    "actor": "user:alice@example.com",
-    "scanner": "strix",
-    "target": "http://localhost:3000",
-    "instruction_set": false
+    "target_id": "tgt-…",
+    "attack_ids": ["fgsm", "pgd"],
+    "norm": "linf",
+    "eps_grid": [0.01, 0.03, 0.1],
+    "reference_eps": 0.03,
+    "n_samples": 200,
+    "seed": 0,
+    "dataset_id": "leibnitz-lab/military_vehicles",
+    "settings_hash": "9f2c…"
   },
-  "run_id": "run-abc123",
+  "run_id": null,
   "project_id": "proj-a",
   "prev_hash": "ee5b…",
   "this_hash": "47b1…"
 }
 ```
 
-`detail` carries forensic context. For Kali tool invocations, the
-shape is the one produced by
-`redsim.audit.forensic.tool_detail` — **digests + refs, not raw
-bytes**: stdout / stderr land in the blob store and the audit row
-carries `{sha256, location, kind}` so a 50 MB scanner output never
-inflates an audit row.
+The example is the planned `attack.run` admission event (spec section
+5.11). Today's events (`scan.start`, `verify.replay`, `run.cancel`,
+`target.manage` and the rest of the table below) carry the same envelope.
+For an in-boundary ML artifact the `target` argument is `None` and
+`allowlist_check` records `n/a`, because the allowlist is a network-scope
+control and the audit row itself is the point. Chain ids follow
+`redsim.audit.chain._chain_id`: `run:<run_id>` when a run exists, else
+`project:<project_id>`, else `system`.
+
+`detail` carries forensic context. For tool and subprocess invocations
+the shape is the one produced by `redsim.audit.forensic.tool_detail`:
+**digests + refs, not raw bytes**. stdout / stderr land in the blob
+store and the audit row carries `{sha256, location, kind}` so a large
+tool output never inflates an audit row. The ML vertical follows the
+same convention (spec 10.5): ids, counts, hashes and blob references,
+never model bytes, images, dataset rows, prompt text or secrets.
 
 `redsim.audit.chain.redact_audit_detail` runs at write-time to scrub
 known-sensitive keys (tokens, passwords, etc.).
@@ -101,7 +117,7 @@ sequenceDiagram
     participant heads as audit_chain_heads
     participant events as audit_events
 
-    Caller->>safety: authorize fix.apply target writer
+    Caller->>safety: authorize attack.run target writer
     safety->>safety: is_target_allowed
     safety->>writer: append action actor target detail
 
@@ -252,39 +268,73 @@ confirm the downloaded bytes match what was sealed.
 
 ## What lands on the chain
 
-| Action prefix       | Emitted by                                                  |
-|---------------------|-------------------------------------------------------------|
-| `scan.start`        | `services.scans.create_scan_job` (admission), worker re-check |
-| `scan.execute.<scanner>` | worker before dispatching the scanner                  |
-| `fix.generate` / `fix.apply` | `services.fixes.create_fix_job` (admission)        |
-| `patch.apply` / `patch.commit` | `services.fixes.generate_fix` (execution)        |
-| `verify.replay`     | `services.verify.create_verify_job` (admission), worker re-check |
-| `run.cancel`        | `services.runs.cancel_run`                                  |
-| `target.manage`     | `services.targets.create_target` / `delete_target`          |
-| `kali.<tool>`       | `redsim.tools.kali_client._audit` per invocation             |
-| `cai.live_hardening` | `services.fixes._generate_live_fix`                        |
-| `deps.bump`         | `services.fixes._generate_deps_fix`                         |
-| `github.open_pr`    | CLI / service when opening a PR via the GitHub App          |
-| `logs.queried`      | `GET /v1/logs` (audit-the-auditors)                         |
-| `audit.verify`      | the verifier itself                                         |
-| `audit.worm_export` | the WORM export beat task / CLI on each run                 |
+Live on `main` today:
 
-A new action type only needs to thread `authorize()` correctly — the
+| Action | Emitted by |
+|---|---|
+| `scan.start` | `services.scans.create_scan_job` (admission) and `start_scan` (the offline `redsim scan` re-check) |
+| `scan.execute.<scanner>` | `workers.tasks.scan` before dispatching a scanner adapter |
+| `verify.replay` | `services.verify.create_verify_job` (admission) and `verify` (worker re-check) |
+| `run.cancel` | `services.runs.cancel_run` |
+| `target.manage` | `services.targets.create_target` / `delete_target` |
+| `auth_profile.create` / `auth_profile.delete` | `services.auth_profiles` |
+| `logs.queried` | `GET /v1/logs` (audit the auditors) |
+| `audit.worm_export` | the WORM export beat task and `redsim audit export` |
+| `tenant.integrity_check` | the `redsim.verify_tenant_integrity` beat task |
+
+`GET /v1/audit/verify` and `redsim audit verify` read the chain and do
+not append to it.
+
+A new action type only needs to thread `authorize()` correctly. The
 chain backend handles serialisation, hash linking, and persistence.
+
+### Planned ML events
+
+The ML vertical adds the actions below (spec section 5.11, emission order
+per task in 10.5). None of the emitters is on `main` yet: admission
+events land with the WS4 routes, worker events with the WS4 tasks. Every
+one goes through `redsim.safety.authorize`, `detail` passes through
+`redact_audit_detail`, and no row carries model bytes, images, dataset
+rows, prompt text or secrets.
+
+| Action | Emitted by | Chain |
+|---|---|---|
+| `model.register` | `POST /v1/models` admission (bundled pick or upload, `success=False` for a refused upload) | project |
+| `model.validate` | worker, from the sandboxed `model.validate` job | run (`ml.ingest`) |
+| `attack.run` | `POST /v1/models/{id}/attacks` admission, before any `Run` or `Job` row | project |
+| `model.load` | worker, at the start of every campaign or verify job | run |
+| `attack.execute.<attack_id>` | worker re-check before each attack (mirrors `scan.execute.<scanner>`) | run |
+| `explain.run` | `POST /v1/findings/{id}/explain` admission or the campaign chain | run |
+| `explain.execute` | worker | run |
+| `campaign.score` | worker, when the `MRIRecord` is written (carries the score record hash and `settings_hash`) | run |
+| `harden.recommend` | `POST /v1/findings/{id}/harden` admission or the campaign chain | run |
+| `harden.execute` | worker (rules fired, narrative outcome, redacted Pythia settings, prompt and completion digests, token counts) | run |
+| `verify.replay` (existing) | `POST /v1/findings/{id}/verify` admission | project, then the verify run |
+| `verify.execute` | worker (defense, outcome, ΔMRI and per-dimension deltas) | run (`ml.verify`) |
+| `job.complete` | worker, at the end of every ML task | run |
+| `finding.review` | `PATCH /v1/findings/{id}/status` | run |
+| `finding.annotate` | reviewer notes and finding notes routes | run |
+| `report.render` | worker | run |
+| `run.cancel`, `target.manage` (existing) | admission | run / project |
+
+Because every worker event shares the campaign's `run:<run_id>` chain
+and the admission events carry the resulting `run_id` in `detail`,
+`redsim audit verify --run <run_id>` proves a whole campaign's trail.
+Offline (`redsim ml attack`, CI) the same `authorize()` calls resolve to
+`JsonlAuditWriter` at `<run_path>/audit.jsonl` and `verify_chain` walks
+either.
 
 ---
 
 ## Forensic detail shape (tools)
 
-Phase-4 v0.3.1 F8 retired the per-tool side-channel
-(`tool-calls.jsonl`). Every Kali tool invocation now lands on the
-canonical chain with the shape `redsim.audit.forensic.tool_detail`
-produces:
+Tool and subprocess invocations land on the canonical chain with the
+shape `redsim.audit.forensic.tool_detail` produces:
 
 ```jsonc
 {
-  "tool": "nmap",
-  "params": { "target": "127.0.0.1", "scan_type": "-sV" },
+  "tool": "<tool name>",
+  "params": { "...": "resolved params, obvious secrets redacted" },
   "return_code": 0,
   "duration_ms": 1247,
   "stdout_sha256": "f31a…",
@@ -293,47 +343,19 @@ produces:
   "stderr_bytes": 0,
   "artifact_refs": [
     { "sha256": "f31a…",
-      "location": "s3://redsim/blobs/runs/run-1/kali/nmap.stdout",
+      "location": "s3://redsim/blobs/runs/run-1/tools/<tool>.stdout",
       "kind": "stdout" }
   ],
   "request_id": "req-…"
 }
 ```
 
-Param values longer than 1 KiB get truncated at this layer; the
-chain's `redact_audit_detail` then scrubs known secret-keys before
-write. The full stdout / stderr stays in the blob store; the row
-carries only the descriptor.
-
----
-
-## Threat model
-
-| Threat                                                | Defence                                                                         |
-|-------------------------------------------------------|---------------------------------------------------------------------------------|
-| Operator silently rewrites an old event               | `this_hash` mismatch on verify; downstream events also break.                   |
-| Operator deletes the last event                       | `audit_chain_heads.head_seq` no longer matches `MAX(seq)`.                       |
-| Two concurrent appends to one chain                   | `audit_chain_heads … FOR UPDATE` serialises them; `seq` is strictly increasing. |
-| Append succeeded but Celery enqueue failed (worker crash) | Chain has the event, job stays `queued`. Reapeable, never a half-state.    |
-| Raw scanner output exfiltrates secrets via audit rows | Forensic detail carries digests + blob refs only; raw bytes stay out.            |
-| Multi-megabyte audit rows                             | Detail capped at 64 KiB; oversize attrs spill to the blob store with a logged warning. |
-| Privileged operator re-signs a chain end-to-end       | `audit_events` is append-only **at the database**: a `BEFORE UPDATE OR DELETE`/`TRUNCATE` trigger `RAISE EXCEPTION`s for everyone (owner + superuser included). Re-signing needs `DROP TRIGGER`/owner DDL, which only `redsim_owner` holds and pgaudit logs. (Migration `0004`.) |
-| Attacker with full DB control rewrites *and* re-signs the chain | Chains are exported off-DB to an Object-Lock bucket (`COMPLIANCE` mode). The sealed copy can't be overwritten or deleted before its retention expires; download the JSONL and re-run `verify_chain` to compare against the live DB. (WORM archival, above.) |
-
-The off-DB tamper-resistance the chain used to lack is now in place — see
-**WORM archival (Object Lock)** above. The residual surfaces are narrow:
-
-- Database-side append-only enforcement (migration `0004`): a
-  row-immutability trigger blocks `UPDATE`/`DELETE`/`TRUNCATE` on
-  `audit_events` even for the table owner, the runtime `redsim_app` role is
-  granted only `INSERT, SELECT` on it, and `pgaudit` logs DDL + role/GRANT
-  changes out-of-band. Only a holder of `redsim_owner` (DDL) can
-  `DROP`/`DISABLE` the trigger or set `session_replication_role = replica`,
-  and any such action is itself pgaudit-logged. Cryptographic verification
-  (`verify_chain`) and the WORM archive stay as layered controls. See
-  SECURITY.md and `docs/ops/deploy.md`.
-- Replay of an external HTTP call. Webhook delivery IDs get the 10-min
-  TTL replay-prevention set in `github_webhooks._check_replay`.
+`_redact_params` scrubs obvious secret-bearing params and truncates
+values longer than 1 KiB at this layer, and the chain's
+`redact_audit_detail` scrubs known secret keys before write.
+The full stdout / stderr stays in the blob store. The row carries only
+the descriptor. Attribute payloads are capped at `MAX_AUDIT_ATTRS_BYTES`
+(64 KiB).
 
 ---
 

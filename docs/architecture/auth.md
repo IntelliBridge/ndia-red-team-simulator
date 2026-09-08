@@ -23,8 +23,8 @@ silently downgrading a bearer call.
 
 The Keycloak code flow is owned by NextAuth; FastAPI never sees the
 upstream access token. NextAuth's callback mints a separate
-`redsim_api_session` cookie that FastAPI verifies against an
-Redsim-managed RSA key — three concerns, three keys:
+`redsim_api_session` cookie that FastAPI verifies against a
+Redsim-managed RSA key. Three concerns, three keys:
 
 | Concern         | Holder            | Key                                                  |
 |-----------------|-------------------|------------------------------------------------------|
@@ -115,7 +115,6 @@ The CLI's `--api` mode and any scripted caller send
 |------------------------------|----------------------------------------------------|-----------------------------|
 | `dev:alice@redsim.local`      | `_dev_user`                                         | dev only — rejected in prod |
 | `worker:v<ver>.<id>.<exp>.<sig>` | `_verify_worker_token` (see below)              | both                        |
-| `worker:<legacy-hmac>`       | legacy static-HMAC path; sub=`service:worker:legacy` | both, transitional       |
 | `eyJhbGc…` (JWT)             | Keycloak JWKS via authlib                          | both                        |
 
 Token source priority in `redsim.cli.api_client.load_token`:
@@ -129,9 +128,9 @@ The CLI never carries cookie state.
 
 ## Worker service-account auth
 
-When workers need to call the API (currently rare; v0.4.1+ paths only
-post log batches and Check Run updates), they mint a time-bound
-token with `redsim.api.auth.issue_worker_token(worker_id)`. The
+When a worker needs to call the API (rare today, since workers write
+Postgres directly), it mints a time-bound token with
+`redsim.api.auth.issue_worker_token(worker_id)`. The
 format:
 
 ```
@@ -157,7 +156,7 @@ sequenceDiagram
     else sig invalid with v2
         API->>API: try v1 key (overlap window)
         alt sig valid with v1
-            API-->>W: 200 (legacy worker accepted)
+            API-->>W: 200 (previous key, overlap window)
         else
             API-->>W: 401 invalid or expired worker token
         end
@@ -180,10 +179,9 @@ Workers refresh their token every `ttl - margin` seconds; the API
 maps every accepted token to actor `service:worker:<worker_id>` for
 audit.
 
-The Phase-3 static-HMAC worker token format
-(`worker:<hex-sig-of-"redsim-worker">`) is still accepted by the
-verifier and lands as `sub=service:worker:legacy` — there for a
-single rolling restart, removed once every worker emits v1+ tokens.
+The pre-v0.3.1 constant-payload form (`worker:<hex-sig>`) is rejected
+outright: `_parse_worker_token` accepts only the versioned, time-bound
+format, and there is no legacy fallback.
 
 ---
 
@@ -223,32 +221,56 @@ clients authenticate via the `redsim.bearer.<token>` subprotocol, the
 ## RBAC
 
 Action authorization on top of identity is project-scoped. Each role
-has a rank; each action requires a minimum rank.
+has a rank and each action requires a minimum rank. `viewer` ranks 0:
+it passes every membership (read) gate and fails every `check()` on a
+gated action, the same as an unknown role.
 
-| Role       | Rank | What they can do                                        |
-|------------|------|---------------------------------------------------------|
-| `scanner`  | 1    | start scans                                             |
-| `remediator` | 2  | generate fixes (dry-run), trigger verifies, run scans   |
-| `approver` | 3    | apply patches + open PRs, plus everything below          |
-| `admin`    | 4    | manage targets, verify audit, settings — everything below |
+| Role         | Rank | What they can do                                                                 |
+|--------------|------|----------------------------------------------------------------------------------|
+| `viewer`     | 0    | read runs, findings, artifacts and the scorecard                                 |
+| `scanner`    | 1    | start scans and attack campaigns, request explanations, export reports           |
+| `remediator` | 2    | register models, request hardening, trigger verifies, cancel runs, annotate, plus everything below |
+| `approver`   | 3    | review (dismiss) findings, plus everything below                                 |
+| `admin`      | 4    | manage targets and auth profiles, verify audit, project settings, everything below |
 
-| Action            | Min role     |
-|-------------------|--------------|
-| `scan.start`      | `scanner`    |
-| `fix.generate`    | `remediator` |
-| `verify.replay`   | `remediator` |
-| `run.cancel`      | `remediator` |
-| `tool.invoke`     | `remediator` |
-| `fix.apply`       | `approver`   |
-| `target.manage`   | `admin`      |
-| `auth_profile.manage` | `admin`  |
-| `audit.verify`    | `admin`      |
+| Action                | Min role     | Status                                        |
+|-----------------------|--------------|-----------------------------------------------|
+| `scan.start`          | `scanner`    | live (the offline `redsim scan` admission)    |
+| `attack.run`          | `scanner`    | ML, routes land with WS4                      |
+| `explain.run`         | `scanner`    | ML, routes land with WS4                      |
+| `report.export`       | `scanner`    | ML                                            |
+| `verify.replay`       | `remediator` | live (`POST /v1/findings/{id}/verify`)        |
+| `run.cancel`          | `remediator` | live                                          |
+| `model.register`      | `remediator` | ML                                            |
+| `harden.recommend`    | `remediator` | ML                                            |
+| `finding.annotate`    | `remediator` | ML                                            |
+| `finding.review`      | `approver`   | ML                                            |
+| `target.manage`       | `admin`      | live (targets, project settings)              |
+| `auth_profile.manage` | `admin`      | live                                          |
+| `audit.verify`        | `admin`      | live                                          |
 
-System callers (workers via `is_system=True`) bypass the check —
-their identity is established at the bearer-resolution step instead.
+The seven ML members (spec section 7.4) are on `main` so that the WS4
+routes can gate on them. `model.register` sits at `remediator` because
+an upload admits untrusted bytes that only the sandboxed worker ever
+opens. Endpoint registration (Phase B) is `target.manage`. Finding
+dismissal (`finding.review`) also carries an independence rule in the
+service layer, not in the policy engine: the reviewer may not be the
+campaign creator and may not be a system principal (spec 7.7). That
+check is not built yet.
+
+The table is mirrored verbatim in `deploy/opa/redsim-authz.rego` and
+`deploy/cedar/redsim-policy.cedar`. Change all three together: an
+unknown action fails closed. Two places still lag: `viewer` is not yet
+a realm role in `deploy/keycloak/realm-export.json`, and the
+design-system `ROLES` tuple
+(`packages/design-system/src/components/role-gated.tsx`) still lists
+four roles.
+
+System callers (workers via `is_system=True`) bypass the check. Their
+identity is established at the bearer-resolution step instead.
 
 The full source of truth is `redsim/api/policy.py`. The `<RoleGated>`
-React component is **UX only** — every protected route and worker
+React component is **UX only**: every protected route and worker
 entry re-runs the same check server-side.
 
 ---
@@ -262,14 +284,17 @@ normalized request and asks the configured `PolicyEngine`
 `HTTPException(403)`, carrying the engine's `reason`. Every call site is
 unchanged.
 
-This is the route-level RBAC layer only. It is distinct from — and runs
-*in addition to* — the target-allowlist + audit gate
-(`redsim.safety.authorize`, the effect-class human-in-the-loop gate of
-[ADR 0004](../adr/0004-unified-effect-class-gate.md)). Both layers still
-run on a mutating request: the `PolicyEngine` answers "may this role do
-this action on this project?"; `authorize()` answers "is this *target*
-allowlisted, and record it." Swapping the policy engine does not touch
-`authorize()`.
+This is the route-level RBAC layer only. It is distinct from, and runs
+in addition to, the target-allowlist + audit gate
+(`redsim.safety.authorize`). Both layers run on a mutating request: the
+`PolicyEngine` answers "may this role do this action on this project?"
+and `authorize()` answers "is this target allowlisted, and record it".
+For ML artifact targets `authorize()` is called with `target=None`, so
+`allowlist_check` records `n/a` and the audit row is the point. Swapping
+the policy engine does not touch `authorize()`. The effect-class
+human-in-the-loop gate of
+[ADR 0004](../adr/0004-unified-effect-class-gate.md) gated the upstream
+agents and tools and left with the pentest domain.
 
 ### The three engines
 
@@ -311,7 +336,7 @@ it wrapped as `{"input": <document>}`; Cedar receives `subject` /
     "project_memberships": { "proj-a": "admin", "proj-b": "scanner" },
     "is_system": false
   },
-  "action": "fix.apply",
+  "action": "attack.run",
   "resource": {
     "project_id": "proj-a"
   },

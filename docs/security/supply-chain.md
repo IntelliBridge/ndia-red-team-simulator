@@ -4,7 +4,7 @@ Redsim ships two complementary supply-chain controls so that the code you
 run can be tied back to the author who vouched for it:
 
 1. **Signed third-party plugins** — opt-in Ed25519 verification of the
-   community scanner/agent adapters discovered through the
+   third-party scanner and attack adapters discovered through the
    [marketplace seam](../dev/extending.md#third-party-plugins-marketplace).
 2. **Signed + attested release images** — keyless [cosign](https://docs.sigstore.dev/cosign/overview/)
    signatures, a CycloneDX SBOM, and SLSA provenance on the four service
@@ -102,7 +102,7 @@ every plugin and no signature is checked.
 $ REDSIM_PLUGINS=1 REDSIM_PLUGINS_REQUIRE_SIGNATURE=1 \
   REDSIM_PLUGINS_TRUSTED_KEYS=/etc/redsim/trusted-keys redsim plugins list
 NAME       KIND     DISTRIBUTION          VERSION  STATUS    SIGNED         DETAIL
-example    scanner  redsim-plugin-example  0.1.0    loaded    yes:1f3c9a02b1
+my-attack  scanner  my-redsim-plugin       0.1.0    loaded    yes:1f3c9a02b1
 acme-dast  scanner  acme-scanners         2.3.0    rejected  -              signature rejected: no signature found
 ```
 
@@ -115,8 +115,8 @@ writes the detached `<dist>-<version>.sig`:
 
 ```bash
 redsim plugins sign \
-  --dist redsim-plugin-example --version 0.1.0 \
-  --entry-point redsim.scanners:example \
+  --dist my-redsim-plugin --version 0.1.0 \
+  --entry-point redsim.scanners:my_attack \
   --key your-ed25519-private-key.pem \
   --out ./signing            # optional; defaults to the current directory
 ```
@@ -132,32 +132,28 @@ changes — the digest, and therefore the signature, moves with it.
     is the author's signing secret and is never read by the platform at
     verification time.
 
-### The reference example
+### Trying it out
 
-[`examples/redsim-plugin-example/`](https://github.com/IntelliBridge/ndia-red-team-simulator/tree/main/examples/redsim-plugin-example)
-ships a complete signed bundle under `signing/`:
-
-- `signing/keys/redsim-plugin-example.pem` — the **trusted public key**.
-- `signing/redsim-plugin-example-0.1.0.sig` — the detached signature over
-  the example's `create_scanner` factory.
-- `signing/generate_and_sign.py` — the reproducible recipe that produced
-  the committed material. It generates an **ephemeral** keypair, writes
-  only the public key + signature, and discards the private key — so the
-  private key is **never committed**.
-
-Run the example with enforcement on to see a verified load:
+The upstream aegis reference plugin bundle (`examples/aegis-plugin-example/`)
+is not carried in this fork, so there is no committed signed example. To
+exercise enforcement end to end: generate an Ed25519 keypair, install a
+plugin distribution that exposes a `redsim.scanners` entry point, sign it
+with `redsim plugins sign`, and point the three variables at the output:
 
 ```bash
 REDSIM_PLUGINS=1 \
 REDSIM_PLUGINS_REQUIRE_SIGNATURE=1 \
-REDSIM_PLUGINS_TRUSTED_KEYS=examples/redsim-plugin-example/signing/keys \
-REDSIM_PLUGINS_SIG_DIR=examples/redsim-plugin-example/signing \
+REDSIM_PLUGINS_TRUSTED_KEYS=./signing/keys \
+REDSIM_PLUGINS_SIG_DIR=./signing \
   redsim plugins list
 ```
 
-The `example` scanner shows `status=loaded` with a `yes:<key_id>` SIGNED
-cell; an unsigned plugin would be `rejected` ("no signature found") and
-never registered.
+A verified plugin shows `status=loaded` with a `yes:<key_id>` SIGNED
+cell. An unsigned plugin is `rejected` ("no signature found") and never
+registered. The ML attack adapters under `redsim/ml/attacks/` will
+register through the same generic registry (entry-point group
+`redsim.ml.attacks`, spec section 8.3), so the same allowlist and
+signature gates apply to third-party attacks.
 
 ---
 
