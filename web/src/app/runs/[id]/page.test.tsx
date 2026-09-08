@@ -265,6 +265,44 @@ describe("/runs/[id] campaign review", () => {
     expect(mocks.mutate).toHaveBeenCalledTimes(2);
   });
 
+  it("revalidates the campaign after a dismissal and surfaces a rejection", async () => {
+    setCampaign(
+      campaign({
+        findings: [
+          {
+            id: "finding-1",
+            run_id: "fixture-run-001",
+            project_id: "default",
+            severity: "high",
+            status: "open",
+            source_tool: null,
+            validation_state: "measured",
+            dedup_key: null,
+            schema_blob: { title: "FGSM threshold crossing", ml: null },
+          },
+        ],
+      }),
+    );
+    vi.spyOn(window, "prompt").mockReturnValue("duplicate evidence");
+    mocks.dismissFinding.mockResolvedValueOnce({});
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() =>
+      expect(mocks.dismissFinding).toHaveBeenCalledWith(
+        "finding-1",
+        "duplicate evidence",
+        "open",
+      ),
+    );
+    await waitFor(() => expect(mocks.mutate).toHaveBeenCalledTimes(1));
+
+    mocks.mutate.mockClear();
+    mocks.dismissFinding.mockRejectedValueOnce(new Error("API 409: stale status"));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(await screen.findByText(/API 409: stale status/)).toBeTruthy();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
   it("cancels active campaigns only after confirmation", async () => {
     setCampaign(campaign({ status: "running" }));
     vi.spyOn(window, "confirm").mockReturnValue(true);

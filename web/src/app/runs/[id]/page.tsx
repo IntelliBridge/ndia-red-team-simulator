@@ -28,6 +28,7 @@ import {
   type Campaign,
   type Comparison,
   type DefenseInfo,
+  type Finding,
 } from "@/lib/api";
 import { useCampaign } from "@/hooks/useCampaign";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -47,6 +48,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
   const [compareResult, setCompareResult] = useState<Comparison | null>(null);
   const [compareError, setCompareError] = useState("");
   const [actionError, setActionError] = useState("");
+  const [dismissError, setDismissError] = useState("");
   const [defenseSelections, setDefenseSelections] = useState<
     Record<string, string>
   >({});
@@ -123,6 +125,20 @@ export default function RunPage({ params }: { params: { id: string } }) {
       await mutate();
     } catch (e) {
       setCancelError(String(e));
+    }
+  };
+  // Completed campaigns do not poll, so a dismissal must revalidate the
+  // campaign itself or the stale row (and its Dismiss button) stays put
+  // and a second click would submit the stale status and receive a 409.
+  const dismiss = async (finding: Finding) => {
+    const reason = window.prompt("Reason for dismissal");
+    if (!reason) return;
+    try {
+      setDismissError("");
+      await dismissFinding(finding.id, reason, finding.status);
+      await mutate();
+    } catch (cause) {
+      setDismissError(String(cause));
     }
   };
   const panel = (number: number, title: string, children: React.ReactNode) => (
@@ -510,6 +526,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
         {panel(
           11,
           "Findings",
+          <div>
           <table className="w-full text-left text-xs">
             <thead>
               <tr>
@@ -537,15 +554,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                   <td>
                     <RoleGated minRole="approver" callerRole={role}>
                       <button
-                        onClick={() => {
-                          const reason = window.prompt("Reason for dismissal");
-                          if (reason)
-                            void dismissFinding(
-                              finding.id,
-                              reason,
-                              finding.status,
-                            );
-                        }}
+                        onClick={() => void dismiss(finding)}
                         className="border border-border px-2 py-1"
                       >
                         Dismiss
@@ -555,7 +564,11 @@ export default function RunPage({ params }: { params: { id: string } }) {
                 </tr>
               ))}
             </tbody>
-          </table>,
+          </table>
+          {dismissError && (
+            <p className="mt-2 text-sm text-destructive">{dismissError}</p>
+          )}
+          </div>,
         )}
         {panel(
           12,
