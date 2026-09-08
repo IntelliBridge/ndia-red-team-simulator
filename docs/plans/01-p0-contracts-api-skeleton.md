@@ -1,6 +1,7 @@
 # Phase P0 · Milestone M0 · redsim/ml scaffold (v2, redsim substrate)
 
-Status: v2, 2026-09-08. Owner: Backend lead. Wave: Gate 0 (blocking, about
+Status: v2, 2026-09-08, **landed** as PR #18 (`4350d38`) on 2026-09-08 (see
+"Landed" at the end of this file). Owner: Backend lead. Wave: Gate 0 (blocking, about
 0.5 to 1 day). Read `docs/plans/00-master-plan.md` sections 2, 5 and 7 first,
 then the canonical spec
 `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md` sections 5,
@@ -429,3 +430,48 @@ Special considerations:
   result.
 - **Follow repo prose conventions.** No em dashes and no semicolons in code
   comments or in this document.
+
+## Landed (2026-09-08)
+
+P0 merged into `main` as PR #18 (`4350d38`, branch `P0`, John Sasser) on
+2026-09-08. Validation as reported in the PR body: `alembic upgrade head`,
+`downgrade -1` and `upgrade head` on Postgres 16 pass, `pytest -q` gives 868
+passed and 30 skipped offline (the migration and RLS suites, 21 tests, pass
+with `REDSIM_DB_URL`), and `make check` is green (ruff, mypy, web typecheck,
+vitest 276 passed). By that validation every acceptance box in section 8 is
+met, and the "What P0 must freeze" list is now in force: every field name and
+type in `redsim/ml/schema.py`, migration head `0010_ml_vertical`, the `Action`
+values with the `viewer` rank, the campaign response shape encoded by
+`tests/ml/fixtures/run_record.json`, and `REDSIM_ML_LLM_MODEL`.
+
+Where this plan or the spec disagreed with the tree, PR #18 resolved the point
+in favour of the tree. The eight resolutions are recorded as reconciliation
+rows in spec section 4.5: the env var is `REDSIM_ML_LLM_MODEL` (not
+`AEGIS_ML_LLM_MODEL`), `RunStatus` gains `cancelled`, `AttackInfo` gains
+`phase`, `access`, `requires_gradients`, `status` and `reason` with defaults,
+`Measurement.params` values may be strings, `Measurement` gains
+`expl_shift_noise_floor`, `expl_shift_noise_floor_n` and
+`expl_shift_n_excluded`, `RunSummary.attack_id` becomes `attack_ids`,
+`finding_asr_threshold` lives on `CampaignConfig` and `MRIRecord` rather than
+inside `ScoringConfig`, and `STANDING_LIMITATIONS` drops the CIFAR-10 sentence
+in favour of `standing_limitations(dataset_name, eps_grid)`. Beyond the six
+items of section 1, the PR also cleared the ruff 0.16 lint baseline, added
+`tests/test_api_process_has_no_ml.py`, kept `deploy/Dockerfile.api` on
+`api,worker` only, and mirrored the seven `Action` rows into the OPA and Cedar
+bundles with a test that keeps them in step.
+
+Not in P0, flagged by the PR for their owners. `viewer` still needs
+`deploy/keycloak/realm-export.json` and the design-system `ROLES` tuple
+(`packages/design-system/src/components/role-gated.tsx`). `web/src/lib/api.ts`
+and `redsim/cli/api_client.py` still post to `/v1/scans` and answer 404 until
+the ML campaign client replaces them. The `Job.detail` TypedDicts of spec 5.9
+and the `POST /v1/targets` ML-kind rejection belong to the task and route
+slices.
+
+The change protocol of section 8 applies from here. A change to a frozen
+name, type, column, `Action` value or response key is announced first (a
+one-line note in master plan section 5 plus a heads-up to the team) and is
+made as an additive, default-valued field wherever possible. Branches built
+against the earlier contract (#8 `feat/ml-core`, #9 `feat/ml-assets`) adapt to
+P0's names and semantics, not the reverse. Master plan section 4.1 tracks
+their state.
