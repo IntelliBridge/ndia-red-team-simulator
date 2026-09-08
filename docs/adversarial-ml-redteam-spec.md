@@ -92,7 +92,7 @@ new core tables are required for Phase A.
 | `Run` | An attack campaign against one model. |
 | `Job.type` | Add `attack.run`, `explain.run`, `harden.recommend`. |
 | `Finding` | One adversarial vulnerability (attack succeeded at budget ε). |
-| `Finding.schema_blob` (`AegisFinding`) | Carries attack name, ε, success rate, confidence drop, SHAP artifact ids. |
+| `Finding.schema_blob` (`AegisFinding`) | Carries attack name, ε, success rate, confidence drop, SHAP artifact ids, MITRE ATLAS technique. |
 | `Finding.validation_state` | Reused for verify-after-harden (`verified` / `still_vulnerable`). |
 | `Artifact` | Stores adversarial examples, SHAP images, perturbation maps, robustness curves. |
 | `AuthProfile` (Fernet-encrypted) | Reused for black-box endpoint credentials (bearer/header). |
@@ -365,7 +365,66 @@ Build steps:
   hash-chained log. `aegis audit verify` proves the campaign trail.
 - **Data.** Ship only unclassified, open sample data. Document this in the UI.
 
-## 14. Build sequence and milestones
+## 14. Interoperability
+
+The tool is scored on interoperability: it should contribute datasets other
+teams consume and consume datasets other teams contribute. redsim addresses
+this three ways, all opt-in and off by default.
+
+### 14.1 Contribute an adversarial dataset
+
+Every attack campaign generates perturbed inputs with their true and predicted
+labels. redsim publishes this as a versioned **adversarial dataset** that other
+teams consume: a defense team adversarially trains on it, a model team adds it
+to a regression suite.
+
+- **Format.** An open ML-dataset standard. Primary is **Croissant**, the
+  MLCommons JSON-LD metadata standard, over a Parquet payload. A Hugging Face
+  `datasets` bundle is the same payload with a dataset card.
+- **Contents.** Adversarial and clean tensors, true and predicted labels, the
+  per-sample attack id and ε, the source-slice indices for reproducibility,
+  and a manifest with model provenance and library versions.
+- **Location.** Written to the shared S3 bucket under `datasets/<run-id>/`,
+  with a content-addressed manifest so a consumer verifies integrity.
+- **Consume side.** redsim accepts another team's model as **ONNX** and another
+  team's evaluation slice as Croissant or Parquet, so the exchange runs both
+  directions.
+- **Endpoints.** `POST /v1/runs/{id}/dataset` builds and registers the dataset.
+  `GET /v1/datasets/{id}` returns the Croissant manifest.
+
+### 14.2 MITRE ATLAS mapping
+
+Every finding is tagged with the **MITRE ATLAS** technique it demonstrates, the
+adversarial-ML companion to ATT&CK. An FGSM or PGD evasion maps to
+`AML.T0043 Craft Adversarial Data`. A black-box query attack maps to
+`AML.T0040 ML Model Inference API Access`.
+
+- The tag is stored on `Finding.schema_blob.atlas_technique` and shown in the
+  findings table, the report, and the dataset manifest.
+- It gives every team a shared vocabulary for the vulnerability, and it lets a
+  program contribute a sanitized case study back to the ATLAS community
+  database.
+- A per-campaign ATLAS coverage view shows which techniques were exercised.
+
+### 14.3 Platform integrations
+
+Two integrations push redsim results into platforms other DoD teams already
+operate. Both are env-selected, off by default, and hold no standing
+credential beyond the connection each is configured with.
+
+- **Palantir Foundry (primary).** redsim writes the robustness scorecard and
+  the adversarial dataset back to Foundry as a dataset through the Foundry REST
+  API, keyed to the model's ontology object. A Foundry team then sees the Model
+  Robustness Index alongside the model it governs. redsim can also read a model
+  or evaluation dataset registered in Foundry as a target.
+- **Anduril Lattice (exploratory).** For a fielded edge model, redsim posts a
+  **robustness attestation** as an attribute on the Lattice entity that runs
+  the model, so the operating picture shows that an asset's model was
+  red-teamed, with its current MRI and grade. Lattice models entities and
+  tasking rather than datasets, so this is a narrative integration, gated on
+  SDK access, and marked exploratory.
+
+## 15. Build sequence and milestones
 
 Ordered for a 2-day hackathon. Each milestone is demo-able on its own.
 
@@ -380,8 +439,9 @@ Ordered for a 2-day hackathon. Each milestone is demo-able on its own.
 | M6 | Verify loop | Apply a feature-squeezing defense, re-attack, show the robustness delta. |
 | M7 | Deploy | Push the three Fargate services + RDS + S3. Run the demo end to end. |
 | B1+ | Stretch | Black-box connector, text and detection modalities, adversarial-training defense. |
+| B2 | Interop | Croissant adversarial-dataset export + ONNX ingest; MITRE ATLAS tagging; Foundry push (Lattice exploratory). |
 
-## 15. Demo script (target)
+## 16. Demo script (target)
 
 1. Open `/models`. Pick the bundled aerial-target CNN.
 2. Click **Run attack**. Select FGSM + PGD, ε slider at 0.03. Start.
@@ -396,7 +456,7 @@ Ordered for a 2-day hackathon. Each milestone is demo-able on its own.
    scorecard, and the finding flips to `verified`.
 6. Open `/audit`. Show the tamper-evident chain of the whole campaign.
 
-## 16. Open risks
+## 17. Open risks
 
 - **ART + SHAP + torch image size.** Keep it in the worker image only. Use the
   CPU torch wheel. Pin versions early.

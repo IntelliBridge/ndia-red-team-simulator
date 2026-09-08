@@ -7,10 +7,10 @@ WORKDIR /app
 # Install extra CA trust (Zscaler / corporate proxy) BEFORE we hit pypi.
 # The `deploy/certs/` directory may be empty on uncorporate networks; the
 # COPY then no-ops because `update-ca-certificates` finds nothing to add.
-COPY deploy/certs/ /usr/local/share/ca-certificates/aegis-extra/
+COPY deploy/certs/ /usr/local/share/ca-certificates/redsim-extra/
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates git \
-    && find /usr/local/share/ca-certificates/aegis-extra/ -type f \( -name "*.pem" -o -name "*.crt" \) \
+    && find /usr/local/share/ca-certificates/redsim-extra/ -type f \( -name "*.pem" -o -name "*.crt" \) \
          -exec sh -c 'cp "$1" "/usr/local/share/ca-certificates/$(basename "${1%.*}").crt"' _ {} \; \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -19,11 +19,18 @@ ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     PIP_CERT=/etc/ssl/certs/ca-certificates.crt
 
-COPY pyproject.toml ./
-COPY aegis ./aegis
-COPY alembic.ini ./
+# Install the CPU-only torch/torchvision first, so the ART/SHAP stack that
+# `pip install -e .` resolves reuses them instead of pulling the multi-GB
+# CUDA wheels. The demo runs on CPU (see the spec: no GPU).
+RUN pip install --upgrade pip && \
+    pip install --index-url https://download.pytorch.org/whl/cpu \
+        "torch>=2.3" "torchvision>=0.18"
 
-RUN pip install --upgrade pip && pip install -e ".[api,worker]"
+COPY pyproject.toml ./
+COPY redsim ./redsim
+
+RUN pip install -e .
 
 EXPOSE 8000
-CMD ["sh", "-c", "alembic upgrade head && uvicorn aegis.api.app:create_app --factory --host 0.0.0.0 --port 8000"]
+# Entrypoint is the redsim FastAPI factory (docs/superpowers/specs/2026-09-08-redsim-design.md).
+CMD ["uvicorn", "redsim.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
