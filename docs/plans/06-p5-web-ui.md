@@ -1,4 +1,4 @@
-> **Phase P5 · Milestones M5a/M5b · UI for F002/F005/F006/F007 (v2, aegis substrate)**
+> **Phase P5 · Milestones M5a/M5b · UI for F002/F005/F006/F007 (v2, redsim substrate)**
 >
 > Read `docs/plans/00-master-plan.md` (v2, sections 2, 5, 7) first. The
 > authoritative contracts are the canonical spec
@@ -6,7 +6,7 @@
 > and 18, and `specs/005-evidence-workbench/spec.md`. This file plans the
 > `@redsim/web` UI only. It builds no backend code.
 
-# Phase P5 — Web UI (aegis substrate)
+# Phase P5 — Web UI (redsim substrate)
 
 Owner: Dev D (WS5). Milestones M5a (image UI slice, the demo cut line per D8)
 and M5b (model catalog UI). Features F002 (catalog), F005 (evidence workbench),
@@ -16,7 +16,7 @@ for `/models`, Slice 2 for the run page, Slice 3 for the finding page.
 The app is `@redsim/web`: the Next.js 14 app router under `web/`, Tailwind,
 `@redsim/design-system` from `packages/design-system`, and the `api()` client in
 `web/src/lib/api.ts`. The app already has auth: NextAuth with the Keycloak
-provider plus the dev-token path, the aegis session cookie minted in
+provider plus the dev-token path, the redsim session cookie minted in
 `web/src/server/`, and the hooks `useRequireAuth`, `useRoles`, `useRunEvents`.
 P5 extends these pages. It does not add a new auth stack.
 
@@ -46,14 +46,14 @@ human review, not a safety, readiness, or certification determination."
 Auth is real, not a placeholder. Pages present role-gated controls with
 `RoleGated` and `useRoles`, but the API is the authoritative boundary. The
 session cookie carries the caller's project roles, and Postgres RLS plus
-`aegis/api/policy.py` enforce every action server-side. The UI never relies on
+`redsim/api/policy.py` enforce every action server-side. The UI never relies on
 client gating for security.
 
 ## 2. Scope
 
 ### In scope
 
-- ML wire types added to `web/src/lib/api.ts` that mirror `aegis/ml/schema.py`
+- ML wire types added to `web/src/lib/api.ts` that mirror `redsim/ml/schema.py`
   and the section 17 responses.
 - Action helpers in `web/src/lib/api.ts`: `startCampaign`, `explainFinding`,
   `hardenFinding`, `verifyFinding`, `dismissFinding`, `patchReviewerNotes`,
@@ -74,7 +74,7 @@ client gating for security.
 
 ### Out of scope
 
-- All backend code. WS4 owns the routers under `aegis/api/v1/`. WS2 and WS3 own
+- All backend code. WS4 owns the routers under `redsim/api/v1/`. WS2 and WS3 own
   the engine, scoring, explain, recommend, and verify tasks.
 - Model upload deep validation, attack execution, SHAP, and scoring. The UI
   renders their results, never computes them.
@@ -91,8 +91,8 @@ P5 runs in parallel with the backend. It needs two things from the earlier
 milestones, both citable before the routes are live:
 
 1. **The P0/P4 API contract.** The `RunConfig` widening and the evidence schema
-   from WS0 (M0, `aegis/ml/schema.py`), and the section 17 route surface from
-   WS4 (F004, routers under `aegis/api/v1/`). The wire types in
+   from WS0 (M0, `redsim/ml/schema.py`), and the section 17 route surface from
+   WS4 (F004, routers under `redsim/api/v1/`). The wire types in
    `web/src/lib/api.ts` are hand-written against these. There is no generated
    client. The FastAPI OpenAPI document is the contract, and vitest fixtures are
    typed against these hand-written types (section 19.4).
@@ -108,7 +108,7 @@ milestones, both citable before the routes are live:
 
 No dependency on WS1, WS2, WS3, or WS6 code. The app already ships `swr`,
 `vitest`, `@testing-library/react`, and `vitest-axe`, so no new packages are
-required. When `NEXT_PUBLIC_AEGIS_API_URL` points at the live API the same pages
+required. When `NEXT_PUBLIC_REDSIM_API_URL` points at the live API the same pages
 drive a real campaign with no code change.
 
 ## 4. Interfaces consumed
@@ -177,7 +177,7 @@ the primitives (`Table`, `Card`, `Alert`, `Input`, `Textarea`, `AlertDialog`,
 ## 5. Ordered implementation steps
 
 1. **Wire types in `web/src/lib/api.ts`.** Add the types in 4.3, matching field
-   names to `aegis/ml/schema.py` and section 17. Keep `api`, `apiBase`,
+   names to `redsim/ml/schema.py` and section 17. Keep `api`, `apiBase`,
    `ApiError`, `reportUrl`, `cancelRun`, `isCancellable`, and `deleteTarget`
    untouched. Add a typed reader for `MlErrorDetail` so callers branch on
    `code`.
@@ -421,7 +421,7 @@ Playwright config is kept for an optional end-to-end smoke of the demo path.
    assert that the API remains the authoritative boundary.
 9. The vitest suites in section 7 pass, including the axe checks. `typecheck`
    passes and each new design-system component has a Storybook story.
-10. When `NEXT_PUBLIC_AEGIS_API_URL` points at the live API, the same pages drive
+10. When `NEXT_PUBLIC_REDSIM_API_URL` points at the live API, the same pages drive
     a real campaign from `/models` through the scorecard and the verify-after-
     harden loop with no code change.
 

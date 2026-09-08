@@ -1,13 +1,13 @@
-> **Phase P1 · Milestones M1/M4/M5b · Feature F002 (v2, aegis substrate)**
+> **Phase P1 · Milestones M1/M4/M5b · Feature F002 (v2, redsim substrate)**
 >
-> This plan is rebased on the aegis platform. It replaces the v1 body, which
+> This plan is rebased on the redsim platform. It replaces the v1 body, which
 > was written against the deleted `redsim/` package. Read `docs/plans/00-master-plan.md`
 > (sections 2, 5, 7) and the canonical spec
 > `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md` (sections 5,
 > 9, 11, 12.2) first. Where this plan and those disagree, they win.
 >
-> Substrate in one line: targets live under `aegis/ml/targets/`; assets are
-> seeded by the `aegis ml build-assets` CLI into the blob store under
+> Substrate in one line: targets live under `redsim/ml/targets/`; assets are
+> seeded by the `redsim ml build-assets` CLI into the blob store under
 > `ml/assets/` and `bundled/`; the demo data is `leibnitz-lab/military_vehicles`
 > (image) and Kaggle `sid321axn/malicious-urls-dataset` (tabular); CIFAR-10 is a CI fixture only;
 > uploads are admin-gated, ONNX or `state_dict` only, and loaded only in the
@@ -44,8 +44,8 @@ Deliverables:
   in the demo catalog and never populates a `Finding`.
 - An **endpoint / LLM** stub target: `status == "not_implemented"` with a reason;
   `load()` raises `NotImplementedError`.
-- The `TARGETS` registry under `aegis/ml`, populated at import.
-- The `aegis ml build-assets` CLI: fetch each dataset by pinned HuggingFace
+- The `TARGETS` registry under `redsim/ml`, populated at import.
+- The `redsim ml build-assets` CLI: fetch each dataset by pinned HuggingFace
   revision, train and export the bundled models with a fixed seed, write each
   model plus `MANIFEST.json` plus the evaluation-slice to the blob store, and
   register a `Target` row of kind `ml_model_artifact`.
@@ -62,22 +62,22 @@ D8 step 4; ONNX upload is D8 step 5.
 
 ### In scope
 
-- `aegis/ml/targets/architectures.py` — the in-tree architecture catalog.
-- `aegis/ml/targets/image_vehicles.py` — the live vehicle-imagery CNN target.
-- `aegis/ml/targets/tabular_url.py` — the live malicious-URLs tree-ensemble target.
-- `aegis/ml/targets/image_cifar10.py` — the CIFAR-10 CNN, CI fixture only.
-- `aegis/ml/targets/endpoint.py` — the `not_implemented` endpoint / LLM stub.
-- `aegis/ml/targets/registry.py` — `TARGETS`, a `Registry[Target]`.
-- `aegis/ml/loaders.py` — file-signature format detection, worker-side only.
-- `aegis/ml/sandbox.py` and `aegis/ml/sandbox_worker.py` — the ML model sandbox
+- `redsim/ml/targets/architectures.py` — the in-tree architecture catalog.
+- `redsim/ml/targets/image_vehicles.py` — the live vehicle-imagery CNN target.
+- `redsim/ml/targets/tabular_url.py` — the live malicious-URLs tree-ensemble target.
+- `redsim/ml/targets/image_cifar10.py` — the CIFAR-10 CNN, CI fixture only.
+- `redsim/ml/targets/endpoint.py` — the `not_implemented` endpoint / LLM stub.
+- `redsim/ml/targets/registry.py` — `TARGETS`, a `Registry[Target]`.
+- `redsim/ml/loaders.py` — file-signature format detection, worker-side only.
+- `redsim/ml/sandbox.py` and `redsim/ml/sandbox_worker.py` — the ML model sandbox
   and its `validate` stage.
-- `aegis/cli/ml.py` — the `build-assets` subcommand (registered in
-  `aegis/cli/main.py`).
-- `aegis/services/ml_models.py` — the model admission service (register bundled,
+- `redsim/cli/ml.py` — the `build-assets` subcommand (registered in
+  `redsim/cli/main.py`).
+- `redsim/services/ml_models.py` — the model admission service (register bundled,
   admit upload, enqueue `model.validate`).
-- `aegis/api/v1/models.py` — `POST /v1/models`, `DELETE /v1/models/{id}`,
-  `GET /v1/models`, mounted on `aegis/api/app.py`.
-- `MLModelManifest` in `aegis/ml/schema.py` (the typed `targets.detail` payload).
+- `redsim/api/v1/models.py` — `POST /v1/models`, `DELETE /v1/models/{id}`,
+  `GET /v1/models`, mounted on `redsim/api/app.py`.
+- `MLModelManifest` in `redsim/ml/schema.py` (the typed `targets.detail` payload).
 - Tests under `tests/ml/`.
 
 ### Out of scope
@@ -110,23 +110,23 @@ D8 step 4; ONNX upload is D8 step 5.
   `adversarial-robustness-toolbox`, `shap`, `numpy`, `scikit-learn`, `xgboost`,
   `onnx`, `onnxruntime`, `onnx2torch`, `safetensors`, `datasets`,
   `huggingface_hub`. The API process imports none of them (section 9.1 rule 2).
-- The `aegis ml` CLI skeleton (`aegis/cli/ml.py` registered in
-  `aegis/cli/main.py`).
+- The `redsim ml` CLI skeleton (`redsim/cli/ml.py` registered in
+  `redsim/cli/main.py`).
 
-**Already present in aegis (consume, do not modify):**
+**Already present in redsim (consume, do not modify):**
 
-- The `Target` Protocol and `Sample` dataclass in `aegis/ml/targets/base.py`.
-- `TargetInfo`, `Domain`, `Provenance` in `aegis/ml/schema.py`.
-- `Registry[T]` in `aegis/registry.py` (duplicate-id detection).
-- `BlobStore` in `aegis/storage/blobs.py` (`put`/`get`; `AEGIS_BLOB_BACKEND=s3`
+- The `Target` Protocol and `Sample` dataclass in `redsim/ml/targets/base.py`.
+- `TargetInfo`, `Domain`, `Provenance` in `redsim/ml/schema.py`.
+- `Registry[T]` in `redsim/registry.py` (duplicate-id detection).
+- `BlobStore` in `redsim/storage/blobs.py` (`put`/`get`; `REDSIM_BLOB_BACKEND=s3`
   for MinIO/S3; content-addressed, so a second put of identical bytes is a
   no-op).
-- The sandbox primitives in `aegis/scanners/sandbox.py` (rlimits, process group,
+- The sandbox primitives in `redsim/scanners/sandbox.py` (rlimits, process group,
   minimal env, wall-clock kill). The ML sandbox reuses these conventions.
-- The audit chain (`aegis/audit/chain.py`, `resolve_writer`) and
-  `aegis.safety.authorize` (the only audit emitter).
-- The admin-gated target surface (`aegis/api/v1/targets.py`,
-  `aegis/services/targets.py`, `aegis/api/policy.py`).
+- The audit chain (`redsim/audit/chain.py`, `resolve_writer`) and
+  `redsim.safety.authorize` (the only audit emitter).
+- The admin-gated target surface (`redsim/api/v1/targets.py`,
+  `redsim/services/targets.py`, `redsim/api/policy.py`).
 - `tests/ml/fakes.py::TinyTarget` (a full `Target` on 8x8x3, 3 classes, no
   network, no assets).
 
@@ -140,7 +140,7 @@ offline (section 22).
 
 ### Consumed (do not modify)
 
-`Sample` (dataclass, `aegis/ml/targets/base.py`):
+`Sample` (dataclass, `redsim/ml/targets/base.py`):
 
 - `x: np.ndarray` — float32 in [0, 1], NCHW for images; `(n, n_features)` for
   tabular.
@@ -148,15 +148,15 @@ offline (section 22).
 - `indices: np.ndarray` — index into the source split, for reproducibility.
 - `class_names: list[str]`.
 
-`TargetInfo` (`aegis/ml/schema.py`): `id`, `name`, `domain` (the `Domain`
+`TargetInfo` (`redsim/ml/schema.py`): `id`, `name`, `domain` (the `Domain`
 literal `image | tabular | llm`), `status` (`available | not_implemented`),
 `metadata: dict`. `Provenance` is built by WS4 from the manifest, not by P1.
 
 ### Exposed
 
-`TARGETS: Registry[Target]` from `aegis/ml/targets/registry.py`, populated at
+`TARGETS: Registry[Target]` from `redsim/ml/targets/registry.py`, populated at
 import with every target. Consumers use `.get(id)`, `.ids()`, iteration, and the
-methods `aegis/registry.py` exposes. Registration runs the `Registry` conformance
+methods `redsim/registry.py` exposes. Registration runs the `Registry` conformance
 check at import, so a target that misses a member fails loudly at load, not
 mid-campaign.
 
@@ -189,7 +189,7 @@ features are declared in the manifest; categorical columns and the label are
 frozen.
 
 `MLModelManifest` (the typed `targets.detail` payload for `ml_model_*` kinds,
-section 5.5). P1 defines it in `aegis/ml/schema.py` and writes it at
+section 5.5). P1 defines it in `redsim/ml/schema.py` and writes it at
 registration. Fields include `name`, `modality`, `format`
 (`onnx | torch_state_dict | safetensors_state_dict | sklearn_joblib |
 xgboost_json | endpoint`), `sha256`, `size_bytes`, `architecture_id`,
@@ -197,7 +197,7 @@ xgboost_json | endpoint`), `sha256`, `size_bytes`, `architecture_id`,
 (tabular trees), `dataset_id`, `dataset_revision`, `dataset_split`,
 `clean_accuracy`, `status` (`registered | validating | available | refused`),
 `refusal_reason`, `gradients`, `bundled`, `license`, `source_url`, and
-`manifest_sha256`. Reads stay lenient the way `AegisFinding.from_dict` is;
+`manifest_sha256`. Reads stay lenient the way `RedsimFinding.from_dict` is;
 validation happens at write time.
 
 ---
@@ -205,17 +205,17 @@ validation happens at write time.
 ## 5. Ordered implementation steps
 
 1. **Architecture catalog.** Define the in-tree architectures in
-   `aegis/ml/targets/architectures.py`, keyed by `architecture_id`: the vehicle
+   `redsim/ml/targets/architectures.py`, keyed by `architecture_id`: the vehicle
    CNN and the CIFAR-10 small CNN as named `nn.Module` classes. Free-form
    uploaded code is never accepted; a `state_dict` upload names one of these ids
    (section 9.2). Put the channel normalisation as the first step inside
    `forward` (mean/std as buffers) so every consumer sees x in [0, 1] NCHW.
 
 2. **`MLModelManifest`.** Add the model manifest and (with WS0) the
-   `Provenance.dataset_revision` field to `aegis/ml/schema.py`. This is the
+   `Provenance.dataset_revision` field to `redsim/ml/schema.py`. This is the
    contract `build-assets` writes and every consumer reads.
 
-3. **Image target — build path.** In `aegis/cli/ml.py`, fetch
+3. **Image target — build path.** In `redsim/cli/ml.py`, fetch
    `leibnitz-lab/military_vehicles` at a pinned revision with
    `snapshot_download(..., repo_type="dataset", revision=<sha>,
    allow_patterns=["train_coarse/*", "test_coarse/*"])`, then
@@ -227,13 +227,13 @@ validation happens at write time.
    export the `state_dict` and the ONNX graph, and bundle the `test_coarse`
    evaluation slice.
 
-4. **Image target — runtime.** In `aegis/ml/targets/image_vehicles.py`,
+4. **Image target — runtime.** In `redsim/ml/targets/image_vehicles.py`,
    implement `load()` (fetch `state_dict` and the evaluation slice from the blob
    store, build the catalog CNN, `eval()`, idempotent), `sample(n, seed)`
    (stratified, seeded, reproducible), `predict_proba`, `art_classifier` (the
    `PyTorchClassifier` above), `torch_model`, `info`, and `manifest`.
 
-5. **Tabular target — build path.** In `aegis/cli/ml.py`, download
+5. **Tabular target — build path.** In `redsim/cli/ml.py`, download
    Kaggle `sid321axn/malicious-urls-dataset` (`malicious_phish.csv`) using a
    Kaggle API token at build time only, pinned by source-file sha256. Run the
    `url_features` extractor to build the all-continuous lexical feature set,
@@ -243,26 +243,26 @@ validation happens at write time.
    agreement rate. Bundle the full `standard` test split as the evaluation split,
    the encoder, the per-feature min/max, and the declared perturbable features.
 
-6. **Tabular target — runtime.** In `aegis/ml/targets/tabular_url.py`,
+6. **Tabular target — runtime.** In `redsim/ml/targets/tabular_url.py`,
    implement `load()`, `sample`, `predict_proba`, `art_classifier` (tree wrapper
    for HopSkipJump; surrogate exposed for WS2's PGD), `info`, and `manifest`.
    `torch_model()` raises `NotImplementedError` with a note that WS3 uses
    `TreeExplainer` on the real model.
 
-7. **CIFAR-10 target (CI only).** In `aegis/ml/targets/image_cifar10.py`,
+7. **CIFAR-10 target (CI only).** In `redsim/ml/targets/image_cifar10.py`,
    implement the small CNN target against the vendored 500-image fixture
    (`tests/ml/fixtures/cifar10_test_500.npz`, seed-0 stratified, 50 per class;
    section 11.3.5). It loads offline from the fixture, never from the network.
    Register it, but keep it out of the demo catalog: mark
    `metadata["fixture_only"] = True` so WS4/WS5 exclude it.
 
-8. **Endpoint / LLM stub.** In `aegis/ml/targets/endpoint.py`, register a target
+8. **Endpoint / LLM stub.** In `redsim/ml/targets/endpoint.py`, register a target
    with a stable id, `domain="llm"`, `info().status == "not_implemented"`, and a
    reason naming the Phase B endpoint shape (`AuthProfile` credentials, target
    allowlist). `load()` raises `NotImplementedError`; the API rejects any
    campaign against it with HTTP 501 upstream (section 9.1 rule 4).
 
-9. **Loaders (worker-side).** In `aegis/ml/loaders.py`, implement format
+9. **Loaders (worker-side).** In `redsim/ml/loaders.py`, implement format
    detection by file signature and the per-format load (ONNX via `onnx.load` +
    `onnx.checker` + `onnxruntime`; `torch_state_dict` via
    `torch.load(weights_only=True)` + catalog instantiation +
@@ -270,19 +270,19 @@ validation happens at write time.
    module imports torch/onnx and therefore runs only in the sandbox child, never
    in the API (section 9.2).
 
-10. **ML sandbox.** In `aegis/ml/sandbox.py` and `aegis/ml/sandbox_worker.py`,
-    build the `validate` stage on the `aegis/scanners/sandbox.py` primitives with
+10. **ML sandbox.** In `redsim/ml/sandbox.py` and `redsim/ml/sandbox_worker.py`,
+    build the `validate` stage on the `redsim/scanners/sandbox.py` primitives with
     the ML differences of section 9.4: child entry `python -m
-    aegis.ml.sandbox_worker --stage validate`; env limits from
-    `AEGIS_ML_SANDBOX_*` (timeout 1200 s, cpu 900 s, memory 4096 MB, threads 2),
+    redsim.ml.sandbox_worker --stage validate`; env limits from
+    `REDSIM_ML_SANDBOX_*` (timeout 1200 s, cpu 900 s, memory 4096 MB, threads 2),
     network never enabled; the **parent** populates the per-job work dir with the
     model file fetched from S3 and digest-checked against the manifest; the child
     reaches no S3, Postgres, Redis, or dataset source. The child returns a typed
     envelope (format detected, shapes, `gradients`, `onnx_torch_argmax_agreement`,
     refusal reason); the parent validates it and writes the outcome.
 
-11. **`build-assets` CLI.** Wire steps 3 and 5 into `aegis ml build-assets`
-    (`aegis/cli/ml.py`). Fetch each dataset by pinned revision, train and export
+11. **`build-assets` CLI.** Wire steps 3 and 5 into `redsim ml build-assets`
+    (`redsim/cli/ml.py`). Fetch each dataset by pinned revision, train and export
     with a fixed seed, write each model plus `MANIFEST.json` plus the evaluation
     slice to the blob store under `ml/assets/<dataset_id>/<revision>/` (datasets)
     and `bundled/<model_id>/` (models), and call `register_bundled_model` so a
@@ -292,7 +292,7 @@ validation happens at write time.
     datasets into S3 on first deploy" step; it is a one-off worker/CLI task, not
     baked into the image (section 11.5).
 
-12. **Model admission service.** In `aegis/services/ml_models.py`, add
+12. **Model admission service.** In `redsim/services/ml_models.py`, add
     `register_bundled_model(...)` (audit `model.register` `source=bundled`, seed
     `available`) and `admit_upload(...)`. `admit_upload` streams bytes to the
     blob store, sniffs the first 16 bytes against the section 9.2 table, computes
@@ -302,19 +302,19 @@ validation happens at write time.
     creates an `ml.ingest` Run and a `model.validate` Job and enqueues it
     (status becomes `validating`). No loading happens in the API.
 
-13. **`POST /v1/models` router.** In `aegis/api/v1/models.py`, add the multipart
+13. **`POST /v1/models` router.** In `redsim/api/v1/models.py`, add the multipart
     upload endpoint (fields `declared_format`, `architecture_id` when required,
     `modality`, `dataset_id`, `license_statement`). Gate it at `admin`
     (`target.manage` tier; add `Action.MODEL_REGISTER` at `admin` rank in
-    `aegis/api/policy.py`). Enforce `Content-Length` and the streaming cap
-    `AEGIS_ML_UPLOAD_MAX_MB` (413 over cap). Refuse pickles with 415, format
+    `redsim/api/policy.py`). Enforce `Content-Length` and the streaming cap
+    `REDSIM_ML_UPLOAD_MAX_MB` (413 over cap). Refuse pickles with 415, format
     mismatch or missing/unknown `architecture_id` with 422, all with an audit
     `model.register` `success=false`. Add `GET /v1/models` (RLS- and
     membership-gated read) and `DELETE /v1/models/{id}` (admin; audit before
     mutate; FK to `runs` blocks deletion of a referenced model; the blob is never
-    deleted here). Mount the router in `aegis/api/app.py`.
+    deleted here). Mount the router in `redsim/api/app.py`.
 
-14. **Wire the registry.** Make `aegis/ml/targets/__init__.py` import each target
+14. **Wire the registry.** Make `redsim/ml/targets/__init__.py` import each target
     module so registration fires when `TARGETS` is imported. Keep import side
     effects cheap: register lightweight instances and defer all blob reads to
     `load()`, so importing the registry touches neither S3 nor a dataset.
@@ -325,18 +325,18 @@ validation happens at write time.
 
 Create:
 
-- `aegis/ml/targets/architectures.py`
-- `aegis/ml/targets/image_vehicles.py`
-- `aegis/ml/targets/tabular_url.py`
-- `aegis/ml/targets/image_cifar10.py`
-- `aegis/ml/targets/endpoint.py`
-- `aegis/ml/targets/registry.py`
-- `aegis/ml/loaders.py`
-- `aegis/ml/sandbox.py`
-- `aegis/ml/sandbox_worker.py`
-- `aegis/cli/ml.py` (the `build-assets` subcommand)
-- `aegis/services/ml_models.py`
-- `aegis/api/v1/models.py`
+- `redsim/ml/targets/architectures.py`
+- `redsim/ml/targets/image_vehicles.py`
+- `redsim/ml/targets/tabular_url.py`
+- `redsim/ml/targets/image_cifar10.py`
+- `redsim/ml/targets/endpoint.py`
+- `redsim/ml/targets/registry.py`
+- `redsim/ml/loaders.py`
+- `redsim/ml/sandbox.py`
+- `redsim/ml/sandbox_worker.py`
+- `redsim/cli/ml.py` (the `build-assets` subcommand)
+- `redsim/services/ml_models.py`
+- `redsim/api/v1/models.py`
 - `tests/ml/test_targets.py`
 - `tests/ml/test_build_assets.py`
 - `tests/ml/test_models_upload.py`
@@ -344,15 +344,15 @@ Create:
 
 Modify:
 
-- `aegis/ml/targets/__init__.py` — import target modules so registration fires.
-- `aegis/ml/schema.py` — add `MLModelManifest` (and, with WS0,
+- `redsim/ml/targets/__init__.py` — import target modules so registration fires.
+- `redsim/ml/schema.py` — add `MLModelManifest` (and, with WS0,
   `Provenance.dataset_revision`).
-- `aegis/api/app.py` — mount the `/v1/models` router.
-- `aegis/api/policy.py` — add `Action.MODEL_REGISTER` at `admin` rank.
-- `aegis/cli/main.py` — register the `ml build-assets` subcommand.
+- `redsim/api/app.py` — mount the `/v1/models` router.
+- `redsim/api/policy.py` — add `Action.MODEL_REGISTER` at `admin` rank.
+- `redsim/cli/main.py` — register the `ml build-assets` subcommand.
 
-Do not modify: `aegis/ml/targets/base.py`, `aegis/registry.py`,
-`aegis/scanners/sandbox.py`. Do not add the `0010_ml_vertical` migration here; it
+Do not modify: `redsim/ml/targets/base.py`, `redsim/registry.py`,
+`redsim/scanners/sandbox.py`. Do not add the `0010_ml_vertical` migration here; it
 is WS0.
 
 ---
@@ -402,7 +402,7 @@ assets still passes; `TinyTarget` covers the protocol path with no assets.
    without `architecture_id`, or an unknown id, returns 422. A non-admin caller
    is denied.
 
-8. **Sandbox isolation.** Launch the real `aegis.ml.sandbox_worker --stage
+8. **Sandbox isolation.** Launch the real `redsim.ml.sandbox_worker --stage
    validate` child on a `TinyTarget`-style file and on a deliberately malformed
    file. The child loads the model only in the subprocess; the parent never
    imports torch/onnx; a malformed file yields a typed `{"ok": false}` envelope
@@ -415,12 +415,12 @@ Run `make test` and `make typecheck`; both must stay green. Do not rely on
 
 ## 8. Acceptance criteria / Definition of done
 
-- `aegis ml build-assets` runs offline-after-fetch, trains and exports the
+- `redsim ml build-assets` runs offline-after-fetch, trains and exports the
   vehicle CNN (`state_dict` + ONNX) and the malicious-URLs tree ensemble with a fixed
   seed, writes each model plus `MANIFEST.json` plus its evaluation slice to the
   blob store under `ml/assets/` and `bundled/`, and registers each as a `Target`
   of kind `ml_model_artifact`, `status="available"`.
-- `from aegis.ml.targets.registry import TARGETS` returns a `Registry[Target]`
+- `from redsim.ml.targets.registry import TARGETS` returns a `Registry[Target]`
   with the vehicle image target and the malicious-URLs tabular target
   (`status="available"`), the CIFAR-10 CNN (registered, `fixture_only`), and the
   endpoint stub (`status="not_implemented"` with a reason).
@@ -451,7 +451,7 @@ sandboxed upload path are the bulk; the tabular target with its surrogate is a
 day; the CIFAR-10 fixture target and the stub are half a day together.
 
 **Asset seeding is a one-off task to S3, not baked into the image.** Dataset and
-model bytes are fetched once by `aegis ml build-assets` and written to the blob
+model bytes are fetched once by `redsim ml build-assets` and written to the blob
 store under `ml/assets/` and `bundled/` (section 11.5). The worker reads them
 from S3/MinIO; the API and web containers never hold them. This is the "seed
 sample models and datasets into S3 on first deploy" step. Do not train at
@@ -467,7 +467,7 @@ behind the `fixture_only` flag.
 **Never load a model in the API.** The API streams bytes, sniffs a signature,
 computes sha256, and writes rows; it imports no torch, onnx, onnxruntime, ART, or
 SHAP (section 9.1 rule 2). Every load — validation, clean eval, attack, explain,
-verify — runs in `aegis.ml.sandbox_worker`, one path for bundled models and
+verify — runs in `redsim.ml.sandbox_worker`, one path for bundled models and
 uploads alike, so the demo exercises the boundary rather than bypassing it. The
 ML sandbox is defense-in-depth (process isolation, rlimits, wall-clock kill,
 minimal env, no credentials), not a network or filesystem jail; the Fargate
@@ -499,4 +499,4 @@ the real tree model (tabular), so keep the tabular `torch_model()` refusal
 explicit. WS4 owns the campaign admission and the `Provenance` build; P1 stops at
 `model.validate`. WS5 owns web `/models` (P5). Raise any missing schema field or
 `targets.detail` shape with WS0 before adding it; do not edit
-`aegis/ml/targets/base.py` or `aegis/registry.py` in this phase.
+`redsim/ml/targets/base.py` or `redsim/registry.py` in this phase.

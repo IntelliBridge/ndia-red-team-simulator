@@ -1,4 +1,4 @@
-# Phase P7 · Milestone M7 · Features F001/F008 · AWS ECS (v2, aegis substrate)
+# Phase P7 · Milestone M7 · Features F001/F008 · AWS ECS (v2, redsim substrate)
 
 Owner: Dev D or the backend lead. Workstream WS7. Wave: starts day 0, runs in
 parallel. Delivers milestone M7 and the deploy half of features F001 (auth) and
@@ -7,12 +7,12 @@ F008 (audit). Feeds the live demo (master-plan section 8).
 Read `docs/plans/00-master-plan.md` sections 2, 5, and 7 first. Then read the
 canonical spec `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md`
 section 20 (deployment), section 21 (security and trust), and section 23
-milestone M7. This file rebuilds the phase onto the aegis platform. It replaces
+milestone M7. This file rebuilds the phase onto the redsim platform. It replaces
 the v1 body that described a two-image stack with EFS. There is no EFS.
 
-The aegis platform already carries auth (F001) and the hash-chained audit
+The redsim platform already carries auth (F001) and the hash-chained audit
 (F008). Both are reused, not built. The new work in this phase is the runtime
-that runs the aegis service set on Fargate, the Secrets Manager wiring, the
+that runs the redsim service set on Fargate, the Secrets Manager wiring, the
 task roles, the one-off asset seed, the pipeline extension for the worker image,
 and the three repo variables that switch the dormant deploy job on.
 
@@ -30,10 +30,10 @@ the existing pipeline against it.
 Deliverables:
 
 - An ECS Fargate cluster in `us-east-1`, account `140381642432`.
-- The aegis service set behind one ALB: `aegis-api` (port 8000, health check
-  `GET /health`), `aegis-web` (port 3000), `aegis-worker` (`-Q scans`),
-  `aegis-worker-default` (`-Q default`), `aegis-beat` (`celery beat`, one task),
-  and `aegis-log-ingest` (optional). Section 20.4 permits one worker service on
+- The redsim service set behind one ALB: `redsim-api` (port 8000, health check
+  `GET /health`), `redsim-web` (port 3000), `redsim-worker` (`-Q scans`),
+  `redsim-worker-default` (`-Q default`), `redsim-beat` (`celery beat`, one task),
+  and `redsim-log-ingest` (optional). Section 20.4 permits one worker service on
   `scans,default` for the demo, split into two when long attacks starve
   bookkeeping.
 - RDS PostgreSQL 16 with row-level security forced on the tenant tables and
@@ -41,8 +41,8 @@ Deliverables:
 - ElastiCache for Redis as the Celery broker (`/0`) and result backend (`/1`).
 - Two S3 buckets: an artifacts bucket and a second bucket created with Object
   Lock for the WORM audit export.
-- Secrets Manager entries for `PYTHIA_API_KEY`, `AEGIS_ML_LLM_MODEL`,
-  `AEGIS_WORKER_SIGNING_KEY`, `AEGIS_AUTH_PROFILES_KEY`, `NEXTAUTH_SECRET`, and
+- Secrets Manager entries for `PYTHIA_API_KEY`, `REDSIM_ML_LLM_MODEL`,
+  `REDSIM_WORKER_SIGNING_KEY`, `REDSIM_AUTH_PROFILES_KEY`, `NEXTAUTH_SECRET`, and
   the DB and Redis credentials, injected as task secrets.
 - Keycloak on Fargate (realm import from `deploy/keycloak/`), or Cognito through
   OIDC, as the F001 identity provider.
@@ -50,7 +50,7 @@ Deliverables:
   `PassRole` grant on `ndia-red-team-gha-deploy` already covers them. The task
   roles grant S3 through the role, with no static keys.
 - The three bundled models and two evaluation datasets seeded into the artifacts
-  bucket by one run of `aegis ml build-assets` as a one-off ECS task.
+  bucket by one run of `redsim ml build-assets` as a one-off ECS task.
 - The pipeline extended to build the worker image, and the ECR path
   `ndia-red-team/worker` used.
 - The repo variables `ECS_CLUSTER`, `ECS_SERVICE_API`, and `ECS_SERVICE_WEB`
@@ -59,7 +59,7 @@ Deliverables:
 The done bar is section 26 and the section 20.4 smoke test: a campaign started
 from `/models` against the bundled vehicle-imagery CNN and the malicious-URLs tabular
 model runs on Fargate end to end, the MRI scorecard renders, `/audit` shows the
-tamper-evident chain, `aegis audit verify --all` passes, and a push to `main`
+tamper-evident chain, `redsim audit verify --all` passes, and a push to `main`
 deploys green.
 
 ---
@@ -69,9 +69,9 @@ deploys green.
 ### In scope
 
 - Infrastructure as code under `deploy/terraform/` (Terraform recommended).
-- ECS task definitions and services for `aegis-api`, `aegis-web`,
-  `aegis-worker`, `aegis-worker-default`, `aegis-beat`, and the optional
-  `aegis-log-ingest`.
+- ECS task definitions and services for `redsim-api`, `redsim-web`,
+  `redsim-worker`, `redsim-worker-default`, `redsim-beat`, and the optional
+  `redsim-log-ingest`.
 - The ALB, target groups, listeners, and security groups.
 - RDS PostgreSQL 16 with the parameter group for `pgaudit`, and the migrations
   that force row-level security applied through the one-off migration task.
@@ -82,7 +82,7 @@ deploys green.
 - Secrets Manager entries and their injection as task secrets.
 - Keycloak on Fargate with realm import, or Cognito through OIDC.
 - The one-off migration task (`alembic upgrade head`) and the one-off
-  `aegis ml build-assets` task.
+  `redsim ml build-assets` task.
 - The worker image added to the `build-and-push` matrix in `deploy-aws.yml`, and
   the `deploy/Dockerfile.worker` change that removes the deleted `project_repos/`
   install lines and installs `.[worker,ml]`.
@@ -95,26 +95,26 @@ deploys green.
   is currently unused. This phase starts using it.
 - The repo variables `AWS_ACCOUNT_ID`, `AWS_REGION`, `AWS_DEPLOY_ROLE_ARN`,
   `ECR_REGISTRY`. Done.
-- Any ML application code in `aegis/ml/`, `aegis/api/v1/`, or `web/`. This phase
+- Any ML application code in `redsim/ml/`, `redsim/api/v1/`, or `web/`. This phase
   touches deploy assets, the two worker Dockerfile lines, and the pipeline only.
   The two application bugs in section 9 are flagged for the code fix-up, not
   fixed here.
 - The audit chain, the WORM export, and the auth stack themselves. F008
-  (`aegis/audit/chain.py`, `aegis/storage/worm.py`) and F001 (Keycloak,
-  NextAuth) are reused aegis foundation. The new F008 work, emitting ML audit
+  (`redsim/audit/chain.py`, `redsim/storage/worm.py`) and F001 (Keycloak,
+  NextAuth) are reused redsim foundation. The new F008 work, emitting ML audit
   events on the existing chain, lives in the ML workstreams, not here. This
   phase only enables Object Lock and the WORM export flag.
 - A custom domain. The demo runs on the ALB DNS name. Add ACM and a domain if
   time allows. Dev-token auth mode is acceptable for the demo only when the ALB
   is restricted to the team's addresses (D002/D11), and is refused when
-  `AEGIS_ENV=prod`.
+  `REDSIM_ENV=prod`.
 
 ---
 
 ## 3. Prerequisites and dependencies
 
-- **A booting aegis api image.** This phase proves the ALB health check against
-  `GET /health` on `aegis-api`. The restored aegis image answers `/health`
+- **A booting redsim api image.** This phase proves the ALB health check against
+  `GET /health` on `redsim-api`. The restored redsim image answers `/health`
   without the ML vertical, so this phase starts day 0 on the infrastructure that
   does not need the ML code (network, ALB, RDS, Redis, S3, roles, secrets), and
   proves `/health` behind the ALB the moment a green api image is pushed. The
@@ -125,7 +125,7 @@ deploys green.
   so concurrent tasks never race the migration (section 20.4). The migration
   `0010_ml_vertical` is additive and runs through the api image.
 - **The bundled assets must be seeded once.** `GET /v1/models` lists the bundled
-  targets as `available` only after `aegis ml build-assets` has run. This phase
+  targets as `available` only after `redsim ml build-assets` has run. This phase
   runs that CLI as a one-off ECS task on the worker image (see step 9). The
   manifests it writes are the only source of clean-accuracy numbers.
 - **Provisioned already this session. Do not recreate any of these.** Account
@@ -152,38 +152,38 @@ deploys green.
 ### Consumed
 
 - **The environment contract, master-plan section 5 and spec section 20.3.**
-  Reuse the Helm chart's variable names (`deploy/helm/aegis/values.yaml` →
+  Reuse the Helm chart's variable names (`deploy/helm/redsim/values.yaml` →
   `templates/configmap.yaml` / `templates/secret.yaml`) as task-definition
   environment, so compose, Helm, and Fargate agree.
 
   | Variable | Consumer | Source in this phase |
   |---|---|---|
-  | `AEGIS_DB_URL` | api, worker, beat | plain env, the RDS endpoint |
-  | `AEGIS_BROKER_URL` | api, worker, beat | plain env, ElastiCache `/0` |
-  | `AEGIS_RESULT_BACKEND` | api, worker | plain env, ElastiCache `/1` |
-  | `AEGIS_BLOB_BACKEND=s3` | api, worker | plain env |
-  | `AEGIS_S3_BUCKET` / `AEGIS_S3_REGION` | api, worker | plain env, artifacts bucket |
-  | `AEGIS_S3_ENDPOINT` | api, worker | unset on AWS (native S3, not MinIO) |
-  | `AEGIS_S3_ACCESS_KEY_ID` / `AEGIS_S3_SECRET_ACCESS_KEY` | api, worker | unset, the task role grants S3 |
-  | `AEGIS_OIDC_ISSUER` / `AEGIS_OIDC_JWKS_URL` | api, web | plain env, Keycloak or Cognito |
-  | `AEGIS_CORS_ORIGINS` | api | plain env, the web ALB URL |
-  | `AEGIS_WORM_EXPORT=1` / `AEGIS_WORM_BUCKET` | beat, worker-default | plain env, the Object-Lock bucket |
-  | `AEGIS_WORM_RETENTION_DAYS` / `AEGIS_WORM_LOCK_MODE` | beat | plain env (default 2555, `COMPLIANCE`) |
-  | `AEGIS_ML_WORK_DIR` | worker | plain env, a path on Fargate ephemeral storage |
-  | `AEGIS_ML_DATASET_CACHE` | worker | plain env, a path on Fargate ephemeral storage |
-  | `NEXT_PUBLIC_AEGIS_API_URL` / `NEXTAUTH_URL` | web | plain env, the ALB URLs |
+  | `REDSIM_DB_URL` | api, worker, beat | plain env, the RDS endpoint |
+  | `REDSIM_BROKER_URL` | api, worker, beat | plain env, ElastiCache `/0` |
+  | `REDSIM_RESULT_BACKEND` | api, worker | plain env, ElastiCache `/1` |
+  | `REDSIM_BLOB_BACKEND=s3` | api, worker | plain env |
+  | `REDSIM_S3_BUCKET` / `REDSIM_S3_REGION` | api, worker | plain env, artifacts bucket |
+  | `REDSIM_S3_ENDPOINT` | api, worker | unset on AWS (native S3, not MinIO) |
+  | `REDSIM_S3_ACCESS_KEY_ID` / `REDSIM_S3_SECRET_ACCESS_KEY` | api, worker | unset, the task role grants S3 |
+  | `REDSIM_OIDC_ISSUER` / `REDSIM_OIDC_JWKS_URL` | api, web | plain env, Keycloak or Cognito |
+  | `REDSIM_CORS_ORIGINS` | api | plain env, the web ALB URL |
+  | `REDSIM_WORM_EXPORT=1` / `REDSIM_WORM_BUCKET` | beat, worker-default | plain env, the Object-Lock bucket |
+  | `REDSIM_WORM_RETENTION_DAYS` / `REDSIM_WORM_LOCK_MODE` | beat | plain env (default 2555, `COMPLIANCE`) |
+  | `REDSIM_ML_WORK_DIR` | worker | plain env, a path on Fargate ephemeral storage |
+  | `REDSIM_ML_DATASET_CACHE` | worker | plain env, a path on Fargate ephemeral storage |
+  | `NEXT_PUBLIC_REDSIM_API_URL` / `NEXTAUTH_URL` | web | plain env, the ALB URLs |
   | `PYTHIA_BASE_URL` / `PYTHIA_PERSONA` | worker-default | plain env |
   | `PYTHIA_API_KEY` | worker-default | Secrets Manager, task `secrets` |
-  | `AEGIS_ML_LLM_MODEL` | worker-default | Secrets Manager, task `secrets` |
-  | `AEGIS_WORKER_SIGNING_KEY` / `AEGIS_AUTH_PROFILES_KEY` | api, worker | Secrets Manager, task `secrets` |
+  | `REDSIM_ML_LLM_MODEL` | worker-default | Secrets Manager, task `secrets` |
+  | `REDSIM_WORKER_SIGNING_KEY` / `REDSIM_AUTH_PROFILES_KEY` | api, worker | Secrets Manager, task `secrets` |
   | `NEXTAUTH_SECRET` | web | Secrets Manager, task `secrets` |
   | DB password | one-off migration, api, worker | Secrets Manager, task `secrets` |
 
   The narrative writer stays off unless `PYTHIA_BASE_URL`, `PYTHIA_API_KEY`, and
-  `AEGIS_ML_LLM_MODEL` all resolve. With any missing, `PythiaSettings.from_env()`
+  `REDSIM_ML_LLM_MODEL` all resolve. With any missing, `PythiaSettings.from_env()`
   returns `None`, recommendations render from the rule layer, and
-  `narrative_source = "rules"` (section 20.3). The workers set `AEGIS_DISABLE_LLM`
-  by default. Unset it on `aegis-worker-default` when the narrative should run.
+  `narrative_source = "rules"` (section 20.3). The workers set `REDSIM_DISABLE_LLM`
+  by default. Unset it on `redsim-worker-default` when the narrative should run.
   There is no model-provider key anywhere in the deployment (D5). Pythia holds
   them. The Pythia egress path is from the worker security group only.
 
@@ -212,7 +212,7 @@ deploys green.
   service loop or by a separate one-off command after the migration task.
 
 - The api ALB URL and the web ALB URL. The api URL feeds the web task's
-  `NEXT_PUBLIC_AEGIS_API_URL` and `AEGIS_CORS_ORIGINS`, and is the base URL a
+  `NEXT_PUBLIC_REDSIM_API_URL` and `REDSIM_CORS_ORIGINS`, and is the base URL a
   judge drives.
 
 ---
@@ -256,10 +256,10 @@ services, then the repo variables.
    adversarial examples, SHAP outputs, robustness curves, reports, and the
    bundled assets. The WORM bucket is created with Object Lock enabled, which
    must be set at bucket creation, and holds the audit chains that
-   `aegis.export_chains_to_worm` writes with `COMPLIANCE` retention. Block all
+   `redsim.export_chains_to_worm` writes with `COMPLIANCE` retention. Block all
    public access and enable versioning on both. Grant access through the task
    roles in step 6, never through a bucket policy with keys and never through
-   static credentials. `aegis/storage/s3.py` refuses a WORM put to a bucket
+   static credentials. `redsim/storage/s3.py` refuses a WORM put to a bucket
    without Object Lock, so the bucket must be right at creation.
 
 6. **IAM roles and secrets (`iam.tf`, `secrets.tf`).** Create the roles, all
@@ -276,22 +276,22 @@ services, then the repo variables.
      artifacts bucket prefix. It streams uploads to S3 and reads artifacts. It
      never loads a model.
    - **Web task role** `ndia-red-team-web-task`: minimal, no S3.
-   Create the Secrets Manager entries for `PYTHIA_API_KEY`, `AEGIS_ML_LLM_MODEL`,
-   `AEGIS_WORKER_SIGNING_KEY`, `AEGIS_AUTH_PROFILES_KEY` (Fernet), `NEXTAUTH_SECRET`,
+   Create the Secrets Manager entries for `PYTHIA_API_KEY`, `REDSIM_ML_LLM_MODEL`,
+   `REDSIM_WORKER_SIGNING_KEY`, `REDSIM_AUTH_PROFILES_KEY` (Fernet), `NEXTAUTH_SECRET`,
    and the DB password. Seed the Pythia values empty for a rules-only baseline,
    or real for the narrative. No model-provider key exists anywhere (D5).
 
 7. **Keycloak or Cognito (`auth.tf`).** Run Keycloak on Fargate with the realm
    import from `deploy/keycloak/` (add the `viewer` realm role, section 7.2), or
-   create a Cognito user pool and point `AEGIS_OIDC_ISSUER` and
-   `AEGIS_OIDC_JWKS_URL` at it. Dev-token mode (`AEGIS_AUTH_MODE=dev`) is
+   create a Cognito user pool and point `REDSIM_OIDC_ISSUER` and
+   `REDSIM_OIDC_JWKS_URL` at it. Dev-token mode (`REDSIM_AUTH_MODE=dev`) is
    acceptable for the demo only behind a restricted ALB and is refused when
-   `AEGIS_ENV=prod`. F001 is otherwise reused aegis (NextAuth, session cookie,
+   `REDSIM_ENV=prod`. F001 is otherwise reused redsim (NextAuth, session cookie,
    JWKS bearer). No new auth code lands here.
 
 8. **Task definitions (`ecs.tf`).** All Fargate. `executionRoleArn` the exec
-   role on every task. There is no EFS volume on any task. `AEGIS_ML_WORK_DIR`
-   and `AEGIS_ML_DATASET_CACHE` point at Fargate ephemeral storage. Raise
+   role on every task. There is no EFS volume on any task. `REDSIM_ML_WORK_DIR`
+   and `REDSIM_ML_DATASET_CACHE` point at Fargate ephemeral storage. Raise
    ephemeral storage above the 20 GiB default if the dataset cache and uploaded
    models need it.
    - **api:** `taskRoleArn` the api task role. Image
@@ -299,26 +299,26 @@ services, then the repo variables.
      and the `secrets` block per section 4. The `ml` extra is never installed
      here.
    - **web:** `taskRoleArn` the web task role. Image `.../web:latest`. Container
-     port 3000. `NEXT_PUBLIC_AEGIS_API_URL` and `NEXTAUTH_URL` set to the ALB
+     port 3000. `NEXT_PUBLIC_REDSIM_API_URL` and `NEXTAUTH_URL` set to the ALB
      URLs.
    - **worker (`-Q scans`) and worker-default (`-Q default`):** `taskRoleArn`
      the worker task role. Image `.../worker:latest`, installed with
      `.[worker,ml]`. Size the task for CPU torch, ART, and SHAP. The sandbox
-     rlimits (`AEGIS_ML_SANDBOX_*`, section 20.3) must fit inside the task memory
+     rlimits (`REDSIM_ML_SANDBOX_*`, section 20.3) must fit inside the task memory
      limit. worker-default carries the Pythia env and runs the narrative,
      reaper, WORM export, and reports. One combined worker on `scans,default` is
      acceptable for the demo (section 20.4).
    - **beat:** `celery beat`, exactly one task. It fires
-     `aegis.reap_stale_jobs` and `aegis.export_chains_to_worm`. Never scale it.
+     `redsim.reap_stale_jobs` and `redsim.export_chains_to_worm`. Never scale it.
    - **log-ingest (optional):** the Postgres log mirror. Skip for the demo if
      time is short.
    - **one-off migration:** `alembic upgrade head` on the api image, run before
      each rollout.
-   - **one-off build-assets:** `aegis ml build-assets` on the worker image.
+   - **one-off build-assets:** `redsim ml build-assets` on the worker image.
 
 9. **Apply and seed.** Run `terraform apply` with short-lived credentials.
    Confirm the ALB `/health` returns ok against the api image. Run the one-off
-   migration task. Then run `aegis ml build-assets` once as a one-off ECS task
+   migration task. Then run `redsim ml build-assets` once as a one-off ECS task
    on the worker image to seed the three bundled models (the image CNN on the
    vehicle-imagery dataset, the tabular tree ensemble on malicious-URLs with its PGD
    surrogate, and the ONNX export of the image CNN) and the two evaluation
@@ -400,10 +400,10 @@ services, then the repo variables.
 
 ### Do not modify
 
-- `aegis/audit/chain.py`, `aegis/storage/worm.py`, `aegis/storage/s3.py`. F008
-  is reused. This phase enables Object Lock and sets `AEGIS_WORM_EXPORT=1`, and
+- `redsim/audit/chain.py`, `redsim/storage/worm.py`, `redsim/storage/s3.py`. F008
+  is reused. This phase enables Object Lock and sets `REDSIM_WORM_EXPORT=1`, and
   does not touch the audit code.
-- `aegis/api/app.py` and the aegis auth stack. F001 is reused.
+- `redsim/api/app.py` and the redsim auth stack. F001 is reused.
 - `deploy/docker-compose.yml`. It is the developer stack. This phase mirrors its
   service names and env onto Fargate but does not edit it.
 
@@ -422,7 +422,7 @@ services, then the repo variables.
    record (`ml_campaigns`) returns nothing (`tests/test_tenant_rls.py` against
    the RDS instance). Confirm `FORCE ROW LEVEL SECURITY` is active on the tenant
    tables.
-5. **S3 receives a dataset.** After `aegis ml build-assets`, the bundled models
+5. **S3 receives a dataset.** After `redsim ml build-assets`, the bundled models
    and the two evaluation datasets exist under the artifacts bucket, each with
    its `MANIFEST.json`, and `GET /v1/models` lists the bundled targets as
    `available`. Confirm no static keys were used, only the task role.
@@ -430,7 +430,7 @@ services, then the repo variables.
    on. With them empty, the pipeline runs rules-only and
    `narrative_source = "rules"`.
 7. **Audit verify passes.** Run one FGSM campaign on the bundled image model.
-   Then `aegis audit verify --all` passes, and `/audit` shows the chain. The
+   Then `redsim audit verify --all` passes, and `/audit` shows the chain. The
    WORM export writes the chain to the Object-Lock bucket on the beat schedule.
 8. **Full demo path (the gate).** A campaign started from `/models` against the
    bundled vehicle-imagery CNN and the malicious-URLs tabular model runs FGSM and PGD
@@ -452,7 +452,7 @@ This phase is done when section 26 holds on the deployed stack:
 3. `/runs/[id]` shows the MRI scorecard with its subscores, per-family table,
    and robustness curve.
 4. `/findings/[id]` shows the three panes and a measured ΔMRI after Verify.
-5. Every action is on the audit chain, `aegis audit verify --all` passes, and
+5. Every action is on the audit chain, `redsim audit verify --all` passes, and
    the WORM export lands the chain in the Object-Lock bucket.
 6. Access is gated by Keycloak (or Cognito) with RLS forced on the tenant
    tables.
@@ -460,11 +460,11 @@ This phase is done when section 26 holds on the deployed stack:
    rolls the services green, its guard passing because the three service
    variables are set.
 8. The bundled assets are seeded to the artifacts bucket by the one-off
-   `aegis ml build-assets` task, and `GET /v1/models` lists them as `available`.
+   `redsim ml build-assets` task, and `GET /v1/models` lists them as `available`.
 9. No static AWS keys anywhere in the runtime. OIDC drives the pipeline, the
    task roles drive S3, no model-provider key exists (D5), and the compromised
    bootstrap keys are rotated.
-10. There is no EFS. `AEGIS_ML_WORK_DIR` and `AEGIS_ML_DATASET_CACHE` are on
+10. There is no EFS. `REDSIM_ML_WORK_DIR` and `REDSIM_ML_DATASET_CACHE` are on
     Fargate ephemeral storage. The README records the measured clone-to-first-run
     time (section 26).
 
@@ -481,8 +481,8 @@ parallel, so wall-clock cost overlaps the ML build.
 **No EFS. S3 is content-addressed.** The v1 plan mounted EFS for a filesystem
 run store. That store is gone. Persistence is RDS plus S3. The run record is a
 sha256-addressed Artifact, and blobs are keyed by project and run. Nothing on the
-task's disk needs to survive a restart. `AEGIS_ML_WORK_DIR` and
-`AEGIS_ML_DATASET_CACHE` are scratch on Fargate ephemeral storage. Do not add an
+task's disk needs to survive a restart. `REDSIM_ML_WORK_DIR` and
+`REDSIM_ML_DATASET_CACHE` are scratch on Fargate ephemeral storage. Do not add an
 EFS volume to any task.
 
 **Image size and build time.** The worker image carries CPU torch, torchvision,
@@ -501,21 +501,21 @@ OIDC role, and the repo variables persist, so re-provisioning is another
 `terraform apply` plus resetting the three service variables. Empty the
 artifacts bucket before destroy. The Object-Lock WORM bucket cannot be emptied
 before its retention expires, so plan its lifecycle deliberately and set
-`AEGIS_WORM_RETENTION_DAYS` on purpose rather than inherit the default 2555.
+`REDSIM_WORM_RETENTION_DAYS` on purpose rather than inherit the default 2555.
 
 **Key rotation (security).** The bootstrap AWS keys pasted to provision this
 session are compromised. Deactivate and delete them in IAM now. The pipeline
 uses OIDC through `ndia-red-team-gha-deploy`, not static keys. The task roles,
 not keys, grant S3. The only long-lived trust is the OIDC provider scoped to
 this repo, and the Pythia key, which lives only in Secrets Manager and reaches
-only `aegis-worker-default`.
+only `redsim-worker-default`.
 
 **Two live bugs to fix in the code fix-up, not here.** Both are in the F008
 surface and are flagged for the concurrent platform fix-up, so they do not block
 the deploy:
 - The `/audit` page (`web/src/app/audit/page.tsx`) fetches
   `/v1/audit/verify?all=1` and reads `data.chains` as an array, but
-  `aegis/api/v1/audit.py` verifies one chain and returns the single-chain shape
+  `redsim/api/v1/audit.py` verifies one chain and returns the single-chain shape
   `{chain_id, verified, count, broken_at, reason}` and ignores the `all` param.
   The page renders an empty "No audit chains found" state against a healthy
   chain until the route returns a `chains` array or the page reads the

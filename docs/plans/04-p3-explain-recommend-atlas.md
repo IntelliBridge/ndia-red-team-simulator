@@ -1,4 +1,4 @@
-# Phase P3 · Milestones M2/M3/M6 · Features F005/F006 (v2, aegis substrate)
+# Phase P3 · Milestones M2/M3/M6 · Features F005/F006 (v2, redsim substrate)
 
 Status: v2, 2026-09-08. Owner: Dev C (WS3). Wave: Slice 2 into Slice 3.
 
@@ -7,13 +7,13 @@ file. Build to the canonical spec
 `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md`, sections 13
 (explainability), 14 (evidence model), 15 (scoring), 16 (hardening), and to the
 feature specs `specs/005-evidence-workbench/spec.md` and
-`specs/006-findings-review/spec.md`. All contracts are the aegis platform. The
+`specs/006-findings-review/spec.md`. All contracts are the redsim platform. The
 deleted `redsim/` package and its filesystem store no longer exist. Use the
-aegis paths below, not the v1 paths.
+redsim paths below, not the v1 paths.
 
 This phase turns a finished attack campaign into evidence, candidate advice, and
 a measured verify delta. It owns the explain layer, the recommend layer, the ML
-projection onto the aegis `Finding`, and three Celery tasks. MITRE ATLAS tagging
+projection onto the redsim `Finding`, and three Celery tasks. MITRE ATLAS tagging
 is **Phase B2** (canonical section 27.2, tag at `Finding.schema_blob.ml.atlas_technique`),
 so this Phase A phase does not build it. The filename keeps the word "atlas" for
 continuity only.
@@ -52,19 +52,19 @@ never appear in any output.
 
 ### In scope
 
-- `aegis/ml/explain/base.py` - the `ExplainOutput` dataclass.
-- `aegis/ml/explain/shap_image.py` - `explain()` for image targets, on
+- `redsim/ml/explain/base.py` - the `ExplainOutput` dataclass.
+- `redsim/ml/explain/shap_image.py` - `explain()` for image targets, on
   `shap.GradientExplainer` (default) with a `shap.PartitionExplainer` fallback
   for non-differentiable modules.
-- `aegis/ml/explain/shap_tabular.py` - `explain()` for tabular targets, on
+- `redsim/ml/explain/shap_tabular.py` - `explain()` for tabular targets, on
   `shap.TreeExplainer` for tree models (exact, deterministic) and
   `shap.KernelExplainer` for non-tree models.
-- `aegis/ml/explain/summary.py` - the deterministic SHAP text summary
+- `redsim/ml/explain/summary.py` - the deterministic SHAP text summary
   (`ml.shap.summary_text`), the only explanation content the LLM writer sees.
-- `aegis/ml/recommend/interpret.py` - `interpret()` for the I1 through I6 rules.
-- `aegis/ml/recommend/rules.py` - `recommend()` for the R1 through R7 rules.
-- `aegis/ml/recommend/narrative.py` - `narrate()`, the optional Pythia rewrite.
-- `aegis/services/ml_findings.py` - the `Finding.schema_blob.ml` projection and
+- `redsim/ml/recommend/interpret.py` - `interpret()` for the I1 through I6 rules.
+- `redsim/ml/recommend/rules.py` - `recommend()` for the R1 through R7 rules.
+- `redsim/ml/recommend/narrative.py` - `narrate()`, the optional Pythia rewrite.
+- `redsim/services/ml_findings.py` - the `Finding.schema_blob.ml` projection and
   derived severity.
 - The Celery tasks `explain.run`, `harden.recommend`, and `verify.replay`, and
   the ML step of the verify loop.
@@ -76,20 +76,20 @@ never appear in any output.
   phase adds no `atlas.py`, no technique map, and no ATLAS field wiring. When B2
   lands, the tag is stamped at `Finding.schema_blob.ml.atlas_technique` from the
   attack registry, not now.
-- The scoring math and the `MRIRecord`. That is WS2 (`aegis/ml/scoring.py`). P3
+- The scoring math and the `MRIRecord`. That is WS2 (`redsim/ml/scoring.py`). P3
   reads the score and supplies `expl_shift_mean`. It does not compute the MRI.
 - The attack run, the ε sweep, the clean and control evaluations, and `x_adv`.
-  That is WS2 (`aegis/ml/attacks/`, `campaign.py`, `eval.py`). P3 receives the
+  That is WS2 (`redsim/ml/attacks/`, `campaign.py`, `eval.py`). P3 receives the
   arrays and the measurements.
 - The target model, weights, dataset slice, and the sandboxed loader. That is
-  WS1 (`aegis/ml/targets/`). P3 calls `Target.torch_model()`,
+  WS1 (`redsim/ml/targets/`). P3 calls `Target.torch_model()`,
   `Target.art_estimator()`, and `Target.predict_proba()`.
 - The API routers, the campaign service, and the WS event channel. That is WS4.
   P3 exposes the three Celery tasks and the projection that WS4 mounts.
 - The web panels (three-pane findings screen, run page). That is WS5. P3 supplies
   the artifacts and the projection they render.
 - The MRI scorecard component, the schema widening to `CampaignConfig`, and the
-  `AEGIS_ML_LLM_MODEL` env rename. Those land in WS0 (M0) and WS2. P3 consumes
+  `REDSIM_ML_LLM_MODEL` env rename. Those land in WS0 (M0) and WS2. P3 consumes
   them.
 
 ## 3. Prerequisites and dependencies
@@ -102,7 +102,7 @@ never appear in any output.
   `top_features_adv`, `CandidateRecommendation.validation` extended to
   `"measured"`, the `MeasuredDelta` type), the `Action` members for explain,
   harden, and verify, and the env rename from `REDSIM_LLM_MODEL` to
-  `AEGIS_ML_LLM_MODEL` in `aegis/llm/pythia.py`. P3 depends on these but does
+  `REDSIM_ML_LLM_MODEL` in `redsim/llm/pythia.py`. P3 depends on these but does
   not create them.
 - **From WS1 (targets):** a loaded `Target` in the sandboxed worker.
   `torch_model()` returns the differentiable module in eval mode.
@@ -113,12 +113,12 @@ never appear in any output.
   reference_eps)` aligned index-for-index with the sampled slice, the control
   array `x_ctrl` at the same ε, the `Measurement` rows, and the `MRIRecord`.
   The explain stage runs after the attack Jobs of the campaign.
-- **From the aegis platform:** `Observation`, `Interpretation`,
+- **From the redsim platform:** `Observation`, `Interpretation`,
   `CandidateRecommendation`, `Measurement`, `Provenance`, `RunRecord` in
-  `aegis/ml/schema.py`, the `Artifact` model and the blob store in
-  `aegis/storage`, the `Finding` model in `aegis/db/models.py`, the audit chain
-  in `aegis/audit/chain.py`, Pythia in `aegis/llm/pythia.py` and guardrails in
-  `aegis/llm/guardrails.py`.
+  `redsim/ml/schema.py`, the `Artifact` model and the blob store in
+  `redsim/storage`, the `Finding` model in `redsim/db/models.py`, the audit chain
+  in `redsim/audit/chain.py`, Pythia in `redsim/llm/pythia.py` and guardrails in
+  `redsim/llm/guardrails.py`.
 
 ### Provides (outputs P3 exposes)
 
@@ -155,11 +155,11 @@ explain stage. The contract:
 
 ## 4. Interfaces consumed and exposed
 
-### Exposed - `ExplainOutput` (`aegis/ml/explain/base.py`)
+### Exposed - `ExplainOutput` (`redsim/ml/explain/base.py`)
 
 ```python
 from dataclasses import dataclass, field
-from aegis.ml.schema import Observation
+from redsim.ml.schema import Observation
 
 @dataclass
 class ExplainOutput:
@@ -201,7 +201,7 @@ def explain(target: Target,
 - `reference_eps` selects the budget at which `x_adv` and `x_ctrl` were
   produced. Phase A explains at the reference budget only.
 - `sink` is the artifact sink the task provides. It writes bytes to S3/MinIO
-  through `aegis/storage` and registers an `Artifact` row
+  through `redsim/storage` and registers an `Artifact` row
   (`id`, `run_id`, `project_id`, `org_id`, `kind`, `sha256`, `location`,
   `content_type`, `size_bytes`, unique on `(run_id, kind, sha256)`). It returns
   the `Artifact.id` and `sha256`. `Observation.artifacts` maps a stable name to
@@ -229,7 +229,7 @@ Each rule prints its threshold in the rationale.
 ```python
 def narrate(recommendations: list[CandidateRecommendation],
             payload: NarrativePayload,
-            *, config: AegisConfig | None = None) -> list[CandidateRecommendation]: ...
+            *, config: RedsimConfig | None = None) -> list[CandidateRecommendation]: ...
 ```
 
 `payload` holds only the text of spec 16.3: the measurements table as text, the
@@ -247,23 +247,23 @@ def derive_severity(attack_id: str, per_eps: dict, settings: ScoringConfig) -> S
 
 `derive_severity` follows spec 15.5 exactly, from the first-success ε and the
 ASR. It never reads free text. `Severity = Literal["critical","high","medium","low"]`
-already exists in `aegis/schema.py`.
+already exists in `redsim/schema.py`.
 
 ### Consumed
 
-- `Target` from `aegis/ml/targets/base.py` (`torch_model`, `art_estimator`,
+- `Target` from `redsim/ml/targets/base.py` (`torch_model`, `art_estimator`,
   `predict_proba`).
-- `aegis/storage` for the blob store, `aegis/db/models.py` for `Artifact` and
+- `redsim/storage` for the blob store, `redsim/db/models.py` for `Artifact` and
   `Finding`.
-- `aegis/ml/schema.py` for the evidence types, `aegis/ml/scoring.py` for the
+- `redsim/ml/schema.py` for the evidence types, `redsim/ml/scoring.py` for the
   `MRIRecord` and `ScoringConfig` (owned by WS2).
-- `aegis/llm/pythia.py` (`PythiaSettings.from_env`, `chat_text`, `make_backend`,
+- `redsim/llm/pythia.py` (`PythiaSettings.from_env`, `chat_text`, `make_backend`,
   `PythiaUnavailable`, `PythiaSettings.redacted`) and the router
-  `aegis/llm/router.py` (`route(task="ml.harden_narrative")`) with the budget
+  `redsim/llm/router.py` (`route(task="ml.harden_narrative")`) with the budget
   checker.
-- `aegis/llm/guardrails.py` (`guard_input`, `guard_output`, `GuardrailViolation`)
-  and `aegis/audit/redact.py`.
-- `aegis/audit/chain.py` (`AuditWriter.append`) for the explain, harden, and
+- `redsim/llm/guardrails.py` (`guard_input`, `guard_output`, `GuardrailViolation`)
+  and `redsim/audit/redact.py`.
+- `redsim/audit/chain.py` (`AuditWriter.append`) for the explain, harden, and
   verify events.
 - ART preprocessing defenses:
   `art.defences.preprocessor.FeatureSqueezing`,
@@ -289,7 +289,7 @@ verify run sets `validation="measured"` and attaches `measured: MeasuredDelta`.
 
 `Finding` (through the projection): `severity`, `finding_type="adversarial_ml"`,
 `title`, `description` (measurement text only), `confidence`,
-`source_tool="aegis.ml/<attack_id>"`, `status="open"`, `evidence` (measurement
+`source_tool="redsim.ml/<attack_id>"`, `status="open"`, `evidence` (measurement
 ids), and the full `schema_blob["ml"]` derivation. Never write `Finding.status`
 transitions here, those belong to F006 (spec section 6). Verify writes
 `validation_state` through the existing `_STATE_MAP`.
@@ -468,8 +468,8 @@ Optional Pythia rewrite of the ranked rule output, off by default:
   `PythiaSettings.from_env()` returning `None` raises `PythiaUnavailable`, catch
   it, record "LLM narrative: not configured", and return the recommendations
   unchanged. Never fail the campaign for a missing gateway.
-- Resolve the model through `aegis.llm.router.route(task="ml.harden_narrative")`,
-  seeded from `AEGIS_ML_LLM_MODEL`, with the per-organisation override and the
+- Resolve the model through `redsim.llm.router.route(task="ml.harden_narrative")`,
+  seeded from `REDSIM_ML_LLM_MODEL`, with the per-organisation override and the
   per-project and per-organisation budget caps. Reject a non-Pythia id.
 - Assemble the user message from the `NarrativePayload` text only (spec 16.3).
   The system prompt states the contract: rewrite the rule outputs into prose,
@@ -505,17 +505,17 @@ Optional Pythia rewrite of the ranked rule output, off by default:
 
 ### Step 13 - Celery tasks
 
-- `explain.run` (`aegis.explain_run`): pre-created at admission, runs after the
+- `explain.run` (`redsim.explain_run`): pre-created at admission, runs after the
   attack Jobs. It loads the target in the sandboxed worker, reads the attack and
   control outputs, calls the modality `explain()`, registers the artifacts,
   writes the observations and the `expl_shift` onto the reference-budget
   measurement row, and appends the `explain.execute` audit event. It can also be
   triggered per finding through `POST /v1/findings/{id}/explain` (WS4).
-- `harden.recommend` (`aegis.harden_recommend`): runs the `interpret` and
+- `harden.recommend` (`redsim.harden_recommend`): runs the `interpret` and
   `recommend` stages after `explain.run`, then the optional `narrate` stage. It
   needs only the run's own rows. A narrative failure leaves the rule output
   standing. It appends the `harden.execute` audit event.
-- `verify.replay` (`aegis.verify_replay`): the verify-after-harden loop, step 14.
+- `verify.replay` (`redsim.verify_replay`): the verify-after-harden loop, step 14.
 
 Admission is audit-first: the audit event is appended before any Run or Job row.
 
@@ -539,7 +539,7 @@ profile.
   hold.
 - Update `Finding.validation_state` on the baseline's findings through the
   worker's `VerifyStatus` and the existing `_STATE_MAP` in
-  `aegis/workers/tasks/verify.py` (`poc_passed`, `poc_failed`, `inconclusive`).
+  `redsim/workers/tasks/verify.py` (`poc_passed`, `poc_failed`, `inconclusive`).
   Attach the `MeasuredDelta` to the recommendation whose ART link the verify run
   applied, and set that recommendation's `validation="measured"`. Other
   recommendations stay `not evaluated`.
@@ -556,16 +556,16 @@ Write the pytest modules of section 7.
 
 Create:
 
-- `aegis/ml/explain/base.py` - `ExplainOutput`.
-- `aegis/ml/explain/shap_image.py` - image `explain()`.
-- `aegis/ml/explain/shap_tabular.py` - tabular `explain()`.
-- `aegis/ml/explain/summary.py` - the SHAP text summary.
-- `aegis/ml/recommend/interpret.py` - `interpret()`.
-- `aegis/ml/recommend/rules.py` - `recommend()`.
-- `aegis/ml/recommend/narrative.py` - `narrate()`.
-- `aegis/services/ml_findings.py` - the projection and `derive_severity`.
+- `redsim/ml/explain/base.py` - `ExplainOutput`.
+- `redsim/ml/explain/shap_image.py` - image `explain()`.
+- `redsim/ml/explain/shap_tabular.py` - tabular `explain()`.
+- `redsim/ml/explain/summary.py` - the SHAP text summary.
+- `redsim/ml/recommend/interpret.py` - `interpret()`.
+- `redsim/ml/recommend/rules.py` - `recommend()`.
+- `redsim/ml/recommend/narrative.py` - `narrate()`.
+- `redsim/services/ml_findings.py` - the projection and `derive_severity`.
 - The Celery tasks `explain.run`, `harden.recommend`, `verify.replay` under the
-  aegis worker layout (for example `aegis/workers/tasks/`), plus the verify ML
+  redsim worker layout (for example `redsim/workers/tasks/`), plus the verify ML
   step. Register the tasks and the `Action` handlers with WS4 and WS0.
 - Tests: `tests/ml/test_explain_image.py`, `tests/ml/test_explain_tabular.py`,
   `tests/ml/test_summary.py`, `tests/ml/test_interpret.py`,
@@ -575,17 +575,17 @@ Create:
 
 Modify:
 
-- `aegis/ml/explain/__init__.py` - replace the one-line stub with re-exports of
+- `redsim/ml/explain/__init__.py` - replace the one-line stub with re-exports of
   `explain` (both modalities) and `ExplainOutput`.
-- `aegis/ml/recommend/__init__.py` - re-export `interpret`, `recommend`,
+- `redsim/ml/recommend/__init__.py` - re-export `interpret`, `recommend`,
   `narrate`.
 
-Depends on, do not modify (owned by WS0, WS1, WS2, or the aegis foundation):
-`aegis/ml/schema.py`, `aegis/ml/scoring.py`, `aegis/ml/targets/base.py`,
-`aegis/ml/attacks/base.py`, `aegis/storage`, `aegis/db/models.py`,
-`aegis/llm/pythia.py`, `aegis/llm/guardrails.py`, `aegis/llm/router.py`,
-`aegis/audit/chain.py`, `aegis/audit/redact.py`,
-`aegis/workers/tasks/verify.py` (the `_STATE_MAP` and `VerifyStatus`).
+Depends on, do not modify (owned by WS0, WS1, WS2, or the redsim foundation):
+`redsim/ml/schema.py`, `redsim/ml/scoring.py`, `redsim/ml/targets/base.py`,
+`redsim/ml/attacks/base.py`, `redsim/storage`, `redsim/db/models.py`,
+`redsim/llm/pythia.py`, `redsim/llm/guardrails.py`, `redsim/llm/router.py`,
+`redsim/audit/chain.py`, `redsim/audit/redact.py`,
+`redsim/workers/tasks/verify.py` (the `_STATE_MAP` and `VerifyStatus`).
 
 No new migration. The schema additions (`Observation.expl_shift`,
 `top_features_*`, the extended `validation`, `MeasuredDelta`,
@@ -645,7 +645,7 @@ SHAP stays fast. Do not load the real CNN in unit tests.
   - `derive_severity` returns critical, high, medium, and low on the boundary
     cases of spec 15.5, from the first-success ε and the ASR only.
   - `project_finding_ml` fills `finding_type="adversarial_ml"`,
-    `source_tool="aegis.ml/<attack_id>"`, `status="open"`, the measurement-only
+    `source_tool="redsim.ml/<attack_id>"`, `status="open"`, the measurement-only
     description, and a `schema_blob["ml"]` that recomputes the same severity. A
     projection that disagrees with the record fails the test.
 - **verify-loop coverage** (extending `tests/test_verify.py`)
@@ -657,7 +657,7 @@ SHAP stays fast. Do not load the real CNN in unit tests.
 
 ## 8. Acceptance criteria and definition of done
 
-1. `aegis/ml/explain/base.py` defines `ExplainOutput`, and WS2 and WS4 import it
+1. `redsim/ml/explain/base.py` defines `ExplainOutput`, and WS2 and WS4 import it
    without a circular dependency.
 2. `explain()` in both modality modules matches the section 4 signature, writes
    the artifacts through the `sink` as `Artifact` rows in S3/MinIO, stores the
