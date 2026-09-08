@@ -174,7 +174,7 @@ def tls_verify(environ: Mapping[str, str] | None = None) -> tuple[ssl.SSLContext
     env = os.environ if environ is None else environ
     if truststore_enabled(env):
         try:
-            import truststore  # type: ignore[import-not-found]
+            import truststore
         except ImportError:
             pass
         else:
@@ -263,7 +263,8 @@ class _HttpxBackend:
     def chat(self, model: str, messages: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:
         resp = self._client.post(CHAT_PATH, json={"model": model, "messages": messages, **kwargs})
         resp.raise_for_status()
-        return resp.json()
+        data: dict[str, Any] = resp.json()
+        return data
 
     def models(self) -> list[dict[str, Any]]:
         """``GET /v1/models``: the entries of the OpenAI-style ``data`` list."""
@@ -281,9 +282,10 @@ def make_backend(settings: PythiaSettings, transport: httpx.BaseTransport | None
     """Prefer the official SDK; fall back to the in-repo httpx client."""
     if transport is None:
         try:
-            from pythia_sdk import PythiaClient  # type: ignore[import-not-found]
-            return PythiaClient(settings.base_url, settings.api_key, persona=settings.persona,
+            from pythia_sdk import PythiaClient
+            backend: ChatBackend = PythiaClient(settings.base_url, settings.api_key, persona=settings.persona,
                                 timeout=settings.timeout_s)
+            return backend
         except ImportError:
             pass
     return _HttpxBackend(settings, transport=transport)

@@ -134,7 +134,8 @@ def run(argv: Sequence[str] | None = None, *, environ: Mapping[str, str] | None 
         say("FAIL: " + _http_failure("POST /v1/chat/completions", exc))
         return 1
     latency_ms = (time.perf_counter() - started) * 1000.0
-    usage = resp.get("usage") if isinstance(resp.get("usage"), dict) else {}
+    raw_usage = resp.get("usage")
+    usage: dict[str, Any] = raw_usage if isinstance(raw_usage, dict) else {}
     say(f"chat: ok in {latency_ms:.0f} ms via model {resp.get('model') or model}")
     say(f"  reply: {reply!r}")
     say(f"  usage: prompt={usage.get('prompt_tokens', '?')} completion={usage.get('completion_tokens', '?')} "
