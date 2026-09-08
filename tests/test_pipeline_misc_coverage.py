@@ -1,10 +1,10 @@
 """Coverage-gap filler for the following modules:
 
-- aegis/log_ingest/server.py
-- aegis/log_ingest/writer.py
-- aegis/audit/chain.py
-- aegis/report.py
-- aegis/services/targets.py
+- redsim/log_ingest/server.py
+- redsim/log_ingest/writer.py
+- redsim/audit/chain.py
+- redsim/report.py
+- redsim/services/targets.py
 
 The pentest strix_runner / patch_workflow / cai_runner / services.fixes
 coverage that once lived here was removed with the pentest domain.
@@ -59,8 +59,8 @@ def _make_finding(
     created_at="2026-01-01",
     updated_at="2026-01-01",
 ):
-    from aegis.schema import AegisFinding
-    f = AegisFinding(
+    from redsim.schema import RedsimFinding
+    f = RedsimFinding(
         id=fid,
         title=title,
         severity=severity,
@@ -85,7 +85,7 @@ def _make_finding(
 
 
 def _make_finding_with_locations(fid="vuln-loc-1"):
-    from aegis.schema import CodeLocation
+    from redsim.schema import CodeLocation
     f = _make_finding(fid=fid)
     f.code_locations = [
         CodeLocation(
@@ -100,14 +100,14 @@ def _make_finding_with_locations(fid="vuln-loc-1"):
 
 
 def _make_config(target_allowlist=None):
-    from aegis.config import AegisConfig
-    return AegisConfig(
+    from redsim.config import RedsimConfig
+    return RedsimConfig(
         target_allowlist=target_allowlist or ["localhost", "127.0.0.1"],
     )
 
 
 def _make_run_state(tmp):
-    from aegis.state import RunState
+    from redsim.state import RunState
     return RunState(tmp, "run-test-1")
 
 
@@ -122,13 +122,13 @@ def _fake_session_ctx(mock_sess=None):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# aegis/log_ingest/server.py — cover remaining branches
+# redsim/log_ingest/server.py — cover remaining branches
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestLogIngestServerEdgeCases(unittest.TestCase):
     def _make_client(self):
-        from aegis.log_ingest.server import create_app
-        from aegis.log_ingest.writer import LogIngestWriter
+        from redsim.log_ingest.server import create_app
+        from redsim.log_ingest.writer import LogIngestWriter
         writer = LogIngestWriter()
         return TestClient(create_app(writer)), writer
 
@@ -265,12 +265,12 @@ class TestLogIngestServerEdgeCases(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# aegis/log_ingest/writer.py — cover remaining branches
+# redsim/log_ingest/writer.py — cover remaining branches
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestLogIngestWriterFlush(unittest.TestCase):
     def _make_row(self, msg="test"):
-        from aegis.log_ingest.writer import LogIngestRow
+        from redsim.log_ingest.writer import LogIngestRow
         return LogIngestRow(
             ts=datetime.now(timezone.utc),
             severity="info",
@@ -281,7 +281,7 @@ class TestLogIngestWriterFlush(unittest.TestCase):
     def test_flush_with_session_factory_calls_insert(self):
         """flush() drains the queue through the real _insert when a session
         factory is configured, writing one row object per queued record."""
-        from aegis.log_ingest.writer import LogIngestWriter
+        from redsim.log_ingest.writer import LogIngestWriter
         inserted = []
 
         class FakeSession:
@@ -297,10 +297,10 @@ class TestLogIngestWriterFlush(unittest.TestCase):
         def fake_factory():
             return FakeSession()
 
-        # The real external boundary _insert touches is aegis.db.models.ApplicationLog.
+        # The real external boundary _insert touches is redsim.db.models.ApplicationLog.
         fake_log_cls = MagicMock(side_effect=lambda **kw: MagicMock())
         with patch.dict(sys.modules, {
-            "aegis.db.models": MagicMock(ApplicationLog=fake_log_cls)
+            "redsim.db.models": MagicMock(ApplicationLog=fake_log_cls)
         }):
             writer = LogIngestWriter(session_factory=fake_factory)
             writer.append(self._make_row("a"))
@@ -312,7 +312,7 @@ class TestLogIngestWriterFlush(unittest.TestCase):
 
     def test_flush_empty_queue_is_noop(self):
         """flush() with empty queue returns 0 immediately."""
-        from aegis.log_ingest.writer import LogIngestWriter
+        from redsim.log_ingest.writer import LogIngestWriter
 
         def fake_factory():
             return MagicMock()
@@ -323,7 +323,7 @@ class TestLogIngestWriterFlush(unittest.TestCase):
 
     def test_flush_without_session_factory_does_not_drain(self):
         """flush() without session factory leaves queue intact."""
-        from aegis.log_ingest.writer import LogIngestWriter
+        from redsim.log_ingest.writer import LogIngestWriter
         writer = LogIngestWriter()  # no session
         writer.append(self._make_row())
         writer.flush()
@@ -331,7 +331,7 @@ class TestLogIngestWriterFlush(unittest.TestCase):
 
     def test_close_flushes(self):
         """close() calls flush()."""
-        from aegis.log_ingest.writer import LogIngestWriter
+        from redsim.log_ingest.writer import LogIngestWriter
         writer = LogIngestWriter()
         writer.append(self._make_row())
         with patch.object(writer, "flush") as mock_flush:
@@ -340,7 +340,7 @@ class TestLogIngestWriterFlush(unittest.TestCase):
 
     def test_should_flush_by_batch_size(self):
         """_should_flush returns True when queue >= batch_size."""
-        from aegis.log_ingest.writer import LogIngestWriter
+        from redsim.log_ingest.writer import LogIngestWriter
         writer = LogIngestWriter(batch_size=2)
         writer._queue.append(self._make_row("a"))
         writer._queue.append(self._make_row("b"))
@@ -348,14 +348,14 @@ class TestLogIngestWriterFlush(unittest.TestCase):
 
     def test_should_flush_by_time(self):
         """_should_flush returns True when flush_seconds has elapsed."""
-        from aegis.log_ingest.writer import LogIngestWriter
+        from redsim.log_ingest.writer import LogIngestWriter
         writer = LogIngestWriter(flush_seconds=0.001)
         time.sleep(0.01)
         self.assertTrue(writer._should_flush())
 
     def test_oversize_attrs_truncated(self):
         """attrs > 64KB are replaced with {'_truncated': True}."""
-        from aegis.log_ingest.writer import LogIngestRow
+        from redsim.log_ingest.writer import LogIngestRow
         big_attrs = {f"key_{i}": "x" * 100 for i in range(700)}
         row = LogIngestRow(
             ts=datetime.now(timezone.utc),
@@ -369,11 +369,11 @@ class TestLogIngestWriterFlush(unittest.TestCase):
     def test_insert_uses_session_factory(self):
         """flush() drains the queue through the session factory when one is set.
 
-        We mock the DB model boundary (aegis.db.models.ApplicationLog) instead
+        We mock the DB model boundary (redsim.db.models.ApplicationLog) instead
         of the private _insert, and force a flush explicitly (bypass the
         _should_flush heuristic), then assert the row landed via the session.
         """
-        from aegis.log_ingest.writer import LogIngestRow, LogIngestWriter
+        from redsim.log_ingest.writer import LogIngestRow, LogIngestWriter
 
         mock_sess = MagicMock()
 
@@ -387,7 +387,7 @@ class TestLogIngestWriterFlush(unittest.TestCase):
             severity="info", service="svc", message="hi",
         ))
         with patch.dict(sys.modules, {
-            "aegis.db.models": MagicMock(ApplicationLog=MagicMock())
+            "redsim.db.models": MagicMock(ApplicationLog=MagicMock())
         }):
             result = writer.flush()
         mock_sess.add_all.assert_called_once()
@@ -396,39 +396,39 @@ class TestLogIngestWriterFlush(unittest.TestCase):
         self.assertEqual(writer.inserted_total, 1)
 
     def test_severity_from_otlp_warning_maps_to_warn(self):
-        from aegis.log_ingest.writer import severity_from_otlp
+        from redsim.log_ingest.writer import severity_from_otlp
         self.assertEqual(severity_from_otlp(None, "warning"), "warn")
 
     def test_severity_from_otlp_critical_passthrough(self):
-        from aegis.log_ingest.writer import severity_from_otlp
+        from redsim.log_ingest.writer import severity_from_otlp
         self.assertEqual(severity_from_otlp(None, "critical"), "critical")
 
     def test_severity_from_otlp_unknown_text_falls_to_number(self):
-        from aegis.log_ingest.writer import severity_from_otlp
+        from redsim.log_ingest.writer import severity_from_otlp
         # "verbose" is not a recognized text label; fall back to number bucket
         self.assertEqual(severity_from_otlp(5, "verbose"), "debug")
 
     def test_ts_from_unix_nano_positive(self):
-        from aegis.log_ingest.writer import ts_from_unix_nano
+        from redsim.log_ingest.writer import ts_from_unix_nano
         ts = ts_from_unix_nano(1_717_248_000_000_000_000)
         self.assertIsNotNone(ts.tzinfo)
         self.assertEqual(ts.year, 2024)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# aegis/audit/chain.py — resolve_writer branches + InMemoryAuditWriter
+# redsim/audit/chain.py — resolve_writer branches + InMemoryAuditWriter
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestResolveWriterBranches(unittest.TestCase):
     """``resolve_writer`` is the single audit-writer selector (the old
-    ``aegis.audit.writers.open_writer`` duplicate was folded in)."""
+    ``redsim.audit.writers.open_writer`` duplicate was folded in)."""
 
     def _clean_env(self):
         return {k: v for k, v in os.environ.items()
-                if k not in ("AEGIS_DB_URL", "AEGIS_TEST_AUDIT")}
+                if k not in ("REDSIM_DB_URL", "REDSIM_TEST_AUDIT")}
 
     def test_offline_returns_jsonl_writer(self):
-        from aegis.audit.chain import JsonlAuditWriter, resolve_writer
+        from redsim.audit.chain import JsonlAuditWriter, resolve_writer
         with tempfile.TemporaryDirectory() as tmp, \
              patch.dict(os.environ, self._clean_env(), clear=True):
             writer = resolve_writer(tmp)
@@ -436,7 +436,7 @@ class TestResolveWriterBranches(unittest.TestCase):
 
     def test_config_object_output_dir(self):
         """A config-like object with .output_dir roots the JSONL writer there."""
-        from aegis.audit.chain import JsonlAuditWriter, resolve_writer
+        from redsim.audit.chain import JsonlAuditWriter, resolve_writer
         with tempfile.TemporaryDirectory() as tmp, \
              patch.dict(os.environ, self._clean_env(), clear=True):
             writer = resolve_writer(SimpleNamespace(output_dir=tmp))
@@ -444,24 +444,24 @@ class TestResolveWriterBranches(unittest.TestCase):
         self.assertEqual(writer.directory, Path(tmp) / "audit")
 
     def test_memory_env_returns_in_memory_writer(self):
-        from aegis.audit.chain import InMemoryAuditWriter, resolve_writer
-        with patch.dict(os.environ, {"AEGIS_TEST_AUDIT": "memory"}, clear=False):
+        from redsim.audit.chain import InMemoryAuditWriter, resolve_writer
+        with patch.dict(os.environ, {"REDSIM_TEST_AUDIT": "memory"}, clear=False):
             writer = resolve_writer("/tmp/ignored")
         self.assertIsInstance(writer, InMemoryAuditWriter)
 
     def test_memory_env_takes_precedence_over_db_url(self):
-        """AEGIS_TEST_AUDIT=memory wins even when AEGIS_DB_URL is set."""
-        from aegis.audit.chain import InMemoryAuditWriter, resolve_writer
+        """REDSIM_TEST_AUDIT=memory wins even when REDSIM_DB_URL is set."""
+        from redsim.audit.chain import InMemoryAuditWriter, resolve_writer
         with patch.dict(os.environ,
-                        {"AEGIS_TEST_AUDIT": "memory",
-                         "AEGIS_DB_URL": "postgresql://fake/db"}, clear=False):
+                        {"REDSIM_TEST_AUDIT": "memory",
+                         "REDSIM_DB_URL": "postgresql://fake/db"}, clear=False):
             writer = resolve_writer("/tmp/ignored")
         self.assertIsInstance(writer, InMemoryAuditWriter)
 
 
 class TestInMemoryAuditWriter(unittest.TestCase):
     def _make_writer(self):
-        from aegis.audit.chain import InMemoryAuditWriter
+        from redsim.audit.chain import InMemoryAuditWriter
         return InMemoryAuditWriter()
 
     def test_append_stores_event(self):
@@ -523,14 +523,14 @@ class TestInMemoryAuditWriter(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# aegis/audit/chain.py — cover remaining branches
+# redsim/audit/chain.py — cover remaining branches
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestJsonlAuditWriterSingleFile(unittest.TestCase):
     """JsonlAuditWriter single-file mode (Phase 2/3 compat)."""
 
     def test_single_file_all_chains_in_one_file(self):
-        from aegis.audit.chain import JsonlAuditWriter
+        from redsim.audit.chain import JsonlAuditWriter
         with tempfile.TemporaryDirectory() as tmp:
             writer = JsonlAuditWriter(Path(tmp), single_file="audit.jsonl")
             writer.append(action="a", actor="cli", target=None,
@@ -545,7 +545,7 @@ class TestJsonlAuditWriterSingleFile(unittest.TestCase):
             self.assertEqual(len(lines), 2)
 
     def test_iter_chain_ids(self):
-        from aegis.audit.chain import JsonlAuditWriter
+        from redsim.audit.chain import JsonlAuditWriter
         with tempfile.TemporaryDirectory() as tmp:
             writer = JsonlAuditWriter(Path(tmp))
             writer.append(action="a", actor="c", target=None,
@@ -559,14 +559,14 @@ class TestJsonlAuditWriterSingleFile(unittest.TestCase):
         self.assertIn("project:proj-1", ids)
 
     def test_read_chain_empty_for_unknown(self):
-        from aegis.audit.chain import JsonlAuditWriter
+        from redsim.audit.chain import JsonlAuditWriter
         with tempfile.TemporaryDirectory() as tmp:
             writer = JsonlAuditWriter(Path(tmp))
             result = list(writer.read_chain("nonexistent:chain"))
         self.assertEqual(result, [])
 
     def test_system_chain_id_for_no_run_project(self):
-        from aegis.audit.chain import JsonlAuditWriter
+        from redsim.audit.chain import JsonlAuditWriter
         with tempfile.TemporaryDirectory() as tmp:
             writer = JsonlAuditWriter(Path(tmp))
             writer.append(action="a", actor="c", target=None,
@@ -577,7 +577,7 @@ class TestJsonlAuditWriterSingleFile(unittest.TestCase):
 
     def test_colon_in_chain_id_replaced_on_filesystem(self):
         """Chain IDs with ':' are stored as '__' on the filesystem."""
-        from aegis.audit.chain import JsonlAuditWriter
+        from redsim.audit.chain import JsonlAuditWriter
         with tempfile.TemporaryDirectory() as tmp:
             writer = JsonlAuditWriter(Path(tmp))
             writer.append(action="a", actor="c", target=None,
@@ -590,13 +590,13 @@ class TestJsonlAuditWriterSingleFile(unittest.TestCase):
 
 class TestVerifyChainEmptyAndEdgeCases(unittest.TestCase):
     def test_empty_chain_is_verified(self):
-        from aegis.audit.chain import verify_chain
+        from redsim.audit.chain import verify_chain
         result = verify_chain([])
         self.assertTrue(result.verified)
         self.assertEqual(result.count, 0)
 
     def test_prev_hash_mismatch_detected(self):
-        from aegis.audit.chain import JsonlAuditWriter, verify_chain
+        from redsim.audit.chain import JsonlAuditWriter, verify_chain
         with tempfile.TemporaryDirectory() as tmp:
             writer = JsonlAuditWriter(Path(tmp))
             for i in range(3):
@@ -618,18 +618,18 @@ class TestVerifyChainEmptyAndEdgeCases(unittest.TestCase):
 
 class TestResolveWriter(unittest.TestCase):
     def test_resolve_writer_offline(self):
-        from aegis.audit.chain import JsonlAuditWriter, resolve_writer
+        from redsim.audit.chain import JsonlAuditWriter, resolve_writer
         with tempfile.TemporaryDirectory() as tmp:
-            env = {k: v for k, v in os.environ.items() if k != "AEGIS_DB_URL"}
+            env = {k: v for k, v in os.environ.items() if k != "REDSIM_DB_URL"}
             with patch.dict(os.environ, env, clear=True):
                 writer = resolve_writer(tmp)
         self.assertIsInstance(writer, JsonlAuditWriter)
 
     def test_resolve_writer_with_config_object(self):
-        from aegis.audit.chain import JsonlAuditWriter, resolve_writer
+        from redsim.audit.chain import JsonlAuditWriter, resolve_writer
         with tempfile.TemporaryDirectory() as tmp:
             config = SimpleNamespace(output_dir=tmp)
-            env = {k: v for k, v in os.environ.items() if k != "AEGIS_DB_URL"}
+            env = {k: v for k, v in os.environ.items() if k != "REDSIM_DB_URL"}
             with patch.dict(os.environ, env, clear=True):
                 writer = resolve_writer(config)
         self.assertIsInstance(writer, JsonlAuditWriter)
@@ -637,47 +637,47 @@ class TestResolveWriter(unittest.TestCase):
 
 class TestCanonicalJson(unittest.TestCase):
     def test_excludes_this_hash_field(self):
-        from aegis.audit.chain import canonical_json
+        from redsim.audit.chain import canonical_json
         rec = {"seq": 1, "actor": "a", "this_hash": "abc123"}
         result = json.loads(canonical_json(rec))
         self.assertNotIn("this_hash", result)
         self.assertIn("seq", result)
 
     def test_deterministic_sort(self):
-        from aegis.audit.chain import canonical_json
+        from redsim.audit.chain import canonical_json
         rec1 = {"b": 2, "a": 1}
         rec2 = {"a": 1, "b": 2}
         self.assertEqual(canonical_json(rec1), canonical_json(rec2))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# aegis/report.py — cover remaining branches
+# redsim/report.py — cover remaining branches
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestReportEdgeCases(unittest.TestCase):
     def test_no_findings_still_generates_report(self):
-        from aegis.report import generate_markdown_report
+        from redsim.report import generate_markdown_report
         with tempfile.TemporaryDirectory() as tmp:
             state = _make_run_state(tmp)
             md = generate_markdown_report(state, [])
-        self.assertIn("Aegis Security Assessment Report", md)
+        self.assertIn("Redsim Security Assessment Report", md)
         self.assertIn("**Total Findings:** 0", md)
 
     def test_multiple_targets_resolves_to_multiple(self):
-        from aegis.report import _resolve_target
+        from redsim.report import _resolve_target
         f1 = _make_finding(target="http://a.example.com")
         f2 = _make_finding(target="http://b.example.com")
         self.assertEqual(_resolve_target([f1, f2]), "Multiple targets")
 
     def test_no_targets_resolves_to_unknown(self):
-        from aegis.report import _resolve_target
+        from redsim.report import _resolve_target
         f1 = _make_finding(target=None)
         self.assertEqual(_resolve_target([f1]), "Unknown")
 
     def test_stage_table_rendered_when_present(self):
         import json
 
-        from aegis.report import generate_markdown_report
+        from redsim.report import generate_markdown_report
         with tempfile.TemporaryDirectory() as tmp:
             state = _make_run_state(tmp)
             stage_table = {"stages": [
@@ -693,7 +693,7 @@ class TestReportEdgeCases(unittest.TestCase):
     def test_verify_panel_rendered_when_present(self):
         import json
 
-        from aegis.report import generate_markdown_report
+        from redsim.report import generate_markdown_report
         with tempfile.TemporaryDirectory() as tmp:
             state = _make_run_state(tmp)
             verify_dir = state.run_path / "verify"
@@ -713,7 +713,7 @@ class TestReportEdgeCases(unittest.TestCase):
     def test_evidence_panel_after_rendered(self):
         import json
 
-        from aegis.report import generate_markdown_report
+        from redsim.report import generate_markdown_report
         with tempfile.TemporaryDirectory() as tmp:
             state = _make_run_state(tmp)
             fid = "vuln-test-1"
@@ -736,7 +736,7 @@ class TestReportEdgeCases(unittest.TestCase):
     def test_remediation_log_section_rendered(self):
         import json
 
-        from aegis.report import generate_markdown_report
+        from redsim.report import generate_markdown_report
         with tempfile.TemporaryDirectory() as tmp:
             state = _make_run_state(tmp)
             log_data = [
@@ -750,7 +750,7 @@ class TestReportEdgeCases(unittest.TestCase):
         self.assertIn("patch_commit", md)
 
     def test_save_reports_writes_files(self):
-        from aegis.report import save_reports
+        from redsim.report import save_reports
         with tempfile.TemporaryDirectory() as tmp:
             state = _make_run_state(tmp)
             f = _make_finding()
@@ -763,7 +763,7 @@ class TestReportEdgeCases(unittest.TestCase):
             self.assertIn("findings", data)
 
     def test_save_reports_no_html(self):
-        from aegis.report import save_reports
+        from redsim.report import save_reports
         with tempfile.TemporaryDirectory() as tmp:
             state = _make_run_state(tmp)
             f = _make_finding()
@@ -771,7 +771,7 @@ class TestReportEdgeCases(unittest.TestCase):
         self.assertFalse((state.run_path / "report.html").exists())
 
     def test_generate_html_report_includes_style(self):
-        from aegis.report import generate_html_report
+        from redsim.report import generate_html_report
         with tempfile.TemporaryDirectory() as tmp:
             state = _make_run_state(tmp)
             f = _make_finding()
@@ -781,7 +781,7 @@ class TestReportEdgeCases(unittest.TestCase):
 
     def test_md_to_html_min_code_fence(self):
         """_md_to_html_min converts code fences to <pre><code>."""
-        from aegis.report import _md_to_html_min
+        from redsim.report import _md_to_html_min
         md = "before\n```\nsome code\n```\nafter"
         html = _md_to_html_min(md)
         self.assertIn("<pre><code>", html)
@@ -789,7 +789,7 @@ class TestReportEdgeCases(unittest.TestCase):
 
     def test_md_to_html_min_table(self):
         """_md_to_html_min converts markdown tables to <table>."""
-        from aegis.report import _md_to_html_min
+        from redsim.report import _md_to_html_min
         md = "| A | B |\n|---|---|\n| 1 | 2 |\n"
         html = _md_to_html_min(md)
         self.assertIn("<table>", html)
@@ -797,7 +797,7 @@ class TestReportEdgeCases(unittest.TestCase):
         self.assertIn("<td>", html)
 
     def test_md_to_html_min_headings(self):
-        from aegis.report import _md_to_html_min
+        from redsim.report import _md_to_html_min
         md = "# H1\n## H2\n### H3\n#### H4\n"
         html = _md_to_html_min(md)
         self.assertIn("<h1>", html)
@@ -806,12 +806,12 @@ class TestReportEdgeCases(unittest.TestCase):
         self.assertIn("<h4>", html)
 
     def test_md_to_html_min_hr(self):
-        from aegis.report import _md_to_html_min
+        from redsim.report import _md_to_html_min
         html = _md_to_html_min("---")
         self.assertIn("<hr/>", html)
 
     def test_sort_findings_order(self):
-        from aegis.report import _sort_findings
+        from redsim.report import _sort_findings
         f_low = _make_finding(fid="a", severity="low", title="B")
         f_crit = _make_finding(fid="b", severity="critical", title="A")
         f_high = _make_finding(fid="c", severity="high", title="C")
@@ -820,7 +820,7 @@ class TestReportEdgeCases(unittest.TestCase):
         self.assertEqual(sorted_[-1].severity, "low")
 
     def test_json_report_structure(self):
-        from aegis.report import generate_json_report
+        from redsim.report import generate_json_report
         with tempfile.TemporaryDirectory() as tmp:
             state = _make_run_state(tmp)
             f1 = _make_finding(fid="v1", severity="critical")
@@ -833,7 +833,7 @@ class TestReportEdgeCases(unittest.TestCase):
 
     def test_code_locations_in_report(self):
         """Findings with code_locations produce Vulnerable Code sections."""
-        from aegis.report import generate_markdown_report
+        from redsim.report import generate_markdown_report
         with tempfile.TemporaryDirectory() as tmp:
             state = _make_run_state(tmp)
             f = _make_finding_with_locations()
@@ -843,19 +843,19 @@ class TestReportEdgeCases(unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# aegis/services/targets.py
+# redsim/services/targets.py
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestCreateTarget(unittest.TestCase):
     def _make_audit_writer(self):
-        from aegis.audit.chain import InMemoryAuditWriter
+        from redsim.audit.chain import InMemoryAuditWriter
         return InMemoryAuditWriter()
 
     def test_create_target_calls_authorize_and_db(self):
-        from aegis.services.targets import TargetRecord, create_target
+        from redsim.services.targets import TargetRecord, create_target
 
         # Fake session context manager — patched at the DB session module
-        # (targets.py does a lazy `from aegis.db.session import get_session`)
+        # (targets.py does a lazy `from redsim.db.session import get_session`)
         mock_sess = MagicMock()
 
         @contextmanager
@@ -865,8 +865,8 @@ class TestCreateTarget(unittest.TestCase):
         config = _make_config(target_allowlist=["localhost"])
         writer = self._make_audit_writer()
 
-        with patch("aegis.db.session.get_session", fake_session), \
-             patch("aegis.services.targets.authorize") as mock_auth:
+        with patch("redsim.db.session.get_session", fake_session), \
+             patch("redsim.services.targets.authorize") as mock_auth:
             result = create_target(
                 project_id="proj-1",
                 kind="url",
@@ -892,12 +892,12 @@ class TestCreateTarget(unittest.TestCase):
 
 class TestDeleteTarget(unittest.TestCase):
     def _make_audit_writer(self):
-        from aegis.audit.chain import InMemoryAuditWriter
+        from redsim.audit.chain import InMemoryAuditWriter
         return InMemoryAuditWriter()
 
     def test_delete_target_success(self):
-        from aegis.db.models import Target
-        from aegis.services.targets import delete_target
+        from redsim.db.models import Target
+        from redsim.services.targets import delete_target
 
         mock_target = MagicMock(spec=Target)
         mock_target.project_id = "proj-1"
@@ -915,8 +915,8 @@ class TestDeleteTarget(unittest.TestCase):
         config = _make_config(target_allowlist=["localhost"])
         writer = self._make_audit_writer()
 
-        with patch("aegis.db.session.get_session", fake_session), \
-             patch("aegis.services.targets.authorize") as mock_auth:
+        with patch("redsim.db.session.get_session", fake_session), \
+             patch("redsim.services.targets.authorize") as mock_auth:
             result = delete_target(
                 target_id="target-abc123",
                 actor="cli:alice",
@@ -930,7 +930,7 @@ class TestDeleteTarget(unittest.TestCase):
         self.assertEqual(result, "target-abc123")
 
     def test_delete_target_not_found_raises(self):
-        from aegis.services.targets import delete_target
+        from redsim.services.targets import delete_target
 
         mock_sess = MagicMock()
         mock_sess.get.return_value = None
@@ -942,7 +942,7 @@ class TestDeleteTarget(unittest.TestCase):
         config = _make_config()
         writer = self._make_audit_writer()
 
-        with patch("aegis.db.session.get_session", fake_session):
+        with patch("redsim.db.session.get_session", fake_session):
             with self.assertRaises(LookupError):
                 delete_target(
                     target_id="nonexistent",
@@ -953,8 +953,8 @@ class TestDeleteTarget(unittest.TestCase):
 
     def test_delete_target_missing_on_second_get(self):
         """Target disappears between first and second session.get (race condition)."""
-        from aegis.db.models import Target
-        from aegis.services.targets import delete_target
+        from redsim.db.models import Target
+        from redsim.services.targets import delete_target
 
         mock_target = MagicMock(spec=Target)
         mock_target.project_id = "proj-1"
@@ -979,8 +979,8 @@ class TestDeleteTarget(unittest.TestCase):
         config = _make_config(target_allowlist=["localhost"])
         writer = self._make_audit_writer()
 
-        with patch("aegis.db.session.get_session", fake_session), \
-             patch("aegis.services.targets.authorize"):
+        with patch("redsim.db.session.get_session", fake_session), \
+             patch("redsim.services.targets.authorize"):
             result = delete_target(
                 target_id="target-vanished",
                 actor="cli:alice",
@@ -1002,7 +1002,7 @@ class TestVerifyTargetUnavailable(unittest.TestCase):
     """
 
     def test_unknown_target_raises_lookup_error_first(self):
-        from aegis.services.targets import verify_target
+        from redsim.services.targets import verify_target
 
         mock_sess = MagicMock()
         mock_sess.get.return_value = None
@@ -1014,8 +1014,8 @@ class TestVerifyTargetUnavailable(unittest.TestCase):
         writer.append.assert_not_called()
 
     def test_known_target_raises_unavailable_and_leaves_verified_untouched(self):
-        from aegis.db.models import Target
-        from aegis.services.targets import (
+        from redsim.db.models import Target
+        from redsim.services.targets import (
             TargetVerificationUnavailable,
             verify_target,
         )
@@ -1043,12 +1043,12 @@ class TestVerifyTargetUnavailable(unittest.TestCase):
         mock_sess.flush.assert_not_called()
 
     def test_unavailable_is_a_not_implemented_error(self):
-        from aegis.services.targets import TargetVerificationUnavailable
+        from redsim.services.targets import TargetVerificationUnavailable
         self.assertTrue(issubclass(TargetVerificationUnavailable, NotImplementedError))
 
     def test_legacy_422_error_class_is_gone(self):
         # The old TargetVerificationError ("maps to 422") went with the engine.
-        import aegis.services.targets as targets_mod
+        import redsim.services.targets as targets_mod
         self.assertFalse(hasattr(targets_mod, "TargetVerificationError"))
 
 
@@ -1060,7 +1060,7 @@ class TestLogIngestWriterFlushAutoTrigger(unittest.TestCase):
     """Cover the flush() auto-trigger paths in append() and append_many()."""
 
     def _make_row(self, msg="x"):
-        from aegis.log_ingest.writer import LogIngestRow
+        from redsim.log_ingest.writer import LogIngestRow
         return LogIngestRow(
             ts=datetime.now(timezone.utc),
             severity="info", service="svc", message=msg,
@@ -1068,7 +1068,7 @@ class TestLogIngestWriterFlushAutoTrigger(unittest.TestCase):
 
     def test_append_triggers_flush_when_should(self):
         """append() calls flush() when _should_flush() is True."""
-        from aegis.log_ingest.writer import LogIngestWriter
+        from redsim.log_ingest.writer import LogIngestWriter
         writer = LogIngestWriter()
         with patch.object(writer, "_should_flush", return_value=True), \
              patch.object(writer, "flush") as mock_flush:
@@ -1077,7 +1077,7 @@ class TestLogIngestWriterFlushAutoTrigger(unittest.TestCase):
 
     def test_append_many_triggers_flush_when_should(self):
         """append_many() calls flush() when _should_flush() is True."""
-        from aegis.log_ingest.writer import LogIngestWriter
+        from redsim.log_ingest.writer import LogIngestWriter
         writer = LogIngestWriter()
         with patch.object(writer, "_should_flush", return_value=True), \
              patch.object(writer, "flush") as mock_flush:
@@ -1086,7 +1086,7 @@ class TestLogIngestWriterFlushAutoTrigger(unittest.TestCase):
 
     def test_real_insert_with_mocked_application_log(self):
         """_insert builds ApplicationLog objects and calls add_all + commit."""
-        from aegis.log_ingest.writer import LogIngestRow, LogIngestWriter
+        from redsim.log_ingest.writer import LogIngestRow, LogIngestWriter
 
         mock_sess = MagicMock()
 
@@ -1102,7 +1102,7 @@ class TestLogIngestWriterFlushAutoTrigger(unittest.TestCase):
         ]
         # Patch ApplicationLog where _insert imports it from
         with patch.dict(sys.modules, {
-            "aegis.db.models": MagicMock(ApplicationLog=fake_log_cls)
+            "redsim.db.models": MagicMock(ApplicationLog=fake_log_cls)
         }):
             n = writer._insert(rows)
         # ApplicationLog was instantiated once, add_all + commit called
@@ -1115,7 +1115,7 @@ class TestAuditChainBlankLineHandling(unittest.TestCase):
     """Cover the blank-line `continue` branch in _last() (line 150)."""
 
     def test_blank_lines_in_chain_file_are_skipped(self):
-        from aegis.audit.chain import JsonlAuditWriter
+        from redsim.audit.chain import JsonlAuditWriter
         with tempfile.TemporaryDirectory() as tmp:
             writer = JsonlAuditWriter(Path(tmp))
             writer.append(action="a", actor="c", target=None,
@@ -1136,13 +1136,13 @@ class TestAuditChainBlankLineHandling(unittest.TestCase):
 
 
 class TestResolveWriterDbUrlBranch(unittest.TestCase):
-    """Cover resolve_writer when AEGIS_DB_URL is set (lines 381-383)."""
+    """Cover resolve_writer when REDSIM_DB_URL is set (lines 381-383)."""
 
     def test_resolve_writer_with_db_url(self):
-        from aegis.audit.chain import PostgresAuditWriter, resolve_writer
-        with patch("aegis.db.session.init_engine") as mock_init, \
-             patch("aegis.db.session.get_session", MagicMock()), \
-             patch.dict(os.environ, {"AEGIS_DB_URL": "postgresql://fake/db"},
+        from redsim.audit.chain import PostgresAuditWriter, resolve_writer
+        with patch("redsim.db.session.init_engine") as mock_init, \
+             patch("redsim.db.session.get_session", MagicMock()), \
+             patch.dict(os.environ, {"REDSIM_DB_URL": "postgresql://fake/db"},
                         clear=False):
             writer = resolve_writer("/tmp/some/dir")
         mock_init.assert_called_once_with("postgresql://fake/db")
@@ -1156,7 +1156,7 @@ class TestPostgresAuditWriter(unittest.TestCase):
     """
 
     def _make_writer(self):
-        from aegis.audit.chain import PostgresAuditWriter
+        from redsim.audit.chain import PostgresAuditWriter
         mock_sess = MagicMock()
         # scalar_one_or_none returns None → triggers new head creation path
         mock_sess.execute.return_value.scalar_one_or_none.return_value = None
@@ -1188,20 +1188,20 @@ class TestPostgresAuditWriter(unittest.TestCase):
         return chain_head_cls, chain_head_instance, ae_model_cls, select_mock
 
     def test_chain_id_run(self):
-        from aegis.audit.chain import _chain_id
+        from redsim.audit.chain import _chain_id
         self.assertEqual(_chain_id(None, "r1"), "run:r1")
 
     def test_chain_id_project(self):
-        from aegis.audit.chain import _chain_id
+        from redsim.audit.chain import _chain_id
         self.assertEqual(_chain_id("proj-1", None), "project:proj-1")
 
     def test_chain_id_system(self):
-        from aegis.audit.chain import _chain_id
+        from redsim.audit.chain import _chain_id
         self.assertEqual(_chain_id(None, None), "system")
 
     def test_append_new_head(self):
         """append() with no existing head creates a new AuditChainHead row."""
-        from aegis.audit.chain import AuditEvent, PostgresAuditWriter
+        from redsim.audit.chain import AuditEvent, PostgresAuditWriter
 
         chain_head_cls, chain_head_inst, ae_model_cls, _ = self._mock_models()
 
@@ -1221,7 +1221,7 @@ class TestPostgresAuditWriter(unittest.TestCase):
         fake_sqlalchemy.select = MagicMock(return_value=MagicMock())
 
         with patch.dict(sys.modules, {
-            "aegis.db.models": fake_models,
+            "redsim.db.models": fake_models,
             "sqlalchemy": fake_sqlalchemy,
         }):
             event = writer.append(
@@ -1240,7 +1240,7 @@ class TestPostgresAuditWriter(unittest.TestCase):
 
     def test_append_existing_head(self):
         """append() with existing head increments seq from head.head_seq."""
-        from aegis.audit.chain import AuditEvent, PostgresAuditWriter
+        from redsim.audit.chain import AuditEvent, PostgresAuditWriter
 
         existing_head = MagicMock()
         existing_head.head_seq = 3
@@ -1266,7 +1266,7 @@ class TestPostgresAuditWriter(unittest.TestCase):
         fake_sqlalchemy.select = MagicMock(return_value=MagicMock())
 
         with patch.dict(sys.modules, {
-            "aegis.db.models": fake_models,
+            "redsim.db.models": fake_models,
             "sqlalchemy": fake_sqlalchemy,
         }):
             event = writer.append(
@@ -1285,7 +1285,7 @@ class TestPostgresAuditWriter(unittest.TestCase):
 
     def test_read_chain_returns_records(self):
         """read_chain() iterates over ORM rows and yields dicts."""
-        from aegis.audit.chain import PostgresAuditWriter
+        from redsim.audit.chain import PostgresAuditWriter
 
         # Create a fake ORM row
         fake_row = MagicMock()
@@ -1319,7 +1319,7 @@ class TestPostgresAuditWriter(unittest.TestCase):
         fake_sqlalchemy = MagicMock()
 
         with patch.dict(sys.modules, {
-            "aegis.db.models": fake_models,
+            "redsim.db.models": fake_models,
             "sqlalchemy": fake_sqlalchemy,
         }):
             records = list(writer.read_chain("run:r1"))
@@ -1331,7 +1331,7 @@ class TestPostgresAuditWriter(unittest.TestCase):
 
     def test_read_chain_with_no_prev_hash(self):
         """read_chain() handles prev_hash=None correctly."""
-        from aegis.audit.chain import PostgresAuditWriter
+        from redsim.audit.chain import PostgresAuditWriter
 
         fake_row = MagicMock()
         fake_row.chain_id = "system"
@@ -1360,7 +1360,7 @@ class TestPostgresAuditWriter(unittest.TestCase):
         writer = PostgresAuditWriter(session_factory=fake_factory)
 
         with patch.dict(sys.modules, {
-            "aegis.db.models": MagicMock(),
+            "redsim.db.models": MagicMock(),
             "sqlalchemy": MagicMock(),
         }):
             records = list(writer.read_chain("system"))
@@ -1369,7 +1369,7 @@ class TestPostgresAuditWriter(unittest.TestCase):
 
     def test_iter_chain_ids(self):
         """iter_chain_ids() yields chain_id strings from AuditChainHead."""
-        from aegis.audit.chain import PostgresAuditWriter
+        from redsim.audit.chain import PostgresAuditWriter
 
         mock_sess = MagicMock()
         mock_sess.execute.return_value.scalars.return_value = iter(["run:r1", "system"])
@@ -1382,7 +1382,7 @@ class TestPostgresAuditWriter(unittest.TestCase):
 
         fake_chain_head_cls = MagicMock()
         with patch.dict(sys.modules, {
-            "aegis.db.models": MagicMock(AuditChainHead=fake_chain_head_cls),
+            "redsim.db.models": MagicMock(AuditChainHead=fake_chain_head_cls),
             "sqlalchemy": MagicMock(),
         }):
             ids = list(writer.iter_chain_ids())

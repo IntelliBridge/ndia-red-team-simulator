@@ -8,16 +8,16 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.postgres
-    image: aegis-postgres:dev
+    image: redsim-postgres:dev
     environment:
-      POSTGRES_USER: aegis
-      POSTGRES_PASSWORD: aegis
-      POSTGRES_DB: aegis
+      POSTGRES_USER: redsim
+      POSTGRES_PASSWORD: redsim
+      POSTGRES_DB: redsim
     ports: ["5432:5432"]
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U aegis"]
+      test: ["CMD-SHELL", "pg_isready -U redsim"]
       interval: 5s
       retries: 10
 
@@ -36,23 +36,23 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: admin
     ports: ["8080:8080"]
     volumes:
-      - ./keycloak/realm-export.json:/opt/keycloak/data/import/aegis-realm.json:ro
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/redsim-realm.json:ro
 
   minio:
     image: quay.io/minio/minio:latest
     command: server /data --console-address ":9001"
     # MinIO S3 port mapped to 9100 on the host because 9000 conflicts with
     # other tools (Portainer, llama.cpp, etc.). Container-internal 9000 is
-    # unchanged so AEGIS_S3_ENDPOINT=http://minio:9000 still works.
+    # unchanged so REDSIM_S3_ENDPOINT=http://minio:9000 still works.
     ports: ["9100:9000", "9101:9001"]
     environment:
-      MINIO_ROOT_USER: aegis
-      MINIO_ROOT_PASSWORD: aegis-secret
+      MINIO_ROOT_USER: redsim
+      MINIO_ROOT_PASSWORD: redsim-secret
     volumes:
       - minio-data:/data
 
-  aegis-api:
-    image: aegis-api:dev
+  redsim-api:
+    image: redsim-api:dev
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
@@ -61,49 +61,49 @@ services:
       redis: { condition: service_healthy }
       minio: { condition: service_started }
     environment:
-      AEGIS_ENV: dev
-      AEGIS_AUTH_MODE: dev
-      AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@postgres:5432/aegis
-      AEGIS_BROKER_URL: redis://redis:6379/0
-      AEGIS_RESULT_BACKEND: redis://redis:6379/1
-      AEGIS_BLOB_BACKEND: s3
-      AEGIS_S3_ENDPOINT: http://minio:9000
-      AEGIS_S3_BUCKET: aegis
-      AEGIS_S3_ACCESS_KEY_ID: aegis
-      AEGIS_S3_SECRET_ACCESS_KEY: aegis-secret
-      AEGIS_CORS_ORIGINS: http://localhost:3300
-      AEGIS_OIDC_ISSUER: http://keycloak:8080/realms/aegis
-      AEGIS_OIDC_JWKS_URL: http://keycloak:8080/realms/aegis/protocol/openid-connect/certs
+      REDSIM_ENV: dev
+      REDSIM_AUTH_MODE: dev
+      REDSIM_DB_URL: postgresql+psycopg://redsim:redsim@postgres:5432/redsim
+      REDSIM_BROKER_URL: redis://redis:6379/0
+      REDSIM_RESULT_BACKEND: redis://redis:6379/1
+      REDSIM_BLOB_BACKEND: s3
+      REDSIM_S3_ENDPOINT: http://minio:9000
+      REDSIM_S3_BUCKET: redsim
+      REDSIM_S3_ACCESS_KEY_ID: redsim
+      REDSIM_S3_SECRET_ACCESS_KEY: redsim-secret
+      REDSIM_CORS_ORIGINS: http://localhost:3300
+      REDSIM_OIDC_ISSUER: http://keycloak:8080/realms/redsim
+      REDSIM_OIDC_JWKS_URL: http://keycloak:8080/realms/redsim/protocol/openid-connect/certs
     ports: ["8000:8000"]
 
   # Long-running attack/explain/verify work (-Q scans).
-  aegis-worker:
-    image: aegis-worker:dev
+  redsim-worker:
+    image: redsim-worker:dev
     build:
       context: ..
       dockerfile: deploy/Dockerfile.worker
-    command: ["celery", "-A", "aegis.workers.celery_app", "worker", "-Q", "scans", "--loglevel=info"]
+    command: ["celery", "-A", "redsim.workers.celery_app", "worker", "-Q", "scans", "--loglevel=info"]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
     environment: &worker-env
-      AEGIS_ENV: dev
-      AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@postgres:5432/aegis
-      AEGIS_BROKER_URL: redis://redis:6379/0
-      AEGIS_RESULT_BACKEND: redis://redis:6379/1
-      AEGIS_BLOB_BACKEND: s3
-      AEGIS_S3_ENDPOINT: http://minio:9000
-      AEGIS_S3_BUCKET: aegis
-      AEGIS_S3_ACCESS_KEY_ID: aegis
-      AEGIS_S3_SECRET_ACCESS_KEY: aegis-secret
-      AEGIS_DISABLE_LLM: "1"
+      REDSIM_ENV: dev
+      REDSIM_DB_URL: postgresql+psycopg://redsim:redsim@postgres:5432/redsim
+      REDSIM_BROKER_URL: redis://redis:6379/0
+      REDSIM_RESULT_BACKEND: redis://redis:6379/1
+      REDSIM_BLOB_BACKEND: s3
+      REDSIM_S3_ENDPOINT: http://minio:9000
+      REDSIM_S3_BUCKET: redsim
+      REDSIM_S3_ACCESS_KEY_ID: redsim
+      REDSIM_S3_SECRET_ACCESS_KEY: redsim-secret
+      REDSIM_DISABLE_LLM: "1"
 
   # Fast bookkeeping (-Q default): report rendering, the stale-job reaper,
   # tenant reconciliation, and WORM export. Kept off the scans pool so long scans can't
   # starve it. Reuses the worker image + env via the &worker-env anchor.
-  aegis-worker-default:
-    image: aegis-worker:dev
-    command: ["celery", "-A", "aegis.workers.celery_app", "worker", "-Q", "default", "--loglevel=info"]
+  redsim-worker-default:
+    image: redsim-worker:dev
+    command: ["celery", "-A", "redsim.workers.celery_app", "worker", "-Q", "default", "--loglevel=info"]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -111,50 +111,50 @@ services:
 
   # Beat scheduler: the only process that fires app.conf.beat_schedule (the
   # stale-job reaper, every 5 min). Without it the reaper never runs.
-  aegis-beat:
-    image: aegis-worker:dev
-    command: ["celery", "-A", "aegis.workers.celery_app", "beat", "--loglevel=info"]
+  redsim-beat:
+    image: redsim-worker:dev
+    command: ["celery", "-A", "redsim.workers.celery_app", "beat", "--loglevel=info"]
     depends_on:
       redis: { condition: service_healthy }
     environment: *worker-env
 
-  aegis-web:
-    image: aegis-web:dev
+  redsim-web:
+    image: redsim-web:dev
     build:
       context: ..
       dockerfile: deploy/Dockerfile.web
-    depends_on: [aegis-api]
+    depends_on: [redsim-api]
     # Host port :3300 avoids the macOS collision where another local dev
     # server commonly grabs :3000. Container-internal stays :3000 so the
     # Next.js process is unchanged.
     ports: ["3300:3000"]
     environment:
-      NEXT_PUBLIC_AEGIS_API_URL: http://localhost:8000
+      NEXT_PUBLIC_REDSIM_API_URL: http://localhost:8000
       NEXTAUTH_URL: http://localhost:3300
       NEXTAUTH_SECRET: dev-secret-change-me
 
   # ----- Always-on Postgres log mirror (F20c) ------------------------------
-  # The aegis-log-ingest sidecar receives OTLP/Logs (under the obs profile)
+  # The redsim-log-ingest sidecar receives OTLP/Logs (under the obs profile)
   # and/or direct JSON batches from the API + worker (default profile) and
   # writes them to application_logs. SELECT * FROM application_logs WHERE
   # run_id='...' returns the full trace without needing Loki or
   # Elasticsearch up.
-  aegis-log-ingest:
-    image: aegis-log-ingest:dev
+  redsim-log-ingest:
+    image: redsim-log-ingest:dev
     build:
       context: ..
       dockerfile: deploy/Dockerfile.log_ingest
     depends_on:
       postgres: { condition: service_healthy }
     environment:
-      AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@postgres:5432/aegis
+      REDSIM_DB_URL: postgresql+psycopg://redsim:redsim@postgres:5432/redsim
     ports: ["4319:4319"]
 
   # ----- policy profile: external OPA policy engine ------------------------
   # Opt-in (non-default) policy decision point for the role gate. Bring it
   # up with `docker compose --profile policy up opa`, mount the example
-  # Rego, then run the API/worker with AEGIS_POLICY_ENGINE=opa and
-  # AEGIS_OPA_URL=http://opa:8181. The default `docker compose up` is
+  # Rego, then run the API/worker with REDSIM_POLICY_ENGINE=opa and
+  # REDSIM_OPA_URL=http://opa:8181. The default `docker compose up` is
   # unchanged — without the profile this service never starts.
   opa:
     image: openpolicyagent/opa:0.66.0
@@ -170,7 +170,7 @@ services:
     image: otel/opentelemetry-collector-contrib:0.108.0
     profiles: ["obs"]
     depends_on:
-      aegis-log-ingest: { condition: service_started }
+      redsim-log-ingest: { condition: service_started }
       loki: { condition: service_started }
     volumes:
       - ./otel/config.yaml:/etc/otelcol-contrib/config.yaml:ro

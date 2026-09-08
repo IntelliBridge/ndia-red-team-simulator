@@ -1,4 +1,4 @@
-"""Fernet round-trip + key handling for ``aegis.security_utils.secrets``.
+"""Fernet round-trip + key handling for ``redsim.security_utils.secrets``.
 
 The encryption seam under the authenticated-DAST auth profiles: a
 missing key must fail closed (no plaintext fallback) and key/secret
@@ -17,7 +17,7 @@ pytest.importorskip("cryptography")
 
 from cryptography.fernet import Fernet, InvalidToken
 
-from aegis.security_utils.secrets import (
+from redsim.security_utils.secrets import (
     AuthProfilesKeyError,
     decrypt_secret,
     encrypt_secret,
@@ -26,12 +26,12 @@ from aegis.security_utils.secrets import (
 
 def _key_env(key: str | None, previous: str | None = None) -> mock._patch_dict:
     env = dict(os.environ)
-    env.pop("AEGIS_AUTH_PROFILES_KEY", None)
-    env.pop("AEGIS_AUTH_PROFILES_KEY_PREVIOUS", None)
+    env.pop("REDSIM_AUTH_PROFILES_KEY", None)
+    env.pop("REDSIM_AUTH_PROFILES_KEY_PREVIOUS", None)
     if key is not None:
-        env["AEGIS_AUTH_PROFILES_KEY"] = key
+        env["REDSIM_AUTH_PROFILES_KEY"] = key
     if previous is not None:
-        env["AEGIS_AUTH_PROFILES_KEY_PREVIOUS"] = previous
+        env["REDSIM_AUTH_PROFILES_KEY_PREVIOUS"] = previous
     return mock.patch.dict(os.environ, env, clear=True)
 
 
@@ -68,7 +68,7 @@ class TestFernetRoundTrip(unittest.TestCase):
 class TestKeyRotationOverlap(unittest.TestCase):
     """C1: MultiFernet decrypt-after-rotation.
 
-    When ``AEGIS_AUTH_PROFILES_KEY_PREVIOUS`` is set, ciphertext written
+    When ``REDSIM_AUTH_PROFILES_KEY_PREVIOUS`` is set, ciphertext written
     under the old key keeps decrypting after the current key rotates,
     while new ciphertext is written under the current key.
     """
@@ -119,7 +119,7 @@ class TestKeyRotationOverlap(unittest.TestCase):
             with self.assertRaises(AuthProfilesKeyError) as ctx:
                 encrypt_secret("s3cret")
         message = str(ctx.exception)
-        self.assertIn("AEGIS_AUTH_PROFILES_KEY_PREVIOUS", message)
+        self.assertIn("REDSIM_AUTH_PROFILES_KEY_PREVIOUS", message)
         self.assertNotIn("not-a-fernet-key", message)
         self.assertNotIn("s3cret", message)
 
@@ -130,7 +130,7 @@ class TestMissingOrInvalidKey(unittest.TestCase):
             with self.assertRaises(AuthProfilesKeyError) as ctx:
                 encrypt_secret("s3cret")
         message = str(ctx.exception)
-        self.assertIn("AEGIS_AUTH_PROFILES_KEY", message)
+        self.assertIn("REDSIM_AUTH_PROFILES_KEY", message)
         # No secret material in the error.
         self.assertNotIn("s3cret", message)
 

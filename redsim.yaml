@@ -1,0 +1,20 @@
+# ===========================================================
+# Redsim — Adversarial-ML Red-Team Simulator — Default Configuration
+# ===========================================================
+# Keys for the removed pentest engines (Strix / CAI / MCP-Kali / vuln-fixer,
+# demo target packs, PR opening) are gone; see redsim/config.py for the full
+# list of supported keys and their env-var overrides.
+
+# Directory where Redsim writes scan results, reports, etc.
+output_dir: "./redsim_output"
+
+# LLM model identifier used by the orchestrator.
+# Doctor derives the required API key from this (Gemini, OpenAI, Anthropic, ...).
+model: "gemini/gemini-2.5-flash"
+
+# Only these targets are permitted for active scanning.
+# Add entries here to authorise additional hosts/IPs.
+target_allowlist:
+  - "127.0.0.1"
+  - "localhost"
+  - "host.docker.internal"

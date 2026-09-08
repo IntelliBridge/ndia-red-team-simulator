@@ -1,13 +1,13 @@
 # OpenTelemetry Collector — obs profile config.
 #
-# Aegis services emit OTLP/Logs (+ traces) to this Collector. Logs fan
+# Redsim services emit OTLP/Logs (+ traces) to this Collector. Logs fan
 # out to:
 #   - Loki                 (logs/loki pipeline; always when obs is up)
-#   - aegis-log-ingest     (logs/aegis-ingest pipeline; the Postgres mirror)
+#   - redsim-log-ingest     (logs/redsim-ingest pipeline; the Postgres mirror)
 #   - Elasticsearch        (logs/elasticsearch pipeline; obs-search only)
 #
-# Traces go to Jaeger. The Postgres mirror path (`otlphttp/aegis-ingest`)
-# posts to the in-tree aegis-log-ingest service which decodes the
+# Traces go to Jaeger. The Postgres mirror path (`otlphttp/redsim-ingest`)
+# posts to the in-tree redsim-log-ingest service which decodes the
 # OTLP-JSON envelope and writes batched inserts to application_logs.
 #
 # Security pipeline (logs/security): host/OS audit sources — filelog
@@ -16,7 +16,7 @@
 # secret-like attribute values, and `transform/redact_body` scrubs secrets
 # from the raw log `body` (where host log lines actually land). Then `filter`
 # denoises and the records fan out to the Postgres mirror
-# (otlphttp/aegis-ingest) and Loki. Both redaction stages run before batch/export.
+# (otlphttp/redsim-ingest) and Loki. Both redaction stages run before batch/export.
 
 receivers:
   otlp:
@@ -119,9 +119,9 @@ processors:
 exporters:
   loki:
     endpoint: http://loki:3100/loki/api/v1/push
-  otlphttp/aegis-ingest:
-    # aegis-log-ingest mounts its OTLP/Logs JSON endpoint at /v1/logs.
-    endpoint: http://aegis-log-ingest:4319
+  otlphttp/redsim-ingest:
+    # redsim-log-ingest mounts its OTLP/Logs JSON endpoint at /v1/logs.
+    endpoint: http://redsim-log-ingest:4319
   otlp/jaeger:
     endpoint: jaeger:4317
     tls:
@@ -131,7 +131,7 @@ exporters:
   # Collector is permissive about unused exporters).
   # elasticsearch:
   #   endpoints: ["http://elasticsearch:9200"]
-  #   logs_index: "aegis-logs"
+  #   logs_index: "redsim-logs"
 
 # --- forward-looking security components (NOT in the vendored distro) ---
 # osquery (endpoint/host telemetry receiver) and isolationforest (ML
@@ -154,10 +154,10 @@ service:
       receivers: [otlp]
       processors: [memory_limiter, batch]
       exporters: [loki]
-    logs/aegis-ingest:
+    logs/redsim-ingest:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlphttp/aegis-ingest]
+      exporters: [otlphttp/redsim-ingest]
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
@@ -166,7 +166,7 @@ service:
     logs/security:
       receivers: [filelog, journald, syslog, k8sobjects]
       processors: [memory_limiter, redaction, transform/redact_body, filter, batch]
-      exporters: [otlphttp/aegis-ingest, loki]
+      exporters: [otlphttp/redsim-ingest, loki]
   telemetry:
     logs:
       level: info

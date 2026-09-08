@@ -5,7 +5,7 @@ row-immutability trigger only exists once ``alembic upgrade head`` has run
 against a real Postgres, so these run in the CI ``coverage`` /
 ``api-integration`` jobs and skip on the offline unit path.
 
-The trigger fires for everyone — including the CI superuser ``aegis`` — so
+The trigger fires for everyone — including the CI superuser ``redsim`` — so
 this exercises the *enforcement* without needing the deploy-time role split.
 """
 
@@ -15,22 +15,22 @@ import os
 import unittest
 from uuid import uuid4
 
-# NB: sqlalchemy / aegis.db imports are deferred into the methods below. The
+# NB: sqlalchemy / redsim.db imports are deferred into the methods below. The
 # offline unit CI job installs without the api/worker extras (no sqlalchemy),
 # and a module-level import would fail at *collection* time — the class-level
 # skipUnless only guards execution. Mirror tests/test_state_pg_coverage.py.
 
-AEGIS_DB = os.environ.get("AEGIS_DB_URL")
+REDSIM_DB = os.environ.get("REDSIM_DB_URL")
 
 
-@unittest.skipUnless(AEGIS_DB, "needs Postgres (AEGIS_DB_URL)")
+@unittest.skipUnless(REDSIM_DB, "needs Postgres (REDSIM_DB_URL)")
 class TestAuditAppendOnly(unittest.TestCase):
     def setUp(self):
-        from aegis.audit.chain import PostgresAuditWriter
-        from aegis.db import session as sess_mod
-        from aegis.db.models import Organization, Project, Run
+        from redsim.audit.chain import PostgresAuditWriter
+        from redsim.db import session as sess_mod
+        from redsim.db.models import Organization, Project, Run
 
-        sess_mod.init_engine(AEGIS_DB)
+        sess_mod.init_engine(REDSIM_DB)
         self.sess_mod = sess_mod
         self.writer = PostgresAuditWriter(session_factory=sess_mod.get_session)
 
@@ -74,7 +74,7 @@ class TestAuditAppendOnly(unittest.TestCase):
     def test_update_delete_truncate_blocked_append_and_verify_ok(self):
         from sqlalchemy.exc import DBAPIError
 
-        from aegis.audit.chain import verify_chain
+        from redsim.audit.chain import verify_chain
 
         ev = self._append("scan.start")
         self.assertEqual(ev.seq, 1)

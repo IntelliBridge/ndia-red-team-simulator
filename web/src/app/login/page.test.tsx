@@ -27,7 +27,7 @@ describe("LoginPage", () => {
   it("renders the Sign in heading and email input with default value", () => {
     render(React.createElement(LoginPage));
     expect(screen.getByRole("heading", { name: "Sign in" })).toBeTruthy();
-    const input = screen.getByDisplayValue("admin@aegis.local");
+    const input = screen.getByDisplayValue("admin@redsim.local");
     expect(input).toBeTruthy();
   });
 
@@ -48,7 +48,7 @@ describe("LoginPage", () => {
       callbackUrl: "/dashboard",
     });
     // The OIDC flow does NOT mint a dev bearer token.
-    expect(localStorage.getItem("aegis_token")).toBeNull();
+    expect(localStorage.getItem("redsim_token")).toBeNull();
   });
 
   it("the Keycloak button becomes disabled after being clicked (busy state)", () => {
@@ -63,17 +63,17 @@ describe("LoginPage", () => {
 
   it("updating the email input changes its displayed value", () => {
     render(React.createElement(LoginPage));
-    const input = screen.getByDisplayValue("admin@aegis.local");
-    fireEvent.change(input, { target: { value: "other@aegis.local" } });
-    expect(screen.getByDisplayValue("other@aegis.local")).toBeTruthy();
+    const input = screen.getByDisplayValue("admin@redsim.local");
+    fireEvent.change(input, { target: { value: "other@redsim.local" } });
+    expect(screen.getByDisplayValue("other@redsim.local")).toBeTruthy();
   });
 
   it("clicking Continue writes both localStorage keys and navigates to /dashboard with default email", () => {
     render(React.createElement(LoginPage));
     const button = screen.getByRole("button", { name: "Continue as dev admin" });
     fireEvent.click(button);
-    expect(localStorage.getItem("aegis_token")).toBe("dev:admin@aegis.local");
-    expect(localStorage.getItem("aegis_email")).toBe("admin@aegis.local");
+    expect(localStorage.getItem("redsim_token")).toBe("dev:admin@redsim.local");
+    expect(localStorage.getItem("redsim_email")).toBe("admin@redsim.local");
     expect(pushMock).toHaveBeenCalledWith("/dashboard");
     expect(pushMock).toHaveBeenCalledTimes(1);
     // The dev path does NOT trigger the OIDC flow.
@@ -82,11 +82,11 @@ describe("LoginPage", () => {
 
   it("clicking Continue uses the updated email when the input was edited", () => {
     render(React.createElement(LoginPage));
-    const input = screen.getByDisplayValue("admin@aegis.local");
-    fireEvent.change(input, { target: { value: "tester@aegis.local" } });
+    const input = screen.getByDisplayValue("admin@redsim.local");
+    fireEvent.change(input, { target: { value: "tester@redsim.local" } });
     fireEvent.click(screen.getByRole("button", { name: "Continue as dev admin" }));
-    expect(localStorage.getItem("aegis_token")).toBe("dev:tester@aegis.local");
-    expect(localStorage.getItem("aegis_email")).toBe("tester@aegis.local");
+    expect(localStorage.getItem("redsim_token")).toBe("dev:tester@redsim.local");
+    expect(localStorage.getItem("redsim_email")).toBe("tester@redsim.local");
     expect(pushMock).toHaveBeenCalledWith("/dashboard");
   });
 

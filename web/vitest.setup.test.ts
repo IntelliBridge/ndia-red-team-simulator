@@ -8,24 +8,24 @@ import { describe, expect, it } from "vitest";
 
 describe("localStorage stub (installed by vitest.setup.ts)", () => {
   it("setItem / getItem roundtrip", () => {
-    localStorage.setItem("aegis_token", "abc");
-    expect(localStorage.getItem("aegis_token")).toBe("abc");
+    localStorage.setItem("redsim_token", "abc");
+    expect(localStorage.getItem("redsim_token")).toBe("abc");
   });
 
   it("length reflects the number of stored keys", () => {
-    localStorage.setItem("aegis_token", "abc");
+    localStorage.setItem("redsim_token", "abc");
     expect(localStorage.length).toBe(1);
   });
 
   it("key(0) returns the first stored key", () => {
-    localStorage.setItem("aegis_token", "abc");
-    expect(localStorage.key(0)).toBe("aegis_token");
+    localStorage.setItem("redsim_token", "abc");
+    expect(localStorage.key(0)).toBe("redsim_token");
   });
 
   it("removeItem deletes the key", () => {
-    localStorage.setItem("aegis_token", "abc");
-    localStorage.removeItem("aegis_token");
-    expect(localStorage.getItem("aegis_token")).toBeNull();
+    localStorage.setItem("redsim_token", "abc");
+    localStorage.removeItem("redsim_token");
+    expect(localStorage.getItem("redsim_token")).toBeNull();
     expect(localStorage.length).toBe(0);
   });
 

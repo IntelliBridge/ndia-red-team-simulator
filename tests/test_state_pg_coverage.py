@@ -1,8 +1,8 @@
 """Postgres-backed state + fs->pg migration coverage.
 
-These exercise the real Postgres paths (``aegis.state.postgres``,
-``aegis.state.factory``, ``aegis.migrate.fs_to_pg``) and so are guarded by
-``AEGIS_DB_URL``: they run in the CI coverage job (which brings up Postgres)
+These exercise the real Postgres paths (``redsim.state.postgres``,
+``redsim.state.factory``, ``redsim.migrate.fs_to_pg``) and so are guarded by
+``REDSIM_DB_URL``: they run in the CI coverage job (which brings up Postgres)
 and skip on the offline unit path, keeping ``pytest -q`` green with no DB.
 
 Isolation: ``PostgresRunState`` tests use a raw Session that is never
@@ -23,11 +23,11 @@ from uuid import uuid4
 
 import pytest
 
-# Postgres-backed (real ``aegis.state.postgres`` / migration paths, gated by
-# AEGIS_DB_URL); excluded from the CI unit job's "not integration" filter.
+# Postgres-backed (real ``redsim.state.postgres`` / migration paths, gated by
+# REDSIM_DB_URL); excluded from the CI unit job's "not integration" filter.
 pytestmark = pytest.mark.integration
 
-AEGIS_DB = os.environ.get("AEGIS_DB_URL")
+REDSIM_DB = os.environ.get("REDSIM_DB_URL")
 
 
 def _finding(scanner_id: str, *, severity: str = "high",
@@ -48,18 +48,18 @@ def _finding(scanner_id: str, *, severity: str = "high",
     }
 
 
-@unittest.skipUnless(AEGIS_DB, "needs Postgres (AEGIS_DB_URL)")
+@unittest.skipUnless(REDSIM_DB, "needs Postgres (REDSIM_DB_URL)")
 class TestPostgresRunState(unittest.TestCase):
     def setUp(self):
-        from aegis.db import session as sess_mod
-        sess_mod.init_engine(AEGIS_DB)
+        from redsim.db import session as sess_mod
+        sess_mod.init_engine(REDSIM_DB)
         self.sess = sess_mod.Session()
         self.addCleanup(self.sess.close)
 
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
-        from aegis.db.models import Organization, Project
+        from redsim.db.models import Organization, Project
         self.org_id = "org-" + uuid4().hex[:8]
         self.project_id = "proj-" + uuid4().hex[:8]
         self.sess.add(Organization(id=self.org_id, name="T", slug=self.org_id))
@@ -69,7 +69,7 @@ class TestPostgresRunState(unittest.TestCase):
         self.sess.flush()
 
     def _state(self, run_id: str | None = None):
-        from aegis.state import PostgresRunState
+        from redsim.state import PostgresRunState
         return PostgresRunState(
             self.sess, run_id=run_id or ("run-" + uuid4().hex[:8]),
             project_id=self.project_id, output_dir=self.tmp,
@@ -77,7 +77,7 @@ class TestPostgresRunState(unittest.TestCase):
         )
 
     def test_init_creates_run_and_is_idempotent(self):
-        from aegis.db.models import Run
+        from redsim.db.models import Run
         rid = "run-" + uuid4().hex[:8]
         self._state(rid)
         self.assertIsNotNone(self.sess.get(Run, rid))
@@ -103,7 +103,7 @@ class TestPostgresRunState(unittest.TestCase):
     def test_save_findings_updates_existing_row(self):
         from sqlalchemy import select
 
-        from aegis.db.models import Finding
+        from redsim.db.models import Finding
         st = self._state()
         st.save_findings([_finding("vuln-1", severity="low", status="open")])
         st.save_findings([_finding("vuln-1", severity="critical", status="fixed")])
@@ -117,7 +117,7 @@ class TestPostgresRunState(unittest.TestCase):
     def test_update_finding_status_by_scanner_id_and_uuid(self):
         from sqlalchemy import select
 
-        from aegis.db.models import Finding
+        from redsim.db.models import Finding
         st = self._state()
         st.save_findings([_finding("vuln-9")])
         row = self.sess.execute(
@@ -149,7 +149,7 @@ class TestPostgresRunState(unittest.TestCase):
     def test_record_artifact_persists_blob_and_row(self):
         from sqlalchemy import select
 
-        from aegis.db.models import Artifact
+        from redsim.db.models import Artifact
         st = self._state()
         ref = st.record_artifact("report", "abc", content_type="text/plain")
         self.assertEqual(ref.size_bytes, 3)
@@ -165,7 +165,7 @@ class TestPostgresRunState(unittest.TestCase):
         # same content must not raise; it returns the existing row's ref.
         from sqlalchemy import select
 
-        from aegis.db.models import Artifact
+        from redsim.db.models import Artifact
         st = self._state()
         ref1 = st.record_artifact("report", "abc", content_type="text/plain")
         ref2 = st.record_artifact("report", "abc", content_type="text/plain")
@@ -180,7 +180,7 @@ class TestPostgresRunState(unittest.TestCase):
     def test_append_remediation_log(self):
         from sqlalchemy import select
 
-        from aegis.db.models import Finding, RemediationAttempt
+        from redsim.db.models import Finding, RemediationAttempt
         st = self._state()
         st.save_findings([_finding("vuln-rem")])
         fid = self.sess.execute(
@@ -201,7 +201,7 @@ class TestPostgresRunState(unittest.TestCase):
         # FK constraint (the H1 bug).
         from sqlalchemy import select
 
-        from aegis.db.models import Finding, RemediationAttempt
+        from redsim.db.models import Finding, RemediationAttempt
         st = self._state()
         st.save_findings([_finding("bumblebee:CVE-1")])
         row = self.sess.execute(
@@ -221,7 +221,7 @@ class TestPostgresRunState(unittest.TestCase):
     def test_append_remediation_log_unknown_finding_is_noop(self):
         from sqlalchemy import select
 
-        from aegis.db.models import RemediationAttempt
+        from redsim.db.models import RemediationAttempt
         st = self._state()
         st.append_remediation_log("does-not-exist", "x", "y", False)
         rows = self.sess.execute(
@@ -231,27 +231,27 @@ class TestPostgresRunState(unittest.TestCase):
         self.assertEqual(rows, [])
 
 
-@unittest.skipUnless(AEGIS_DB, "needs Postgres (AEGIS_DB_URL)")
+@unittest.skipUnless(REDSIM_DB, "needs Postgres (REDSIM_DB_URL)")
 class TestStateFactory(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
     def test_open_run_state_postgres_branch(self):
-        from aegis.config import AegisConfig
-        from aegis.db import session as sess_mod
-        from aegis.db.models import Organization, Project
-        from aegis.state import PostgresRunState, open_run_state
+        from redsim.config import RedsimConfig
+        from redsim.db import session as sess_mod
+        from redsim.db.models import Organization, Project
+        from redsim.state import PostgresRunState, open_run_state
         # open_run_state does not create the project, so commit one first.
-        sess_mod.init_engine(AEGIS_DB)
+        sess_mod.init_engine(REDSIM_DB)
         oid = "org-" + uuid4().hex[:8]
         pid = "proj-" + uuid4().hex[:8]
         with sess_mod.get_session() as s:
             s.add(Organization(id=oid, name="T", slug=oid))
             s.flush()
             s.add(Project(id=pid, org_id=oid, name=pid, slug=pid))
-        cfg = AegisConfig(output_dir=self.tmp)
-        with patch.dict(os.environ, {"AEGIS_DB_URL": AEGIS_DB}):
+        cfg = RedsimConfig(output_dir=self.tmp)
+        with patch.dict(os.environ, {"REDSIM_DB_URL": REDSIM_DB}):
             state = open_run_state(cfg, project_id=pid)
         self.assertIsInstance(state, PostgresRunState)
         # The factory generates a run id when none is passed.
@@ -260,26 +260,26 @@ class TestStateFactory(unittest.TestCase):
         self.addCleanup(state.close)
 
     def test_open_run_state_releases_session_on_init_failure(self):
-        from aegis.config import AegisConfig
-        from aegis.state import open_run_state
-        cfg = AegisConfig(output_dir=self.tmp)
-        with patch.dict(os.environ, {"AEGIS_DB_URL": AEGIS_DB}), \
-                patch("aegis.state.postgres.PostgresRunState",
+        from redsim.config import RedsimConfig
+        from redsim.state import open_run_state
+        cfg = RedsimConfig(output_dir=self.tmp)
+        with patch.dict(os.environ, {"REDSIM_DB_URL": REDSIM_DB}), \
+                patch("redsim.state.postgres.PostgresRunState",
                       side_effect=RuntimeError("boom")):
             with self.assertRaises(RuntimeError):
                 open_run_state(cfg, project_id="default")
 
     def test_open_run_state_filesystem_branch(self):
-        from aegis.config import AegisConfig
-        from aegis.state import FilesystemRunState, open_run_state
-        cfg = AegisConfig(output_dir=self.tmp)
-        env = {k: v for k, v in os.environ.items() if k != "AEGIS_DB_URL"}
+        from redsim.config import RedsimConfig
+        from redsim.state import FilesystemRunState, open_run_state
+        cfg = RedsimConfig(output_dir=self.tmp)
+        env = {k: v for k, v in os.environ.items() if k != "REDSIM_DB_URL"}
         with patch.dict(os.environ, env, clear=True):
             state = open_run_state(cfg, run_id="run-fs")
         self.assertIsInstance(state, FilesystemRunState)
 
 
-@unittest.skipUnless(AEGIS_DB, "needs Postgres (AEGIS_DB_URL)")
+@unittest.skipUnless(REDSIM_DB, "needs Postgres (REDSIM_DB_URL)")
 class TestMigrateFsToPg(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -312,19 +312,19 @@ class TestMigrateFsToPg(unittest.TestCase):
         return rd
 
     def test_no_runs_dir_records_failure(self):
-        from aegis.migrate.fs_to_pg import migrate
+        from redsim.migrate.fs_to_pg import migrate
         empty = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
-        summary = migrate(source_dir=empty, db_url=AEGIS_DB)
+        summary = migrate(source_dir=empty, db_url=REDSIM_DB)
         self.assertTrue(any("no runs dir" in f for f in summary.failures))
 
     def test_dry_run_walks_all_branches_without_writing(self):
-        from aegis.migrate.fs_to_pg import migrate
+        from redsim.migrate.fs_to_pg import migrate
         self._run_dir("dry-" + uuid4().hex[:8], with_findings=True)
-        with patch.dict(os.environ, {"AEGIS_BLOB_FS_PATH": self.blobs}):
+        with patch.dict(os.environ, {"REDSIM_BLOB_FS_PATH": self.blobs}):
             summary = migrate(source_dir=self.tmp,
                               project_id="proj-" + uuid4().hex[:8],
-                              db_url=AEGIS_DB, dry_run=True)
+                              db_url=REDSIM_DB, dry_run=True)
         self.assertEqual(summary.failures, [])
         self.assertEqual(summary.runs_imported, 1)
         self.assertEqual(summary.findings_imported, 1)
@@ -334,7 +334,7 @@ class TestMigrateFsToPg(unittest.TestCase):
         self.assertEqual(summary.audit_events_reanchored, 3)
 
     def test_malformed_inputs_are_tolerated(self):
-        from aegis.migrate.fs_to_pg import migrate
+        from redsim.migrate.fs_to_pg import migrate
         runs = Path(self.tmp) / "runs"
         rd = runs / ("bad-" + uuid4().hex[:8])
         rd.mkdir(parents=True)
@@ -344,31 +344,31 @@ class TestMigrateFsToPg(unittest.TestCase):
         (rd / "stage_table.json").write_text("{not json")
         (rd / "audit.jsonl").write_text("\n{not json\n")
         (rd / "remediation-log.json").write_text("{not json")
-        with patch.dict(os.environ, {"AEGIS_BLOB_FS_PATH": self.blobs}):
+        with patch.dict(os.environ, {"REDSIM_BLOB_FS_PATH": self.blobs}):
             summary = migrate(source_dir=self.tmp,
                               project_id="proj-" + uuid4().hex[:8],
-                              db_url=AEGIS_DB, dry_run=True)
+                              db_url=REDSIM_DB, dry_run=True)
         self.assertEqual(summary.failures, [])
         self.assertEqual(summary.runs_imported, 1)
         self.assertEqual(summary.to_dict()["runs_imported"], 1)
 
     def test_real_import_then_idempotent_rerun(self):
-        from aegis.migrate.fs_to_pg import migrate
+        from redsim.migrate.fs_to_pg import migrate
         run_id = "imp-" + uuid4().hex[:8]
         project_id = "proj-" + uuid4().hex[:8]
         self._run_dir(run_id, with_findings=False)
-        with patch.dict(os.environ, {"AEGIS_BLOB_FS_PATH": self.blobs}):
+        with patch.dict(os.environ, {"REDSIM_BLOB_FS_PATH": self.blobs}):
             first = migrate(source_dir=self.tmp, project_id=project_id,
-                            db_url=AEGIS_DB)
+                            db_url=REDSIM_DB)
         self.assertEqual(first.failures, [])
         self.assertEqual(first.runs_imported, 1)
         self.assertGreaterEqual(first.artifacts_imported, 1)
         self.assertEqual(first.audit_events_reanchored, 3)
 
         # Re-running on the same source is a no-op for the existing run.
-        with patch.dict(os.environ, {"AEGIS_BLOB_FS_PATH": self.blobs}):
+        with patch.dict(os.environ, {"REDSIM_BLOB_FS_PATH": self.blobs}):
             second = migrate(source_dir=self.tmp, project_id=project_id,
-                             db_url=AEGIS_DB)
+                             db_url=REDSIM_DB)
         self.assertEqual(second.runs_imported, 0)
         self.assertGreaterEqual(second.skipped_duplicates, 1)
 

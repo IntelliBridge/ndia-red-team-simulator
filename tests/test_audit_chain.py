@@ -1,12 +1,12 @@
 """Hash-chain integrity tests (filesystem backend; Postgres parity is
-exercised when AEGIS_TEST_DB_URL is set)."""
+exercised when REDSIM_TEST_DB_URL is set)."""
 
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from aegis.audit.chain import (
+from redsim.audit.chain import (
     JsonlAuditWriter,
     verify_chain,
 )

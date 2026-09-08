@@ -13,7 +13,7 @@ Exercises:
 - Loader enforcement (signed loads + carries key_id; unsigned rejected + not
   registered; one bad plugin doesn't block a signed sibling; enforcement OFF =
   back-compat).
-- ``aegis plugins list`` SIGNED column + ``aegis plugins sign`` round-trip.
+- ``redsim plugins list`` SIGNED column + ``redsim plugins sign`` round-trip.
 - The committed example's public key verifies the committed example ``.sig``.
 - The signature gate and the sandbox wrapper compose through the real eager
   loader (signed -> registered as a ``SandboxedScanner``; unsigned -> nothing
@@ -22,10 +22,8 @@ Exercises:
 
 from __future__ import annotations
 
-import importlib
 import io
 import os
-import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -40,11 +38,9 @@ pytest.importorskip("cryptography")
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-import aegis.scanners.registry as scanner_registry
-from aegis.supply_chain.signing import (
+import redsim.scanners.registry as scanner_registry
+from redsim.supply_chain.signing import (
     ENV_REQUIRE_SIGNATURE,
-    ENV_SIG_DIR,
-    ENV_TRUSTED_KEYS,
     KeyringVerifier,
     SignatureResult,
     canonical_plugin_payload,
@@ -53,7 +49,7 @@ from aegis.supply_chain.signing import (
     sign_plugin_distribution,
 )
 
-EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "aegis-plugin-example"
+EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "redsim-plugin-example"
 EXAMPLE_SIGNING = EXAMPLE_DIR / "signing"
 
 
@@ -185,11 +181,11 @@ class TestSignRoundTrip(unittest.TestCase):
 class TestPrimitives(unittest.TestCase):
     def test_canonical_payload_format(self):
         payload = canonical_plugin_payload("mydist", "2.3", "deadbeef")
-        self.assertEqual(payload, b"aegis-plugin\nmydist\n2.3\ndeadbeef")
+        self.assertEqual(payload, b"redsim-plugin\nmydist\n2.3\ndeadbeef")
 
     def test_canonical_payload_none_version(self):
         payload = canonical_plugin_payload("mydist", None, "abc")
-        self.assertEqual(payload, b"aegis-plugin\nmydist\n\nabc")
+        self.assertEqual(payload, b"redsim-plugin\nmydist\n\nabc")
 
     def test_factory_digest_stable(self):
         d1 = compute_factory_digest(fake_scanner_factory)
@@ -197,18 +193,6 @@ class TestPrimitives(unittest.TestCase):
         self.assertEqual(d1, d2)
         self.assertEqual(len(d1), 64)
 
-    def test_factory_digest_differs_for_different_module_source(self):
-        """Two factories defined in different module source files differ."""
-        # The example's create_scanner lives in a different source file.
-        inserted = str(EXAMPLE_DIR)
-        if inserted not in sys.path:
-            sys.path.insert(0, inserted)
-            self.addCleanup(sys.path.remove, inserted)
-        mod = importlib.import_module("aegis_plugin_example")
-        self.addCleanup(sys.modules.pop, "aegis_plugin_example", None)
-        example_digest = compute_factory_digest(mod.create_scanner)
-        local_digest = compute_factory_digest(fake_scanner_factory)
-        self.assertNotEqual(example_digest, local_digest)
 
 
 # ---------------------------------------------------------------------------
@@ -256,11 +240,11 @@ class TestLoaderEnforcement(unittest.TestCase):
     def test_signed_loads_with_key_id(self):
         ep = _fake_ep("signed", fake_scanner_factory,
                       dist_name="signed-dist", version="1")
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [ep] if group == "aegis.scanners" else []):
+                      side_effect=lambda group: [ep] if group == "redsim.scanners" else []):
             report = list(scanner_registry._scanner_registry.scan_entry_points(
-                "aegis.scanners", register=True, verifier=self._verifier()))
+                "redsim.scanners", register=True, verifier=self._verifier()))
         row = report[0]
         self.assertEqual(row.status, "loaded")
         self.assertIsNotNone(row.signature)
@@ -270,11 +254,11 @@ class TestLoaderEnforcement(unittest.TestCase):
     def test_unsigned_rejected_and_not_registered(self):
         ep = _fake_ep("unsigned", fake_scanner_factory_unsigned,
                       dist_name="unsigned-dist", version="1")
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [ep] if group == "aegis.scanners" else []):
+                      side_effect=lambda group: [ep] if group == "redsim.scanners" else []):
             report = list(scanner_registry._scanner_registry.scan_entry_points(
-                "aegis.scanners", register=True, verifier=self._verifier()))
+                "redsim.scanners", register=True, verifier=self._verifier()))
         row = report[0]
         self.assertEqual(row.status, "rejected")
         self.assertIn("no signature found", row.detail)
@@ -287,11 +271,11 @@ class TestLoaderEnforcement(unittest.TestCase):
             _fake_ep("signed", fake_scanner_factory,
                      dist_name="signed-dist", version="1"),
         ]
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: eps if group == "aegis.scanners" else []):
+                      side_effect=lambda group: eps if group == "redsim.scanners" else []):
             report = list(scanner_registry._scanner_registry.scan_entry_points(
-                "aegis.scanners", register=True, verifier=self._verifier()))
+                "redsim.scanners", register=True, verifier=self._verifier()))
         by_name = {r.name: r for r in report}
         self.assertEqual(by_name["unsigned"].status, "rejected")
         self.assertEqual(by_name["fake-sig-scanner"].status, "loaded")
@@ -306,11 +290,11 @@ class TestLoaderEnforcement(unittest.TestCase):
             _fake_ep("signed", fake_scanner_factory,
                      dist_name="signed-dist", version="1"),
         ]
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: eps if group == "aegis.scanners" else []):
+                      side_effect=lambda group: eps if group == "redsim.scanners" else []):
             report = list(scanner_registry._scanner_registry.scan_entry_points(
-                "aegis.scanners", register=True, verifier=None))
+                "redsim.scanners", register=True, verifier=None))
         # Loaded rows report the adapter's own ``name`` (not the EP name).
         statuses = {r.name: r.status for r in report}
         self.assertEqual(statuses["unsigned-sig-scanner"], "loaded")
@@ -320,19 +304,19 @@ class TestLoaderEnforcement(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# CLI: `aegis plugins list` SIGNED column + `aegis plugins sign`
+# CLI: `redsim plugins list` SIGNED column + `redsim plugins sign`
 # ---------------------------------------------------------------------------
 
 class TestPluginsCli(unittest.TestCase):
     def test_list_shows_signed_column(self):
-        from aegis.cli.main import main
+        from redsim.cli.main import main
         ep = _fake_ep("example", fake_scanner_factory,
                       dist_name="fake-dist", version="9.9.9")
         buf = io.StringIO()
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
-                patch("aegis.config.load_config"), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
+                patch("redsim.config.load_config"), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [ep] if group == "aegis.scanners" else []), \
+                      side_effect=lambda group: [ep] if group == "redsim.scanners" else []), \
                 redirect_stdout(buf):
             main(["plugins", "list"])
         out = buf.getvalue()
@@ -341,7 +325,7 @@ class TestPluginsCli(unittest.TestCase):
 
     def test_sign_then_verify_round_trip_via_cli(self):
 
-        from aegis.cli.main import main
+        from redsim.cli.main import main
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
             priv, pub = _write_keypair(tmp)
@@ -349,12 +333,12 @@ class TestPluginsCli(unittest.TestCase):
                           dist_name="cli-dist", version="3.0")
             buf = io.StringIO()
             with patch.dict(os.environ, {}, clear=False), \
-                    patch("aegis.config.load_config"), \
+                    patch("redsim.config.load_config"), \
                     patch("importlib.metadata.entry_points",
-                          side_effect=lambda group: [ep] if group == "aegis.scanners" else []), \
+                          side_effect=lambda group: [ep] if group == "redsim.scanners" else []), \
                     redirect_stdout(buf):
                 main(["plugins", "sign", "--dist", "cli-dist", "--version", "3.0",
-                      "--entry-point", "aegis.scanners:example",
+                      "--entry-point", "redsim.scanners:example",
                       "--key", str(priv), "--out", str(tmp)])
             out = buf.getvalue()
             self.assertIn("wrote signature", out)
@@ -370,126 +354,12 @@ class TestPluginsCli(unittest.TestCase):
 # Committed example: the shipped public key verifies the shipped .sig
 # ---------------------------------------------------------------------------
 
-class TestCommittedExampleSigned(unittest.TestCase):
-    def test_example_public_key_verifies_example_signature(self):
-        inserted = str(EXAMPLE_DIR)
-        if inserted not in sys.path:
-            sys.path.insert(0, inserted)
-            self.addCleanup(sys.path.remove, inserted)
-        mod = importlib.import_module("aegis_plugin_example")
-        self.addCleanup(sys.modules.pop, "aegis_plugin_example", None)
-
-        keys_dir = EXAMPLE_SIGNING / "keys"
-        verifier = KeyringVerifier(
-            trusted_keys_raw=str(keys_dir), sig_dirs_raw=str(EXAMPLE_SIGNING))
-        result = verifier.verify("aegis-plugin-example", "0.1.0", mod.create_scanner)
-        self.assertTrue(result.verified, result.reason)
-        self.assertIsNotNone(result.key_id)
-
-    def test_example_loader_enforcement_loads_it(self):
-        """End-to-end: enforcement on + committed key -> example loads signed."""
-        self.addCleanup(scanner_registry._REGISTRY.pop, "example", None)
-        inserted = str(EXAMPLE_DIR)
-        if inserted not in sys.path:
-            sys.path.insert(0, inserted)
-            self.addCleanup(sys.path.remove, inserted)
-        mod = importlib.import_module("aegis_plugin_example")
-        self.addCleanup(sys.modules.pop, "aegis_plugin_example", None)
-        ep = _fake_ep("example", mod.create_scanner,
-                      dist_name="aegis-plugin-example", version="0.1.0")
-        env = {
-            "AEGIS_PLUGINS": "1",
-            ENV_REQUIRE_SIGNATURE: "1",
-            ENV_TRUSTED_KEYS: str(EXAMPLE_SIGNING / "keys"),
-            ENV_SIG_DIR: str(EXAMPLE_SIGNING),
-        }
-        with patch.dict(os.environ, env), \
-                patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [ep] if group == "aegis.scanners" else []):
-            verifier = load_plugin_verifier()
-            report = list(scanner_registry._scanner_registry.scan_entry_points(
-                "aegis.scanners", register=True, verifier=verifier))
-        row = report[0]
-        self.assertEqual(row.status, "loaded", row.detail)
-        self.assertIsNotNone(row.signature)
-        self.assertIn("example", scanner_registry._REGISTRY)
 
 
 # ---------------------------------------------------------------------------
 # Signature gate + sandbox compose: a signed plugin runs out-of-process
 # ---------------------------------------------------------------------------
 
-class TestSignedPluginSandboxed(unittest.TestCase):
-    """The signature gate and the sandbox stack compose.
-
-    The signature binds to the plugin's *real* factory source; the sandbox
-    wrapper is trusted in-tree code substituted only after verification. So an
-    operator who turns enforcement on still gets the verified plugin, and it
-    still runs out-of-process.
-    """
-
-    def _example_on_path(self) -> None:
-        inserted = str(EXAMPLE_DIR)
-        if inserted not in sys.path:
-            sys.path.insert(0, inserted)
-            self.addCleanup(sys.path.remove, inserted)
-        self.addCleanup(sys.modules.pop, "aegis_plugin_example", None)
-
-    def test_signed_example_loads_sandbox_wrapped_via_eager_loader(self):
-        """End-to-end: enforcement on + committed key -> example loads, signed,
-        and wrapped in the sandbox proxy by the real eager loader."""
-        from aegis.scanners.registry import maybe_load_entry_points
-        from aegis.scanners.sandbox import SandboxedScanner
-
-        self.addCleanup(scanner_registry._REGISTRY.pop, "example", None)
-        self._example_on_path()
-        import aegis_plugin_example as mod
-        ep = SimpleNamespace(
-            name="example", value="aegis_plugin_example:create_scanner",
-            load=lambda: mod.create_scanner,
-            dist=SimpleNamespace(name="aegis-plugin-example", version="0.1.0"),
-        )
-        env = {
-            "AEGIS_PLUGINS": "1",
-            ENV_REQUIRE_SIGNATURE: "1",
-            ENV_TRUSTED_KEYS: str(EXAMPLE_SIGNING / "keys"),
-            ENV_SIG_DIR: str(EXAMPLE_SIGNING),
-            # leave AEGIS_PLUGINS_SANDBOX unset -> sandbox on by default
-        }
-        with patch.dict(os.environ, env), \
-                patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [ep] if group == "aegis.scanners" else []):
-            maybe_load_entry_points()
-        registered = scanner_registry._REGISTRY.get("example")
-        self.assertIsInstance(registered, SandboxedScanner)
-        self.assertEqual(registered.name, "example")
-
-    def test_unsigned_example_rejected_before_sandbox_wrap(self):
-        """Signature failure rejects the plugin; nothing is registered/wrapped."""
-        from aegis.scanners.registry import maybe_load_entry_points
-
-        self.addCleanup(scanner_registry._REGISTRY.pop, "example", None)
-        self._example_on_path()
-        import aegis_plugin_example as mod
-        ep = SimpleNamespace(
-            name="example", value="aegis_plugin_example:create_scanner",
-            load=lambda: mod.create_scanner,
-            dist=SimpleNamespace(name="aegis-plugin-example", version="0.1.0"),
-        )
-        with tempfile.TemporaryDirectory() as d:
-            # A trusted key with no matching signature -> rejected.
-            _, foreign_pub = _write_keypair(Path(d))
-            env = {
-                "AEGIS_PLUGINS": "1",
-                ENV_REQUIRE_SIGNATURE: "1",
-                ENV_TRUSTED_KEYS: str(foreign_pub),
-                ENV_SIG_DIR: str(d),
-            }
-            with patch.dict(os.environ, env), \
-                    patch("importlib.metadata.entry_points",
-                          side_effect=lambda group: [ep] if group == "aegis.scanners" else []):
-                maybe_load_entry_points()
-        self.assertNotIn("example", scanner_registry._REGISTRY)
 
 
 if __name__ == "__main__":

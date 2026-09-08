@@ -3,7 +3,7 @@ import { FindingCard } from "./finding-card";
 
 const meta: Meta<typeof FindingCard> = {
   component: FindingCard,
-  title: "Aegis/FindingCard",
+  title: "Redsim/FindingCard",
   tags: ["autodocs"],
 };
 export default meta;

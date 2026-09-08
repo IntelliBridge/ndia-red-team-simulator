@@ -3,7 +3,7 @@ import { EvidenceDiff } from "./evidence-diff";
 
 const meta: Meta<typeof EvidenceDiff> = {
   component: EvidenceDiff,
-  title: "Aegis/EvidenceDiff",
+  title: "Redsim/EvidenceDiff",
   tags: ["autodocs"],
 };
 export default meta;

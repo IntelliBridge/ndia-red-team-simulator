@@ -15,10 +15,10 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from aegis.config import AegisConfig
-from aegis.db.models import LLMUsage, Organization, Project
-from aegis.llm.budget import DbBudgetChecker
-from aegis.llm.router import BudgetExceeded, route
+from redsim.config import RedsimConfig
+from redsim.db.models import LLMUsage, Organization, Project
+from redsim.llm.budget import DbBudgetChecker
+from redsim.llm.router import BudgetExceeded, route
 from tests.conftest import make_sqlite_session_factory
 
 # DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
@@ -267,7 +267,7 @@ class _FakeOrgChecker:
 
 class TestRouteBudgetGate(unittest.TestCase):
     def setUp(self):
-        self.config = AegisConfig(model="gpt-test")
+        self.config = RedsimConfig(model="gpt-test")
 
     def test_route_raises_when_exhausted(self):
         checker = _FakeChecker(0)
@@ -313,7 +313,7 @@ class TestRouteBudgetGate(unittest.TestCase):
 
 class TestRouteOrgRouting(unittest.TestCase):
     def setUp(self):
-        self.config = AegisConfig(model="gpt-test")
+        self.config = RedsimConfig(model="gpt-test")
 
     def test_org_override_wins_over_config_default(self):
         checker = _FakeOrgChecker(project_remaining=100, org_remaining=100,

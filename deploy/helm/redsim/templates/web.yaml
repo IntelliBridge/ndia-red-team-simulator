@@ -1,0 +1,84 @@
+{{/*
+redsim-web — Next.js 14 UI on :3000. Mirrors the redsim-web service in
+deploy/docker-compose.yml (NEXT_PUBLIC_REDSIM_API_URL / NEXTAUTH_*).
+*/}}
+{{- $component := "web" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "redsim.componentName" (dict "ctx" . "component" $component) }}
+  labels:
+    {{- include "redsim.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "redsim.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "redsim.componentLabels" (dict "ctx" . "component" $component) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "redsim.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: web
+          image: {{ include "redsim.image" (dict "ctx" . "image" .Values.web.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "redsim.containerSecurityContext" (dict "readOnlyRootFilesystem" .Values.web.readOnlyRootFilesystem) | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: NEXT_PUBLIC_REDSIM_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "redsim.configMapName" . }}
+                  key: NEXT_PUBLIC_REDSIM_API_URL
+            - name: NEXTAUTH_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "redsim.configMapName" . }}
+                  key: NEXTAUTH_URL
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "redsim.secretName" . }}
+                  key: NEXTAUTH_SECRET
+          # Next.js serves the app root once the server is listening.
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "redsim.componentName" (dict "ctx" . "component" $component) }}
+  labels:
+    {{- include "redsim.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  type: {{ .Values.web.service.type }}
+  selector:
+    {{- include "redsim.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.web.service.port }}
+      targetPort: http

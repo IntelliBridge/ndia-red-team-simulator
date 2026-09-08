@@ -21,10 +21,10 @@ from unittest.mock import patch
 
 import pytest
 
-from aegis.audit.chain import JsonlAuditWriter, verify_chain
-from aegis.config import AegisConfig
-from aegis.storage.blobs import BlobRef, FilesystemBlobStore
-from aegis.storage.worm import (
+from redsim.audit.chain import JsonlAuditWriter, verify_chain
+from redsim.config import RedsimConfig
+from redsim.storage.blobs import BlobRef, FilesystemBlobStore
+from redsim.storage.worm import (
     WormArchive,
     canonical_jsonl,
     worm_export_enabled,
@@ -80,10 +80,10 @@ class TestEnvHelpers(unittest.TestCase):
 
     def test_export_enabled_truthy_variants(self):
         for val in ("1", "true", "YES", "on"):
-            with patch.dict("os.environ", {"AEGIS_WORM_EXPORT": val}, clear=True):
+            with patch.dict("os.environ", {"REDSIM_WORM_EXPORT": val}, clear=True):
                 self.assertTrue(worm_export_enabled())
         for val in ("0", "false", "", "no"):
-            with patch.dict("os.environ", {"AEGIS_WORM_EXPORT": val}, clear=True):
+            with patch.dict("os.environ", {"REDSIM_WORM_EXPORT": val}, clear=True):
                 self.assertFalse(worm_export_enabled())
         with patch.dict("os.environ", {}, clear=True):
             self.assertFalse(worm_export_enabled())  # default off
@@ -91,9 +91,9 @@ class TestEnvHelpers(unittest.TestCase):
     def test_interval_default_and_override_and_bad_value(self):
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(worm_export_interval(), 86400)
-        with patch.dict("os.environ", {"AEGIS_WORM_INTERVAL": "3600"}, clear=True):
+        with patch.dict("os.environ", {"REDSIM_WORM_INTERVAL": "3600"}, clear=True):
             self.assertEqual(worm_export_interval(), 3600)
-        with patch.dict("os.environ", {"AEGIS_WORM_INTERVAL": "nope"}, clear=True):
+        with patch.dict("os.environ", {"REDSIM_WORM_INTERVAL": "nope"}, clear=True):
             self.assertEqual(worm_export_interval(), 86400)  # falls back
 
 
@@ -123,7 +123,7 @@ class TestCanonicalJsonlAndManifest(unittest.TestCase):
             events = list(writer.read_chain("run:run-1"))
             store = _FakeStore()
             archive = WormArchive(store, retention_days=10, lock_mode="COMPLIANCE",
-                                  bucket="aegis-worm")
+                                  bucket="redsim-worm")
             ref = archive.archive_chain("run:run-1", events, verified=True)
             self.assertIsNotNone(ref)
             # two objects: jsonl + manifest
@@ -233,26 +233,26 @@ class TestS3ObjectLock(unittest.TestCase):
             self.skipTest("moto not installed")
         import boto3
 
-        from aegis.storage.s3 import S3BlobStore
+        from redsim.storage.s3 import S3BlobStore
 
         with mock_aws(), tempfile.TemporaryDirectory() as tmp:
             client = boto3.client("s3", region_name="us-east-1")
-            client.create_bucket(Bucket="aegis-worm",
+            client.create_bucket(Bucket="redsim-worm",
                                  ObjectLockEnabledForBucket=True)
 
             writer = JsonlAuditWriter(Path(tmp))
             _seed_chain(writer)
             events = list(writer.read_chain("run:run-1"))
 
-            store = S3BlobStore(bucket="aegis-worm")
+            store = S3BlobStore(bucket="redsim-worm")
             archive = WormArchive(store, retention_days=7, lock_mode="COMPLIANCE",
-                                  bucket="aegis-worm")
+                                  bucket="redsim-worm")
             ref = archive.archive_chain("run:run-1", events, verified=True)
             self.assertIsNotNone(ref)
 
             # The JSONL object carries Object Lock retention metadata.
             s3_key = ref.location.split("/", 3)[3]
-            head = client.head_object(Bucket="aegis-worm", Key=s3_key)
+            head = client.head_object(Bucket="redsim-worm", Key=s3_key)
             self.assertEqual(head["ObjectLockMode"], "COMPLIANCE")
             self.assertIn("ObjectLockRetainUntilDate", head)
 
@@ -268,7 +268,7 @@ class TestS3ObjectLock(unittest.TestCase):
             self.skipTest("moto not installed")
         import boto3
 
-        from aegis.storage.s3 import S3BlobStore
+        from redsim.storage.s3 import S3BlobStore
 
         with mock_aws():
             client = boto3.client("s3", region_name="us-east-1")
@@ -285,11 +285,11 @@ class TestS3ObjectLock(unittest.TestCase):
         import boto3
 
         env = {
-            "AEGIS_WORM_EXPORT": "1",
-            "AEGIS_WORM_BUCKET": "worm-from-env",
-            "AEGIS_WORM_RETENTION_DAYS": "30",
-            "AEGIS_WORM_LOCK_MODE": "GOVERNANCE",
-            "AEGIS_S3_REGION": "us-east-1",
+            "REDSIM_WORM_EXPORT": "1",
+            "REDSIM_WORM_BUCKET": "worm-from-env",
+            "REDSIM_WORM_RETENTION_DAYS": "30",
+            "REDSIM_WORM_LOCK_MODE": "GOVERNANCE",
+            "REDSIM_S3_REGION": "us-east-1",
             # moto needs *some* creds on the client built by from_env.
             "AWS_ACCESS_KEY_ID": "testing",
             "AWS_SECRET_ACCESS_KEY": "testing",
@@ -310,44 +310,44 @@ class TestS3ObjectLock(unittest.TestCase):
             self.skipTest("moto not installed")
         with mock_aws(), patch.dict(
             "os.environ",
-            {"AEGIS_WORM_RETENTION_DAYS": "not-a-number"}, clear=True,
+            {"REDSIM_WORM_RETENTION_DAYS": "not-a-number"}, clear=True,
         ):
             archive = WormArchive.from_env()
             self.assertEqual(archive.retention_days, 2555)
 
 
 # ---------------------------------------------------------------------------
-# CLI: aegis audit export
+# CLI: redsim audit export
 # ---------------------------------------------------------------------------
 
 class TestCmdAuditExport(unittest.TestCase):
 
     def test_export_disabled_errors(self):
-        from aegis.cli.audit import cmd_audit_export
+        from redsim.cli.audit import cmd_audit_export
 
         args = Namespace(all=True, chain=None, no_verify=False)
         buf = io.StringIO()
         with patch.dict("os.environ", {}, clear=True), redirect_stdout(buf):
             with self.assertRaises(SystemExit) as ctx:
-                cmd_audit_export(args, AegisConfig())
+                cmd_audit_export(args, RedsimConfig())
         self.assertEqual(ctx.exception.code, 1)
-        self.assertIn("AEGIS_WORM_EXPORT", buf.getvalue())
+        self.assertIn("REDSIM_WORM_EXPORT", buf.getvalue())
 
     def test_export_all_prints_summary(self):
-        from aegis.cli.audit import cmd_audit_export
+        from redsim.cli.audit import cmd_audit_export
 
         with tempfile.TemporaryDirectory() as tmp:
             writer = JsonlAuditWriter(Path(tmp) / "audit")
             _seed_chain(writer)
-            config = AegisConfig(output_dir=tmp)
+            config = RedsimConfig(output_dir=tmp)
             store = _FakeStore()
-            archive = WormArchive(store, bucket="aegis-worm")
+            archive = WormArchive(store, bucket="redsim-worm")
 
             args = Namespace(all=True, chain=None, no_verify=False)
             buf = io.StringIO()
-            with patch.dict("os.environ", {"AEGIS_WORM_EXPORT": "1"}, clear=True), \
-                 patch("aegis.storage.worm.WormArchive.from_env", return_value=archive), \
-                 patch("aegis.audit.chain.resolve_writer", return_value=writer), \
+            with patch.dict("os.environ", {"REDSIM_WORM_EXPORT": "1"}, clear=True), \
+                 patch("redsim.storage.worm.WormArchive.from_env", return_value=archive), \
+                 patch("redsim.audit.chain.resolve_writer", return_value=writer), \
                  redirect_stdout(buf):
                 with self.assertRaises(SystemExit) as ctx:
                     cmd_audit_export(args, config)
@@ -357,20 +357,20 @@ class TestCmdAuditExport(unittest.TestCase):
             self.assertIn("archived", out)
 
     def test_export_single_chain(self):
-        from aegis.cli.audit import cmd_audit_export
+        from redsim.cli.audit import cmd_audit_export
 
         with tempfile.TemporaryDirectory() as tmp:
             writer = JsonlAuditWriter(Path(tmp) / "audit")
             _seed_chain(writer)
-            config = AegisConfig(output_dir=tmp)
+            config = RedsimConfig(output_dir=tmp)
             store = _FakeStore()
             archive = WormArchive(store)
 
             args = Namespace(all=False, chain="run:run-1", no_verify=False)
             buf = io.StringIO()
-            with patch.dict("os.environ", {"AEGIS_WORM_EXPORT": "1"}, clear=True), \
-                 patch("aegis.storage.worm.WormArchive.from_env", return_value=archive), \
-                 patch("aegis.audit.chain.resolve_writer", return_value=writer), \
+            with patch.dict("os.environ", {"REDSIM_WORM_EXPORT": "1"}, clear=True), \
+                 patch("redsim.storage.worm.WormArchive.from_env", return_value=archive), \
+                 patch("redsim.audit.chain.resolve_writer", return_value=writer), \
                  redirect_stdout(buf):
                 with self.assertRaises(SystemExit) as ctx:
                     cmd_audit_export(args, config)
@@ -385,31 +385,31 @@ class TestCmdAuditExport(unittest.TestCase):
 class TestWormExportTask(unittest.TestCase):
 
     def setUp(self):
-        # The Celery task wrapper imports aegis.workers.celery_app → celery,
+        # The Celery task wrapper imports redsim.workers.celery_app → celery,
         # which the minimal unit env (.[test,dev]) doesn't install. The
         # WormArchive logic above is covered celery-free; only the task
         # wrapper needs this guard.
         pytest.importorskip("celery")
 
     def test_disabled_returns_disabled(self):
-        from aegis.workers.tasks.worm_export import export_chains_to_worm
+        from redsim.workers.tasks.worm_export import export_chains_to_worm
 
         with patch.dict("os.environ", {}, clear=True):
             result = export_chains_to_worm()
         self.assertEqual(result, {"status": "disabled"})
 
     def test_enabled_runs_export(self):
-        from aegis.workers.tasks.worm_export import export_chains_to_worm
+        from redsim.workers.tasks.worm_export import export_chains_to_worm
 
         with tempfile.TemporaryDirectory() as tmp:
             writer = JsonlAuditWriter(Path(tmp) / "audit")
             _seed_chain(writer)
             store = _FakeStore()
-            archive = WormArchive(store, bucket="aegis-worm")
+            archive = WormArchive(store, bucket="redsim-worm")
 
-            with patch.dict("os.environ", {"AEGIS_WORM_EXPORT": "1"}, clear=True), \
-                 patch("aegis.storage.worm.WormArchive.from_env", return_value=archive), \
-                 patch("aegis.audit.chain.resolve_writer", return_value=writer):
+            with patch.dict("os.environ", {"REDSIM_WORM_EXPORT": "1"}, clear=True), \
+                 patch("redsim.storage.worm.WormArchive.from_env", return_value=archive), \
+                 patch("redsim.audit.chain.resolve_writer", return_value=writer):
                 result = export_chains_to_worm()
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["chains_archived"], 1)

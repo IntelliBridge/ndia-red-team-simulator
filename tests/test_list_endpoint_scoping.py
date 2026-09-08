@@ -26,9 +26,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from aegis.api.app import create_app
-from aegis.api.auth import CurrentUser, get_current_user
-from aegis.api.settings import APISettings
+from redsim.api.app import create_app
+from redsim.api.auth import CurrentUser, get_current_user
+from redsim.api.settings import APISettings
 
 
 def _patch_jsonb_for_sqlite() -> None:
@@ -42,7 +42,7 @@ def _patch_jsonb_for_sqlite() -> None:
 
 def _build_app_with_sqlite():
     _patch_jsonb_for_sqlite()
-    from aegis.db.models import Base, Organization, Project, Run, Target
+    from redsim.db.models import Base, Organization, Project, Run, Target
 
     engine = create_engine(
         "sqlite://",
@@ -98,7 +98,7 @@ class TestListRunScoping(unittest.TestCase):
         member_b = CurrentUser(sub="u-b", email="b@x.com",
                                project_memberships={"proj-b": "scanner"})
         client = _client(app, member_b)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/runs")
         self.assertEqual(resp.status_code, 200)
         ids = {r["id"] for r in resp.json()["runs"]}
@@ -110,7 +110,7 @@ class TestListRunScoping(unittest.TestCase):
         member_b = CurrentUser(sub="u-b", email="b@x.com",
                                project_memberships={"proj-b": "scanner"})
         client = _client(app, member_b)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/runs", params={"project": "proj-a"})
         self.assertEqual(resp.status_code, 403)
 
@@ -119,7 +119,7 @@ class TestListRunScoping(unittest.TestCase):
         app, session_cm = _build_app_with_sqlite()
         system = CurrentUser(sub="svc", email="svc@x.com", is_system=True)
         client = _client(app, system)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/runs")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual({r["id"] for r in resp.json()["runs"]},
@@ -133,7 +133,7 @@ class TestListTargetScoping(unittest.TestCase):
         member_b = CurrentUser(sub="u-b", email="b@x.com",
                                project_memberships={"proj-b": "scanner"})
         client = _client(app, member_b)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/targets", params={"project": "proj-a"})
         self.assertEqual(resp.status_code, 403)
 
@@ -143,7 +143,7 @@ class TestListTargetScoping(unittest.TestCase):
         member_b = CurrentUser(sub="u-b", email="b@x.com",
                                project_memberships={"proj-b": "scanner"})
         client = _client(app, member_b)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/targets", params={"project": "proj-b"})
         self.assertEqual(resp.status_code, 200)
         self.assertEqual({t["id"] for t in resp.json()["targets"]}, {"tgt-b"})

@@ -15,11 +15,11 @@ import pytest
 
 pytest.importorskip("fastapi")
 
-from aegis.api.auth import (
+from redsim.api.auth import (
     _verify_worker_token,
     issue_worker_token,
 )
-from aegis.api.settings import APISettings
+from redsim.api.settings import APISettings
 
 
 def _settings(**overrides) -> APISettings:
@@ -49,7 +49,7 @@ class TestIssueAndVerify(unittest.TestCase):
         settings = _settings()
         token = issue_worker_token("w1", settings=settings, ttl_seconds=1)
         # Force the clock forward by stubbing time.time inside auth
-        with patch("aegis.api.auth.time.time",
+        with patch("redsim.api.auth.time.time",
                    return_value=time.time() + 10):
             self.assertIsNone(_verify_worker_token(token, settings))
 
@@ -92,7 +92,7 @@ class TestKeyRotationOverlap(unittest.TestCase):
 class TestLegacyTokenRejected(unittest.TestCase):
     """C1: the legacy non-expiring constant-payload token is gone.
 
-    The Phase 3 demo token was ``worker:<HMAC("aegis-worker")>`` — no
+    The Phase 3 demo token was ``worker:<HMAC("redsim-worker")>`` — no
     expiry, signed over a fixed string, and it granted ``is_system``.
     That branch was deleted; such a token must now be rejected.
     """
@@ -101,7 +101,7 @@ class TestLegacyTokenRejected(unittest.TestCase):
     def _legacy_token(secret: str) -> str:
         from hashlib import sha256
         from hmac import new as hmac_new
-        legacy_sig = hmac_new(secret.encode(), b"aegis-worker", sha256).hexdigest()
+        legacy_sig = hmac_new(secret.encode(), b"redsim-worker", sha256).hexdigest()
         return f"worker:{legacy_sig}"
 
     def test_static_hmac_legacy_token_now_rejected(self):

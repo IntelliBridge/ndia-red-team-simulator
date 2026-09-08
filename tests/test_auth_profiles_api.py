@@ -28,9 +28,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from aegis.api.app import create_app
-from aegis.api.auth import CurrentUser, get_current_user
-from aegis.api.settings import APISettings
+from redsim.api.app import create_app
+from redsim.api.auth import CurrentUser, get_current_user
+from redsim.api.settings import APISettings
 
 SECRET = "hunter2-super-secret"
 
@@ -46,7 +46,7 @@ def _patch_jsonb_for_sqlite() -> None:
 
 def _build_app_with_sqlite():
     _patch_jsonb_for_sqlite()
-    from aegis.db.models import (
+    from redsim.db.models import (
         Base,
         Organization,
         Project,
@@ -118,14 +118,14 @@ class AuthProfilesApiBase(unittest.TestCase):
         # The rate-limit bucket store is a module global shared across tests;
         # reset it so an earlier suite's writes don't drain it into a 429 here
         # (and clean up so this suite's writes don't drain it for later ones).
-        import aegis.api.middleware.rate_limit as rl
+        import redsim.api.middleware.rate_limit as rl
         rl._BUCKETS.clear()
         self.addCleanup(rl._BUCKETS.clear)
 
         env = dict(os.environ)
-        env.pop("AEGIS_DB_URL", None)  # keep resolve_writer off Postgres
-        env["AEGIS_TEST_AUDIT"] = "memory"
-        env["AEGIS_AUTH_PROFILES_KEY"] = Fernet.generate_key().decode()
+        env.pop("REDSIM_DB_URL", None)  # keep resolve_writer off Postgres
+        env["REDSIM_TEST_AUDIT"] = "memory"
+        env["REDSIM_AUTH_PROFILES_KEY"] = Fernet.generate_key().decode()
         patcher = mock.patch.dict(os.environ, env, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -135,7 +135,7 @@ class AuthProfilesApiBase(unittest.TestCase):
 
     def _request(self, method: str, url: str, *, user: CurrentUser = ALICE, **kw):
         _override_user(self.app, user)
-        with patch("aegis.db.session.get_session", self.session_cm):
+        with patch("redsim.db.session.get_session", self.session_cm):
             return getattr(self.client, method)(url, **kw)
 
 
@@ -196,7 +196,7 @@ class TestAuthProfilesCrud(AuthProfilesApiBase):
 
 class TestResolveAuthForScan(AuthProfilesApiBase):
     def test_resolves_decrypted_secret_for_worker(self):
-        from aegis.services import auth_profiles as svc
+        from redsim.services import auth_profiles as svc
 
         created = self._request("post", "/v1/auth-profiles", json=BODY)
         profile_id = created.json()["id"]
@@ -208,14 +208,14 @@ class TestResolveAuthForScan(AuthProfilesApiBase):
         self.assertEqual(resolved["secret"], SECRET)
 
     def test_unknown_profile_raises_lookup_error(self):
-        from aegis.services import auth_profiles as svc
+        from redsim.services import auth_profiles as svc
 
         with self.session_cm() as sess:
             with self.assertRaises(LookupError):
                 svc.resolve_auth_for_scan(sess, "authprof-nope")
 
     def test_stored_ciphertext_is_not_plaintext(self):
-        from aegis.db.models import AuthProfile
+        from redsim.db.models import AuthProfile
 
         created = self._request("post", "/v1/auth-profiles", json=BODY)
         profile_id = created.json()["id"]

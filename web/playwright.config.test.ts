@@ -35,7 +35,7 @@ describe("playwright config", () => {
 
   it("use.baseURL falls back to http://localhost:3000 when env var unset", () => {
     const use = (config as Record<string, Record<string, unknown>>).use;
-    // process.env.AEGIS_WEB_URL is not set in this test environment
+    // process.env.REDSIM_WEB_URL is not set in this test environment
     expect(use.baseURL).toBe("http://localhost:3000");
   });
 

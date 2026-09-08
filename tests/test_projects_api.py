@@ -22,9 +22,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from aegis.api.app import create_app
-from aegis.api.auth import CurrentUser, get_current_user
-from aegis.api.settings import APISettings
+from redsim.api.app import create_app
+from redsim.api.auth import CurrentUser, get_current_user
+from redsim.api.settings import APISettings
 
 
 def _patch_jsonb_for_sqlite() -> None:
@@ -38,7 +38,7 @@ def _patch_jsonb_for_sqlite() -> None:
 
 def _build_app_with_sqlite():
     _patch_jsonb_for_sqlite()
-    from aegis.db.models import (
+    from redsim.db.models import (
         Base,
         Organization,
         Project,
@@ -98,7 +98,7 @@ class TestProjectsApi(unittest.TestCase):
                              project_memberships={"proj-a": "admin"})
         _override_user(app, alice)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/projects")
         self.assertEqual(resp.status_code, 200)
         slugs = {p["slug"] for p in resp.json()["projects"]}
@@ -112,7 +112,7 @@ class TestProjectsApi(unittest.TestCase):
                                 project_memberships={"proj-b": "admin"})
         _override_user(app, outsider)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/projects/proj-a/membership")
         self.assertEqual(resp.status_code, 403)
 
@@ -122,7 +122,7 @@ class TestProjectsApi(unittest.TestCase):
                              project_memberships={"proj-a": "admin"})
         _override_user(app, alice)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/projects/proj-a/membership")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
@@ -136,7 +136,7 @@ class TestProjectsApi(unittest.TestCase):
                            project_memberships={"proj-a": "scanner"})
         _override_user(app, bob)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.put(
                 "/v1/projects/proj-a/settings",
                 json={"daily_llm_budget_cents": 50000},
@@ -149,7 +149,7 @@ class TestProjectsApi(unittest.TestCase):
                              project_memberships={"proj-a": "admin"})
         _override_user(app, alice)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.put(
                 "/v1/projects/proj-a/settings",
                 json={"daily_llm_budget_cents": 50000},

@@ -18,7 +18,7 @@ afterEach(cleanup);
 
 describe("Home (root page)", () => {
   it("redirects to /dashboard when a token is present in localStorage", async () => {
-    localStorage.setItem("aegis_token", "dev:admin@aegis.local");
+    localStorage.setItem("redsim_token", "dev:admin@redsim.local");
     render(React.createElement(Home));
     await waitFor(() => {
       expect(replaceMock).toHaveBeenCalledWith("/dashboard");
@@ -34,9 +34,9 @@ describe("Home (root page)", () => {
     expect(replaceMock).not.toHaveBeenCalledWith("/dashboard");
   });
 
-  it("renders the Aegis heading while the redirect effect fires", () => {
+  it("renders the Redsim heading while the redirect effect fires", () => {
     render(React.createElement(Home));
-    expect(screen.getByRole("heading", { name: "Aegis" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Redsim" })).toBeTruthy();
   });
 
   it("renders a loading paragraph", () => {

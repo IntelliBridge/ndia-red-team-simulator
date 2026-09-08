@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Verify a released Aegis image before deploy.
+# Verify a released Redsim image before deploy.
 #
 # These checks run against artifacts produced by
 # .github/workflows/release-sign.yml: a keyless cosign signature, a
@@ -40,10 +40,10 @@ if [[ "$DIGEST" != sha256:* ]]; then
 fi
 
 # GHCR rejects upper-case path segments, so the pushed name is lower-cased.
-IMAGE="ghcr.io/intellibridge/aegis/${SERVICE}@${DIGEST}"
+IMAGE="ghcr.io/intellibridge/redsim/${SERVICE}@${DIGEST}"
 
 # Identity of THIS repo's release workflow, signing on a version tag.
-IDENTITY='^https://github.com/IntelliBridge/aegis/.github/workflows/release-sign.yml@refs/tags/v.*$'
+IDENTITY='^https://__UPSTREAM_REDSIM_URL__/.github/workflows/release-sign.yml@refs/tags/v.*$'
 # The SLSA generator signs provenance under its own identity.
 SLSA_IDENTITY='^https://github.com/slsa-framework/slsa-github-generator/.*$'
 ISSUER='https://token.actions.githubusercontent.com'

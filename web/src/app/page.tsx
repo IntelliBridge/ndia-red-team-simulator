@@ -6,12 +6,12 @@ import { useRouter } from "next/navigation";
 export default function Home() {
   const router = useRouter();
   useEffect(() => {
-    const token = localStorage.getItem("aegis_token");
+    const token = localStorage.getItem("redsim_token");
     router.replace(token ? "/dashboard" : "/login");
   }, [router]);
   return (
     <div>
-      <h1>Aegis</h1>
+      <h1>Redsim</h1>
       <p>Loading…</p>
     </div>
   );

@@ -1,4 +1,4 @@
-# MkDocs config for the Aegis docs site.
+# MkDocs config for the Redsim docs site.
 #
 # Authoring stays in markdown under docs/. This config renders the
 # same markdown into a browseable site (search, sidebar, dark mode,
@@ -11,14 +11,14 @@
 # CI builds on every PR; main deploys to GitHub Pages — see
 # .github/workflows/docs.yml.
 
-site_name: Aegis
+site_name: Redsim
 site_description: >-
-  Aegis adversarial-ML red-team simulator — attack, measure, explain,
+  Redsim adversarial-ML red-team simulator — attack, measure, explain,
   recommend. With a hash-chained audit log so what the platform did,
   against what target, on whose authority, always has a verifiable answer.
-site_url: https://aegis-docs.example.com
-repo_name: aegis
-repo_url: https://github.com/IntelliBridge/aegis
+site_url: https://redsim-docs.example.com
+repo_name: redsim
+repo_url: https://__UPSTREAM_REDSIM_URL__
 edit_uri: edit/main/docs/
 
 docs_dir: docs
@@ -170,19 +170,19 @@ nav:
       - Local stack: dev/local-stack.md
       - Testing: dev/testing.md
       - Frontend: dev/frontend.md
-      - Extending Aegis: dev/extending.md
+      - Extending Redsim: dev/extending.md
       - Editing the docs: dev/docs.md
   - Security:
       - Supply-chain integrity: security/supply-chain.md
-      - "Policy (SECURITY.md)": https://github.com/IntelliBridge/aegis/blob/main/SECURITY.md
+      - "Policy (SECURITY.md)": https://__UPSTREAM_REDSIM_URL__/blob/main/SECURITY.md
   - ADRs:
       - "0001 — Vendored submodules": adr/0001-vendored-submodules.md
       - "0002 — Registry seam + runners": adr/0002-registry-seam-and-runners.md
       - "0004 — Unified effect-class gate": adr/0004-unified-effect-class-gate.md
       - "0005 — Worker autoscaling + DR": adr/0005-worker-autoscaling-and-dr.md
       - "0008 — Nix reproducible builds": adr/0008-nix-reproducible-builds.md
-  - "Changelog ↗": https://github.com/IntelliBridge/aegis/blob/main/CHANGELOG.md
-  - "Contributing ↗": https://github.com/IntelliBridge/aegis/blob/main/CONTRIBUTING.md
+  - "Changelog ↗": https://__UPSTREAM_REDSIM_URL__/blob/main/CHANGELOG.md
+  - "Contributing ↗": https://__UPSTREAM_REDSIM_URL__/blob/main/CONTRIBUTING.md
 
 # ---------------------------------------------------------------------
 # Strictness — fail the build on broken refs so CI catches them.
@@ -200,6 +200,6 @@ extra:
   generator: false
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/IntelliBridge/aegis
+      link: https://__UPSTREAM_REDSIM_URL__
 copyright: >-
-  Aegis is Apache-2.0. Bundled components keep their own licenses.
+  Redsim is Apache-2.0. Bundled components keep their own licenses.

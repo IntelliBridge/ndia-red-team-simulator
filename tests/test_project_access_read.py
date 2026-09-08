@@ -22,9 +22,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from aegis.api.app import create_app
-from aegis.api.auth import CurrentUser, get_current_user
-from aegis.api.settings import APISettings
+from redsim.api.app import create_app
+from redsim.api.auth import CurrentUser, get_current_user
+from redsim.api.settings import APISettings
 
 
 def _patch_jsonb_for_sqlite() -> None:
@@ -46,7 +46,7 @@ def _build_app_with_sqlite():
     """
     from sqlalchemy.pool import StaticPool
     _patch_jsonb_for_sqlite()
-    from aegis.db.models import Base, Organization, Project, Run
+    from redsim.db.models import Base, Organization, Project, Run
 
     engine = create_engine(
         "sqlite://",
@@ -96,8 +96,8 @@ class TestProjectAccessRead(unittest.TestCase):
                                 project_memberships={"proj-b": "admin"})
         _override_user(app, outsider)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.policy.get_session", session_cm, create=True):
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.policy.get_session", session_cm, create=True):
             # The route imports get_session inside ensure_run_access, so
             # patch the source module too. Already patched above.
             resp = client.get("/v1/runs/run-a/report.md")
@@ -110,7 +110,7 @@ class TestProjectAccessRead(unittest.TestCase):
                               project_memberships={"proj-a": "scanner"})
         _override_user(app, member)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/runs/run-missing/report.md")
         self.assertEqual(resp.status_code, 404)
         self.assertEqual(resp.json()["detail"], "run not found")
@@ -127,14 +127,14 @@ class TestProjectAccessRead(unittest.TestCase):
 
         app, session_cm = _build_app_with_sqlite()
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
+        with patch("redsim.db.session.get_session", session_cm), \
              patch.dict(os.environ,
-                        {"AEGIS_ENV": "dev", "AEGIS_AUTH_MODE": "dev"},
+                        {"REDSIM_ENV": "dev", "REDSIM_AUTH_MODE": "dev"},
                         clear=False):
             with self.assertRaises(WebSocketDisconnect) as cm:
                 with client.websocket_connect(
                         "/v1/runs/run-a/events",
-                        subprotocols=["aegis.bearer.dev:outsider@x.com"]) as ws:
+                        subprotocols=["redsim.bearer.dev:outsider@x.com"]) as ws:
                     # Receiving a message forces the test client to surface
                     # the server-side close.
                     ws.receive_json()
@@ -148,8 +148,8 @@ class TestProjectAccessRead(unittest.TestCase):
                               project_memberships={"proj-a": "scanner"})
         _override_user(app, member)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch.dict(os.environ, {"AEGIS_OUTPUT_DIR": "/tmp/aegis-empty"},
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch.dict(os.environ, {"REDSIM_OUTPUT_DIR": "/tmp/redsim-empty"},
                         clear=False):
             resp = client.get("/v1/runs/run-a/report.html")
         self.assertEqual(resp.status_code, 404)

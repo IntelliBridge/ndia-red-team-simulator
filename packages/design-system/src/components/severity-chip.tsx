@@ -1,7 +1,7 @@
 // Severity chip — color-coded badge for finding severities.
 //
 // Wraps a small visual badge. The runtime "level" is the lowercased
-// severity coming straight off AegisFinding.severity; unknown values
+// severity coming straight off RedsimFinding.severity; unknown values
 // fall back to a neutral gray.
 
 import { type HTMLAttributes } from "react";

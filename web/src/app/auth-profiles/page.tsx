@@ -257,7 +257,7 @@ export default function AuthProfilesPage() {
                 <input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  placeholder="scanner@aegis.local"
+                  placeholder="scanner@redsim.local"
                   className={`w-56 ${inputCls}`}
                 />
               </label>

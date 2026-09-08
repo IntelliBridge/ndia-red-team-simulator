@@ -1,0 +1,141 @@
+{{/*
+keycloak — OIDC IdP. Gated by keycloak.enabled; disable when using a managed
+IdP and point config.oidcIssuer / config.oidcJwksUrl at it. Mirrors the
+keycloak service in deploy/docker-compose.yml (start-dev --import-realm with
+the bundled realm).
+
+HA NOTE: keycloak.replicas defaults to 2. Multi-replica Keycloak is only
+truly HA when backed by:
+  1. a SHARED external database (every replica points KC_DB at the same
+     Postgres — NOT the embedded H2 that `start-dev` uses), and
+  2. a DISTRIBUTED Infinispan cache with a jgroups discovery stack
+     (e.g. KC_CACHE=ispn + KC_CACHE_STACK=kubernetes, plus a headless
+     Service + DNS_PING) so user/auth sessions replicate across replicas.
+`start-dev` (used here for parity with the dev compose stack) runs an
+embedded H2 + a LOCAL cache, so running it with replicas>1 gives you N
+independent instances, NOT a coherent HA cluster. For production switch the
+command to `start --optimized`, wire KC_DB_* at the shared Postgres, set the
+cache stack, and front it with the headless Service below for DNS_PING
+discovery.
+*/}}
+{{- if .Values.keycloak.enabled }}
+{{- $component := "keycloak" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "redsim.componentName" (dict "ctx" . "component" $component) }}
+  labels:
+    {{- include "redsim.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  # Configurable replica count for HA (default 2). See the HA NOTE above for
+  # the shared-DB + distributed-cache requirements that make replicas>1 a
+  # real cluster rather than N independent instances.
+  replicas: {{ .Values.keycloak.replicas }}
+  selector:
+    matchLabels:
+      {{- include "redsim.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "redsim.componentLabels" (dict "ctx" . "component" $component) | nindent 8 }}
+      annotations:
+        # Roll pods when the realm import changes.
+        checksum/realm: {{ .Files.Get "files/realm-export.json" | sha256sum }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        # Keycloak images run as uid 1000 (non-root) by default.
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: keycloak
+          image: {{ include "redsim.image" (dict "ctx" . "image" .Values.keycloak.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            # Keycloak writes a transient build under /opt/keycloak, so the
+            # root fs stays writable.
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          args:
+            - start-dev
+            {{- if .Values.keycloak.importRealm }}
+            - --import-realm
+            {{- end }}
+          env:
+            - name: KEYCLOAK_ADMIN
+              value: {{ .Values.keycloak.admin.user | quote }}
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              value: {{ .Values.keycloak.admin.password | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+          # Keycloak exposes health on the management port (9000) from 17+;
+          # /realms/master is a cheap readiness signal on the http port.
+          livenessProbe:
+            httpGet:
+              path: /realms/master
+              port: http
+            initialDelaySeconds: 45
+            periodSeconds: 15
+            failureThreshold: 10
+          readinessProbe:
+            httpGet:
+              path: /realms/master
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 10
+          resources:
+            {{- toYaml .Values.keycloak.resources | nindent 12 }}
+          {{- if .Values.keycloak.importRealm }}
+          volumeMounts:
+            - name: realm-import
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+          {{- end }}
+      {{- if .Values.keycloak.importRealm }}
+      volumes:
+        - name: realm-import
+          configMap:
+            name: {{ include "redsim.componentName" (dict "ctx" . "component" $component) }}-realm
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "redsim.componentName" (dict "ctx" . "component" $component) }}
+  labels:
+    {{- include "redsim.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  selector:
+    {{- include "redsim.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.keycloak.service.port }}
+      targetPort: http
+{{- if .Values.keycloak.importRealm }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redsim.componentName" (dict "ctx" . "component" $component) }}-realm
+  labels:
+    {{- include "redsim.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+data:
+  redsim-realm.json: |-
+    {{- .Files.Get "files/realm-export.json" | nindent 4 }}
+{{- end }}
+{{- end }}

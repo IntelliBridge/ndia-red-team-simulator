@@ -1,4 +1,4 @@
-"""Unit tests for the stale-job reaper (``aegis.workers.tasks.reaper``).
+"""Unit tests for the stale-job reaper (``redsim.workers.tasks.reaper``).
 
 Offline + DB-free: the shared sqlite in-memory harness
 (``make_sqlite_session_factory`` from ``tests/conftest.py``) hosts the
@@ -16,8 +16,8 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from aegis.db.models import Job, Organization, Project, Run
-from aegis.workers.tasks.reaper import reap_stale_jobs_in_session
+from redsim.db.models import Job, Organization, Project, Run
+from redsim.workers.tasks.reaper import reap_stale_jobs_in_session
 from tests.conftest import make_sqlite_session_factory as _make_session_factory
 
 # DB-backed (sqlite harness); excluded from the CI unit job's "not integration".

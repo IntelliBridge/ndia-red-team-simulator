@@ -1,15 +1,15 @@
 """Registry-level checks for the scanner-adapter dispatch (offline-safe).
 
 The 14 first-party pentest scanner adapters were removed with the pentest
-domain; the adversarial-ML attack adapters (``aegis.ml.attacks``) register
+domain; the adversarial-ML attack adapters (``redsim.ml.attacks``) register
 through this same registry. No scanner binary is invoked: dispatch-by-capability
 is exercised with a synthetic capability + mock adapter.
 """
 
 import unittest
 
-from aegis.scanners import dispatch
-from aegis.scanners.registry import _REGISTRY, ScanOptions, ScanResult, register
+from redsim.scanners import dispatch
+from redsim.scanners.registry import _REGISTRY, ScanOptions, ScanResult, register
 
 
 class TestDispatch(unittest.TestCase):

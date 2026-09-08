@@ -4,7 +4,7 @@
 //
 // Backs <RoleGated callerRole={…}/> and any page-level conditional
 // rendering. The API enforces the same role checks server side
-// (aegis/api/policy.py); this hook is presentation only.
+// (redsim/api/policy.py); this hook is presentation only.
 
 import useSWR from "swr";
 import { api, type ProjectMembership } from "@/lib/api";

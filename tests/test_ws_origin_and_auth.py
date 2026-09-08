@@ -2,7 +2,7 @@
 
 The upgrade:
 - closes 1008 when Origin is set but not in the CORS allowlist;
-- accepts a bearer token in ``Sec-WebSocket-Protocol: aegis.bearer.<token>``
+- accepts a bearer token in ``Sec-WebSocket-Protocol: redsim.bearer.<token>``
   (the server echoes the chosen subprotocol back);
 - continues to honour the cookie path for browser callers;
 - closes 1008 on policy failures with a reason string.
@@ -27,9 +27,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from starlette.websockets import WebSocketDisconnect
 
-from aegis.api.app import create_app
-from aegis.api.session_cookie import generate_keypair, mint_session_cookie
-from aegis.api.settings import APISettings
+from redsim.api.app import create_app
+from redsim.api.session_cookie import generate_keypair, mint_session_cookie
+from redsim.api.settings import APISettings
 
 
 def _patch_jsonb_for_sqlite() -> None:
@@ -43,7 +43,7 @@ def _patch_jsonb_for_sqlite() -> None:
 
 def _build_app_with_run():
     _patch_jsonb_for_sqlite()
-    from aegis.db.models import Base, Organization, Project, Run
+    from redsim.db.models import Base, Organization, Project, Run
 
     engine = create_engine(
         "sqlite://", future=True,
@@ -81,11 +81,11 @@ def _build_app_with_run():
 
 def _env_for(settings: APISettings) -> dict[str, str]:
     return {
-        "AEGIS_ENV": "dev", "AEGIS_AUTH_MODE": "dev",
-        "AEGIS_API_SESSION_PRIVATE_KEY": settings.api_session_private_key,
-        "AEGIS_API_SESSION_PUBLIC_KEY": settings.api_session_public_key,
-        "AEGIS_CORS_ORIGINS": ",".join(settings.cors_origins),
-        "AEGIS_WEB_ORIGIN": settings.web_origin,
+        "REDSIM_ENV": "dev", "REDSIM_AUTH_MODE": "dev",
+        "REDSIM_API_SESSION_PRIVATE_KEY": settings.api_session_private_key,
+        "REDSIM_API_SESSION_PUBLIC_KEY": settings.api_session_public_key,
+        "REDSIM_CORS_ORIGINS": ",".join(settings.cors_origins),
+        "REDSIM_WEB_ORIGIN": settings.web_origin,
     }
 
 
@@ -93,7 +93,7 @@ class TestOriginValidation(unittest.TestCase):
     def test_bad_origin_closes_1008(self):
         app, session_cm, settings = _build_app_with_run()
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
+        with patch("redsim.db.session.get_session", session_cm), \
              patch.dict(os.environ, _env_for(settings), clear=False):
             with self.assertRaises(WebSocketDisconnect) as cm:
                 with client.websocket_connect(
@@ -109,14 +109,14 @@ class TestOriginValidation(unittest.TestCase):
         # subprotocol bearer or cookie path is what authorises.
         app, session_cm, settings = _build_app_with_run()
         client = TestClient(app)
-        # Drop AEGIS_BROKER_URL inside the test so the WS handler's
+        # Drop REDSIM_BROKER_URL inside the test so the WS handler's
         # _redis_pubsub_iter takes its no-broker heartbeat path
         # instead of trying to subscribe to a real Redis (which CI
         # has via the redis service container — and which would
         # block forever waiting for a message that never publishes).
         test_env = _env_for(settings)
-        test_env["AEGIS_BROKER_URL"] = ""
-        with patch("aegis.db.session.get_session", session_cm), \
+        test_env["REDSIM_BROKER_URL"] = ""
+        with patch("redsim.db.session.get_session", session_cm), \
              patch.dict(os.environ, test_env, clear=False):
             cookie = mint_session_cookie(
                 sub="u-1", email="a@x",
@@ -136,7 +136,7 @@ class TestSubprotocolBearer(unittest.TestCase):
     def test_bearer_subprotocol_authorises_and_is_echoed(self):
         app, session_cm, settings = _build_app_with_run()
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
+        with patch("redsim.db.session.get_session", session_cm), \
              patch.dict(os.environ, _env_for(settings), clear=False):
             # Dev token grants membership on "default" — but the run
             # is in proj-a. Use the cookie minted with explicit
@@ -153,7 +153,7 @@ class TestSubprotocolBearer(unittest.TestCase):
             del cookie  # unused — we wanted to demonstrate parity
             with client.websocket_connect(
                 "/v1/runs/run-a/events",
-                subprotocols=["aegis.bearer.dev:proj-a-admin@aegis.local"],
+                subprotocols=["redsim.bearer.dev:proj-a-admin@redsim.local"],
                 headers={"Origin": "http://localhost:3000"},
             ) as ws:
                 # dev token maps to project_memberships={"default": "admin"}
@@ -172,8 +172,8 @@ class TestRunLookup(unittest.TestCase):
         app, session_cm, settings = _build_app_with_run()
         client = TestClient(app)
         test_env = _env_for(settings)
-        test_env["AEGIS_BROKER_URL"] = ""
-        with patch("aegis.db.session.get_session", session_cm), \
+        test_env["REDSIM_BROKER_URL"] = ""
+        with patch("redsim.db.session.get_session", session_cm), \
              patch.dict(os.environ, test_env, clear=False):
             cookie = mint_session_cookie(
                 sub="u-1", email="a@x",

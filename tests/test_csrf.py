@@ -1,7 +1,7 @@
 """Phase 4 v0.4.0 F14b — CSRF double-submit + CORS hardening.
 
-Cookie-authenticated mutations require an ``X-Aegis-CSRF`` header that
-matches the ``aegis_csrf`` cookie. Bearer callers are exempt. Read
+Cookie-authenticated mutations require an ``X-Redsim-CSRF`` header that
+matches the ``redsim_csrf`` cookie. Bearer callers are exempt. Read
 methods are out of scope. CORS exposes ``allow_credentials=True``
 only against an explicit origin list.
 """
@@ -20,10 +20,10 @@ pytest.importorskip("cryptography")
 
 from fastapi.testclient import TestClient
 
-from aegis.api.app import create_app
-from aegis.api.middleware.csrf import issue_csrf_token
-from aegis.api.session_cookie import generate_keypair, mint_session_cookie
-from aegis.api.settings import APISettings
+from redsim.api.app import create_app
+from redsim.api.middleware.csrf import issue_csrf_token
+from redsim.api.session_cookie import generate_keypair, mint_session_cookie
+from redsim.api.settings import APISettings
 
 
 def _settings_with_session_keys(**overrides) -> APISettings:
@@ -41,9 +41,9 @@ def _settings_with_session_keys(**overrides) -> APISettings:
 
 def _env_for(settings: APISettings) -> dict[str, str]:
     return {
-        "AEGIS_ENV": "dev", "AEGIS_AUTH_MODE": "dev",
-        "AEGIS_API_SESSION_PRIVATE_KEY": settings.api_session_private_key,
-        "AEGIS_API_SESSION_PUBLIC_KEY": settings.api_session_public_key,
+        "REDSIM_ENV": "dev", "REDSIM_AUTH_MODE": "dev",
+        "REDSIM_API_SESSION_PRIVATE_KEY": settings.api_session_private_key,
+        "REDSIM_API_SESSION_PUBLIC_KEY": settings.api_session_public_key,
     }
 
 
@@ -61,7 +61,7 @@ class TestCsrfDoubleSubmit(unittest.TestCase):
             resp = client.post(
                 "/v1/scans",
                 json={"target": "http://localhost:3000"},
-                # No X-Aegis-CSRF header
+                # No X-Redsim-CSRF header
             )
         self.assertEqual(resp.status_code, 403)
         self.assertIn("CSRF", resp.json()["detail"])
@@ -113,7 +113,7 @@ class TestCsrfDoubleSubmit(unittest.TestCase):
             resp = client.post(
                 "/v1/scans",
                 json={"target": "http://localhost:3000"},
-                headers={"Authorization": "Bearer dev:alice@aegis.local"},
+                headers={"Authorization": "Bearer dev:alice@redsim.local"},
             )
         self.assertNotEqual(resp.status_code, 403,
                             f"unexpected 403 for bearer POST: {resp.text}")

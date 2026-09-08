@@ -13,7 +13,7 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from aegis.db.models import (
+from redsim.db.models import (
     Base,
     Finding,
     Organization,

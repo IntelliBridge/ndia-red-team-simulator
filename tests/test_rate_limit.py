@@ -1,4 +1,4 @@
-"""Rate-limit middleware contract (aegis.api.middleware.rate_limit).
+"""Rate-limit middleware contract (redsim.api.middleware.rate_limit).
 
 The token-bucket middleware gates only *write* requests on a small set
 of ``/v1`` write-path prefixes. This suite drives the **real**
@@ -12,7 +12,7 @@ and asserts the three load-bearing behaviours:
   (c) the module-level ``_BUCKETS`` dict is reset between cases so token
       state never leaks across tests.
 
-We wire the middleware exactly as ``aegis.api.app.create_app`` does
+We wire the middleware exactly as ``redsim.api.app.create_app`` does
 (``user_per_min``/``project_per_min`` sourced from ``APISettings``) onto
 a tiny app whose routes echo, so the assertions exercise the limiter in
 isolation from auth/DB/route concerns. ``create_app`` is preferred and
@@ -41,8 +41,8 @@ pytest.importorskip("httpx")
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-import aegis.api.middleware.rate_limit as rl
-from aegis.api.settings import APISettings
+import redsim.api.middleware.rate_limit as rl
+from redsim.api.settings import APISettings
 
 # A write path whose prefix the middleware guards (see ``write_paths`` in
 # rate_limit.py). The limiter runs before any route handler, so a tripped
@@ -82,7 +82,7 @@ def _build_app(settings: APISettings) -> FastAPI:
     identically, so this suite asserts real behaviour deterministically.
     """
     try:
-        from aegis.api.app import create_app
+        from redsim.api.app import create_app
         return create_app(settings)
     except Exception:
         app = FastAPI()
@@ -242,19 +242,19 @@ class RateLimitScopeTest(unittest.TestCase):
         self.assertTrue(rl._is_throttled("POST", "/v1/webhooks/github"))
         self.assertFalse(rl._is_throttled("POST", "/v1/health"))
 
-    def test_x_aegis_user_header_does_not_partition_buckets(self) -> None:
-        # Distinct spoofed X-Aegis-User values must share one (IP) bucket, so
+    def test_x_redsim_user_header_does_not_partition_buckets(self) -> None:
+        # Distinct spoofed X-Redsim-User values must share one (IP) bucket, so
         # the (cap+1)th write trips regardless of the header value.
         client = TestClient(self._app_with("/v1/scans"),
                             raise_server_exceptions=False)
         for i in range(USER_CAP):
             self.assertNotEqual(
                 client.post(
-                    "/v1/scans", headers={"X-Aegis-User": f"user-{i}"},
+                    "/v1/scans", headers={"X-Redsim-User": f"user-{i}"},
                 ).status_code, 429)
         self.assertEqual(
             client.post(
-                "/v1/scans", headers={"X-Aegis-User": "user-final"},
+                "/v1/scans", headers={"X-Redsim-User": "user-final"},
             ).status_code, 429)
 
 
