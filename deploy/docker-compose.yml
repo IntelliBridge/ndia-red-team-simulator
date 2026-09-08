@@ -74,6 +74,12 @@ services:
       REDSIM_CORS_ORIGINS: http://localhost:3300
       REDSIM_OIDC_ISSUER: http://keycloak:8080/realms/redsim
       REDSIM_OIDC_JWKS_URL: http://keycloak:8080/realms/redsim/protocol/openid-connect/certs
+      # Pythia gateway passthrough (docs/ops/pythia.md). Empty when the host
+      # shell does not export them, so the LLM narrative simply stays off.
+      PYTHIA_BASE_URL: ${PYTHIA_BASE_URL:-}
+      PYTHIA_API_KEY: ${PYTHIA_API_KEY:-}
+      PYTHIA_PERSONA: ${PYTHIA_PERSONA:-}
+      REDSIM_ML_LLM_MODEL: ${REDSIM_ML_LLM_MODEL:-}
     ports: ["8000:8000"]
 
   # Long-running attack/explain/verify work (-Q scans).
@@ -97,6 +103,12 @@ services:
       REDSIM_S3_ACCESS_KEY_ID: redsim
       REDSIM_S3_SECRET_ACCESS_KEY: redsim-secret
       REDSIM_DISABLE_LLM: "1"
+      # Pythia gateway passthrough (docs/ops/pythia.md). The worker also needs
+      # REDSIM_DISABLE_LLM unset before the hardening narrative is produced.
+      PYTHIA_BASE_URL: ${PYTHIA_BASE_URL:-}
+      PYTHIA_API_KEY: ${PYTHIA_API_KEY:-}
+      PYTHIA_PERSONA: ${PYTHIA_PERSONA:-}
+      REDSIM_ML_LLM_MODEL: ${REDSIM_ML_LLM_MODEL:-}
 
   # Fast bookkeeping (-Q default): report rendering, the stale-job reaper,
   # tenant reconciliation, and WORM export. Kept off the scans pool so long scans can't
