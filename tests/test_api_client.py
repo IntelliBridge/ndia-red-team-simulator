@@ -32,7 +32,7 @@ class _StubResponse:
 
 def _stub_urlopen(payload: dict, capture: list[tuple[str, str, bytes | None,
                                                      dict]]):
-    def _opener(req, timeout=None):  # noqa: ARG001
+    def _opener(req, timeout=None):
         body = req.data
         headers = {k: v for k, v in req.header_items()}
         capture.append((req.get_method(), req.full_url, body, headers))
@@ -86,22 +86,21 @@ class TestApiClient(unittest.TestCase):
     def test_http_error_is_surfaced_as_ApiError(self):
         client = api_client.ApiClient(base_url="http://api.local", token=None)
 
-        def _raise(req, timeout=None):  # noqa: ARG001
+        def _raise(req, timeout=None):
             raise urllib.error.HTTPError(
                 req.full_url, 403, "Forbidden", {},
                 io.BytesIO(b'{"detail":"role lacks scan.start"}'),
             )
 
-        with patch("urllib.request.urlopen", _raise):
-            with self.assertRaises(api_client.ApiError) as ctx:
-                client.start_scan(target="http://localhost:3000",
-                                  scanner="fake-attack")
+        with patch("urllib.request.urlopen", _raise), self.assertRaises(api_client.ApiError) as ctx:
+            client.start_scan(target="http://localhost:3000",
+                              scanner="fake-attack")
         self.assertEqual(ctx.exception.status_code, 403)
         self.assertIn("scan.start", ctx.exception.body)
 
     def test_health_returns_none_when_unreachable(self):
         client = api_client.ApiClient(base_url="http://nope", token=None)
-        def _raise(_req, timeout=None):  # noqa: ARG001
+        def _raise(_req, timeout=None):
             raise urllib.error.URLError("nope")
         with patch("urllib.request.urlopen", _raise):
             self.assertIsNone(client.health())

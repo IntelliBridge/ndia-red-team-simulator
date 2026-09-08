@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import TYPE_CHECKING, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from fastapi import Request
@@ -64,7 +65,7 @@ def _is_throttled(method: str, path: str) -> bool:
     )
 
 
-def _principal_key(request: "Request", settings: "APISettings | None") -> str:
+def _principal_key(request: Request, settings: APISettings | None) -> str:
     """Bucket key identifying the caller.
 
     Resolves the caller to its authenticated subject the same way the
@@ -83,7 +84,7 @@ def _principal_key(request: "Request", settings: "APISettings | None") -> str:
             cookie = request.cookies.get(settings.api_session_cookie_name)
             if cookie:
                 return f"sub:{_resolve_from_cookie(cookie, settings).sub}"
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - unreadable cookie, fall back to the ip key
             pass
     client = request.client
     return f"ip:{client.host if client else 'unknown'}"
@@ -91,12 +92,12 @@ def _principal_key(request: "Request", settings: "APISettings | None") -> str:
 
 def rate_limit_middleware(user_per_min: int = 30,
                           project_per_min: int = 120,
-                          settings: "APISettings | None" = None) -> Callable:
+                          settings: APISettings | None = None) -> Callable:
     """Return an ASGI middleware closure."""
     from fastapi.responses import JSONResponse
 
-    async def middleware(request: "Request",
-                         call_next: "RequestResponseEndpoint") -> "Response":
+    async def middleware(request: Request,
+                         call_next: RequestResponseEndpoint) -> Response:
         if not _is_throttled(request.method, request.url.path):
             return await call_next(request)
 

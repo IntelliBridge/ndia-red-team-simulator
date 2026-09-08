@@ -2,7 +2,7 @@ import json
 import os
 import unittest
 
-from redsim.schema import RedsimFinding, CodeLocation
+from redsim.schema import CodeLocation, RedsimFinding
 
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 

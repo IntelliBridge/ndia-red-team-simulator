@@ -57,7 +57,7 @@ def _statuses(pub: MagicMock) -> list[str]:
 class TestTaskContextLifecycle(unittest.TestCase):
     def test_success_marks_succeeded_and_publishes_after(self):
         job = _fake_job()
-        with _patched(job) as (sess, pub):
+        with _patched(job) as (_sess, pub):
             with bootstrap.task_context("job-1") as ctx:
                 self.assertFalse(ctx.skip)
             self.assertEqual(job.status, "succeeded")
@@ -70,9 +70,8 @@ class TestTaskContextLifecycle(unittest.TestCase):
         'running'."""
         job = _fake_job()
         with _patched(job) as (sess, pub):
-            with self.assertRaises(ValueError):
-                with bootstrap.task_context("job-1"):
-                    raise ValueError("boom")
+            with self.assertRaises(ValueError), bootstrap.task_context("job-1"):
+                raise ValueError("boom")
             self.assertEqual(job.status, "failed")
             self.assertIn("ValueError", job.error)
             self.assertTrue(sess.commit.called)  # committed, not left pending
@@ -80,9 +79,8 @@ class TestTaskContextLifecycle(unittest.TestCase):
 
     def test_skip_path_publishes_nothing(self):
         job = _fake_job(status="cancelled")
-        with _patched(job) as (sess, pub):
-            with bootstrap.task_context("job-1") as ctx:
-                self.assertTrue(ctx.skip)
+        with _patched(job) as (_sess, pub), bootstrap.task_context("job-1") as ctx:
+            self.assertTrue(ctx.skip)
         pub.assert_not_called()
 
 
@@ -105,10 +103,9 @@ class TestTransientRetry(unittest.TestCase):
         from celery.exceptions import Retry
         job = _fake_job()
         task = self._bound_task(retries=0)
-        with _patched(job) as (sess, pub):
-            with self.assertRaises(Retry):
-                with bootstrap.task_context("job-1", task=task):
-                    raise self._operational_error()
+        with _patched(job) as (_sess, pub):
+            with self.assertRaises(Retry), bootstrap.task_context("job-1", task=task):
+                raise self._operational_error()
             self.assertEqual(job.status, "queued")
             self.assertIsNone(job.started_at)
             task.retry.assert_called_once()
@@ -118,10 +115,9 @@ class TestTransientRetry(unittest.TestCase):
         from sqlalchemy.exc import OperationalError
         job = _fake_job()
         task = self._bound_task(retries=2)  # retries == max_retries
-        with _patched(job) as (sess, pub):
-            with self.assertRaises(OperationalError):
-                with bootstrap.task_context("job-1", task=task):
-                    raise self._operational_error()
+        with _patched(job) as (_sess, _pub):
+            with self.assertRaises(OperationalError), bootstrap.task_context("job-1", task=task):
+                raise self._operational_error()
             self.assertEqual(job.status, "failed")
             task.retry.assert_not_called()
 

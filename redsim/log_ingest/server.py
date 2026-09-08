@@ -17,6 +17,7 @@ at. A gRPC adapter can layer on later without changing the writer.
 from __future__ import annotations
 
 import os
+from datetime import UTC
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, Request, status
@@ -186,15 +187,15 @@ def _stamp_provenance(
 def _row_from_native(
     record: dict[str, Any], *, principal: CurrentUser | None = None
 ) -> LogIngestRow:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     ts_raw = record.get("ts")
     if isinstance(ts_raw, str):
-        ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+        ts = datetime.fromisoformat(ts_raw)
     elif isinstance(ts_raw, (int, float)):
-        ts = datetime.fromtimestamp(float(ts_raw), tz=timezone.utc)
+        ts = datetime.fromtimestamp(float(ts_raw), tz=UTC)
     else:
-        ts = datetime.now(timezone.utc)
+        ts = datetime.now(UTC)
     return LogIngestRow(
         ts=ts,
         severity=str(record.get("severity", "info")),

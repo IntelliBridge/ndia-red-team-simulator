@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest import mock
 
 from redsim.scanners import dispatch, list_scanners
@@ -41,7 +42,7 @@ class TestScannerRegistry(unittest.TestCase):
     def test_dispatch_by_name(self):
         class _Mock:
             name = "mock-dast"
-            capabilities = {"dast"}
+            capabilities: ClassVar[set[str]] = {"dast"}
             default_timeout = 60
 
             def adapter_version(self):
@@ -261,7 +262,7 @@ class TestScanResultFromRunner(unittest.TestCase):
 
     @staticmethod
     def _runner(*, findings=None, return_code=0, error=None, command=...):
-        attrs = dict(findings=findings or [], return_code=return_code, error=error)
+        attrs = {"findings": findings or [], "return_code": return_code, "error": error}
         # ``command=...`` (default) means "no command attribute" (a runner that
         # is not a CLI wrapper); pass ``command=[...]`` for a CLI-style runner.
         if command is not ...:

@@ -28,9 +28,15 @@ from redsim.services.scans import JobHandle, ScanOutcome, create_scan_job, start
 from redsim.services.verify import VerifyOutcome, create_verify_job, verify
 
 __all__ = [
+    "CancelOutcome",
     "JobHandle",
-    "ScanOutcome", "create_scan_job", "start_scan",
-    "VerifyOutcome", "create_verify_job", "verify",
-    "CancelOutcome", "cancel_run",
-    "ReportOutcome", "render_reports",
+    "ReportOutcome",
+    "ScanOutcome",
+    "VerifyOutcome",
+    "cancel_run",
+    "create_scan_job",
+    "create_verify_job",
+    "render_reports",
+    "start_scan",
+    "verify",
 ]

@@ -8,8 +8,8 @@ the ``redsim.scanners`` entry-point group when ``REDSIM_PLUGINS=1``.
 
 from redsim.scanners.registry import (  # noqa: F401
     KNOWN_CAPABILITIES,
-    ScanOptions,
     ScannerAdapter,
+    ScanOptions,
     ScanResult,
     dispatch,
     get,

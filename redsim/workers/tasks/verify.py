@@ -14,7 +14,7 @@ chips reflect the verify result. Mapping:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -63,7 +63,7 @@ def verify_replay(self: Task, job_id: str) -> dict[str, Any]:
 
         state = _STATE_MAP.get(outcome.status, "inconclusive")
         finding_row.validation_state = state
-        finding_row.validated_at = datetime.now(timezone.utc)
+        finding_row.validated_at = datetime.now(UTC)
 
         logger.info("verify_replay finished job_id=%s finding_id=%s status=%s validation_state=%s",
                     job_id, outcome.finding_id, outcome.status, state)

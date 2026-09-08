@@ -36,12 +36,12 @@ from redsim.api.settings import APISettings
 
 def _settings_with_session_keys(**overrides) -> APISettings:
     private, public = generate_keypair()
-    base = dict(
-        env="dev", auth_mode="dev",
-        api_session_private_key=private,
-        api_session_public_key=public,
-        cors_origins=["http://localhost:3000"],
-    )
+    base = {
+        "env": "dev", "auth_mode": "dev",
+        "api_session_private_key": private,
+        "api_session_public_key": public,
+        "cors_origins": ["http://localhost:3000"],
+    }
     base.update(overrides)
     return APISettings(**base)
 
@@ -81,9 +81,8 @@ class TestMintAndVerify(unittest.TestCase):
         )
         import time
         with patch("redsim.api.session_cookie.time.time",
-                   return_value=time.time() + 10):
-            with self.assertRaises(SessionCookieError):
-                verify_session_cookie(cookie, settings)
+                   return_value=time.time() + 10), self.assertRaises(SessionCookieError):
+            verify_session_cookie(cookie, settings)
 
 
 class TestSessionKeyRotationOverlap(unittest.TestCase):
@@ -174,9 +173,8 @@ class TestSessionKeyRotationOverlap(unittest.TestCase):
         )
         import time
         with patch("redsim.api.session_cookie.time.time",
-                   return_value=time.time() + 10):
-            with self.assertRaises(SessionCookieError):
-                verify_session_cookie(cookie, rotated)
+                   return_value=time.time() + 10), self.assertRaises(SessionCookieError):
+            verify_session_cookie(cookie, rotated)
 
 
 class TestParityViaTestClient(unittest.TestCase):

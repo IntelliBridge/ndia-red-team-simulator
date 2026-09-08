@@ -17,9 +17,10 @@ entity User {
 
 entity Project;
 
-action "scan.start", "agent.run", "agent.execute", "fix.generate",
-       "fix.apply", "verify.replay", "target.manage", "audit.verify",
-       "run.cancel", "tool.invoke"
+action "scan.start", "verify.replay", "target.manage", "auth_profile.manage",
+       "audit.verify", "run.cancel", "model.register", "attack.run",
+       "explain.run", "harden.recommend", "finding.review", "finding.annotate",
+       "report.export"
   appliesTo {
     principal: [User],
     resource: [Project],
@@ -33,7 +34,7 @@ where:
 
 - `principal` = the Redsim subject dict (`sub`, `email`, `is_system`,
   `project_memberships`).
-- `action` = the `Action` value string, e.g. `"fix.apply"`.
+- `action` = the `Action` value string, e.g. `"attack.run"`.
 - `resource` = `{ "project_id": "<id>", ... }`.
 - `context` = request-time flags (e.g. `override_authorized`).
 

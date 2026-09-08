@@ -16,27 +16,32 @@
 // subject.project_memberships[resource.project_id] before evaluation —
 // see redsim-entities.md).
 //
-// Role ranks: scanner(1) < remediator(2) < approver(3) < admin(4).
+// Role ranks: viewer(0) < scanner(1) < remediator(2) < approver(3) < admin(4).
+// viewer is read-only membership: it appears in no permit below.
 // A principal satisfies an action when its role rank >= the action's
 // minimum, so each action lists every role at or above its bar.
 
-// --- scan.start : minimum scanner -----------------------------------------
+// --- scanner-min actions: scan.start, attack.run, explain.run,
+//     report.export -------------------------------------------------------
 permit (
   principal,
-  action == Action::"scan.start",
+  action in [
+    Action::"scan.start", Action::"attack.run", Action::"explain.run",
+    Action::"report.export"
+  ],
   resource
 ) when {
   principal.role == "scanner" || principal.role == "remediator" ||
   principal.role == "approver" || principal.role == "admin"
 };
 
-// --- remediator-min actions: agent.run, fix.generate, verify.replay,
-//     run.cancel, tool.invoke --------------------------------------------
+// --- remediator-min actions: verify.replay, run.cancel, model.register,
+//     harden.recommend, finding.annotate --------------------------------
 permit (
   principal,
   action in [
-    Action::"agent.run", Action::"fix.generate", Action::"verify.replay",
-    Action::"run.cancel", Action::"tool.invoke"
+    Action::"verify.replay", Action::"run.cancel", Action::"model.register",
+    Action::"harden.recommend", Action::"finding.annotate"
   ],
   resource
 ) when {
@@ -44,19 +49,23 @@ permit (
   principal.role == "admin"
 };
 
-// --- approver-min actions: agent.execute, fix.apply -----------------------
+// --- approver-min actions: finding.review ---------------------------------
+// The independence check (reviewer != campaign creator) lives in the
+// service layer, not here (spec section 7.7).
 permit (
   principal,
-  action in [Action::"agent.execute", Action::"fix.apply"],
+  action == Action::"finding.review",
   resource
 ) when {
   principal.role == "approver" || principal.role == "admin"
 };
 
-// --- admin-only actions: target.manage, audit.verify ----------------------
+// --- admin-only actions: target.manage, auth_profile.manage, audit.verify --
 permit (
   principal,
-  action in [Action::"target.manage", Action::"audit.verify"],
+  action in [
+    Action::"target.manage", Action::"auth_profile.manage", Action::"audit.verify"
+  ],
   resource
 ) when {
   principal.role == "admin"

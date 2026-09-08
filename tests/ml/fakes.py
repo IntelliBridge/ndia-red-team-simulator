@@ -24,7 +24,7 @@ class _TinyNet(nn.Module):
         self.conv = nn.Conv2d(3, 4, kernel_size=3, padding=1)
         self.fc = nn.Linear(4 * 8 * 8, len(CLASS_NAMES))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # noqa: D401
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.fc(torch.relu(self.conv(x)).flatten(1))
 
 

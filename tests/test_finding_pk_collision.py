@@ -27,7 +27,7 @@ def _make_engine():
     engine = create_engine("sqlite://", future=True)
     try:
         Base.metadata.create_all(bind=engine)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - skip on any sqlite failure
         raise unittest.SkipTest(f"sqlite can't host the schema: {exc}")
     return engine
 

@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from redsim.schema import RedsimFinding, CodeLocation
+from redsim.schema import CodeLocation, RedsimFinding
 from redsim.state import RunState
 from redsim.verify import (
     classify_dast_remediation,
@@ -16,21 +16,21 @@ from redsim.verify import (
 
 
 def _finding(**overrides):
-    base = dict(
-        id="vuln-0001", title="SQL Injection",
-        severity="critical", finding_type="dast",
-        description="...", source_tool="strix", source_run_id="r",
-        affected_component="/rest/user/login", confidence="high",
-        status="open", created_at="2026-01-01", updated_at="2026-01-01",
-        target="http://localhost:3000",
-        endpoint="/rest/user/login",
-        method="POST",
-        poc_script_code=(
+    base = {
+        "id": "vuln-0001", "title": "SQL Injection",
+        "severity": "critical", "finding_type": "dast",
+        "description": "...", "source_tool": "strix", "source_run_id": "r",
+        "affected_component": "/rest/user/login", "confidence": "high",
+        "status": "open", "created_at": "2026-01-01", "updated_at": "2026-01-01",
+        "target": "http://localhost:3000",
+        "endpoint": "/rest/user/login",
+        "method": "POST",
+        "poc_script_code": (
             "curl -X POST http://localhost:3000/rest/user/login "
             "-H 'Content-Type: application/json' "
             "-d '{\"email\":\"x@y.z\",\"password\":\"p\"}'"
         ),
-    )
+    }
     base.update(overrides)
     return RedsimFinding(**base)
 

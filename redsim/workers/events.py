@@ -58,7 +58,7 @@ def publish_job_event(run_id: str, job_id: str, status: str, **extra: Any) -> No
         if client is None:
             return
         client.publish(f"run:{run_id}:events", json.dumps(payload))
-    except Exception:  # noqa: BLE001 — telemetry must never break the task
+    except Exception:
         logger.warning(
             "event publish failed (run=%s job=%s status=%s)",
             run_id, job_id, status, exc_info=True,

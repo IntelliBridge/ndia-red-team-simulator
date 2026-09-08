@@ -33,7 +33,7 @@ class TestSchemaImportsAndCreateAll(unittest.TestCase):
             pass
         try:
             _sqlite_safe_metadata().create_all(bind=engine)
-        except Exception as exc:  # SQLite balks on JSONB; that's expected
+        except Exception as exc:  # noqa: BLE001 - SQLite balks on JSONB, that is expected
             self.skipTest(f"SQLite cannot host JSONB columns: {exc}")
         Session = sessionmaker(engine)
         with Session() as s:

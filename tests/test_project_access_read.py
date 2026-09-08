@@ -32,7 +32,7 @@ def _patch_jsonb_for_sqlite() -> None:
     from sqlalchemy.ext.compiler import compiles
 
     @compiles(JSONB, "sqlite")
-    def _to_text(type_, compiler, **kw):  # noqa: ARG001
+    def _to_text(type_, compiler, **kw):
         return "TEXT"
 
 
@@ -56,7 +56,7 @@ def _build_app_with_sqlite():
     )
     try:
         Base.metadata.create_all(bind=engine)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - skip on any sqlite failure
         raise unittest.SkipTest(f"sqlite can't host the schema: {exc}")
     Session = sessionmaker(engine, expire_on_commit=False)
     with Session() as s:
@@ -131,13 +131,12 @@ class TestProjectAccessRead(unittest.TestCase):
              patch.dict(os.environ,
                         {"REDSIM_ENV": "dev", "REDSIM_AUTH_MODE": "dev"},
                         clear=False):
-            with self.assertRaises(WebSocketDisconnect) as cm:
-                with client.websocket_connect(
-                        "/v1/runs/run-a/events",
-                        subprotocols=["redsim.bearer.dev:outsider@x.com"]) as ws:
-                    # Receiving a message forces the test client to surface
-                    # the server-side close.
-                    ws.receive_json()
+            with self.assertRaises(WebSocketDisconnect) as cm, client.websocket_connect(
+                    "/v1/runs/run-a/events",
+                    subprotocols=["redsim.bearer.dev:outsider@x.com"]) as ws:
+                # Receiving a message forces the test client to surface
+                # the server-side close.
+                ws.receive_json()
             self.assertEqual(cm.exception.code, 1008)
 
     def test_report_404_when_no_artifact(self):

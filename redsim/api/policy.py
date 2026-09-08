@@ -12,30 +12,37 @@ from redsim.api.auth import CurrentUser
 class Action(str, Enum):
     """RBAC action vocabulary.
 
-    Only SCAN_START / VERIFY_REPLAY / TARGET_MANAGE / AUTH_PROFILE_MANAGE /
-    AUDIT_VERIFY / RUN_CANCEL have live callers in this fork. The agent / fix /
-    tool / ticket actions are reserved vocabulary: they are the ``remediator`` /
-    ``approver``-tier rungs the effects gate (``redsim.effects``) refers to and
-    the ML attack adapters' gated actions will reuse. They are mirrored
-    verbatim in ``deploy/opa/redsim-authz.rego`` and
-    ``deploy/cedar/redsim-policy.cedar`` — change all three together.
+    Live callers in this fork: ``SCAN_START`` (the offline ``redsim scan``
+    admission path), ``VERIFY_REPLAY``, ``TARGET_MANAGE``,
+    ``AUTH_PROFILE_MANAGE``, ``AUDIT_VERIFY`` and ``RUN_CANCEL``. The seven
+    ``MODEL_REGISTER`` to ``REPORT_EXPORT`` members are the adversarial-ML
+    vertical's gates (spec section 7.4); their routes land in M1 to M6. The
+    pentest-era members (agent, fix, tool, ticket) were pruned at M0 with the
+    routes that used them. The table is mirrored verbatim in
+    ``deploy/opa/redsim-authz.rego`` and ``deploy/cedar/redsim-policy.cedar``.
+    Change all three together: an unknown action fails closed.
     """
 
     SCAN_START = "scan.start"
-    AGENT_RUN = "agent.run"
-    AGENT_EXECUTE = "agent.execute"
-    FIX_GENERATE = "fix.generate"
-    FIX_APPLY = "fix.apply"
     VERIFY_REPLAY = "verify.replay"
     TARGET_MANAGE = "target.manage"
     AUTH_PROFILE_MANAGE = "auth_profile.manage"
     AUDIT_VERIFY = "audit.verify"
     RUN_CANCEL = "run.cancel"
-    TOOL_INVOKE = "tool.invoke"
-    TICKET_SYNC = "ticket.sync"
+    # Adversarial-ML vertical (spec section 7.4).
+    MODEL_REGISTER = "model.register"
+    ATTACK_RUN = "attack.run"
+    EXPLAIN_RUN = "explain.run"
+    HARDEN_RECOMMEND = "harden.recommend"
+    FINDING_REVIEW = "finding.review"
+    FINDING_ANNOTATE = "finding.annotate"
+    REPORT_EXPORT = "report.export"
 
 
+# ``viewer`` ranks 0: it passes every membership (read) gate and fails every
+# ``check()`` on a gated action, the same as an unknown role.
 _ROLE_RANK = {
+    "viewer": 0,
     "scanner": 1,
     "remediator": 2,
     "approver": 3,
@@ -44,22 +51,24 @@ _ROLE_RANK = {
 
 _ACTION_MIN_ROLE: dict[Action, str] = {
     Action.SCAN_START: "scanner",
-    Action.AGENT_RUN: "remediator",
-    # Executing an active/external agent (exploit, live hardening, PR) is the
-    # state-changing step — same bar as applying a fix.
-    Action.AGENT_EXECUTE: "approver",
-    Action.FIX_GENERATE: "remediator",
-    Action.FIX_APPLY: "approver",
     Action.VERIFY_REPLAY: "remediator",
     Action.TARGET_MANAGE: "admin",
     # Auth profiles hold scan credentials — same bar as managing targets.
     Action.AUTH_PROFILE_MANAGE: "admin",
     Action.AUDIT_VERIFY: "admin",
     Action.RUN_CANCEL: "remediator",
-    Action.TOOL_INVOKE: "remediator",
-    # Pushing a finding to an external tracker is a remediation-workflow
-    # action — same bar as fix.generate / verify.replay.
-    Action.TICKET_SYNC: "remediator",
+    # Registering a model (bundled pick or upload) admits untrusted bytes to
+    # the worker sandbox: remediator tier. Endpoint registration is
+    # TARGET_MANAGE (admin).
+    Action.MODEL_REGISTER: "remediator",
+    Action.ATTACK_RUN: "scanner",
+    Action.EXPLAIN_RUN: "scanner",
+    Action.HARDEN_RECOMMEND: "remediator",
+    # Dismissing a finding is a review verdict: approver tier, plus the
+    # independence check in the service layer (spec section 7.7).
+    Action.FINDING_REVIEW: "approver",
+    Action.FINDING_ANNOTATE: "remediator",
+    Action.REPORT_EXPORT: "scanner",
 }
 
 
@@ -152,7 +161,7 @@ def has_org_access(user: CurrentUser, org_id: str) -> bool:
                 .limit(1)
             ).first()
         return match is not None
-    except Exception:
+    except Exception:  # noqa: BLE001 - degrade to no access, never open the gate
         return False
 
 

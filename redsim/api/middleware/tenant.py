@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from redsim.api.settings import APISettings
 
 
-def _resolve_user(request: "Request",
-                  settings: "APISettings") -> "CurrentUser | None":
+def _resolve_user(request: Request,
+                  settings: APISettings) -> CurrentUser | None:
     """Resolve the caller the same way the route dependencies do.
 
     Bearer token wins over the session cookie (matching ``get_current_user``).
@@ -45,12 +45,12 @@ def _resolve_user(request: "Request",
         cookie = request.cookies.get(settings.api_session_cookie_name)
         if cookie:
             return _resolve_from_cookie(cookie, settings)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable credential means no user, not a failed request
         return None
     return None
 
 
-def _accessible_org_ids(user: "CurrentUser") -> list[str] | None:
+def _accessible_org_ids(user: CurrentUser) -> list[str] | None:
     """Distinct org ids for the caller's member projects, or ``None``.
 
     ``None`` (full access) for system principals and for callers with no
@@ -82,13 +82,13 @@ def _accessible_org_ids(user: "CurrentUser") -> list[str] | None:
     return orgs or None
 
 
-def tenant_middleware(settings: "APISettings") -> Callable:
+def tenant_middleware(settings: APISettings) -> Callable:
     """Return an ASGI middleware closure that pins the request's tenant scope."""
 
     async def middleware(
-        request: "Request",
-        call_next: Callable[["Request"], Awaitable["Response"]],
-    ) -> "Response":
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
         from redsim.db.session import reset_current_tenants, set_current_tenants
 
         org_ids: list[str] | None = None
@@ -96,7 +96,7 @@ def tenant_middleware(settings: "APISettings") -> Callable:
         if user is not None:
             try:
                 org_ids = _accessible_org_ids(user)
-            except Exception:
+            except Exception:  # noqa: BLE001 - fallback explained below
                 # The org lookup needs a configured DB. If it isn't available
                 # (no engine / DB down), fall back to system scope rather than
                 # failing the request: RLS is defense-in-depth *behind* the

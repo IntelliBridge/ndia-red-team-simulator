@@ -18,7 +18,7 @@ import re
 import shlex
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -165,7 +165,7 @@ def replay_poc(parsed: dict[str, Any], *, timeout: float = 10.0) -> dict[str, An
         body = b""
         try:
             body = e.read(64 * 1024)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - the error body is optional evidence
             pass
         return {
             "status": e.code,
@@ -292,7 +292,7 @@ def classify_sast_remediation(finding: RedsimFinding, repo_path: Path) -> tuple[
 # ---------------------------------------------------------------------------
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _persist(run_state: RunStateAPI, result: VerifyResult,

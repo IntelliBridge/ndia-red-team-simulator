@@ -21,8 +21,8 @@ def list_registered_scanners(
     The pentest built-ins were removed with the pentest domain; until an
     adversarial-ML attack adapter (``redsim.ml.attacks``) or a signed plugin
     registers, the roster is empty and clients must render an explicit
-    "no adapter registered" state rather than offer a scan that
-    ``POST /v1/scans`` would reject with 400.
+    "no adapter registered" state. ``POST /v1/scans`` was unmounted at M0;
+    campaigns start with ``POST /v1/models/{id}/attacks``.
     """
     from redsim.scanners import get, list_scanners
 

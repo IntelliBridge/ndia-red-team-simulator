@@ -13,7 +13,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -187,5 +187,5 @@ def severity_from_otlp(severity_number: int | None,
 
 def ts_from_unix_nano(ts_nano: int | None) -> datetime:
     if ts_nano is None or ts_nano <= 0:
-        return datetime.now(timezone.utc)
-    return datetime.fromtimestamp(ts_nano / 1_000_000_000, tz=timezone.utc)
+        return datetime.now(UTC)
+    return datetime.fromtimestamp(ts_nano / 1_000_000_000, tz=UTC)

@@ -39,10 +39,11 @@ from __future__ import annotations
 import logging
 import os
 import traceback
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Iterator
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -70,7 +71,7 @@ class TaskContext:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _transient_errors() -> tuple[type[BaseException], ...]:
@@ -82,7 +83,7 @@ def _transient_errors() -> tuple[type[BaseException], ...]:
     try:
         from sqlalchemy.exc import InterfaceError, OperationalError
         errs += [OperationalError, InterfaceError]
-    except Exception:  # noqa: BLE001 — sqlalchemy optional in minimal envs
+    except Exception:  # noqa: BLE001, S110 — sqlalchemy optional in minimal envs
         pass
     return tuple(errs)
 
@@ -92,7 +93,7 @@ def _publish(run_id: str, job_id: str, status: str) -> None:
     try:
         from redsim.workers.events import publish_job_event
         publish_job_event(run_id, job_id, status)
-    except Exception:  # noqa: BLE001 — telemetry must never break the task
+    except Exception:
         logger.debug("event publish hook failed", exc_info=True)
 
 

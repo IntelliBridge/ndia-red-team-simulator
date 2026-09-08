@@ -10,7 +10,7 @@ boundary deterministic.
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -24,7 +24,7 @@ from tests.conftest import make_sqlite_session_factory as _make_session_factory
 pytestmark = pytest.mark.integration
 
 TTL_SECONDS = 3600
-NOW = datetime(2026, 6, 8, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 6, 8, 12, 0, 0, tzinfo=UTC)
 
 
 def _seed_org_project_run(Session) -> None:
@@ -65,7 +65,7 @@ class TestReaper(unittest.TestCase):
             # sqlite drops tzinfo on round-trip from a timezone=True column,
             # so compare the wall-clock value rather than the aware datetime.
             self.assertIsNotNone(job.completed_at)
-            self.assertEqual(job.completed_at.replace(tzinfo=timezone.utc), NOW)
+            self.assertEqual(job.completed_at.replace(tzinfo=UTC), NOW)
             self.assertEqual(job.error, "reaped: exceeded max runtime TTL")
 
     def test_fresh_running_job_is_untouched(self):

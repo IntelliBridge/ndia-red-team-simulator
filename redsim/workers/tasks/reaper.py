@@ -16,7 +16,7 @@ so it's unit-testable without Celery or a real DB.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -40,7 +40,7 @@ def reap_stale_jobs_in_session(
     ``now`` is injectable so callers (tests) can be deterministic; it
     defaults to the current UTC time. Returns the number of jobs reaped.
     """
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     cutoff = now - timedelta(seconds=ttl_seconds)
 
     stale = (

@@ -180,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         envelope = run(args.entry_point, request)
-    except Exception as exc:  # any plugin failure → structured error envelope
+    except Exception as exc:  # noqa: BLE001 - any plugin failure becomes a structured error envelope
         envelope = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     _emit(envelope)
     return 0

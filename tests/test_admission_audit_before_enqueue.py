@@ -92,15 +92,15 @@ class TestAdmissionAuditBeforeEnqueue(unittest.TestCase):
         writer = InMemoryAuditWriter()
 
         from redsim.safety import AuthorizationError
-        with patch("redsim.db.session.get_session", session_cm):
-            with self.assertRaises(AuthorizationError):
-                create_scan_job(
-                    target="http://attacker.example.com",
-                    scanner="fake-attack", project_id="proj-1",
-                    actor="user:test",
-                    config=RedsimConfig(target_allowlist=["localhost"]),
-                    audit_writer=writer,
-                )
+        with patch("redsim.db.session.get_session", session_cm), \
+                self.assertRaises(AuthorizationError):
+            create_scan_job(
+                target="http://attacker.example.com",
+                scanner="fake-attack", project_id="proj-1",
+                actor="user:test",
+                config=RedsimConfig(target_allowlist=["localhost"]),
+                audit_writer=writer,
+            )
 
         # The refusal still lands on the chain as a fail
         self.assertEqual(len(writer.events), 1)

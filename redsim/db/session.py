@@ -13,8 +13,8 @@ from __future__ import annotations
 import contextvars
 import logging
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
@@ -102,7 +102,7 @@ def _apply_tenant_guc(sess: _Session) -> None:
         _rls_bypass_warned = True
         try:
             is_super = sess.execute(text("SHOW is_superuser")).scalar()
-        except Exception:  # pragma: no cover - defensive
+        except Exception:  # noqa: BLE001  # pragma: no cover - defensive
             is_super = None
         if str(is_super).lower() == "on":
             logger.warning(

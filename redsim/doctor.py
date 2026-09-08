@@ -33,7 +33,7 @@ def _warn(label: str, detail: str = "") -> None:
 def _cmd_version(cmd: str) -> str | None:
     try:
         result = subprocess.run(
-            cmd.split(), capture_output=True, text=True, timeout=10,
+            cmd.split(), capture_output=True, text=True, timeout=10, check=False,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -80,7 +80,7 @@ def _check_db(url: str) -> tuple[bool, str]:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return True, "SELECT 1 ok"
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover
         return False, f"{type(exc).__name__}: {exc}"
 
 
@@ -91,7 +91,7 @@ def _check_blob_backend(backend: str) -> tuple[bool, str]:
         try:
             base.mkdir(parents=True, exist_ok=True)
             return True, f"fs at {base}"
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover
             return False, f"{type(exc).__name__}: {exc}"
     if backend == "s3":
         try:
@@ -109,7 +109,7 @@ def _check_oidc(issuer: str) -> tuple[bool, str]:
             if resp.status == 200:
                 return True, f"{resp.status} from issuer"
             return False, f"unexpected status {resp.status}"
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover
         return False, f"{type(exc).__name__}: {exc}"
 
 
@@ -125,7 +125,7 @@ def _report_attack_adapters() -> None:
     try:
         from redsim.scanners import list_scanners
         names = list_scanners()
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - defensive
         _warn("Attack adapters", f"registry unavailable — {type(exc).__name__}: {exc}")
         return
     if names:

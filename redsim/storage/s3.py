@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+from collections.abc import Iterator
 from datetime import datetime
-from typing import Iterator, cast
+from typing import cast
 
 from redsim.storage.blobs import BlobRef
 
@@ -46,7 +47,7 @@ class S3BlobStore:
         self.client = boto3.client("s3", **kwargs)
 
     @classmethod
-    def from_env(cls) -> "S3BlobStore":
+    def from_env(cls) -> S3BlobStore:
         bucket = os.environ.get("REDSIM_S3_BUCKET")
         if not bucket:
             raise RuntimeError("REDSIM_S3_BUCKET not set")
@@ -78,7 +79,7 @@ class S3BlobStore:
         try:
             conf = self.client.get_object_lock_configuration(Bucket=self.bucket)
             enabled = conf.get("ObjectLockConfiguration", {}).get("ObjectLockEnabled")
-        except Exception as exc:  # noqa: BLE001 - any failure = can't prove WORM
+        except Exception as exc:
             raise RuntimeError(
                 f"bucket {self.bucket!r} does not have S3 Object Lock enabled "
                 "(enable it at bucket creation); refusing to write an unsealed "

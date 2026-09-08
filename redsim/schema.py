@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 Severity = Literal["critical", "high", "medium", "low"]
 FindingType = Literal[
-    "dependency", "sast", "dast", "runtime", "config", "code", "code_audit", "supply_chain"
+    "dependency", "sast", "dast", "runtime", "config", "code", "code_audit", "supply_chain",
+    "adversarial_ml",
 ]
 Status = Literal["open", "fixing", "fixed", "failed", "false_positive"]
 Confidence = Literal["high", "medium", "low"]
@@ -94,6 +95,13 @@ class RedsimFinding(BaseModel):
     poc_description: str | None = None
     timestamp: str | None = None
     cvss_breakdown: dict[str, Any] | None = None
+
+    # Adversarial-ML detail (finding_type == "adversarial_ml"): the
+    # ``model_dump()`` of ``redsim.ml.schema.MLFindingDetail``, validated by
+    # the worker before ``to_dict()``. Kept a plain dict here so the core
+    # schema never imports ``redsim.ml``. Without this field ``extra="ignore"``
+    # would silently drop the ML block on ``model_validate``.
+    ml: dict[str, Any] | None = None
 
     @property
     def is_dependency_finding(self) -> bool:
