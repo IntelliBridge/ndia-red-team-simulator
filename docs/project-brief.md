@@ -96,6 +96,7 @@ The register of record is [specs/_shared/decisions.md](../specs/_shared/decision
 | Managed identity | Resolved: redsim Keycloak OIDC + NextAuth; dev-token mode allowed for the demo | D002 |
 | Retention, export redaction, licence restrictions | Open | D006 |
 | Team roles and ownership | Open; unassigned | D007 |
+| Licence and redistribution of the malicious-gpt corpus (Phase B probe material) | Open | D008 |
 
 No provider authorization, deployment, spending commitment, or collaborator invitation is implied by this brief.
 
@@ -116,6 +117,7 @@ Recorded here so the open decisions above have a traceable answer. The product o
 11. **Decision register.** D001–D005 resolved as above, approver "product owner (hackathon), 2026-09-08". D006 and D007 remain open with no owners assigned.
 12. **Constitution.** Principles are not rewritten. Three amendment proposals — (a) Principle II and vehicle imagery, (b) Principle II and bounded upload, (c) Principle III and the per-campaign score — are appended with status "proposed, pending named approval". Ratification is not claimed.
 13. **Brief consolidation.** `docs/brief.md` is folded into this file and deleted; references in `docs/`, `specs/`, and `.specify/` point here.
+14. **LLM-track corpus (2026-09-08, later).** The jailbreak prompts of `idllresearch/malicious-gpt` (USENIX Security '24 "Malla" paper, commit `25be7cc16ab821c7f7908641d3e433ac81671181`, 200 records combined into one JSON Lines file with provenance fields) were fetched into the gitignored asset cache as probe material for the Phase B LLM-assistant domain (item 6: garak-style probes through Pythia). Phase B only and probe material only: not a Phase A dataset, not a classifier dataset, never mixed into an MRI. Prompts are untrusted data, sent only to an explicitly entitled Pythia persona with the permission-gate-only guardrail default, never to a production system. The evidence for an LLM assessment is the test context, the observed response, the criterion, the detector result and the reviewer assessment. *Divergence from this brief's data-handling rule:* the upstream repository declares no licence, so the corpus is usable internally for research and is not shippable or publishable until the authors clarify. Recorded as open item D008, not silently accepted.
 
 ## Not in the first milestone
 
