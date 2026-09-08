@@ -24,8 +24,8 @@ describe("auth client helpers", () => {
   it("getToken / getEmail read from localStorage", () => {
     expect(getToken()).toBeUndefined();
     expect(getEmail()).toBeUndefined();
-    localStorage.setItem("aegis_token", "tok");
-    localStorage.setItem("aegis_email", "a@b.c");
+    localStorage.setItem("redsim_token", "tok");
+    localStorage.setItem("redsim_email", "a@b.c");
     expect(getToken()).toBe("tok");
     expect(getEmail()).toBe("a@b.c");
   });
@@ -33,27 +33,27 @@ describe("auth client helpers", () => {
   it("logout clears storage and pings the signout endpoint", () => {
     const fetchMock = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("fetch", fetchMock);
-    localStorage.setItem("aegis_token", "tok");
-    localStorage.setItem("aegis_email", "a@b.c");
+    localStorage.setItem("redsim_token", "tok");
+    localStorage.setItem("redsim_email", "a@b.c");
 
     logout();
 
-    expect(localStorage.getItem("aegis_token")).toBeNull();
-    expect(localStorage.getItem("aegis_email")).toBeNull();
-    expect(fetchMock).toHaveBeenCalledWith("/api/auth/signout-aegis", {
+    expect(localStorage.getItem("redsim_token")).toBeNull();
+    expect(localStorage.getItem("redsim_email")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/signout-redsim", {
       method: "POST",
     });
   });
 
   it("requireAuth returns the token when present, without redirecting", () => {
-    localStorage.setItem("aegis_token", "tok");
+    localStorage.setItem("redsim_token", "tok");
     const router = { push: vi.fn() };
     expect(requireAuth(router)).toBe("tok");
     expect(router.push).not.toHaveBeenCalled();
   });
 
   it("requireAuth accepts a cookie session via the non-httpOnly csrf cookie", () => {
-    document.cookie = "aegis_csrf=csrf-value";
+    document.cookie = "redsim_csrf=csrf-value";
     const router = { push: vi.fn() };
     expect(requireAuth(router)).toBe("(cookie)");
     expect(router.push).not.toHaveBeenCalled();

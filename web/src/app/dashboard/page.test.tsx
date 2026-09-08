@@ -27,7 +27,7 @@ vi.mock("@/hooks/useRequireAuth", () => ({
 
 // auth helpers the page imports: getEmail (display) + logout (sign-out wiring).
 const logoutMock = vi.hoisted(() => vi.fn());
-const getEmailMock = vi.hoisted(() => vi.fn(() => "dev@aegis.local"));
+const getEmailMock = vi.hoisted(() => vi.fn(() => "dev@redsim.local"));
 vi.mock("@/lib/auth", () => ({
   getEmail: getEmailMock,
   logout: logoutMock,
@@ -60,7 +60,7 @@ beforeEach(() => {
   replaceMock.mockReset();
   logoutMock.mockReset();
   getEmailMock.mockReset();
-  getEmailMock.mockReturnValue("dev@aegis.local");
+  getEmailMock.mockReturnValue("dev@redsim.local");
   useRequireAuthMock.mockReturnValue(true);
 });
 
@@ -164,12 +164,12 @@ describe("DashboardPage", () => {
   });
 
   it("shows the session email from getEmail()", () => {
-    getEmailMock.mockReturnValue("alice@aegis.local");
+    getEmailMock.mockReturnValue("alice@redsim.local");
     useSWRMock.mockReturnValue({ data: { runs: [], count: 0 }, error: undefined, isLoading: false });
 
     render(h(DashboardPage));
 
-    expect(screen.getByText("alice@aegis.local")).toBeTruthy();
+    expect(screen.getByText("alice@redsim.local")).toBeTruthy();
   });
 
   it("signs out: calls logout() then routes to /login", () => {

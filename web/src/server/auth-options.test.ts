@@ -9,11 +9,11 @@ const keycloakMock = vi.hoisted(() => vi.fn(() => ({ id: "keycloak" })));
 vi.mock("next-auth/providers/keycloak", () => ({ default: keycloakMock }));
 
 const mintMock = vi.hoisted(() => vi.fn());
-vi.mock("./aegis-session", () => ({
-  csrfCookieName: "aegis_csrf",
-  sessionCookieName: "aegis_api_session",
+vi.mock("./redsim-session", () => ({
+  csrfCookieName: "redsim_csrf",
+  sessionCookieName: "redsim_api_session",
   sessionTtlSeconds: 900,
-  mintAegisSessionJwt: mintMock,
+  mintRedsimSessionJwt: mintMock,
   newCsrfToken: () => "csrf",
 }));
 
@@ -34,7 +34,7 @@ describe("authOptions config shape", () => {
 });
 
 describe("authOptions.callbacks.jwt", () => {
-  it("merges sub/email/name and aegis_project_roles from the Keycloak profile", async () => {
+  it("merges sub/email/name and redsim_project_roles from the Keycloak profile", async () => {
     const token = await authOptions.callbacks!.jwt!({
       token: { sub: "old" },
       account: { provider: "keycloak" },
@@ -42,13 +42,13 @@ describe("authOptions.callbacks.jwt", () => {
         sub: "u1",
         email: "u@e.com",
         name: "U",
-        aegis_project_roles: { p1: "admin" },
+        redsim_project_roles: { p1: "admin" },
       },
     } as any);
 
     expect(token.sub).toBe("u1");
     expect(token.email).toBe("u@e.com");
-    expect(token.aegisProjectRoles).toEqual({ p1: "admin" });
+    expect(token.redsimProjectRoles).toEqual({ p1: "admin" });
   });
 
   it("returns the token unchanged when there is no account/profile", async () => {
@@ -61,7 +61,7 @@ describe("authOptions.callbacks.jwt", () => {
 });
 
 describe("authOptions.callbacks.session", () => {
-  it("mints the jwt and sets both Aegis cookies on a session refresh", async () => {
+  it("mints the jwt and sets both Redsim cookies on a session refresh", async () => {
     mintMock.mockResolvedValue("signed-jwt");
 
     const session = await authOptions.callbacks!.session!({
@@ -70,7 +70,7 @@ describe("authOptions.callbacks.session", () => {
         sub: "u1",
         email: "u@e.com",
         name: "U",
-        aegisProjectRoles: { p1: "admin" },
+        redsimProjectRoles: { p1: "admin" },
       },
     } as any);
 

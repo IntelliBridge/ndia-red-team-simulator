@@ -5,7 +5,7 @@ Covers the seams finished in M6:
   (a) ``start_scan`` routes every scanner through the registry ``dispatch``
       and maps the returned ``ScanResult`` into a ``ScanOutcome``;
   (b) an unregistered scanner surfaces a ``KeyError`` whose message names the
-      missing adapter and points at ``aegis.ml.attacks`` (the pentest engines
+      missing adapter and points at ``redsim.ml.attacks`` (the pentest engines
       were removed; the ML attack adapters register in the same registry);
   (c) ``POST /v1/scans`` with an unregistered scanner is rejected with HTTP 400
       before any Run/Job row is created;
@@ -22,9 +22,9 @@ import subprocess
 import unittest
 from unittest.mock import MagicMock, patch
 
-from aegis.config import AegisConfig
-from aegis.scanners.registry import ScanOptions, ScanResult, run_cli_scan
-from aegis.services.scans import ScanOutcome, start_scan
+from redsim.config import RedsimConfig
+from redsim.scanners.registry import ScanOptions, ScanResult, run_cli_scan
+from redsim.services.scans import ScanOutcome, start_scan
 
 
 def _run_state() -> MagicMock:
@@ -40,7 +40,7 @@ def _completed(returncode: int = 0) -> subprocess.CompletedProcess:
 
 class TestStartScanDispatch(unittest.TestCase):
     def setUp(self):
-        self.config = AegisConfig(target_allowlist=["localhost"])
+        self.config = RedsimConfig(target_allowlist=["localhost"])
 
     def test_scanner_dispatches_and_maps_result(self):
         state = _run_state()
@@ -49,8 +49,8 @@ class TestStartScanDispatch(unittest.TestCase):
             command_str="semgrep --json /repo", exit_code=0,
             duration_s=4.2, error=None,
         )
-        with patch("aegis.scanners.dispatch", return_value=result) as dispatch, \
-             patch("aegis.safety.authorize"):
+        with patch("redsim.scanners.dispatch", return_value=result) as dispatch, \
+             patch("redsim.safety.authorize"):
             outcome = start_scan(
                 run_state=state, target="localhost", scanner="semgrep",
                 instruction="focus on injection", timeout=600,
@@ -82,8 +82,8 @@ class TestStartScanDispatch(unittest.TestCase):
             findings=[finding], adapter_name="semgrep", adapter_version="1",
             command_str="semgrep", exit_code=1, duration_s=1.0, error=None,
         )
-        with patch("aegis.scanners.dispatch", return_value=result), \
-             patch("aegis.safety.authorize"):
+        with patch("redsim.scanners.dispatch", return_value=result), \
+             patch("redsim.safety.authorize"):
             outcome = start_scan(
                 run_state=state, target="localhost", scanner="semgrep",
                 actor="cli:scan", config=self.config,
@@ -99,8 +99,8 @@ class TestStartScanDispatch(unittest.TestCase):
             command_str="semgrep", exit_code=0, duration_s=0.0,
             error="boom",
         )
-        with patch("aegis.scanners.dispatch", return_value=result), \
-             patch("aegis.safety.authorize"):
+        with patch("redsim.scanners.dispatch", return_value=result), \
+             patch("redsim.safety.authorize"):
             outcome = start_scan(
                 run_state=state, target="localhost", scanner="semgrep",
                 actor="cli:scan", config=self.config,
@@ -117,8 +117,8 @@ class TestStartScanDispatch(unittest.TestCase):
             findings=[], adapter_name="fake-evasion", adapter_version="1",
             command_str="fake-evasion", exit_code=0, duration_s=0.0, error=None,
         )
-        with patch("aegis.scanners.dispatch", return_value=result) as dispatch, \
-             patch("aegis.safety.authorize"):
+        with patch("redsim.scanners.dispatch", return_value=result) as dispatch, \
+             patch("redsim.safety.authorize"):
             outcome = start_scan(
                 run_state=state, target="localhost", scanner="fake-evasion",
                 actor="cli:scan", config=self.config,
@@ -138,7 +138,7 @@ class TestStartScanDispatch(unittest.TestCase):
         # explicit failure, never a silent success or a faked result — and the
         # message names the missing adapter and where the ML adapters register.
         state = _run_state()
-        with patch("aegis.safety.authorize"), self.assertRaises(KeyError) as cm:
+        with patch("redsim.safety.authorize"), self.assertRaises(KeyError) as cm:
             start_scan(
                 run_state=state, target="localhost",
                 scanner="no-such-adapter-m6",
@@ -146,7 +146,7 @@ class TestStartScanDispatch(unittest.TestCase):
             )
         message = str(cm.exception)
         self.assertIn("no-such-adapter-m6", message)
-        self.assertIn("aegis.ml.attacks", message)
+        self.assertIn("redsim.ml.attacks", message)
         self.assertIn("available", message)
 
 
@@ -186,16 +186,16 @@ class TestUnknownScannerRejected(unittest.TestCase):
         pytest.importorskip("fastapi")
         # The rate-limit bucket store is a module global shared across tests;
         # reset it so an earlier suite's writes don't drain it into a 429 here.
-        import aegis.api.middleware.rate_limit as rl
+        import redsim.api.middleware.rate_limit as rl
         rl._BUCKETS.clear()
         self.addCleanup(rl._BUCKETS.clear)
 
     def _client(self):
         from fastapi.testclient import TestClient
 
-        from aegis.api.app import create_app
-        from aegis.api.auth import CurrentUser, get_current_user
-        from aegis.api.settings import APISettings
+        from redsim.api.app import create_app
+        from redsim.api.auth import CurrentUser, get_current_user
+        from redsim.api.settings import APISettings
         app = create_app(APISettings(env="dev", auth_mode="dev",
                                      cors_origins=["http://localhost:3000"]))
         user = CurrentUser(sub="dev:u@test", email="u@test",

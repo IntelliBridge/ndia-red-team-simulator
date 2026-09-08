@@ -1,33 +1,33 @@
 // Unified API client (Phase 4 v0.4.0 F18).
 //
 // Auth modes:
-//   - Cookie (browser): credentials: "include" so aegis_api_session
-//     rides along; X-Aegis-CSRF auto-attached from the aegis_csrf
+//   - Cookie (browser): credentials: "include" so redsim_api_session
+//     rides along; X-Redsim-CSRF auto-attached from the redsim_csrf
 //     cookie on every mutating request.
-//   - Bearer (CLI / programmatic): set window.localStorage.aegis_token
+//   - Bearer (CLI / programmatic): set window.localStorage.redsim_token
 //     and we'll attach Authorization: Bearer ... (bearer wins server
-//     side, see aegis/api/auth.py).
+//     side, see redsim/api/auth.py).
 //
-// X-Aegis-Request-ID is auto-generated per call so the API +
+// X-Redsim-Request-ID is auto-generated per call so the API +
 // worker + scanner logs correlate.
 
-const BASE = process.env.NEXT_PUBLIC_AEGIS_API_URL ?? "http://localhost:8000";
+const BASE = process.env.NEXT_PUBLIC_REDSIM_API_URL ?? "http://localhost:8000";
 
 export const apiBase = BASE;
 export const apiWsBase = BASE.replace(/^http/, "ws");
 
 const SESSION_COOKIE =
-  process.env.NEXT_PUBLIC_AEGIS_API_SESSION_COOKIE ?? "aegis_api_session";
+  process.env.NEXT_PUBLIC_REDSIM_API_SESSION_COOKIE ?? "redsim_api_session";
 const CSRF_COOKIE =
-  process.env.NEXT_PUBLIC_AEGIS_CSRF_COOKIE ?? "aegis_csrf";
+  process.env.NEXT_PUBLIC_REDSIM_CSRF_COOKIE ?? "redsim_csrf";
 const CSRF_HEADER =
-  process.env.NEXT_PUBLIC_AEGIS_CSRF_HEADER ?? "X-Aegis-CSRF";
+  process.env.NEXT_PUBLIC_REDSIM_CSRF_HEADER ?? "X-Redsim-CSRF";
 
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 function _bearerFromStorage(): string | undefined {
   if (typeof window === "undefined") return undefined;
-  return localStorage.getItem("aegis_token") ?? undefined;
+  return localStorage.getItem("redsim_token") ?? undefined;
 }
 
 /**
@@ -77,7 +77,7 @@ export async function api<T>(
   const method = (init.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = {
     Accept: "application/json",
-    "X-Aegis-Request-ID": _newRequestId(),
+    "X-Redsim-Request-ID": _newRequestId(),
     ...(init.headers as Record<string, string> | undefined ?? {}),
   };
 
@@ -183,8 +183,8 @@ export async function deleteTarget(targetId: string): Promise<void> {
 
 // ── Report downloads ───────────────────────────────────────────────
 // These are plain authenticated GETs: the browser sends the
-// aegis_api_session cookie (the API CSP-hardens HTML and serves
-// json/md as nosniff downloads — see aegis/api/v1/reports.py). They
+// redsim_api_session cookie (the API CSP-hardens HTML and serves
+// json/md as nosniff downloads — see redsim/api/v1/reports.py). They
 // mirror the existing HTML-report anchor (apiBase + path), so we expose
 // URL builders rather than blob helpers.
 export type ReportExt = "html" | "json" | "md";
@@ -318,7 +318,7 @@ export function startScan(req: StartScanRequest): Promise<{ run_id: string }> {
 
 export type ScannerInfo = {
   name: string;
-  /** Capability vocabulary from aegis.scanners.registry (e.g. "dast"). */
+  /** Capability vocabulary from redsim.scanners.registry (e.g. "dast"). */
   capabilities: string[];
 };
 
@@ -327,7 +327,7 @@ export type ScannerInfo = {
  *
  * Drives the scanner picker so the UI never hardcodes adapter names: the
  * pentest built-ins were removed with the pentest domain, and until an ML
- * attack adapter (aegis.ml.attacks) or a signed plugin registers, the roster
+ * attack adapter (redsim.ml.attacks) or a signed plugin registers, the roster
  * is empty. POST /v1/scans rejects any name not in this list with 400, so an
  * empty roster must render as "no adapter registered", never as a scan that
  * can be started.

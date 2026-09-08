@@ -6,7 +6,7 @@ export default defineConfig({
   retries: 0,
   use: {
     headless: true,
-    baseURL: process.env.AEGIS_WEB_URL ?? "http://localhost:3000",
+    baseURL: process.env.REDSIM_WEB_URL ?? "http://localhost:3000",
     trace: "retain-on-failure",
   },
 });

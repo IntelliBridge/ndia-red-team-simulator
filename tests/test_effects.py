@@ -10,8 +10,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from aegis import effects
-from aegis.effects import (
+from redsim import effects
+from redsim.effects import (
     build_action_plan,
     domain_default_effect,
     requires_approval,

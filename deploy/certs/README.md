@@ -1,4 +1,4 @@
-# TLS trust anchors for the Aegis stack
+# TLS trust anchors for the Redsim stack
 
 This directory holds extra root certificates the build context needs to
 trust when pulling base images and dependencies through a corporate

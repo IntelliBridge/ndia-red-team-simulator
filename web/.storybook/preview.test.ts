@@ -34,22 +34,22 @@ describe("storybook preview config", () => {
     expect(a11y.config).toEqual({ rules: [] });
   });
 
-  it("parameters.backgrounds.default is 'aegis-light'", () => {
+  it("parameters.backgrounds.default is 'redsim-light'", () => {
     const { backgrounds } = preview.parameters as Record<string, Record<string, unknown>>;
-    expect(backgrounds.default).toBe("aegis-light");
+    expect(backgrounds.default).toBe("redsim-light");
   });
 
-  it("parameters.backgrounds.values contains the aegis-light entry", () => {
+  it("parameters.backgrounds.values contains the redsim-light entry", () => {
     const { backgrounds } = preview.parameters as Record<string, Record<string, unknown>>;
     expect(backgrounds.values).toEqual(
-      expect.arrayContaining([{ name: "aegis-light", value: "#f8fafc" }]),
+      expect.arrayContaining([{ name: "redsim-light", value: "#f8fafc" }]),
     );
   });
 
-  it("parameters.backgrounds.values contains the aegis-dark entry", () => {
+  it("parameters.backgrounds.values contains the redsim-dark entry", () => {
     const { backgrounds } = preview.parameters as Record<string, Record<string, unknown>>;
     expect(backgrounds.values).toEqual(
-      expect.arrayContaining([{ name: "aegis-dark", value: "#0b1220" }]),
+      expect.arrayContaining([{ name: "redsim-dark", value: "#0b1220" }]),
     );
   });
 

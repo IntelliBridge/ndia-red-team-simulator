@@ -18,9 +18,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from aegis.api.app import create_app
-from aegis.api.auth import CurrentUser, get_current_user
-from aegis.api.settings import APISettings
+from redsim.api.app import create_app
+from redsim.api.auth import CurrentUser, get_current_user
+from redsim.api.settings import APISettings
 
 
 def _patch_jsonb_for_sqlite() -> None:
@@ -34,7 +34,7 @@ def _patch_jsonb_for_sqlite() -> None:
 
 def _build_app_with_logs():
     _patch_jsonb_for_sqlite()
-    from aegis.db.models import (
+    from redsim.db.models import (
         ApplicationLog,
         Base,
         Organization,
@@ -56,7 +56,7 @@ def _build_app_with_logs():
         for i in range(5):
             s.add(ApplicationLog(
                 ts=now, severity="info" if i % 2 == 0 else "error",
-                service="aegis-api", message=f"event {i}",
+                service="redsim-api", message=f"event {i}",
                 run_id="run-1", project_id="proj-a",
                 request_id="req-abc",
             ))
@@ -87,8 +87,8 @@ class TestLogsApi(unittest.TestCase):
                               project_memberships={"default": "admin"})
         _override_user(app, admin)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.audit.chain.resolve_writer",
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.audit.chain.resolve_writer",
                    return_value=_DiscardWriter()):
             resp = client.get("/v1/logs?run=run-1")
         self.assertEqual(resp.status_code, 200)
@@ -104,7 +104,7 @@ class TestLogsApi(unittest.TestCase):
                                 project_memberships={"default": "scanner"})
         _override_user(app, scanner)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/logs")
         self.assertEqual(resp.status_code, 403)
 
@@ -114,8 +114,8 @@ class TestLogsApi(unittest.TestCase):
                               project_memberships={"default": "admin"})
         _override_user(app, admin)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.audit.chain.resolve_writer",
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.audit.chain.resolve_writer",
                    return_value=_DiscardWriter()):
             resp = client.get("/v1/logs?severity=error")
         self.assertEqual(resp.status_code, 200)

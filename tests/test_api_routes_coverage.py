@@ -1,13 +1,13 @@
 """Comprehensive behavioral tests for FastAPI route modules.
 
 Covers:
-  - aegis/api/auth.py
-  - aegis/api/ws.py
-  - aegis/api/v1/targets.py
-  - aegis/api/v1/findings.py
-  - aegis/api/v1/runs_cancel.py
-  - aegis/api/v1/verify.py
-  - aegis/api/v1/runs.py
+  - redsim/api/auth.py
+  - redsim/api/ws.py
+  - redsim/api/v1/targets.py
+  - redsim/api/v1/findings.py
+  - redsim/api/v1/runs_cancel.py
+  - redsim/api/v1/verify.py
+  - redsim/api/v1/runs.py
 
 (The pentest fix.py and exports.py route modules were removed with the
 pentest domain.)
@@ -32,8 +32,8 @@ pytest.importorskip("sqlalchemy")
 
 from fastapi.testclient import TestClient
 
-from aegis.api.app import create_app
-from aegis.api.auth import (
+from redsim.api.app import create_app
+from redsim.api.auth import (
     CurrentUser,
     _dev_user,
     _hmac_sign,
@@ -43,10 +43,10 @@ from aegis.api.auth import (
     get_current_user,
     issue_worker_token,
 )
-from aegis.api.settings import APISettings
-from aegis.config import AegisConfig
-from aegis.safety import AuthorizationError
-from aegis.services.scans import JobHandle
+from redsim.api.settings import APISettings
+from redsim.config import RedsimConfig
+from redsim.safety import AuthorizationError
+from redsim.services.scans import JobHandle
 from tests.conftest import make_sqlite_session_factory
 
 # DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
@@ -57,7 +57,7 @@ pytestmark = pytest.mark.integration
 # ---------------------------------------------------------------------------
 
 def _make_sqlite_session():
-    """Build an in-memory SQLite engine with all Aegis tables.
+    """Build an in-memory SQLite engine with all Redsim tables.
 
     Returns ``(Session, session_cm)`` — the shape this module's ``_build_app``
     expects; the engine is unused here. Delegates to the shared
@@ -70,7 +70,7 @@ def _make_sqlite_session():
 def _build_app(extra_rows_fn=None):
     """Create a dev-mode app backed by SQLite; seed rows via extra_rows_fn."""
     Session, session_cm = _make_sqlite_session()
-    from aegis.db.models import Organization, Project
+    from redsim.db.models import Organization, Project
 
     with Session() as s:
         s.add(Organization(id="org-1", name="TestOrg", slug="testorg"))
@@ -108,7 +108,7 @@ def _scanner(project_id: str = "proj-1") -> CurrentUser:
 
 def _system_user() -> CurrentUser:
     return CurrentUser(
-        sub="service:worker:w1", email="worker@aegis.local",
+        sub="service:worker:w1", email="worker@redsim.local",
         project_memberships={"default": "admin"},
         is_system=True,
     )
@@ -148,7 +148,7 @@ def _fake_redis_module(events):
     the given ``events`` as JSON ``message`` frames.
 
     This is the real boundary ``_redis_pubsub_iter`` reaches when
-    ``AEGIS_BROKER_URL`` is set (``redis_async.from_url(...).pubsub()`` →
+    ``REDSIM_BROKER_URL`` is set (``redis_async.from_url(...).pubsub()`` →
     ``listen()``). Patching it (instead of the private ``_redis_pubsub_iter``)
     drives the genuine generator. ``events`` are dicts; each is JSON-encoded
     so the helper decodes it back to the same dict.
@@ -177,7 +177,7 @@ def _fake_redis_module(events):
 
 @contextlib.contextmanager
 def _patched_redis_boundary(events):
-    """Patch ``AEGIS_BROKER_URL`` + ``redis.asyncio`` so the real
+    """Patch ``REDSIM_BROKER_URL`` + ``redis.asyncio`` so the real
     ``_redis_pubsub_iter`` yields ``events`` from its genuine redis path.
 
     ``_redis_pubsub_iter`` resolves the module via
@@ -186,7 +186,7 @@ def _patched_redis_boundary(events):
     already imported the real ``redis`` package.
     """
     import os
-    with patch.dict(os.environ, {"AEGIS_BROKER_URL": "redis://localhost:6379"}), \
+    with patch.dict(os.environ, {"REDSIM_BROKER_URL": "redis://localhost:6379"}), \
          patch.dict("sys.modules", {"redis.asyncio": _fake_redis_module(events)}):
         yield
 
@@ -206,7 +206,7 @@ def _patched_jwt_boundary(claims=None, *, error=None):
     - ``error``: if given, ``jwt.decode`` raises this (use a ``JoseError``)
       to drive the verification-failure path.
     """
-    from aegis.api.auth import _jwks_cache
+    from redsim.api.auth import _jwks_cache
 
     # The JWKS cache is process-wide (lru_cache); clear it so our httpx stub
     # is what backs the fetch for this test rather than a value cached by an
@@ -237,7 +237,7 @@ def _patched_jwt_boundary(claims=None, *, error=None):
 # ===========================================================================
 
 class TestAuthHelpers(unittest.TestCase):
-    """Unit tests for helper functions inside aegis/api/auth.py."""
+    """Unit tests for helper functions inside redsim/api/auth.py."""
 
     # --- _hmac_sign ---
     def test_hmac_sign_deterministic(self):
@@ -336,7 +336,7 @@ class TestAuthHelpers(unittest.TestCase):
             worker_signing_key="legacykey",
             worker_signing_key_version=1,
         )
-        sig = _hmac_sign("legacykey", "aegis-worker")
+        sig = _hmac_sign("legacykey", "redsim-worker")
         token = f"worker:{sig}"
         self.assertIsNone(_verify_worker_token(token, settings))
 
@@ -400,7 +400,7 @@ class TestAuthHelpers(unittest.TestCase):
             worker_signing_key="autoloaded-key",
             worker_signing_key_version=1,
         )
-        with patch("aegis.api.auth.load_settings", return_value=fake_settings):
+        with patch("redsim.api.auth.load_settings", return_value=fake_settings):
             token = issue_worker_token("w-auto")
         self.assertTrue(token.startswith("worker:v1.w-auto."))
 
@@ -447,7 +447,7 @@ class TestAuthHelpers(unittest.TestCase):
     def test_get_current_user_dev_bearer_resolves(self):
         app, session_cm = _build_app()
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get(
                 "/v1/runs",
                 headers={"Authorization": "Bearer dev:alice@test.com"},
@@ -472,11 +472,11 @@ class TestAuthHelpers(unittest.TestCase):
             cookie_calls.append(value)
             raise AssertionError("cookie path should not be reached")
 
-        with patch("aegis.api.session_cookie.verify_session_cookie",
+        with patch("redsim.api.session_cookie.verify_session_cookie",
                    _spy_verify_cookie), \
-             patch("aegis.db.session.get_session", session_cm):
+             patch("redsim.db.session.get_session", session_cm):
             client = TestClient(app, raise_server_exceptions=False)
-            client.cookies.set("aegis_api_session", "cookieval")
+            client.cookies.set("redsim_api_session", "cookieval")
             resp = client.get(
                 "/v1/runs",
                 headers={"Authorization": "Bearer dev:alice@test.com"},
@@ -495,7 +495,7 @@ class TestAuthHelpers(unittest.TestCase):
         (``verify_session_cookie``) so the genuine ``_resolve_from_cookie``
         path runs end to end, rather than stubbing that private resolver.
         """
-        from aegis.api.session_cookie import SessionClaims
+        from redsim.api.session_cookie import SessionClaims
 
         app, session_cm = _build_app()
         claims = SessionClaims(
@@ -504,26 +504,26 @@ class TestAuthHelpers(unittest.TestCase):
             iat=0, exp=0, jti="t",
         )
 
-        with patch("aegis.api.session_cookie.verify_session_cookie",
+        with patch("redsim.api.session_cookie.verify_session_cookie",
                    return_value=claims), \
-             patch("aegis.db.session.get_session", session_cm):
+             patch("redsim.db.session.get_session", session_cm):
             # Use a fresh client after setting cookies on it
             client = TestClient(app, raise_server_exceptions=False)
-            client.cookies.set("aegis_api_session", "some-cookie-val")
+            client.cookies.set("redsim_api_session", "some-cookie-val")
             resp = client.get("/v1/runs")
         self.assertIn(resp.status_code, [200, 503])
 
     def test_resolve_from_token_settings_none_uses_load_settings(self):
         """When settings=None, load_settings() is called implicitly."""
         settings = APISettings(env="dev", auth_mode="dev")
-        with patch("aegis.api.auth.load_settings", return_value=settings):
+        with patch("redsim.api.auth.load_settings", return_value=settings):
             user = _resolve_from_token("dev:auto@test.com")
         self.assertEqual(user.email, "auto@test.com")
 
     # --- _resolve_from_cookie ---
     def test_resolve_from_cookie_valid(self):
         """Cookie verify success returns a CurrentUser."""
-        from aegis.api.auth import _resolve_from_cookie
+        from redsim.api.auth import _resolve_from_cookie
 
         @dataclass
         class FakeClaims:
@@ -536,7 +536,7 @@ class TestAuthHelpers(unittest.TestCase):
                     self.project_memberships = {"proj-1": "admin"}
 
         settings = APISettings(env="dev", auth_mode="dev")
-        with patch("aegis.api.session_cookie.verify_session_cookie",
+        with patch("redsim.api.session_cookie.verify_session_cookie",
                    return_value=FakeClaims()):
             user = _resolve_from_cookie("cookieval", settings)
         self.assertEqual(user.email, "u1@test.com")
@@ -546,11 +546,11 @@ class TestAuthHelpers(unittest.TestCase):
         """SessionCookieError from verify_session_cookie raises HTTPException 401."""
         from fastapi import HTTPException
 
-        from aegis.api.auth import _resolve_from_cookie
-        from aegis.api.session_cookie import SessionCookieError
+        from redsim.api.auth import _resolve_from_cookie
+        from redsim.api.session_cookie import SessionCookieError
 
         settings = APISettings(env="dev", auth_mode="dev")
-        with patch("aegis.api.session_cookie.verify_session_cookie",
+        with patch("redsim.api.session_cookie.verify_session_cookie",
                    side_effect=SessionCookieError("bad cookie")):
             with self.assertRaises(HTTPException) as ctx:
                 _resolve_from_cookie("badcookieval", settings)
@@ -566,7 +566,7 @@ class TestAuthHelpers(unittest.TestCase):
             "sub": "user-123",
             "email": "jwtuser@test.com",
             "name": "JWT User",
-            "aegis_project_roles": {"proj-1": "admin"},
+            "redsim_project_roles": {"proj-1": "admin"},
             "aud": settings.oidc_audience,
         }
         with _patched_jwt_boundary(fake_claims):
@@ -577,12 +577,12 @@ class TestAuthHelpers(unittest.TestCase):
         self.assertEqual(user.display_name, "JWT User")
 
     def test_resolve_from_token_jwt_success_non_dict_roles(self):
-        """Non-dict aegis_project_roles is treated as empty."""
+        """Non-dict redsim_project_roles is treated as empty."""
         settings = APISettings(env="dev", auth_mode="oidc", oidc_jwks_url="http://x/jwks")
         fake_claims = {
             "sub": "user-456",
             "email": "r@test.com",
-            "aegis_project_roles": "not-a-dict",
+            "redsim_project_roles": "not-a-dict",
             "aud": settings.oidc_audience,
         }
         with _patched_jwt_boundary(fake_claims):
@@ -607,20 +607,20 @@ class TestAuthHelpers(unittest.TestCase):
 # ===========================================================================
 
 class TestWsHelpers(unittest.TestCase):
-    """Test the pure helper functions in aegis/api/ws.py."""
+    """Test the pure helper functions in redsim/api/ws.py."""
 
     def test_origin_allowed_empty_string(self):
-        from aegis.api.ws import _origin_allowed
+        from redsim.api.ws import _origin_allowed
         settings = APISettings(cors_origins=["http://foo.com"])
         self.assertTrue(_origin_allowed("", settings))
 
     def test_origin_allowed_whitelisted(self):
-        from aegis.api.ws import _origin_allowed
+        from redsim.api.ws import _origin_allowed
         settings = APISettings(cors_origins=["http://foo.com"])
         self.assertTrue(_origin_allowed("http://foo.com", settings))
 
     def test_origin_allowed_web_origin(self):
-        from aegis.api.ws import _origin_allowed
+        from redsim.api.ws import _origin_allowed
         settings = APISettings(
             cors_origins=["http://other.com"],
             web_origin="http://myapp.com",
@@ -628,20 +628,20 @@ class TestWsHelpers(unittest.TestCase):
         self.assertTrue(_origin_allowed("http://myapp.com", settings))
 
     def test_origin_not_allowed(self):
-        from aegis.api.ws import _origin_allowed
+        from redsim.api.ws import _origin_allowed
         settings = APISettings(cors_origins=["http://good.com"])
         self.assertFalse(_origin_allowed("http://evil.com", settings))
 
     def test_extract_bearer_subprotocol_present(self):
-        from aegis.api.ws import _extract_bearer_subprotocol
+        from redsim.api.ws import _extract_bearer_subprotocol
         ws = MagicMock()
-        ws.headers.get.return_value = "aegis.bearer.mytoken123"
+        ws.headers.get.return_value = "redsim.bearer.mytoken123"
         token, echo = _extract_bearer_subprotocol(ws)
         self.assertEqual(token, "mytoken123")
-        self.assertEqual(echo, "aegis.bearer.mytoken123")
+        self.assertEqual(echo, "redsim.bearer.mytoken123")
 
     def test_extract_bearer_subprotocol_absent(self):
-        from aegis.api.ws import _extract_bearer_subprotocol
+        from redsim.api.ws import _extract_bearer_subprotocol
         ws = MagicMock()
         ws.headers.get.return_value = ""
         token, echo = _extract_bearer_subprotocol(ws)
@@ -649,14 +649,14 @@ class TestWsHelpers(unittest.TestCase):
         self.assertIsNone(echo)
 
     def test_extract_bearer_subprotocol_multiple_protocols(self):
-        from aegis.api.ws import _extract_bearer_subprotocol
+        from redsim.api.ws import _extract_bearer_subprotocol
         ws = MagicMock()
-        ws.headers.get.return_value = "graphql-ws, aegis.bearer.tok42"
+        ws.headers.get.return_value = "graphql-ws, redsim.bearer.tok42"
         token, echo = _extract_bearer_subprotocol(ws)
         self.assertEqual(token, "tok42")
 
     def test_extract_bearer_subprotocol_none_matching(self):
-        from aegis.api.ws import _extract_bearer_subprotocol
+        from redsim.api.ws import _extract_bearer_subprotocol
         ws = MagicMock()
         ws.headers.get.return_value = "graphql-ws, soap"
         token, echo = _extract_bearer_subprotocol(ws)
@@ -669,7 +669,7 @@ class TestWsEndpoint(unittest.TestCase):
 
     def _build_ws_app(self, seed_run=True):
         Session, session_cm = _make_sqlite_session()
-        from aegis.db.models import Organization, Project, Run
+        from redsim.db.models import Organization, Project, Run
 
         with Session() as s:
             s.add(Organization(id="org-1", name="O", slug="o"))
@@ -706,9 +706,9 @@ class TestWsEndpoint(unittest.TestCase):
         app, session_cm = self._build_ws_app()
         client = TestClient(app, raise_server_exceptions=False)
 
-        with patch("aegis.api.settings.load_settings",
+        with patch("redsim.api.settings.load_settings",
                    return_value=self._tight_settings(restricted=True)), \
-             patch("aegis.db.session.get_session", session_cm):
+             patch("redsim.db.session.get_session", session_cm):
             try:
                 with client.websocket_connect(
                     "/v1/runs/run-ws-1/events",
@@ -728,9 +728,9 @@ class TestWsEndpoint(unittest.TestCase):
         app, session_cm = self._build_ws_app()
         client = TestClient(app, raise_server_exceptions=False)
 
-        with patch("aegis.api.settings.load_settings",
+        with patch("redsim.api.settings.load_settings",
                    return_value=self._tight_settings()), \
-             patch("aegis.db.session.get_session", session_cm):
+             patch("redsim.db.session.get_session", session_cm):
             try:
                 with client.websocket_connect("/v1/runs/run-ws-1/events"):
                     pass
@@ -744,7 +744,7 @@ class TestWsEndpoint(unittest.TestCase):
         genuine _resolve_from_cookie path) rather than patching the private
         _resolve_user_for_ws.
         """
-        from aegis.api.session_cookie import SessionClaims
+        from redsim.api.session_cookie import SessionClaims
 
         app, session_cm = self._build_ws_app(seed_run=False)
         claims = SessionClaims(
@@ -753,11 +753,11 @@ class TestWsEndpoint(unittest.TestCase):
         )
 
         client = TestClient(app, raise_server_exceptions=False)
-        client.cookies.set("aegis_api_session", "cookieval")
-        with patch("aegis.api.settings.load_settings",
+        client.cookies.set("redsim_api_session", "cookieval")
+        with patch("redsim.api.settings.load_settings",
                    return_value=self._tight_settings()), \
-             patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.session_cookie.verify_session_cookie",
+             patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.session_cookie.verify_session_cookie",
                    return_value=claims):
             try:
                 with client.websocket_connect("/v1/runs/nonexistent/events"):
@@ -772,7 +772,7 @@ class TestWsEndpoint(unittest.TestCase):
         through the real cookie verification boundary, exercising the genuine
         resolver + membership gate rather than patching _resolve_user_for_ws.
         """
-        from aegis.api.session_cookie import SessionClaims
+        from redsim.api.session_cookie import SessionClaims
 
         app, session_cm = self._build_ws_app()
         claims = SessionClaims(
@@ -781,11 +781,11 @@ class TestWsEndpoint(unittest.TestCase):
         )
 
         client = TestClient(app, raise_server_exceptions=False)
-        client.cookies.set("aegis_api_session", "cookieval")
-        with patch("aegis.api.settings.load_settings",
+        client.cookies.set("redsim_api_session", "cookieval")
+        with patch("redsim.api.settings.load_settings",
                    return_value=self._tight_settings()), \
-             patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.session_cookie.verify_session_cookie",
+             patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.session_cookie.verify_session_cookie",
                    return_value=claims):
             try:
                 with client.websocket_connect("/v1/runs/run-ws-1/events"):
@@ -801,10 +801,10 @@ class TestWsEndpoint(unittest.TestCase):
         subprotocol, and feeds the event through the real redis boundary — no
         private _resolve_user_for_ws / _redis_pubsub_iter patches.
         """
-        from aegis.api.auth import issue_worker_token
+        from redsim.api.auth import issue_worker_token
 
         Session, session_cm = _make_sqlite_session()
-        from aegis.db.models import Organization, Project, Run
+        from redsim.db.models import Organization, Project, Run
         with Session() as s:
             s.add(Organization(id="org-1", name="O", slug="o"))
             s.add(Project(id="proj-1", org_id="org-1", name="P", slug="proj-1"))
@@ -822,14 +822,14 @@ class TestWsEndpoint(unittest.TestCase):
         token = issue_worker_token("w1", settings=worker_settings)
 
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.api.settings.load_settings",
+        with patch("redsim.api.settings.load_settings",
                    return_value=worker_settings), \
-             patch("aegis.db.session.get_session", session_cm), \
+             patch("redsim.db.session.get_session", session_cm), \
              _patched_redis_boundary([{"type": "heartbeat"}]):
             try:
                 with client.websocket_connect(
                     "/v1/runs/run-ws-1/events",
-                    subprotocols=["aegis.bearer." + token],
+                    subprotocols=["redsim.bearer." + token],
                 ) as ws:
                     data = ws.receive_json()
                     self.assertEqual(data["type"], "heartbeat")
@@ -843,7 +843,7 @@ class TestWsResolveUser(unittest.IsolatedAsyncioTestCase):
     async def test_resolve_via_bearer_header(self):
         # Drive the real _resolve_from_token via a genuine dev token (dev mode
         # needs no external boundary) instead of patching the private resolver.
-        from aegis.api.ws import _resolve_user_for_ws
+        from redsim.api.ws import _resolve_user_for_ws
 
         ws = MagicMock()
         ws.headers.get.side_effect = lambda key, default="": (
@@ -863,11 +863,11 @@ class TestWsResolveUser(unittest.IsolatedAsyncioTestCase):
     async def test_resolve_via_subprotocol(self):
         # The bearer subprotocol carries a real dev token; the genuine token
         # resolver runs (no private-symbol patch).
-        from aegis.api.ws import _resolve_user_for_ws
+        from redsim.api.ws import _resolve_user_for_ws
 
         ws = MagicMock()
         ws.headers.get.side_effect = lambda key, default="": (
-            "aegis.bearer.dev:alice@test" if key == "sec-websocket-protocol"
+            "redsim.bearer.dev:alice@test" if key == "sec-websocket-protocol"
             else ""
         )
         ws.cookies.get.return_value = None
@@ -881,8 +881,8 @@ class TestWsResolveUser(unittest.IsolatedAsyncioTestCase):
     async def test_resolve_via_cookie(self):
         # Patch the real cookie verification boundary so the genuine
         # _resolve_from_cookie runs, rather than stubbing the private resolver.
-        from aegis.api.session_cookie import SessionClaims
-        from aegis.api.ws import _resolve_user_for_ws
+        from redsim.api.session_cookie import SessionClaims
+        from redsim.api.ws import _resolve_user_for_ws
 
         ws = MagicMock()
         ws.headers.get.return_value = ""
@@ -894,8 +894,8 @@ class TestWsResolveUser(unittest.IsolatedAsyncioTestCase):
             project_memberships={"proj-1": "admin"}, iat=0, exp=0, jti="t",
         )
         settings = APISettings(env="dev", auth_mode="dev",
-                               api_session_cookie_name="aegis_api_session")
-        with patch("aegis.api.session_cookie.verify_session_cookie",
+                               api_session_cookie_name="redsim_api_session")
+        with patch("redsim.api.session_cookie.verify_session_cookie",
                    return_value=claims):
             result = await _resolve_user_for_ws(ws, settings)
         self.assertIsNotNone(result)
@@ -903,7 +903,7 @@ class TestWsResolveUser(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.project_memberships["proj-1"], "admin")
 
     async def test_resolve_no_credentials_returns_none(self):
-        from aegis.api.ws import _resolve_user_for_ws
+        from redsim.api.ws import _resolve_user_for_ws
 
         ws = MagicMock()
         ws.headers.get.return_value = ""
@@ -922,11 +922,11 @@ class TestWsResolveUser(unittest.IsolatedAsyncioTestCase):
         swallows it and returns None. Exercises the genuine failure boundary
         rather than patching the private resolver.
         """
-        from aegis.api.ws import _resolve_user_for_ws
+        from redsim.api.ws import _resolve_user_for_ws
 
         ws = MagicMock()
         ws.headers.get.side_effect = lambda key, default="": (
-            "aegis.bearer.badtoken" if key == "sec-websocket-protocol" else ""
+            "redsim.bearer.badtoken" if key == "sec-websocket-protocol" else ""
         )
         ws.cookies.get.return_value = None
         ws.query_params.get.return_value = ""
@@ -950,7 +950,7 @@ class TestWsResolveUserExceptionPaths(unittest.IsolatedAsyncioTestCase):
         because OIDC is unconfigured; the helper swallows it. Drives the
         genuine failure boundary instead of patching the private resolver.
         """
-        from aegis.api.ws import _resolve_user_for_ws
+        from redsim.api.ws import _resolve_user_for_ws
 
         ws = MagicMock()
         ws.headers.get.side_effect = lambda key, default="": (
@@ -971,8 +971,8 @@ class TestWsResolveUserExceptionPaths(unittest.IsolatedAsyncioTestCase):
         The real cookie verification boundary raises SessionCookieError, so
         the genuine _resolve_from_cookie raises and the helper swallows it.
         """
-        from aegis.api.session_cookie import SessionCookieError
-        from aegis.api.ws import _resolve_user_for_ws
+        from redsim.api.session_cookie import SessionCookieError
+        from redsim.api.ws import _resolve_user_for_ws
 
         ws = MagicMock()
         ws.headers.get.return_value = ""
@@ -981,9 +981,9 @@ class TestWsResolveUserExceptionPaths(unittest.IsolatedAsyncioTestCase):
 
         settings = APISettings(
             env="dev", auth_mode="dev",
-            api_session_cookie_name="aegis_api_session",
+            api_session_cookie_name="redsim_api_session",
         )
-        with patch("aegis.api.session_cookie.verify_session_cookie",
+        with patch("redsim.api.session_cookie.verify_session_cookie",
                    side_effect=SessionCookieError("bad cookie")):
             result = await _resolve_user_for_ws(ws, settings)
         self.assertIsNone(result)
@@ -994,7 +994,7 @@ class TestWsSubprotocolEcho(unittest.TestCase):
 
     def _build_ws_app(self):
         Session, session_cm = _make_sqlite_session()
-        from aegis.db.models import Organization, Project, Run
+        from redsim.db.models import Organization, Project, Run
 
         with Session() as s:
             s.add(Organization(id="org-1", name="O", slug="o"))
@@ -1017,7 +1017,7 @@ class TestWsSubprotocolEcho(unittest.TestCase):
         on accept; the event is fed through the real redis boundary. No private
         _resolve_user_for_ws / _redis_pubsub_iter patches.
         """
-        from aegis.api.auth import issue_worker_token
+        from redsim.api.auth import issue_worker_token
 
         app, session_cm = self._build_ws_app()
         tight = APISettings(
@@ -1029,13 +1029,13 @@ class TestWsSubprotocolEcho(unittest.TestCase):
         token = issue_worker_token("w1", settings=tight)
 
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.api.settings.load_settings", return_value=tight), \
-             patch("aegis.db.session.get_session", session_cm), \
+        with patch("redsim.api.settings.load_settings", return_value=tight), \
+             patch("redsim.db.session.get_session", session_cm), \
              _patched_redis_boundary([{"type": "heartbeat"}]):
             try:
                 with client.websocket_connect(
                     "/v1/runs/run-sub-1/events",
-                    subprotocols=["aegis.bearer." + token],
+                    subprotocols=["redsim.bearer." + token],
                 ) as ws:
                     # consume event so connection stays alive until pubsub ends
                     data = ws.receive_json()
@@ -1045,18 +1045,18 @@ class TestWsSubprotocolEcho(unittest.TestCase):
 
 
 class TestWsRedisPubsubFallback(unittest.IsolatedAsyncioTestCase):
-    """Cover the no-AEGIS_BROKER_URL heartbeat loop (lines 154-166) and the
+    """Cover the no-REDSIM_BROKER_URL heartbeat loop (lines 154-166) and the
     main WS loop send_json path (line 193)."""
 
     async def test_redis_pubsub_no_url_yields_heartbeat(self):
-        """Without AEGIS_BROKER_URL the generator yields heartbeat events."""
+        """Without REDSIM_BROKER_URL the generator yields heartbeat events."""
         import os
 
-        from aegis.api.ws import _redis_pubsub_iter
+        from redsim.api.ws import _redis_pubsub_iter
 
         # Ensure the env var is absent
         env_without_broker = {k: v for k, v in os.environ.items()
-                               if k != "AEGIS_BROKER_URL"}
+                               if k != "REDSIM_BROKER_URL"}
 
         events = []
         with patch.dict("os.environ", env_without_broker, clear=True), \
@@ -1075,8 +1075,8 @@ class TestWsRedisPubsubFallback(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0]["type"], "heartbeat")
 
     async def test_redis_pubsub_with_url_valid_json_message(self):
-        """When AEGIS_BROKER_URL is set, the redis path is taken (lines 160-180)."""
-        from aegis.api.ws import _redis_pubsub_iter
+        """When REDSIM_BROKER_URL is set, the redis path is taken (lines 160-180)."""
+        from redsim.api.ws import _redis_pubsub_iter
 
         # Build mock redis client + pubsub
         fake_pubsub = MagicMock()
@@ -1106,7 +1106,7 @@ class TestWsRedisPubsubFallback(unittest.IsolatedAsyncioTestCase):
         fake_redis_module = MagicMock()
         fake_redis_module.from_url.return_value = fake_client
 
-        with patch.dict("os.environ", {"AEGIS_BROKER_URL": "redis://localhost:6379"}), \
+        with patch.dict("os.environ", {"REDSIM_BROKER_URL": "redis://localhost:6379"}), \
              patch.dict("sys.modules", {"redis.asyncio": fake_redis_module}):
             # Re-import so the env var is picked up inside the function
             events = []
@@ -1124,7 +1124,7 @@ class TestWsRedisPubsubFallback(unittest.IsolatedAsyncioTestCase):
     async def test_redis_pubsub_with_url_invalid_json_message(self):
         """Non-JSON redis messages are yielded as raw (lines 176-177)."""
 
-        from aegis.api.ws import _redis_pubsub_iter
+        from redsim.api.ws import _redis_pubsub_iter
 
         fake_pubsub = MagicMock()
         fake_client = MagicMock()
@@ -1144,7 +1144,7 @@ class TestWsRedisPubsubFallback(unittest.IsolatedAsyncioTestCase):
         fake_redis_module = MagicMock()
         fake_redis_module.from_url.return_value = fake_client
 
-        with patch.dict("os.environ", {"AEGIS_BROKER_URL": "redis://localhost:6379"}), \
+        with patch.dict("os.environ", {"REDSIM_BROKER_URL": "redis://localhost:6379"}), \
              patch.dict("sys.modules", {"redis.asyncio": fake_redis_module}):
             events = []
             gen = _redis_pubsub_iter("run:test:events")
@@ -1163,12 +1163,12 @@ class TestWsRedisPubsubFallback(unittest.IsolatedAsyncioTestCase):
         """If redis.asyncio cannot be imported, fallback heartbeat loop runs."""
         import sys
 
-        from aegis.api.ws import _redis_pubsub_iter
+        from redsim.api.ws import _redis_pubsub_iter
 
         # Remove redis.asyncio from sys.modules to simulate ImportError
         saved = sys.modules.pop("redis.asyncio", None)
         try:
-            with patch.dict("os.environ", {"AEGIS_BROKER_URL": "redis://localhost:6379"}), \
+            with patch.dict("os.environ", {"REDSIM_BROKER_URL": "redis://localhost:6379"}), \
                  patch.dict("sys.modules", {"redis.asyncio": None}), \
                  patch("asyncio.sleep", return_value=None):
                 events = []
@@ -1201,7 +1201,7 @@ class TestWsRedisPubsubFallback(unittest.IsolatedAsyncioTestCase):
         """
         from fastapi import WebSocketDisconnect
 
-        from aegis.api.ws import events_ws
+        from redsim.api.ws import events_ws
 
         sent = []
         disconnect_exc = WebSocketDisconnect(code=1001)
@@ -1218,7 +1218,7 @@ class TestWsRedisPubsubFallback(unittest.IsolatedAsyncioTestCase):
 
         # Real redis boundary yields two events; the first send_json raises
         # WebSocketDisconnect, so the loop exits after one send.
-        with patch("aegis.api.ws._enforce_upgrade_policy", return_value=True), \
+        with patch("redsim.api.ws._enforce_upgrade_policy", return_value=True), \
              _patched_redis_boundary([
                  {"type": "scan_event", "data": "hello"},
                  {"type": "scan_event", "data": "world"},
@@ -1234,7 +1234,7 @@ class TestWsRedisPubsubFallback(unittest.IsolatedAsyncioTestCase):
 # ===========================================================================
 
 def _seed_run(sess):
-    from aegis.db.models import Run
+    from redsim.db.models import Run
     sess.add(Run(id="run-1", project_id="proj-1", status="running", mode="live",
                  scanner="strix", stage_table={}))
 
@@ -1245,7 +1245,7 @@ class TestRunsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_run)
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/runs")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
@@ -1256,7 +1256,7 @@ class TestRunsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_run)
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/runs?project=proj-1")
         self.assertEqual(resp.status_code, 200)
         # All returned runs belong to the requested project
@@ -1266,7 +1266,7 @@ class TestRunsApi(unittest.TestCase):
     def test_list_runs_no_auth_401(self):
         app, session_cm = _build_app(extra_rows_fn=_seed_run)
         client = _no_auth_client(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/runs")
         self.assertEqual(resp.status_code, 401)
 
@@ -1274,7 +1274,7 @@ class TestRunsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_run)
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/runs/run-1")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
@@ -1285,7 +1285,7 @@ class TestRunsApi(unittest.TestCase):
         app, session_cm = _build_app()
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/runs/nonexistent")
         self.assertEqual(resp.status_code, 404)
 
@@ -1296,7 +1296,7 @@ class TestRunsApi(unittest.TestCase):
         )
         _override_user(app, outsider)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/runs/run-1")
         self.assertEqual(resp.status_code, 403)
 
@@ -1304,7 +1304,7 @@ class TestRunsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_run)
         _override_user(app, _system_user())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/runs/run-1")
         self.assertEqual(resp.status_code, 200)
 
@@ -1315,11 +1315,11 @@ class TestRunsApi(unittest.TestCase):
 
         @contextlib.contextmanager
         def _bad_session():
-            raise RuntimeError("AEGIS_DB_URL not configured")
+            raise RuntimeError("REDSIM_DB_URL not configured")
             yield  # pragma: no cover
 
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", _bad_session):
+        with patch("redsim.db.session.get_session", _bad_session):
             resp = client.get("/v1/runs")
         self.assertEqual(resp.status_code, 503)
 
@@ -1331,7 +1331,7 @@ class TestRunsApi(unittest.TestCase):
 def _seed_finding(sess):
     import uuid
 
-    from aegis.db.models import Finding, Run
+    from redsim.db.models import Finding, Run
     sess.add(Run(id="run-f1", project_id="proj-1", status="done", mode="live",
                  stage_table={}))
     sess.add(Finding(
@@ -1353,7 +1353,7 @@ class TestFindingsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_finding)
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/findings")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
@@ -1364,7 +1364,7 @@ class TestFindingsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_finding)
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/findings?project=proj-1")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["count"], 1)
@@ -1373,7 +1373,7 @@ class TestFindingsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_finding)
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/findings?run=run-f1")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["count"], 1)
@@ -1382,7 +1382,7 @@ class TestFindingsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_finding)
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/findings?severity=low")
         self.assertEqual(resp.status_code, 200)
         # no low-severity findings seeded
@@ -1396,7 +1396,7 @@ class TestFindingsApi(unittest.TestCase):
         )
         _override_user(app, outsider)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/findings")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["count"], 0)
@@ -1405,7 +1405,7 @@ class TestFindingsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_finding)
         _override_user(app, _system_user())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/findings")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["count"], 1)
@@ -1414,7 +1414,7 @@ class TestFindingsApi(unittest.TestCase):
         Session, session_cm = _make_sqlite_session()
         import uuid
 
-        from aegis.db.models import Finding, Organization, Project, Run
+        from redsim.db.models import Finding, Organization, Project, Run
 
         fid = str(uuid.uuid4())
         with Session() as s:
@@ -1434,7 +1434,7 @@ class TestFindingsApi(unittest.TestCase):
         app = create_app(settings)
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get(f"/v1/findings/{fid}")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["id"], fid)
@@ -1443,7 +1443,7 @@ class TestFindingsApi(unittest.TestCase):
         app, session_cm = _build_app()
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/findings/no-such-id")
         self.assertEqual(resp.status_code, 404)
 
@@ -1451,7 +1451,7 @@ class TestFindingsApi(unittest.TestCase):
         Session, session_cm = _make_sqlite_session()
         import uuid
 
-        from aegis.db.models import Finding, Organization, Project, Run
+        from redsim.db.models import Finding, Organization, Project, Run
 
         fid = str(uuid.uuid4())
         with Session() as s:
@@ -1473,14 +1473,14 @@ class TestFindingsApi(unittest.TestCase):
                                project_memberships={"other": "admin"})
         _override_user(app, outsider)
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get(f"/v1/findings/{fid}")
         self.assertEqual(resp.status_code, 403)
 
     def test_list_findings_no_auth_401(self):
         app, session_cm = _build_app()
         client = _no_auth_client(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/findings")
         self.assertEqual(resp.status_code, 401)
 
@@ -1490,7 +1490,7 @@ class TestFindingsApi(unittest.TestCase):
 # ===========================================================================
 
 def _seed_target(sess):
-    from aegis.db.models import Target
+    from redsim.db.models import Target
     sess.add(Target(id="tgt-1", project_id="proj-1",
                     kind="url", value="http://localhost", verified=False))
 
@@ -1501,7 +1501,7 @@ class TestTargetsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_target)
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/targets?project=proj-1")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
@@ -1511,7 +1511,7 @@ class TestTargetsApi(unittest.TestCase):
     def test_list_targets_no_auth_401(self):
         app, session_cm = _build_app()
         client = _no_auth_client(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/targets")
         self.assertEqual(resp.status_code, 401)
 
@@ -1526,12 +1526,12 @@ class TestTargetsApi(unittest.TestCase):
         fake_record.value = "http://localhost:8080"
         fake_record.project_id = "proj-1"
 
-        with patch("aegis.api.v1.targets.targets_svc.create_target",
+        with patch("redsim.api.v1.targets.targets_svc.create_target",
                    return_value=fake_record), \
-             patch("aegis.api.v1.targets.resolve_writer",
+             patch("redsim.api.v1.targets.resolve_writer",
                    return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.targets.load_config",
-                   return_value=AegisConfig()):
+             patch("redsim.api.v1.targets.load_config",
+                   return_value=RedsimConfig()):
             resp = client.post("/v1/targets", json={
                 "project_id": "proj-1",
                 "kind": "url",
@@ -1544,10 +1544,10 @@ class TestTargetsApi(unittest.TestCase):
         app, session_cm = _build_app()
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.api.v1.targets.resolve_writer",
+        with patch("redsim.api.v1.targets.resolve_writer",
                    return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.targets.load_config",
-                   return_value=AegisConfig()):
+             patch("redsim.api.v1.targets.load_config",
+                   return_value=RedsimConfig()):
             resp = client.post("/v1/targets", json={
                 "project_id": "proj-1",
                 "kind": "url",
@@ -1560,10 +1560,10 @@ class TestTargetsApi(unittest.TestCase):
         app, session_cm = _build_app()
         _override_user(app, _scanner())
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.api.v1.targets.resolve_writer",
+        with patch("redsim.api.v1.targets.resolve_writer",
                    return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.targets.load_config",
-                   return_value=AegisConfig()):
+             patch("redsim.api.v1.targets.load_config",
+                   return_value=RedsimConfig()):
             resp = client.post("/v1/targets", json={
                 "project_id": "proj-1",
                 "kind": "url",
@@ -1575,13 +1575,13 @@ class TestTargetsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_target)
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.targets.targets_svc.delete_target",
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.targets.targets_svc.delete_target",
                    return_value="tgt-1"), \
-             patch("aegis.api.v1.targets.resolve_writer",
+             patch("redsim.api.v1.targets.resolve_writer",
                    return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.targets.load_config",
-                   return_value=AegisConfig()):
+             patch("redsim.api.v1.targets.load_config",
+                   return_value=RedsimConfig()):
             resp = client.delete("/v1/targets/tgt-1")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["deleted"], "tgt-1")
@@ -1590,11 +1590,11 @@ class TestTargetsApi(unittest.TestCase):
         app, session_cm = _build_app()
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.targets.resolve_writer",
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.targets.resolve_writer",
                    return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.targets.load_config",
-                   return_value=AegisConfig()):
+             patch("redsim.api.v1.targets.load_config",
+                   return_value=RedsimConfig()):
             resp = client.delete("/v1/targets/nonexistent")
         self.assertEqual(resp.status_code, 404)
 
@@ -1603,13 +1603,13 @@ class TestTargetsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_target)
         _override_user(app, _admin())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.targets.targets_svc.delete_target",
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.targets.targets_svc.delete_target",
                    side_effect=LookupError("not found")), \
-             patch("aegis.api.v1.targets.resolve_writer",
+             patch("redsim.api.v1.targets.resolve_writer",
                    return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.targets.load_config",
-                   return_value=AegisConfig()):
+             patch("redsim.api.v1.targets.load_config",
+                   return_value=RedsimConfig()):
             resp = client.delete("/v1/targets/tgt-1")
         self.assertEqual(resp.status_code, 404)
 
@@ -1617,11 +1617,11 @@ class TestTargetsApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_target)
         _override_user(app, _scanner())
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.targets.resolve_writer",
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.targets.resolve_writer",
                    return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.targets.load_config",
-                   return_value=AegisConfig()):
+             patch("redsim.api.v1.targets.load_config",
+                   return_value=RedsimConfig()):
             resp = client.delete("/v1/targets/tgt-1")
         self.assertEqual(resp.status_code, 403)
 
@@ -1640,16 +1640,16 @@ class TestTargetsVerificationUnavailable(unittest.TestCase):
                            project_memberships={"proj-other": "admin"})
 
     def _verified_flag(self, session_cm) -> bool:
-        from aegis.db.models import Target
+        from redsim.db.models import Target
         with session_cm() as s:
             return bool(s.get(Target, "tgt-1").verified)
 
     def _post_patches(self):
         return (
-            patch("aegis.api.v1.targets.resolve_writer",
+            patch("redsim.api.v1.targets.resolve_writer",
                   return_value=_DiscardWriter()),
-            patch("aegis.api.v1.targets.load_config",
-                  return_value=AegisConfig()),
+            patch("redsim.api.v1.targets.load_config",
+                  return_value=RedsimConfig()),
         )
 
     # --- GET /v1/targets/{id}/verification -------------------------------
@@ -1658,7 +1658,7 @@ class TestTargetsVerificationUnavailable(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_target)
         _override_user(app, _scanner())   # any membership may read
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/targets/tgt-1/verification")
         self.assertEqual(resp.status_code, 501)
         detail = resp.json()["detail"]
@@ -1670,7 +1670,7 @@ class TestTargetsVerificationUnavailable(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_target)
         _override_user(app, _admin())
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/targets/nonexistent/verification")
         self.assertEqual(resp.status_code, 404)
 
@@ -1678,7 +1678,7 @@ class TestTargetsVerificationUnavailable(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_target)
         _override_user(app, self._non_member())
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.get("/v1/targets/tgt-1/verification")
         self.assertEqual(resp.status_code, 403)
 
@@ -1689,7 +1689,7 @@ class TestTargetsVerificationUnavailable(unittest.TestCase):
         _override_user(app, _admin())
         client = TestClient(app, raise_server_exceptions=False)
         p_writer, p_cfg = self._post_patches()
-        with patch("aegis.db.session.get_session", session_cm), p_writer, p_cfg:
+        with patch("redsim.db.session.get_session", session_cm), p_writer, p_cfg:
             resp = client.post("/v1/targets/tgt-1/verify")
         self.assertEqual(resp.status_code, 501)
         detail = resp.json()["detail"]
@@ -1703,7 +1703,7 @@ class TestTargetsVerificationUnavailable(unittest.TestCase):
         _override_user(app, _scanner())
         client = TestClient(app, raise_server_exceptions=False)
         p_writer, p_cfg = self._post_patches()
-        with patch("aegis.db.session.get_session", session_cm), p_writer, p_cfg:
+        with patch("redsim.db.session.get_session", session_cm), p_writer, p_cfg:
             resp = client.post("/v1/targets/tgt-1/verify")
         self.assertEqual(resp.status_code, 403)
         self.assertFalse(self._verified_flag(session_cm))
@@ -1713,7 +1713,7 @@ class TestTargetsVerificationUnavailable(unittest.TestCase):
         _override_user(app, self._non_member())
         client = TestClient(app, raise_server_exceptions=False)
         p_writer, p_cfg = self._post_patches()
-        with patch("aegis.db.session.get_session", session_cm), p_writer, p_cfg:
+        with patch("redsim.db.session.get_session", session_cm), p_writer, p_cfg:
             resp = client.post("/v1/targets/tgt-1/verify")
         self.assertEqual(resp.status_code, 403)
 
@@ -1722,20 +1722,20 @@ class TestTargetsVerificationUnavailable(unittest.TestCase):
         _override_user(app, _admin())
         client = TestClient(app, raise_server_exceptions=False)
         p_writer, p_cfg = self._post_patches()
-        with patch("aegis.db.session.get_session", session_cm), p_writer, p_cfg:
+        with patch("redsim.db.session.get_session", session_cm), p_writer, p_cfg:
             resp = client.post("/v1/targets/nonexistent/verify")
         self.assertEqual(resp.status_code, 404)
 
     def test_post_verify_service_unavailable_detail_is_surfaced(self):
         """The 501 detail is the service's own message, not a generic string."""
-        from aegis.services.targets import TargetVerificationUnavailable
+        from redsim.services.targets import TargetVerificationUnavailable
 
         app, session_cm = _build_app(extra_rows_fn=_seed_target)
         _override_user(app, _admin())
         client = TestClient(app, raise_server_exceptions=False)
         p_writer, p_cfg = self._post_patches()
-        with patch("aegis.db.session.get_session", session_cm), p_writer, p_cfg, \
-             patch("aegis.api.v1.targets.targets_svc.verify_target",
+        with patch("redsim.db.session.get_session", session_cm), p_writer, p_cfg, \
+             patch("redsim.api.v1.targets.targets_svc.verify_target",
                    side_effect=TargetVerificationUnavailable("engine gone")):
             resp = client.post("/v1/targets/tgt-1/verify")
         self.assertEqual(resp.status_code, 501)
@@ -1747,7 +1747,7 @@ class TestTargetsVerificationUnavailable(unittest.TestCase):
 # ===========================================================================
 
 def _seed_run_cancelable(sess):
-    from aegis.db.models import Run
+    from redsim.db.models import Run
     sess.add(Run(id="run-c1", project_id="proj-1", status="running",
                  mode="live", stage_table={}))
 
@@ -1765,15 +1765,15 @@ class TestRunsCancelApi(unittest.TestCase):
         _override_user(app, self._remediator())
         client = TestClient(app)
 
-        from aegis.services.runs import CancelOutcome
+        from redsim.services.runs import CancelOutcome
         outcome = CancelOutcome(run_id="run-c1", status="cancelled", jobs_cancelled=0)
 
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.runs_cancel.cancel_run", return_value=outcome), \
-             patch("aegis.api.v1.runs_cancel.resolve_writer",
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.runs_cancel.cancel_run", return_value=outcome), \
+             patch("redsim.api.v1.runs_cancel.resolve_writer",
                    return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.runs_cancel.load_config",
-                   return_value=AegisConfig()):
+             patch("redsim.api.v1.runs_cancel.load_config",
+                   return_value=RedsimConfig()):
             resp = client.post("/v1/runs/run-c1/cancel")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
@@ -1784,11 +1784,11 @@ class TestRunsCancelApi(unittest.TestCase):
         app, session_cm = _build_app()
         _override_user(app, self._remediator())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.runs_cancel.resolve_writer",
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.runs_cancel.resolve_writer",
                    return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.runs_cancel.load_config",
-                   return_value=AegisConfig()):
+             patch("redsim.api.v1.runs_cancel.load_config",
+                   return_value=RedsimConfig()):
             resp = client.post("/v1/runs/nonexistent/cancel")
         self.assertEqual(resp.status_code, 404)
 
@@ -1797,11 +1797,11 @@ class TestRunsCancelApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_run_cancelable)
         _override_user(app, _scanner())
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.runs_cancel.resolve_writer",
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.runs_cancel.resolve_writer",
                    return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.runs_cancel.load_config",
-                   return_value=AegisConfig()):
+             patch("redsim.api.v1.runs_cancel.load_config",
+                   return_value=RedsimConfig()):
             resp = client.post("/v1/runs/run-c1/cancel")
         self.assertEqual(resp.status_code, 403)
 
@@ -1810,13 +1810,13 @@ class TestRunsCancelApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_run_cancelable)
         _override_user(app, self._remediator())
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.runs_cancel.cancel_run",
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.runs_cancel.cancel_run",
                    side_effect=AuthorizationError("denied")), \
-             patch("aegis.api.v1.runs_cancel.resolve_writer",
+             patch("redsim.api.v1.runs_cancel.resolve_writer",
                    return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.runs_cancel.load_config",
-                   return_value=AegisConfig()):
+             patch("redsim.api.v1.runs_cancel.load_config",
+                   return_value=RedsimConfig()):
             resp = client.post("/v1/runs/run-c1/cancel")
         self.assertEqual(resp.status_code, 403)
 
@@ -1825,20 +1825,20 @@ class TestRunsCancelApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_run_cancelable)
         _override_user(app, self._remediator())
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.runs_cancel.cancel_run",
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.runs_cancel.cancel_run",
                    side_effect=LookupError("gone")), \
-             patch("aegis.api.v1.runs_cancel.resolve_writer",
+             patch("redsim.api.v1.runs_cancel.resolve_writer",
                    return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.runs_cancel.load_config",
-                   return_value=AegisConfig()):
+             patch("redsim.api.v1.runs_cancel.load_config",
+                   return_value=RedsimConfig()):
             resp = client.post("/v1/runs/run-c1/cancel")
         self.assertEqual(resp.status_code, 404)
 
     def test_cancel_run_no_auth_401(self):
         app, session_cm = _build_app()
         client = _no_auth_client(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.post("/v1/runs/run-c1/cancel")
         self.assertEqual(resp.status_code, 401)
 
@@ -1848,7 +1848,7 @@ class TestRunsCancelApi(unittest.TestCase):
 # ===========================================================================
 
 def _seed_finding_for_verify(sess):
-    from aegis.db.models import Finding, Run
+    from redsim.db.models import Finding, Run
     sess.add(Run(id="run-v1", project_id="proj-1", status="done",
                  mode="live", stage_table={}))
     sess.add(Finding(
@@ -1877,10 +1877,10 @@ class TestVerifyApi(unittest.TestCase):
         client = TestClient(app)
 
         handle = JobHandle(run_id="run-v1", job_id="job-ver")
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.verify.create_verify_job", return_value=handle), \
-             patch("aegis.api.v1.verify.resolve_writer", return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.verify.load_config", return_value=AegisConfig()):
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.verify.create_verify_job", return_value=handle), \
+             patch("redsim.api.v1.verify.resolve_writer", return_value=_DiscardWriter()), \
+             patch("redsim.api.v1.verify.load_config", return_value=RedsimConfig()):
             resp = client.post("/v1/findings/find-v-001/verify")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["job_id"], "job-ver")
@@ -1889,9 +1889,9 @@ class TestVerifyApi(unittest.TestCase):
         app, session_cm = _build_app()
         _override_user(app, self._remediator())
         client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.verify.resolve_writer", return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.verify.load_config", return_value=AegisConfig()):
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.verify.resolve_writer", return_value=_DiscardWriter()), \
+             patch("redsim.api.v1.verify.load_config", return_value=RedsimConfig()):
             resp = client.post("/v1/findings/nonexistent/verify")
         self.assertEqual(resp.status_code, 404)
 
@@ -1900,9 +1900,9 @@ class TestVerifyApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_finding_for_verify)
         _override_user(app, _scanner())
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.verify.resolve_writer", return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.verify.load_config", return_value=AegisConfig()):
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.verify.resolve_writer", return_value=_DiscardWriter()), \
+             patch("redsim.api.v1.verify.load_config", return_value=RedsimConfig()):
             resp = client.post("/v1/findings/find-v-001/verify")
         self.assertEqual(resp.status_code, 403)
 
@@ -1910,18 +1910,18 @@ class TestVerifyApi(unittest.TestCase):
         app, session_cm = _build_app(extra_rows_fn=_seed_finding_for_verify)
         _override_user(app, self._remediator())
         client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.verify.create_verify_job",
+        with patch("redsim.db.session.get_session", session_cm), \
+             patch("redsim.api.v1.verify.create_verify_job",
                    side_effect=AuthorizationError("denied")), \
-             patch("aegis.api.v1.verify.resolve_writer", return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.verify.load_config", return_value=AegisConfig()):
+             patch("redsim.api.v1.verify.resolve_writer", return_value=_DiscardWriter()), \
+             patch("redsim.api.v1.verify.load_config", return_value=RedsimConfig()):
             resp = client.post("/v1/findings/find-v-001/verify")
         self.assertEqual(resp.status_code, 403)
 
     def test_verify_no_auth_401(self):
         app, session_cm = _build_app()
         client = _no_auth_client(app)
-        with patch("aegis.db.session.get_session", session_cm):
+        with patch("redsim.db.session.get_session", session_cm):
             resp = client.post("/v1/findings/find-v-001/verify")
         self.assertEqual(resp.status_code, 401)
 

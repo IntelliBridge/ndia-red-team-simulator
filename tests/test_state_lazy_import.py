@@ -1,8 +1,8 @@
-"""CI-0 regression: importing ``aegis.state`` must not pull in SQLAlchemy.
+"""CI-0 regression: importing ``redsim.state`` must not pull in SQLAlchemy.
 
 The lightweight ``unit`` CI job installs only ``[test,dev]`` — no ``api``/
-``worker`` extras, so SQLAlchemy is absent. ``aegis.state.__init__`` exposes
-``PostgresRunState`` lazily (PEP 562) so ``from aegis.state import RunState``
+``worker`` extras, so SQLAlchemy is absent. ``redsim.state.__init__`` exposes
+``PostgresRunState`` lazily (PEP 562) so ``from redsim.state import RunState``
 (the filesystem backend) keeps working without it. An eager import here would
 re-break the unit job's test collection.
 
@@ -29,10 +29,10 @@ _PROBE = textwrap.dedent(
 
     sys.meta_path.insert(0, _Block())
 
-    import aegis.state as state
+    import redsim.state as state
 
     assert state.RunState.__name__ == "FilesystemRunState", state.RunState
-    assert "sqlalchemy" not in sys.modules, "aegis.state eagerly imported sqlalchemy"
+    assert "sqlalchemy" not in sys.modules, "redsim.state eagerly imported sqlalchemy"
 
     try:
         state.PostgresRunState
@@ -46,7 +46,7 @@ _PROBE = textwrap.dedent(
 )
 
 
-def test_import_aegis_state_without_sqlalchemy():
+def test_import_redsim_state_without_sqlalchemy():
     proc = subprocess.run(
         [sys.executable, "-c", _PROBE],
         capture_output=True, text=True,

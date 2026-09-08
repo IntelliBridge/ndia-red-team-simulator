@@ -3,7 +3,7 @@ import { SeverityChip } from "./severity-chip";
 
 const meta: Meta<typeof SeverityChip> = {
   component: SeverityChip,
-  title: "Aegis/SeverityChip",
+  title: "Redsim/SeverityChip",
   tags: ["autodocs"],
 };
 export default meta;

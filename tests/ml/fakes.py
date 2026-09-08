@@ -11,8 +11,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from aegis.ml.schema import TargetInfo
-from aegis.ml.targets.base import Sample
+from redsim.ml.schema import TargetInfo
+from redsim.ml.targets.base import Sample
 
 CLASS_NAMES = ["circle", "square", "triangle"]
 

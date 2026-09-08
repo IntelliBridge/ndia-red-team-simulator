@@ -16,7 +16,7 @@ pytest.importorskip("sqlalchemy")
 
 class TestVerifyStateMap(unittest.TestCase):
     def test_verify_status_to_validation_state_mapping(self):
-        from aegis.workers.tasks.verify import _STATE_MAP
+        from redsim.workers.tasks.verify import _STATE_MAP
         self.assertEqual(_STATE_MAP["verified"], "poc_passed")
         self.assertEqual(_STATE_MAP["still_vulnerable"], "poc_failed")
         self.assertEqual(_STATE_MAP["inconclusive"], "inconclusive")

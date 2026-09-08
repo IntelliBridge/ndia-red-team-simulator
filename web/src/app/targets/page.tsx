@@ -37,7 +37,7 @@ const fetcher = (path: string) => api<{ targets: Target[] }>(path);
 // The scanner roster is data, not a literal list: it comes from
 // GET /v1/scanners (the live adapter registry). The pentest built-ins were
 // removed with the pentest domain, so until an ML attack adapter
-// (aegis.ml.attacks) or a signed plugin registers, the roster is empty and
+// (redsim.ml.attacks) or a signed plugin registers, the roster is empty and
 // Start scan must be disabled with an explicit notice. POST /v1/scans rejects
 // any unregistered name with 400, so offering one would only ever fail.
 // Adapters that declare the "dast" capability can additionally scan behind a
@@ -45,7 +45,7 @@ const fetcher = (path: string) => api<{ targets: Target[] }>(path);
 const scannersFetcher = () => listScanners();
 const NO_ADAPTER_NOTICE =
   "No attack adapter is registered. Start scan is disabled until an ML attack " +
-  "adapter (aegis.ml.attacks) or a signed plugin registers through aegis.scanners.";
+  "adapter (redsim.ml.attacks) or a signed plugin registers through redsim.scanners.";
 
 const profilesFetcher = () => listAuthProfiles("default");
 

@@ -3,7 +3,7 @@ import { StageTimeline } from "./stage-timeline";
 
 const meta: Meta<typeof StageTimeline> = {
   component: StageTimeline,
-  title: "Aegis/StageTimeline",
+  title: "Redsim/StageTimeline",
   tags: ["autodocs"],
 };
 export default meta;

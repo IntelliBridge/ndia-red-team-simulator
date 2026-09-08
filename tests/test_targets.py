@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aegis.targets import (
+from redsim.targets import (
     JuiceShopPack,
     get_target_pack,
     list_target_packs,
@@ -52,7 +52,7 @@ class TestTargetPackRegistry(unittest.TestCase):
             self.assertIn("20260527-runB", pack2.container_name)
 
     def test_dvwa_image_is_pinned(self):
-        from aegis.targets import DvwaPack
+        from redsim.targets import DvwaPack
         self.assertNotIn(":latest", DvwaPack.image)
         self.assertIn(":", DvwaPack.image, msg="DVWA image must carry an explicit tag")
 
@@ -71,7 +71,7 @@ class TestImageModeUp(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             run_path = Path(tmp)
             pack = JuiceShopPack(run_path=run_path)
-            with patch("aegis.targets.subprocess.run", side_effect=_mock_run_factory(commands)):
+            with patch("redsim.targets.subprocess.run", side_effect=_mock_run_factory(commands)):
                 runtime = pack.up()
 
             self.assertEqual(runtime.mode, "image")
@@ -101,10 +101,10 @@ class TestSourceModeLifecycle(unittest.TestCase):
             repo_path = Path(tmp) / "juice-shop"
             repo_path.mkdir()
             pack = JuiceShopPack(run_path=run_path)
-            with patch("aegis.targets.subprocess.run", side_effect=_mock_run_factory(commands)):
+            with patch("redsim.targets.subprocess.run", side_effect=_mock_run_factory(commands)):
                 runtime = pack.up_from_repo(repo_path)
                 self.assertEqual(runtime.mode, "source")
-                self.assertEqual(runtime.image_tag, "aegis-juice-shop:local")
+                self.assertEqual(runtime.image_tag, "redsim-juice-shop:local")
                 self.assertEqual(runtime.source_repo, str(repo_path.resolve()))
                 first_started = runtime.started_at
 
@@ -113,7 +113,7 @@ class TestSourceModeLifecycle(unittest.TestCase):
                 builds = [c for c in commands if c[:3] == ["docker", "build", "-t"]]
                 self.assertEqual(len(builds), 2)
                 for build in builds:
-                    self.assertIn("aegis-juice-shop:local", build)
+                    self.assertIn("redsim-juice-shop:local", build)
                     self.assertIn(str(repo_path.resolve()), build)
 
                 runs = [c for c in commands if c[:3] == ["docker", "run", "-d"]]
@@ -141,7 +141,7 @@ class TestDown(unittest.TestCase):
     def test_down_invokes_docker_rm_force(self):
         commands: list[list[str]] = []
         pack = JuiceShopPack()
-        with patch("aegis.targets.subprocess.run", side_effect=_mock_run_factory(commands)):
+        with patch("redsim.targets.subprocess.run", side_effect=_mock_run_factory(commands)):
             pack.down()
         self.assertTrue(any(c[:3] == ["docker", "rm", "-f"] for c in commands))
 

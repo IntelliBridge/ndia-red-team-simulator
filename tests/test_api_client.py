@@ -1,4 +1,4 @@
-"""Phase 4 v0.3.1 F4 — CLI --api dispatch via aegis.cli.api_client."""
+"""Phase 4 v0.3.1 F4 — CLI --api dispatch via redsim.cli.api_client."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
-from aegis.cli import api_client
+from redsim.cli import api_client
 
 
 class _StubResponse:
@@ -111,12 +111,12 @@ class TestIsApiMode(unittest.TestCase):
     def test_flag_takes_precedence(self):
         args = argparse.Namespace(global_api=True)
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AEGIS_MODE", None)
+            os.environ.pop("REDSIM_MODE", None)
             self.assertTrue(api_client.is_api_mode(args))
 
     def test_env_var_lower_case(self):
         args = argparse.Namespace(global_api=False)
-        with patch.dict(os.environ, {"AEGIS_MODE": "API"}, clear=False):
+        with patch.dict(os.environ, {"REDSIM_MODE": "API"}, clear=False):
             self.assertTrue(api_client.is_api_mode(args))
 
 
@@ -124,19 +124,19 @@ class TestLoadToken(unittest.TestCase):
     def test_env_wins_over_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / ".config" / "aegis").mkdir(parents=True)
-            (home / ".config" / "aegis" / "token").write_text("from-file\n")
-            with patch.dict(os.environ, {"AEGIS_TOKEN": "from-env",
+            (home / ".config" / "redsim").mkdir(parents=True)
+            (home / ".config" / "redsim" / "token").write_text("from-file\n")
+            with patch.dict(os.environ, {"REDSIM_TOKEN": "from-env",
                                           "HOME": str(home)}, clear=False):
                 self.assertEqual(api_client.load_token(), "from-env")
 
     def test_file_used_when_env_unset(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            (home / ".config" / "aegis").mkdir(parents=True)
-            (home / ".config" / "aegis" / "token").write_text("file-token\n")
+            (home / ".config" / "redsim").mkdir(parents=True)
+            (home / ".config" / "redsim" / "token").write_text("file-token\n")
             with patch.dict(os.environ, {"HOME": str(home)}, clear=False):
-                os.environ.pop("AEGIS_TOKEN", None)
+                os.environ.pop("REDSIM_TOKEN", None)
                 self.assertEqual(api_client.load_token(), "file-token")
 
 

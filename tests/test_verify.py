@@ -4,9 +4,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from aegis.schema import AegisFinding, CodeLocation
-from aegis.state import RunState
-from aegis.verify import (
+from redsim.schema import RedsimFinding, CodeLocation
+from redsim.state import RunState
+from redsim.verify import (
     classify_dast_remediation,
     classify_sast_remediation,
     parse_curl,
@@ -32,7 +32,7 @@ def _finding(**overrides):
         ),
     )
     base.update(overrides)
-    return AegisFinding(**base)
+    return RedsimFinding(**base)
 
 
 def _write_runtime(run_path: Path, **fields):
@@ -40,7 +40,7 @@ def _write_runtime(run_path: Path, **fields):
     target_dir.mkdir(parents=True, exist_ok=True)
     data = {
         "name": "juice-shop", "mode": "image", "url": "http://localhost:3000",
-        "container_name": "aegis-juice-shop", "container_id": "abc",
+        "container_name": "redsim-juice-shop", "container_id": "abc",
         "image_tag": None, "source_repo": None,
         "source_ref_before": None, "source_ref_after": None,
         "built_image_digest": None, "started_at": "now",
@@ -184,7 +184,7 @@ class TestVerifyTopLevel(unittest.TestCase):
             state = RunState(tmp, "r1")
             _write_runtime(state.run_path, mode="source", last_rebuild_at="t",
                            source_ref_before="a", source_ref_after="b")
-            with patch("aegis.verify.replay_poc", return_value={
+            with patch("redsim.verify.replay_poc", return_value={
                 "status": 401, "headers": {}, "body_excerpt": "",
                 "body_sha256": "x", "duration_ms": 1,
             }):
@@ -202,7 +202,7 @@ class TestVerifyTopLevel(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             state = RunState(tmp, "r1")
             _write_runtime(state.run_path, mode="image")
-            with patch("aegis.verify.replay_poc", return_value={
+            with patch("redsim.verify.replay_poc", return_value={
                 "status": 200, "headers": {},
                 "body_excerpt": "{\"authentication\":{\"token\":\"xyz\"}}",
                 "body_sha256": "x", "duration_ms": 1,
@@ -220,7 +220,7 @@ class TestDependencyRescan(unittest.TestCase):
     """
 
     def _dep(self, package="lodash", installed="4.17.20", fixed="4.17.21"):
-        return AegisFinding(
+        return RedsimFinding(
             id=f"CVE-2024-1111@{package}",
             title=f"{package} vuln", severity="high",
             finding_type="dependency",

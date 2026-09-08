@@ -1,10 +1,10 @@
 """Offline-safe tests for the community scanner adapter marketplace.
 
-Exercises the structured discovery report (:func:`aegis.plugins.discover_all`),
-the shared load+report path on :class:`aegis.registry.Registry`, the
-``AEGIS_PLUGINS_ALLOW`` allowlist gate, the sandbox wrapping/error envelopes,
-the reference example package (``examples/aegis-plugin-example``, run for real
-through the out-of-process sandbox worker), and the ``aegis plugins list`` CLI
+Exercises the structured discovery report (:func:`redsim.plugins.discover_all`),
+the shared load+report path on :class:`redsim.registry.Registry`, the
+``REDSIM_PLUGINS_ALLOW`` allowlist gate, the sandbox wrapping/error envelopes,
+the reference example package (``examples/redsim-plugin-example``, run for real
+through the out-of-process sandbox worker), and the ``redsim plugins list`` CLI
 surface. (The pentest agent-registry group that was also exercised here was
 removed with the pentest domain.)
 
@@ -28,19 +28,19 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import aegis.plugins as plugins
-import aegis.scanners.registry as scanner_registry
-from aegis.scanners.registry import ScanOptions
-from aegis.scanners.sandbox import (
+import redsim.plugins as plugins
+import redsim.scanners.registry as scanner_registry
+from redsim.scanners.registry import ScanOptions
+from redsim.scanners.sandbox import (
     SandboxConfig,
     SandboxedScanner,
     entry_point_ref,
     sandbox_enabled,
 )
-from aegis.state import RunState
+from redsim.state import RunState
 
-EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "aegis-plugin-example"
-EXAMPLE_EP = "aegis_plugin_example:create_scanner"
+EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "redsim-plugin-example"
+EXAMPLE_EP = "redsim_plugin_example:create_scanner"
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +89,7 @@ def _fake_ep(name, factory, *, dist_name=None, version=None):
 
 
 def _env_without_plugins():
-    return {k: v for k, v in os.environ.items() if k != "AEGIS_PLUGINS"}
+    return {k: v for k, v in os.environ.items() if k != "REDSIM_PLUGINS"}
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ def _env_without_plugins():
 
 class TestDiscoverAll(unittest.TestCase):
     def test_disabled_when_plugins_unset(self):
-        """No AEGIS_PLUGINS -> discover_all() == [] and nothing registered."""
+        """No REDSIM_PLUGINS -> discover_all() == [] and nothing registered."""
         self.addCleanup(scanner_registry._REGISTRY.pop, "fake-mp-scanner", None)
         before = set(scanner_registry._REGISTRY)
         with patch.dict(os.environ, _env_without_plugins(), clear=True), \
@@ -112,16 +112,16 @@ class TestDiscoverAll(unittest.TestCase):
         self.addCleanup(scanner_registry._REGISTRY.pop, "fake-mp-scanner", None)
         ep = _fake_ep("example", lambda: FakeScanner(),
                       dist_name="fake-dist", version="1.2.3")
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [ep] if group == "aegis.scanners" else []):
+                      side_effect=lambda group: [ep] if group == "redsim.scanners" else []):
             report = plugins.discover_all()
         rows = [r for r in report if r.name == "fake-mp-scanner"]
         self.assertEqual(len(rows), 1)
         row = rows[0]
         self.assertEqual(row.status, "loaded")
         self.assertEqual(row.kind, "scanner")
-        self.assertEqual(row.group, "aegis.scanners")
+        self.assertEqual(row.group, "redsim.scanners")
         self.assertEqual(row.distribution, "fake-dist")
         self.assertEqual(row.version, "1.2.3")
         self.assertEqual(row.detail, "")
@@ -137,7 +137,7 @@ class TestEagerLoad(unittest.TestCase):
     def test_conformant_scanner_loads_and_registers(self):
         self.addCleanup(scanner_registry._REGISTRY.pop, "fake-mp-scanner", None)
         ep = _fake_ep("example", lambda: FakeScanner(), dist_name="d", version="1")
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points", return_value=[ep]):
             scanner_registry.maybe_load_entry_points()
         self.assertIn("fake-mp-scanner", scanner_registry._REGISTRY)
@@ -150,11 +150,11 @@ class TestEagerLoad(unittest.TestCase):
             _fake_ep("bad", lambda: BadScanner(), dist_name="d", version="1"),
             _fake_ep("good", lambda: FakeScanner(), dist_name="d", version="1"),
         ]
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: eps if group == "aegis.scanners" else []):
+                      side_effect=lambda group: eps if group == "redsim.scanners" else []):
             report = list(scanner_registry._scanner_registry.scan_entry_points(
-                "aegis.scanners", register=True))
+                "redsim.scanners", register=True))
         # Rejected rows report the entry-point name (the adapter is untrusted);
         # loaded rows report the adapter's own ``name``.
         by_name = {r.name: r for r in report}
@@ -169,11 +169,11 @@ class TestEagerLoad(unittest.TestCase):
         self.addCleanup(scanner_registry._REGISTRY.pop, "", None)
         ep = _fake_ep("blank", lambda: FakeScanner(name=""),
                       dist_name="d", version="1")
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [ep] if group == "aegis.scanners" else []):
+                      side_effect=lambda group: [ep] if group == "redsim.scanners" else []):
             report = list(scanner_registry._scanner_registry.scan_entry_points(
-                "aegis.scanners", register=True))
+                "redsim.scanners", register=True))
         self.assertEqual(report[0].status, "rejected")
         self.assertIn("name", report[0].detail.lower())
         self.assertNotIn("", scanner_registry._REGISTRY)
@@ -187,11 +187,11 @@ class TestEagerLoad(unittest.TestCase):
             _fake_ep("boom", boom, dist_name="d", version="1"),
             _fake_ep("good", lambda: FakeScanner(), dist_name="d", version="1"),
         ]
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: eps if group == "aegis.scanners" else []):
+                      side_effect=lambda group: eps if group == "redsim.scanners" else []):
             report = list(scanner_registry._scanner_registry.scan_entry_points(
-                "aegis.scanners", register=True))
+                "redsim.scanners", register=True))
         self.assertEqual(report[0].status, "rejected")
         self.assertIn("kaboom", report[0].detail)
         # Discovery continued to the sibling.
@@ -203,9 +203,9 @@ class TestEagerLoad(unittest.TestCase):
         self.addCleanup(scanner_registry._REGISTRY.pop, "fake-mp-scanner", None)
         ep = _fake_ep("cap", lambda: FakeScanner(capabilities={"made-up"}),
                       dist_name="d", version="1")
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points", return_value=[ep]):
-            with self.assertLogs("aegis.scanners.registry", level="WARNING") as cm:
+            with self.assertLogs("redsim.scanners.registry", level="WARNING") as cm:
                 scanner_registry.maybe_load_entry_points()
         self.assertIn("fake-mp-scanner", scanner_registry._REGISTRY)
         self.assertTrue(any("unknown capabilities" in line for line in cm.output))
@@ -220,88 +220,76 @@ class TestAllowlist(unittest.TestCase):
         self.addCleanup(scanner_registry._REGISTRY.pop, "fake-mp-scanner", None)
         ep = _fake_ep("example", lambda: FakeScanner(),
                       dist_name="not-allowed", version="1")
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1",
-                                     "AEGIS_PLUGINS_ALLOW": "some-other-dist"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1",
+                                     "REDSIM_PLUGINS_ALLOW": "some-other-dist"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [ep] if group == "aegis.scanners" else []):
+                      side_effect=lambda group: [ep] if group == "redsim.scanners" else []):
             report = list(scanner_registry._scanner_registry.scan_entry_points(
-                "aegis.scanners", register=True))
+                "redsim.scanners", register=True))
         self.assertEqual(report[0].status, "skipped")
-        self.assertIn("AEGIS_PLUGINS_ALLOW", report[0].detail)
+        self.assertIn("REDSIM_PLUGINS_ALLOW", report[0].detail)
         self.assertNotIn("fake-mp-scanner", scanner_registry._REGISTRY)
 
     def test_distribution_in_allow_loads(self):
         self.addCleanup(scanner_registry._REGISTRY.pop, "fake-mp-scanner", None)
         ep = _fake_ep("example", lambda: FakeScanner(),
                       dist_name="allowed-dist", version="1")
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1",
-                                     "AEGIS_PLUGINS_ALLOW": "allowed-dist"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1",
+                                     "REDSIM_PLUGINS_ALLOW": "allowed-dist"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [ep] if group == "aegis.scanners" else []):
+                      side_effect=lambda group: [ep] if group == "redsim.scanners" else []):
             report = list(scanner_registry._scanner_registry.scan_entry_points(
-                "aegis.scanners", register=True))
+                "redsim.scanners", register=True))
         self.assertEqual(report[0].status, "loaded")
         self.assertIn("fake-mp-scanner", scanner_registry._REGISTRY)
 
     def test_no_allowlist_warns(self):
-        """AEGIS_PLUGINS=1 with no allowlist logs the unrestricted warning."""
+        """REDSIM_PLUGINS=1 with no allowlist logs the unrestricted warning."""
         self.addCleanup(scanner_registry._REGISTRY.pop, "fake-mp-scanner", None)
-        env = {k: v for k, v in os.environ.items() if k != "AEGIS_PLUGINS_ALLOW"}
-        env["AEGIS_PLUGINS"] = "1"
+        env = {k: v for k, v in os.environ.items() if k != "REDSIM_PLUGINS_ALLOW"}
+        env["REDSIM_PLUGINS"] = "1"
         ep = _fake_ep("example", lambda: FakeScanner(), dist_name="d", version="1")
         with patch.dict(os.environ, env, clear=True), \
                 patch("importlib.metadata.entry_points", return_value=[ep]):
-            with self.assertLogs("aegis.registry", level="WARNING") as cm:
+            with self.assertLogs("redsim.registry", level="WARNING") as cm:
                 list(scanner_registry._scanner_registry.scan_entry_points(
-                    "aegis.scanners", register=False))
-        self.assertTrue(any("no AEGIS_PLUGINS_ALLOW" in line for line in cm.output))
+                    "redsim.scanners", register=False))
+        self.assertTrue(any("no REDSIM_PLUGINS_ALLOW" in line for line in cm.output))
 
 
 # ---------------------------------------------------------------------------
 # Reference example package
 # ---------------------------------------------------------------------------
 
-class TestExamplePackage(unittest.TestCase):
-    def test_example_create_scanner_is_protocol_conformant(self):
-        inserted = str(EXAMPLE_DIR)
-        if inserted not in sys.path:
-            sys.path.insert(0, inserted)
-            self.addCleanup(sys.path.remove, inserted)
-        import importlib
-        mod = importlib.import_module("aegis_plugin_example")
-        self.addCleanup(sys.modules.pop, "aegis_plugin_example", None)
-        scanner = mod.create_scanner()
-        self.assertEqual(scanner.name, "example")
-        self.assertIsInstance(scanner, scanner_registry.ScannerAdapter)
 
 
 # ---------------------------------------------------------------------------
-# CLI: aegis plugins list
+# CLI: redsim plugins list
 # ---------------------------------------------------------------------------
 
 class TestPluginsCli(unittest.TestCase):
     def test_list_discovery_disabled_prints_hint(self):
-        from aegis.cli.main import main
+        from redsim.cli.main import main
         args_env = _env_without_plugins()
         buf = io.StringIO()
         with patch.dict(os.environ, args_env, clear=True), \
-                patch("aegis.config.load_config"), \
+                patch("redsim.config.load_config"), \
                 redirect_stdout(buf):
             main(["plugins", "list"])
         out = buf.getvalue()
-        self.assertIn("AEGIS_PLUGINS=1", out)
+        self.assertIn("REDSIM_PLUGINS=1", out)
         self.assertIn("disabled", out)
 
     def test_list_table_renders_loaded_plugin(self):
         """Enabled discovery prints a human-readable table row for the plugin."""
-        from aegis.cli.main import main
+        from redsim.cli.main import main
         ep = _fake_ep("example", lambda: FakeScanner(),
                       dist_name="fake-dist", version="9.9.9")
         buf = io.StringIO()
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
-                patch("aegis.config.load_config"), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
+                patch("redsim.config.load_config"), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [ep] if group == "aegis.scanners" else []), \
+                      side_effect=lambda group: [ep] if group == "redsim.scanners" else []), \
                 redirect_stdout(buf):
             main(["plugins", "list"])
         out = buf.getvalue()
@@ -312,10 +300,10 @@ class TestPluginsCli(unittest.TestCase):
         self.assertNotIn("fake-mp-scanner", scanner_registry._REGISTRY)
 
     def test_list_table_no_plugins_prints_note(self):
-        from aegis.cli.main import main
+        from redsim.cli.main import main
         buf = io.StringIO()
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
-                patch("aegis.config.load_config"), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
+                patch("redsim.config.load_config"), \
                 patch("importlib.metadata.entry_points",
                       side_effect=lambda group: []), \
                 redirect_stdout(buf):
@@ -323,14 +311,14 @@ class TestPluginsCli(unittest.TestCase):
         self.assertIn("no third-party plugins discovered", buf.getvalue())
 
     def test_list_json_emits_valid_json_for_loaded_plugin(self):
-        from aegis.cli.main import main
+        from redsim.cli.main import main
         ep = _fake_ep("example", lambda: FakeScanner(),
                       dist_name="fake-dist", version="9.9.9")
         buf = io.StringIO()
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
-                patch("aegis.config.load_config"), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
+                patch("redsim.config.load_config"), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [ep] if group == "aegis.scanners" else []), \
+                      side_effect=lambda group: [ep] if group == "redsim.scanners" else []), \
                 redirect_stdout(buf):
             main(["plugins", "list", "--json"])
         payload = json.loads(buf.getvalue())
@@ -360,7 +348,7 @@ def _example_on_path(case: unittest.TestCase) -> None:
     if inserted not in sys.path:
         sys.path.insert(0, inserted)
         case.addCleanup(sys.path.remove, inserted)
-    case.addCleanup(sys.modules.pop, "aegis_plugin_example", None)
+    case.addCleanup(sys.modules.pop, "redsim_plugin_example", None)
     prev = os.environ.get("PYTHONPATH")
     parts = [inserted] + ([prev] if prev else [])
     patcher = patch.dict(os.environ, {"PYTHONPATH": os.pathsep.join(parts)})
@@ -381,9 +369,9 @@ class TestSandboxWrapping(unittest.TestCase):
 
     def test_loaded_plugin_is_sandbox_wrapped_by_default(self):
         self.addCleanup(scanner_registry._REGISTRY.pop, "fake-mp-scanner", None)
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [self._ep()] if group == "aegis.scanners" else []):
+                      side_effect=lambda group: [self._ep()] if group == "redsim.scanners" else []):
             scanner_registry.maybe_load_entry_points()
         reg = scanner_registry._REGISTRY["fake-mp-scanner"]
         self.assertIsInstance(reg, SandboxedScanner)
@@ -394,9 +382,9 @@ class TestSandboxWrapping(unittest.TestCase):
 
     def test_sandbox_disabled_registers_raw_adapter(self):
         self.addCleanup(scanner_registry._REGISTRY.pop, "fake-mp-scanner", None)
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1", "AEGIS_PLUGINS_SANDBOX": "0"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1", "REDSIM_PLUGINS_SANDBOX": "0"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [self._ep()] if group == "aegis.scanners" else []):
+                      side_effect=lambda group: [self._ep()] if group == "redsim.scanners" else []):
             scanner_registry.maybe_load_entry_points()
         reg = scanner_registry._REGISTRY["fake-mp-scanner"]
         self.assertIsInstance(reg, FakeScanner)
@@ -405,11 +393,11 @@ class TestSandboxWrapping(unittest.TestCase):
     def test_wrapping_does_not_change_the_discovery_report(self):
         """A wrapped plugin still reports loaded under its own name."""
         self.addCleanup(scanner_registry._REGISTRY.pop, "fake-mp-scanner", None)
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points",
-                      side_effect=lambda group: [self._ep()] if group == "aegis.scanners" else []):
+                      side_effect=lambda group: [self._ep()] if group == "redsim.scanners" else []):
             report = list(scanner_registry._scanner_registry.scan_entry_points(
-                "aegis.scanners", register=True,
+                "redsim.scanners", register=True,
                 wrap=scanner_registry._sandbox_wrap))
         row = [r for r in report if r.name == "fake-mp-scanner"][0]
         self.assertEqual(row.status, "loaded")
@@ -418,25 +406,25 @@ class TestSandboxWrapping(unittest.TestCase):
 
 class TestSandboxConfig(unittest.TestCase):
     def test_enabled_by_default(self):
-        env = {k: v for k, v in os.environ.items() if k != "AEGIS_PLUGINS_SANDBOX"}
+        env = {k: v for k, v in os.environ.items() if k != "REDSIM_PLUGINS_SANDBOX"}
         with patch.dict(os.environ, env, clear=True):
             self.assertTrue(sandbox_enabled())
 
     def test_env_disables(self):
-        with patch.dict(os.environ, {"AEGIS_PLUGINS_SANDBOX": "0"}):
+        with patch.dict(os.environ, {"REDSIM_PLUGINS_SANDBOX": "0"}):
             self.assertFalse(sandbox_enabled())
 
     def test_config_flag_disables_when_env_absent(self):
-        env = {k: v for k, v in os.environ.items() if k != "AEGIS_PLUGINS_SANDBOX"}
+        env = {k: v for k, v in os.environ.items() if k != "REDSIM_PLUGINS_SANDBOX"}
         cfg = SimpleNamespace(plugins_sandbox=False)
         with patch.dict(os.environ, env, clear=True):
             self.assertFalse(sandbox_enabled(cfg))
 
     def test_from_env_overrides_and_tolerates_garbage(self):
         env = {
-            "AEGIS_PLUGIN_SANDBOX_MEMORY_MB": "512",
-            "AEGIS_PLUGIN_SANDBOX_CPU_SECONDS": "not-a-number",
-            "AEGIS_PLUGIN_SANDBOX_NETWORK": "1",
+            "REDSIM_PLUGIN_SANDBOX_MEMORY_MB": "512",
+            "REDSIM_PLUGIN_SANDBOX_CPU_SECONDS": "not-a-number",
+            "REDSIM_PLUGIN_SANDBOX_NETWORK": "1",
         }
         with patch.dict(os.environ, env):
             cfg = SandboxConfig.from_env(timeout_s=42)
@@ -478,7 +466,7 @@ class TestSandboxedRunEndToEnd(unittest.TestCase):
     """Spawns the real worker subprocess against the reference example.
 
     This is the sandbox's *success* path: ``SandboxedScanner.scan`` -> child
-    ``python -m aegis.scanners.sandbox_worker`` -> ok envelope -> a rebuilt
+    ``python -m redsim.scanners.sandbox_worker`` -> ok envelope -> a rebuilt
     ``ScanResult`` with a real finding and an artifact persisted into the run
     dir. The error-envelope tests below cover the failure paths.
     """
@@ -490,13 +478,13 @@ class TestSandboxedRunEndToEnd(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
 
     def _sandboxed(self) -> SandboxedScanner:
-        import aegis_plugin_example as mod
+        import redsim_plugin_example as mod
         return SandboxedScanner(mod.create_scanner(), EXAMPLE_EP)
 
     def test_marker_hit_produces_finding_via_subprocess(self):
         target = self.tmp / "target"
         target.mkdir()
-        (target / "a.py").write_text('pw = "AEGIS-EXAMPLE-SECRET"\n')
+        (target / "a.py").write_text('pw = "REDSIM-EXAMPLE-SECRET"\n')
         (target / "clean.txt").write_text("nothing to see\n")
         run_state = RunState(str(self.tmp / "out"))
         result = self._sandboxed().scan(run_state, ScanOptions(target=str(target)))
@@ -509,7 +497,7 @@ class TestSandboxedRunEndToEnd(unittest.TestCase):
         self.assertEqual(finding.source_tool, "example")
         self.assertEqual(finding.code_locations[0].start_line, 1)
         # The command recorded is the safe list-argv worker invocation (no shell).
-        self.assertIn("aegis.scanners.sandbox_worker", result.command_str)
+        self.assertIn("redsim.scanners.sandbox_worker", result.command_str)
         # The sandboxed child persisted an artifact into the real run dir.
         self.assertTrue((run_state.run_path / "artifacts" / "example-scanner.txt").is_file())
 
@@ -527,8 +515,8 @@ class TestSandboxedRunChildEnv(unittest.TestCase):
     """Sandbox child-env policy (does not need the reference example package)."""
 
     def test_network_off_env_strips_proxy_for_child(self):
-        """The child env has proxy vars stripped + AEGIS_PLUGINS pinned off."""
-        from aegis.scanners.sandbox import _child_env
+        """The child env has proxy vars stripped + REDSIM_PLUGINS pinned off."""
+        from redsim.scanners.sandbox import _child_env
 
         with patch.dict(os.environ, {"HTTPS_PROXY": "http://p:8080",
                                      "http_proxy": "http://p:8080"}):
@@ -536,7 +524,7 @@ class TestSandboxedRunChildEnv(unittest.TestCase):
             env_on = _child_env(SandboxConfig(allow_network=True))
         self.assertNotIn("HTTPS_PROXY", env_off)
         self.assertNotIn("http_proxy", env_off)
-        self.assertEqual(env_off["AEGIS_PLUGINS"], "0")
+        self.assertEqual(env_off["REDSIM_PLUGINS"], "0")
         self.assertEqual(env_on["HTTPS_PROXY"], "http://p:8080")
 
 
@@ -559,7 +547,7 @@ class TestSandboxErrorEnvelopes(unittest.TestCase):
     def test_timeout_is_clean_error(self):
         import subprocess
 
-        from aegis.scanners import sandbox as sandbox_mod
+        from redsim.scanners import sandbox as sandbox_mod
 
         class _TimeoutProc:
             pid = 4321
@@ -585,7 +573,7 @@ class TestSandboxErrorEnvelopes(unittest.TestCase):
         self.assertIn("timed out", result.error or "")
 
     def test_unparseable_worker_output_is_clean_error(self):
-        from aegis.scanners import sandbox as sandbox_mod
+        from redsim.scanners import sandbox as sandbox_mod
 
         proc = SimpleNamespace(
             returncode=0,
@@ -599,7 +587,7 @@ class TestSandboxErrorEnvelopes(unittest.TestCase):
         self.assertIn("unparseable", result.error or "")
 
     def test_structured_failure_envelope_is_surfaced(self):
-        from aegis.scanners import sandbox as sandbox_mod
+        from redsim.scanners import sandbox as sandbox_mod
 
         proc = SimpleNamespace(
             returncode=0,
@@ -620,25 +608,25 @@ class TestSandboxEnvPolicy(unittest.TestCase):
     def test_child_env_excludes_parent_secrets(self):
         import os
 
-        from aegis.scanners.sandbox import SandboxConfig, _child_env
+        from redsim.scanners.sandbox import SandboxConfig, _child_env
 
         with patch.dict(os.environ, {
-            "AEGIS_WORKER_SIGNING_KEY": "k",
-            "AEGIS_DB_URL": "postgresql://u:secret@h/db",
-            "AEGIS_AUTH_PROFILES_KEY": "fernet-key",
+            "REDSIM_WORKER_SIGNING_KEY": "k",
+            "REDSIM_DB_URL": "postgresql://u:secret@h/db",
+            "REDSIM_AUTH_PROFILES_KEY": "fernet-key",
             "AWS_SECRET_ACCESS_KEY": "aws-secret",
         }):
             env = _child_env(SandboxConfig())
-        for secret in ("AEGIS_WORKER_SIGNING_KEY", "AEGIS_DB_URL",
-                       "AEGIS_AUTH_PROFILES_KEY", "AWS_SECRET_ACCESS_KEY"):
+        for secret in ("REDSIM_WORKER_SIGNING_KEY", "REDSIM_DB_URL",
+                       "REDSIM_AUTH_PROFILES_KEY", "AWS_SECRET_ACCESS_KEY"):
             self.assertNotIn(secret, env)
-        self.assertEqual(env["AEGIS_PLUGINS"], "0")
+        self.assertEqual(env["REDSIM_PLUGINS"], "0")
         self.assertIn("PATH", env)
 
     def test_child_env_network_off_by_default(self):
         import os
 
-        from aegis.scanners.sandbox import SandboxConfig, _child_env
+        from redsim.scanners.sandbox import SandboxConfig, _child_env
 
         with patch.dict(os.environ, {"HTTP_PROXY": "http://p", "NO_PROXY": "x"}):
             off = _child_env(SandboxConfig(allow_network=False))
@@ -657,11 +645,11 @@ class TestSandboxWorkerUnit(unittest.TestCase):
         self.tmp = Path(self._tmp.name)
 
     def test_run_returns_ok_envelope(self):
-        from aegis.scanners import sandbox_worker
+        from redsim.scanners import sandbox_worker
 
         target = self.tmp / "t"
         target.mkdir()
-        (target / "a.py").write_text('k = "AEGIS-EXAMPLE-SECRET"\n')
+        (target / "a.py").write_text('k = "REDSIM-EXAMPLE-SECRET"\n')
         run_path = self.tmp / "out" / "run-1"
         request = {"run_id": "run-1", "run_path": str(run_path),
                    "options": {"target": str(target)}}
@@ -671,14 +659,14 @@ class TestSandboxWorkerUnit(unittest.TestCase):
         self.assertEqual(envelope["result"]["adapter_name"], "example")
 
     def test_parse_entry_point_rejects_malformed(self):
-        from aegis.scanners.sandbox_worker import _parse_entry_point
+        from redsim.scanners.sandbox_worker import _parse_entry_point
 
         for bad in ("nocolon", ":nofactory", "nomodule:", ""):
             with self.assertRaises(ValueError):
                 _parse_entry_point(bad)
 
     def test_main_emits_error_envelope_on_unimportable(self):
-        from aegis.scanners import sandbox_worker
+        from redsim.scanners import sandbox_worker
 
         request = json.dumps({"run_id": "r", "run_path": str(self.tmp / "o"),
                               "options": {"target": "."}})

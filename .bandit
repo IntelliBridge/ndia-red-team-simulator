@@ -1,6 +1,6 @@
 # Bandit configuration for the `sast` CI job (cluster C2).
 #
-# The job runs `bandit -r aegis -ll -ii --ini .bandit`, i.e. it reports only
+# The job runs `bandit -r redsim -ll -ii --ini .bandit`, i.e. it reports only
 # findings at MEDIUM-or-higher severity AND MEDIUM-or-higher confidence and
 # fails on any such finding. Bandit does not auto-discover this file, so the
 # CI step passes it explicitly via --ini.
@@ -11,12 +11,12 @@
 [bandit]
 
 # B310 (urllib urlopen permitting file:/ schemes): every flagged call site
-# opens a URL whose scheme is fixed by Aegis config or code, never an
+# opens a URL whose scheme is fixed by Redsim config or code, never an
 # attacker-controlled file:// path:
-#   - aegis/cli/api_client.py        -> the operator's configured Aegis API
-#   - aegis/doctor.py                -> OIDC issuer .well-known discovery
-#   - aegis/targets.py               -> http(s) target liveness probe
-#   - aegis/verify.py                -> PoC HTTP replay against a parsed URL
+#   - redsim/cli/api_client.py        -> the operator's configured Redsim API
+#   - redsim/doctor.py                -> OIDC issuer .well-known discovery
+#   - redsim/targets.py               -> http(s) target liveness probe
+#   - redsim/verify.py                -> PoC HTTP replay against a parsed URL
 # Switching to requests/httpx here is tracked separately; until then B310 is
 # skipped wholesale rather than scattering #nosec across these modules.
 skips = B310

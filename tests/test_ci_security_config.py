@@ -1,6 +1,6 @@
 """Regression guards for the CI self-scanning config (cluster C2).
 
-The ``sast`` and ``deps`` jobs in ``.github/workflows/aegis-ci.yml`` only
+The ``sast`` and ``deps`` jobs in ``.github/workflows/redsim-ci.yml`` only
 gate effectively while their backing config files stay present and well
 formed. These checks mirror the ``otel-config`` CI job's "validate the
 committed config" pattern: pure-Python, offline, no security tool required
@@ -21,7 +21,7 @@ import pytest
 yaml = pytest.importorskip("yaml")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = REPO_ROOT / ".github" / "workflows" / "aegis-ci.yml"
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "redsim-ci.yml"
 DEPENDABOT = REPO_ROOT / ".github" / "dependabot.yml"
 BANDIT_INI = REPO_ROOT / ".bandit"
 SEMGREP_RULES = REPO_ROOT / ".semgrep.yml"
@@ -68,8 +68,8 @@ class TestSastJob:
 
     def test_bandit_uses_documented_flags_and_baseline(self) -> None:
         run = _job_run_text(_workflow_jobs()["sast"])
-        # -r aegis -ll -ii is the exact threshold the C2 spec calls for.
-        assert "bandit -r aegis -ll -ii" in run
+        # -r redsim -ll -ii is the exact threshold the C2 spec calls for.
+        assert "bandit -r redsim -ll -ii" in run
         # bandit does not auto-discover .bandit; the ini must be passed.
         assert "--ini .bandit" in run
 
@@ -138,7 +138,7 @@ class TestBaselineConfigsParse:
         assert all(r["severity"] == "ERROR" for r in rules)
         ids = {r["id"] for r in rules}
         # The shell=True ban is the load-bearing one for a security product.
-        assert "aegis-no-subprocess-shell-true" in ids
+        assert "redsim-no-subprocess-shell-true" in ids
 
     @staticmethod
     def _active_lines(path: Path) -> list[str]:

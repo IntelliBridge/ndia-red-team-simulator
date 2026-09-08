@@ -19,7 +19,7 @@ import pytest
 pytest.importorskip("celery")
 pytest.importorskip("sqlalchemy")
 
-from aegis.workers import bootstrap, events
+from redsim.workers import bootstrap, events
 
 
 def _fake_job(status: str = "queued") -> SimpleNamespace:
@@ -39,14 +39,14 @@ def _patched(job: SimpleNamespace):
     def fake_get_session():
         yield sess
 
-    with patch("aegis.db.session.get_session", fake_get_session), \
-         patch("aegis.db.session.init_engine"), \
-         patch("aegis.config.load_config",
+    with patch("redsim.db.session.get_session", fake_get_session), \
+         patch("redsim.db.session.init_engine"), \
+         patch("redsim.config.load_config",
                return_value=SimpleNamespace(output_dir="/tmp")), \
-         patch("aegis.storage.open_blob_store", return_value=MagicMock()), \
-         patch("aegis.state.PostgresRunState", return_value=MagicMock()), \
-         patch("aegis.audit.chain.PostgresAuditWriter", return_value=MagicMock()), \
-         patch("aegis.workers.events.publish_job_event") as pub:
+         patch("redsim.storage.open_blob_store", return_value=MagicMock()), \
+         patch("redsim.state.PostgresRunState", return_value=MagicMock()), \
+         patch("redsim.audit.chain.PostgresAuditWriter", return_value=MagicMock()), \
+         patch("redsim.workers.events.publish_job_event") as pub:
         yield sess, pub
 
 
@@ -153,35 +153,35 @@ class TestPublishJobEvent(unittest.TestCase):
 
 class TestQueueRouting(unittest.TestCase):
     def test_long_tasks_route_to_scans(self):
-        from aegis.workers.celery_app import app
+        from redsim.workers.celery_app import app
         routes = app.conf.task_routes
-        for name in ("aegis.scan_start", "aegis.verify_replay"):
+        for name in ("redsim.scan_start", "redsim.verify_replay"):
             self.assertEqual(routes[name]["queue"], "scans", name)
 
     def test_short_tasks_route_to_default(self):
-        from aegis.workers.celery_app import app
+        from redsim.workers.celery_app import app
         routes = app.conf.task_routes
-        for name in ("aegis.report_render", "aegis.reap_stale_jobs",
-                     "aegis.verify_tenant_integrity",
-                     "aegis.export_chains_to_worm"):
+        for name in ("redsim.report_render", "redsim.reap_stale_jobs",
+                     "redsim.verify_tenant_integrity",
+                     "redsim.export_chains_to_worm"):
             self.assertEqual(routes[name]["queue"], "default", name)
         self.assertEqual(app.conf.task_default_queue, "default")
 
     def test_removed_pentest_tasks_are_not_routed(self):
         # fix / agent / vuln-fixer / CI-gate / parallel_fix tasks were removed
         # with the pentest domain; no dead routes linger in the table.
-        from aegis.workers.celery_app import app
+        from redsim.workers.celery_app import app
         routes = app.conf.task_routes
-        for name in ("aegis.fix_generate", "aegis.agent_run",
-                     "aegis.vulnfixer_render", "aegis.ci_gate",
-                     "aegis.parallel_fix"):
+        for name in ("redsim.fix_generate", "redsim.agent_run",
+                     "redsim.vulnfixer_render", "redsim.ci_gate",
+                     "redsim.parallel_fix"):
             self.assertNotIn(name, routes)
         # Every routed task name is one the app actually includes.
         self.assertEqual(
             set(routes),
-            {"aegis.scan_start", "aegis.verify_replay", "aegis.report_render",
-             "aegis.reap_stale_jobs", "aegis.verify_tenant_integrity",
-             "aegis.export_chains_to_worm"},
+            {"redsim.scan_start", "redsim.verify_replay", "redsim.report_render",
+             "redsim.reap_stale_jobs", "redsim.verify_tenant_integrity",
+             "redsim.export_chains_to_worm"},
         )
 
 

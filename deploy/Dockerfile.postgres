@@ -7,7 +7,7 @@ FROM postgres:16
 #
 # Extra CA trust (Zscaler / corporate proxy) before apt hits the network. The
 # deploy/certs/ dir may be empty off-corp; update-ca-certificates then no-ops.
-COPY deploy/certs/ /usr/local/share/ca-certificates/aegis-extra/
+COPY deploy/certs/ /usr/local/share/ca-certificates/redsim-extra/
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates postgresql-16-pgaudit \
     && update-ca-certificates \

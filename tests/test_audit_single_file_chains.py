@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aegis.audit.chain import JsonlAuditWriter, verify_chain
+from redsim.audit.chain import JsonlAuditWriter, verify_chain
 
 
 def _append(writer, run_id, action):
