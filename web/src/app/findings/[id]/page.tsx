@@ -17,7 +17,6 @@ import {
   explainFinding,
   hardenFinding,
   verifyFinding,
-  type AccuracyPoint,
   type DefenseInfo,
   type CandidateRecommendation,
   type Measurement,
@@ -27,13 +26,6 @@ import { useFinding } from "@/hooks/useFinding";
 import { useDefenses } from "@/hooks/useMlCatalog";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
-
-// Accuracy with its denominator; an empty point is reported as absent
-// evidence rather than as zero accuracy.
-function accuracyText(point: AccuracyPoint): string {
-  if (point.n === 0 || point.accuracy == null) return "no evidence recorded";
-  return `${point.accuracy} (n=${point.n})`;
-}
 
 function ArtifactImage({ artifact, alt }: { artifact?: string; alt: string }) {
   const [failed, setFailed] = useState(false);
@@ -146,17 +138,11 @@ export default function FindingPage({ params }: { params: { id: string } }) {
   const ml = data.schema_blob.ml;
   const role = roles[data.project_id];
   const observation = ml?.observations[0];
-  // The aggregate explanation shift, its denominator and its noise floor
-  // all live on the evasion measurement at reference_eps for this attack.
-  // Per-observation expl_shift is a single sample and is shown separately.
-  const referenceMeasurement = ml
-    ? ml.measurements.find(
-        (row: Measurement) =>
-          row.family === "evasion" &&
-          (row.attack_id == null || row.attack_id === ml.attack_id) &&
-          Number(row.params.eps) === ml.reference_eps,
-      )
-    : undefined;
+  const referenceMeasurement = ml?.measurements.find(
+    (row: Measurement) =>
+      row.attack_id === ml.attack_id &&
+      Number(row.params.eps) === ml.reference_eps,
+  );
   const act = async (
     name: typeof pending,
     action: () => Promise<unknown>,
@@ -314,34 +300,21 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                 {observation.center_mass_ratio_clean ?? "—"} →{" "}
                 {observation.center_mass_ratio_adv ?? "—"}
                 <br />
-                this sample: explanation shift {observation.expl_shift ?? "—"}
+                per-sample explanation shift{" "}
+                {observation.expl_shift ?? "not recorded"}
+                <br />
+                aggregate explanation shift at reference ε{" "}
+                {referenceMeasurement?.expl_shift_mean ?? "not recorded"} · n=
+                {referenceMeasurement?.expl_shift_n ?? "not recorded"} · noise
+                floor{" "}
+                {referenceMeasurement?.expl_shift_noise_floor ??
+                  "not recorded"}{" "}
+                (n=
+                {referenceMeasurement?.expl_shift_noise_floor_n ??
+                  "not recorded"}
+                )
               </div>
             )}
-            <div className="mt-2 text-xs">
-              <span className="redsim-kicker">
-                reference ε {ml.reference_eps} aggregate
-              </span>
-              <br />
-              {referenceMeasurement ? (
-                <>
-                  mean explanation shift{" "}
-                  {referenceMeasurement.expl_shift_mean ?? "not recorded"} ·
-                  n={referenceMeasurement.expl_shift_n ?? "not recorded"}
-                  {referenceMeasurement.expl_shift_n_excluded != null
-                    ? ` · excluded ${referenceMeasurement.expl_shift_n_excluded}`
-                    : ""}
-                  <br />
-                  noise floor{" "}
-                  {referenceMeasurement.expl_shift_noise_floor ??
-                    "not recorded"}{" "}
-                  · n=
-                  {referenceMeasurement.expl_shift_noise_floor_n ??
-                    "not recorded"}
-                </>
-              ) : (
-                "Aggregate explanation shift unavailable: no evasion measurement is recorded at the reference ε."
-              )}
-            </div>
             <p className="mt-3 text-sm">
               Attribution describes model sensitivity; it is not causal proof.
             </p>
@@ -454,31 +427,29 @@ export default function FindingPage({ params }: { params: { id: string } }) {
             {ml.verify?.delta && (
               <div className="mt-4 border-t border-border pt-3 text-xs">
                 <strong>Recorded measured verification</strong>
-                <p>
-                  ΔMRI {ml.verify.delta.delta} · {ml.verify.delta.mri_before}{" "}
-                  → {ml.verify.delta.mri_after} · baseline{" "}
-                  {ml.verify.delta.baseline_run_id}
-                </p>
-                {Object.entries(ml.verify.delta.delta_subscores ?? {}).map(
+                <p>ΔMRI {ml.verify.delta.delta}</p>
+                {Object.entries(ml.verify.delta.delta_subscores).map(
                   ([key, value]) => (
-                    <p key={key}>
-                      {key}: {value ?? "not recorded"}
-                    </p>
-                  ),
-                )}
-                {ml.verify.delta.delta_acc_clean && (
-                  <p>
-                    clean accuracy{" "}
-                    {accuracyText(ml.verify.delta.delta_acc_clean.before)} →{" "}
-                    {accuracyText(ml.verify.delta.delta_acc_clean.after)} · Δ{" "}
-                    {ml.verify.delta.delta_acc_clean.delta ?? "not recorded"}
+                  <p key={key}>
+                    {key}: {value ?? "not recorded"}
                   </p>
-                )}
-                {(ml.verify.delta.delta_families ?? []).map((family) => (
+                ))}
+                <p>
+                  Clean accuracy{" "}
+                  {ml.verify.delta.delta_acc_clean.before.accuracy ??
+                    "not recorded"}{" "}
+                  (n={ml.verify.delta.delta_acc_clean.before.n}) →{" "}
+                  {ml.verify.delta.delta_acc_clean.after.accuracy ??
+                    "not recorded"}{" "}
+                  (n={ml.verify.delta.delta_acc_clean.after.n})
+                </p>
+                {ml.verify.delta.delta_families.map((family) => (
                   <p key={family.measurement_id}>
-                    {family.measurement_id}: {accuracyText(family.before)} →{" "}
-                    {accuracyText(family.after)} · Δ{" "}
-                    {family.delta ?? "not recorded"}
+                    {family.measurement_id}{" "}
+                    {family.before.accuracy ?? "not recorded"} (n=
+                    {family.before.n}) →{" "}
+                    {family.after.accuracy ?? "not recorded"} (n=
+                    {family.after.n}) · Δ {family.delta ?? "not recorded"}
                   </p>
                 ))}
               </div>

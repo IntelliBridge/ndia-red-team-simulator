@@ -4,8 +4,6 @@
   "stage": "report",
   "stages_done": ["load_target", "sample", "clean_eval", "attack", "control", "explain", "interpret", "recommend", "report"],
   "config": {
-    "target_id": "fixture-model",
-    "modality": "image",
     "attack_ids": ["fgsm"],
     "attack_params": {"fgsm": {"eps": 0.03}},
     "norm": "linf",
@@ -20,17 +18,12 @@
     "explain_k": 8,
     "auto_recommend": true,
     "llm_narrative": false,
+    "target_id": "fixture-model",
+    "modality": "image",
     "dataset_split": "test",
-    "scoring": {
-      "version": "mri-1",
-      "weights": {"acc": 0.35, "asr": 0.25, "eps": 0.2, "conf": 0.1, "expl": 0.1},
-      "severity": {"asr_high": 0.5, "asr_mid": 0.2},
-      "confidence": {"n_high": 100, "n_medium": 30},
-      "interpretation": {"evasion_drop": 0.2, "control_tolerance": 0.05, "control_drop": 0.1, "iterative_margin": 0.1, "center_mass_drop": 0.15, "expl_shift_high": 0.5, "conf_gap_high": 0.5}
-    },
-    "defense": null
+    "scoring": {"version": "mri-1", "weights": {"acc": 0.35, "asr": 0.25, "eps": 0.2, "conf": 0.1, "expl": 0.1}}
   },
-  "settings_hash": "sha256:fixture-settings-hash",
+  "settings_hash": "fixture-settings-hash",
   "target": {
     "id": "fixture-model",
     "project_id": "default",

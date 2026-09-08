@@ -141,39 +141,26 @@ export type DefenseConfig = {
   name: string;
   params: Record<string, number | boolean | string>;
 };
-/** A fraction with its denominator; `accuracy` is null when `n` is 0. */
-export type AccuracyPoint = {
-  n: number;
-  n_correct: number;
-  accuracy?: number | null;
-};
-/** The five MRI dimensions on a 0 to 100 scale; also used for deltas. */
-export type MRISubscores = Record<
-  "S_acc" | "S_asr" | "S_eps" | "S_conf" | "S_expl",
-  number | null
->;
-export type CleanAccuracyDelta = {
-  before: AccuracyPoint;
-  after: AccuracyPoint;
-  delta?: number | null;
-};
-export type FamilyDelta = {
-  measurement_id: string;
-  before: AccuracyPoint;
-  after: AccuracyPoint;
-  delta?: number | null;
-};
-// Mirrors redsim.ml.schema.MRIDelta (spec 15.6): a verify run's ΔMRI against
-// its baseline. Per-dimension deltas live in `delta_subscores` and per-family
-// accuracy deltas (with denominators) in `delta_families`.
 export type MRIDelta = {
   baseline_run_id: string;
   mri_before: number;
   mri_after: number;
   delta: number;
-  delta_subscores?: Partial<MRISubscores>;
-  delta_acc_clean?: CleanAccuracyDelta;
-  delta_families?: FamilyDelta[];
+  delta_subscores: Record<
+    "S_acc" | "S_asr" | "S_eps" | "S_conf" | "S_expl",
+    number | null
+  >;
+  delta_acc_clean: {
+    before: { n_correct: number; n: number; accuracy: number | null };
+    after: { n_correct: number; n: number; accuracy: number | null };
+    delta: number | null;
+  };
+  delta_families: Array<{
+    measurement_id: string;
+    before: { n_correct: number; n: number; accuracy: number | null };
+    after: { n_correct: number; n: number; accuracy: number | null };
+    delta: number | null;
+  }>;
 };
 export type MLFindingDetail = {
   attack_id: string;
@@ -336,7 +323,7 @@ export type Capabilities = {
   };
   worker_ml_extra: boolean;
   sandbox_enabled: boolean;
-  scoring_weights?: MRIWeights;
+  scoring_weights?: ScoringWeights;
   endpoint_connector?: {
     status: "available" | "not_implemented";
     reason?: string;
@@ -361,36 +348,27 @@ export type CampaignRequest = {
   auto_recommend?: boolean;
   llm_narrative?: boolean;
 };
-// Mirrors redsim.ml.schema.MRIWeights: sums to 1 and is never renormalised.
-export type MRIWeights = {
+export type ScoringWeights = {
   acc: number;
   asr: number;
   eps: number;
   conf: number;
   expl: number;
 };
-// Mirrors redsim.ml.schema.ScoringConfig, the `ml.scoring` block copied onto
-// the campaign at admission and frozen.
-export type ScoringConfig = {
-  version: string;
-  weights: MRIWeights;
-  severity?: { asr_high: number; asr_mid: number };
-  confidence?: { n_high: number; n_medium: number };
-  interpretation?: Record<string, number>;
-};
-// Mirrors redsim.ml.schema.CampaignConfig as returned on a campaign record.
-// settings_hash is not part of the config: it is a top-level CampaignRecord
-// field (see Campaign below).
 export type CampaignConfig = CampaignRequest & {
-  target_id?: string;
-  modality?: "image" | "tabular" | "llm";
+  target_id: string;
+  modality: "image" | "tabular" | "llm";
   dataset_split?: string;
-  scoring: ScoringConfig;
-  defense?: {
-    id: string;
-    art_class?: string | null;
-    params: Record<string, unknown>;
-  } | null;
+  scoring: {
+    version: string;
+    weights: ScoringWeights;
+    severity?: Record<string, number>;
+    confidence?: Record<string, number>;
+    interpretation?: Record<string, number>;
+  };
+  defense?: DefenseConfig | null;
+  target_snapshot?: Record<string, unknown>;
+  attacks?: AttackInfo[];
 };
 export type Measurement = {
   id: string;
@@ -474,10 +452,19 @@ export type MRIRecord = {
   run_id?: string;
   mri?: number;
   grade?: string;
-  delta?: MRIDelta | null;
-  subscores?: MRISubscores;
+  delta?: {
+    baseline_run_id: string;
+    mri_before: number;
+    mri_after: number;
+    delta: number;
+    delta_acc_clean?: number;
+  } | null;
+  subscores?: Record<
+    "S_acc" | "S_asr" | "S_eps" | "S_conf" | "S_expl",
+    number | null
+  >;
   per_attack?: Record<string, number>;
-  weights?: MRIWeights;
+  weights?: ScoringWeights;
   reading?: string;
   reference_eps?: number;
   eps_grid?: number[];
@@ -499,8 +486,8 @@ export type Campaign = {
   stage?: string;
   stages_done: string[];
   error?: string | null;
-  config: CampaignConfig;
   settings_hash?: string | null;
+  config: CampaignConfig;
   target: ModelTarget;
   attacks: AttackInfo[];
   provenance?: Record<string, unknown> | null;

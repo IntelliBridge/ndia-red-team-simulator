@@ -26,10 +26,8 @@ import {
   startCampaign,
   verifyFinding,
   type Campaign,
-  type CampaignRequest,
   type Comparison,
   type DefenseInfo,
-  type Finding,
 } from "@/lib/api";
 import { useCampaign } from "@/hooks/useCampaign";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
@@ -49,28 +47,33 @@ export default function RunPage({ params }: { params: { id: string } }) {
   const [compareResult, setCompareResult] = useState<Comparison | null>(null);
   const [compareError, setCompareError] = useState("");
   const [actionError, setActionError] = useState("");
-  const [dismissError, setDismissError] = useState("");
   const [defenseSelections, setDefenseSelections] = useState<
     Record<string, string>
   >({});
   const { data: defenses = [] } = useDefenses(authed);
   useRunEvents(authed ? params.id : null, (event) => {
-    // Job frames carry no stage name: they only mean "something changed",
-    // so revalidate. Named stage frames drive the timeline, and a running
-    // stage is shown as in progress rather than as a success.
-    if (event.type === "stage" && event.name) {
-      const name = event.name;
-      const next: StageEntry = {
-        name,
-        mode: event.status,
-        success: event.status === "succeeded",
-        pending: event.status === "running",
-      };
-      setStages((current: StageEntry[]) => [
-        ...current.filter((stage) => stage.name !== name),
-        next,
-      ]);
+    if (event.type === "job") {
+      void mutate();
+      return;
     }
+    if (!event.name) return;
+    const stageName = event.name;
+    setStages((current: StageEntry[]) => {
+      const next = {
+        name: stageName,
+        mode: event.status,
+        success:
+          event.status === "succeeded"
+            ? true
+            : event.status === "failed"
+              ? false
+              : null,
+      };
+      return [
+        ...current.filter((stage) => stage.name !== next.name),
+        next,
+      ];
+    });
     void mutate();
   });
 
@@ -99,25 +102,13 @@ export default function RunPage({ params }: { params: { id: string } }) {
 
   const campaign = data as Campaign;
   const role = roles[campaign.target.project_id];
-  // Verify answers 501 for a not_implemented defense and 422 for one whose
-  // modalities exclude the target, so neither may be offered as a choice.
-  const targetModality = campaign.target.modality;
-  const defenseBlockedReason = (defense: DefenseInfo): string | null => {
-    if (defense.status !== "available") {
-      return defense.reason ?? "not implemented";
-    }
-    const modalities = (defense.modalities as string[] | undefined) ?? [];
-    if (!modalities.includes(targetModality)) {
-      return `not applicable to ${targetModality} targets`;
-    }
-    return null;
-  };
-  const defenseIsEligible = (id: string) => {
-    const defense = defenses.find((entry: DefenseInfo) => entry.id === id);
-    return defense != null && defenseBlockedReason(defense) == null;
-  };
   const canAnnotate =
     role === "remediator" || role === "approver" || role === "admin";
+  const availableDefenses = defenses.filter(
+    (defense: DefenseInfo) =>
+      defense.status === "available" &&
+      defense.modalities.includes(campaign.target.modality as "image" | "tabular"),
+  );
   const saveNotes = async () => {
     try {
       setNoteError("");
@@ -143,20 +134,6 @@ export default function RunPage({ params }: { params: { id: string } }) {
       await mutate();
     } catch (e) {
       setCancelError(String(e));
-    }
-  };
-  // Completed campaigns do not poll, so a dismissal must revalidate the
-  // campaign itself or the stale row (and its Dismiss button) stays put
-  // and a second click would submit the stale status and receive a 409.
-  const dismiss = async (finding: Finding) => {
-    const reason = window.prompt("Reason for dismissal");
-    if (!reason) return;
-    try {
-      setDismissError("");
-      await dismissFinding(finding.id, reason, finding.status);
-      await mutate();
-    } catch (cause) {
-      setDismissError(String(cause));
     }
   };
   const panel = (number: number, title: string, children: React.ReactNode) => (
@@ -290,14 +267,9 @@ export default function RunPage({ params }: { params: { id: string } }) {
             <div>
               <dt className="redsim-kicker">scoring weights</dt>
               <dd>
-                {campaign.config.scoring?.weights
-                  ? Object.entries(campaign.config.scoring.weights)
-                      .map(([key, value]) => `${key}=${value}`)
-                      .join(", ")
-                  : "not recorded"}
-                {campaign.config.scoring?.version
-                  ? ` (${campaign.config.scoring.version})`
-                  : ""}
+                {Object.entries(campaign.config.scoring.weights)
+                  .map(([key, value]) => `${key}=${value}`)
+                  .join(", ")}
               </dd>
             </div>
             <div>
@@ -433,19 +405,11 @@ export default function RunPage({ params }: { params: { id: string } }) {
                     className="mt-2 border border-input bg-background p-1"
                   >
                     <option value="">Select defense</option>
-                    {defenses.map((defense: DefenseInfo) => {
-                      const blocked = defenseBlockedReason(defense);
-                      return (
-                        <option
-                          key={defense.id}
-                          value={defense.id}
-                          disabled={blocked != null}
-                        >
-                          {defense.name}
-                          {blocked ? ` · ${blocked}` : ""}
-                        </option>
-                      );
-                    })}
+                    {availableDefenses.map((defense: DefenseInfo) => (
+                      <option key={defense.id} value={defense.id}>
+                        {defense.name}
+                      </option>
+                    ))}
                   </select>
                   <button
                     onClick={async () => {
@@ -462,8 +426,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                       }
                     }}
                     disabled={
-                      !item.finding_id ||
-                      !defenseIsEligible(defenseSelections[item.id] ?? "")
+                      !item.finding_id || !defenseSelections[item.id]
                     }
                     className="ml-2 border border-border px-2 py-1"
                   >
@@ -507,26 +470,16 @@ export default function RunPage({ params }: { params: { id: string } }) {
             <RoleGated minRole="scanner" callerRole={role}>
               <button
                 onClick={async () => {
-                  // Resend only the request fields: the recorded config also
-                  // carries admission-time snapshots (scoring, target, attacks)
-                  // that POST /v1/models/{id}/attacks does not accept.
-                  const { config } = campaign;
-                  const request: CampaignRequest = {
-                    attack_ids: config.attack_ids,
-                    attack_params: config.attack_params,
-                    norm: config.norm,
-                    eps_grid: config.eps_grid,
-                    reference_eps: config.reference_eps,
-                    finding_asr_threshold: config.finding_asr_threshold,
-                    dataset_id: config.dataset_id,
-                    dataset_revision: config.dataset_revision,
-                    n_samples: config.n_samples,
-                    seed: config.seed,
-                    include_control: config.include_control,
-                    explain_k: config.explain_k,
-                    auto_recommend: config.auto_recommend,
-                    llm_narrative: config.llm_narrative,
-                  };
+                  const {
+                    target_id: _targetId,
+                    modality: _modality,
+                    dataset_split: _datasetSplit,
+                    scoring: _scoring,
+                    defense: _defense,
+                    target_snapshot: _targetSnapshot,
+                    attacks: _attacks,
+                    ...request
+                  } = campaign.config;
                   const result = await startCampaign(
                     campaign.target.id,
                     request,
@@ -573,7 +526,6 @@ export default function RunPage({ params }: { params: { id: string } }) {
         {panel(
           11,
           "Findings",
-          <div>
           <table className="w-full text-left text-xs">
             <thead>
               <tr>
@@ -601,7 +553,21 @@ export default function RunPage({ params }: { params: { id: string } }) {
                   <td>
                     <RoleGated minRole="approver" callerRole={role}>
                       <button
-                        onClick={() => void dismiss(finding)}
+                        onClick={async () => {
+                          const reason = window.prompt("Reason for dismissal");
+                          if (!reason) return;
+                          try {
+                            setActionError("");
+                            await dismissFinding(
+                              finding.id,
+                              reason,
+                              finding.status,
+                            );
+                            await mutate();
+                          } catch (cause) {
+                            setActionError(String(cause));
+                          }
+                        }}
                         className="border border-border px-2 py-1"
                       >
                         Dismiss
@@ -611,11 +577,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                 </tr>
               ))}
             </tbody>
-          </table>
-          {dismissError && (
-            <p className="mt-2 text-sm text-destructive">{dismissError}</p>
-          )}
-          </div>,
+          </table>,
         )}
         {panel(
           12,

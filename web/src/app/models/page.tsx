@@ -27,20 +27,12 @@ export default function ModelsPage() {
   } = useModels(authed ? projectId : null);
   const { data: capabilities } = useCapabilities(authed);
   const { data: datasets = [] } = useDatasets(authed);
-  // Artifact registration hard-codes modality=image below, so only datasets
-  // that declare image compatibility can be offered; anything else would be
-  // refused by admission as dataset_incompatible.
-  const uploadDatasets = datasets.filter((dataset) =>
-    dataset.compatible_modalities.includes("image"),
-  );
-  // GET /v1/models is not mounted on every API deployment yet; a 404 is
-  // the route being absent, which must read as not_implemented rather than
-  // as an empty or missing catalog.
   const catalogError =
     error instanceof ApiError
       ? ({
           403: "Unauthorized for this project.",
-          404: "Model catalog not_implemented: GET /v1/models is not mounted on this API deployment, so no model can be listed or registered here yet.",
+          404: "Model catalog is not implemented in this deployment.",
+          501: "Model catalog is not implemented in this deployment.",
           503: "Model service unavailable. Retry when the service is restored.",
         }[error.status] ?? `Model catalog refused (${error.status}).`)
       : "Model catalog unavailable. Retry.";
@@ -126,7 +118,7 @@ export default function ModelsPage() {
             Register the exact artifact before measuring it.
           </p>
         </div>
-        <RoleGated
+        {!error && <RoleGated
           minRole="remediator"
           callerRole={projectId ? roles[projectId] : undefined}
         >
@@ -136,7 +128,7 @@ export default function ModelsPage() {
           >
             Add model
           </button>
-        </RoleGated>
+        </RoleGated>}
       </header>
       {error && (
         <div className="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
@@ -309,18 +301,16 @@ export default function ModelsPage() {
                     className="mt-1 w-full rounded-sm border border-input bg-background px-3 py-2"
                   >
                     <option value="">Select a compatible dataset</option>
-                    {uploadDatasets.map((dataset) => (
+                    {datasets
+                      .filter((dataset) =>
+                        dataset.compatible_modalities.includes("image"),
+                      )
+                      .map((dataset) => (
                       <option key={dataset.id} value={dataset.id}>
                         {dataset.name} · {dataset.revision}
                       </option>
                     ))}
                   </select>
-                  {uploadDatasets.length === 0 && (
-                    <span className="mt-1 block text-xs text-muted-foreground">
-                      No registered dataset is compatible with image
-                      artifacts, so an upload cannot be evaluated yet.
-                    </span>
-                  )}
                 </label>
                 <label className="mt-3 block text-sm">
                   License statement

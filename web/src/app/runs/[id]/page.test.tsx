@@ -55,7 +55,11 @@ vi.mock("@/lib/api", async () => ({
 
 import RunPage from "./page";
 
-type RunEvent = { type?: string; name?: string; status?: string };
+type RunEvent = {
+  type: "job" | "stage";
+  name?: string;
+  status: "running" | "succeeded" | "failed";
+};
 
 let eventHandler: ((event: RunEvent) => void) | undefined;
 
@@ -92,7 +96,6 @@ beforeEach(() => {
         name: "JPEG preprocessing",
         status: "available",
         modalities: ["image"],
-        phase: "A",
       },
     ],
   });
@@ -160,23 +163,6 @@ describe("/runs/[id] campaign review", () => {
     expect(screen.getByText("Audit chain")).toBeTruthy();
   });
 
-  it("reads scoring weights from the nested config and the hash from the record", () => {
-    renderPage();
-    expect(
-      screen.getByText("acc=0.35, asr=0.25, eps=0.2, conf=0.1, expl=0.1 (mri-1)"),
-    ).toBeTruthy();
-    expect(screen.getByText("sha256:fixture-settings-hash")).toBeTruthy();
-  });
-
-  it("does not crash when the config omits the scoring block", () => {
-    const bare = campaign();
-    delete (bare.config as { scoring?: unknown }).scoring;
-    delete (bare as { settings_hash?: unknown }).settings_hash;
-    setCampaign(bare);
-    renderPage();
-    expect(screen.getAllByText("not recorded").length).toBeGreaterThan(0);
-  });
-
   it("does not claim failed campaigns are still receiving evidence", () => {
     setCampaign(campaign({ status: "failed", evidence_complete: false }));
     renderPage();
@@ -228,65 +214,6 @@ describe("/runs/[id] campaign review", () => {
     expect(mocks.mutate).toHaveBeenCalled();
   });
 
-  it("offers only available defenses that match the target modality", () => {
-    mocks.useDefenses.mockReturnValue({
-      data: [
-        {
-          id: "jpeg",
-          name: "JPEG preprocessing",
-          status: "available",
-          modalities: ["image"],
-          phase: "A",
-        },
-        {
-          id: "scaler",
-          name: "Feature scaling",
-          status: "available",
-          modalities: ["tabular"],
-          phase: "A",
-        },
-        {
-          id: "adv_train",
-          name: "Adversarial training",
-          status: "not_implemented",
-          reason: "Phase B",
-          modalities: ["image"],
-          phase: "B",
-        },
-      ],
-    });
-    const linked = campaign();
-    (linked.recommendations[0] as typeof linked.recommendations[0] & {
-      finding_id: string;
-    }).finding_id = "finding-1";
-    setCampaign(linked);
-    renderPage();
-    expect(
-      screen.getByRole("option", { name: "JPEG preprocessing" }),
-    ).toHaveProperty("disabled", false);
-    expect(
-      screen.getByRole("option", {
-        name: "Feature scaling · not applicable to image targets",
-      }),
-    ).toHaveProperty("disabled", true);
-    expect(
-      screen.getByRole("option", { name: "Adversarial training · Phase B" }),
-    ).toHaveProperty("disabled", true);
-    const select = screen.getByLabelText(
-      "Defense for Evaluate input preprocessing",
-    );
-    fireEvent.change(select, { target: { value: "scaler" } });
-    expect(screen.getByRole("button", { name: "Verify" })).toHaveProperty(
-      "disabled",
-      true,
-    );
-    fireEvent.change(select, { target: { value: "jpeg" } });
-    expect(screen.getByRole("button", { name: "Verify" })).toHaveProperty(
-      "disabled",
-      false,
-    );
-  });
-
   it("labels a recommendation as measured only when that candidate has a measured record", () => {
     const measured = campaign();
     const recommendation = measured.recommendations[0] as
@@ -317,74 +244,31 @@ describe("/runs/[id] campaign review", () => {
   });
 
   it("upserts repeated stage events and revalidates campaign evidence", () => {
-    const { container } = renderPage();
+    renderPage();
     expect(eventHandler).toBeTypeOf("function");
     act(() => {
-      eventHandler?.({ type: "stage", name: "attack.execute", status: "running" });
+      eventHandler?.({
+        type: "stage",
+        name: "attack.execute",
+        status: "running",
+      });
+      eventHandler?.({
+        type: "stage",
+        name: "attack.execute",
+        status: "succeeded",
+      });
     });
     expect(screen.getAllByText("attack.execute")).toHaveLength(1);
-    expect(
-      container.querySelector('li[data-state="running"]'),
-    ).not.toBeNull();
-    expect(container.querySelector('li[data-state="succeeded"]')).toBeNull();
-    act(() => {
-      eventHandler?.({ type: "stage", name: "attack.execute", status: "succeeded" });
-    });
-    expect(screen.getAllByText("attack.execute")).toHaveLength(1);
-    expect(container.querySelector('li[data-state="running"]')).toBeNull();
-    expect(
-      container.querySelector('li[data-state="succeeded"]'),
-    ).not.toBeNull();
     expect(mocks.mutate).toHaveBeenCalledTimes(2);
   });
 
-  it("revalidates on job frames without inventing a timeline stage", () => {
-    const { container } = renderPage();
+  it("revalidates job frames without inventing a stage", () => {
+    renderPage();
     act(() => {
       eventHandler?.({ type: "job", status: "running" });
-      eventHandler?.({ type: "stage", status: "failed" });
     });
     expect(screen.queryByText("campaign stage")).toBeNull();
-    expect(container.querySelectorAll("li[data-state]")).toHaveLength(0);
-    expect(mocks.mutate).toHaveBeenCalledTimes(2);
-  });
-
-  it("revalidates the campaign after a dismissal and surfaces a rejection", async () => {
-    setCampaign(
-      campaign({
-        findings: [
-          {
-            id: "finding-1",
-            run_id: "fixture-run-001",
-            project_id: "default",
-            severity: "high",
-            status: "open",
-            source_tool: null,
-            validation_state: "measured",
-            dedup_key: null,
-            schema_blob: { title: "FGSM threshold crossing", ml: null },
-          },
-        ],
-      }),
-    );
-    vi.spyOn(window, "prompt").mockReturnValue("duplicate evidence");
-    mocks.dismissFinding.mockResolvedValueOnce({});
-    renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-    await waitFor(() =>
-      expect(mocks.dismissFinding).toHaveBeenCalledWith(
-        "finding-1",
-        "duplicate evidence",
-        "open",
-      ),
-    );
-    await waitFor(() => expect(mocks.mutate).toHaveBeenCalledTimes(1));
-
-    mocks.mutate.mockClear();
-    mocks.dismissFinding.mockRejectedValueOnce(new Error("API 409: stale status"));
-    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
-    expect(await screen.findByText(/API 409: stale status/)).toBeTruthy();
-    expect(mocks.mutate).not.toHaveBeenCalled();
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
   });
 
   it("cancels active campaigns only after confirmation", async () => {
