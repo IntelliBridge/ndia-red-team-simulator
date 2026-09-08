@@ -8,8 +8,13 @@ Edit the README, not this file. If the README ever stops existing,
 this stub is what readers see.
 -->
 
-# Redsim docs
+# redsim docs
 
-The site landing comes from the project README. If you're seeing
-this stub, the build hook didn't run. See
+The site landing comes from the project README. If you are seeing this stub,
+the build hook did not run. See
 [`hooks/readme_as_index.py`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/hooks/readme_as_index.py).
+
+Start with the
+[product spec](superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md),
+the [project brief](project-brief.md) and the
+[master plan](plans/00-master-plan.md).

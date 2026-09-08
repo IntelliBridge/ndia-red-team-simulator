@@ -1,551 +1,248 @@
-# Extending Redsim
+# Extending redsim
 
-Redsim discovers two kinds of pluggable component at startup: **scanner
-adapters** (wrap a security tool, emit `RedsimFinding`s) and **agent
-adapters** (wrap a CAI agent). Both are kept in a generic
-`name -> item` table — `redsim.registry.Registry[T]` — that backs the
-scanner registry ([`redsim/scanners/registry.py`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/redsim/scanners/registry.py))
-and the agent registry ([`aegis/agents/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/registry.py)).
+redsim has two extension surfaces. The **platform registry seam** is the
+generic `name -> item` table (`redsim.registry.Registry[T]`) that backs the
+scanner registry in
+[`redsim/scanners/registry.py`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/redsim/scanners/registry.py):
+duplicate detection, a structural protocol check, opt-in entry-point
+discovery, an allowlist, Ed25519 signatures and an out-of-process sandbox.
+The **ML vertical** adds two protocols of its own, `Target` and
+`AttackAdapter`, plus explainers, recommendation rules and ART defenses, and
+registers into the same seam.
 
-This page covers how to add your own.
+This page says what exists on `main` and what the product spec assigns to the
+open ML pull requests (#8 `feat/ml-core`, #9 `feat/ml-assets`). Nothing
+described as "PR #8" or "planned" may be presented as working until it merges
+(`CLAUDE.md`, working rules).
 
-## Two extension paths
+## What is on `main`
 
-| Path | How it registers | When to use |
-|------|------------------|-------------|
-| **First-party** | Eager `import` in the subsystem `__init__.py`, which runs `register(...)` at module import. Fast, explicit, always present. | Adapters that ship inside the `redsim` package. |
-| **Third-party** | A Python **entry point** that Redsim discovers at startup — opt-in via `REDSIM_PLUGINS=1`. | Adapters shipped from a separate downstream package, with no edit to `redsim`. |
+| Piece | Where | State |
+|---|---|---|
+| `Registry[T]` (register, get, list, entry-point scan, conformance check, allowlist, signatures) | `redsim/registry.py` | exists |
+| Scanner registry: `ScannerAdapter` protocol, `ScanOptions`, `ScanResult`, `dispatch`, `KNOWN_CAPABILITIES`, `maybe_load_entry_points`, sandbox wrap | `redsim/scanners/registry.py`, `redsim/scanners/sandbox.py`, `sandbox_worker.py` | exists, **no adapter registered** |
+| Plugin discovery report and signing | `redsim/plugins.py`, `redsim/supply_chain/signing.py`, `redsim plugins list|sign` | exists |
+| Effect-class gate (`read` / `active` / `external`) | `redsim/effects.py` | exists, unused by any route today |
+| `Target` protocol and `Sample` | `redsim/ml/targets/base.py` | exists |
+| `AttackAdapter` protocol and `AttackOutput` | `redsim/ml/attacks/base.py` | exists |
+| `AttackInfo`, `ParamSpec`, `TargetInfo`, `DefenseConfig` and the rest of the evidence schema | `redsim/ml/schema.py` | exists, **frozen by P0** |
+| `TinyTarget` test double | `tests/ml/fakes.py` | exists |
+| Concrete targets, attack adapters and their registries, `campaign.py`, `eval.py`, `scoring.py`, `defenses.py`, `datasets/`, explainers, recommendation rules | `redsim/ml/…` | PR #8 / #9, not on `main` |
 
-### First-party (in-tree)
+## The ML protocols
 
-The built-ins are imported eagerly so callers never have to import each
-adapter module by hand. For example,
-[`redsim/scanners/__init__.py`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/redsim/scanners/__init__.py)
-imports `strix_adapter`, `trivy_adapter`, and the rest; each module ends
-with a top-level `register(MyAdapter())`. Adding a first-party adapter is
-two steps: write `redsim/scanners/<tool>_adapter.py` ending in
-`register(...)`, then add it to the import list in `__init__.py`.
+### `Target` (`redsim/ml/targets/base.py`)
 
-### Third-party (entry points)
+A target is a model plus the public dataset slice it is evaluated on.
 
-See [Third-party plugins (marketplace)](#third-party-plugins-marketplace)
-below for the full authoring guide: the entry-point contract, a
-copy-pasteable example plugin, enabling discovery, the security
-allowlist, conformance validation, and the inspection CLI.
+| Member | Purpose |
+|---|---|
+| `id: str` | Registry key. |
+| `info() -> TargetInfo` | Name, modality, dataset, class names, `status` (`available` or `not_implemented` with a reason). Stubs report `not_implemented` so the UI can show them honestly. |
+| `load() -> None` | Load weights and data. Idempotent. Raises `NotImplementedError` for stubs. |
+| `sample(n, seed) -> Sample` | Stratified, seeded slice of the evaluation split. `Sample` carries `x` (float32 in [0, 1], NCHW for images), `y`, the source `indices` and `class_names`. |
+| `predict_proba(x) -> ndarray` | Class probabilities, shape `(n, n_classes)`. |
+| `art_classifier() -> Any` | An ART estimator over the model (`PyTorchClassifier` for images, `SklearnClassifier` / `XGBoostClassifier` for the tabular tree ensemble). |
+| `torch_model() -> Any` | The `torch.nn.Module` in eval mode, for SHAP `GradientExplainer`. |
+| `manifest() -> dict` | Dataset and weights provenance: names, versions, sha256, training config. |
 
-## The adapter surface
+The spec (section 8.3) assigns the concrete implementations to
+`redsim/ml/targets/bundled.py` (bundled catalog and asset manifest reader),
+`artifact.py` (ONNX, `state_dict`, `safetensors`, XGBoost-JSON loaders),
+`architectures.py` (the in-tree architecture catalog that `state_dict`
+uploads must name), `tabular.py`, and `endpoint.py` (Phase B stub). Loaders
+are imported **only inside the sandbox child** (section 9). A `Target` that
+needs a download must never fetch at import time.
 
-A plugin's `factory()` must return an object that satisfies the
-relevant Protocol. The Protocols are the contract — match them exactly;
-the registry only checks `.name` at registration, so a missing method
-surfaces later at dispatch, not at load.
+### `AttackAdapter` (`redsim/ml/attacks/base.py`)
 
-### `ScannerAdapter`
+Every attack is an adapter over the Adversarial Robustness Toolbox.
 
-Defined in [`redsim/scanners/registry.py`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/redsim/scanners/registry.py):
+| Member | Purpose |
+|---|---|
+| `id: str` | Registry key and the `attack_id` clients send. |
+| `info() -> AttackInfo` | `id`, `name`, `domain` (`image` / `tabular` / `llm`), `family` (`evasion` / `control`), `description`, `params_schema` (a list of `ParamSpec`: name, type, default, min, max, description), `references`. |
+| `resolve_params(params) -> dict` | Fill defaults, coerce types, reject out-of-range values with `ValueError` (mapped to HTTP 422 at admission). The worker calls it again before running so a stale client cannot widen a bound. |
+| `run(target, x, y, params, seed) -> AttackOutput` | Produce `x_adv`, the mean L∞ and L2 norms, wall time, the resolved params, `library_versions` and free-text `notes`. |
+
+`params_schema` is the single source of parameter bounds: the launcher UI
+renders from it, admission validates against it, the worker re-validates.
+Attack ids are declarative references to registered, bounded ART adapters.
+The repository stores no attack recipes or executable payloads.
+
+Phase A catalog (spec section 12.2), carried by PR #8:
+
+| Adapter id | Modality | ART class | Access |
+|---|---|---|---|
+| `fgsm` | image | `FastGradientMethod` | white-box |
+| `pgd` | image, tabular (via a build-time differentiable surrogate) | `ProjectedGradientDescent` | white-box |
+| `hopskipjump` | tabular (image in Phase B) | `HopSkipJump` | black-box |
+| `noise_control` | image, tabular | none, adapter-native benign noise at the same ε | control, never creates a Finding |
+
+Phase B rows (`cw_l2`, `deepfool`, `zoo`, text and detection attacks) are
+registered only when their adapter, estimator support and tests exist. Until
+then `GET /v1/attacks` will not list them and the UI shows the modality as
+unavailable with the reason.
+
+### Registration
+
+- Attack adapters register in an instance of `redsim.registry.Registry`
+  (`redsim/ml/attacks/registry.py` in PR #8), with duplicate-id detection and
+  the protocol check. Third-party attack adapters use the entry-point group
+  `redsim.ml.attacks`, gated by `REDSIM_PLUGINS=1` and the same allowlist and
+  signature controls as scanner plugins.
+- A campaign façade, `CampaignScannerAdapter` (`redsim/ml/campaign.py`,
+  `name="ml-campaign"`, `capabilities={"adversarial_ml", "explainability"}`),
+  is a built-in `ScannerAdapter` registered in `redsim.scanners.registry`, so
+  `list_scanners()`, `GET /v1/scanners`, `dispatch()` and the offline CLI see
+  the vertical. `KNOWN_CAPABILITIES` gains `adversarial_ml` and
+  `explainability` with it. `POST /v1/scans` is **not** the ML entry point
+  and stays unmounted, campaigns start with `POST /v1/models/{id}/attacks`.
+- The stage pipeline inside the sandbox child is
+  `load_target → sample → clean_eval → attack×eps → control → explain →
+  score → interpret → recommend → report`, the `STAGES` tuple in
+  `redsim/ml/schema.py`.
+
+### Adding an attack adapter (once PR #8 is in)
+
+1. Write `redsim/ml/attacks/<id>.py` with a class that satisfies
+   `AttackAdapter`. Declare every parameter in `params_schema` with bounds
+   and a default. Record `library_versions` from ART and torch.
+2. Register it in `redsim/ml/attacks/registry.py`. A duplicate id raises at
+   import.
+3. Add its row to spec section 12.2 (adapter id, ART class, parameters,
+   phase) and to the `GET /v1/attacks` fixture.
+4. Test it in-process against `tests/ml/fakes.py::TinyTarget` under the `ml`
+   marker, with `pytest.importorskip("torch")` at module top so the 3.13 CI
+   lane still collects the module.
+5. Keep it deterministic for a given seed, and list every nondeterminism
+   source in `AttackOutput.notes` so it lands in `Provenance`.
+
+## Explainers, rules and defenses
+
+- **Explainers** (`redsim/ml/explain/`, package exists empty on `main`):
+  `shap_image.py` (`GradientExplainer` on `Target.torch_model()`),
+  `shap_tabular.py` (`TreeExplainer` on the tree ensemble), `stability.py`
+  (`expl_shift`, the centre-mass heuristic), `summary.py` (the deterministic
+  SHAP text summary that is the only thing the LLM writer receives). Outputs
+  are `Observation` records with `metric_kind: "heuristic"` and artifact
+  rows. SHAP is supporting evidence, never causal proof.
+- **Interpretation and recommendation rules**
+  (`redsim/ml/recommend/{interpret,rules,narrative}.py`): deterministic rules
+  that cite measurement ids and produce `Interpretation` (`kind: "inferred"`)
+  and `CandidateRecommendation` (`status: "candidate"`) records. The Pythia
+  writer in `narrative.py` adds prose only, with `narrative_source = "rules"`
+  when Pythia is not configured. No expected gain appears on a recommendation
+  until verify measures it.
+- **Defenses** (`redsim/ml/defenses.py`, `DefenseConfig` in the schema): ART
+  preprocessors applied only to a worker-side evaluation copy inside the
+  verify-after-harden loop (spec section 16.5). Phase A set:
+
+| Defense id | ART class | Defaults | Modalities |
+|---|---|---|---|
+| feature squeezing | `art.defences.preprocessor.FeatureSqueezing` | `bit_depth=4`, `clip_values` from the target | image, tabular |
+| spatial smoothing | `art.defences.preprocessor.SpatialSmoothing` | `window_size=3` | image |
+| JPEG compression | `art.defences.preprocessor.JpegCompression` | `quality=50`, `clip_values` from the target | image |
+
+  A new defense declares its ART class, parameter schema and modalities, is
+  listed by the planned `GET /v1/defenses`, and never modifies or persists
+  the model artifact. Adversarial training and defensive distillation are
+  Phase B "apply" steps and stay disabled with a reason.
+
+## The platform registry seam
+
+### `ScannerAdapter` (`redsim/scanners/registry.py`)
 
 | Member | Type | Purpose |
-|--------|------|---------|
+|---|---|---|
 | `name` | `str` | Registry key. Used by `dispatch(name, ...)`. |
-| `capabilities` | `set[str]` | Capability tags (e.g. `{"dast"}`). Drives capability-based dispatch. |
-| `default_timeout` | `int` | Fallback scan timeout in seconds. |
+| `capabilities` | `set[str]` | Capability tags. Drives capability-based dispatch. |
+| `default_timeout` | `int` | Fallback timeout in seconds. |
 | `adapter_version()` | `-> str` | Version string for the wrapped tool. |
-| `health_check()` | `-> bool` | Whether the tool is usable (e.g. on `PATH`). |
-| `scan(run_state, options)` | `-> ScanResult` | Run the scan; return findings + metadata. |
+| `health_check()` | `-> bool` | Whether the adapter is usable (for the campaign façade: the `ml` extra imports and the sandbox child launches). |
+| `scan(run_state, options)` | `-> ScanResult` | Run and return findings plus metadata. |
 
-`scan` takes a `RunState` and a `ScanOptions` (`target`, optional
-`instruction`, `timeout`, `extra`) and returns a `ScanResult`
-(`findings`, `adapter_name`, `adapter_version`, `command_str`,
-`env_keys`, `exit_code`, `duration_s`, `error`). The in-tree
-`StrixAdapter` in
-[`aegis/scanners/strix_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/strix_adapter.py)
-is the reference implementation.
+`KNOWN_CAPABILITIES` is an open vocabulary: a capability in the set registers
+silently, one outside it logs a warning and still registers. Promoting one is
+a one-line append. The subprocess helpers `run_cli_scan`, `run_cli_scan_jsonl`,
+`cli_version` and `which_available` remain for adapters that wrap a CLI tool.
 
-## Don't hand-roll `scan()` — pick the right shared helper
+Findings are Pydantic v2 models (`redsim/schema.py::RedsimFinding`) validated
+at construction, so an out-of-vocabulary `severity` raises at the adapter
+instead of persisting a malformed row. `from_dict` stays lenient for reads.
 
-Most adapters wrap a CLI tool, and the wrapping boilerplate (start the
-timer, `subprocess.run`, the `TimeoutExpired` / `FileNotFoundError`
-envelope, persist the raw payload, assemble the `ScanResult`) is
-identical from adapter to adapter. [`redsim/scanners/registry.py`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/redsim/scanners/registry.py)
-provides three reuse seams so a new adapter supplies only what genuinely
-varies. Reach for them in this order — write a fully custom `scan()`
-only when none fits.
+### Third-party plugins {#third-party-plugins-marketplace}
 
-### CLI-subprocess helpers: `run_cli_scan` vs. `run_cli_scan_jsonl`
-
-Both own the same lifecycle (timer → `subprocess.run` with the adapter's
-`default_timeout` honoured → error envelope → optional raw-payload
-persistence → `ScanResult`). They differ only in **how stdout is
-parsed**:
-
-| Helper | Tool output shape | Parse callback | Malformed input |
-|--------|-------------------|----------------|-----------------|
-| `run_cli_scan(...)` | A **single JSON document** on stdout (one object/array for the whole scan). | `parse(proc, run_id) -> list[RedsimFinding]` — gets the whole `CompletedProcess`. | May raise `json.JSONDecodeError`; with `parse_error_label` set that becomes a `"failed to parse <label>"` error result. |
-| `run_cli_scan_jsonl(...)` | **Line-oriented JSONL / NDJSON** — one JSON object per line. | `convert(record, run_id) -> RedsimFinding \| None` — invoked once per parsed line. | A line that isn't valid JSON is **silently skipped**; the scan never fails on a bad line, so there is no parse-error envelope. |
-
-The JSONL helper's per-line `convert` callback returning `None` **filters
-that line out**. That is how `bumblebee` keeps only its finding records:
-its callback (`_convert_finding` in
-[`aegis/scanners/bumblebee_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/bumblebee_adapter.py))
-returns `None` for any record whose `record_type != "finding"`, dropping
-the interleaved `scan_summary` / `diagnostic` lines. `nuclei`,
-`trufflehog`, and `bumblebee` all use `run_cli_scan_jsonl`; the
-single-document tools (e.g. grype, sonarqube) use `run_cli_scan`. Both
-take `subdir` / `raw_filename` to persist the raw stdout under
-`run_state.run_path`, or `None` / `None` to persist nothing.
-
-The companion helpers `cli_version(executable, ...)` (probe a tool's
-`--version` banner, or `"unknown"` on any failure) and
-`which_available(*executables)` (`shutil.which` OR-probe) cover the
-matching `adapter_version()` / `health_check()` boilerplate.
-
-### Runner-backed adapters: `ScanResult.from_runner(...)`
-
-`strix` and `trivy` don't shell out directly from the adapter — they
-delegate to a subprocess **runner** in `redsim/runners/` (see below) that
-returns a `*RunResult`. Rather than hand-roll the re-wrap, map that
-result into a `ScanResult` with the classmethod:
-
-```python
-return ScanResult.from_runner(
-    result,
-    adapter_name=self.name,
-    adapter_version=version,
-    duration_s=time.monotonic() - started,
-    command_str=command_str,   # optional; defaults to " ".join(result.command)
-)
-```
-
-`findings` / `error` pass straight through and `exit_code` is
-`result.return_code or 0`. `command_str` defaults to the joined
-`result.command`, but a runner with no `command` attribute passes it
-explicitly (the `trivy` adapter passes the literal `"trivy fs"`). Any
-runner result satisfying the `RunnerResult` Protocol (`findings`,
-`return_code`, `error`) works — the scanner layer never imports the
-runner layer, keeping the dependency one-directional.
-
-### When a fully custom adapter is justified
-
-`deepsec` ([`aegis/scanners/deepsec_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/deepsec_adapter.py))
-is the worked example of an adapter that *can't* use any of the shared
-helpers, and its module docstring spells out why:
-
-- **Multi-step `scan → process → export` flow.** A single deepsec run is
-  three sequential subprocess invocations sharing on-disk state, not the
-  one `subprocess.run` + one stdout payload that `run_cli_scan` models.
-  The AI `process` stage is opt-in (only when `config.deepsec_ai_process`
-  is set, `config.deepsec_budget_usd > 0`, and a model key is present),
-  so the default path stays free.
-- **`pnpm` + config-driven `cwd` invocation.** deepsec isn't on `PATH`;
-  it runs as `pnpm deepsec <subcmd>` from `config.deepsec_path`. That
-  argv-with-cwd shape is something `cli_version` / `which_available`
-  can't express, so `adapter_version()` and `health_check()` stay custom.
-- **`_convert(record, run_id) -> RedsimFinding | None` verdict filtering.**
-  Like the JSONL `convert` callback, `_convert` returns `None` to drop a
-  record — here for non-actionable revalidation verdicts
-  (`false-positive` / `fixed` / `duplicate`) — but it's wired into the
-  hand-written scan loop rather than a shared helper. (deepsec also
-  strips code-owner PII before either constructing a finding or persisting
-  its raw artifact; see the docstring.)
-
-## Findings are validated at construction (Pydantic v2)
-
-As of the architecture-hardening pass,
-[`redsim/schema.py`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/redsim/schema.py)'s
-`RedsimFinding` and `CodeLocation` are **Pydantic v2 `BaseModel`s**, not
-dataclasses. The fields `severity`, `finding_type`, `status`, and
-`confidence` are typed as `Literal` vocabularies, so construction is
-validated at runtime: an adapter that emits an out-of-vocabulary
-`severity` or omits a required field now **raises at the adapter** (the
-source) instead of silently persisting a malformed finding.
-
-For an adapter author this means two things:
-
-- Construct findings with **valid `Literal` values** — `severity` in
-  `critical | high | medium | low`, `finding_type` in `dependency | sast
-  | dast | runtime | config | code | code_audit | supply_chain`, `status`
-  in `open | fixing | fixed | failed | false_positive`, `confidence` in
-  `high | medium | low`. Map your tool's native vocabulary onto these
-  (deepsec's `_SEVERITY_MAP` / `_canon_severity` is the pattern).
-- The public surface is unchanged: `to_dict()` / `from_dict()` keep the
-  same signatures, and `from_dict` is deliberately lenient (it falls back
-  to an unvalidated construction and logs) so legacy `schema_blob` rows
-  still read. New writes are fail-closed; only reads are best-effort.
-
-### `AgentAdapter`
-
-Defined in [`aegis/agents/registry.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/registry.py):
-
-| Member | Type | Purpose |
-|--------|------|---------|
-| `name` | `str` | Registry key. Used by `dispatch(name, ...)`. |
-| `domain` | `Domain` | One of `offensive`, `defensive`, `forensic`, `recon`, `remediation`, `audit`. |
-| `wired` | `bool` | Whether the agent is actually executable (vs. a stub). |
-| `invoke(prompt, context)` | `-> AgentResult` | Run the agent; return status + output. |
-
-`invoke` takes a prompt `str` and an `AgentContext` (`finding_id`,
-`target`, `repo_path`, `actor`, `extra`) and returns an `AgentResult`
-(`status`, `output`, `findings`, `diff`, `agent_version`, `error`).
-
-Each agent also declares an **effect** (`read` / `active` / `external`) — see
-"The tool catalog and effect classification" below — which drives the unified
-human-in-the-loop gate in `redsim/effects.py`. Effect is a per-agent property,
-not a function of domain.
-
-## Authoring a native specialist agent
-
-Beyond wrapping an agent CAI already ships, you can **compose** a brand-new
-specialist from the vendored CAI tool catalog. The pattern lives in
-[`aegis/agents/cai/authored.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/cai/authored.py):
-each specialist is a declarative `AuthoredSpec` (a scoped system prompt +
-a toolbelt + a `domain` and `effect`), turned into a `FunctionAgentAdapter`
-and `register()`ed at import. Adding one is a single list entry:
-
-```python
-AuthoredSpec(
-    name="my_specialist",          # Redsim registry key (dispatch by name)
-    cai_name="MySpecialist",       # the CAI Agent's own name
-    domain="recon",                # one of the six Domain values
-    effect="external",             # read / active / external — drives the gate
-    instructions=_ROE + "You are a … specialist. …",  # substantive prompt
-    tool_imports=[                 # (module_path, attribute) pairs, lazy-resolved
-        ("cai.tools.reconnaissance", "shodan_search"),
-        ("cai.tools.reconnaissance", "curl"),
-    ],
-    use_osint=True,                # append the Camoufox OSINT search tool
-),
-```
-
-Three properties make this safe:
-
-- **Registration is import-safe.** Specs are plain data; the adapter
-  registers `wired=True` at import **without** importing CAI. CAI only
-  matters at invocation.
-- **Invocation degrades, never raises.** `invoke` loads CAI through the
-  central loader; a `None` bundle (submodule missing / offline) surfaces
-  `status="error"`. The CAI `Agent` is built lazily and cached, resolving
-  each `tool_imports` entry defensively — a tool whose import fails is
-  **skipped, not fatal** — and any runtime failure becomes `status="error"`.
-- **OSINT search** is wired by setting `use_osint=True`, which appends the
-  tool returned by
-  [`build_osint_search_tool()`](https://github.com/IntelliBridge/aegis/blob/main/aegis/tools/osint_search.py)
-  — the platform's web-search tool (Camoufox + DuckDuckGo, used in place of a
-  Google/SerpAPI search). It returns `None` when CAI isn't importable, and
-  `None` is filtered out of the toolbelt.
-
-The 12 shipped specialists (`cloud_recon`, `osint_collector`, `threat_intel`,
-`api_security_tester`, `web_surface_mapper`, `ssl_tls_auditor`,
-`dns_enumerator`, `secrets_hunter`, `iac_auditor`, `container_security`,
-`crypto_analyst`, `log_triage`) are the reference implementations.
-
-To wire an *existing* CAI agent instead of composing a new one, add a tuple to
-`_WIRED` in [`aegis/agents/cai/builtins.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/agents/cai/builtins.py)
-with `by_name=True`; it resolves generically by its upstream registry key via
-`resolve_cai_agent` (CAI's `get_agent_by_name`), so no per-agent `CAIBundle`
-field is needed.
-
-## The tool catalog and effect classification
-
-[`aegis/tools/catalog.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/tools/catalog.py)
-(`TOOL_CATALOG` / `list_tools()`) is the single, honest registry of every tool
-the platform can expose to agents — **42 today** across four `source`s:
-`kali` (10, the mcp-kali allowlist), `scanner` (14 registered adapters),
-`cai` (17 vendored `@function_tool`s, namespaced `cai_*`), and `osint` (1, the
-Camoufox web search). The module is import-light, so it lists what the platform
-*can* expose independent of whether the optional CAI / Camoufox stacks are
-installed.
-
-Each `ToolSpec` carries an **effect** that is **authoritative in the catalog**:
-`redsim.effects.tool_effect()` consults it (falling back to the Kali map), so
-the catalog and the gate never drift. Classify conservatively:
-
-| Effect | Use for | Gate |
-|--------|---------|------|
-| `read` | enumeration, analysis, third-party-free observation | none beyond the target allowlist |
-| `active` | command execution or active probing of a live target | `execute=true` + `approver` |
-| `external` | reaches a third party (Shodan API, web search, egress) | `execute=true` + `approver` |
-
-An unclassified name fails **safe** to `active` — never silently treated as
-harmless. To add a `cai` tool, append a `_CaiEntry` (catalog name, bare CAI
-name, category, effect, description); the bare name is recorded in
-`CAI_TOOL_NAMES` for toolbelt wiring.
-
-## Capabilities are an open vocabulary
-
-`redsim/scanners/registry.py` defines the known capability set:
-
-```python
-KNOWN_CAPABILITIES: set[str] = {"dast", "sast", "dependency", "iac", "secret", "sbom", "supply_chain", "code_audit"}
-```
-
-A scanner's `capabilities` is a `set[str]` validated at `register()`:
-
-- A capability **in** the set registers silently.
-- A capability **outside** the set **logs a warning but still
-  registers**. Plugins can therefore introduce a new capability without
-  patching core.
-
-To promote a capability to first-party (so it no longer warns), it's a
-**one-line append** to `KNOWN_CAPABILITIES`.
-
-## Third-party plugins (marketplace)
-
-The entry-point seam is Redsim's **community scanner-adapter marketplace**:
-a downstream package ships a scanner (or agent) adapter, declares an entry
-point, and an Redsim operator installs and enables it with **no edit to the
-`redsim` package**. Discovery is opt-in, validated, and gated behind an
-allowlist — the three controls below let an operator run third-party
-adapters without surrendering the deterministic offline path or running
-arbitrary code unconditionally.
-
-A complete, installable reference plugin lives at
-[`examples/redsim-plugin-example/`](https://github.com/IntelliBridge/ndia-red-team-simulator/tree/main/examples/redsim-plugin-example)
-— copy it as your starting point.
-
-### The entry-point contract
-
-A plugin declares an entry point in its own `pyproject.toml`. The
-**group** selects the registry (`redsim.scanners` or `redsim.agents`); the
-**value** is a module path to a **zero-arg factory callable** that returns
-the adapter instance:
+A plugin declares an entry point in its own `pyproject.toml`. The group
+selects the registry, the value is a zero-arg factory:
 
 ```toml
-# In the plugin's own pyproject.toml — nothing in redsim changes.
 [project.entry-points."redsim.scanners"]
 myscanner = "my_pkg:create_scanner"
 
-[project.entry-points."redsim.agents"]
-myagent = "my_pkg:create_agent"
+[project.entry-points."redsim.ml.attacks"]   # once PR #8 lands
+myattack = "my_pkg:create_attack"
 ```
 
-Redsim imports the value, calls `create_scanner()` with **no arguments**,
-and registers the returned object. A class works too (calling it with no
-args constructs an instance), but a factory function keeps construction
-explicit. The returned object must satisfy the relevant Protocol —
-[`ScannerAdapter`](#scanneradapter) or [`AgentAdapter`](#agentadapter)
-above.
+Discovery is **off by default** and per-process: set `REDSIM_PLUGINS=1` on
+the API, the worker and the CLI. `pytest` runs without it, so an installed
+plugin can never perturb the built-in registry during tests. The seam is
+`Registry.maybe_load_entry_points`, called by each package `__init__` after
+the built-ins are imported.
 
-### A minimal conformant scanner plugin
+#### Allowlist, signatures and sandbox {#security-the-redsim_plugins_allow-allowlist}
 
-The factory returns any object with the `ScannerAdapter` surface. Here is
-a complete, copy-pasteable `my_pkg/__init__.py` that mirrors the Protocol
-exactly:
-
-```python
-"""my_pkg — a minimal third-party Redsim scanner adapter."""
-from redsim.scanners.registry import ScanOptions, ScanResult
-
-
-class MyScanner:
-    name = "myscanner"
-    capabilities = {"dast"}        # from the known set; unknown is allowed (warns)
-    default_timeout = 600          # seconds; used when the caller doesn't override
-
-    def adapter_version(self) -> str:
-        return "1.0.0"
-
-    def health_check(self) -> bool:
-        return True                # e.g. shutil.which("mytool") is not None
-
-    def scan(self, run_state, options: ScanOptions) -> ScanResult:
-        # Run your tool against options.target, convert its output to
-        # RedsimFinding objects, and return them in a ScanResult.
-        return ScanResult(
-            findings=[],
-            adapter_name=self.name,
-            adapter_version=self.adapter_version(),
-            command_str=f"mytool {options.target}",
-        )
-
-
-def create_scanner() -> MyScanner:   # the zero-arg factory the entry point names
-    return MyScanner()
-```
-
-For a real conversion pattern — building `RedsimFinding`s from tool output
-and the `run_cli_scan` subprocess helper — read the in-tree
-[`grype_adapter.py`](https://github.com/IntelliBridge/aegis/blob/main/aegis/scanners/grype_adapter.py),
-the simplest registered adapter.
-
-### Enabling discovery: `REDSIM_PLUGINS=1`
-
-Third-party discovery is **off by default**. Built-in adapters always
-load; third-party ones load **only** when `REDSIM_PLUGINS=1` is set.
-
-!!! warning "Set `REDSIM_PLUGINS=1` on every process that needs the plugin"
-    Discovery is per-process. To use a third-party adapter end to end,
-    set `REDSIM_PLUGINS=1` in the environment of **all three**:
-
-    - the **API** (so `POST /v1/scans` accepts the adapter's name),
-    - the **worker** (so the scan actually dispatches to it), and
-    - the **CLI** (so `redsim scan --scanner …` and `redsim plugins list`
-      see it).
-
-    A common failure mode is enabling it on the API but not the worker:
-    admission accepts the scan, then the worker — running without the
-    flag — can't find the adapter.
-
-This gate is deliberate. The offline test path must stay deterministic:
-`pytest` runs without `REDSIM_PLUGINS`, so a plugin installed in the same
-environment can never perturb the built-in registry during tests. The
-seam is wired in `Registry.maybe_load_entry_points`, which returns
-immediately unless the flag is `"1"`. Each subsystem exposes a no-arg
-wrapper — `redsim.scanners.maybe_load_entry_points()` and
-`redsim.agents.maybe_load_entry_points()` — that the package `__init__`
-calls **after** the built-ins are imported, so first-party adapters are
-always present and plugins layer on top.
-
-### Security: the `REDSIM_PLUGINS_ALLOW` allowlist
-
-!!! danger "Loading a plugin runs its code in your process"
-    A discovered plugin's factory and `scan`/`invoke` methods execute
-    **in-process** inside the API and worker — same privileges, same
-    secrets, same network. Treat installing an Redsim plugin as installing
-    any other dependency: only enable distributions you trust.
-
-`REDSIM_PLUGINS_ALLOW` is a comma-separated list of **distribution** names
-(the installed package/project name, not the entry-point name) that acts
-as an allowlist:
-
-```bash
-# Only load plugins from these two distributions; skip everything else.
-export REDSIM_PLUGINS=1
-export REDSIM_PLUGINS_ALLOW="redsim-plugin-example,acme-scanners"
-```
-
-- **Allowlist set** — only plugins whose providing distribution is named
-  in the list load. Every other discovered plugin is **skipped** (status
-  `skipped` in `redsim plugins list`), even though discovery is on.
-- **Allowlist unset** (with `REDSIM_PLUGINS=1`) — **all** discovered
-  plugins load, and Redsim **logs a warning** that an unpinned plugin set
-  is active. This is convenient for development but not recommended for
-  production: pin the distributions you trust.
-
-Treat the allowlist as a production control. Combined with pinning plugin
-versions in your lockfile, it bounds exactly which third-party code runs.
-
-### Signature enforcement: `REDSIM_PLUGINS_REQUIRE_SIGNATURE`
-
-The allowlist bounds *which distributions* may load; **signature
-enforcement** adds cryptographic proof of *who authored the code*, bound to
-the exact factory module that runs. It is opt-in and **off by default** —
-the allowlist behaviour above is unchanged until you turn it on.
-
-When `REDSIM_PLUGINS_REQUIRE_SIGNATURE=1` is set, every discovered plugin
-must carry a valid **Ed25519** signature, verifying under a trusted public
-key, **before** it is registered. An unsigned or invalid plugin is
-**rejected** (status `rejected` in `redsim plugins list`, with the reason in
-the detail column); a valid one loads and the new **SIGNED** column shows
-`yes:<key_id>` so an operator can see which trusted key vouched for it. One
-bad signature never crashes discovery.
+Controls, all read on every process that discovers plugins:
 
 | Var | Purpose |
-|-----|---------|
-| `REDSIM_PLUGINS_REQUIRE_SIGNATURE` | `1`/truthy to require a valid signature; unset = no signature check. |
-| `REDSIM_PLUGINS_TRUSTED_KEYS` | Colon/comma-separated `*.pem` **public-key** files and/or dirs. |
-| `REDSIM_PLUGINS_SIG_DIR` | Dirs holding `<dist>-<version>.sig` files (falls back to trusted-key dirs + the plugin's module dir). |
+|---|---|
+| `REDSIM_PLUGINS` | `1` enables discovery. |
+| `REDSIM_PLUGINS_ALLOW` | Comma-separated **distribution** names. Set: only those load, others are `skipped`. Unset: everything loads with a warning. Treat as a production control. |
+| `REDSIM_PLUGINS_REQUIRE_SIGNATURE` | `1` requires a valid Ed25519 signature bound to the factory module's source before registration. Unsigned or invalid plugins are `rejected`. |
+| `REDSIM_PLUGINS_TRUSTED_KEYS` | `*.pem` public-key files and/or directories. |
+| `REDSIM_PLUGINS_SIG_DIR` | Directories holding `<dist>-<version>.sig` files. |
+| `REDSIM_PLUGINS_SANDBOX` | Default `1`: plugin `scan()` runs out-of-process (see below). |
 
-A plugin author signs their own distribution with the CLI — it digests the
-factory module's source, signs the canonical payload, and writes the
-detached `<dist>-<version>.sig`:
-
-```bash
-redsim plugins sign \
-  --dist redsim-plugin-example --version 0.1.0 \
-  --entry-point redsim.scanners:example \
-  --key your-ed25519-private-key.pem \
-  --out ./signing
-```
-
-The reference example at
-[`examples/redsim-plugin-example/signing/`](https://github.com/IntelliBridge/ndia-red-team-simulator/tree/main/examples/redsim-plugin-example/signing)
-ships a working trusted public key + signature. For the full trust model,
-the payload format, and the operator runbook, see
+A plugin author signs with
+`redsim plugins sign --dist <dist> --version <v> --entry-point <group>:<name> --key <ed25519.pem> --out ./signing`.
+The trust model and the operator runbook are in
 [Supply-chain integrity](../security/supply-chain.md#signed-third-party-plugins).
+The upstream example plugin directory is not carried in this fork.
 
-### Validation: a bad plugin is rejected, never fatal
+Validation: a plugin whose factory raises, whose object misses the protocol,
+or whose `name` is empty is rejected and logged without crashing discovery.
+`redsim plugins list [--json]` prints name, kind, distribution, version,
+status (`loaded`, `rejected`, `skipped`) and the reason. With discovery off it
+prints a hint rather than an empty table.
 
-Each discovered plugin is validated against its Protocol before it joins
-the registry. A plugin is **rejected and skipped** — without crashing
-discovery or affecting any other plugin or built-in — when:
+!!! danger "Loading a plugin runs its code in your process"
+    The factory and the module's top-level code run in-process at discovery,
+    before the signature check. Only `scan()` is sandboxed. Treat installing a
+    plugin as installing any dependency and pin the distributions you trust.
 
-- its factory **raises** on construction,
-- the returned object **doesn't satisfy the Protocol** (e.g. missing
-  `scan`, or no `name`), or
-- its `name` is **empty**.
+### The plugin sandbox and the ML sandbox
 
-A rejection is logged and surfaces as status `rejected` in `redsim plugins
-list` (with the reason in the detail column). One broken plugin can never
-take down discovery or sideline a healthy one.
+`redsim/scanners/sandbox.py` runs a plugin's `scan()` in a short-lived child
+(`python -m redsim.scanners.sandbox_worker --entry-point <ep>`, list argv,
+never `shell=True`) with POSIX rlimits, its own process group and a
+wall-clock kill, a minimal allowlisted environment that never carries the
+parent's secrets, and a private fd result channel. It is process isolation,
+not a network or filesystem jail.
 
-### Inspecting plugins: `redsim plugins list`
+The ML vertical builds `redsim/ml/sandbox.py` and `sandbox_worker.py` on the
+same primitives with deliberate differences (spec section 9.4): the child
+imports only in-tree `redsim.ml` code and the untrusted input is the model
+file, there is no in-process path for model bytes and no network switch, the
+parent populates a per-job work directory with the digest-checked model file
+and the evaluation slice, and every list element of the child's envelope is
+re-validated with its Pydantic model before anything is persisted. Bundled
+models take the same path on every run. These files are not on `main` yet.
 
-`redsim plugins list` prints what discovery found — built-in and
-third-party alike — so an operator can confirm a plugin loaded (or see why
-it didn't) without reading logs:
+## Effect classes
 
-```text
-$ REDSIM_PLUGINS=1 redsim plugins list
-NAME         KIND      DISTRIBUTION           VERSION  STATUS    DETAIL
-myscanner    scanner   redsim-plugin-example   1.0.0    loaded
-acme-dast    scanner   acme-scanners          2.3.0    skipped   not in REDSIM_PLUGINS_ALLOW
-brokenone    scanner   broken-pkg             —        rejected  factory raised: ValueError
-```
-
-| Column | Meaning |
-|--------|---------|
-| `name` | The adapter's registry key (entry-point name). |
-| `kind` | `scanner` or `agent`. |
-| `distribution` | The installed distribution that provides the plugin. |
-| `version` | The distribution version. |
-| `status` | `loaded` (registered), `rejected` (failed validation), or `skipped` (not in the allowlist). |
-| `detail` | Reason for a non-`loaded` status. |
-
-Add `--json` to emit the same data as a JSON array for scripting:
-
-```bash
-REDSIM_PLUGINS=1 redsim plugins list --json
-```
-
-With discovery **disabled**, `redsim plugins list` prints a hint to set
-`REDSIM_PLUGINS=1` rather than an empty table, so the off-by-default
-behaviour is never mistaken for "no plugins installed."
-
-## Runners vs. converters vs. registered adapters
-
-The single most confusing distinction for a new contributor: not
-everything named `*_adapter.py` is a registered adapter, and the
-`redsim/runners/` package holds none of the registered scanner adapters.
-
-Only the `*_adapter.py` modules under **`redsim/scanners/`** implement
-the `ScannerAdapter` Protocol and call `register(...)`. Everything in
-**`redsim/runners/`** is plumbing those adapters call into — it is *not*
-registered.
-
-| Module | Role | Registered? |
-|--------|------|-------------|
-| `redsim/scanners/strix_adapter.py` (`StrixAdapter`) | The registered `ScannerAdapter`; `register()`ed into the scanner registry. | **Yes** |
-| `redsim/runners/strix_runner.py` | Subprocess **runner** — discovers + launches the Strix CLI, tails `events.jsonl`. | No |
-| `redsim/runners/trivy_runner.py` | Subprocess **runner** for Trivy. | No |
-| `redsim/runners/strix_converter.py` | **Converter** — turns raw Strix events into `RedsimFinding`s (`convert_strix_finding`). | No |
-| `redsim/runners/vulnfixer_converter.py` | **Exporter** — maps an `RedsimFinding` to the vulnerability-fixer payload. | No |
-| `redsim/runners/vulnfixer_runner.py` | **Runner** — drives the vendored vulnerability-fixer engine for the agentic remediation strategy. | No |
-
-!!! note "Why the rename"
-    The package `redsim/adapters/` was renamed to `redsim/runners/`, and
-    its finding-converter members were renamed with it
-    (`strix_adapter.py` → `strix_converter.py`,
-    `vulnfixer_adapter.py` → `vulnfixer_converter.py`). The old
-    name collided with the genuinely registered
-    `redsim/scanners/strix_adapter.py`. The new name says what the
-    module is: a runner package whose Strix member is a *converter*, not
-    a registered adapter. See
-    [ADR 0002](../adr/0002-registry-seam-and-runners.md).
-
-The call path ties them together: `StrixAdapter.scan` (registered
-adapter) calls `run_strix` (runner), which calls `convert_strix_finding`
-(converter) per event, then wraps the `StrixRunResult` into a
-`ScanResult` via `ScanResult.from_runner(...)` (see [Runner-backed
-adapters](#runner-backed-adapters-scanresultfrom_runner) above) — so a
-registered adapter is the public face and the `runners/` modules are the
-implementation behind it.
+`redsim/effects.py` classifies an action as `read`, `active` or `external`
+and drives the approver gate (`requires_approval`). It was written for the
+pentest agents and tools ([ADR 0004](../adr/0004-unified-effect-class-gate.md))
+and no mounted route consults it today. The ML routes gate on the `Action`
+members in `redsim/api/policy.py` instead, and the verify-after-harden loop is
+the only "apply" step, always user-triggered.

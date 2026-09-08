@@ -1,0 +1,504 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Redsim Platform Architecture",
+    "output": "docs/architecture/diagrams/redsim-platform.architecture.html",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1030,
+      555
+    ],
+    "repository": {
+      "url": "https://github.com/IntelliBridge/ndia-red-team-simulator",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "432074035709487011fc01bace56162dc05b1c35"
+    }
+  },
+  "components": [
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "@redsim/web",
+      "sublabel": "Next.js + NextAuth",
+      "tag": "edge",
+      "pos": [
+        30,
+        190
+      ],
+      "size": [
+        130,
+        56
+      ],
+      "sources": [
+        {
+          "path": "web/package.json",
+          "label": "@redsim/web"
+        },
+        {
+          "path": "deploy/docker-compose.yml",
+          "line": 133,
+          "label": "redsim-web"
+        }
+      ]
+    },
+    {
+      "id": "keycloak",
+      "type": "security",
+      "label": "Keycloak",
+      "sublabel": "OIDC issuer, JWKS",
+      "tag": "identity",
+      "pos": [
+        30,
+        56
+      ],
+      "size": [
+        130,
+        56
+      ],
+      "sources": [
+        {
+          "path": "deploy/keycloak/realm-export.json",
+          "label": "realm"
+        },
+        {
+          "path": "redsim/api/auth.py",
+          "label": "OIDC verify"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "redsim-api",
+      "sublabel": "FastAPI /v1, RBAC, RLS",
+      "tag": "admission",
+      "pos": [
+        320,
+        190
+      ],
+      "size": [
+        130,
+        56
+      ],
+      "sources": [
+        {
+          "path": "redsim/api/app.py",
+          "line": 29,
+          "label": "create_app"
+        },
+        {
+          "path": "redsim/api/policy.py",
+          "line": 12,
+          "label": "Action"
+        },
+        {
+          "path": "redsim/services/scans.py",
+          "line": 87,
+          "label": "admission"
+        }
+      ]
+    },
+    {
+      "id": "redis",
+      "type": "messagebus",
+      "label": "Redis",
+      "sublabel": "broker + run events",
+      "tag": "queue",
+      "pos": [
+        590,
+        190
+      ],
+      "size": [
+        130,
+        56
+      ],
+      "sources": [
+        {
+          "path": "redsim/workers/celery_app.py",
+          "line": 11,
+          "label": "broker"
+        },
+        {
+          "path": "redsim/workers/events.py",
+          "line": 49,
+          "label": "publish_job_event"
+        }
+      ]
+    },
+    {
+      "id": "workers",
+      "type": "backend",
+      "label": "Celery workers",
+      "sublabel": "scans, default, beat",
+      "tag": "execution",
+      "pos": [
+        590,
+        324
+      ],
+      "size": [
+        130,
+        56
+      ],
+      "sources": [
+        {
+          "path": "redsim/workers/celery_app.py",
+          "line": 34,
+          "label": "task_routes"
+        },
+        {
+          "path": "redsim/workers/bootstrap.py",
+          "line": 101,
+          "label": "task_context"
+        },
+        {
+          "path": "deploy/docker-compose.yml",
+          "line": 86,
+          "label": "worker pools"
+        }
+      ]
+    },
+    {
+      "id": "sandbox",
+      "type": "backend",
+      "label": "Model sandbox",
+      "sublabel": "planned child (D2)",
+      "tag": "planned",
+      "pos": [
+        860,
+        190
+      ],
+      "size": [
+        130,
+        56
+      ],
+      "sources": [
+        {
+          "path": "redsim/scanners/sandbox.py",
+          "line": 293,
+          "label": "run_scanner_sandboxed"
+        },
+        {
+          "path": "docs/plans/00-master-plan.md",
+          "line": 122,
+          "label": "D2"
+        }
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "Postgres",
+      "sublabel": "runs, jobs, findings",
+      "tag": "records",
+      "pos": [
+        320,
+        324
+      ],
+      "size": [
+        130,
+        56
+      ],
+      "sources": [
+        {
+          "path": "redsim/db/models.py",
+          "line": 121,
+          "label": "Run / Job"
+        },
+        {
+          "path": "redsim/audit/chain.py",
+          "label": "hash chain"
+        },
+        {
+          "path": "redsim/workers/job_state.py",
+          "line": 43,
+          "label": "ALLOWED"
+        }
+      ]
+    },
+    {
+      "id": "blobs",
+      "type": "database",
+      "label": "S3 / MinIO",
+      "sublabel": "artifacts + WORM",
+      "tag": "bytes",
+      "pos": [
+        860,
+        324
+      ],
+      "size": [
+        130,
+        56
+      ],
+      "sources": [
+        {
+          "path": "redsim/storage/s3.py",
+          "line": 14,
+          "label": "S3BlobStore"
+        },
+        {
+          "path": "redsim/storage/worm.py",
+          "label": "WORM export"
+        },
+        {
+          "path": "deploy/docker-compose.yml",
+          "line": 41,
+          "label": "minio"
+        }
+      ]
+    },
+    {
+      "id": "observability",
+      "type": "cloud",
+      "label": "Observability",
+      "sublabel": "OTel + log-ingest",
+      "tag": "opt-in",
+      "pos": [
+        590,
+        56
+      ],
+      "size": [
+        130,
+        56
+      ],
+      "sources": [
+        {
+          "path": "redsim/observability.py",
+          "line": 18,
+          "label": "configure_otel"
+        },
+        {
+          "path": "redsim/log_ingest/server.py",
+          "label": "log-ingest"
+        },
+        {
+          "path": "deploy/docker-compose.yml",
+          "line": 181,
+          "label": "otel-collector"
+        }
+      ]
+    },
+    {
+      "id": "pythia",
+      "type": "external",
+      "label": "Pythia gateway",
+      "sublabel": "text-only LLM egress",
+      "tag": "external",
+      "pos": [
+        590,
+        458
+      ],
+      "size": [
+        130,
+        56
+      ],
+      "sources": [
+        {
+          "path": "redsim/llm/pythia.py",
+          "line": 1,
+          "label": "client"
+        },
+        {
+          "path": "redsim/llm/router.py",
+          "label": "per-task routing"
+        }
+      ]
+    },
+    {
+      "id": "datasets",
+      "type": "external",
+      "label": "HuggingFace / Kaggle",
+      "sublabel": "build-assets only",
+      "tag": "external",
+      "pos": [
+        860,
+        458
+      ],
+      "size": [
+        130,
+        56
+      ],
+      "sources": [
+        {
+          "path": "redsim/cli/ml.py",
+          "line": 18,
+          "label": "build-assets"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Identity (Keycloak OIDC)",
+      "wraps": [
+        "keycloak"
+      ],
+      "pad": 20
+    },
+    {
+      "kind": "region",
+      "label": "Browser / edge",
+      "wraps": [
+        "web"
+      ],
+      "pad": 20
+    },
+    {
+      "kind": "region",
+      "label": "Redsim platform (compose / Helm)",
+      "wraps": [
+        "observability",
+        "api",
+        "redis",
+        "sandbox",
+        "postgres",
+        "workers",
+        "blobs"
+      ],
+      "pad": 20
+    },
+    {
+      "kind": "region",
+      "label": "External services",
+      "wraps": [
+        "pythia",
+        "datasets"
+      ],
+      "pad": 20
+    }
+  ],
+  "connections": [
+    {
+      "id": "c-web-api",
+      "from": "web",
+      "to": "api",
+      "label": "/v1 cookie + CSRF",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-api-keycloak",
+      "from": "api",
+      "to": "keycloak",
+      "label": "JWKS verify",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "right"
+    },
+    {
+      "id": "c-web-keycloak",
+      "from": "web",
+      "to": "keycloak",
+      "label": "OIDC login (NextAuth)",
+      "variant": "security",
+      "labelDy": -45
+    },
+    {
+      "id": "c-api-observability",
+      "from": "api",
+      "to": "observability",
+      "label": "OTLP traces + logs (opt-in)",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "c-api-redis",
+      "from": "api",
+      "to": "redis",
+      "label": "task.delay(job_id)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-redis-workers",
+      "from": "redis",
+      "to": "workers",
+      "label": "consume queues",
+      "variant": "emphasis",
+      "labelDy": 24
+    },
+    {
+      "id": "c-api-postgres",
+      "from": "api",
+      "to": "postgres",
+      "label": "audit row, then Run + Job",
+      "variant": "emphasis",
+      "labelDx": 70,
+      "labelDy": 24
+    },
+    {
+      "id": "c-workers-postgres",
+      "from": "workers",
+      "to": "postgres",
+      "label": "records + audit",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-workers-blobs",
+      "from": "workers",
+      "to": "blobs",
+      "label": "artifacts + reports",
+      "variant": "emphasis"
+    },
+    {
+      "id": "c-workers-sandbox",
+      "from": "workers",
+      "to": "sandbox",
+      "label": "spawn per-stage child (planned)",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "c-workers-pythia",
+      "from": "workers",
+      "to": "pythia",
+      "label": "text-only narrative",
+      "variant": "security",
+      "labelDy": 24
+    },
+    {
+      "id": "c-datasets-blobs",
+      "from": "datasets",
+      "to": "blobs",
+      "label": "build-assets fetch (not implemented)",
+      "variant": "dashed"
+    },
+    {
+      "id": "c-api-web",
+      "from": "api",
+      "to": "web",
+      "label": "WS /v1/runs/{id}/events",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Campaign path",
+      "items": [
+        "Admission (redsim/services/scans.py): audit row, then Run + Job rows, then task.delay",
+        "Worker (redsim/workers/bootstrap.py, events.py): records, artifacts, events relayed by redsim/api/ws.py"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Trust boundaries",
+      "items": [
+        "Keycloak issues OIDC tokens, the API verifies them against JWKS (redsim/api/auth.py), Postgres RLS via the tenant GUC",
+        "Pythia is the only LLM egress and gets text only (redsim/llm/pythia.py), the audit chain is exported to WORM (redsim/storage/worm.py)"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Planned and opt-in",
+      "items": [
+        "Planned, not on main at 4320740: sandbox child (D2), /v1/models routes, attack.run, explain.run, harden.recommend tasks",
+        "redsim ml build-assets is a stub (redsim/cli/ml.py), the obs profile services are opt-in (deploy/docker-compose.yml)"
+      ]
+    }
+  ]
+}
