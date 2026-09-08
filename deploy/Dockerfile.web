@@ -22,9 +22,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 
-# pnpm via corepack (ships with node:20). Pin to the version used in
-# dev so reproducible installs land on the same resolver behaviour.
-RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
+# pnpm installed explicitly: node:25+ images no longer bundle corepack. Pinned to the
+# version used in dev so reproducible installs land on the same resolver behaviour.
+RUN npm install -g pnpm@10.33.2
 
 # Workspace manifest + lockfile first, for layer cache efficiency.
 COPY pnpm-workspace.yaml pnpm-lock.yaml ./

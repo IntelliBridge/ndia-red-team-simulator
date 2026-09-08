@@ -6,7 +6,7 @@
 
 import { type ReactNode } from "react";
 
-export const ROLES = ["scanner", "remediator", "approver", "admin"] as const;
+export const ROLES = ["viewer", "scanner", "remediator", "approver", "admin"] as const;
 export type Role = (typeof ROLES)[number];
 
 export interface RoleGatedProps {
@@ -21,7 +21,7 @@ export interface RoleGatedProps {
 }
 
 const RANK: Record<Role, number> = Object.fromEntries(
-  ROLES.map((r, i) => [r, i + 1]),
+  ROLES.map((r, i) => [r, i]),
 ) as Record<Role, number>;
 
 function rankOf(role: string | undefined): number {
