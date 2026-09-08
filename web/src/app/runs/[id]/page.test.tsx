@@ -55,7 +55,7 @@ vi.mock("@/lib/api", async () => ({
 
 import RunPage from "./page";
 
-type RunEvent = { name?: string; status?: string };
+type RunEvent = { type?: string; name?: string; status?: string };
 
 let eventHandler: ((event: RunEvent) => void) | undefined;
 
@@ -233,13 +233,35 @@ describe("/runs/[id] campaign review", () => {
   });
 
   it("upserts repeated stage events and revalidates campaign evidence", () => {
-    renderPage();
+    const { container } = renderPage();
     expect(eventHandler).toBeTypeOf("function");
     act(() => {
-      eventHandler?.({ name: "attack.execute", status: "running" });
-      eventHandler?.({ name: "attack.execute", status: "succeeded" });
+      eventHandler?.({ type: "stage", name: "attack.execute", status: "running" });
     });
     expect(screen.getAllByText("attack.execute")).toHaveLength(1);
+    expect(
+      container.querySelector('li[data-state="running"]'),
+    ).not.toBeNull();
+    expect(container.querySelector('li[data-state="succeeded"]')).toBeNull();
+    act(() => {
+      eventHandler?.({ type: "stage", name: "attack.execute", status: "succeeded" });
+    });
+    expect(screen.getAllByText("attack.execute")).toHaveLength(1);
+    expect(container.querySelector('li[data-state="running"]')).toBeNull();
+    expect(
+      container.querySelector('li[data-state="succeeded"]'),
+    ).not.toBeNull();
+    expect(mocks.mutate).toHaveBeenCalledTimes(2);
+  });
+
+  it("revalidates on job frames without inventing a timeline stage", () => {
+    const { container } = renderPage();
+    act(() => {
+      eventHandler?.({ type: "job", status: "running" });
+      eventHandler?.({ type: "stage", status: "failed" });
+    });
+    expect(screen.queryByText("campaign stage")).toBeNull();
+    expect(container.querySelectorAll("li[data-state]")).toHaveLength(0);
     expect(mocks.mutate).toHaveBeenCalledTimes(2);
   });
 

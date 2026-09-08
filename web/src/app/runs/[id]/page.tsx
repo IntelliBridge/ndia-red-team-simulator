@@ -52,17 +52,22 @@ export default function RunPage({ params }: { params: { id: string } }) {
   >({});
   const { data: defenses = [] } = useDefenses(authed);
   useRunEvents(authed ? params.id : null, (event) => {
-    setStages((current: StageEntry[]) => {
-      const next = {
-        name: event.name ?? "campaign stage",
+    // Job frames carry no stage name: they only mean "something changed",
+    // so revalidate. Named stage frames drive the timeline, and a running
+    // stage is shown as in progress rather than as a success.
+    if (event.type === "stage" && event.name) {
+      const name = event.name;
+      const next: StageEntry = {
+        name,
         mode: event.status,
-        success: event.status !== "failed",
+        success: event.status === "succeeded",
+        pending: event.status === "running",
       };
-      return [
-        ...current.filter((stage) => stage.name !== next.name),
+      setStages((current: StageEntry[]) => [
+        ...current.filter((stage) => stage.name !== name),
         next,
-      ];
-    });
+      ]);
+    }
     void mutate();
   });
 

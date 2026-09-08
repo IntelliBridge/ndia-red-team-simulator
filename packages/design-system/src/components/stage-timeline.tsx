@@ -12,6 +12,8 @@ export interface StageEntry {
   name: string;
   mode: StageMode;
   success: boolean;
+  /** Still running: rendered as in-progress, never as a success or failure. */
+  pending?: boolean;
   detail?: string;
 }
 
@@ -30,17 +32,23 @@ export function StageTimeline({ stages, className }: StageTimelineProps) {
   return (
     <ol className={cn("space-y-3", className)}>
       {stages.map((s) => (
-        <li key={s.name} className="flex items-start gap-3">
+        <li
+          key={s.name}
+          className="flex items-start gap-3"
+          data-state={s.pending ? "running" : s.success ? "succeeded" : "failed"}
+        >
           <span
             className={cn(
               "mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold",
-              s.success
-                ? "bg-emerald-500 text-white"
-                : "bg-red-500 text-white",
+              s.pending
+                ? "bg-slate-300 text-slate-800"
+                : s.success
+                  ? "bg-emerald-500 text-white"
+                  : "bg-red-500 text-white",
             )}
             aria-hidden="true"
           >
-            {s.success ? "✓" : "✗"}
+            {s.pending ? "…" : s.success ? "✓" : "✗"}
           </span>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
