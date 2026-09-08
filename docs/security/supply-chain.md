@@ -1,6 +1,6 @@
 # Supply-chain integrity
 
-Aegis ships two complementary supply-chain controls so that the code you
+Redsim ships two complementary supply-chain controls so that the code you
 run can be tied back to the author who vouched for it:
 
 1. **Signed third-party plugins** — opt-in Ed25519 verification of the
@@ -23,8 +23,8 @@ touches a PR build.
 
 Loading a marketplace plugin runs its code **in-process** inside the API
 and worker — same privileges, same secrets, same network (see the
-[allowlist danger note](../dev/extending.md#security-the-aegis_plugins_allow-allowlist)).
-The `AEGIS_PLUGINS_ALLOW` distribution allowlist plus a pinned lockfile
+[allowlist danger note](../dev/extending.md#security-the-redsim_plugins_allow-allowlist)).
+The `REDSIM_PLUGINS_ALLOW` distribution allowlist plus a pinned lockfile
 bound *which* distributions load; signature verification adds the missing
 piece — **cryptographic proof of authorship**, bound to the exact code
 that will run.
@@ -32,10 +32,10 @@ that will run.
 ### The trust model
 
 A plugin signature covers a deterministic payload built by
-`aegis.supply_chain.signing.canonical_plugin_payload`:
+`redsim.supply_chain.signing.canonical_plugin_payload`:
 
 ```text
-aegis-plugin\n<dist_name>\n<version>\n<sha256-of-factory-module-source>
+redsim-plugin\n<dist_name>\n<version>\n<sha256-of-factory-module-source>
 ```
 
 The trailing field is the SHA-256 of the *source file* that defines the
@@ -58,23 +58,23 @@ changes, invalidating any prior signature.
 
 Enforcement is opt-in via three environment variables (read at process
 start; set them on the **API**, **worker**, and **CLI** alike, exactly as
-with `AEGIS_PLUGINS`):
+with `REDSIM_PLUGINS`):
 
 | Var | Purpose |
 |-----|---------|
-| `AEGIS_PLUGINS_REQUIRE_SIGNATURE` | Set to `1` (or `true`/`yes`/`on`) to require a valid signature before any third-party plugin loads. Unset/`0` = today's behaviour (no signature check). |
-| `AEGIS_PLUGINS_TRUSTED_KEYS` | Colon/comma-separated list of `*.pem` **public-key** files and/or directories of them. The signature must verify under one of these. |
-| `AEGIS_PLUGINS_SIG_DIR` | Colon/comma-separated directories where the `<dist>-<version>.sig` files live. Falls back to the trusted-key directories, then the plugin's own module directory — so a self-contained key+sig directory works with no extra config. |
+| `REDSIM_PLUGINS_REQUIRE_SIGNATURE` | Set to `1` (or `true`/`yes`/`on`) to require a valid signature before any third-party plugin loads. Unset/`0` = today's behaviour (no signature check). |
+| `REDSIM_PLUGINS_TRUSTED_KEYS` | Colon/comma-separated list of `*.pem` **public-key** files and/or directories of them. The signature must verify under one of these. |
+| `REDSIM_PLUGINS_SIG_DIR` | Colon/comma-separated directories where the `<dist>-<version>.sig` files live. Falls back to the trusted-key directories, then the plugin's own module directory — so a self-contained key+sig directory works with no extra config. |
 
 ```bash
-export AEGIS_PLUGINS=1                       # marketplace discovery on
-export AEGIS_PLUGINS_REQUIRE_SIGNATURE=1     # require signatures
-export AEGIS_PLUGINS_TRUSTED_KEYS=/etc/aegis/trusted-keys
-export AEGIS_PLUGINS_SIG_DIR=/etc/aegis/plugin-sigs
+export REDSIM_PLUGINS=1                       # marketplace discovery on
+export REDSIM_PLUGINS_REQUIRE_SIGNATURE=1     # require signatures
+export REDSIM_PLUGINS_TRUSTED_KEYS=/etc/redsim/trusted-keys
+export REDSIM_PLUGINS_SIG_DIR=/etc/redsim/plugin-sigs
 ```
 
 !!! note "Enforcement is independent of the allowlist"
-    `AEGIS_PLUGINS_ALLOW` and signature enforcement are separate gates and
+    `REDSIM_PLUGINS_ALLOW` and signature enforcement are separate gates and
     compose: a plugin can be skipped for not being in the allowlist *and*
     a plugin in the allowlist can still be rejected for a missing or
     invalid signature. For a hardened production posture, pin the
@@ -86,12 +86,12 @@ When enforcement is on, each discovered plugin's distribution signature is
 checked **before** the plugin is registered:
 
 - A plugin with a **valid** signature loads normally and carries its
-  `key_id` — `aegis plugins list` shows `yes:<first-12-of-key_id>` in the
+  `key_id` — `redsim plugins list` shows `yes:<first-12-of-key_id>` in the
   **SIGNED** column.
 - A plugin that is **unsigned or whose signature does not verify** is
   **rejected** (not loaded) with a concise reason (`no signature found`,
   `signature does not verify`, `no trusted keys`) and surfaces as
-  `rejected` in `aegis plugins list`.
+  `rejected` in `redsim plugins list`.
 - One bad plugin never crashes discovery or sidelines a healthy one — the
   same resilience guarantee as Protocol-conformance validation.
 
@@ -99,10 +99,10 @@ When enforcement is **off** (the default) the SIGNED column shows `-` for
 every plugin and no signature is checked.
 
 ```text
-$ AEGIS_PLUGINS=1 AEGIS_PLUGINS_REQUIRE_SIGNATURE=1 \
-  AEGIS_PLUGINS_TRUSTED_KEYS=/etc/aegis/trusted-keys aegis plugins list
+$ REDSIM_PLUGINS=1 REDSIM_PLUGINS_REQUIRE_SIGNATURE=1 \
+  REDSIM_PLUGINS_TRUSTED_KEYS=/etc/redsim/trusted-keys redsim plugins list
 NAME       KIND     DISTRIBUTION          VERSION  STATUS    SIGNED         DETAIL
-example    scanner  aegis-plugin-example  0.1.0    loaded    yes:1f3c9a02b1
+example    scanner  redsim-plugin-example  0.1.0    loaded    yes:1f3c9a02b1
 acme-dast  scanner  acme-scanners         2.3.0    rejected  -              signature rejected: no signature found
 ```
 
@@ -114,9 +114,9 @@ source, signs the canonical payload with an Ed25519 **private** key, and
 writes the detached `<dist>-<version>.sig`:
 
 ```bash
-aegis plugins sign \
-  --dist aegis-plugin-example --version 0.1.0 \
-  --entry-point aegis.scanners:example \
+redsim plugins sign \
+  --dist redsim-plugin-example --version 0.1.0 \
+  --entry-point redsim.scanners:example \
   --key your-ed25519-private-key.pem \
   --out ./signing            # optional; defaults to the current directory
 ```
@@ -128,17 +128,17 @@ changes — the digest, and therefore the signature, moves with it.
 
 !!! tip "Generate a keypair"
     Any Ed25519 keypair works (e.g. `openssl genpkey -algorithm ed25519`).
-    Aegis only needs the **public** half as a trusted key; the private half
+    Redsim only needs the **public** half as a trusted key; the private half
     is the author's signing secret and is never read by the platform at
     verification time.
 
 ### The reference example
 
-[`examples/aegis-plugin-example/`](https://github.com/IntelliBridge/aegis/tree/main/examples/aegis-plugin-example)
+[`examples/redsim-plugin-example/`](https://github.com/IntelliBridge/ndia-red-team-simulator/tree/main/examples/redsim-plugin-example)
 ships a complete signed bundle under `signing/`:
 
-- `signing/keys/aegis-plugin-example.pem` — the **trusted public key**.
-- `signing/aegis-plugin-example-0.1.0.sig` — the detached signature over
+- `signing/keys/redsim-plugin-example.pem` — the **trusted public key**.
+- `signing/redsim-plugin-example-0.1.0.sig` — the detached signature over
   the example's `create_scanner` factory.
 - `signing/generate_and_sign.py` — the reproducible recipe that produced
   the committed material. It generates an **ephemeral** keypair, writes
@@ -148,11 +148,11 @@ ships a complete signed bundle under `signing/`:
 Run the example with enforcement on to see a verified load:
 
 ```bash
-AEGIS_PLUGINS=1 \
-AEGIS_PLUGINS_REQUIRE_SIGNATURE=1 \
-AEGIS_PLUGINS_TRUSTED_KEYS=examples/aegis-plugin-example/signing/keys \
-AEGIS_PLUGINS_SIG_DIR=examples/aegis-plugin-example/signing \
-  aegis plugins list
+REDSIM_PLUGINS=1 \
+REDSIM_PLUGINS_REQUIRE_SIGNATURE=1 \
+REDSIM_PLUGINS_TRUSTED_KEYS=examples/redsim-plugin-example/signing/keys \
+REDSIM_PLUGINS_SIG_DIR=examples/redsim-plugin-example/signing \
+  redsim plugins list
 ```
 
 The `example` scanner shows `status=loaded` with a `yes:<key_id>` SIGNED
@@ -165,14 +165,14 @@ never registered.
 
 The four service images (`api`, `worker`, `web`, `log_ingest`) are signed
 and attested at release time by
-[`.github/workflows/release-sign.yml`](https://github.com/IntelliBridge/aegis/blob/main/.github/workflows/release-sign.yml),
+[`.github/workflows/release-sign.yml`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/.github/workflows/release-sign.yml),
 which runs **only on `v*` tags** — it is the release-only, push-and-sign
 counterpart to the no-push PR `docker-images` build. Everything executes in
 GitHub Actions; it cannot be run locally.
 
 For each image the workflow:
 
-1. **Builds and pushes** the image to GHCR (`ghcr.io/<owner>/aegis/<service>`)
+1. **Builds and pushes** the image to GHCR (`ghcr.io/<owner>/ndia-red-team-simulator/<service>`)
    and captures the pushed **digest**.
 2. **Keyless-signs** the image **by digest** with cosign using the ambient
    GitHub OIDC token (`id-token: write`). No private keys are stored
@@ -194,8 +194,8 @@ log_ingest` and `<DIGEST>` with the image's `sha256:…` digest. A helper
 lives at `scripts/verify-release.sh`.
 
 ```bash
-IMAGE="ghcr.io/intellibridge/aegis/<service>@<DIGEST>"
-IDENTITY='^https://github.com/IntelliBridge/aegis/.github/workflows/release-sign.yml@refs/tags/v.*$'
+IMAGE="ghcr.io/intellibridge/ndia-red-team-simulator/<service>@<DIGEST>"
+IDENTITY='^https://github.com/IntelliBridge/ndia-red-team-simulator/.github/workflows/release-sign.yml@refs/tags/v.*$'
 ISSUER='https://token.actions.githubusercontent.com'
 
 # 1. Verify the keyless image signature.
@@ -225,7 +225,7 @@ repo) is:
 ```bash
 cosign verify \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github.com/IntelliBridge/aegis/' \
+  --certificate-identity-regexp '^https://github.com/IntelliBridge/ndia-red-team-simulator/' \
   <image>@<digest>
 ```
 

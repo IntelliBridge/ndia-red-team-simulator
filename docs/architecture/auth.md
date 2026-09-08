@@ -1,17 +1,17 @@
 # Auth flows
 
-Aegis carries four distinct auth paths into the API, plus one
+Redsim carries four distinct auth paths into the API, plus one
 defence-in-depth surface (the WebSocket upgrade). They all converge
-on `aegis.api.auth.get_current_user`, which returns a `CurrentUser`
+on `redsim.api.auth.get_current_user`, which returns a `CurrentUser`
 to the route handler.
 
 | Path                    | Caller                       | Auth header / cookie                                  | Where it's verified                              |
 |-------------------------|------------------------------|-------------------------------------------------------|--------------------------------------------------|
-| Browser cookie          | Web SPA                      | `aegis_api_session` cookie (RS256 JWT)                | Aegis public key (`AEGIS_API_SESSION_PUBLIC_KEY`) |
-| CLI / CI bearer         | `aegis --api …` + scripts    | `Authorization: Bearer <jwt|dev:email|worker:…>`      | Keycloak JWKS / dev table / worker SA verifier   |
-| Worker SA bearer        | aegis-worker → API           | `Authorization: Bearer worker:v<ver>.<id>.<exp>.<sig>` | `AEGIS_WORKER_SIGNING_KEY` + rotation overlap    |
-| WebSocket subprotocol   | Programmatic WS clients      | `Sec-WebSocket-Protocol: aegis.bearer.<token>`        | Same as CLI bearer                               |
-| WebSocket cookie        | Browser WS                   | `aegis_api_session` cookie (rides along the upgrade)  | Same as browser cookie                           |
+| Browser cookie          | Web SPA                      | `redsim_api_session` cookie (RS256 JWT)                | Redsim public key (`REDSIM_API_SESSION_PUBLIC_KEY`) |
+| CLI / CI bearer         | `redsim --api …` + scripts    | `Authorization: Bearer <jwt|dev:email|worker:…>`      | Keycloak JWKS / dev table / worker SA verifier   |
+| Worker SA bearer        | redsim-worker → API           | `Authorization: Bearer worker:v<ver>.<id>.<exp>.<sig>` | `REDSIM_WORKER_SIGNING_KEY` + rotation overlap    |
+| WebSocket subprotocol   | Programmatic WS clients      | `Sec-WebSocket-Protocol: redsim.bearer.<token>`        | Same as CLI bearer                               |
+| WebSocket cookie        | Browser WS                   | `redsim_api_session` cookie (rides along the upgrade)  | Same as browser cookie                           |
 
 When more than one is present, **`Authorization: Bearer …` wins.**
 That keeps the CLI / CI path simple and prevents a stale cookie from
@@ -19,18 +19,18 @@ silently downgrading a bearer call.
 
 ---
 
-## Browser auth (NextAuth + Aegis-signed cookie)
+## Browser auth (NextAuth + Redsim-signed cookie)
 
 The Keycloak code flow is owned by NextAuth; FastAPI never sees the
 upstream access token. NextAuth's callback mints a separate
-`aegis_api_session` cookie that FastAPI verifies against an
-Aegis-managed RSA key — three concerns, three keys:
+`redsim_api_session` cookie that FastAPI verifies against an
+Redsim-managed RSA key — three concerns, three keys:
 
 | Concern         | Holder            | Key                                                  |
 |-----------------|-------------------|------------------------------------------------------|
 | Identity        | Keycloak          | Keycloak signing keys (rotated by Keycloak)          |
-| Browser session | NextAuth          | `NEXTAUTH_SECRET` (HMAC-ish, opaque to Aegis)        |
-| API session    | Aegis             | `AEGIS_API_SESSION_PRIVATE_KEY` (RS256)              |
+| Browser session | NextAuth          | `NEXTAUTH_SECRET` (HMAC-ish, opaque to Redsim)        |
+| API session    | Redsim             | `REDSIM_API_SESSION_PRIVATE_KEY` (RS256)              |
 
 ```mermaid
 sequenceDiagram
@@ -38,7 +38,7 @@ sequenceDiagram
     participant U as User browser
     participant N as Next.js NextAuth
     participant K as Keycloak
-    participant API as aegis-api
+    participant API as redsim-api
 
     U->>N: GET /dashboard
     N->>K: redirect to authorization endpoint
@@ -46,45 +46,45 @@ sequenceDiagram
     K-->>N: callback with auth code
     N->>K: POST token (exchange code)
     K-->>N: access_token + id_token
-    Note over N: jwt callback stores sub, email,<br/>aegis_project_roles
-    Note over N: session callback mints<br/>aegis_api_session + aegis_csrf
-    N-->>U: Set-Cookie aegis_api_session (httpOnly)<br/>+ aegis_csrf (readable by SPA)
+    Note over N: jwt callback stores sub, email,<br/>redsim_project_roles
+    Note over N: session callback mints<br/>redsim_api_session + redsim_csrf
+    N-->>U: Set-Cookie redsim_api_session (httpOnly)<br/>+ redsim_csrf (readable by SPA)
 
-    U->>API: GET /v1/runs with aegis_api_session cookie
-    API->>API: verify against AEGIS_API_SESSION_PUBLIC_KEY
+    U->>API: GET /v1/runs with redsim_api_session cookie
+    API->>API: verify against REDSIM_API_SESSION_PUBLIC_KEY
     API-->>U: 200 runs payload
 ```
 
-The Aegis cookie's claims:
+The Redsim cookie's claims:
 
 ```jsonc
 {
-  "iss": "aegis-api-session",
-  "aud": "aegis-api",
+  "iss": "redsim-api-session",
+  "aud": "redsim-api",
   "sub": "<keycloak sub>",
   "email": "alice@example.com",
   "name": "Alice",
-  "aegis_project_roles": { "proj-a": "admin", "proj-b": "scanner" },
+  "redsim_project_roles": { "proj-a": "admin", "proj-b": "scanner" },
   "iat": 1717000000,
-  "exp": 1717000900,   // iat + AEGIS_API_SESSION_TTL_SECONDS (default 900)
+  "exp": 1717000900,   // iat + REDSIM_API_SESSION_TTL_SECONDS (default 900)
   "jti": "0c…f3"
 }
 ```
 
-Header carries `alg=RS256` and `kid=aegis-api-session-v1` (configurable
-via `AEGIS_API_SESSION_KEY_ID`). Rotation is "issue with the new
+Header carries `alg=RS256` and `kid=redsim-api-session-v1` (configurable
+via `REDSIM_API_SESSION_KEY_ID`). Rotation is "issue with the new
 private key; serve the new public key alongside the old one for a
 grace window" — same pattern as the worker SA path below.
 
 ### CSRF (double-submit cookie)
 
 Every cookie-authenticated mutation (POST / PUT / PATCH / DELETE)
-must echo the `aegis_csrf` cookie via the `X-Aegis-CSRF` header. The
-middleware in `aegis/api/middleware/csrf.py` skips the check entirely
+must echo the `redsim_csrf` cookie via the `X-Redsim-CSRF` header. The
+middleware in `redsim/api/middleware/csrf.py` skips the check entirely
 when:
 
 - `Authorization: Bearer …` is present (programmatic callers exempt), or
-- there is no `aegis_api_session` cookie (no session to forge against),
+- there is no `redsim_api_session` cookie (no session to forge against),
   or
 - the request method is read-only.
 
@@ -100,9 +100,9 @@ if (!bearer && MUTATING.has(method) && _hasSessionCookie()) {
 ```
 
 CORS is hardened in tandem — `allow_credentials=True` only against the
-explicit origin list (`AEGIS_CORS_ORIGINS` + `AEGIS_WEB_ORIGIN`),
+explicit origin list (`REDSIM_CORS_ORIGINS` + `REDSIM_WEB_ORIGIN`),
 methods enumerated, headers scoped to `Authorization` / `Content-Type`
-/ `X-Aegis-CSRF` / `X-Aegis-Request-ID`.
+/ `X-Redsim-CSRF` / `X-Redsim-Request-ID`.
 
 ---
 
@@ -113,15 +113,15 @@ The CLI's `--api` mode and any scripted caller send
 
 | Format                       | Resolver                                           | Dev / prod                  |
 |------------------------------|----------------------------------------------------|-----------------------------|
-| `dev:alice@aegis.local`      | `_dev_user`                                         | dev only — rejected in prod |
+| `dev:alice@redsim.local`      | `_dev_user`                                         | dev only — rejected in prod |
 | `worker:v<ver>.<id>.<exp>.<sig>` | `_verify_worker_token` (see below)              | both                        |
 | `worker:<legacy-hmac>`       | legacy static-HMAC path; sub=`service:worker:legacy` | both, transitional       |
 | `eyJhbGc…` (JWT)             | Keycloak JWKS via authlib                          | both                        |
 
-Token source priority in `aegis.cli.api_client.load_token`:
+Token source priority in `redsim.cli.api_client.load_token`:
 
-1. `AEGIS_TOKEN` env var.
-2. First non-empty line of `~/.config/aegis/token`.
+1. `REDSIM_TOKEN` env var.
+2. First non-empty line of `~/.config/redsim/token`.
 
 The CLI never carries cookie state.
 
@@ -131,7 +131,7 @@ The CLI never carries cookie state.
 
 When workers need to call the API (currently rare; v0.4.1+ paths only
 post log batches and Check Run updates), they mint a time-bound
-token with `aegis.api.auth.issue_worker_token(worker_id)`. The
+token with `redsim.api.auth.issue_worker_token(worker_id)`. The
 format:
 
 ```
@@ -143,8 +143,8 @@ where `hex_sig = HMAC-SHA256(current_signing_key, "v<ver>.<id>.<exp>")`.
 ```mermaid
 sequenceDiagram
     autonumber
-    participant W as aegis-worker
-    participant API as aegis-api
+    participant W as redsim-worker
+    participant API as redsim-api
 
     Note over W: issue_worker_token w-7<br/>signed with current key v2
     W->>API: GET /v1/something<br/>Authorization Bearer worker.v2.w-7.exp.sig
@@ -167,21 +167,21 @@ sequenceDiagram
 
 Rotation knobs (env on the API side):
 
-- `AEGIS_WORKER_SIGNING_KEY` — current key (`v<version>`).
-- `AEGIS_WORKER_SIGNING_KEY_PREVIOUS` — previous key, accepted during
+- `REDSIM_WORKER_SIGNING_KEY` — current key (`v<version>`).
+- `REDSIM_WORKER_SIGNING_KEY_PREVIOUS` — previous key, accepted during
   the overlap.
-- `AEGIS_WORKER_SIGNING_KEY_VERSION` — current version integer
+- `REDSIM_WORKER_SIGNING_KEY_VERSION` — current version integer
   (default `1`).
-- `AEGIS_WORKER_KEY_OVERLAP_SECONDS` — how long the previous key is
+- `REDSIM_WORKER_KEY_OVERLAP_SECONDS` — how long the previous key is
   accepted past version bump (default `300`).
-- `AEGIS_WORKER_TOKEN_TTL_SECONDS` — token lifetime (default `300`).
+- `REDSIM_WORKER_TOKEN_TTL_SECONDS` — token lifetime (default `300`).
 
 Workers refresh their token every `ttl - margin` seconds; the API
 maps every accepted token to actor `service:worker:<worker_id>` for
 audit.
 
 The Phase-3 static-HMAC worker token format
-(`worker:<hex-sig-of-"aegis-worker">`) is still accepted by the
+(`worker:<hex-sig-of-"redsim-worker">`) is still accepted by the
 verifier and lands as `sub=service:worker:legacy` — there for a
 single rolling restart, removed once every worker emits v1+ tokens.
 
@@ -201,7 +201,7 @@ flowchart TB
   originOk -- no --> close1["close 1008<br/>origin not allowed"]
   originOk -- yes --> accept
 
-  accept --> hasSubproto{"aegis.bearer.* subprotocol<br/>offered?"}
+  accept --> hasSubproto{"redsim.bearer.* subprotocol<br/>offered?"}
   hasSubproto -- yes --> echoSub["accept with subprotocol<br/>+ verify token"]
   hasSubproto -- no  --> bareAccept["accept"]
 
@@ -215,7 +215,7 @@ flowchart TB
 ```
 
 The legacy `?token=…` query-parameter fallback has been removed; WebSocket
-clients authenticate via the `aegis.bearer.<token>` subprotocol, the
+clients authenticate via the `redsim.bearer.<token>` subprotocol, the
 `Authorization` header, or the session cookie.
 
 ---
@@ -247,7 +247,7 @@ has a rank; each action requires a minimum rank.
 System callers (workers via `is_system=True`) bypass the check —
 their identity is established at the bearer-resolution step instead.
 
-The full source of truth is `aegis/api/policy.py`. The `<RoleGated>`
+The full source of truth is `redsim/api/policy.py`. The `<RoleGated>`
 React component is **UX only** — every protected route and worker
 entry re-runs the same check server-side.
 
@@ -256,15 +256,15 @@ entry re-runs the same check server-side.
 ## Policy engine
 
 The role-rank decision above is **pluggable**. The route-level gate
-(`aegis.api.policy.check`) no longer inlines the rule table; it builds a
+(`redsim.api.policy.check`) no longer inlines the rule table; it builds a
 normalized request and asks the configured `PolicyEngine`
-(`aegis/policy/engine.py`) for a decision. A deny still raises the same
+(`redsim/policy/engine.py`) for a decision. A deny still raises the same
 `HTTPException(403)`, carrying the engine's `reason`. Every call site is
 unchanged.
 
 This is the route-level RBAC layer only. It is distinct from — and runs
 *in addition to* — the target-allowlist + audit gate
-(`aegis.safety.authorize`, the effect-class human-in-the-loop gate of
+(`redsim.safety.authorize`, the effect-class human-in-the-loop gate of
 [ADR 0004](../adr/0004-unified-effect-class-gate.md)). Both layers still
 run on a mutating request: the `PolicyEngine` answers "may this role do
 this action on this project?"; `authorize()` answers "is this *target*
@@ -273,7 +273,7 @@ allowlisted, and record it." Swapping the policy engine does not touch
 
 ### The three engines
 
-| Engine | `AEGIS_POLICY_ENGINE` | Behaviour |
+| Engine | `REDSIM_POLICY_ENGINE` | Behaviour |
 |--------|-----------------------|-----------|
 | `StaticPolicyEngine` | `static` (**default**) | The built-in role-rank table above, **behaviour-identical** to the historical inline check. No network. |
 | `OPAPolicyEngine`    | `opa`    | POSTs the decision input to an [Open Policy Agent](https://www.openpolicyagent.org/) data endpoint; reads `result.allow` (bool) + optional `result.reason`. |
@@ -281,7 +281,7 @@ allowlisted, and record it." Swapping the policy engine does not touch
 
 The static engine is the default; running with it is byte-for-byte the
 same authorization behaviour as before this seam existed. The example
-OPA / Cedar policies that ship with Aegis replicate the same role-rank
+OPA / Cedar policies that ship with Redsim replicate the same role-rank
 table, so `opa` / `cedar` are drop-in equivalents — see
 [deploy.md](../ops/deploy.md) § "External policy engine (optional)".
 
@@ -331,12 +331,12 @@ once per process from the environment, with a reset hook for tests.
 
 | Var | Default | Used by |
 |-----|---------|---------|
-| `AEGIS_POLICY_ENGINE` | `static` | api, worker — `static` \| `opa` \| `cedar` |
-| `AEGIS_OPA_URL`       | `http://localhost:8181` | `opa` engine base URL |
-| `AEGIS_OPA_PATH`      | `/v1/data/aegis/authz`  | `opa` engine data path |
-| `AEGIS_CEDAR_URL`     | `http://localhost:8180` | `cedar` engine base URL |
+| `REDSIM_POLICY_ENGINE` | `static` | api, worker — `static` \| `opa` \| `cedar` |
+| `REDSIM_OPA_URL`       | `http://localhost:8181` | `opa` engine base URL |
+| `REDSIM_OPA_PATH`      | `/v1/data/redsim/authz`  | `opa` engine data path |
+| `REDSIM_CEDAR_URL`     | `http://localhost:8180` | `cedar` engine base URL |
 
-An unknown `AEGIS_POLICY_ENGINE` value logs a warning and falls back to
+An unknown `REDSIM_POLICY_ENGINE` value logs a warning and falls back to
 `static`. The ops-side runbook for standing up an OPA / Cedar sidecar
 lives in [deploy.md](../ops/deploy.md).
 
@@ -346,12 +346,12 @@ lives in [deploy.md](../ops/deploy.md).
 
 | Symptom                                | Likely cause                                                                                              |
 |----------------------------------------|-----------------------------------------------------------------------------------------------------------|
-| `401 authentication required`          | No bearer header AND no `aegis_api_session` cookie.                                                       |
+| `401 authentication required`          | No bearer header AND no `redsim_api_session` cookie.                                                       |
 | `401 invalid token: …`                 | JWT verification failed (bad signature, expired, wrong audience).                                          |
 | `401 invalid session cookie`           | Cookie not signed by the configured private key, or expired.                                              |
 | `401 invalid or expired worker token`  | Worker token outside the overlap window, or signed with an unknown key version.                            |
-| `403 CSRF token missing or mismatched` | Cookie-authed POST without `X-Aegis-CSRF`. CLI bearer is exempt.                                          |
-| `403 no membership on project …`       | RBAC: user not in `aegis_project_roles` for that project (read), or below the action's minimum rank (write). |
+| `403 CSRF token missing or mismatched` | Cookie-authed POST without `X-Redsim-CSRF`. CLI bearer is exempt.                                          |
+| `403 no membership on project …`       | RBAC: user not in `redsim_project_roles` for that project (read), or below the action's minimum rank (write). |
 | `403 policy engine unavailable: …`     | External `opa` / `cedar` engine errored / timed out / returned a malformed decision — the engine failed closed (deny). Check the OPA / Cedar sidecar. |
-| WebSocket close `1008 origin not allowed` | Browser origin not in `AEGIS_CORS_ORIGINS` / `AEGIS_WEB_ORIGIN`.                                        |
+| WebSocket close `1008 origin not allowed` | Browser origin not in `REDSIM_CORS_ORIGINS` / `REDSIM_WEB_ORIGIN`.                                        |
 | WebSocket close `1008 no project membership` | Run belongs to a project the user doesn't have membership on.                                       |

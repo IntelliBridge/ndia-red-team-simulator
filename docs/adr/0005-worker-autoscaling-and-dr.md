@@ -1,5 +1,7 @@
 # ADR 0005 — Worker autoscaling + multi-region DR
 
+> Inherited from the upstream `IntelliBridge/aegis` project and kept as history. Names below are the upstream `aegis` identifiers at the time of the decision. In this fork the package is `redsim/`, environment variables are `REDSIM_*`, the console script is `redsim` and the chart is `deploy/helm/redsim`.
+
 - **Status:** Proposed (spike)
 - **Date:** 2026-06-18
 - **Scope:** the worker/queue layer (`aegis/workers/`, `AEGIS_BROKER_URL` /
