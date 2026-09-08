@@ -23,7 +23,7 @@ identifier renamed to redsim (see Provenance).
 
 ## Status
 
-As of 2026-09-08 (evening), `main` at `4320740`. The decisions behind this
+As of 2026-09-08 (late evening), `main` at `7240220`. The decisions behind this
 table are in [`docs/project-brief.md`](docs/project-brief.md) under
 "Decisions taken", the target design is the
 [product spec](docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md),
@@ -34,15 +34,15 @@ UI.
 
 | Area | State on `main` |
 |---|---|
-| redsim platform (inherited from aegis): FastAPI `/v1` API (`redsim.api.app:create_app`), Celery workers (`redsim.workers.celery_app`), Postgres with Alembic migrations `0001` to `0010`, Redis, S3/MinIO blob store, Keycloak/NextAuth auth, RBAC and Postgres RLS, hash-chained audit log with WORM export, per-task LLM routing and budgets, OTel observability and `redsim-log-ingest` | Restored and green. `create_app()` mounts 23 HTTP routes under `/v1` plus `/health` and the run-events WebSocket. `pytest -q` = 900 passed, 30 skipped. ruff (CI selection) and mypy are clean. Counts and commands are in [`CLAUDE.md`](CLAUDE.md). |
+| redsim platform (inherited from aegis): FastAPI `/v1` API (`redsim.api.app:create_app`), Celery workers (`redsim.workers.celery_app`), Postgres with Alembic migrations `0001` to `0010`, Redis, S3/MinIO blob store, Keycloak/NextAuth auth, RBAC and Postgres RLS, hash-chained audit log with WORM export, per-task LLM routing and budgets, OTel observability and `redsim-log-ingest` | Restored and green. `create_app()` mounts 23 HTTP routes under `/v1` plus `/health` and the run-events WebSocket. `pytest -q` = 1198 passed, 30 skipped, and the web vitest suite is 274 passed. ruff (CI selection) and mypy are clean from the venv. Counts, commands and the CI state on `main` are in [`CLAUDE.md`](CLAUDE.md). |
 | Pentest domain (14 scanner adapters, Kali, CAI agents, GitHub remediation, ticketing, CI gate) | Deleted for good. The seams it filled fail explicitly rather than pretend: `GET /v1/scanners` returns an empty roster, `POST /v1/scans` is unmounted (404), `redsim scan --scanner X` exits 1 without writing a findings file, the web Start scan button is disabled behind a notice, target ownership verification answers 501, and `redsim doctor` lists the adapter roster as information only. |
-| ML vertical contracts (milestone M0 / plan P0, merged as #18) | On main: `redsim/ml/schema.py` frozen (`CampaignConfig`, `ScoringConfig`, `MRIRecord`, `MLModelManifest`, `MLFindingDetail`, `RunRecord`, `CampaignRecord`, `STAGES` with `score`, `standing_limitations()`), the `Target` and `AttackAdapter` protocols, migration `0010_ml_vertical` (`targets.detail`, `ml_campaigns` with RLS parity), the seven ML `Action` members and the `viewer` role, the `redsim ml build-assets` CLI skeleton (reports `not_implemented`), and a test that the API process imports no ML library. |
-| ML vertical implementation: model loaders, sandboxed loader child, FGSM / PGD / HopSkipJump adapters, noise control, epsilon sweep, evaluation, MRI scoring, SHAP explainers, recommendation rules and Pythia narrative, bundled `SmallCNN` and URL feature extractor, real `build-assets` | Not on main. Open draft PRs #8 `feat/ml-core` and #9 `feat/ml-assets` carry them and are being adapted to the P0 contracts. Nothing under `redsim/ml/` runs an attack today. |
+| ML vertical contracts (milestone M0 / plan P0, merged as #18) | On main: `redsim/ml/schema.py` frozen (`CampaignConfig`, `ScoringConfig`, `MRIRecord`, `MLModelManifest`, `MLFindingDetail`, `RunRecord`, `CampaignRecord`, `STAGES` with `score`, `standing_limitations()`), the `Target` and `AttackAdapter` protocols, migration `0010_ml_vertical` (`targets.detail`, `ml_campaigns` with RLS parity), the seven ML `Action` members and the `viewer` role, the `redsim ml build-assets` CLI entry point (real since #9, next row), and a test that the API process imports no ML library. |
+| ML vertical implementation: model loaders, sandboxed loader child, FGSM / PGD / HopSkipJump adapters, noise control, epsilon sweep, evaluation, MRI scoring, SHAP explainers, recommendation rules and Pythia narrative, bundled `SmallCNN` and URL feature extractor, real `build-assets` | On main since 2026-09-08. #8 `feat/ml-core` merged as `ce33d21`: targets, defenses, datasets, the ART adapters `fgsm`, `pgd`, `hopskipjump` and the `noise_control` control, the epsilon sweep, evaluation, MRI scoring, the campaign runner, SHAP explainers, the interpretation and recommendation rules and the Pythia narrative. #9 `feat/ml-assets` merged as `1725728`: `SmallCNN`, `url_features`, the real `redsim ml build-assets` and `MANIFEST.json` on `MLModelManifest`. `import redsim.ml.targets, redsim.ml.attacks` registers the targets `cifar10_smallcnn`, `endpoint_stub`, `url_trees`, `vehicles_cnn` and the attacks `fgsm`, `hopskipjump`, `noise_control`, `pgd`. The sandboxed loader child is WS4 work. Attacks run from Python and the tests only, no task or route drives them yet (next row). |
 | ML orchestration and API (WS4): Celery tasks `model.validate`, `attack.run`, `explain.run`, `harden.recommend`, the ML branch of `verify.replay`, the admission services, `/v1/models`, `/v1/attacks`, `/v1/datasets`, `/v1/defenses`, `/v1/ml/capabilities`, `/v1/runs/{id}/campaign`, `/v1/runs/{id}/artifacts`, `/v1/artifacts/{id}`, `/v1/runs/{id}/compare` | Not started. Listed as planned in [`docs/api/v1.md`](docs/api/v1.md). |
 | Pythia LLM transport (`redsim/llm/pythia.py`, `python -m redsim.llm.pythia_check`) | Merged (#11) and verified on 2026-09-08 behind the corporate proxy: 27 entitled models listed, one chat completion OK. Reads `REDSIM_ML_LLM_MODEL`. See [`docs/ops/pythia.md`](docs/ops/pythia.md). |
-| Web app `@redsim/web` (Next.js 14) and `@redsim/design-system` | Platform pages present: `/`, `/login`, `/dashboard`, `/runs`, `/runs/[id]`, `/findings`, `/findings/[id]`, `/projects`, `/projects/[slug]/settings`, `/targets`, `/auth-profiles`, `/logs`, `/audit`, `/cost`. The ML pages (`/models`, `/models/[id]`, the MRI scorecard on `/runs/[id]`, the three-pane `/findings/[id]`) are not on main (PR #16 is open). The two web CI jobs are red on main: the root `pnpm-lock.yaml` is behind `web/package.json` after dependabot #15, and the web image build fails at `corepack prepare pnpm` on the `node:26` base image after dependabot #13. |
-| Deployment: `deploy/docker-compose.yml`, `deploy/helm/redsim`, `deploy/Dockerfile.*`, `deploy-aws.yml` | Compose (postgres, redis, keycloak, minio, redsim-api, redsim-worker, redsim-worker-default, redsim-beat, redsim-web, redsim-log-ingest, optional opa / otel-collector / loki / jaeger / elasticsearch / kibana) and the Helm chart are named `redsim-*`. `Dockerfile.api` installs `.[api,worker]` and runs `alembic upgrade head`, `Dockerfile.worker` installs CPU torch then `.[worker,ml]`. `deploy-aws.yml` fails at the OIDC AssumeRole step (account-side). ECS Fargate (WS7) is not started, PR #19 is an open draft. |
-| Demo data | Decided, not fetched. See Datasets below. Nothing is downloaded or trained on main. |
+| Web app `@redsim/web` (Next.js 14) and `@redsim/design-system` | Platform pages present: `/`, `/login`, `/dashboard`, `/runs`, `/runs/[id]`, `/findings`, `/findings/[id]`, `/projects`, `/projects/[slug]/settings`, `/targets`, `/auth-profiles`, `/logs`, `/audit`, `/cost`. The P5 pages landed with #16 (`1a9204e`, 2026-09-08): `/models`, `/models/[id]`, the MRI scorecard and panels on `/runs/[id]`, the three-pane `/findings/[id]`, and `MriScorecard`, `DimensionBars`, `RobustnessCurve`, `MeasurementTable`, `ObservationCard` in the design system. They call the WS4 routes, which are not mounted, and show an explicit `not_implemented` state on 404 or 501. #16's ten review findings were fixed before merge. #21 (`ea39f97`) restored the web toolchain: the dependabot #15 bump is reverted (Next 14, React 18, TypeScript 5), `deploy/Dockerfile.web` installs pnpm with `npm install -g` on `node:26`, and the `viewer` role is in the Keycloak realm export and in the design-system `ROLES` with 0-based ranks. Both web CI jobs were green at `ea39f97` and have not run on main since (skipped behind the failing unit job, see [`CLAUDE.md`](CLAUDE.md)). |
+| Deployment: `deploy/docker-compose.yml`, `deploy/helm/redsim`, `deploy/Dockerfile.*`, `deploy-aws.yml` | Compose (postgres, redis, keycloak, minio, redsim-api, redsim-worker, redsim-worker-default, redsim-beat, redsim-web, redsim-log-ingest, optional opa / otel-collector / loki / jaeger / elasticsearch / kibana) and the Helm chart are named `redsim-*`. `Dockerfile.api` installs `.[api,worker]` and runs `alembic upgrade head`, `Dockerfile.worker` installs CPU torch then `.[worker,ml]`. `deploy-aws.yml` fails at the OIDC AssumeRole step (account-side). ECS Fargate (WS7): #19 merged as `b40f7e1` (2026-09-08) with the code-only Terraform foundation under `deploy/terraform/` (existing-VPC checks, private endpoints, an ALB with target groups but no listeners, RDS PostgreSQL 16, Redis, two S3 buckets, per-service IAM roles, mocked-plan tests behind `validate.sh`). No task definitions, no services, nothing applied. |
+| Demo data | Decided and buildable. `redsim ml build-assets --dataset all` fetches the datasets by pinned revision and trains the bundled models on CPU. Everything it writes under `assets/` is gitignored, so a fresh clone has none until it runs the build (see Get started). Clean accuracy per model is recorded in the asset manifest. |
 | Docs site (`mkdocs.yml`, `make docs-*`) | `mkdocs build --strict` passes locally and in the Docs workflow. GitHub Pages publishing is off (the plan has no private Pages). |
 
 ## Architecture at a glance
@@ -125,6 +125,23 @@ safetensors, SHAP, matplotlib, pillow, pyarrow, httpx), `llm` (the optional
 private `pythia-sdk`, not needed because `redsim/llm/pythia.py` falls back to
 an in-repo httpx client) and `garak` (Phase B only).
 
+### Build the bundled ML assets
+
+```bash
+.venv/bin/redsim ml build-assets --dataset all
+```
+
+Fetches the datasets of spec section 11 by pinned revision, trains the
+bundled `SmallCNN` models and the URL classifier on CPU with a fixed seed,
+and writes `assets/MANIFEST.json`. Everything under `assets/` except its
+README is gitignored, so each clone builds its own. The Kaggle download
+reads `KAGGLE_API_TOKEN` from the environment or from `.env`
+(`REDSIM_ENV_FILE`), or the older `KAGGLE_USERNAME` / `KAGGLE_KEY` pair,
+and falls back to the committed CI sample when neither is set.
+`--dataset cifar10` needs no token. `--epochs` (default 3), `--only
+<model_id>`, `--out` and `--cache-dir` are the other knobs. Clean accuracy
+per model is recorded in the manifest.
+
 ### Run
 
 ```bash
@@ -197,14 +214,15 @@ entitled model list, is [`docs/ops/pythia.md`](docs/ops/pythia.md).
 ### Datasets
 
 Every dataset is open, unclassified, publicly available and carries a license
-stated on its distribution page (spec section 11). None is fetched or trained
-on main yet.
+stated on its distribution page (spec section 11). Nothing is committed: the
+one-off `redsim ml build-assets` run (see Get started) fetches them and
+trains the bundled models locally.
 
 | Role | Dataset | Modality | License | Notes |
 |---|---|---|---|---|
 | Demo image dataset | `leibnitz-lab/military_vehicles` (HuggingFace), coarse 7-class task | image | MIT (dataset card) | Ground-level photographs, not aerial imagery. Photo copyright is not cleared by the MIT tag, so images are not redistributed in public releases or reports. |
 | Image CI fixture | `uoft-cs/cifar10` (HuggingFace), test split, pinned 500-image subset | image | CIFAR-10 terms | Tests only, never a demo dataset or a result. |
-| Demo tabular dataset | Kaggle `sid321axn/malicious-urls-dataset` (`malicious_phish.csv`) | tabular | CC0 (Kaggle metadata API) | Lexical URL features only. URL strings are data and are never fetched, resolved or rendered as links. The download needs a Kaggle API token for the one `redsim ml build-assets` run (`KAGGLE_USERNAME`, `KAGGLE_KEY`), never on the API, web, steady-state worker or CI. A committed stratified sample under `tests/ml/fixtures/` serves CI. |
+| Demo tabular dataset | Kaggle `sid321axn/malicious-urls-dataset` (`malicious_phish.csv`) | tabular | CC0 (Kaggle metadata API) | Lexical URL features only. URL strings are data and are never fetched, resolved or rendered as links. The download needs a Kaggle API token for the one `redsim ml build-assets` run (`KAGGLE_API_TOKEN`, or the older `KAGGLE_USERNAME` / `KAGGLE_KEY` pair), never on the API, web, steady-state worker or CI. A committed stratified sample under `tests/ml/fixtures/` serves CI. |
 | Tabular fallback | `lacg030175/UNSW-NB15` (HuggingFace), config `standard` | tabular | CC-BY-4.0 | Used only if the Kaggle download cannot be completed on the day. |
 | Unit-test double | `TinyTarget` in `tests/ml/fakes.py` | image | in-repo | Random-weight 1-conv net, no download. |
 
@@ -235,11 +253,11 @@ CI contract is in [`docs/dev/ci.md`](docs/dev/ci.md).
 ### Tests
 
 ```bash
-.venv/bin/python -m pytest -q                                   # 900 passed, 30 skipped on main 4320740
+.venv/bin/python -m pytest -q                                   # 1198 passed, 30 skipped on main 7240220
 .venv/bin/ruff check --select E4,E7,E9,F,I redsim tests         # lint, exactly as CI
 .venv/bin/mypy redsim                                           # types
 pnpm --filter @redsim/web typecheck                             # tsc --noEmit
-pnpm --filter @redsim/web test                                  # vitest
+pnpm --filter @redsim/web test                                  # vitest, 274 passed on main 7240220
 ```
 
 Markers are declared in `pyproject.toml`. `unit` and `integration` run by

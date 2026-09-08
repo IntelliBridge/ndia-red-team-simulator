@@ -1,8 +1,8 @@
 # ML vertical
 
-Status as of 2026-09-08 (evening). This page describes the adversarial-ML
-vertical as it stands on `main`, what the open pull requests add, and what
-has not started. The authoritative design is the
+Status as of 2026-09-08 (late evening, `main` at `7240220`). This page
+describes the adversarial-ML vertical as it stands on `main` and what has
+not started. The authoritative design is the
 [product spec](../superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md)
 and the coordination plan is the [master plan](../plans/00-master-plan.md).
 Where this page and the spec disagree, the spec wins and this page is stale.
@@ -36,15 +36,22 @@ routing with budgets, and the Pythia transport.
 | Frozen contracts: `redsim/ml/schema.py`, `redsim/ml/targets/base.py`, `redsim/ml/attacks/base.py` | on `main`, frozen by P0 | WS0 |
 | Migration `0010_ml_vertical` (`targets.detail` JSONB, `ml_campaigns` with RLS parity) | on `main`. The ORM in `redsim/db/models.py` does not yet map either | WS0 |
 | Seven ML `Action` members and the `viewer` rank in `redsim/api/policy.py`, mirrored in the OPA and Cedar bundles | on `main` | WS0 |
-| `redsim ml build-assets` CLI | skeleton on `main`, reports `not_implemented` | WS0 |
+| `redsim ml build-assets` CLI | implemented on `main` (merged 2026-09-08 with #9, `1725728`): fetch by pinned revision, CPU training, `assets/MANIFEST.json` | WS0, WS1 assets |
 | `redsim/llm/pythia.py` transport, `REDSIM_ML_LLM_MODEL`, `python -m redsim.llm.pythia_check` | on `main`, connectivity verified 2026-09-08 | WS0 |
-| Targets, defenses, datasets, ART adapters (`fgsm`, `pgd`, `noise_control`, `hopskipjump`), eval, MRI scoring, campaign runner, SHAP explainers, interpretation and recommendation rules, Pythia narrative | open draft PR #8 `feat/ml-core`, being adapted to the P0 freeze | WS1 (pure part), WS2, WS3 |
-| `SmallCNN`, `url_features`, the `build-assets` implementation, `MANIFEST.json` | open draft PR #9 `feat/ml-assets` | WS1 assets |
+| Targets, defenses, datasets, ART adapters (`fgsm`, `pgd`, `noise_control`, `hopskipjump`), eval, MRI scoring, campaign runner, SHAP explainers, interpretation and recommendation rules, Pythia narrative | on `main` (PR #8 `feat/ml-core`, merged 2026-09-08 as `ce33d21`). `import redsim.ml.targets, redsim.ml.attacks` registers the targets `cifar10_smallcnn`, `endpoint_stub`, `url_trees`, `vehicles_cnn` and the attacks `fgsm`, `hopskipjump`, `noise_control`, `pgd` | WS1 (pure part), WS2, WS3 |
+| `SmallCNN`, `url_features`, the `build-assets` implementation, `MANIFEST.json` | on `main` (PR #9 `feat/ml-assets`, merged 2026-09-08 as `1725728`). The built assets are local and gitignored | WS1 assets |
 | Celery tasks `attack.run`, `explain.run`, `harden.recommend`, `model.validate`, the ML branch of `verify.replay`, and the routes `/v1/models`, `/v1/attacks`, `/v1/datasets`, `/v1/defenses`, `/v1/ml/capabilities`, `/v1/runs/{id}/campaign`, `/v1/runs/{id}/artifacts`, `/v1/artifacts/{id}`, `/v1/runs/{id}/compare`, the finding `explain` and `harden` routes | not started | WS4 |
-| Web pages `/models`, `/models/[id]`, MRI panels on `/runs/[id]`, three-pane `/findings/[id]` | not on `main`. PR #16 proposes them against the planned WS4 contract | WS5 |
-| ECS Fargate deployment | not on `main`. Draft PR #19 holds a Terraform-only foundation, no services | WS7 |
+| Web pages `/models`, `/models/[id]`, MRI panels on `/runs/[id]`, three-pane `/findings/[id]` | on `main` (PR #16, merged 2026-09-08 as `1a9204e`, ten review findings fixed before merge). They target the planned WS4 routes, which are not mounted, and show an explicit `not_implemented` state on 404 or 501 | WS5 |
+| ECS Fargate deployment | Terraform foundation on `main` under `deploy/terraform/` (PR #19, merged 2026-09-08 as `b40f7e1`): network, ALB and target groups without listeners, RDS, Redis, S3, IAM, mocked-plan tests. No services, nothing applied | WS7 |
 
-No dataset has been fetched and no bundled model has been trained yet.
+The bundled assets have been built locally with
+`redsim ml build-assets --dataset all`: `vehicles_cnn` on the military
+vehicles set, the `cifar10_smallcnn` fixture, and `url_classifier` (the
+asset behind the `url_trees` target) on the full Kaggle malicious-URLs set.
+They are gitignored under `assets/`, so a fresh clone builds its own, and
+their clean accuracy is recorded in the asset manifest rather than quoted
+here. The sandbox child, the Celery tasks and the routes that would run a
+campaign from the API are still WS4 work.
 
 ## The frozen schema
 
@@ -170,19 +177,21 @@ voice under their own heading.
 
 The interpretation rules I1 to I6 (spec 14.6) and the recommendation rules
 (spec 16.2) are deterministic, read `InterpretationThresholds`, cite the
-ids that fired them and print their thresholds. They live on PR #8, not on
-`main`.
+ids that fired them and print their thresholds. They are on `main` in
+`redsim/ml/recommend/rules.py` since PR #8 merged.
 
 ## Datasets and handling rules
 
 Every dataset is open, unclassified, public, and carries a stated license
-(spec 11). None has been fetched or trained on yet.
+(spec 11). The demo and fixture sets have been fetched and the bundled
+models trained locally by the one-off `redsim ml build-assets` run. Nothing
+is committed.
 
 | Role | Dataset | License | Notes |
 |---|---|---|---|
 | Demo image | `leibnitz-lab/military_vehicles` (HF), coarse 7-class task | MIT for the compilation and labels | Ground-level photographs, not overhead. Photo copyright is not cleared by the MIT tag, so images stay inside the team's blob store. |
 | CI image fixture | `uoft-cs/cifar10` (HF), pinned 500-image subset | unknown on the card | Fixture only, never presented as results. |
-| Demo tabular | Kaggle `sid321axn/malicious-urls-dataset` | CC0 | The download needs a Kaggle token at build time only. A committed stratified sample under `tests/ml/fixtures/` serves CI. URL strings are data: never fetched, resolved or rendered as links. |
+| Demo tabular | Kaggle `sid321axn/malicious-urls-dataset` | CC0 | The download needs a Kaggle token (`KAGGLE_API_TOKEN`) at build time only. A committed stratified sample under `tests/ml/fixtures/` serves CI. URL strings are data: never fetched, resolved or rendered as links. |
 | Tabular fallback | `lacg030175/UNSW-NB15` (HF, config `standard`) | CC-BY-4.0 | Used only if the Kaggle download cannot be completed. |
 
 Rules that apply to all of them: bytes are fetched once by
