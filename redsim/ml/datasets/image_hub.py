@@ -52,7 +52,8 @@ def _ssl_verify() -> ssl.SSLContext | bool:
         import truststore
     except ImportError:  # pragma: no cover - depends on the environment
         return True
-    return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context: ssl.SSLContext = truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    return context
 
 
 def make_client(*, timeout: float = 60.0, transport: httpx.BaseTransport | None = None) -> httpx.Client:
