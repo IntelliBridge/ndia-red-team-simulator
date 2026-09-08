@@ -22,8 +22,7 @@ pytest.importorskip("sqlalchemy")
 
 from aegis.audit.chain import InMemoryAuditWriter
 from aegis.config import AegisConfig
-from aegis.db.models import Finding, Organization, Project, Run
-from aegis.services.fixes import create_fix_job
+from aegis.db.models import Organization, Project, Run
 from aegis.services.runs import cancel_run
 from aegis.services.scans import create_scan_job
 from aegis.services.verify import create_verify_job
@@ -58,7 +57,7 @@ class TestAdmissionAuditBeforeEnqueue(unittest.TestCase):
             scan_start.delay = fake_delay
             handle = create_scan_job(
                 target="http://localhost:3000",
-                scanner="strix", project_id="proj-1",
+                scanner="fake-attack", project_id="proj-1",
                 actor="user:test",
                 config=AegisConfig(target_allowlist=["localhost"]),
                 audit_writer=writer,
@@ -97,7 +96,7 @@ class TestAdmissionAuditBeforeEnqueue(unittest.TestCase):
             with self.assertRaises(AuthorizationError):
                 create_scan_job(
                     target="http://attacker.example.com",
-                    scanner="strix", project_id="proj-1",
+                    scanner="fake-attack", project_id="proj-1",
                     actor="user:test",
                     config=AegisConfig(target_allowlist=["localhost"]),
                     audit_writer=writer,
@@ -112,42 +111,6 @@ class TestAdmissionAuditBeforeEnqueue(unittest.TestCase):
         # And no Run/Job rows were inserted
         with Session() as s:
             self.assertEqual(s.query(Run).count(), 0)
-
-    def test_fix_admission_emits_chain_row_before_celery(self):
-        session_cm, _, Session = _make_session_factory()
-        _seed_project(Session)
-        with Session() as s:
-            s.add(Run(id="run-1", project_id="proj-1",
-                      mode="api", status="queued", stage_table={}))
-            s.add(Finding(
-                id="f-uuid-1", scanner_finding_id="vuln-0001",
-                run_id="run-1", project_id="proj-1",
-                schema_blob={"id": "vuln-0001"},
-                severity="high",
-            ))
-            s.commit()
-
-        writer = InMemoryAuditWriter()
-        enqueue_calls: list[str] = []
-
-        def fake_delay(job_id):
-            self.assertEqual(len(writer.events), 1)
-            enqueue_calls.append(job_id)
-
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.workers.tasks.fix.fix_generate") as fix_generate:
-            fix_generate.delay = fake_delay
-            handle = create_fix_job(
-                finding_id="f-uuid-1", strategy="patch", apply=False,
-                project_id="proj-1", run_id="run-1",
-                actor="user:test",
-                config=AegisConfig(),
-                audit_writer=writer,
-            )
-
-        self.assertEqual(len(writer.events), 1)
-        self.assertEqual(writer.events[0].action, "fix.generate")
-        self.assertEqual(enqueue_calls, [handle.job_id])
 
     def test_verify_admission_emits_chain_row_before_celery(self):
         session_cm, _, Session = _make_session_factory()

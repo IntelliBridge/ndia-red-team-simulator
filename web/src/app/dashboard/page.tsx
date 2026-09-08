@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 
-import { RunStatusBadge } from "@aegis/design-system";
+import { RunStatusBadge } from "@redsim/design-system";
 import { api, type Run } from "@/lib/api";
 import { getEmail, logout } from "@/lib/auth";
 import { useRequireAuth } from "@/hooks/useRequireAuth";

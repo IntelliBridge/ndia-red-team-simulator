@@ -3,12 +3,11 @@
 Covers:
   aegis/workers/bootstrap.py
   aegis/workers/tasks/scan.py
-  aegis/workers/tasks/fix.py
   aegis/workers/tasks/verify.py
-  aegis/workers/tasks/parallel_fix.py
-  aegis/workers/tasks/exports.py
-  aegis/workers/tasks/ci_gate.py
   aegis/workers/tasks/report.py
+
+(The pentest fix / parallel_fix / exports / ci_gate task modules were removed
+with the pentest domain.)
 
 All tests are fully offline: Celery runs in eager/apply() mode; no real
 Redis, Postgres, or network connection is made.  The DB session, service
@@ -19,10 +18,8 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 import unittest
 from contextlib import contextmanager
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -622,142 +619,30 @@ class TestScanStart(unittest.TestCase):
 
         ctx.run_state.save_findings.assert_called_once_with(disp_result.findings)
 
-    def test_default_scanner_is_strix_when_missing_from_detail(self):
+    def test_missing_scanner_in_detail_fails_explicitly(self):
+        # Admission always records the scanner; there is no default engine to
+        # fall back to (the pentest default "strix" was removed). A Job without
+        # one must fail loudly before authorize / dispatch, never substitute an
+        # adapter silently.
         ctx, sess, job, fake_tc = _make_task_ctx(
             # detail has no 'scanner' key
             job_detail={"target": "host"},
         )
 
-        disp_result = MagicMock()
-        disp_result.findings = []
-        disp_result.exit_code = 0
-
         with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
              patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.safety.authorize"), \
-             patch("aegis.scanners.dispatch", return_value=disp_result) as mock_dispatch, \
+             patch("aegis.safety.authorize") as mock_auth, \
+             patch("aegis.scanners.dispatch") as mock_dispatch, \
              patch("aegis.scanners.registry.ScanOptions"):
             mock_cfg.return_value = MagicMock(target_allowlist=[])
-            result = self._scan_task().apply(args=["job-scan-004"]).get()
-
-        # scanner key defaults to "strix"
-        self.assertEqual(result["scanner"], "strix")
-        # dispatch was called with "strix"
-        self.assertEqual(mock_dispatch.call_args[0][0], "strix")
-
-
-# ---------------------------------------------------------------------------
-# fix.py
-# ---------------------------------------------------------------------------
-
-class TestFixGenerate(unittest.TestCase):
-
-    def _fix_task(self):
-        from aegis.workers.tasks.fix import fix_generate
-        return fix_generate
-
-    def _make_outcome(self, status="fixed", **kwargs):
-        from aegis.services.fixes import FixOutcome
-        defaults = dict(
-            success=True, strategy="patch", finding_id="find-001",
-            status=status, source="cai", branch="fix/find-001",
-            commit_hash="deadbeef", pr_url=None,
-        )
-        defaults.update(kwargs)
-        return FixOutcome(**defaults)
-
-    def test_happy_path_patch_strategy(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={
-                "finding_id": "find-001", "strategy": "patch",
-                "repo": "/tmp/repo", "apply": True, "open_pr": False,
-                "branch": None, "allow_dirty": False, "push": True,
-                "use_golden_patch": False,
-            },
-        )
-
-        finding_row = MagicMock()
-        finding_row.schema_blob = _make_finding_blob()
-        # sess.get: first call → job, second → finding_row
-        sess.get.side_effect = [job, finding_row]
-
-        outcome = self._make_outcome()
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.services.fixes.generate_fix", return_value=outcome):
-            mock_cfg.return_value = MagicMock()
-
-            result = self._fix_task().apply(args=["job-fix-001"]).get()
-
-        self.assertEqual(result["status"], "fixed")
-        self.assertTrue(result["success"])
-        self.assertEqual(result["finding_id"], "find-001")
-        self.assertEqual(result["branch"], "fix/find-001")
-        # F11: finding_row.status should be updated
-        self.assertEqual(finding_row.status, "fixed")
-
-    def test_missing_finding_raises_runtime_error(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={"finding_id": "find-missing"},
-        )
-        # Second get() returns None → finding missing
-        sess.get.side_effect = [job, None]
-
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg:
-            mock_cfg.return_value = MagicMock()
-
             with self.assertRaises(RuntimeError) as cm:
-                self._fix_task().apply(args=["job-fix-002"]).get()
+                self._scan_task().apply(args=["job-scan-004"]).get()
 
-        self.assertIn("find-missing", str(cm.exception))
-
-    def test_finding_status_lifted_onto_db_row(self):
-        """The F11 contract: finding_row.status is updated from outcome.status."""
-        ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={"finding_id": "find-003", "strategy": "patch"},
-        )
-
-        finding_row = MagicMock()
-        finding_row.schema_blob = _make_finding_blob(id="find-003")
-        sess.get.side_effect = [job, finding_row]
-
-        outcome = self._make_outcome(status="pending_apply", success=False,
-                                     branch=None, commit_hash=None)
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.services.fixes.generate_fix", return_value=outcome):
-            mock_cfg.return_value = MagicMock()
-            self._fix_task().apply(args=["job-fix-003"]).get()
-
-        self.assertEqual(finding_row.status, "pending_apply")
-
-    def test_generate_fix_called_with_correct_strategy_and_flags(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={
-                "finding_id": "find-004", "strategy": "live",
-                "repo": None, "apply": False, "open_pr": False,
-                "branch": None, "allow_dirty": False, "push": True,
-                "use_golden_patch": False,
-            },
-        )
-
-        finding_row = MagicMock()
-        finding_row.schema_blob = _make_finding_blob(id="find-004")
-        sess.get.side_effect = [job, finding_row]
-
-        outcome = self._make_outcome(strategy="live", status="fixed")
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("aegis.config.load_config") as mock_cfg, \
-             patch("aegis.services.fixes.generate_fix",
-                   return_value=outcome) as mock_gen:
-            mock_cfg.return_value = MagicMock()
-            self._fix_task().apply(args=["job-fix-004"]).get()
-
-        call_kwargs = mock_gen.call_args[1]
-        self.assertEqual(call_kwargs["strategy"], "live")
-        self.assertFalse(call_kwargs["apply"])
-        self.assertFalse(call_kwargs["open_pr"])
+        self.assertIn("no scanner", str(cm.exception))
+        self.assertIn("aegis.ml.attacks", str(cm.exception))
+        mock_auth.assert_not_called()
+        mock_dispatch.assert_not_called()
+        ctx.run_state.save_findings.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -900,303 +785,6 @@ class TestVerifyReplay(unittest.TestCase):
                     "validation_state"):
             self.assertIn(key, result)
         self.assertEqual(result["strategy"], "replay")
-
-
-# ---------------------------------------------------------------------------
-# parallel_fix.py
-# ---------------------------------------------------------------------------
-
-class TestParallelFix(unittest.TestCase):
-
-    def _pf_task(self):
-        from aegis.workers.tasks.parallel_fix import parallel_fix
-        return parallel_fix
-
-    def test_happy_path_enqueues_two_child_jobs_and_returns_outcomes(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={"finding_id": "find-001", "repo": "/tmp/repo"},
-        )
-        ctx.session = sess
-        sess.get.return_value = job
-
-        group_result = MagicMock()
-        group_result.get.return_value = [
-            {"status": "fixed", "finding_id": "find-001"},
-            {"status": "fixed", "finding_id": "find-001"},
-        ]
-
-        mock_fg = MagicMock()
-        mock_fg.s = MagicMock(return_value="subtask-sig")
-
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("celery.group") as mock_group, \
-             patch("aegis.workers.tasks.fix.fix_generate", mock_fg):
-            mock_group.return_value.apply_async.return_value = group_result
-
-            result = self._pf_task().apply(args=["job-pf-001"]).get()
-
-        self.assertIn("patch_job", result)
-        self.assertIn("live_job", result)
-        self.assertIn("outcomes", result)
-        # Two child Job rows should have been added to the session
-        self.assertEqual(sess.add.call_count, 2)
-        # session.flush() called to persist child rows
-        sess.flush.assert_called()
-        # fix_generate.s called twice: once for patch, once for live
-        self.assertEqual(mock_fg.s.call_count, 2)
-        # group_result.get called with timeout
-        group_result.get.assert_called_once_with(timeout=1800)
-
-    def test_missing_finding_id_raises_runtime_error(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={"repo": "/tmp/repo"},  # no finding_id
-        )
-        ctx.session = sess
-        sess.get.return_value = job
-
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc):
-            with self.assertRaises(RuntimeError) as cm:
-                self._pf_task().apply(args=["job-pf-002"]).get()
-
-        self.assertIn("finding_id required", str(cm.exception))
-
-    def test_child_jobs_carry_correct_strategies(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={"finding_id": "find-001", "repo": None},
-        )
-        ctx.session = sess
-        sess.get.return_value = job
-
-        added_jobs = []
-
-        def _capture_add(obj):
-            added_jobs.append(obj)
-
-        sess.add.side_effect = _capture_add
-
-        group_result = MagicMock()
-        group_result.get.return_value = []
-
-        mock_fg = MagicMock()
-        mock_fg.s = MagicMock(return_value="subtask-sig")
-
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("celery.group") as mock_group, \
-             patch("aegis.workers.tasks.fix.fix_generate", mock_fg), \
-             patch("aegis.db.models.Job") as MockJob:
-            mock_group.return_value.apply_async.return_value = group_result
-            # MockJob returns the passed kwargs as a record we can inspect
-            MockJob.side_effect = lambda **kw: kw
-            self._pf_task().apply(args=["job-pf-003"]).get()
-
-        strategies = {j.get("detail", {}).get("strategy") for j in added_jobs
-                      if isinstance(j, dict)}
-        self.assertIn("patch", strategies)
-        self.assertIn("live", strategies)
-
-
-# ---------------------------------------------------------------------------
-# exports.py
-# ---------------------------------------------------------------------------
-
-class TestVulnfixerRender(unittest.TestCase):
-
-    def _exp_task(self):
-        from aegis.workers.tasks.exports import vulnfixer_render
-        return vulnfixer_render
-
-    def test_happy_path_returns_expected_keys(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            ctx, sess, job, fake_tc = _make_task_ctx()
-            run_path = Path(tmpdir)
-            ctx.run_state.run_path = run_path
-            ctx.run_state.load_findings.return_value = []
-
-            art_ref = MagicMock()
-            art_ref.sha256 = "deadbeef" * 8
-            art_ref.location = str(run_path / "vulnfixer-export.json")
-            ctx.run_state.record_artifact.return_value = art_ref
-
-            summary = {"total": 0, "routable_to_vulnfixer": 0,
-                       "requires_code_fix": 0}
-
-            with patch("aegis.workers.bootstrap.task_context",
-                       side_effect=fake_tc), \
-                 patch("aegis.runners.vulnfixer_converter.export_findings",
-                       return_value=summary):
-                # export_findings writes the file in prod; create it here
-                (run_path / "vulnfixer-export.json").write_text('{}')
-                result = self._exp_task().apply(args=["job-exp-001"]).get()
-
-        self.assertEqual(result["job_id"], "job-exp-001")
-        self.assertIn("summary", result)
-        self.assertIn("sha256", result)
-        self.assertIn("location", result)
-
-    def test_findings_loaded_and_converted_to_aegis_finding(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            raw_finding = _make_finding_blob()
-            ctx, sess, job, fake_tc = _make_task_ctx()
-            run_path = Path(tmpdir)
-            ctx.run_state.run_path = run_path
-            ctx.run_state.load_findings.return_value = [raw_finding]
-
-            art_ref = MagicMock()
-            art_ref.sha256 = "aabbcc"
-            art_ref.location = str(run_path / "vulnfixer-export.json")
-            ctx.run_state.record_artifact.return_value = art_ref
-
-            exported_findings = []
-
-            def _capture_export(findings, path):
-                exported_findings.extend(findings)
-                return {"total": 1, "routable_to_vulnfixer": 0,
-                        "requires_code_fix": 1}
-
-            with patch("aegis.workers.bootstrap.task_context",
-                       side_effect=fake_tc), \
-                 patch("aegis.runners.vulnfixer_converter.export_findings",
-                       side_effect=_capture_export):
-                (run_path / "vulnfixer-export.json").write_text('{}')
-                self._exp_task().apply(args=["job-exp-002"]).get()
-
-        # The task converts raw dicts → AegisFinding objects before passing
-        from aegis.schema import AegisFinding
-        self.assertEqual(len(exported_findings), 1)
-        self.assertIsInstance(exported_findings[0], AegisFinding)
-
-    def test_artifact_recorded_on_run_state(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            ctx, sess, job, fake_tc = _make_task_ctx()
-            run_path = Path(tmpdir)
-            ctx.run_state.run_path = run_path
-            ctx.run_state.load_findings.return_value = []
-
-            art_ref = MagicMock()
-            art_ref.sha256 = "112233"
-            art_ref.location = str(run_path / "vulnfixer-export.json")
-            ctx.run_state.record_artifact.return_value = art_ref
-
-            with patch("aegis.workers.bootstrap.task_context",
-                       side_effect=fake_tc), \
-                 patch("aegis.runners.vulnfixer_converter.export_findings",
-                       return_value={"total": 0, "routable_to_vulnfixer": 0,
-                                     "requires_code_fix": 0}):
-                (run_path / "vulnfixer-export.json").write_text('{}')
-                self._exp_task().apply(args=["job-exp-003"]).get()
-
-        ctx.run_state.record_artifact.assert_called_once_with(
-            "vulnfixer_export", b"{}",
-            content_type="application/json",
-        )
-
-
-# ---------------------------------------------------------------------------
-# ci_gate.py
-# ---------------------------------------------------------------------------
-
-class TestCIGate(unittest.TestCase):
-
-    def _cg_task(self):
-        from aegis.workers.tasks.ci_gate import ci_gate
-        return ci_gate
-
-    def _run(self, findings, policy_detail=None):
-        ctx, sess, job, fake_tc = _make_task_ctx(
-            findings=findings,
-            job_detail={"policy": policy_detail or {}},
-        )
-
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc):
-            return self._cg_task().apply(args=["job-cg-001"]).get()
-
-    def test_no_findings_returns_pass(self):
-        result = self._run([])
-        self.assertEqual(result["exit_code"], 0)
-        self.assertEqual(result["reason"], "pass")
-        self.assertEqual(result["findings_evaluated"], 0)
-
-    def test_critical_finding_triggers_failure_at_high_threshold(self):
-        result = self._run(
-            [{"severity": "critical", "validation_state": None}],
-            policy_detail={"severity_threshold": "high"},
-        )
-        self.assertEqual(result["exit_code"], 1)
-        self.assertIn("1 blocking findings", result["reason"])
-
-    def test_low_finding_passes_high_threshold(self):
-        result = self._run(
-            [{"severity": "low", "validation_state": None}],
-            policy_detail={"severity_threshold": "high"},
-        )
-        self.assertEqual(result["exit_code"], 0)
-
-    def test_max_findings_exceeded_triggers_failure(self):
-        findings = [
-            {"severity": "high", "validation_state": "poc_passed"},
-            {"severity": "high", "validation_state": "poc_passed"},
-            {"severity": "high", "validation_state": "poc_passed"},
-        ]
-        result = self._run(
-            findings,
-            policy_detail={"severity_threshold": "high",
-                           "max_findings": 2, "require_validated": False},
-        )
-        self.assertEqual(result["exit_code"], 1)
-        self.assertIn("exceeds max 2", result["reason"])
-
-    def test_require_validated_skips_unvalidated_findings(self):
-        # Finding is critical but not poc_passed → should NOT block
-        findings = [{"severity": "critical", "validation_state": "poc_failed"}]
-        result = self._run(
-            findings,
-            policy_detail={"severity_threshold": "high",
-                           "require_validated": True},
-        )
-        self.assertEqual(result["exit_code"], 0)
-
-    def test_require_validated_blocks_on_poc_passed(self):
-        findings = [{"severity": "critical", "validation_state": "poc_passed"}]
-        result = self._run(
-            findings,
-            policy_detail={"severity_threshold": "high",
-                           "require_validated": True},
-        )
-        self.assertEqual(result["exit_code"], 1)
-
-    def test_return_dict_includes_job_id_and_findings_evaluated(self):
-        ctx, sess, job, fake_tc = _make_task_ctx(
-            findings=[{"severity": "medium"}],
-            job_detail={"policy": {}},
-        )
-
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc):
-            result = self._cg_task().apply(args=["job-cg-detail"]).get()
-
-        self.assertEqual(result["job_id"], "job-cg-detail")
-        self.assertIn("findings_evaluated", result)
-
-    def test_policy_defaults_applied_when_detail_empty(self):
-        """Empty policy detail → severity_threshold='high', no max, no validated."""
-        findings = [{"severity": "high", "validation_state": None}]
-        ctx, sess, job, fake_tc = _make_task_ctx(
-            findings=findings,
-            job_detail={},  # no 'policy' key at all
-        )
-
-        with patch("aegis.workers.bootstrap.task_context", side_effect=fake_tc):
-            result = self._cg_task().apply(args=["job-cg-defaults"]).get()
-
-        # high severity at high threshold → blocking
-        self.assertEqual(result["exit_code"], 1)
-
-    def test_cigatepolicy_and_evaluate_are_re_exported(self):
-        from aegis.workers.tasks.ci_gate import CIGatePolicy, evaluate
-        policy = CIGatePolicy(severity_threshold="medium")
-        exit_code, reason = evaluate(
-            [{"severity": "medium"}], policy
-        )
-        self.assertEqual(exit_code, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -1377,14 +965,13 @@ class TestCeleryAppBootstrap(unittest.TestCase):
 
     def test_task_modules_registered(self):
         m = self._fresh_import({})
+        # The pentest fix/parallel_fix/exports/ci_gate task modules were
+        # removed with the pentest domain; the surviving task set is what
+        # celery_app now includes.
         expected_tasks = [
             "aegis.workers.tasks.scan",
-            "aegis.workers.tasks.fix",
             "aegis.workers.tasks.verify",
             "aegis.workers.tasks.report",
-            "aegis.workers.tasks.exports",
-            "aegis.workers.tasks.ci_gate",
-            "aegis.workers.tasks.parallel_fix",
         ]
         registered = list(m.app.conf.include)
         for module in expected_tasks:
@@ -1404,27 +991,6 @@ class TestVerifyStateMapConstants(unittest.TestCase):
         self.assertEqual(_STATE_MAP["verified"], "poc_passed")
         self.assertEqual(_STATE_MAP["still_vulnerable"], "poc_failed")
         self.assertEqual(_STATE_MAP["inconclusive"], "inconclusive")
-
-
-class TestCIGatePolicyEvaluateDirectly(unittest.TestCase):
-    """Drive ``evaluate`` from the re-export in ci_gate to hit that import."""
-
-    def test_re_exported_evaluate_works(self):
-        from aegis.workers.tasks.ci_gate import CIGatePolicy, evaluate
-
-        # medium finding, threshold = medium → blocking
-        policy = CIGatePolicy(severity_threshold="medium")
-        code, reason = evaluate(
-            [{"severity": "medium", "validation_state": None}], policy
-        )
-        self.assertEqual(code, 1)
-        self.assertIn("medium", reason)
-
-    def test_empty_findings_always_pass(self):
-        from aegis.workers.tasks.ci_gate import CIGatePolicy, evaluate
-        code, reason = evaluate([], CIGatePolicy())
-        self.assertEqual(code, 0)
-        self.assertEqual(reason, "pass")
 
 
 if __name__ == "__main__":

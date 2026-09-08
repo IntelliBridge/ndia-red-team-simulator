@@ -46,12 +46,14 @@ def _bucket(key: str, capacity: int, refill_per_min: int) -> _Bucket:
         return _BUCKETS[key]
 
 
-# Throttle every mutating request under ``/v1`` except a small
-# liveness/ingress allowlist. Gating on method + prefix (rather than a
-# hand-maintained list of write paths) keeps new write routes throttled by
-# default instead of silently un-limited as routes are added.
+# Throttle every mutating request under ``/v1`` except the liveness probe.
+# Gating on method + prefix (rather than a hand-maintained list of write
+# paths) keeps new write routes throttled by default instead of silently
+# un-limited as routes are added. (The GitHub-webhook ingress that used to be
+# exempted here was removed with the pentest domain; no unauthenticated
+# prefix is pre-exempted.)
 _THROTTLED_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
-_THROTTLE_EXCLUDE = ("/v1/health", "/v1/webhooks/")
+_THROTTLE_EXCLUDE = ("/v1/health",)
 
 
 def _is_throttled(method: str, path: str) -> bool:

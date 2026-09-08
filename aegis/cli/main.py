@@ -36,7 +36,7 @@ open = open  # noqa: A001  (intentional builtin re-export for the scan fixture l
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="aegis",
-        description="Aegis — unified security scanning and remediation platform",
+        description="Aegis — adversarial-ML red-team simulator (platform CLI)",
     )
     parser.add_argument(
         "--config", "-c",
@@ -45,8 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--dry-run", dest="global_dry_run", action="store_true",
-        help="Refuse destructive operations across all subcommands "
-             "(implies no --apply, no --push, no --open-pr).",
+        help="Refuse destructive operations across all subcommands.",
     )
     parser.add_argument(
         "--verbose", "-v", dest="global_verbose", action="store_true",
@@ -74,19 +73,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("init", help="Create a default aegis.yaml in the current directory")
 
     # scan
-    p_scan = sub.add_parser("scan", help="Scan a target URL")
+    p_scan = sub.add_parser("scan", help="Scan a target through a registered attack adapter")
     p_scan.add_argument("target_url", help="Target URL to scan")
-    p_scan.add_argument("--repo", help="Path to repository with Strix events", default=None)
-    p_scan.add_argument("--events", help="Path to Strix events.jsonl", default=None)
-    p_scan.add_argument("--demo", action="store_true", help="Use bundled demo finding fixture")
-    p_scan.add_argument("--use-strix", dest="use_strix", action="store_true",
-                        help="Invoke Strix as a subprocess against the target URL")
-    p_scan.add_argument("--scanner", default="strix",
-                        help="Registered scanner adapter to dispatch (default: strix)")
+    p_scan.add_argument("--scanner", required=True,
+                        help="Registered scanner / attack adapter to dispatch. There is "
+                             "no default: ML attack adapters register via aegis.ml.attacks "
+                             "(`aegis plugins list` shows third-party adapters).")
     p_scan.add_argument("--instruction", default=None,
-                        help="Free-text scope/rules-of-engagement instruction for Strix")
+                        help="Free-text scope/rules-of-engagement instruction")
     p_scan.add_argument("--timeout", type=int, default=1800,
-                        help="Strix subprocess timeout in seconds (default: 1800)")
+                        help="Adapter run timeout in seconds (default: 1800)")
     p_scan.add_argument("--i-understand-this-target-is-authorized",
                         dest="override_authorized", action="store_true",
                         help="Authorize a target outside the allowlist")
@@ -94,44 +90,6 @@ def build_parser() -> argparse.ArgumentParser:
     # findings
     p_findings = sub.add_parser("findings", help="List findings from a run")
     p_findings.add_argument("--run", help="Run ID (default: latest)", default=None)
-
-    # export
-    p_export = sub.add_parser("export", help="Export findings to external tool format")
-    p_export.add_argument("--format", required=True, choices=["vulnfixer"],
-                          help="Export format")
-    p_export.add_argument("--run", help="Run ID (default: latest)", default=None)
-
-    # fix
-    p_fix = sub.add_parser("fix", help="Remediate a specific finding")
-    p_fix.add_argument("finding_id", help="ID of the finding to fix")
-    p_fix.add_argument("--run", help="Run ID (default: latest)", default=None)
-    p_fix.add_argument("--repo", help="Repository path for code patch generation", default=None)
-    p_fix.add_argument("--patch", action="store_true",
-                       help="Generate a code patch via CAI CodeAgent")
-    p_fix.add_argument("--live", action="store_true",
-                       help="Harden the target via CAI BlueteamAgent")
-    p_fix.add_argument("--deps", action="store_true",
-                       help="Run Trivy and synthesize a version-bump patch for "
-                            "the specified dependency finding")
-    p_fix.add_argument("--apply", action="store_true",
-                       help="Actually write the patch to the repo (default: dry-run)")
-    p_fix.add_argument("--branch", default=None,
-                       help="Branch name (default: aegis/fix/<finding_id>)")
-    p_fix.add_argument("--push", action="store_true",
-                       help="git push -u origin <branch> before creating PR")
-    p_fix.add_argument("--open-pr", dest="open_pr", action="store_true",
-                       help="Create a GitHub PR via `gh pr create` after commit")
-    p_fix.add_argument("--rollback", action="store_true",
-                       help="git reset --hard <ref-before>; requires --repo and --ref-before")
-    p_fix.add_argument("--ref-before", dest="ref_before", default=None,
-                       help="Commit SHA to roll back to (used with --rollback)")
-    p_fix.add_argument("--use-golden-patch", dest="use_golden_patch", action="store_true",
-                       help="Use bundled golden patch fixture instead of calling CAI")
-    p_fix.add_argument("--allow-dirty", dest="allow_dirty", action="store_true",
-                       help="Allow patch on a dirty working tree")
-    p_fix.add_argument("--i-understand-this-target-is-authorized",
-                       dest="override_authorized", action="store_true",
-                       help="Authorize a target outside the allowlist (live hardening)")
 
     # verify
     p_verify = sub.add_parser("verify", help="Verify a finding by replaying its PoC")
@@ -147,36 +105,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--run", help="Run ID (default: latest)", default=None)
     p_report.add_argument("--html", action="store_true", help="Also emit report.html (default on)")
     p_report.add_argument("--no-html", action="store_true", help="Skip HTML emission")
-
-    # pipeline
-    p_pipeline = sub.add_parser("pipeline", help="Run full pipeline: scan -> findings -> export -> report")
-    p_pipeline.add_argument("target_url", help="Target URL to scan")
-    p_pipeline.add_argument("--repo", help="Path to repository with Strix events", default=None)
-    p_pipeline.add_argument("--events", help="Path to Strix events.jsonl", default=None)
-    p_pipeline.add_argument("--demo", action="store_true", help="Use bundled demo finding fixture")
-
-    # targets
-    p_targets = sub.add_parser("targets", help="Manage vulnerable-target containers")
-    targets_sub = p_targets.add_subparsers(dest="targets_action", required=True)
-    targets_sub.add_parser("list", help="List available target packs")
-    p_targets_up = targets_sub.add_parser("up", help="Start a target")
-    p_targets_up.add_argument("target_pack", help="Pack name (e.g. juice-shop, dvwa)")
-    p_targets_up.add_argument("--repo", default=None,
-                              help="Build from this source repo (source mode). "
-                                   "Without --repo a pinned upstream image is used.")
-    p_targets_up.add_argument("--port", type=int, default=None,
-                              help="Host port to bind (defaults per pack)")
-    p_targets_up.add_argument("--run", default=None,
-                              help="Reuse an existing run id (default: create new)")
-    p_targets_up.add_argument("--timeout", type=int, default=120,
-                              help="Readiness probe timeout in seconds")
-    p_targets_up.add_argument("--i-understand-this-target-is-authorized",
-                              dest="override_authorized", action="store_true",
-                              help="Allow non-loopback host bindings")
-    p_targets_down = targets_sub.add_parser("down", help="Stop a target")
-    p_targets_down.add_argument("target_pack", help="Pack name")
-    p_targets_down.add_argument("--run", default=None,
-                                help="Run id whose target/runtime.json should be updated")
 
     # status (Phase 3 M0.5)
     sub.add_parser("status", help="Print active mode, backends, and connectivity")
@@ -213,7 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
              "(default: report only)")
 
     # plugins (community adapter marketplace)
-    p_plugins = sub.add_parser("plugins", help="Inspect community scanner/agent adapters")
+    p_plugins = sub.add_parser("plugins", help="Inspect community scanner/attack adapters")
     plugins_sub = p_plugins.add_subparsers(dest="plugins_action", required=True)
     p_plugins_list = plugins_sub.add_parser(
         "list", help="List discovered third-party plugins (AEGIS_PLUGINS=1)")
@@ -257,38 +185,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_migrate.add_argument("--dry-run", dest="dry_run", action="store_true",
                            help="Print planned counts without writing")
 
-    # ci-gate (Phase 3 M5/M12)
-    p_ci = sub.add_parser("ci-gate",
-                          help="Evaluate findings against a CI policy and exit 0/1/2")
-    p_ci.add_argument("--findings-file", default=None,
-                      help="Path to a findings.json")
-    p_ci.add_argument("--run", default=None,
-                      help="Read findings.json from aegis_output/runs/<run>/")
-    p_ci.add_argument("--severity-threshold", default="high",
-                      choices=["critical", "high", "medium", "low"])
-    p_ci.add_argument("--max-findings", type=int, default=None)
-    p_ci.add_argument("--require-validated", action="store_true",
-                      help="Only count findings with validation_state=poc_passed")
-    p_ci.add_argument("--junit-xml", default=None,
-                      help="Path to write a JUnit XML report")
-
-    # demo
-    p_demo = sub.add_parser("demo", help="Opinionated end-to-end demo (defaults to fixture-assisted)")
-    p_demo.add_argument("--repo", required=True, help="Path to the target source repo to patch")
-    p_demo.add_argument("--target-pack", dest="target_pack", default="juice-shop",
-                        help="Target pack name (default: juice-shop)")
-    p_demo.add_argument("--live-strix", dest="live_strix", action="store_true",
-                        help="Invoke Strix instead of using the recorded fixture")
-    p_demo.add_argument("--live-llm", dest="live_llm", action="store_true",
-                        help="Call CAI CodeAgent instead of using the golden patch")
-    p_demo.add_argument("--use-golden-patch", dest="use_golden_patch", action="store_true",
-                        help="Force golden patch even when --live-llm is set")
-    p_demo.add_argument("--keep-target", dest="keep_target", action="store_true",
-                        help="Skip docker teardown so you can poke at the target afterwards")
-    p_demo.add_argument("--apply", action="store_true",
-                        help="Commit the patch to a new branch in --repo "
-                             "(default: dry-run; diff is persisted but the repo is not mutated)")
-
     return parser
 
 
@@ -296,23 +192,17 @@ def build_parser() -> argparse.ArgumentParser:
 # Command re-exports + dispatch table
 #
 # Each command body now lives in its own per-command sibling module
-# (``aegis.cli.scan``, ``aegis.cli.fix``, …), mirroring the already-extracted
-# ``status`` / ``audit`` / ``migrate`` / ``ci_gate`` siblings. The bodies are
+# (``aegis.cli.scan``, ``aegis.cli.verify``, …), mirroring the already-extracted
+# ``status`` / ``audit`` / ``migrate`` siblings. The bodies are
 # re-imported here so that ``aegis.cli.main.cmd_<name>`` keeps resolving for
-# external importers (``aegis.cli.__init__``), for ``cmd_pipeline``'s
-# in-namespace lookups, and for tests that import or monkeypatch the commands
-# at ``aegis.cli.main``.
+# external importers (``aegis.cli.__init__``) and for tests that import or
+# monkeypatch the commands at ``aegis.cli.main``.
 # ---------------------------------------------------------------------------
-from aegis.cli.demo import cmd_demo  # noqa: E402
 from aegis.cli.doctor import cmd_doctor  # noqa: E402
-from aegis.cli.export import cmd_export  # noqa: E402
 from aegis.cli.findings import cmd_findings  # noqa: E402
-from aegis.cli.fix import cmd_fix  # noqa: E402
 from aegis.cli.init import cmd_init  # noqa: E402
-from aegis.cli.pipeline import cmd_pipeline  # noqa: E402
 from aegis.cli.report import cmd_report  # noqa: E402
 from aegis.cli.scan import cmd_scan  # noqa: E402
-from aegis.cli.targets import cmd_targets  # noqa: E402
 from aegis.cli.verify import cmd_verify  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -324,13 +214,8 @@ _COMMANDS = {
     "init": cmd_init,
     "scan": cmd_scan,
     "findings": cmd_findings,
-    "export": cmd_export,
-    "fix": cmd_fix,
     "verify": cmd_verify,
     "report": cmd_report,
-    "pipeline": cmd_pipeline,
-    "demo": cmd_demo,
-    "targets": cmd_targets,
 }
 
 
@@ -355,11 +240,6 @@ def _cmd_migrate_dispatch(args: argparse.Namespace, config: AegisConfig) -> None
     cmd_migrate(args, config)
 
 
-def _cmd_ci_gate_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
-    from aegis.cli.ci_gate import cmd_ci_gate
-    cmd_ci_gate(args, config)
-
-
 def _cmd_evidence_pack_dispatch(args: argparse.Namespace, config: AegisConfig) -> None:
     from aegis.cli.evidence import cmd_evidence_pack
     cmd_evidence_pack(args, config)
@@ -382,7 +262,6 @@ def _cmd_tenants_dispatch(args: argparse.Namespace, config: AegisConfig) -> None
 _COMMANDS["status"] = _cmd_status_dispatch
 _COMMANDS["audit"] = _cmd_audit_dispatch
 _COMMANDS["migrate"] = _cmd_migrate_dispatch
-_COMMANDS["ci-gate"] = _cmd_ci_gate_dispatch
 _COMMANDS["evidence-pack"] = _cmd_evidence_pack_dispatch
 _COMMANDS["plugins"] = _cmd_plugins_dispatch
 _COMMANDS["tenants"] = _cmd_tenants_dispatch
@@ -405,23 +284,11 @@ def main(argv: list[str] | None = None) -> None:
     # Union the global flags with subcommand-specific equivalents.
     if getattr(args, "global_override_authorized", False):
         args.override_authorized = True
-    if getattr(args, "global_dry_run", False):
-        # Global dry-run refuses to mutate the repo or push. We do not
-        # override --apply here silently; instead we abort loudly so the
-        # user notices the conflict.
-        for mutating in ("apply", "push", "open_pr"):
-            if getattr(args, mutating, False):
-                _console._err(f"--dry-run cannot be combined with --{mutating.replace('_','-')}")
-                sys.exit(2)
-        # Refuse any subcommand that mutates Docker state.
-        if args.command == "targets":
-            action = getattr(args, "targets_action", None)
-            if action in ("up", "down", "rebuild"):
-                _console._err(f"--dry-run cannot be combined with `targets {action}` "
-                              f"(would mutate Docker state)")
-                sys.exit(2)
-        # demo without --apply is read-only; demo --apply was already caught
-        # above. Other mutating subcommands should add a similar gate.
+    # ``--dry-run`` is a global refusal flag. The pentest subcommands that
+    # carried the conflicting mutating flags (--apply / --push / --open-pr)
+    # were removed with the pentest domain, so there is nothing to cross-check
+    # here; subcommands read ``args.global_dry_run`` themselves when they
+    # grow a mutating step (the ML attack adapters' gated actions).
 
     if getattr(args, "global_verbose", False):
         _console._info(f"config={args.config or '<auto>'}")

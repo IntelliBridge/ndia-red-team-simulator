@@ -1,14 +1,23 @@
 SHELL := /bin/bash
 
-# Repo-root Makefile for redsim: the Python package in redsim/ plus the
-# Next.js app in web/ (@redsim/web), joined by pnpm-workspace.yaml.
+# Repo-root Makefile for redsim (Adversarial ML Red-Team Simulator): the
+# aegis Python package (aegis/: FastAPI API, Celery workers, alembic
+# migrations) plus the Next.js app in web/ (@redsim/web) and
+# packages/design-system (@redsim/design-system), joined by
+# pnpm-workspace.yaml. The full stack (Postgres, Redis, Keycloak, MinIO,
+# api, workers, web) runs from deploy/docker-compose.yml via `make up`.
 #
 # Recipes invoke the venv interpreter by path instead of assuming an
 # activated shell, so `make dev` works from a clean terminal.
 
-VENV ?= .venv
-PY   := $(VENV)/bin/python
-WEB  := @redsim/web
+VENV    ?= .venv
+PY      := $(VENV)/bin/python
+WEB     := @redsim/web
+# pyproject extras installed by `make install`. `llm` (private pythia-sdk
+# git dep), `docs`, `security` and `garak` are opt-in, for example:
+#   EXTRAS=api,worker,test,dev,ml,docs make install
+EXTRAS  ?= api,worker,test,dev,ml
+COMPOSE := docker compose -f deploy/docker-compose.yml
 
 # ---------------------------------------------------------------------
 # Setup
@@ -27,8 +36,17 @@ install:
 	  echo "==> creating $(VENV) from $$base ($$("$$base" --version 2>&1))"; \
 	  "$$base" -m venv "$(VENV)"; \
 	fi
-	$(PY) -m pip install --upgrade pip
-	$(PY) -m pip install -e ".[dev]"
+# The venv may have been created by uv, which ships no pip module. Prefer uv
+# when it is on PATH (--native-tls trusts the corporate TLS proxy's CA).
+# Otherwise bootstrap pip into the venv with ensurepip first.
+	@if command -v uv >/dev/null 2>&1; then \
+	  echo "==> uv pip install -e '.[$(EXTRAS)]'"; \
+	  uv pip install --native-tls --python $(PY) -e '.[$(EXTRAS)]'; \
+	else \
+	  echo "==> pip install -e '.[$(EXTRAS)]'"; \
+	  $(PY) -m ensurepip --upgrade && $(PY) -m pip install --upgrade pip && \
+	  $(PY) -m pip install -e '.[$(EXTRAS)]'; \
+	fi
 	pnpm install
 
 # Every target below needs an installed tree. Checking up front turns a
@@ -42,17 +60,48 @@ require-install:
 # Development
 # ---------------------------------------------------------------------
 #
-# Services run under `$(MAKE) -j` so that adding the FastAPI server, once
-# redsim/api exposes a real app, is a new dev-api target plus one word on
-# the -j line. Make forwards Ctrl-C to every child.
+# Services run under `$(MAKE) -j` (dev-api + dev-web). Adding another one is
+# a new target plus one word on the -j line. Make forwards Ctrl-C to every
+# child. Note that -j returns as soon as the first child exits, so a server
+# that dies on startup shows up as a partial teardown rather than an error.
+#
+# Environment for dev-api (read by aegis/api/settings.py, all optional):
+#   AEGIS_ENV=dev, AEGIS_AUTH_MODE=dev      defaults. dev auth accepts
+#                                            `Bearer dev:<email>`
+#   AEGIS_DB_URL                            postgresql+psycopg://... Unset
+#                                            is allowed: the app starts,
+#                                            /health reports
+#                                            db_configured=false, and any
+#                                            DB-backed route raises
+#                                            "AEGIS_DB_URL is not set"
+#   AEGIS_CORS_ORIGINS / AEGIS_WEB_ORIGIN   default http://localhost:3000
+#   AEGIS_BLOB_BACKEND=fs, AEGIS_OUTPUT_DIR  default ./aegis_output
+#   AEGIS_BROKER_URL / AEGIS_RESULT_BACKEND redis://... Needed only when
+#                                            a request enqueues Celery work
+# So dev-api boots with no Postgres or Redis running, but anything beyond
+# /health, /docs and /metrics needs `make up` (or at least postgres +
+# redis from it) and the variables above exported in the shell. Copy
+# .env.example to .env and `set -a; source .env; set +a` for a quick start.
+#
+# dev-worker is deliberately NOT on the default `dev` line: it needs Redis
+# (AEGIS_BROKER_URL, AEGIS_RESULT_BACKEND) and Postgres (AEGIS_DB_URL) up
+# front and the ml extra installed. Run it in a second terminal, or use
+# `make -j dev-api dev-web dev-worker` once the stack is up.
 
 dev: require-install
 	$(PY) -m pytest -q
+	@echo "==> api: http://localhost:8000  (/docs, /health)"
 	@echo "==> web: http://localhost:3000"
-	$(MAKE) -j dev-web
+	$(MAKE) -j dev-api dev-web
+
+dev-api: require-install
+	$(PY) -m uvicorn aegis.api.app:create_app --factory --reload --port 8000
 
 dev-web: require-install
 	pnpm --filter $(WEB) dev
+
+dev-worker: require-install
+	$(PY) -m celery -A aegis.workers.celery_app worker -Q scans,default -l info
 
 # ---------------------------------------------------------------------
 # Tests
@@ -63,27 +112,53 @@ test: require-install
 	pnpm --filter $(WEB) test
 
 test-cov: require-install
-	$(PY) -m pytest -q --cov=redsim --cov-report=term-missing
+	$(PY) -m pytest -q --cov=aegis --cov-report=term-missing
 
 lint: lint-py lint-web
 
 lint-py: require-install
-	$(VENV)/bin/ruff check redsim tests
+	$(VENV)/bin/ruff check aegis tests
 
+# web/ has no ESLint config yet, and `next lint` with no config stops to ask
+# how to set one up, which would hang `make lint` and `make check` in a
+# terminal and fail them in CI. Skip with a visible line until the config
+# lands (eslint, eslint-config-next and web/.eslintrc.json or
+# web/eslint.config.mjs). Once a config exists this guard runs the real lint.
 lint-web: require-install
-	pnpm --filter $(WEB) lint
+	@if ls web/.eslintrc* web/eslint.config.* >/dev/null 2>&1; then \
+	  pnpm --filter $(WEB) lint; \
+	else \
+	  echo "skip: lint-web (web/ has no ESLint config yet, so next lint would prompt to create one)"; \
+	fi
 
 typecheck: typecheck-py typecheck-web
 
 typecheck-py: require-install
-	$(VENV)/bin/mypy redsim
+	$(VENV)/bin/mypy aegis
 
 typecheck-web: require-install
 	pnpm --filter $(WEB) typecheck
 
-# Full local gate. Nothing in CI runs it: .github/workflows/deploy-aws.yml
-# only builds images and rolls ECS services.
+# Full local gate, mirroring the lint/typecheck/test jobs in
+# .github/workflows/aegis-ci.yml. deploy-aws.yml does not run it: that
+# workflow only builds images and rolls ECS services.
 check: lint typecheck test
+
+# ---------------------------------------------------------------------
+# Full stack (docker compose)
+# ---------------------------------------------------------------------
+#
+# deploy/docker-compose.yml brings up postgres, redis, keycloak, minio,
+# aegis-api (runs `alembic upgrade head` on start), aegis-worker (-Q scans),
+# aegis-worker-default (-Q default), aegis-beat, aegis-web (host port 3300)
+# and aegis-log-ingest. Optional profiles: --profile obs, obs-search, policy.
+# deploy/Makefile has the finer-grained helpers (seed, psql, logs, rebuild).
+
+up:
+	$(COMPOSE) up -d --build
+
+down:
+	$(COMPOSE) down
 
 # ---------------------------------------------------------------------
 # Docs (MkDocs Material)
@@ -108,9 +183,9 @@ docs-clean:
 	rm -rf site/
 
 .PHONY: install require-install \
-	dev dev-web \
+	dev dev-api dev-web dev-worker \
 	test test-cov \
 	lint lint-py lint-web \
 	typecheck typecheck-py typecheck-web \
-	check \
+	check up down \
 	docs-serve docs-build docs-build-strict docs-clean

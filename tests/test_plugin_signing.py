@@ -15,6 +15,9 @@ Exercises:
   back-compat).
 - ``aegis plugins list`` SIGNED column + ``aegis plugins sign`` round-trip.
 - The committed example's public key verifies the committed example ``.sig``.
+- The signature gate and the sandbox wrapper compose through the real eager
+  loader (signed -> registered as a ``SandboxedScanner``; unsigned -> nothing
+  registered).
 """
 
 from __future__ import annotations
@@ -115,7 +118,6 @@ def _write_keypair(tmp: Path) -> tuple[Path, Path]:
 
 class TestSignRoundTrip(unittest.TestCase):
     def setUp(self):
-        import tempfile
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
@@ -136,7 +138,6 @@ class TestSignRoundTrip(unittest.TestCase):
     def test_wrong_key_does_not_verify(self):
         sign_plugin_distribution(self.priv, "d", "1.0", fake_scanner_factory, self.tmp)
         # A foreign trusted key (distinct dir) -> signature does not verify.
-        import tempfile
         with tempfile.TemporaryDirectory() as d2:
             _, foreign_pub = _write_keypair(Path(d2))
             verifier = KeyringVerifier(
@@ -239,7 +240,6 @@ class TestVerifierToggle(unittest.TestCase):
 
 class TestLoaderEnforcement(unittest.TestCase):
     def setUp(self):
-        import tempfile
         self._tmp = tempfile.TemporaryDirectory()
         self.tmp = Path(self._tmp.name)
         self.addCleanup(self._tmp.cleanup)
@@ -340,7 +340,6 @@ class TestPluginsCli(unittest.TestCase):
         self.assertIn("fake-sig-scanner", out)
 
     def test_sign_then_verify_round_trip_via_cli(self):
-        import tempfile
 
         from aegis.cli.main import main
         with tempfile.TemporaryDirectory() as d:

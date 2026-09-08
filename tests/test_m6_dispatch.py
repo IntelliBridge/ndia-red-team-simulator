@@ -2,16 +2,17 @@
 
 Covers the seams finished in M6:
 
-  (a) ``start_scan`` with a non-Strix scanner routes through the registry
-      ``dispatch`` and maps the returned ``ScanResult`` into a ``ScanOutcome``;
-  (b) ``start_scan`` with ``scanner="strix"`` still delegates to ``run_strix``
-      with its original ``detail`` shape (no regression);
+  (a) ``start_scan`` routes every scanner through the registry ``dispatch``
+      and maps the returned ``ScanResult`` into a ``ScanOutcome``;
+  (b) an unregistered scanner surfaces a ``KeyError`` whose message names the
+      missing adapter and points at ``aegis.ml.attacks`` (the pentest engines
+      were removed; the ML attack adapters register in the same registry);
   (c) ``POST /v1/scans`` with an unregistered scanner is rejected with HTTP 400
       before any Run/Job row is created;
   (d) ``run_cli_scan`` falls back to an adapter's ``default_timeout`` when the
       caller leaves ``ScanOptions.timeout`` at its sentinel default.
 
-No scanner binary, broker, or DB is touched: ``dispatch`` / ``run_strix`` /
+No scanner binary, broker, or DB is touched: ``dispatch`` /
 ``subprocess.run`` are mocked at their boundaries.
 """
 
@@ -41,7 +42,7 @@ class TestStartScanDispatch(unittest.TestCase):
     def setUp(self):
         self.config = AegisConfig(target_allowlist=["localhost"])
 
-    def test_non_strix_scanner_dispatches_and_maps_result(self):
+    def test_scanner_dispatches_and_maps_result(self):
         state = _run_state()
         result = ScanResult(
             findings=[], adapter_name="semgrep", adapter_version="1.2.3",
@@ -74,7 +75,7 @@ class TestStartScanDispatch(unittest.TestCase):
         self.assertEqual(outcome.detail["duration_s"], 4.2)
         state.save_findings.assert_called_once_with(result.findings)
 
-    def test_non_strix_partial_success_when_findings_with_nonzero_exit(self):
+    def test_partial_success_when_findings_with_nonzero_exit(self):
         state = _run_state()
         finding = MagicMock()
         result = ScanResult(
@@ -91,7 +92,7 @@ class TestStartScanDispatch(unittest.TestCase):
         self.assertTrue(outcome.partial_success)
         self.assertEqual(outcome.return_code, 1)
 
-    def test_non_strix_error_marks_failure(self):
+    def test_error_marks_failure(self):
         state = _run_state()
         result = ScanResult(
             findings=[], adapter_name="semgrep", adapter_version="1",
@@ -108,46 +109,45 @@ class TestStartScanDispatch(unittest.TestCase):
         self.assertFalse(outcome.partial_success)
         self.assertEqual(outcome.error, "boom")
 
-    def test_strix_scanner_still_uses_run_strix(self):
-        from aegis.runners.strix_runner import StrixRunResult
+    def test_explicit_scanner_name_routes_through_registry(self):
+        # There is no default scanner: every caller names the adapter and the
+        # name is handed to the registry verbatim.
         state = _run_state()
-        strix_result = StrixRunResult(
-            success=True, partial_success=False, return_code=0,
-            findings=[], command=["strix", "--target", "localhost"],
-            log_path="/tmp/run/strix/log", events_path="/tmp/run/events.jsonl",
-            error=None,
+        result = ScanResult(
+            findings=[], adapter_name="fake-evasion", adapter_version="1",
+            command_str="fake-evasion", exit_code=0, duration_s=0.0, error=None,
         )
-        with patch("aegis.runners.strix_runner.run_strix",
-                   return_value=strix_result) as run_strix, \
-             patch("aegis.scanners.dispatch") as dispatch, \
+        with patch("aegis.scanners.dispatch", return_value=result) as dispatch, \
              patch("aegis.safety.authorize"):
             outcome = start_scan(
-                run_state=state, target="localhost", scanner="strix",
+                run_state=state, target="localhost", scanner="fake-evasion",
                 actor="cli:scan", config=self.config,
             )
-        run_strix.assert_called_once()
-        dispatch.assert_not_called()
+        self.assertEqual(dispatch.call_args[0][0], "fake-evasion")
         self.assertTrue(outcome.success)
-        self.assertEqual(outcome.scanner, "strix")
-        # Strix-specific detail shape is unchanged.
-        self.assertEqual(outcome.detail["command"], strix_result.command)
-        self.assertEqual(outcome.detail["log_path"], "/tmp/run/strix/log")
-        self.assertEqual(outcome.detail["events_path"], "/tmp/run/events.jsonl")
-        state.save_findings.assert_called_once_with([])
+        self.assertEqual(outcome.scanner, "fake-evasion")
 
-    def test_events_only_bypass_skips_dispatch_and_strix(self):
+    def test_start_scan_has_no_default_scanner(self):
+        import inspect
+        param = inspect.signature(start_scan).parameters["scanner"]
+        self.assertIs(param.default, inspect.Parameter.empty)
+        self.assertNotIn("use_strix", inspect.signature(start_scan).parameters)
+
+    def test_unregistered_scanner_raises_keyerror_naming_the_adapter(self):
+        # With no adapter registered, the live registry raises KeyError — an
+        # explicit failure, never a silent success or a faked result — and the
+        # message names the missing adapter and where the ML adapters register.
         state = _run_state()
-        with patch("aegis.runners.strix_runner.run_strix") as run_strix, \
-             patch("aegis.scanners.dispatch") as dispatch, \
-             patch("aegis.safety.authorize"):
-            outcome = start_scan(
-                run_state=state, target="localhost", scanner="semgrep",
-                actor="cli:scan", config=self.config, use_strix=False,
+        with patch("aegis.safety.authorize"), self.assertRaises(KeyError) as cm:
+            start_scan(
+                run_state=state, target="localhost",
+                scanner="no-such-adapter-m6",
+                actor="cli:scan", config=self.config,
             )
-        run_strix.assert_not_called()
-        dispatch.assert_not_called()
-        self.assertTrue(outcome.success)
-        self.assertEqual(outcome.detail, {"mode": "events-only"})
+        message = str(cm.exception)
+        self.assertIn("no-such-adapter-m6", message)
+        self.assertIn("aegis.ml.attacks", message)
+        self.assertIn("available", message)
 
 
 class TestRunCliScanTimeout(unittest.TestCase):

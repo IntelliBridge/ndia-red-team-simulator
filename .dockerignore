@@ -1,0 +1,23 @@
+# Keep the docker build context small. Every deploy/Dockerfile.* is built
+# with the repo root as context (docker build -f deploy/Dockerfile.api .),
+# and without this file the local .venv and node_modules trees (gigabytes)
+# are sent to the daemon on every build. Nothing listed here is copied by
+# any Dockerfile: the web image runs pnpm install itself and the Python
+# images pip install into their own site-packages.
+.git
+.venv
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+web/.next
+web/storybook-static
+site
+aegis_output
+.env
+.env.local
+.pytest_cache
+.mypy_cache
+.ruff_cache
+htmlcov
+.coverage

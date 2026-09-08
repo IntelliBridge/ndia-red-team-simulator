@@ -1,7 +1,8 @@
 """Effect classification — the spine of the unified human-in-the-loop gate.
 
-Every capability the platform can invoke (a scanner, an agent, a Kali tool)
-has an **effect class** describing its blast radius:
+Every capability the platform can invoke (a scanner / attack adapter, a tool an
+adapter drives, a gated action) has an **effect class** describing its blast
+radius:
 
 - ``read``     — no meaningful side effect on the target: recon/enumeration,
                  static analysis, dependency/SBOM scans, generating a diff or a
@@ -20,9 +21,11 @@ caller explicitly opts in (``execute=true`` / ``apply=true`` / ``open_pr=true``)
 **and** the actor holds the ``approver`` role. Otherwise it returns a reviewable
 *proposal* (an attack plan, a hardening plan, a diff) for a human to approve.
 
-This module is intentionally dependency-free (no imports from ``aegis.agents``
-/ ``aegis.api``) so both the agent registry and the tool layer can import it
-without a cycle.
+This module is intentionally dependency-free (no imports from the API or
+attack-adapter layers) so any layer can import it without a cycle. The
+domain/tool tables below are retained as the classification vocabulary the
+ML attack adapters reuse; the pentest agent/Kali registries that once
+populated them were removed with the pentest domain.
 """
 
 from __future__ import annotations
@@ -40,17 +43,15 @@ def requires_approval(effect: Effect | str) -> bool:
     return effect in _GATED
 
 
-# --- Agents -----------------------------------------------------------------
-# Default effect per registry ``Domain``. Per-agent overrides live in the
-# agent wiring table (e.g. an android-SAST agent is ``offensive`` by domain but
-# only reads bytecode → ``read``; a re-tester is ``audit`` by domain but
-# re-fires exploits to verify a fix → ``active``). An unknown domain is treated
-# as ``active`` so a mis-tagged or third-party agent fails *safe* (gated), never
-# open.
+# --- Domains ----------------------------------------------------------------
+# Default effect per capability ``Domain``. Per-capability overrides may narrow
+# this (e.g. a re-tester is ``audit`` by domain but re-fires an attack to verify
+# a fix → ``active``). An unknown domain is treated as ``active`` so a mis-tagged
+# or third-party capability fails *safe* (gated), never open.
 _DOMAIN_DEFAULT_EFFECT: dict[str, Effect] = {
     "offensive": "active",
     "defensive": "active",
-    "remediation": "read",   # produces a diff proposal; apply is gated in fixes.py
+    "remediation": "read",   # produces a proposal (diff / plan); applying it is the gated step
     "forensic": "read",
     "recon": "read",
     "audit": "read",
@@ -61,54 +62,27 @@ def domain_default_effect(domain: str | None) -> Effect:
     return _DOMAIN_DEFAULT_EFFECT.get(domain or "", "active")
 
 
-# --- Kali tools -------------------------------------------------------------
-# Effect per Kali tool name. Scanning / enumeration / local-only work is
-# ``read``; exploitation and credential brute-force are ``active``. An
-# unlisted tool defaults to ``active`` (fail-safe — an unclassified tool is
-# never silently treated as harmless).
-_KALI_TOOL_EFFECTS: dict[str, Effect] = {
-    "nmap": "read",
-    "nikto": "read",
-    "gobuster": "read",
-    "dirb": "read",
-    "enum4linux": "read",
-    "john": "read",
-    "sqlmap": "active",
-    "hydra": "active",
-    "metasploit": "active",
-    "wpscan": "active",
-}
+# --- Tools / adapters -------------------------------------------------------
+# Effect per capability *name* (a scanner / attack adapter, or a tool an adapter
+# invokes). Scanning / enumeration / local-only work is ``read``; attack or
+# state-changing work is ``active``. The table starts empty in this fork — the
+# pentest Kali-tool table that populated it was removed with the pentest
+# domain — and the adversarial-ML attack adapters register their entries here.
+# An unlisted name defaults to ``active`` (fail-safe — an unclassified
+# capability is never silently treated as harmless).
+_TOOL_EFFECTS: dict[str, Effect] = {}
 
 
-def kali_tool_effect(name: str) -> Effect:
-    return _KALI_TOOL_EFFECTS.get((name or "").strip().lower(), "active")
+def tool_effect(name: str | None) -> Effect:
+    """Authoritative ``name -> effect`` lookup; unknown or blank fails safe.
 
-
-# --- Unified tool effects ---------------------------------------------------
-# The full tool roster (Kali + scanners + CAI + OSINT) classifies its own
-# effects in ``aegis.tools.catalog``. ``tool_effect`` is the authoritative
-# lookup across *all* of them: it consults the catalog first, then falls back
-# to the Kali map (so a bare Kali name still resolves), and finally fails
-# *safe* to ``active``. The catalog is imported lazily to avoid an import
-# cycle (the catalog imports this module for ``Effect``/``kali_tool_effect``).
-
-
-def tool_effect(name: str) -> Effect:
-    """Authoritative effect for any platform tool name (catalog or Kali).
-
-    An unknown tool fails *safe* to ``active`` — an unclassified capability is
-    never silently treated as harmless.
+    Case-insensitive and whitespace-tolerant. A name with no entry (and an
+    empty / ``None`` name) is ``active`` so it stays gated.
     """
-    key = (name or "").strip()
+    key = (name or "").strip().lower()
     if not key:
         return "active"
-    try:
-        from aegis.tools.catalog import _EFFECT_BY_NAME
-    except Exception:  # noqa: BLE001 - catalog import must never break the gate
-        _EFFECT_BY_NAME = {}
-    if key in _EFFECT_BY_NAME:
-        return _EFFECT_BY_NAME[key]
-    return _KALI_TOOL_EFFECTS.get(key.lower(), "active")
+    return _TOOL_EFFECTS.get(key, "active")
 
 
 # --- Proposal plans ---------------------------------------------------------

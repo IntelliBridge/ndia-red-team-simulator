@@ -21,7 +21,6 @@ data:
   AEGIS_CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
   AEGIS_OIDC_ISSUER: {{ .Values.config.oidcIssuer | quote }}
   AEGIS_OIDC_JWKS_URL: {{ .Values.config.oidcJwksUrl | quote }}
-  AEGIS_KALI_URL: {{ .Values.config.kaliUrl | quote }}
   AEGIS_DISABLE_LLM: {{ .Values.config.disableLlm | quote }}
   # Web (Next.js) public config.
   NEXT_PUBLIC_AEGIS_API_URL: {{ .Values.config.webApiUrl | quote }}

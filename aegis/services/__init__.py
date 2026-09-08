@@ -6,7 +6,7 @@ Phase 4 v0.3.1 F6 split:
   against the supplied ``audit_writer``, persists Run+Job rows, and
   enqueues the Celery task. Called from API write routes and the CLI's
   ``--api`` dispatch.
-- **Execution** (``start_scan`` / ``generate_fix`` / ``verify``):
+- **Execution** (``start_scan`` / ``verify``):
   long-running. Called from Celery workers and (for backward compat)
   the offline CLI.
 
@@ -22,19 +22,15 @@ aegis.workers.tasks.* import …`` lines stay **function-level** inside the
 scope. See the mirror note in ``aegis.workers.tasks``.
 """
 
-from aegis.services.fixes import FixOutcome, create_fix_job, generate_fix
 from aegis.services.reports import ReportOutcome, render_reports
 from aegis.services.runs import CancelOutcome, cancel_run
 from aegis.services.scans import JobHandle, ScanOutcome, create_scan_job, start_scan
-from aegis.services.tools import ToolOutcome, run_kali_tool
 from aegis.services.verify import VerifyOutcome, create_verify_job, verify
 
 __all__ = [
     "JobHandle",
     "ScanOutcome", "create_scan_job", "start_scan",
-    "FixOutcome", "create_fix_job", "generate_fix",
     "VerifyOutcome", "create_verify_job", "verify",
     "CancelOutcome", "cancel_run",
     "ReportOutcome", "render_reports",
-    "ToolOutcome", "run_kali_tool",
 ]

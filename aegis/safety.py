@@ -8,8 +8,7 @@ gone. ``authorize()`` resolves its writer one of two ways:
   services and worker tasks — pass the writer ``resolve_writer`` selected
   (Postgres or JSONL). Every API write route takes this path.
 - **run_path-derived** (``run_path=``): offline / execution-half callers
-  (the CLI, the demo, ``start_scan`` / ``generate_fix`` / ``verify``)
-  pass the run directory; the safety layer opens a single-file
+  (the CLI, ``start_scan`` / ``verify``) pass the run directory; the safety layer opens a single-file
   ``JsonlAuditWriter`` at ``<run_path>/audit.jsonl``.
 
 Passing neither is a programmer error and raises ``ValueError`` — there
@@ -68,7 +67,7 @@ def _resolve_writer(writer: AuditWriter | None, run_path: Path | None) -> AuditW
 
     Explicit ``writer`` wins. Otherwise a ``run_path`` yields a single-file
     ``JsonlAuditWriter`` at ``<run_path>/audit.jsonl`` — the location
-    offline callers (CLI, demo, tests) expect. Passing neither is a
+    offline callers (CLI, tests) expect. Passing neither is a
     programmer error: there is no silent no-op audit destination.
     """
     if writer is not None:

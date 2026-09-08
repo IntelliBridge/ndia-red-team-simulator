@@ -21,12 +21,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
   type StageEntry,
-} from "@aegis/design-system";
+} from "@redsim/design-system";
 import {
   api,
   apiWsBase,
   cancelRun,
-  exportVulnfixerUrl,
   isCancellable,
   reportUrl,
   type Finding,
@@ -294,21 +293,6 @@ function ReportLinks({ runId }: { runId: string }) {
           <TooltipContent>{l.tip}</TooltipContent>
         </Tooltip>
       ))}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <a
-            href={exportVulnfixerUrl(runId)}
-            target="_blank"
-            rel="noreferrer"
-            className="text-primary underline"
-          >
-            Vulnfixer export
-          </a>
-        </TooltipTrigger>
-        <TooltipContent>
-          Structured JSON for the Vulnfixer remediation pipeline.
-        </TooltipContent>
-      </Tooltip>
     </div>
   );
 }

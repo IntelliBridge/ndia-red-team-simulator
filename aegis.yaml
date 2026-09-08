@@ -1,14 +1,9 @@
 # ===========================================================
-# Aegis Security Platform — Default Configuration
+# Aegis — Adversarial-ML Red-Team Simulator — Default Configuration
 # ===========================================================
-
-# Paths to local tool repositories
-strix_path: "./project_repos/strix"
-cai_path: "./project_repos/cai"
-vulnfixer_path: "./project_repos/vulnerability-fixer"
-
-# MCP-Kali server URL
-mcp_kali_url: "http://127.0.0.1:5000"
+# Keys for the removed pentest engines (Strix / CAI / MCP-Kali / vuln-fixer,
+# demo target packs, PR opening) are gone; see aegis/config.py for the full
+# list of supported keys and their env-var overrides.
 
 # Directory where Aegis writes scan results, reports, etc.
 output_dir: "./aegis_output"
@@ -23,15 +18,3 @@ target_allowlist:
   - "127.0.0.1"
   - "localhost"
   - "host.docker.internal"
-
-# Default target pack for `aegis demo`.
-target_pack: "juice-shop"
-
-# Pinned Juice Shop image used in scan-only mode.
-juice_shop_image_tag: "bkimminich/juice-shop:v17.3.0"
-
-# Optional explicit Strix CLI command (override discovery).
-# strix_command: "strix"
-
-# Phase-2 default: do not push branches or open PRs unless explicitly asked.
-enable_pr: false

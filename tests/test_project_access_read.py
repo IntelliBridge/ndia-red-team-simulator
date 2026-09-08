@@ -1,4 +1,4 @@
-"""Phase 4 v0.3.1 F12 — project-access on report / export / WebSocket.
+"""Phase 4 v0.3.1 F12 — project-access on report / WebSocket.
 
 A user with no membership on a run's project receives 403 (HTTP) or
 close 1008 (WebSocket). The same routes are also 404 for an unknown
@@ -103,16 +103,6 @@ class TestProjectAccessRead(unittest.TestCase):
             resp = client.get("/v1/runs/run-a/report.md")
         self.assertEqual(resp.status_code, 403)
         self.assertIn("no membership", resp.json()["detail"])
-
-    def test_export_403_when_no_membership(self):
-        app, session_cm = _build_app_with_sqlite()
-        outsider = CurrentUser(sub="u-outsider", email="o@x.com",
-                                project_memberships={"proj-b": "scanner"})
-        _override_user(app, outsider)
-        client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm):
-            resp = client.get("/v1/runs/run-a/exports/vulnfixer")
-        self.assertEqual(resp.status_code, 403)
 
     def test_report_404_when_run_unknown(self):
         app, session_cm = _build_app_with_sqlite()

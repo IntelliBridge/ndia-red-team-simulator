@@ -212,7 +212,12 @@ class TestVerifyTopLevel(unittest.TestCase):
 
 
 class TestDependencyRescan(unittest.TestCase):
-    """Dependency findings verify by re-running Trivy on the repo."""
+    """Dependency verification is unavailable in this build.
+
+    The pentest dependency-rescan engine (the Trivy runner) was removed with
+    the pentest domain, so a dependency finding now verifies as ``inconclusive``
+    with an explicit "engine unavailable" reason — never a silent success.
+    """
 
     def _dep(self, package="lodash", installed="4.17.20", fixed="4.17.21"):
         return AegisFinding(
@@ -226,80 +231,18 @@ class TestDependencyRescan(unittest.TestCase):
             installed_version=installed, fixed_version=fixed,
         )
 
-    def test_verified_when_cve_absent_after_rescan(self):
-        from aegis.runners.trivy_runner import TrivyRunResult
+    def test_dependency_verification_is_inconclusive_and_explicit(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = RunState(tmp, "r1")
             _write_runtime(state.run_path, mode="source", last_rebuild_at="t",
                            source_ref_before="a", source_ref_after="b")
-            empty_scan = TrivyRunResult(
-                success=True, return_code=0, findings=[], raw_json_path=None,
+            result = verify_finding(
+                self._dep(), run_state=state,
+                repo_path=Path(tmp), require_source_rebuild=False,
             )
-            with patch("aegis.runners.trivy_runner.run_trivy", return_value=empty_scan):
-                result = verify_finding(
-                    self._dep(), run_state=state,
-                    repo_path=Path(tmp), require_source_rebuild=False,
-                )
-            self.assertEqual(result.status, "verified")
-            self.assertEqual(result.strategy, "dependency_rescan")
-            self.assertIn("no longer reported", result.evidence["reason"])
-
-    def test_verified_when_installed_at_or_above_fixed(self):
-        from aegis.runners.trivy_runner import TrivyRunResult
-        with tempfile.TemporaryDirectory() as tmp:
-            state = RunState(tmp, "r1")
-            _write_runtime(state.run_path, mode="source", last_rebuild_at="t",
-                           source_ref_before="a", source_ref_after="b")
-            # Trivy still reports the package, but installed >= fixed
-            still_seen = TrivyRunResult(
-                success=True, return_code=0,
-                findings=[self._dep(installed="4.17.21")],
-                raw_json_path=None,
-            )
-            with patch("aegis.runners.trivy_runner.run_trivy", return_value=still_seen):
-                result = verify_finding(
-                    self._dep(installed="4.17.20"),  # original installed
-                    run_state=state, repo_path=Path(tmp),
-                    require_source_rebuild=False,
-                )
-            self.assertEqual(result.status, "verified")
-            self.assertIn(">=", result.evidence["reason"])
-
-    def test_still_vulnerable_when_version_below_fixed(self):
-        from aegis.runners.trivy_runner import TrivyRunResult
-        with tempfile.TemporaryDirectory() as tmp:
-            state = RunState(tmp, "r1")
-            _write_runtime(state.run_path, mode="source", last_rebuild_at="t",
-                           source_ref_before="a", source_ref_after="b")
-            unchanged = TrivyRunResult(
-                success=True, return_code=0,
-                findings=[self._dep(installed="4.17.20")],
-                raw_json_path=None,
-            )
-            with patch("aegis.runners.trivy_runner.run_trivy", return_value=unchanged):
-                result = verify_finding(
-                    self._dep(installed="4.17.20"),
-                    run_state=state, repo_path=Path(tmp),
-                    require_source_rebuild=False,
-                )
-            self.assertEqual(result.status, "still_vulnerable")
-
-    def test_inconclusive_when_trivy_fails(self):
-        from aegis.runners.trivy_runner import TrivyRunResult
-        with tempfile.TemporaryDirectory() as tmp:
-            state = RunState(tmp, "r1")
-            _write_runtime(state.run_path, mode="source", last_rebuild_at="t",
-                           source_ref_before="a", source_ref_after="b")
-            failed_scan = TrivyRunResult(
-                success=False, return_code=-1, findings=[], raw_json_path=None,
-                error="trivy not installed",
-            )
-            with patch("aegis.runners.trivy_runner.run_trivy", return_value=failed_scan):
-                result = verify_finding(
-                    self._dep(), run_state=state, repo_path=Path(tmp),
-                    require_source_rebuild=False,
-                )
             self.assertEqual(result.status, "inconclusive")
+            self.assertEqual(result.strategy, "dependency_rescan")
+            self.assertIn("unavailable", result.evidence["reason"])
 
 
 if __name__ == "__main__":

@@ -23,15 +23,18 @@ vi.mock("@/hooks/useRequireAuth", () => ({
 }));
 
 // targets calls api() directly for create() and the typed startScan()/
-// listAuthProfiles() helpers for scans + DAST auth profiles -> mock all.
+// listAuthProfiles()/listScanners() helpers for scans, DAST auth profiles and
+// the adapter roster -> mock all.
 const apiMock = vi.hoisted(() => vi.fn());
 const deleteTargetMock = vi.hoisted(() => vi.fn());
 const startScanMock = vi.hoisted(() => vi.fn());
 const listAuthProfilesMock = vi.hoisted(() => vi.fn());
+const listScannersMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/api", () => ({
   api: apiMock,
   startScan: startScanMock,
   listAuthProfiles: listAuthProfilesMock,
+  listScanners: listScannersMock,
   apiBase: "http://api.test",
   apiWsBase: "ws://api.test",
   deleteTarget: deleteTargetMock,
@@ -42,7 +45,7 @@ vi.mock("@/hooks/useRoles", () => ({ useRoles: useRolesMock }));
 
 // Render RoleGated/AlertDialog transparently so gating + the confirm action
 // stay observable in the DOM.
-vi.mock("@aegis/design-system", () => ({
+vi.mock("@redsim/design-system", () => ({
   RoleGated: ({ minRole, callerRole, children, fallback }: any) => {
     const rank: Record<string, number> = { scanner: 1, remediator: 2, approver: 3, admin: 4 };
     return (rank[callerRole] ?? 0) >= (rank[minRole] ?? 99)
@@ -85,15 +88,36 @@ function profile(over: Record<string, unknown> = {}) {
   };
 }
 
-// Key-aware SWR stub: the page issues two useSWR calls (targets list +
-// auth profiles when a DAST scanner is selected).
+// The adapter roster the page reads from GET /v1/scanners. No literal
+// adapter name is meaningful here: the pentest built-ins are gone and the
+// real list is whatever registered (an ML attack adapter or a signed plugin).
+const ROSTER = [
+  { name: "fake-static", capabilities: ["sast"] },
+  { name: "fake-dast", capabilities: ["dast"] },
+];
+
+// Key-aware SWR stub: the page issues three useSWR calls (targets list, the
+// scanner roster, and auth profiles when a dast-capable adapter is selected).
+// `scanners: null` models a roster that has not loaded yet (SWR data
+// undefined); `undefined` would just select the ROSTER default.
 function stubSWR({
   targets = [target()],
   profiles = [profile()],
-}: { targets?: unknown[]; profiles?: unknown[] } = {}) {
+  scanners = ROSTER,
+  scannersError,
+}: {
+  targets?: unknown[];
+  profiles?: unknown[];
+  scanners?: unknown[] | null;
+  scannersError?: Error;
+} = {}) {
   useSWRMock.mockImplementation((key: string | null) => {
     if (key?.startsWith("/v1/auth-profiles")) {
       return { data: profiles, error: undefined, mutate: vi.fn() };
+    }
+    if (key === "/v1/scanners") {
+      const data = scannersError || scanners === null ? undefined : scanners;
+      return { data, error: scannersError, mutate: vi.fn() };
     }
     return { data: { targets }, error: undefined, mutate: mutateMock };
   });
@@ -105,6 +129,7 @@ beforeEach(() => {
   deleteTargetMock.mockReset();
   startScanMock.mockReset();
   listAuthProfilesMock.mockReset();
+  listScannersMock.mockReset();
   mutateMock.mockReset();
   pushMock.mockReset();
   replaceMock.mockReset();
@@ -201,7 +226,7 @@ describe("TargetsPage", () => {
     expect(mutateMock).not.toHaveBeenCalled();
   });
 
-  it("startScan(): calls startScan without auth_profile_id and routes to the new run", async () => {
+  it("startScan(): sends the first registered adapter without auth_profile_id and routes to the new run", async () => {
     startScanMock.mockResolvedValue({ run_id: "run-99" });
     stubSWR({
       targets: [target({ id: "t-9", value: "https://scan.example", project_id: "p7" })],
@@ -213,10 +238,57 @@ describe("TargetsPage", () => {
     await waitFor(() => expect(startScanMock).toHaveBeenCalledTimes(1));
     expect(startScanMock).toHaveBeenCalledWith({
       target: "https://scan.example",
-      scanner: "trivy",
+      scanner: "fake-static",
       project_id: "p7",
     });
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/runs/run-99"));
+  });
+
+  it("scanner picker is populated from the roster, not a hardcoded list", () => {
+    render(h(TargetsPage));
+    const options = Array.from(
+      (screen.getByLabelText("Scanner") as HTMLSelectElement).options,
+    ).map((o) => o.value);
+    expect(options).toEqual(["fake-static", "fake-dast"]);
+    for (const removed of ["trivy", "zap", "nuclei", "strix"]) {
+      expect(options).not.toContain(removed);
+    }
+  });
+
+  it("empty roster: renders the no-adapter notice, disables Start scan and never calls startScan", () => {
+    stubSWR({ scanners: [] });
+    render(h(TargetsPage));
+
+    expect(screen.getByRole("status").textContent).toMatch(/No attack adapter is registered/);
+    expect(screen.getByRole("status").textContent).toMatch(/aegis\.ml\.attacks/);
+    const start = screen.getByRole("button", { name: "Start scan" }) as HTMLButtonElement;
+    expect(start.disabled).toBe(true);
+    expect((screen.getByLabelText("Scanner") as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.click(start);
+    expect(startScanMock).not.toHaveBeenCalled();
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("roster load failure: shows the unavailable notice and disables Start scan", () => {
+    stubSWR({ scannersError: new Error("roster-500") });
+    render(h(TargetsPage));
+
+    expect(screen.getByRole("status").textContent).toMatch(/Could not load the attack adapter roster/);
+    const start = screen.getByRole("button", { name: "Start scan" }) as HTMLButtonElement;
+    expect(start.disabled).toBe(true);
+    fireEvent.click(start);
+    expect(startScanMock).not.toHaveBeenCalled();
+  });
+
+  it("roster still loading: Start scan is disabled and nothing is sent", () => {
+    stubSWR({ scanners: null });
+    render(h(TargetsPage));
+
+    expect(screen.getByRole("status").textContent).toMatch(/Loading attack adapters/);
+    const start = screen.getByRole("button", { name: "Start scan" }) as HTMLButtonElement;
+    expect(start.disabled).toBe(true);
+    fireEvent.click(start);
+    expect(startScanMock).not.toHaveBeenCalled();
   });
 
   it("startScan(): surfaces the error panel and does not navigate on rejection", async () => {
@@ -264,13 +336,13 @@ describe("TargetsPage", () => {
     expect(mutateMock).not.toHaveBeenCalled();
   });
 
-  it("hides the auth profile select for non-DAST scanners", () => {
+  it("hides the auth profile select for adapters without the dast capability", () => {
     render(h(TargetsPage));
     expect(screen.getByLabelText("Scanner")).toBeTruthy();
     expect(screen.queryByLabelText("Authentication profile (optional)")).toBeNull();
   });
 
-  it("shows the auth profile select for zap and includes auth_profile_id in the scan", async () => {
+  it("shows the auth profile select for a dast-capable adapter and includes auth_profile_id in the scan", async () => {
     startScanMock.mockResolvedValue({ run_id: "run-42" });
     stubSWR({
       targets: [target({ id: "t-9", value: "https://scan.example", project_id: "p7" })],
@@ -278,7 +350,7 @@ describe("TargetsPage", () => {
     });
 
     render(h(TargetsPage));
-    fireEvent.change(screen.getByLabelText("Scanner"), { target: { value: "zap" } });
+    fireEvent.change(screen.getByLabelText("Scanner"), { target: { value: "fake-dast" } });
 
     const select = screen.getByLabelText("Authentication profile (optional)");
     expect(screen.getByText("Staging login (form)")).toBeTruthy();
@@ -288,24 +360,24 @@ describe("TargetsPage", () => {
     await waitFor(() => expect(startScanMock).toHaveBeenCalledTimes(1));
     expect(startScanMock).toHaveBeenCalledWith({
       target: "https://scan.example",
-      scanner: "zap",
+      scanner: "fake-dast",
       project_id: "p7",
       auth_profile_id: "ap-9",
     });
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/runs/run-42"));
   });
 
-  it("omits auth_profile_id for a DAST scanner when no profile is chosen", async () => {
+  it("omits auth_profile_id for a dast-capable adapter when no profile is chosen", async () => {
     startScanMock.mockResolvedValue({ run_id: "run-43" });
     render(h(TargetsPage));
 
-    fireEvent.change(screen.getByLabelText("Scanner"), { target: { value: "nuclei" } });
+    fireEvent.change(screen.getByLabelText("Scanner"), { target: { value: "fake-dast" } });
     fireEvent.click(screen.getByRole("button", { name: "Start scan" }));
 
     await waitFor(() => expect(startScanMock).toHaveBeenCalledTimes(1));
     expect(startScanMock).toHaveBeenCalledWith({
       target: "https://target.example",
-      scanner: "nuclei",
+      scanner: "fake-dast",
       project_id: "default",
     });
   });

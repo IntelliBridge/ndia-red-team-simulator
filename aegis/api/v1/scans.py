@@ -20,7 +20,10 @@ router = APIRouter(prefix="/scans", tags=["scans"])
 class StartScanBody(BaseModel):
     project_id: str | None = None
     target: str | None = None
-    scanner: str = "strix"
+    # No default scanner: the pentest default ("strix") was removed with the
+    # pentest domain. Callers name a registered adapter explicitly (see
+    # GET /v1/scanners for the roster).
+    scanner: str | None = None
     instruction: str | None = None
     # Authenticated DAST: id of a stored AuthProfile. Only the id travels
     # through admission; the worker resolves (decrypts) it at execution time.
@@ -46,6 +49,13 @@ def start(
     if not target:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="target required")
+    if not scanner:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=("scanner required: name a registered attack adapter "
+                    "(see GET /v1/scanners; adapters register via "
+                    "aegis.ml.attacks)"),
+        )
     from aegis.scanners import list_scanners
     if scanner not in list_scanners():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,

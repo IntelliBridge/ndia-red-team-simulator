@@ -39,11 +39,12 @@ class ScanOptions:
     instruction: str | None = None
     timeout: int = _DEFAULT_TIMEOUT
     scan_mode: str = "standard"
-    # Strix depth (v0.10.0). All optional and adapter-specific: an adapter that
-    # doesn't understand them ignores them, so the single-target default path is
-    # unchanged. ``targets`` augments ``target`` for multi-target sweeps;
-    # ``instruction_file`` is a path read in lieu of ``instruction``;
-    # ``scope_mode``/``diff_base`` control code-target diff scoping.
+    # Generic depth / scope knobs. All optional and adapter-specific: an adapter
+    # that doesn't understand them ignores them, so the single-target default
+    # path is unchanged. ``targets`` augments ``target`` for multi-target
+    # sweeps; ``instruction_file`` is a path read in lieu of ``instruction``;
+    # ``scope_mode``/``diff_base`` control code-target diff scoping. The worker
+    # forwards ``scan_mode`` / ``scope_mode`` from ``Job.detail`` verbatim.
     targets: list[str] | None = None
     instruction_file: str | None = None
     scope_mode: str = "auto"
@@ -54,12 +55,12 @@ class ScanOptions:
 class RunnerResult(Protocol):
     """Duck-typed shape of a runner result consumed by :meth:`ScanResult.from_runner`.
 
-    Both ``aegis.runners.strix_runner.StrixRunResult`` and
-    ``aegis.runners.trivy_runner.TrivyRunResult`` satisfy this without the
-    scanner layer importing the runner layer (which would invert the dependency:
-    runners must never import the scanner registry). ``command`` is optional —
-    ``TrivyRunResult`` has no command list, so the trivy adapter passes an
-    explicit ``command_str`` instead.
+    Any adapter's run result satisfies this without the scanner layer importing
+    the adapter layer (which would invert the dependency: adapters must never
+    import the scanner registry). ``command`` is optional — a runner with no
+    command list passes an explicit ``command_str`` instead. This is the seam
+    an adapter that delegates to a separate runner object (the adversarial-ML
+    attack adapters in ``aegis.ml.attacks``) uses to hand its result back.
     """
     findings: list[AegisFinding]
     return_code: int
@@ -87,16 +88,13 @@ class ScanResult:
         duration_s: float,
         command_str: str | None = None,
     ) -> ScanResult:
-        """Wrap a duck-typed runner result (Strix/Trivy) into a ``ScanResult``.
+        """Wrap a duck-typed runner result into a ``ScanResult``.
 
-        Collapses the verbatim re-wrap both delegating adapters performed:
-        ``findings``/``error`` pass straight through, ``exit_code`` is
-        ``result.return_code or 0`` (a non-zero rc is preserved; the strix
-        adapter already coalesced ``None``→0 and trivy's rc is always an int, so
-        this is byte-for-byte identical for both). ``command_str`` defaults to
-        ``" ".join(result.command or [])`` — the strix form — but accepts an
-        explicit override for runners with no ``command`` attribute (trivy passes
-        the literal ``"trivy fs"``).
+        The adapter contract for delegating adapters: ``findings``/``error``
+        pass straight through; ``exit_code`` is ``result.return_code or 0`` (a
+        non-zero rc is preserved, ``None`` coalesces to 0); ``command_str``
+        defaults to ``" ".join(result.command or [])`` but accepts an explicit
+        override for runners that carry no ``command`` list.
         """
         if command_str is None:
             command_str = " ".join(getattr(result, "command", None) or [])
@@ -372,13 +370,23 @@ def dispatch(name_or_capability: str,
              run_state: RunStateAPI,
              options: ScanOptions) -> ScanResult:
     """Run a registered scanner by name; otherwise pick the first scanner
-    that claims the given capability."""
+    that claims the given capability.
+
+    Raises ``KeyError`` when nothing matches. The message is deliberately
+    explicit: there is no built-in adapter in this fork (the pentest adapters
+    were removed), so it names the missing adapter, lists what *is* registered,
+    and points at where the adversarial-ML attack adapters register.
+    """
     if name_or_capability in _REGISTRY:
         return _REGISTRY[name_or_capability].scan(run_state, options)
     for adapter in _REGISTRY.values():
         if name_or_capability in adapter.capabilities:
             return adapter.scan(run_state, options)
-    raise KeyError(f"no scanner registered for {name_or_capability!r}")
+    raise KeyError(
+        f"no scanner adapter registered for {name_or_capability!r}; register an "
+        f"ML attack adapter (aegis.ml.attacks) or a signed plugin. "
+        f"available: {list_scanners()}"
+    )
 
 
 def _sandbox_wrap(adapter: ScannerAdapter, ep: object) -> ScannerAdapter:
