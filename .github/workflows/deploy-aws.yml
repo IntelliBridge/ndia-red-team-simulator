@@ -86,19 +86,30 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       - name: Roll ECS services to the new image
+        env:
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          ECS_SERVICE_API: ${{ vars.ECS_SERVICE_API }}
+          ECS_SERVICE_WEB: ${{ vars.ECS_SERVICE_WEB }}
         run: |
           set -euo pipefail
-          for svc in "${{ vars.ECS_SERVICE_API }}" "${{ vars.ECS_SERVICE_WEB }}"; do
+          # Guard: the job condition only checks ECS_CLUSTER, so fail loudly
+          # if no service is configured rather than reporting a false-positive
+          # green deploy that rolled nothing.
+          if [ -z "$ECS_SERVICE_API" ] && [ -z "$ECS_SERVICE_WEB" ]; then
+            echo "::error::ECS_CLUSTER is set but neither ECS_SERVICE_API nor ECS_SERVICE_WEB is configured; nothing to deploy." >&2
+            exit 1
+          fi
+          for svc in "$ECS_SERVICE_API" "$ECS_SERVICE_WEB"; do
             [ -n "$svc" ] || continue
             echo "Forcing new deployment for $svc"
             aws ecs update-service \
-              --cluster "${{ vars.ECS_CLUSTER }}" \
+              --cluster "$ECS_CLUSTER" \
               --service "$svc" \
               --force-new-deployment >/dev/null
           done
           echo "Waiting for services to stabilize..."
-          for svc in "${{ vars.ECS_SERVICE_API }}" "${{ vars.ECS_SERVICE_WEB }}"; do
+          for svc in "$ECS_SERVICE_API" "$ECS_SERVICE_WEB"; do
             [ -n "$svc" ] || continue
             aws ecs wait services-stable \
-              --cluster "${{ vars.ECS_CLUSTER }}" --services "$svc"
+              --cluster "$ECS_CLUSTER" --services "$svc"
           done
