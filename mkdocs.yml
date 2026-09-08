@@ -18,7 +18,7 @@ site_description: >-
   against what target, on whose authority, always has a verifiable answer.
 site_url: https://redsim-docs.example.com
 repo_name: redsim
-repo_url: https://__UPSTREAM_REDSIM_URL__
+repo_url: https://github.com/IntelliBridge/ndia-red-team-simulator
 edit_uri: edit/main/docs/
 
 docs_dir: docs
@@ -133,9 +133,16 @@ plugins:
 # readme_as_index.py reads ../README.md at build time and rewrites
 # its docs/X.md paths so the README renders cleanly as docs/index.md.
 # Single source of truth: README.md at the repo root.
+#
+# cross_tree_links.py rewrites relative links that escape docs/ (for
+# example ../specs/README.md from project-brief.md) to absolute GitHub
+# URLs when the target exists in the repo, so `mkdocs build --strict`
+# stays green without duplicating the Spec Kit tree into the site.
+# Links to files that exist nowhere are left alone and still fail strict.
 
 hooks:
   - hooks/readme_as_index.py
+  - hooks/cross_tree_links.py
 
 # `mkdocs serve` watches docs_dir + mkdocs.yml by default; tell it to
 # also rebuild when the README (rendered as index.md via the hook) or
@@ -155,6 +162,26 @@ watch:
 
 nav:
   - Home: index.md
+  - Product and planning:
+      - Project brief: project-brief.md
+      - Product spec (2026-09-08): superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md
+      - Master plan: plans/00-master-plan.md
+      - Phase plans:
+          - "P0 Contracts + API skeleton": plans/01-p0-contracts-api-skeleton.md
+          - "P1 Targets + assets": plans/02-p1-targets-assets.md
+          - "P2 Attacks + scoring": plans/03-p2-attacks-scoring.md
+          - "P3 Explain, recommend, ATLAS": plans/04-p3-explain-recommend-atlas.md
+          - "P4 Orchestration + API": plans/05-p4-orchestration-api.md
+          - "P5 Web UI": plans/06-p5-web-ui.md
+          - "P6 Interoperability": plans/07-p6-interoperability.md
+          - "P7 Infra + CD": plans/08-p7-infra-cd.md
+          - Execution context: plans/EXECUTION-CONTEXT.md
+      - Team backlog: team-backlog.md
+      - Spec-driven workflow: spec-driven-workflow.md
+      - Audit foundation contract: audit-foundation-contract.md
+      - Superseded:
+          - "Hackathon spec (v1)": adversarial-ml-redteam-spec.md
+          - "Redsim design note": superpowers/specs/2026-09-08-redsim-design.md
   - Architecture:
       - Overview: architecture/overview.md
       - Auth: architecture/auth.md
@@ -171,18 +198,19 @@ nav:
       - Testing: dev/testing.md
       - Frontend: dev/frontend.md
       - Extending Redsim: dev/extending.md
+      - CI pipeline: dev/ci.md
       - Editing the docs: dev/docs.md
   - Security:
       - Supply-chain integrity: security/supply-chain.md
-      - "Policy (SECURITY.md)": https://__UPSTREAM_REDSIM_URL__/blob/main/SECURITY.md
+      - "Policy (SECURITY.md)": https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/SECURITY.md
   - ADRs:
       - "0001 — Vendored submodules": adr/0001-vendored-submodules.md
       - "0002 — Registry seam + runners": adr/0002-registry-seam-and-runners.md
       - "0004 — Unified effect-class gate": adr/0004-unified-effect-class-gate.md
       - "0005 — Worker autoscaling + DR": adr/0005-worker-autoscaling-and-dr.md
       - "0008 — Nix reproducible builds": adr/0008-nix-reproducible-builds.md
-  - "Changelog ↗": https://__UPSTREAM_REDSIM_URL__/blob/main/CHANGELOG.md
-  - "Contributing ↗": https://__UPSTREAM_REDSIM_URL__/blob/main/CONTRIBUTING.md
+  - "Changelog ↗": https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CHANGELOG.md
+  - "Contributing ↗": https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CONTRIBUTING.md
 
 # ---------------------------------------------------------------------
 # Strictness — fail the build on broken refs so CI catches them.
@@ -200,6 +228,6 @@ extra:
   generator: false
   social:
     - icon: fontawesome/brands/github
-      link: https://__UPSTREAM_REDSIM_URL__
+      link: https://github.com/IntelliBridge/ndia-red-team-simulator
 copyright: >-
   Redsim is Apache-2.0. Bundled components keep their own licenses.

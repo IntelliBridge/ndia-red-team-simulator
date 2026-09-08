@@ -24,7 +24,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 # Cross-tree paths that live outside ``docs/`` and must be rewritten
 # to absolute GitHub URLs in the docs-site rendering.
 _CROSS_TREE = re.compile(
