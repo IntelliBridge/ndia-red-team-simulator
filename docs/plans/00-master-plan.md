@@ -19,8 +19,8 @@ filesystem store, a thread-pool, no auth, and no audit. That package was
 
 Every architectural assumption in v1 is overridden. The corrections are in
 sections 2 and 5. Two things we had **missed** and now cover: authentication
-(F001) and the audit chain (F008). One thing that was **dropped** in the
-consolidation: interoperability (see section 6).
+(F001) and the audit chain (F008). Interoperability is **adopted as Phase B2**,
+beyond the Phase A demo (see section 6).
 
 ## 1. Authoritative sources (in order)
 
@@ -32,15 +32,16 @@ consolidation: interoperability (see section 6).
 3. `specs/_shared/{architecture,decisions,analysis}.md` — shared contracts and
    the D001–D007 clarification register (D006, D007 still open).
 
-Note the stale files: the repo `CLAUDE.md` still describes the old `redsim/`
-world (filesystem, `redsim.api.app:create_app`, no Postgres/Celery). It is
-out of date after the restructure. Do not build against it.
+The repo `CLAUDE.md` is current after the team's standardization pass: it
+describes the aegis platform, the `aegis/ml/` vertical, and the naming rules
+(product name **redsim**; Python namespace `aegis`; web packages `@redsim/web`
+and `@redsim/design-system`; env `NEXT_PUBLIC_AEGIS_API_URL`). Read it.
 
 ## 2. Substrate correction (v1 → v2)
 
 | Concern | v1 assumption (wrong now) | v2 authoritative (aegis) |
 |---|---|---|
-| Package | `redsim/…` | `aegis/ml/…` (D7); "redsim" retired |
+| Package | `redsim/…` | `aegis/ml/…` (D7); the `redsim/` package is retired, but "redsim" stays the product name |
 | Persistence | filesystem `RunStore` on EFS | Postgres + RLS; run record as sha256 Artifact; `ml_campaigns` table; S3/MinIO for bytes (D1) |
 | Run progress | `run.json` per stage | `Run.stage_table` JSON column + Redis run-event channel |
 | Jobs | in-process thread pool `redsim/jobs.py` | Celery on Redis; admission→execution split; `aegis/workers/job_state.py` |
@@ -50,7 +51,7 @@ out of date after the restructure. Do not build against it.
 | Audit | none | hash-chained append-only audit + WORM to S3 (F008) |
 | Storage on AWS | EFS + RDS | RDS PostgreSQL 16 + ElastiCache Redis + **S3 (two buckets, one Object-Lock WORM); no EFS** |
 | LLM env | `REDSIM_LLM_MODEL` | `AEGIS_ML_LLM_MODEL`, via Pythia only |
-| Demo data | CIFAR-10 | `leibnitz-lab/military_vehicles` (image) + `lacg030175/UNSW-NB15` (tabular); CIFAR-10 is a CI fixture only (D3) |
+| Demo data | CIFAR-10 | `leibnitz-lab/military_vehicles` (image) + Kaggle `sid321axn/malicious-urls-dataset` (tabular); CIFAR-10 is a CI fixture only (D3) |
 
 ## 3. Scope (canonical Phase A)
 
@@ -79,7 +80,7 @@ delivers.
 | **WS2 Attacks, engine & scoring** | Dev B | M1, M3, M4, M6 | F003, F004 | `aegis/ml/attacks/`, `campaign.py`, `eval.py`, `scoring.py`; the `attack.run` Celery chain (sample→clean_eval→control→attack); MRI + severity. |
 | **WS3 Explain, recommend & findings** | Dev C | M2, M3, M6 | F005, F006 | `aegis/ml/explain/`, `recommend/{rules,narrative}.py`, `explain.run` / `harden.recommend` / `verify.replay` tasks, `Finding.schema_blob.ml` projection, dismissal + reviewer-notes routes. |
 | **WS4 API & campaign service** | Backend lead | M1–M6 | F004 | routers `aegis/api/v1/{models,attacks,datasets,defenses,ml_capabilities,artifacts,compare,ml_findings}.py` mounted on `aegis/api/app.py`; `aegis/services/ml_campaigns.py`; WS events channel. |
-| **WS5 Web UI** | Dev D | M5a, M5b | F005, F006, F007 UI | `@aegis/web` pages `/models`, `/models/[id]` launcher, 13-panel `/runs/[id]`, three-pane `/findings/[id]`; design-system `MriScorecard`, `DimensionBars`, `RobustnessCurve`, `MeasurementTable`, `ObservationCard`. |
+| **WS5 Web UI** | Dev D | M5a, M5b | F005, F006, F007 UI | `@redsim/web` pages `/models`, `/models/[id]` launcher, 13-panel `/runs/[id]`, three-pane `/findings/[id]`; design-system `MriScorecard`, `DimensionBars`, `RobustnessCurve`, `MeasurementTable`, `ObservationCard`. |
 | **WS6 Reports & comparison** | rotates | M3, M6 | F007 | extend `aegis/report.py` to render the ML run record + scorecard; `GET /v1/runs/{id}/compare`; report Artifact rows. |
 | **WS7 Infra, auth & deploy** | Dev D / lead | M7 | F001, F008 | ECS Fargate services (api, worker, beat, web, log-ingest) + ALB; RDS PostgreSQL 16; ElastiCache Redis; two S3 buckets (one Object-Lock); Secrets Manager; Keycloak on Fargate; activate the existing deploy pipeline. Reuse the audit chain (F008) already in aegis. |
 
@@ -117,19 +118,29 @@ wiring Keycloak on Fargate. These are the two features v1 missed entirely.
   `AEGIS_ML_LLM_MODEL`, `AEGIS_ML_WORK_DIR`. LLM calls go through
   `aegis/llm/pythia.py` under the aegis router and budget.
 
-## 6. Interoperability — dropped, decision needed
+## 6. Interoperability — adopted as Phase B2
 
-The interop work added to the old hackathon spec — Croissant adversarial-dataset
-export, ONNX ingest as an export path, MITRE ATLAS tagging, Palantir/Lattice —
-**does not appear anywhere in the canonical spec or in F001–F008.** The
-consolidation dropped it. Phase A has no dataset upload or export path; only
-model upload. ONNX survives solely as an ingest loader inside F002.
+The interop work is back in the canonical spec as **section 27,
+"Interoperability (Phase B2)"**, and milestone **B2** in section 23. It is
+adopted but sits **beyond Phase A**: specified, off by default, and not built.
+It covers Croissant/Parquet adversarial-dataset export and its consume side
+(ONNX models and evaluation slices from other teams), MITRE ATLAS technique
+tags on findings with a per-campaign coverage view, and env-selected platform
+pushes (Palantir Foundry primary; Anduril Lattice exploratory, blocked by the
+D3 "no mission-system connections" bound until an explicit decision resolves it).
 
-This matters because interoperability is a scored judging criterion. To keep it,
-it must be re-proposed into the product spec as a feature (a `F009` or an
-addition to F007), with the ATLAS technique added to `Finding.schema_blob.ml`
-and a dataset-export endpoint. Until then, treat interop as **deferred**, not
-planned. Flag this to the product owner.
+Concrete anchors for when B2 lands:
+
+- **Routes** (section 17.4, each returns `501` with `phase: "B"` until B2):
+  `POST /v1/runs/{id}/dataset`, `GET /v1/datasets/{id}`, and the consume-side
+  `POST /v1/datasets` (multipart).
+- **ATLAS tag** lives at `Finding.schema_blob.ml.atlas_technique` (section 5.7),
+  stamped from the attack registry: `AML.T0043 Craft Adversarial Data` for
+  `fgsm`/`pgd`, `AML.T0040 ML Model Inference API Access` for `hopskipjump`.
+- **Features**: the export is F007's B2 addition; the consume side is F002's.
+
+So this is **not planned for the Phase A demo**, but it is no longer dropped.
+`docs/plans/07-p6-interoperability.md` maps to Phase B2, not to nothing.
 
 ## 7. Integration waves and demo-critical order
 
@@ -149,7 +160,7 @@ slice) is the cut line for a demo.** Everything in Phase B waits behind Fargate.
 ## 8. Definition of done (canonical section 26)
 
 The demo runs live on ECS Fargate: a campaign started from `/models` against the
-bundled vehicle-imagery CNN and the UNSW-NB15 tabular model runs FGSM and PGD
+bundled vehicle-imagery CNN and the malicious-URLs tabular model runs FGSM and PGD
 with the noise control and ε sweep; `/runs/[id]` shows the MRI scorecard with
 its subscores, per-family table, and robustness curve; `/findings/[id]` shows
 the three panes and a measured ΔMRI after Verify; every action is on the audit

@@ -9,7 +9,7 @@
 > Substrate in one line: targets live under `aegis/ml/targets/`; assets are
 > seeded by the `aegis ml build-assets` CLI into the blob store under
 > `ml/assets/` and `bundled/`; the demo data is `leibnitz-lab/military_vehicles`
-> (image) and `lacg030175/UNSW-NB15` (tabular); CIFAR-10 is a CI fixture only;
+> (image) and Kaggle `sid321axn/malicious-urls-dataset` (tabular); CIFAR-10 is a CI fixture only;
 > uploads are admin-gated, ONNX or `state_dict` only, and loaded only in the
 > sandboxed worker.
 
@@ -33,9 +33,12 @@ Deliverables:
 - A live **image** target on `leibnitz-lab/military_vehicles` (7-class coarse
   task): a small CNN shipped as a `state_dict` plus an in-tree architecture, and
   exported to ONNX. `info().status == "available"`.
-- A live **tabular** target on `lacg030175/UNSW-NB15` (config `standard`, binary
-  `label` task): a bundled RandomForest or XGBoost tree ensemble with a
-  build-time differentiable **PGD surrogate**, wrapped for ART. `status ==
+- A live **tabular** target on Kaggle `sid321axn/malicious-urls-dataset`
+  (`malicious_phish.csv`, four `type` classes, a URL-maliciousness task): a
+  bundled RandomForest or XGBoost tree ensemble over **lexical URL features**
+  extracted by a `url_features` extractor, with a build-time differentiable
+  **PGD surrogate**, wrapped for ART. URL strings are data, never fetched or
+  rendered as links. `lacg030175/UNSW-NB15` is the fallback dataset. `status ==
   "available"`.
 - A **CIFAR-10** small CNN target kept for CI and fixtures only. It never appears
   in the demo catalog and never populates a `Finding`.
@@ -61,7 +64,7 @@ D8 step 4; ONNX upload is D8 step 5.
 
 - `aegis/ml/targets/architectures.py` — the in-tree architecture catalog.
 - `aegis/ml/targets/image_vehicles.py` — the live vehicle-imagery CNN target.
-- `aegis/ml/targets/tabular_unsw.py` — the live UNSW-NB15 tree-ensemble target.
+- `aegis/ml/targets/tabular_url.py` — the live malicious-URLs tree-ensemble target.
 - `aegis/ml/targets/image_cifar10.py` — the CIFAR-10 CNN, CI fixture only.
 - `aegis/ml/targets/endpoint.py` — the `not_implemented` endpoint / LLM stub.
 - `aegis/ml/targets/registry.py` — `TARGETS`, a `Registry[Target]`.
@@ -230,16 +233,17 @@ validation happens at write time.
    (stratified, seeded, reproducible), `predict_proba`, `art_classifier` (the
    `PyTorchClassifier` above), `torch_model`, `info`, and `manifest`.
 
-5. **Tabular target — build path.** In `aegis/cli/ml.py`, load
-   `lacg030175/UNSW-NB15` config `standard` at a pinned revision. Fit the
-   categorical encoder (`proto`, `service`, `state`) on the train split, record
-   its vocabularies. Train the RandomForest or XGBoost on the train split for the
+5. **Tabular target — build path.** In `aegis/cli/ml.py`, download
+   Kaggle `sid321axn/malicious-urls-dataset` (`malicious_phish.csv`) using a
+   Kaggle API token at build time only, pinned by source-file sha256. Run the
+   `url_features` extractor to build the all-continuous lexical feature set,
+   record its config. Train the RandomForest or XGBoost on the train split for the
    binary `label` task. Fit the **PGD surrogate** on the train split to the
    bundled model's predicted labels, record its kind, sha256, and clean-slice
    agreement rate. Bundle the full `standard` test split as the evaluation split,
    the encoder, the per-feature min/max, and the declared perturbable features.
 
-6. **Tabular target — runtime.** In `aegis/ml/targets/tabular_unsw.py`,
+6. **Tabular target — runtime.** In `aegis/ml/targets/tabular_url.py`,
    implement `load()`, `sample`, `predict_proba`, `art_classifier` (tree wrapper
    for HopSkipJump; surrogate exposed for WS2's PGD), `info`, and `manifest`.
    `torch_model()` raises `NotImplementedError` with a note that WS3 uses
@@ -323,7 +327,7 @@ Create:
 
 - `aegis/ml/targets/architectures.py`
 - `aegis/ml/targets/image_vehicles.py`
-- `aegis/ml/targets/tabular_unsw.py`
+- `aegis/ml/targets/tabular_url.py`
 - `aegis/ml/targets/image_cifar10.py`
 - `aegis/ml/targets/endpoint.py`
 - `aegis/ml/targets/registry.py`
@@ -412,12 +416,12 @@ Run `make test` and `make typecheck`; both must stay green. Do not rely on
 ## 8. Acceptance criteria / Definition of done
 
 - `aegis ml build-assets` runs offline-after-fetch, trains and exports the
-  vehicle CNN (`state_dict` + ONNX) and the UNSW-NB15 tree ensemble with a fixed
+  vehicle CNN (`state_dict` + ONNX) and the malicious-URLs tree ensemble with a fixed
   seed, writes each model plus `MANIFEST.json` plus its evaluation slice to the
   blob store under `ml/assets/` and `bundled/`, and registers each as a `Target`
   of kind `ml_model_artifact`, `status="available"`.
 - `from aegis.ml.targets.registry import TARGETS` returns a `Registry[Target]`
-  with the vehicle image target and the UNSW-NB15 tabular target
+  with the vehicle image target and the malicious-URLs tabular target
   (`status="available"`), the CIFAR-10 CNN (registered, `fixture_only`), and the
   endpoint stub (`status="not_implemented"` with a reason).
 - Each live target implements every `Target` member. `sample` is stratified,

@@ -4,7 +4,7 @@
 > authoritative contracts are the canonical spec
 > `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md` sections 17
 > and 18, and `specs/005-evidence-workbench/spec.md`. This file plans the
-> `@aegis/web` UI only. It builds no backend code.
+> `@redsim/web` UI only. It builds no backend code.
 
 # Phase P5 — Web UI (aegis substrate)
 
@@ -13,8 +13,8 @@ and M5b (model catalog UI). Features F002 (catalog), F005 (evidence workbench),
 F006 (findings actions), F007 (reports and compare, UI surface). Wave: Slice 1
 for `/models`, Slice 2 for the run page, Slice 3 for the finding page.
 
-The app is `@aegis/web`: the Next.js 14 app router under `web/`, Tailwind,
-`@aegis/design-system` from `packages/design-system`, and the `api()` client in
+The app is `@redsim/web`: the Next.js 14 app router under `web/`, Tailwind,
+`@redsim/design-system` from `packages/design-system`, and the `api()` client in
 `web/src/lib/api.ts`. The app already has auth: NextAuth with the Keycloak
 provider plus the dev-token path, the aegis session cookie minted in
 `web/src/server/`, and the hooks `useRequireAuth`, `useRoles`, `useRunEvents`.
