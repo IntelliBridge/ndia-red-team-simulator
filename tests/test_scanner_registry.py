@@ -1,4 +1,4 @@
-"""Scanner + agent registry smoke."""
+"""Scanner registry smoke."""
 
 import json
 import subprocess
@@ -8,8 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from aegis.agents import list_agents
-from aegis.scanners import dispatch, get, list_scanners
+from aegis.scanners import dispatch, list_scanners
 from aegis.scanners.registry import (
     ScanOptions,
     ScanResult,
@@ -33,16 +32,11 @@ def _finding(fid: str = "f1") -> AegisFinding:
 
 
 class TestScannerRegistry(unittest.TestCase):
-    def test_builtin_scanners_registered(self):
-        names = set(list_scanners())
-        for required in ("strix", "trivy", "semgrep", "nuclei"):
-            self.assertIn(required, names)
-
-    def test_capabilities_match_plan(self):
-        self.assertEqual(get("strix").capabilities, {"dast"})
-        self.assertEqual(get("trivy").capabilities, {"dependency"})
-        self.assertEqual(get("semgrep").capabilities, {"sast"})
-        self.assertEqual(get("nuclei").capabilities, {"dast"})
+    def test_registry_starts_without_builtin_adapters(self):
+        # The pentest scanner adapters were removed; the registry has no
+        # built-ins until an ML attack adapter (aegis.ml.attacks) registers.
+        for removed in ("strix", "trivy", "semgrep", "nuclei"):
+            self.assertNotIn(removed, set(list_scanners()))
 
     def test_dispatch_by_name(self):
         class _Mock:
@@ -67,25 +61,6 @@ class TestScannerRegistry(unittest.TestCase):
         result = dispatch("mock-dast", run_state=None,
                           options=ScanOptions(target="http://localhost"))
         self.assertEqual(result.adapter_name, "mock-dast")
-
-
-class TestAgentRegistry(unittest.TestCase):
-    def test_phase3_agents_wired(self):
-        agents = {a["name"]: a for a in list_agents()}
-        for wired in ("codeagent", "blueteam_agent", "bug_bounter",
-                      "red_teamer", "dfir", "retester", "reporter",
-                      "web_pentester"):
-            self.assertIn(wired, agents)
-            self.assertTrue(agents[wired]["wired"])
-
-    def test_phase4_agents_now_wired(self):
-        # v0.4.2 wired the formerly registered-only forensic/wireless agents;
-        # full dispatch coverage lives in tests/test_agent_registry.py.
-        agents = {a["name"]: a for a in list_agents()}
-        for name in ("memory_analysis", "network_traffic_analyzer",
-                     "reverse_engineering"):
-            self.assertIn(name, agents)
-            self.assertTrue(agents[name]["wired"])
 
 
 class TestCliVersion(unittest.TestCase):
@@ -279,65 +254,66 @@ class TestRunCliScanJsonl(unittest.TestCase):
 
 
 class TestScanResultFromRunner(unittest.TestCase):
-    """``ScanResult.from_runner`` collapses the verbatim re-wrap the strix and
-    trivy adapters performed on a duck-typed runner result, preserving the exact
-    field mapping (command_str / exit_code / error)."""
+    """``ScanResult.from_runner`` wraps a duck-typed runner result (the seam a
+    delegating adapter, e.g. an ML attack adapter in ``aegis.ml.attacks``, uses
+    to hand its result back), preserving the exact field mapping
+    (command_str / exit_code / error)."""
 
     @staticmethod
     def _runner(*, findings=None, return_code=0, error=None, command=...):
         attrs = dict(findings=findings or [], return_code=return_code, error=error)
-        # ``command=...`` (default) means "no command attribute" — the trivy
-        # shape; pass ``command=[...]`` for the strix shape.
+        # ``command=...`` (default) means "no command attribute" (a runner that
+        # is not a CLI wrapper); pass ``command=[...]`` for a CLI-style runner.
         if command is not ...:
             attrs["command"] = command
         return SimpleNamespace(**attrs)
 
-    def test_strix_shape_joins_command_and_coalesces_exit_code(self):
+    def test_command_list_is_joined_and_exit_code_coalesced(self):
         f = _finding()
         runner = self._runner(
             findings=[f], return_code=0, error=None,
-            command=["strix", "--target", "http://localhost"],
+            command=["fake-cli", "--target", "http://localhost"],
         )
         result = ScanResult.from_runner(
-            runner, adapter_name="strix", adapter_version="1.2.3",
+            runner, adapter_name="fake-cli", adapter_version="1.2.3",
             duration_s=4.2,
         )
         self.assertEqual(result.findings, [f])
-        self.assertEqual(result.adapter_name, "strix")
+        self.assertEqual(result.adapter_name, "fake-cli")
         self.assertEqual(result.adapter_version, "1.2.3")
-        self.assertEqual(result.command_str, "strix --target http://localhost")
+        self.assertEqual(result.command_str, "fake-cli --target http://localhost")
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(result.duration_s, 4.2)
         self.assertIsNone(result.error)
 
     def test_none_command_becomes_empty_string(self):
-        # StrixRunResult.command defaults to [] but be robust to None too.
+        # A runner whose ``command`` is None (not just []) still yields "".
         runner = self._runner(command=None)
         result = ScanResult.from_runner(
-            runner, adapter_name="strix", adapter_version="1", duration_s=0.0,
+            runner, adapter_name="fake-cli", adapter_version="1", duration_s=0.0,
         )
         self.assertEqual(result.command_str, "")
 
-    def test_explicit_command_str_override_for_trivy_shape(self):
-        # TrivyRunResult has no ``command`` attribute; the adapter supplies the
-        # literal "trivy fs" instead of deriving it.
+    def test_explicit_command_str_override_when_runner_has_no_command(self):
+        # A runner with no ``command`` attribute (e.g. an in-process library
+        # call); the adapter supplies a literal command_str instead.
         runner = self._runner(findings=[], return_code=0, error=None)
         self.assertFalse(hasattr(runner, "command"))
         result = ScanResult.from_runner(
-            runner, adapter_name="trivy", adapter_version="0.46.0",
-            duration_s=1.0, command_str="trivy fs",
+            runner, adapter_name="fake-lib", adapter_version="0.46.0",
+            duration_s=1.0, command_str="fake-lib scan",
         )
-        self.assertEqual(result.command_str, "trivy fs")
+        self.assertEqual(result.command_str, "fake-lib scan")
         self.assertEqual(result.exit_code, 0)
 
     def test_nonzero_exit_code_and_error_pass_through(self):
-        runner = self._runner(return_code=-1, error="trivy CLI not found")
+        runner = self._runner(return_code=-1, error="fake-lib not found")
         result = ScanResult.from_runner(
-            runner, adapter_name="trivy", adapter_version="0",
-            duration_s=0.0, command_str="trivy fs",
+            runner, adapter_name="fake-lib", adapter_version="0",
+            duration_s=0.0, command_str="fake-lib scan",
         )
         self.assertEqual(result.exit_code, -1)
-        self.assertEqual(result.error, "trivy CLI not found")
+        self.assertEqual(result.error, "fake-lib not found")
         self.assertEqual(result.findings, [])
 
 

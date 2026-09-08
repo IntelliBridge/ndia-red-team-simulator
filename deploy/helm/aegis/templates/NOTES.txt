@@ -15,7 +15,6 @@ Components:
   - worker      (Celery; no Service){{ if .Values.sandbox.enabled }} [gVisor: {{ .Values.sandbox.runtimeClassName }}]{{ end }}
   - web         (Service: {{ include "aegis.componentName" (dict "ctx" . "component" "web") }}:{{ .Values.web.service.port }})
   - log-ingest  (Service: {{ include "aegis.componentName" (dict "ctx" . "component" "log-ingest") }}:{{ .Values.logIngest.service.port }})
-  - kali        (Service: {{ include "aegis.componentName" (dict "ctx" . "component" "kali") }}:{{ .Values.kali.service.port }}){{ if .Values.sandbox.enabled }} [gVisor: {{ .Values.sandbox.runtimeClassName }}]{{ end }}
 
 Stateful deps (in-cluster when enabled):
   - postgres : {{ .Values.postgres.enabled }}
@@ -26,7 +25,7 @@ Stateful deps (in-cluster when enabled):
 {{- if .Values.sandbox.enabled }}
 
 Sandbox isolation is ON. gVisor ({{ .Values.sandbox.handler }}) MUST be
-installed on every node that schedules the worker / kali pods.
+installed on every node that schedules the worker pod.
 {{- end }}
 {{- if not .Values.ingress.enabled }}
 

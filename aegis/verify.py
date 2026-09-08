@@ -2,7 +2,9 @@
 
 DAST strategy: replay the PoC against the (rebuilt) running target.
 SAST strategy: grep the patched files for the original signature.
-Dependency strategy: stubbed — re-scan logic lands with M7.
+Dependency strategy: unavailable — the pentest re-scan engine (the Trivy
+runner) was removed with the pentest domain; the ML attack adapters
+(``aegis.ml.attacks``) will provide the replacement re-evaluation path.
 
 Every verify returns a structured ``VerifyResult`` and persists
 ``<run_path>/verify/<finding_id>.json`` plus before/after evidence under
@@ -238,91 +240,22 @@ def _verify_dependency(
     repo_path: Path | None,
     provenance: str,
 ) -> VerifyResult:
-    """Verify a dependency finding by rerunning Trivy on the repo.
+    """Dependency re-scan verification — engine unavailable in this build.
 
-    Verified when:
-      - the same CVE@package is no longer reported by Trivy, OR
-      - the package is still reported but its installed version is at-or-above
-        the previously-recorded fixed_version (i.e. fixed-by-upgrade).
-
-    Inconclusive when Trivy isn't available or fails. Still-vulnerable when
-    the same CVE@package is reported AND the installed version is still
-    below the fixed_version.
+    The pentest dependency-rescan engine (the Trivy runner) was removed with
+    the pentest domain. The adversarial-ML red-team vertical's attack adapters
+    (``aegis.ml.attacks``) will provide the equivalent re-evaluation path.
+    Until then this returns ``inconclusive`` with an explicit reason rather
+    than silently succeeding or faking a re-scan.
     """
-    from aegis.runners.trivy_runner import run_trivy
-
-    if repo_path is None:
-        return VerifyResult(
-            finding_id=finding.id, status="inconclusive",
-            strategy="dependency_rescan",
-            evidence={"reason": "repo_path required for dependency re-scan",
-                      "provenance": provenance},
-            verified_at=_now_iso(),
-        )
-
-    trivy = run_trivy(repo_path, run_id=run_state.run_id,
-                     output_dir=run_state.run_path / "verify" / "trivy")
-    if not trivy.success:
-        return VerifyResult(
-            finding_id=finding.id, status="inconclusive",
-            strategy="dependency_rescan",
-            evidence={"reason": f"trivy rescan failed: {trivy.error}",
-                      "provenance": provenance},
-            verified_at=_now_iso(),
-        )
-
-    fixed_target = _parse_semver(finding.fixed_version)
-    matches: list[dict[str, Any]] = []
-    for tf in trivy.findings:
-        same_package = (
-            (finding.package_name or "").lower() == (tf.package_name or "").lower()
-        )
-        same_cve = (
-            (finding.cve or "").lower() == (tf.cve or "").lower()
-            and (finding.cve or "")
-        )
-        if same_package and (same_cve or tf.id == finding.id):
-            matches.append({
-                "id": tf.id, "package": tf.package_name,
-                "installed": tf.installed_version,
-                "fixed_version_in_db": tf.fixed_version,
-            })
-
-    if not matches:
-        return VerifyResult(
-            finding_id=finding.id, status="verified",
-            strategy="dependency_rescan",
-            evidence={
-                "reason": "CVE no longer reported by Trivy after re-scan",
-                "rescanned_findings": len(trivy.findings),
-                "provenance": provenance,
-            },
-            verified_at=_now_iso(),
-        )
-
-    # Still present in scan — check whether the installed version meets/exceeds
-    # the previously-known fixed version.
-    if fixed_target is not None:
-        for hit in matches:
-            installed = _parse_semver(hit["installed"])
-            if installed is not None and installed >= fixed_target:
-                return VerifyResult(
-                    finding_id=finding.id, status="verified",
-                    strategy="dependency_rescan",
-                    evidence={
-                        "reason": (f"installed {hit['installed']} >= "
-                                   f"fixed {finding.fixed_version}"),
-                        "matches": matches, "provenance": provenance,
-                    },
-                    verified_at=_now_iso(),
-                )
-
     return VerifyResult(
-        finding_id=finding.id, status="still_vulnerable",
+        finding_id=finding.id, status="inconclusive",
         strategy="dependency_rescan",
         evidence={
-            "reason": "Trivy still reports the same CVE@package below fixed_version",
-            "matches": matches, "provenance": provenance,
+            "reason": ("dependency re-scan engine unavailable: the pentest "
+                       "Trivy runner was removed; the ML attack adapters will "
+                       "provide the replacement re-evaluation path"),
+            "provenance": provenance,
         },
         verified_at=_now_iso(),
     )

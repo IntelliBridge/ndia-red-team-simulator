@@ -234,13 +234,13 @@ class RateLimitScopeTest(unittest.TestCase):
             f"project bucket not principal-scoped: {project_keys}",
         )
 
-    def test_webhook_path_is_excluded(self) -> None:
-        client = TestClient(self._app_with("/v1/webhooks/github"),
-                            raise_server_exceptions=False)
-        for _ in range(USER_CAP + 5):
-            self.assertNotEqual(
-                client.post("/v1/webhooks/github").status_code, 429)
-        self.assertEqual(rl._BUCKETS, {})
+    def test_only_health_is_excluded_from_throttling(self) -> None:
+        # The GitHub-webhook prefix that used to be pre-exempted was removed
+        # with the pentest domain; no unauthenticated prefix is exempt now, so
+        # a write landing under /v1/webhooks/ is throttled like any other.
+        self.assertEqual(rl._THROTTLE_EXCLUDE, ("/v1/health",))
+        self.assertTrue(rl._is_throttled("POST", "/v1/webhooks/github"))
+        self.assertFalse(rl._is_throttled("POST", "/v1/health"))
 
     def test_x_aegis_user_header_does_not_partition_buckets(self) -> None:
         # Distinct spoofed X-Aegis-User values must share one (IP) bucket, so

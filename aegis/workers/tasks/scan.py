@@ -38,7 +38,16 @@ def scan_start(self: Task, job_id: str) -> dict[str, Any]:
         job = ctx.session.get(Job, job_id)
         detail = (job.detail if job else {}) or {}
         target = detail["target"]
-        scanner = detail.get("scanner", "strix")
+        scanner = detail.get("scanner")
+        if not scanner:
+            # Admission always records the scanner. There is no default engine
+            # to fall back to (the pentest default "strix" was removed with the
+            # pentest domain), so a Job without one fails explicitly — never a
+            # silently substituted adapter. task_context marks the job failed.
+            raise RuntimeError(
+                f"job {job_id} has no scanner in Job.detail; admission must "
+                f"name a registered attack adapter (aegis.ml.attacks)"
+            )
         instruction = detail.get("instruction")
         # Carried from admission: an off-allowlist target the caller explicitly
         # authorized must stay authorized through the worker re-check.

@@ -99,12 +99,14 @@ def delete_target(
     return target_id
 
 
-class TargetVerificationError(Exception):
-    """Raised when an ownership-verification check does not pass.
+class TargetVerificationUnavailable(NotImplementedError):
+    """Raised when target ownership verification is not available in this build.
 
-    The API maps this to 422 (the request was well-formed but the operator
-    has not yet proven control of the target). The message is operator-safe
-    — it never carries the verification secret.
+    The DNS-TXT / GitHub-App ownership-verification engine
+    (``aegis.services.target_verify``) was removed with the pentest domain.
+    The adversarial-ML red-team vertical does not verify target ownership;
+    targets are gated by the project allowlist alone. The API maps this to
+    501 Not Implemented so the failure is explicit, never faked.
     """
 
 
@@ -116,85 +118,22 @@ def verify_target(
     audit_writer: AuditWriter | None = None,
     config: AegisConfig | None = None,
 ) -> Target:
-    """Prove the operator controls a target, then mark it ``verified``.
+    """Ownership verification — unavailable in this build.
 
-    Dispatches on ``Target.kind``:
-
-    - ``url`` → a DNS TXT record on the host must carry the deterministic
-      ``expected_dns_token``.
-    - ``github_repo`` → the linked GitHub App installation must access the repo.
-    - ``image`` → unsupported (raises ``TargetVerificationError``).
-
-    On success: sets ``verified=True``, flushes, and emits a secret-free
-    ``target.verify`` audit event (mirroring ``create_target``: detail carries
-    kind + matched bool, never the token/secret). On failure: leaves
-    ``verified`` untouched and raises ``TargetVerificationError`` with the
-    reason. ``LookupError`` if the target is unknown.
-
-    Returns the (refreshed) ``Target`` on success; the verification ``method``
-    and ``detail`` are attached as ``target.verify_method`` /
-    ``target.verify_detail`` transient attributes so the API can echo them
-    without re-running the check.
+    The DNS-TXT / GitHub-App ownership-verification engine was removed with
+    the pentest domain, so this always raises
+    :class:`TargetVerificationUnavailable`. ``LookupError`` still fires first
+    for an unknown target so callers keep their 404 path.
     """
-    from aegis.config import load_config
     from aegis.db.models import Target
-    from aegis.services.target_verify import (
-        expected_dns_token,
-        verify_dns_txt,
-        verify_github_repo,
-    )
-
-    cfg = config or load_config()
 
     target = session.get(Target, target_id)
     if target is None:
         raise LookupError(f"target not found: {target_id}")
 
-    logger.info("verify_target start target_id=%s kind=%s", target_id, target.kind)
-    if target.kind == "url":
-        expected = expected_dns_token(target, config=cfg)
-        matched, detail = verify_dns_txt(target.value, expected)
-        method = "dns-txt"
-    elif target.kind == "github_repo":
-        matched, detail = verify_github_repo(target.value, target.installation_id)
-        method = "github-app"
-    elif target.kind == "image":
-        raise TargetVerificationError(
-            "image targets cannot be ownership-verified "
-            "(no DNS/GitHub ownership channel for a container image)"
-        )
-    else:
-        raise TargetVerificationError(
-            f"unsupported target kind for verification: {target.kind!r}"
-        )
-
-    if audit_writer is not None:
-        audit_writer.append(
-            action="target.verify",
-            actor=actor,
-            target=target.value,
-            allowlist_check="n/a",
-            override=False,
-            success=matched,
-            detail={
-                "actor": actor,
-                "target_id": target_id,
-                "kind": target.kind,
-                "method": method,
-                "matched": matched,
-            },
-            project_id=target.project_id,
-        )
-
-    if not matched:
-        logger.info("verify_target failed target_id=%s method=%s", target_id, method)
-        raise TargetVerificationError(detail)
-
-    logger.info("verify_target verified target_id=%s method=%s", target_id, method)
-    target.verified = True
-    session.flush()
-    # Transient attributes for the API to echo (not persisted columns).
-    target.verify_method = method
-    target.verify_detail = detail
-    verified: Target = target
-    return verified
+    logger.info("verify_target unavailable target_id=%s kind=%s",
+                target_id, target.kind)
+    raise TargetVerificationUnavailable(
+        "target ownership verification is unavailable: the DNS/GitHub "
+        "ownership-verification engine was removed with the pentest domain"
+    )

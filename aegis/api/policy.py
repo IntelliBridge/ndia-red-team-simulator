@@ -10,6 +10,17 @@ from aegis.api.auth import CurrentUser
 
 
 class Action(str, Enum):
+    """RBAC action vocabulary.
+
+    Only SCAN_START / VERIFY_REPLAY / TARGET_MANAGE / AUTH_PROFILE_MANAGE /
+    AUDIT_VERIFY / RUN_CANCEL have live callers in this fork. The agent / fix /
+    tool / ticket actions are reserved vocabulary: they are the ``remediator`` /
+    ``approver``-tier rungs the effects gate (``aegis.effects``) refers to and
+    the ML attack adapters' gated actions will reuse. They are mirrored
+    verbatim in ``deploy/opa/aegis-authz.rego`` and
+    ``deploy/cedar/aegis-policy.cedar`` — change all three together.
+    """
+
     SCAN_START = "scan.start"
     AGENT_RUN = "agent.run"
     AGENT_EXECUTE = "agent.execute"

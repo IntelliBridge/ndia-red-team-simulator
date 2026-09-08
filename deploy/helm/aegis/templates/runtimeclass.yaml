@@ -1,8 +1,8 @@
 {{/*
 gVisor RuntimeClass for sandboxed (untrusted) tool execution.
 
-Rendered only when sandbox.enabled=true. The worker + kali Deployments set
-`runtimeClassName: {{ .Values.sandbox.runtimeClassName }}` so their pods run
+Rendered only when sandbox.enabled=true. The worker Deployment sets
+`runtimeClassName: {{ .Values.sandbox.runtimeClassName }}` so its pod runs
 under the gVisor `runsc` runtime instead of the default OCI runtime.
 
 PREREQUISITE: gVisor MUST be installed on every node that schedules these
