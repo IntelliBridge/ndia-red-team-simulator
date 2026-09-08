@@ -1,9 +1,9 @@
-# Dockerfile for @aegis/web (Next.js 14).
+# Dockerfile for @redsim/web (Next.js 14).
 #
-# Builds against the pnpm workspace at the repo root (v0.4.0 F16),
-# so @aegis/web and @aegis/design-system are linked the same way
-# they are in dev. ``docker build`` MUST be invoked from the repo
-# root with ``-f deploy/Dockerfile.web .``.
+# Builds against the pnpm workspace at the repo root, so @redsim/web and
+# @redsim/design-system are linked the same way they are in dev.
+# ``docker build`` MUST be invoked from the repo root with
+# ``-f deploy/Dockerfile.web .``.
 
 FROM node:20-bookworm-slim AS builder
 
@@ -12,10 +12,10 @@ WORKDIR /app
 # Extra CA trust for corporate proxies. Debian base avoids the alpine
 # chicken/egg where apk can't reach its mirrors until the cert is trusted.
 # The certs/ directory is gitignored — empty in CI, populated locally.
-COPY deploy/certs/ /usr/local/share/ca-certificates/aegis-extra/
+COPY deploy/certs/ /usr/local/share/ca-certificates/redsim-extra/
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
-    && find /usr/local/share/ca-certificates/aegis-extra/ -type f \( -name "*.pem" -o -name "*.crt" \) \
+    && find /usr/local/share/ca-certificates/redsim-extra/ -type f \( -name "*.pem" -o -name "*.crt" \) \
          -exec sh -c 'cp "$1" "/usr/local/share/ca-certificates/$(basename "${1%.*}").crt"' _ {} \; \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -29,20 +29,20 @@ RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
 # Workspace manifest + lockfile first, for layer cache efficiency.
 COPY pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY web/package.json ./web/
-COPY project_repos/design-system/package.json ./project_repos/design-system/
+COPY packages/design-system/package.json ./packages/design-system/
 
-# Frozen install of the workspace. Both @aegis/web and
-# @aegis/design-system land in their workspace locations; design-
+# Frozen install of the workspace. Both @redsim/web and
+# @redsim/design-system land in their workspace locations; design-
 # system's source is then copied below.
-RUN pnpm install --frozen-lockfile --filter @aegis/web...
+RUN pnpm install --frozen-lockfile --filter @redsim/web...
 
 # Now the source. Two trees, because the workspace links them.
 COPY web/ ./web/
-COPY project_repos/design-system/ ./project_repos/design-system/
+COPY packages/design-system/ ./packages/design-system/
 
-# NEXT_PUBLIC env values come from the compose stack at run-time;
-# tolerate their absence at build time.
-RUN pnpm --filter @aegis/web build || true
+# NEXT_PUBLIC env values come from the runtime env; tolerate their
+# absence at build time.
+RUN pnpm --filter @redsim/web build || true
 
 # --------------------------------------------------------------------
 # Runtime
@@ -61,7 +61,6 @@ EXPOSE 3000
 # Start `next` directly via the workspace-local binary symlink. We
 # stay in /app/web so Next finds its build output at ./.next; no
 # pnpm needed at runtime (the runtime stage doesn't carry the
-# corporate CA bundle, so corepack would fail trying to download
-# pnpm).
+# corporate CA bundle, so corepack would fail trying to download pnpm).
 WORKDIR /app/web
 CMD ["./node_modules/.bin/next", "start", "-p", "3000"]
