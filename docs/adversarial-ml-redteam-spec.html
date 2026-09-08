@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Adversarial ML Red-Team Simulator — Spec</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      white-space: pre-wrap;
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <style>
+    :root{--fg:#1a1f2b;--bg:#ffffff;--muted:#5b6474;--accent:#0b5cad;--border:#e2e6ee;--code-bg:#f5f7fa;}
+    @media (prefers-color-scheme: dark){:root{--fg:#e6e9f0;--bg:#12151c;--muted:#9aa4b6;--accent:#6db3ff;--border:#2a3140;--code-bg:#1b2029;}}
+    html{scroll-behavior:smooth}
+    body{max-width:900px;margin:0 auto;padding:48px 28px 120px;font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--fg);background:var(--bg);}
+    h1,h2,h3{line-height:1.25;font-weight:650}
+    h1{font-size:2rem;border-bottom:2px solid var(--border);padding-bottom:.3em}
+    h2{font-size:1.4rem;margin-top:2.2em;border-bottom:1px solid var(--border);padding-bottom:.25em}
+    h3{font-size:1.12rem;margin-top:1.6em}
+    a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+    blockquote{border-left:3px solid var(--accent);margin:1em 0;padding:.4em 1em;color:var(--muted);background:var(--code-bg)}
+    code{background:var(--code-bg);padding:.15em .4em;border-radius:4px;font-size:.9em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+    pre{background:var(--code-bg);padding:16px;border-radius:8px;overflow-x:auto;border:1px solid var(--border)}
+    pre code{background:none;padding:0}
+    table{border-collapse:collapse;width:100%;margin:1.2em 0;font-size:.93em;display:block;overflow-x:auto}
+    th,td{border:1px solid var(--border);padding:8px 12px;text-align:left;vertical-align:top}
+    th{background:var(--code-bg);font-weight:650}
+    tr:nth-child(even) td{background:color-mix(in srgb,var(--code-bg) 45%,transparent)}
+    #TOC{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:12px 20px;margin:1.5em 0;font-size:.92em}
+    #TOC ul{margin:.3em 0}
+    hr{border:none;border-top:1px solid var(--border);margin:2em 0}
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Adversarial ML Red-Team Simulator — Spec</h1>
+</header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#adversarial-ml-red-team-simulator--hackathon-spec"
+id="toc-adversarial-ml-red-team-simulator--hackathon-spec">Adversarial
+ML Red-Team Simulator — Hackathon Spec</a>
+<ul>
+<li><a href="#1-goal" id="toc-1-goal">1. Goal</a></li>
+<li><a href="#2-why-reuse-aegis" id="toc-2-why-reuse-aegis">2. Why reuse
+Aegis</a></li>
+<li><a href="#3-scope-and-phasing" id="toc-3-scope-and-phasing">3. Scope
+and phasing</a></li>
+<li><a href="#4-domain-model-mapping" id="toc-4-domain-model-mapping">4.
+Domain model mapping</a></li>
+<li><a href="#5-architecture" id="toc-5-architecture">5.
+Architecture</a></li>
+<li><a href="#6-attack-catalog-art" id="toc-6-attack-catalog-art">6.
+Attack catalog (ART)</a></li>
+<li><a href="#7-explainability-shap" id="toc-7-explainability-shap">7.
+Explainability (SHAP)</a></li>
+<li><a href="#8-hardening-recommendations"
+id="toc-8-hardening-recommendations">8. Hardening
+recommendations</a></li>
+<li><a href="#9-api-surface" id="toc-9-api-surface">9. API
+surface</a></li>
+<li><a href="#10-web-ui" id="toc-10-web-ui">10. Web UI</a></li>
+<li><a href="#11-aws-deployment-ecs-fargate"
+id="toc-11-aws-deployment-ecs-fargate">11. AWS deployment (ECS
+Fargate)</a></li>
+<li><a href="#12-security-and-trust-notes"
+id="toc-12-security-and-trust-notes">12. Security and trust
+notes</a></li>
+<li><a href="#13-build-sequence-and-milestones"
+id="toc-13-build-sequence-and-milestones">13. Build sequence and
+milestones</a></li>
+<li><a href="#14-demo-script-target" id="toc-14-demo-script-target">14.
+Demo script (target)</a></li>
+<li><a href="#15-open-risks" id="toc-15-open-risks">15. Open
+risks</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="adversarial-ml-red-team-simulator--hackathon-spec">Adversarial
+ML Red-Team Simulator — Hackathon Spec</h1>
+<blockquote>
+<p>Automated red-team simulator for DoD AI models. Upload or connect a
+model. Generate adversarial attacks with ART. Explain each failure with
+SHAP. Output natural-language hardening recommendations. Prove the whole
+trail on the Aegis audit chain.</p>
+</blockquote>
+<p>Status: draft v0.1. Owner: hackathon team. Base: this Aegis fork
+(<code>IntelliBridge/ndia-red-team-simulator</code>).</p>
+<hr />
+<h2 id="1-goal">1. Goal</h2>
+<p>Build a web tool that stress-tests a machine-learning model before
+deployment. A user selects a model, triggers an adversarial attack, and
+views the SHAP explanation and the mitigation recommendations side by
+side.</p>
+<p>The tool answers three questions for each model:</p>
+<ol type="1">
+<li><strong>Can it be fooled?</strong> Generate adversarial examples
+that flip predictions.</li>
+<li><strong>Why did it fail?</strong> Use SHAP to show which features or
+pixels drove the wrong output.</li>
+<li><strong>How do we fix it?</strong> Emit natural-language hardening
+steps, scored by expected robustness gain.</li>
+</ol>
+<h2 id="2-why-reuse-aegis">2. Why reuse Aegis</h2>
+<p>Aegis already ships the platform we need for the loop. We add one new
+vertical instead of building infrastructure from scratch. We reuse:</p>
+<table>
+<thead>
+<tr>
+<th>Aegis capability</th>
+<th>Reuse for the ML red-team</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>FastAPI + Celery + Postgres + Redis</td>
+<td>Attack jobs run async on workers.</td>
+</tr>
+<tr>
+<td>Hash-chained audit log (WORM to S3)</td>
+<td>Every attack, explanation, and model access is recorded and
+verifiable.</td>
+</tr>
+<tr>
+<td>RBAC + Postgres row-level security</td>
+<td>Cross-org tenant isolation for model owners.</td>
+</tr>
+<tr>
+<td><code>Run</code> / <code>Job</code> / <code>Finding</code> /
+<code>Artifact</code> models</td>
+<td>Map directly to campaigns, attacks, vulnerabilities, and SHAP
+outputs.</td>
+</tr>
+<tr>
+<td>Scanner registry + capability vocabulary</td>
+<td>ART attacks register the same way scanner adapters do.</td>
+</tr>
+<tr>
+<td>Verify-after-fix pattern (<code>verify.replay</code>)</td>
+<td>Re-run the attack after hardening to prove the gain.</td>
+</tr>
+<tr>
+<td>Next.js web + design system + command palette</td>
+<td>Extend with model and attack pages.</td>
+</tr>
+<tr>
+<td>Helm chart / container images</td>
+<td>Adapt for the ECS Fargate target.</td>
+</tr>
+<tr>
+<td>Per-task LLM routing + budget caps</td>
+<td>Drive the natural-language recommendation writer.</td>
+</tr>
+</tbody>
+</table>
+<p>The core insight: Aegis red-teams <strong>code and services</strong>.
+This vertical red-teams <strong>models</strong>. The lifecycle
+(discover, exploit, explain, remediate, verify) is identical.</p>
+<h2 id="3-scope-and-phasing">3. Scope and phasing</h2>
+<p>The team chose all four modalities and both ingest paths. We phase
+the build so the demo-day critical path is never at risk.</p>
+<h3 id="phase-a--demo-critical-path-must-land">Phase A — demo-critical
+path (must land)</h3>
+<ul>
+<li><strong>Modalities:</strong> image classifier (CV) and tabular
+classifier.</li>
+<li><strong>Ingest:</strong> white-box artifact upload plus 3 bundled
+sample models.</li>
+<li><strong>Attacks:</strong> FGSM and PGD (image); PGD and
+boundary/HopSkipJump (tabular).</li>
+<li><strong>Explain:</strong> SHAP image saliency (image); SHAP bar and
+beeswarm (tabular).</li>
+<li><strong>Recommend:</strong> LLM-written hardening report from attack
++ SHAP results.</li>
+<li><strong>Verify:</strong> re-run the attack after applying a
+preprocessing defense.</li>
+<li><strong>UI:</strong> model page, attack trigger, side-by-side SHAP +
+recommendations.</li>
+<li><strong>Deploy:</strong> ECS Fargate + RDS Postgres + S3.</li>
+</ul>
+<h3 id="phase-b--stretch-add-if-time-allows">Phase B — stretch (add if
+time allows)</h3>
+<ul>
+<li><strong>Ingest:</strong> black-box API endpoint connector
+(query-only).</li>
+<li><strong>Modalities:</strong> text/NLP classifier and object
+detection (YOLO-style).</li>
+<li><strong>Attacks:</strong> Carlini-Wagner, DeepFool, query-based
+black-box attacks; adversarial-patch for detection.</li>
+<li><strong>Explain:</strong> KernelSHAP for black-box models; text
+token attributions.</li>
+<li><strong>Harden:</strong> apply adversarial training on a bundled
+model and show the delta.</li>
+</ul>
+<h3 id="non-goals-for-the-hackathon">Non-goals for the hackathon</h3>
+<ul>
+<li>Training pipelines or model registries beyond upload.</li>
+<li>GPU. All demo models run on CPU. Keep sample models small.</li>
+<li>Real classified data. Ship only open, unclassified sample data.</li>
+</ul>
+<h2 id="4-domain-model-mapping">4. Domain model mapping</h2>
+<p>We reuse the existing tables. We add two enum values and one detail
+shape. No new core tables are required for Phase A.</p>
+<table>
+<thead>
+<tr>
+<th>Existing concept</th>
+<th>ML red-team meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Target.kind</code> (<code>url</code> /
+<code>github_repo</code> / <code>image</code>)</td>
+<td>Add <code>ml_model_artifact</code> and
+<code>ml_model_endpoint</code>.</td>
+</tr>
+<tr>
+<td><code>Target.value</code></td>
+<td>S3 key of the uploaded model, or the inference URL.</td>
+</tr>
+<tr>
+<td><code>Run</code></td>
+<td>An attack campaign against one model.</td>
+</tr>
+<tr>
+<td><code>Job.type</code></td>
+<td>Add <code>attack.run</code>, <code>explain.run</code>,
+<code>harden.recommend</code>.</td>
+</tr>
+<tr>
+<td><code>Finding</code></td>
+<td>One adversarial vulnerability (attack succeeded at budget ε).</td>
+</tr>
+<tr>
+<td><code>Finding.schema_blob</code> (<code>AegisFinding</code>)</td>
+<td>Carries attack name, ε, success rate, confidence drop, SHAP artifact
+ids.</td>
+</tr>
+<tr>
+<td><code>Finding.validation_state</code></td>
+<td>Reused for verify-after-harden (<code>verified</code> /
+<code>still_vulnerable</code>).</td>
+</tr>
+<tr>
+<td><code>Artifact</code></td>
+<td>Stores adversarial examples, SHAP images, perturbation maps,
+robustness curves.</td>
+</tr>
+<tr>
+<td><code>AuthProfile</code> (Fernet-encrypted)</td>
+<td>Reused for black-box endpoint credentials (bearer/header).</td>
+</tr>
+<tr>
+<td><code>AuditEvent</code> chain</td>
+<td>Records model upload, each attack, each explanation, each
+report.</td>
+</tr>
+</tbody>
+</table>
+<p>New capability tags in the scanner registry vocabulary:
+<code>adversarial_ml</code>, <code>explainability</code>.</p>
+<h2 id="5-architecture">5. Architecture</h2>
+<pre><code>                          ┌─────────────────────────────────────────┐
+   Browser (Next.js) ───► │ FastAPI /v1  (reuse Aegis API)           │
+                          │  + /v1/models  /v1/attacks  /v1/explain  │
+                          └───────────────┬─────────────────────────┘
+                                          │ enqueue Job (audit event first)
+                                          ▼
+                          ┌─────────────────────────────────────────┐
+   Redis broker ◄────────►│ Celery workers                          │
+                          │  attack.run   → ART attack engine        │
+                          │  explain.run  → SHAP explainer           │
+                          │  harden.recommend → LLM writer           │
+                          │  verify.replay → re-attack hardened model│
+                          └───────┬─────────────────────┬───────────┘
+                                  │                      │
+                       Postgres (RDS)             S3 (models, artifacts,
+                    runs/jobs/findings/audit       SHAP images, adv. examples)</code></pre>
+<p>New Python packages inside the <code>aegis</code> namespace:</p>
+<ul>
+<li><code>aegis/ml/loaders.py</code> — load a model from artifact or
+endpoint into an ART estimator. Detects framework by file
+signature.</li>
+<li><code>aegis/ml/attacks/</code> — ART attack adapters. One module per
+attack, registered through the existing registry so they list in
+<code>/tools</code>.</li>
+<li><code>aegis/ml/explain/</code> — SHAP explainers per modality. Emit
+PNG + JSON artifacts.</li>
+<li><code>aegis/ml/harden.py</code> — map (attack result + SHAP signal)
+to a ranked list of defenses, then call the LLM writer for prose.</li>
+<li><code>aegis/ml/eval.py</code> — robustness metrics: clean accuracy,
+robust accuracy, attack success rate, mean perturbation, confidence
+drop.</li>
+<li><code>aegis/workers/tasks/{attack,explain,harden}.py</code> — Celery
+tasks mirroring the existing <code>scan</code> / <code>fix</code> /
+<code>verify</code> tasks.</li>
+</ul>
+<h3 id="model-loading-and-isolation">Model loading and isolation</h3>
+<p>Untrusted model files are dangerous. A pickle can execute code on
+load.</p>
+<ul>
+<li><strong>Preferred formats:</strong> ONNX and TensorFlow SavedModel
+(no arbitrary code on load). Accept PyTorch <code>state_dict</code> with
+an explicit architecture, not full pickles.</li>
+<li><strong>Sandbox:</strong> load and run every uploaded model in the
+existing plugin sandbox pattern (<code>AEGIS_PLUGINS_SANDBOX</code>):
+separate process, dropped network, rlimits, minimal env. Reject
+full-pickle <code>torch.load</code> by default.</li>
+<li><strong>Never load a model file in the API process.</strong> Loading
+happens only on the worker, in the sandbox.</li>
+</ul>
+<h2 id="6-attack-catalog-art">6. Attack catalog (ART)</h2>
+<p>Adversarial Robustness Toolbox provides the attacks. We wrap each as
+an adapter with a common
+<code>run(estimator, data, budget) -&gt; AttackResult</code>
+interface.</p>
+<table>
+<thead>
+<tr>
+<th>Modality</th>
+<th>Attack</th>
+<th>Access</th>
+<th>Phase</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Image</td>
+<td>FGSM</td>
+<td>white-box</td>
+<td>A</td>
+</tr>
+<tr>
+<td>Image</td>
+<td>PGD (L∞, L2)</td>
+<td>white-box</td>
+<td>A</td>
+</tr>
+<tr>
+<td>Image</td>
+<td>Carlini-Wagner L2</td>
+<td>white-box</td>
+<td>B</td>
+</tr>
+<tr>
+<td>Image</td>
+<td>DeepFool</td>
+<td>white-box</td>
+<td>B</td>
+</tr>
+<tr>
+<td>Image</td>
+<td>HopSkipJump</td>
+<td>black-box</td>
+<td>B</td>
+</tr>
+<tr>
+<td>Tabular</td>
+<td>PGD</td>
+<td>white-box</td>
+<td>A</td>
+</tr>
+<tr>
+<td>Tabular</td>
+<td>Boundary / HopSkipJump</td>
+<td>black-box</td>
+<td>A</td>
+</tr>
+<tr>
+<td>Tabular</td>
+<td>Zeroth-Order Optimization</td>
+<td>black-box</td>
+<td>B</td>
+</tr>
+<tr>
+<td>Text</td>
+<td>TextFooler-style word substitution</td>
+<td>black/white</td>
+<td>B</td>
+</tr>
+<tr>
+<td>Detection</td>
+<td>Adversarial patch / DPatch</td>
+<td>white-box</td>
+<td>B</td>
+</tr>
+</tbody>
+</table>
+<p>Each attack sweeps a small budget grid (for example ε in
+<code>{0.01, 0.03, 0.1}</code> for L∞ images) so the UI can plot a
+robustness curve. An attack produces a <code>Finding</code> when success
+rate crosses a configurable threshold at any budget.</p>
+<h2 id="7-explainability-shap">7. Explainability (SHAP)</h2>
+<p>SHAP explains why the model failed. We show clean vs adversarial side
+by side.</p>
+<table>
+<thead>
+<tr>
+<th>Modality</th>
+<th>SHAP explainer</th>
+<th>Output artifact</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Image</td>
+<td><code>DeepExplainer</code> (white-box) or
+<code>PartitionExplainer</code></td>
+<td>Pixel saliency overlay, clean vs adversarial.</td>
+</tr>
+<tr>
+<td>Tabular</td>
+<td><code>TreeExplainer</code> (trees) or
+<code>KernelExplainer</code></td>
+<td>Bar plot, beeswarm, per-sample force plot.</td>
+</tr>
+<tr>
+<td>Text</td>
+<td><code>PartitionExplainer</code></td>
+<td>Token attribution highlight.</td>
+</tr>
+<tr>
+<td>Black-box any</td>
+<td><code>KernelExplainer</code></td>
+<td>Same plots, sampled.</td>
+</tr>
+</tbody>
+</table>
+<p>The key demo narrative comes from the diff: the SHAP overlay shows
+the model relied on background pixels rather than the target, which is
+why the small perturbation flipped the label.
+<code>aegis/ml/explain</code> writes both a rendered PNG and the raw
+SHAP values JSON to S3 as <code>Artifact</code> rows.</p>
+<h2 id="8-hardening-recommendations">8. Hardening recommendations</h2>
+<p><code>aegis/ml/harden.py</code> turns results into action. It runs in
+two layers.</p>
+<ol type="1">
+<li><strong>Rule layer (deterministic).</strong> Map observed signals to
+candidate defenses. Examples:
+<ul>
+<li>High FGSM success at small ε → recommend adversarial training and
+gradient masking review.</li>
+<li>SHAP concentrated on background/irrelevant features → recommend
+input preprocessing, feature squeezing, or retraining with masking.</li>
+<li>Large confidence with wrong label → recommend confidence calibration
+and an out-of-distribution reject option.</li>
+<li>Black-box query success → recommend rate limiting and query-pattern
+monitoring at the inference API.</li>
+</ul></li>
+<li><strong>LLM writer layer.</strong> Feed the ranked candidates,
+metrics, and SHAP summary to the LLM (reuse per-task routing + budget
+caps). It writes a concise, plain-language report with prioritized steps
+and expected robustness gain.</li>
+</ol>
+<p>Each recommendation links to the ART defense that implements it
+(adversarial training, feature squeezing, spatial smoothing, defensive
+distillation) so a Phase B step can apply it and re-measure.</p>
+<h2 id="9-api-surface">9. API surface</h2>
+<p>Reuse the existing <code>/v1</code> router and auth. Add:</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/models</code></td>
+<td>Register a model target: upload artifact (multipart to S3) or
+endpoint URL. Returns a <code>Target</code>.</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/models</code></td>
+<td>List model targets for the project.</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/models/{id}/attacks</code></td>
+<td>Start an attack campaign. Body: modality, attacks, budget grid,
+sample dataset id. Creates a <code>Run</code> + <code>attack.run</code>
+jobs.</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/runs/{id}</code></td>
+<td>Reuse. Campaign status + stage table.</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/findings?run_id=</code></td>
+<td>Reuse. Adversarial findings with metrics.</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/findings/{id}/explain</code></td>
+<td>Enqueue <code>explain.run</code>. Returns SHAP artifact ids.</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/findings/{id}/harden</code></td>
+<td>Enqueue <code>harden.recommend</code>. Returns the report.</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/v1/artifacts/{id}</code></td>
+<td>Reuse. Stream SHAP PNG / JSON with strict CSP.</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/v1/findings/{id}/verify</code></td>
+<td>Reuse <code>verify.replay</code> to re-attack after hardening.</td>
+</tr>
+</tbody>
+</table>
+<p>Every mutating call emits a chained audit event before enqueue,
+exactly as the existing scan flow does.</p>
+<h2 id="10-web-ui">10. Web UI</h2>
+<p>Extend the Next.js app. Reuse the design system, tables, and RBAC
+gating.</p>
+<ul>
+<li><strong><code>/models</code></strong> — model list; upload dialog;
+"Connect endpoint" form; bundled sample picker.</li>
+<li><strong><code>/models/[id]</code></strong> — model summary; "Run
+attack" launcher with modality, attack checklist, and budget
+slider.</li>
+<li><strong><code>/runs/[id]</code></strong> — campaign progress;
+robustness curve; findings table.</li>
+<li><strong><code>/findings/[id]</code></strong> — the money screen.
+Three panes side by side:
+<ol type="1">
+<li>Original vs adversarial input (image pair, or feature diff
+table).</li>
+<li>SHAP explanation (clean vs adversarial saliency).</li>
+<li>Ranked hardening recommendations with expected gain and "Verify
+fix".</li>
+</ol></li>
+<li>Reuse <code>/audit</code> to show the tamper-evident trail of the
+whole campaign.</li>
+</ul>
+<h2 id="11-aws-deployment-ecs-fargate">11. AWS deployment (ECS
+Fargate)</h2>
+<p>Target: ECS Fargate + RDS Postgres + S3 + ElastiCache Redis. No
+GPU.</p>
+<table>
+<thead>
+<tr>
+<th>Component</th>
+<th>AWS service</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>API (<code>aegis-api</code>)</td>
+<td>ECS Fargate service behind ALB</td>
+<td>Reuse <code>deploy/Dockerfile.api</code>.</td>
+</tr>
+<tr>
+<td>Worker (<code>aegis-worker</code>)</td>
+<td>ECS Fargate service</td>
+<td>Reuse <code>deploy/Dockerfile.worker</code>, add ART + SHAP +
+ONNX/torch-cpu to the image.</td>
+</tr>
+<tr>
+<td>Web (<code>aegis-web</code>)</td>
+<td>ECS Fargate service behind ALB, or Amplify</td>
+<td>Reuse <code>deploy/Dockerfile.web</code>.</td>
+</tr>
+<tr>
+<td>Postgres</td>
+<td>RDS PostgreSQL 16</td>
+<td>Enable RLS. Run Alembic migrations on deploy.</td>
+</tr>
+<tr>
+<td>Redis</td>
+<td>ElastiCache (Redis)</td>
+<td>Celery broker + result backend.</td>
+</tr>
+<tr>
+<td>Object store</td>
+<td>S3 bucket</td>
+<td>Models, artifacts, SHAP outputs. Enable Object Lock for WORM audit
+export.</td>
+</tr>
+<tr>
+<td>Secrets</td>
+<td>AWS Secrets Manager</td>
+<td>LLM keys, worker signing key, Fernet key.</td>
+</tr>
+<tr>
+<td>Auth</td>
+<td>Keycloak on Fargate, or Cognito via OIDC</td>
+<td>Dev mode acceptable for the hackathon demo.</td>
+</tr>
+</tbody>
+</table>
+<p>Build steps:</p>
+<ol type="1">
+<li>Add <code>art</code>, <code>shap</code>, <code>onnxruntime</code>,
+<code>torch</code> (CPU wheel), <code>scikit-learn</code>, and
+<code>matplotlib</code> to a new <code>ml</code> optional-dependency
+group in <code>pyproject.toml</code>. Install it only in the worker
+image to keep API and web images small.</li>
+<li>Write a Terraform or Copilot definition for the four Fargate
+services, RDS, ElastiCache, S3, and the ALB. Reuse the Helm env var
+names as task-def env.</li>
+<li>Set <code>AEGIS_BLOB_BACKEND=s3</code> and point Postgres/Redis at
+the managed endpoints.</li>
+<li>Seed 3 bundled sample models and 2 sample datasets into S3 on first
+deploy.</li>
+</ol>
+<h2 id="12-security-and-trust-notes">12. Security and trust notes</h2>
+<ul>
+<li><strong>Model files are untrusted input.</strong> Load only in the
+worker sandbox. Prefer ONNX/SavedModel. Refuse full pickle load unless
+the user checks an explicit "I trust this file" box, and even then,
+sandbox it.</li>
+<li><strong>Attacks stay in-boundary.</strong> We never send a target
+model's data to a third party. Only the SHAP summary text and metrics
+reach the LLM writer, with secrets redacted, reusing the existing
+redaction path.</li>
+<li><strong>Multi-tenancy.</strong> Model artifacts and findings inherit
+Postgres RLS by <code>org_id</code>. One tenant never sees another's
+model or results.</li>
+<li><strong>Audit.</strong> Upload, attack, explain, harden, and verify
+each append to the hash-chained log. <code>aegis audit verify</code>
+proves the campaign trail.</li>
+<li><strong>Data.</strong> Ship only unclassified, open sample data.
+Document this in the UI.</li>
+</ul>
+<h2 id="13-build-sequence-and-milestones">13. Build sequence and
+milestones</h2>
+<p>Ordered for a 2-day hackathon. Each milestone is demo-able on its
+own.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Milestone</th>
+<th>Deliverable</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>M0</td>
+<td>Scaffold</td>
+<td><code>aegis/ml/</code> package, <code>ml</code> dep group, migration
+adding the two <code>Target.kind</code> values and the new
+<code>Job.type</code>s.</td>
+</tr>
+<tr>
+<td>M1</td>
+<td>Load + attack (image)</td>
+<td>Load a bundled CNN from ONNX in the sandbox. Run FGSM + PGD. Write
+<code>Finding</code>s with metrics.</td>
+</tr>
+<tr>
+<td>M2</td>
+<td>SHAP (image)</td>
+<td><code>explain.run</code> produces clean vs adversarial saliency PNGs
+as <code>Artifact</code>s.</td>
+</tr>
+<tr>
+<td>M3</td>
+<td>Recommendations</td>
+<td>Rule layer + LLM writer produce the hardening report.</td>
+</tr>
+<tr>
+<td>M4</td>
+<td>Tabular path</td>
+<td>Load a bundled XGBoost/sklearn model. PGD + boundary attack.
+TreeExplainer SHAP.</td>
+</tr>
+<tr>
+<td>M5</td>
+<td>UI</td>
+<td><code>/models</code>, attack launcher, and the three-pane
+<code>/findings/[id]</code> screen.</td>
+</tr>
+<tr>
+<td>M6</td>
+<td>Verify loop</td>
+<td>Apply a feature-squeezing defense, re-attack, show the robustness
+delta.</td>
+</tr>
+<tr>
+<td>M7</td>
+<td>Deploy</td>
+<td>Push the three Fargate services + RDS + S3. Run the demo end to
+end.</td>
+</tr>
+<tr>
+<td>B1+</td>
+<td>Stretch</td>
+<td>Black-box connector, text and detection modalities,
+adversarial-training defense.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="14-demo-script-target">14. Demo script (target)</h2>
+<ol type="1">
+<li>Open <code>/models</code>. Pick the bundled aerial-target CNN.</li>
+<li>Click <strong>Run attack</strong>. Select FGSM + PGD, ε slider at
+0.03. Start.</li>
+<li>Watch the campaign complete on <code>/runs/[id]</code>. A
+high-severity finding appears.</li>
+<li>Open the finding. Left: the tank image, clean vs perturbed
+(near-identical to the eye). Middle: SHAP shows the model fixated on
+background terrain, not the vehicle. Right: recommendations —
+adversarial training, input preprocessing, confidence calibration — with
+expected gain.</li>
+<li>Click <strong>Verify fix</strong>. The tool applies feature
+squeezing and re-attacks. Robust accuracy rises; the finding flips to
+<code>verified</code>.</li>
+<li>Open <code>/audit</code>. Show the tamper-evident chain of the whole
+campaign.</li>
+</ol>
+<h2 id="15-open-risks">15. Open risks</h2>
+<ul>
+<li><strong>ART + SHAP + torch image size.</strong> Keep it in the
+worker image only. Use the CPU torch wheel. Pin versions early.</li>
+<li><strong>SHAP on images is slow.</strong> Use small models and a
+handful of samples for the demo. Cache explanations.</li>
+<li><strong>Pickle safety.</strong> Default to ONNX. Treat any pickle as
+hostile.</li>
+<li><strong>Scope creep across four modalities.</strong> Freeze Phase A
+first. Do not start text or detection until the image + tabular demo
+runs end to end.</li>
+</ul>
+</body>
+</html>
