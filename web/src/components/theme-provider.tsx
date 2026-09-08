@@ -1,6 +1,6 @@
 "use client";
 
-// ThemeProvider / useTheme — the dark-mode foundation for the Aegis web app.
+// ThemeProvider / useTheme — the dark-mode foundation for the redsim web app.
 //
 // Mount <ThemeProvider> high in the tree (e.g. inside <body> in
 // app/layout.tsx). On mount it reads localStorage["theme"] (falling back

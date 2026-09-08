@@ -1,2 +1,0 @@
-{"DetectorName": "AWS", "DecoderName": "PLAIN", "Verified": true, "Raw": "AKIAIOSFODNN7EXAMPLE", "SourceMetadata": {"Data": {"Filesystem": {"file": "/app/config/secrets.env", "line": 12}}}}
-{"DetectorName": "Github", "DecoderName": "PLAIN", "Verified": false, "Raw": "ghp_FAKE000111222333444555666777888999AAA", "SourceMetadata": {"Data": {"Git": {"file": "/app/.git/config", "line": 3, "commit": "deadbeef"}}}}

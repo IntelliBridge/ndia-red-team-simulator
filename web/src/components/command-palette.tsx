@@ -18,7 +18,7 @@ import {
   CommandEmpty,
   CommandGroup,
   CommandItem,
-} from "@aegis/design-system";
+} from "@redsim/design-system";
 
 export interface CommandPaletteLink {
   href: string;
