@@ -23,6 +23,7 @@ def clean_env(monkeypatch, tmp_path):
     monkeypatch.setenv(pythia.ENV_FILE_VAR, str(tmp_path / "absent.env"))
     # The repo-root fallback must not find a developer's real .env during tests.
     monkeypatch.setattr(pythia, "_REPO_ROOT", tmp_path)
+    monkeypatch.chdir(tmp_path)  # nor the cwd fallback
     return tmp_path
 
 
