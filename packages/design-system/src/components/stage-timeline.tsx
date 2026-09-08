@@ -11,7 +11,7 @@ export type StageMode = string;
 export interface StageEntry {
   name: string;
   mode: StageMode;
-  success: boolean;
+  success: boolean | null;
   detail?: string;
 }
 
@@ -34,13 +34,15 @@ export function StageTimeline({ stages, className }: StageTimelineProps) {
           <span
             className={cn(
               "mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold",
-              s.success
+              s.success === true
                 ? "bg-emerald-500 text-white"
-                : "bg-red-500 text-white",
+                : s.success === false
+                  ? "bg-red-500 text-white"
+                  : "bg-amber-500 text-white",
             )}
             aria-hidden="true"
           >
-            {s.success ? "✓" : "✗"}
+            {s.success === true ? "✓" : s.success === false ? "✗" : "…"}
           </span>
           <div className="min-w-0">
             <div className="flex items-center gap-2">

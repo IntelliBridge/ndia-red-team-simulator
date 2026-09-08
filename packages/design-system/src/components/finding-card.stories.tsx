@@ -18,7 +18,8 @@ export const Default: Story = {
     status: "open",
     target: "http://localhost:3000/login",
     validationState: "poc_passed",
-    children: "User-supplied email parameter flows directly into an unparameterised query.",
+    children:
+      "User-supplied email parameter flows directly into an unparameterised query.",
   },
 };
 

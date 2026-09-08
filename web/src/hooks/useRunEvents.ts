@@ -28,9 +28,10 @@ import { apiWsBase, bearerToken } from "@/lib/api";
 const BEARER_SUBPROTOCOL_PREFIX = "redsim.bearer.";
 
 export type JobEvent = {
-  type: "job";
+  type: "job" | "stage";
   run_id: string;
-  job_id: string;
+  job_id?: string;
+  name?: string;
   status: "running" | "succeeded" | "failed";
 };
 
@@ -38,7 +39,8 @@ function isJobEvent(value: unknown): value is JobEvent {
   return (
     typeof value === "object" &&
     value !== null &&
-    (value as { type?: unknown }).type === "job"
+    ((value as { type?: unknown }).type === "job" ||
+      (value as { type?: unknown }).type === "stage")
   );
 }
 
