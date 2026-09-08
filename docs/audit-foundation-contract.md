@@ -1,10 +1,50 @@
 # Audit foundation: proposed v1 contract
 
-**Status:** Proposed for review; not approved for implementation or production.
+**Status:** Draft awaiting UI/UX review; not approved for implementation or production.
 
 This is the bounded internal writer slice of F008, not the full audit/governance
-feature. It implements application event history, not tamper-proof evidence,
+feature. It proposes application event history, not tamper-proof evidence,
 certification, non-repudiation, or a guarantee that every external action is logged.
+
+## Plain-language contract
+
+The proposed backend records **who did what, to which project and versioned
+item, when, and with what result**. It records references and a few safe facts,
+not the underlying content.
+
+- Every event identifies a person or a service explicitly; a background job
+  must not appear to be a person.
+- Events describe an action as successful, failed, or denied. That action result
+  is separate from whether the audit record itself was saved.
+- Ordinary application code can append events but cannot edit or delete them.
+  This is not protection against a host administrator altering files.
+- Retrying the exact same event does not add another row. Reusing its ID with
+  different content is an error, not an edit.
+- Invalid data, unavailable storage, full storage, and damaged history must be
+  reported explicitly. The writer never silently claims that recording succeeded.
+- This first version builds only the internal writer. It supplies no screen,
+  history-reading API, search, export, permissions system, or live event callers.
+
+All field choices, limits, and behavior below remain proposals until reviewed.
+
+## Review order and implementation gate
+
+1. **UI/UX reviews this draft first.** Check whether the available information
+   and its meaning can support the intended audit-history experience. Flag
+   missing information before code is written; no UI implementation is requested.
+2. **Incorporate feedback and confirm scope with the product owner.** Record
+   changes and explicit decisions, rather than treating silence as approval.
+3. **Engineering and security/data review the revised contract.** Engineering
+   checks feasibility, concurrency, durability, and error semantics; security/data
+   checks attribution, allowed content, storage boundaries, and privacy.
+4. **Record explicit scoped approval, then implement and test the writer.**
+   UI/UX feedback alone does not approve backend reliability or security.
+5. **Review live integration separately.** Identity binding, permissions,
+   history-reading interfaces, and action-specific responses to audit failure
+   remain outside this slice.
+
+Implementation is paused for this review sequence. No early internal-prototype
+implementation has been authorized.
 
 ## Review boundary
 
@@ -15,6 +55,7 @@ Product, engineering, and security/data ownership must not be inferred from
 repository access or project collaboration.
 
 - Product owner: unassigned.
+- UI/UX reviewer: unassigned; feedback pending.
 - Engineering reviewer: unassigned.
 - Security/data reviewer: unassigned.
 - Approval of this specific contract: pending.
@@ -26,6 +67,63 @@ not be recorded as approval of all F008 requirements or the full constitution.
 If internal prototype implementation is authorized before named team review,
 record that explicit scope decision and keep team approval and live integration
 blocked; do not silently reinterpret an unassigned reviewer as approval.
+
+## UI/UX review guide
+
+Start with the event envelope, closed vocabularies, synthetic examples, and
+writer results below. The persistence section is primarily for engineering
+and security/data review.
+
+### What a future history experience could use
+
+| Available information | Design implication or limitation |
+| --- | --- |
+| Actor kind and opaque actor ID | Distinguish people from services. Names and avatars are not stored; resolving labels and handling deleted actors require a later contract. |
+| Action, entity type, ID, and version | Can identify the action and exact referenced version. No item title, free-text description, before/after diff, or raw content is included. |
+| UTC event timestamp | Can be formatted for a viewer's timezone. It represents the caller's stated action time, not necessarily the journal's acceptance order. |
+| Per-project sequence | Provides recorded order within one project. It is not global ordering across projects. |
+| Action outcome and optional reason code | Can distinguish successful, failed, and denied actions without displaying raw errors. Reason codes are optional and deliberately limited. |
+| Correlation ID | Can associate related events. It does not itself provide navigation or an API for finding them. |
+| Small allowlisted metadata | Can expose approved counts or duration, but not arbitrary explanatory text or event content. |
+
+These are data affordances for future work, not a promise of a browser-facing
+response or an approved audit-history screen. The internal writer's return
+value is not a history-listing API.
+
+### States that must not be confused
+
+- **Action result versus recording result:** an action may succeed even when
+  saving its audit event fails. This library neither reverses that action nor
+  decides whether a future caller should block it.
+- **Saved versus uncertain:** only `accepted` and `duplicate` establish successful
+  recording. A failure with `recording_state: unknown` cannot truthfully be
+  displayed as either definitely saved or definitely absent.
+- **Duplicate versus another action:** retrying an identical audit write should
+  not produce a second history entry. A separate real action needs its own event ID.
+- **No history versus unavailable history:** a later history-reading contract
+  must distinguish an empty result from denied access, loading, or read failure.
+  Those read states and their UI are not implemented by this writer.
+
+### Questions for the UI/UX reviewer
+
+- [ ] Do the action and entity labels cover the intended first audit-history
+  stories without implying that all those features already emit events?
+- [ ] Can the design distinguish a person, a service, and an unresolved/deleted
+  identity without relying on names being present in the event?
+- [ ] Are stable item/version references enough? List any proposed extra field,
+  the user need it serves, and whether it could contain sensitive content.
+- [ ] Is the distinction between action outcome and recording uncertainty clear?
+- [ ] Is it clear how timestamps, recorded order, and related actions differ?
+- [ ] Which future filtering, detail, or navigation needs would require a
+  separate read API or label-resolution contract rather than a writer change?
+- [ ] Is there any design assumption that requires editing/deleting history,
+  storing raw content, or promising complete/tamper-proof evidence? Flag it.
+
+Please return feedback as **section/field → user need → suggested change**,
+marked either **blocking for this contract** or **future UI/read-API work**.
+Open questions are welcome; checking these boxes is not engineering or
+security approval. Reviewer names, feedback, and approval decisions remain
+unfilled until the responsible people provide them.
 
 ## Scope and integration boundary
 
@@ -117,6 +215,70 @@ Prompts, outputs, datasets, artifacts, request/response bodies, free-text
 exceptions, credentials, tokens, and operational content are prohibited.
 Reject rather than automatically redact or silently discard unsupported data.
 Changes to the allowlist require a reviewed contract update.
+
+## Synthetic event examples
+
+These are invented fixtures illustrating the proposed event envelope, not
+observed activity or evidence of live integration. Display names, UI copy,
+storage sequence, and writer results are deliberately not envelope fields.
+
+### Person updates a catalog version
+
+```json
+{
+  "schema_version": 1,
+  "event_id": "11111111-1111-4111-8111-111111111111",
+  "project_id": "demo_project_001",
+  "actor": {
+    "kind": "user",
+    "id": "demo_user_001"
+  },
+  "occurred_at": "2026-09-08T14:00:00.000000Z",
+  "action": "updated",
+  "entity_type": "catalog_version",
+  "entity_id": "demo_catalog_001",
+  "entity_version": "v2",
+  "outcome": "succeeded",
+  "correlation_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "metadata": {
+    "source": "api",
+    "changed_field_count": 2
+  }
+}
+```
+
+The event records that an update succeeded and how many fields changed; it
+does not store the changed values or identify which fields changed.
+
+### Service records a failed run action
+
+```json
+{
+  "schema_version": 1,
+  "event_id": "22222222-2222-4222-8222-222222222222",
+  "project_id": "demo_project_001",
+  "actor": {
+    "kind": "service",
+    "id": "demo_worker_001"
+  },
+  "occurred_at": "2026-09-08T14:05:00.000000Z",
+  "action": "failed",
+  "entity_type": "run",
+  "entity_id": "demo_run_001",
+  "entity_version": "unversioned",
+  "outcome": "failed",
+  "correlation_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "metadata": {
+    "source": "worker",
+    "reason_code": "unavailable",
+    "duration_ms": 1500
+  }
+}
+```
+
+This event describes a failed action. If the writer durably saves it, the
+writer result is `accepted`, despite the action's `failed` outcome. Retrying
+that same envelope unchanged returns `duplicate`, not another event.
 
 ## Persistence, ordering, and retries
 
