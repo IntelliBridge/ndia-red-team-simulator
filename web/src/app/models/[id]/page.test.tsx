@@ -1,6 +1,6 @@
 import { createElement } from "react";
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/hooks/useRequireAuth", () => ({ useRequireAuth: () => true }));
 vi.mock("@/hooks/useRoles", () => ({
@@ -54,6 +54,19 @@ vi.mock("@/hooks/useMlCatalog", () => ({
         reachability: "recorded",
         compatible_modalities: ["image"],
       },
+      {
+        id: "d2",
+        name: "Phishing URLs",
+        revision: "r2",
+        license: "open",
+        source_url: "https://example.invalid",
+        classes: [],
+        size: 10,
+        format: "parquet",
+        role: "demo",
+        reachability: "recorded",
+        compatible_modalities: ["tabular"],
+      },
     ],
   }),
   useDefenses: () => ({ data: [] }),
@@ -71,6 +84,7 @@ vi.mock("@/lib/api", async () => ({
 }));
 import ModelPage from "./page";
 describe("model launcher", () => {
+  afterEach(() => cleanup());
   it("renders server attack and editable campaign controls", () => {
     render(createElement(ModelPage, { params: { id: "m1" } }));
     expect(screen.getByText("FGSM")).toBeTruthy();
@@ -83,6 +97,24 @@ describe("model launcher", () => {
     ).toBeGreaterThan(0);
     expect(
       screen.getByRole("button", { name: /start campaign/i }),
+    ).toBeTruthy();
+  });
+  it("refuses to enable launch for a dataset incompatible with the model modality", () => {
+    render(createElement(ModelPage, { params: { id: "m1" } }));
+    const start = screen.getByRole("button", { name: /start campaign/i });
+    fireEvent.click(screen.getByRole("checkbox", { name: /FGSM/ }));
+    const dataset = screen.getByLabelText("Dataset");
+    expect(
+      screen.getByRole("option", {
+        name: /Phishing URLs · r2 · not compatible with image targets/,
+      }),
+    ).toHaveProperty("disabled", true);
+    fireEvent.change(dataset, { target: { value: "d1" } });
+    expect(start).toHaveProperty("disabled", false);
+    fireEvent.change(dataset, { target: { value: "d2" } });
+    expect(start).toHaveProperty("disabled", true);
+    expect(
+      screen.getByText(/Phishing URLs does not support image targets/),
     ).toBeTruthy();
   });
 });

@@ -66,17 +66,25 @@ export default function ModelPage({ params }: { params: { id: string } }) {
   const modelDataset = datasets.find(
     (dataset: DatasetInfo) => dataset.id === model?.manifest.dataset_id,
   );
+  // Admission rejects a dataset whose compatible_modalities exclude the
+  // target modality, so the launcher must not offer or accept one.
+  const modality = model?.modality;
+  const datasetCompatible = (dataset: DatasetInfo) =>
+    modality != null && dataset.compatible_modalities.includes(modality);
+  const selectedDatasetCompatible =
+    selectedDataset != null && datasetCompatible(selectedDataset);
   const configIsValid =
     selected.length > 0 &&
     epsGrid.length > 0 &&
     epsGrid.includes(referenceEps) &&
-    Boolean(selectedDataset) &&
+    selectedDatasetCompatible &&
     sampleCount >= 50 &&
     sampleCount <= 500 &&
     Number(threshold) >= 0 &&
     Number(threshold) <= 1;
   const launch = async () => {
     if (!available || !configIsValid || !selectedDataset) return;
+    if (!datasetCompatible(selectedDataset)) return;
     setBusy(true);
     setErr("");
     const config: CampaignRequest = {
@@ -256,14 +264,24 @@ export default function ModelPage({ params }: { params: { id: string } }) {
                   className="mt-1 w-full border border-input bg-background px-2 py-1"
                 >
                   <option value="">Select server dataset</option>
-                  {datasets.map((dataset: DatasetInfo) => (
-                    <option key={dataset.id} value={dataset.id}>
-                      {dataset.name} · {dataset.revision}
-                      {dataset.role === "ci_fixture"
-                        ? " · CI fixture — not the demo dataset"
-                        : ""}
-                    </option>
-                  ))}
+                  {datasets.map((dataset: DatasetInfo) => {
+                    const compatible = datasetCompatible(dataset);
+                    return (
+                      <option
+                        key={dataset.id}
+                        value={dataset.id}
+                        disabled={!compatible}
+                      >
+                        {dataset.name} · {dataset.revision}
+                        {dataset.role === "ci_fixture"
+                          ? " · CI fixture — not the demo dataset"
+                          : ""}
+                        {compatible
+                          ? ""
+                          : ` · not compatible with ${modality ?? "this"} targets`}
+                      </option>
+                    );
+                  })}
                 </select>
               </label>
               <fieldset className="col-span-2">
@@ -412,6 +430,14 @@ export default function ModelPage({ params }: { params: { id: string } }) {
             {!selectedDataset && datasets.length > 0 && (
               <p className="text-xs text-muted-foreground">
                 Select a compatible dataset before launching.
+              </p>
+            )}
+            {selectedDataset && !selectedDatasetCompatible && (
+              <p className="text-xs text-destructive">
+                {selectedDataset.name} does not support {modality ?? "this"}{" "}
+                targets (compatible:{" "}
+                {selectedDataset.compatible_modalities.join(", ") || "none"}).
+                Choose a compatible dataset before launching.
               </p>
             )}
             {defenses.length > 0 && (
