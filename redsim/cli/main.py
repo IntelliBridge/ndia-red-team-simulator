@@ -203,12 +203,24 @@ def build_parser() -> argparse.ArgumentParser:
 # external importers (``redsim.cli.__init__``) and for tests that import or
 # monkeypatch the commands at ``redsim.cli.main``.
 # ---------------------------------------------------------------------------
-from redsim.cli.doctor import cmd_doctor  # noqa: E402  (late import: avoids a circular import with the subcommand modules)
-from redsim.cli.findings import cmd_findings  # noqa: E402  (late import: avoids a circular import with the subcommand modules)
-from redsim.cli.init import cmd_init  # noqa: E402  (late import: avoids a circular import with the subcommand modules)
-from redsim.cli.report import cmd_report  # noqa: E402  (late import: avoids a circular import with the subcommand modules)
-from redsim.cli.scan import cmd_scan  # noqa: E402  (late import: avoids a circular import with the subcommand modules)
-from redsim.cli.verify import cmd_verify  # noqa: E402  (late import: avoids a circular import with the subcommand modules)
+from redsim.cli.doctor import (
+    cmd_doctor,  # noqa: E402  (late import: avoids a circular import with the subcommand modules)
+)
+from redsim.cli.findings import (
+    cmd_findings,  # noqa: E402  (late import: avoids a circular import with the subcommand modules)
+)
+from redsim.cli.init import (
+    cmd_init,  # noqa: E402  (late import: avoids a circular import with the subcommand modules)
+)
+from redsim.cli.report import (
+    cmd_report,  # noqa: E402  (late import: avoids a circular import with the subcommand modules)
+)
+from redsim.cli.scan import (
+    cmd_scan,  # noqa: E402  (late import: avoids a circular import with the subcommand modules)
+)
+from redsim.cli.verify import (
+    cmd_verify,  # noqa: E402  (late import: avoids a circular import with the subcommand modules)
+)
 
 # ---------------------------------------------------------------------------
 # Main
