@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "files": {
+    "malicious_urls_sample.csv": {
+      "role": "CI tabular fixture for the URL pipeline (spec 11.2, 11.3.3, 22.2)",
+      "synthetic": true,
+      "shaped_like": "kaggle:sid321axn/malicious-urls-dataset / malicious_phish.csv (columns url,type; classes benign, defacement, phishing, malware)",
+      "source_file_sha256": null,
+      "source_row_indices": null,
+      "columns": [
+        "url",
+        "type"
+      ],
+      "n_rows": 60,
+      "per_class": {
+        "benign": 15,
+        "defacement": 15,
+        "malware": 15,
+        "phishing": 15
+      },
+      "sha256": "80043e8cdb9a9667425dee8f60f19be0be104c296871dcab813d84d2e3866694",
+      "notes": [
+        "Hand-written synthetic rows on RFC 2606 reserved names (.test, .example, .invalid) and RFC 5737 TEST-NET addresses (192.0.2.x, 198.51.100.x, 203.0.113.x); none of these URLs exist or were fetched.",
+        "Stands in until a Kaggle API token is available to draw a seeded, stratified sample of the real file (CC0 permits committing it); when that lands, fill source_file_sha256 and source_row_indices and set synthetic to false.",
+        "Never presented as results: no demo target, no Finding, no evidence (spec 11.1)."
+      ]
+    }
+  }
+}
