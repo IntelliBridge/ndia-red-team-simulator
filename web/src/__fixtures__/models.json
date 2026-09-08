@@ -1,0 +1,22 @@
+[
+  {
+    "id": "fixture-model",
+    "project_id": "default",
+    "name": "Illustrative image classifier",
+    "source": "bundled",
+    "modality": "image",
+    "format": "onnx",
+    "sha256": "fixture-sha256",
+    "manifest": {
+      "dataset_id": "fixture-public-image",
+      "dataset_revision": "fixture-revision",
+      "class_names": ["car", "truck"],
+      "clean_accuracy": 0.82,
+      "clean_n": 50,
+      "gradients": false
+    },
+    "status": "available",
+    "refusal_reason": null,
+    "last_run_id": null
+  }
+]

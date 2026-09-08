@@ -1,0 +1,122 @@
+{
+  "id": "fixture-finding",
+  "run_id": "fixture-run-001",
+  "project_id": "default",
+  "severity": "high",
+  "status": "open",
+  "source_tool": "aegis.ml/fgsm",
+  "validation_state": "unvalidated",
+  "dedup_key": null,
+  "schema_blob": {
+    "title": "FGSM flips predictions at ε=0.03",
+    "description": "FIXTURE — illustrative measured threshold crossing.",
+    "target": "fixture-model",
+    "attack_id": "fgsm",
+    "first_success_eps": 0.03,
+    "ml": {
+      "attack_id": "fgsm",
+      "attack_name": "FGSM",
+      "family": "evasion",
+      "norm": "linf",
+      "eps_grid": [0.01, 0.03, 0.1],
+      "reference_eps": 0.03,
+      "first_success_eps": 0.03,
+      "asr_at_reference": 0.41,
+      "asr_by_eps": { "0.01": 0.1, "0.03": 0.41, "0.1": 0.76 },
+      "threshold": 0.2,
+      "measurements": [
+        {
+          "id": "m1",
+          "family": "evasion",
+          "attack_id": "fgsm",
+          "params": { "eps": 0.03 },
+          "n": 50,
+          "n_correct": 24,
+          "accuracy": 0.48,
+          "n_flipped_from_clean": 17,
+          "n_clean_correct": 41,
+          "attack_success_rate": 0.41,
+          "linf_norm_mean": 0.03,
+          "l2_norm_mean": 0.42,
+          "per_class": {},
+          "wall_time_s": 2.1,
+          "notes": []
+        }
+      ],
+      "observations": [
+        {
+          "id": "o1",
+          "sample_index": 4,
+          "true_label": "car",
+          "pred_clean": "car",
+          "pred_adv": "truck",
+          "flipped": true,
+          "confidence_clean": 0.84,
+          "confidence_adv": 0.67,
+          "artifacts": {
+            "original": "a-original",
+            "adv": "a-adv",
+            "perturbation": "a-pert",
+            "control": "a-control",
+            "shap_clean": "a-shap-clean",
+            "shap_adv": "a-shap-adv"
+          },
+          "artifact_sha256": {},
+          "center_mass_ratio_clean": 0.43,
+          "center_mass_ratio_adv": 0.61,
+          "metric_kind": "heuristic",
+          "metric_note": "FIXTURE — illustrative heuristic.",
+          "expl_shift": 0.37,
+          "linf_norm": 0.03,
+          "l2_norm": 0.42,
+          "control_pred": "car",
+          "control_confidence": 0.79
+        }
+      ],
+      "interpretation": [
+        {
+          "id": "i1",
+          "statement": "Attribution shifted at the recorded setting.",
+          "basis": ["o1"],
+          "kind": "inferred"
+        }
+      ],
+      "recommendations": [
+        {
+          "id": "r1",
+          "title": "Evaluate input preprocessing",
+          "rationale": "The rule fired from recorded ASR.",
+          "triggered_by": ["m1"],
+          "status": "candidate",
+          "validation": "not evaluated",
+          "measured": null,
+          "references": [],
+          "narrative_source": "rules"
+        }
+      ],
+      "limitations": [
+        "FIXTURE — illustrative values are not deployed evidence."
+      ],
+      "artifacts": {},
+      "review": {
+        "state": "unreviewed",
+        "reviewer": null,
+        "reason": null,
+        "at": null,
+        "notes": null
+      },
+      "verify": null,
+      "audit": {
+        "state": "verified",
+        "events": 7,
+        "entries": [
+          {
+            "id": "ae1",
+            "action": "finding.created",
+            "at": "2026-01-01T00:00:00Z"
+          }
+        ]
+      }
+    }
+  }
+}

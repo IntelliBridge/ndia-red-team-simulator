@@ -18,8 +18,7 @@ export const apiWsBase = BASE.replace(/^http/, "ws");
 
 const SESSION_COOKIE =
   process.env.NEXT_PUBLIC_REDSIM_API_SESSION_COOKIE ?? "redsim_api_session";
-const CSRF_COOKIE =
-  process.env.NEXT_PUBLIC_REDSIM_CSRF_COOKIE ?? "redsim_csrf";
+const CSRF_COOKIE = process.env.NEXT_PUBLIC_REDSIM_CSRF_COOKIE ?? "redsim_csrf";
 const CSRF_HEADER =
   process.env.NEXT_PUBLIC_REDSIM_CSRF_HEADER ?? "X-Redsim-CSRF";
 
@@ -78,7 +77,7 @@ export async function api<T>(
   const headers: Record<string, string> = {
     Accept: "application/json",
     "X-Redsim-Request-ID": _newRequestId(),
-    ...(init.headers as Record<string, string> | undefined ?? {}),
+    ...((init.headers as Record<string, string> | undefined) ?? {}),
   };
 
   // Bearer wins when explicitly supplied or available in localStorage;
@@ -127,6 +126,67 @@ export type FindingSchemaBlob = {
   description?: string;
   cve?: string;
   target?: string;
+  attack_id?: string;
+  first_success_eps?: number;
+  ml?: MLFindingDetail | null;
+};
+export type FindingReview = {
+  state: "unreviewed" | "dismissed";
+  reviewer: string | null;
+  reason: string | null;
+  at: string | null;
+  notes: string | null;
+};
+export type DefenseConfig = {
+  name: string;
+  params: Record<string, number | boolean | string>;
+};
+export type MRIDelta = {
+  baseline_run_id: string;
+  mri_before: number;
+  mri_after: number;
+  delta: number;
+  dimensions: Record<string, number>;
+  delta_acc_clean?: {
+    before: { n_correct: number; n: number };
+    after: { n_correct: number; n: number };
+    delta: number;
+  };
+  asr_by_attack?: Record<
+    string,
+    { before: number; after: number; n_before: number; n_after: number }
+  >;
+};
+export type MLFindingDetail = {
+  attack_id: string;
+  attack_name: string;
+  family: "evasion";
+  norm: "linf" | "l2";
+  eps_grid: number[];
+  reference_eps: number;
+  first_success_eps: number | null;
+  asr_at_reference: number;
+  asr_by_eps: Record<string, number>;
+  threshold: number;
+  measurements: Measurement[];
+  observations: Observation[];
+  interpretation: Interpretation[];
+  recommendations: CandidateRecommendation[];
+  limitations: string[];
+  artifacts: Record<string, string>;
+  review: FindingReview;
+  verify: {
+    run_id: string;
+    defense: DefenseConfig;
+    outcome: "verified" | "still_vulnerable" | "inconclusive";
+    delta: MRIDelta | null;
+  } | null;
+  explanation_unavailable_reason?: string | null;
+  audit?: {
+    state: "verified" | "broken" | "pending";
+    events?: number;
+    entries?: Array<{ id: string; action: string; at: string }>;
+  };
 };
 
 export type Finding = {
@@ -140,6 +200,413 @@ export type Finding = {
   dedup_key: string | null;
   schema_blob: FindingSchemaBlob;
 };
+
+export type TargetMetadata = {
+  dataset_id?: string;
+  dataset_revision?: string;
+  class_names?: string[];
+  clean_accuracy?: number;
+  clean_n?: number;
+  framework_versions?: Record<string, string>;
+  gradients?: boolean;
+  manifest?: Record<string, unknown>;
+  [key: string]: unknown;
+};
+export type ModelTarget = {
+  id: string;
+  project_id: string;
+  name: string;
+  source: "bundled" | "upload" | "endpoint";
+  modality: "image" | "tabular" | "llm";
+  format:
+    | "onnx"
+    | "torch_state_dict"
+    | "safetensors_state_dict"
+    | "sklearn_joblib"
+    | "xgboost_json"
+    | "endpoint";
+  sha256: string | null;
+  manifest: TargetMetadata;
+  status:
+    "registered" | "validating" | "available" | "refused" | "not_implemented";
+  refusal_reason?: string | null;
+  last_run_id?: string | null;
+  reason?: string | null;
+  validation?: {
+    detected_format?: string;
+    input_shape?: number[];
+    class_count?: number;
+    gradients?: boolean;
+    onnx_torch_argmax_agreement?: number | null;
+    refusal_reason?: string | null;
+    ingest_job_id?: string | null;
+  } | null;
+  campaign_history?: CampaignHistory[];
+};
+export type CampaignHistory = {
+  run_id: string;
+  attacks: string[];
+  reference_eps: number;
+  status: string;
+  settings_hash: string;
+  scorecard_available?: boolean;
+  created_at: string;
+};
+export type ParamSpec = {
+  name: string;
+  type: "float" | "int" | "bool";
+  default: number | boolean;
+  min?: number;
+  max?: number;
+  description?: string;
+};
+export type AttackInfo = {
+  id: string;
+  name: string;
+  domain: "image" | "tabular" | "llm" | "text" | "detection";
+  family: "evasion" | "control";
+  description: string;
+  params_schema: ParamSpec[];
+  references: string[];
+  phase: "A" | "B";
+  access: "white-box" | "black-box";
+  requires_gradients: boolean;
+  status: "available" | "not_implemented";
+  reason?: string;
+};
+export type DatasetInfo = {
+  id: string;
+  name: string;
+  license: string;
+  source_url: string;
+  classes: string[];
+  size: number;
+  format: string;
+  revision: string;
+  role: "demo" | "ci_fixture";
+  reachability: string;
+  compatible_modalities: Array<"image" | "tabular" | "llm">;
+};
+export type DefenseInfo = {
+  id: string;
+  name: string;
+  art_class: string;
+  params_schema: ParamSpec[];
+  modalities: Array<"image" | "tabular">;
+  phase: "A" | "B";
+  status: "available" | "not_implemented";
+  reason?: string;
+};
+export type Capabilities = {
+  modalities: Record<
+    "image" | "tabular" | "llm" | "text" | "detection",
+    { status: "available" | "not_implemented"; reason?: string; phase: "A" | "B" }
+  >;
+  upload_formats: Array<
+    "onnx" | "torch_state_dict" | "safetensors_state_dict"
+  >;
+  pickle_accepted: false;
+  architectures: Array<{ id: string; name: string } | string>;
+  explainers: Record<string, unknown>;
+  defenses: string[];
+  llm_narrative: {
+    configured: boolean;
+    gateway: "pythia";
+    model: string | null;
+    persona_set: boolean;
+    reason?: string;
+  };
+  worker_ml_extra: boolean;
+  sandbox_enabled: boolean;
+  scoring_weights?: ScoringWeights;
+  endpoint_connector?: {
+    status: "available" | "not_implemented";
+    reason?: string;
+    phase: "A" | "B";
+  };
+  bundled_models?: Array<{ id: string; name: string; modality: string }>;
+  [key: string]: unknown;
+};
+export type CampaignRequest = {
+  attack_ids: string[];
+  attack_params?: Record<string, Record<string, number | boolean>>;
+  norm?: "linf" | "l2";
+  eps_grid: number[];
+  reference_eps: number;
+  finding_asr_threshold?: number;
+  dataset_id: string;
+  dataset_revision?: string;
+  n_samples?: number;
+  seed?: number;
+  include_control?: boolean;
+  explain_k?: number;
+  auto_recommend?: boolean;
+  llm_narrative?: boolean;
+};
+export type ScoringWeights = {
+  acc_clean: number;
+  acc_adv: number;
+  asr: number;
+  conf_gap: number;
+  expl_shift: number;
+};
+export type CampaignConfig = CampaignRequest & {
+  scoring_weights: ScoringWeights;
+  settings_hash?: string;
+};
+export type Measurement = {
+  id: string;
+  family: "clean" | "evasion" | "control";
+  attack_id?: string | null;
+  params: Record<string, number | boolean>;
+  n: number;
+  n_correct: number;
+  accuracy: number;
+  n_flipped_from_clean?: number | null;
+  n_clean_correct?: number | null;
+  attack_success_rate?: number | null;
+  pert_first_success_mean?: number | null;
+  pert_first_success_n?: number | null;
+  conf_gap_mean?: number | null;
+  conf_gap_n?: number | null;
+  expl_shift_mean?: number | null;
+  expl_shift_n?: number | null;
+  queries_mean?: number | null;
+  linf_norm_mean?: number | null;
+  l2_norm_mean?: number | null;
+  per_class: Record<string, { n: number; n_correct: number }>;
+  wall_time_s: number;
+  notes: string[];
+};
+export type Observation = {
+  id: string;
+  sample_index: number;
+  true_label: string;
+  pred_clean: string;
+  pred_adv: string;
+  flipped: boolean;
+  confidence_clean: number;
+  confidence_adv: number;
+  artifacts: Record<string, string>;
+  artifact_sha256: Record<string, string>;
+  center_mass_ratio_clean?: number | null;
+  center_mass_ratio_adv?: number | null;
+  metric_kind: "heuristic";
+  metric_note: string;
+  expl_shift?: number | null;
+  top_features_clean?: string[];
+  top_features_adv?: string[];
+  feature_values_clean?: Record<string, string | number | boolean | null>;
+  feature_values_adv?: Record<string, string | number | boolean | null>;
+  modality?: "image" | "tabular";
+  linf_norm?: number | null;
+  l2_norm?: number | null;
+  control_pred?: string | null;
+  control_confidence?: number | null;
+  explanation_unavailable_reason?: string | null;
+};
+export type Interpretation = {
+  id: string;
+  statement: string;
+  basis: string[];
+  kind: "inferred";
+};
+export type CandidateRecommendation = {
+  id: string;
+  finding_id?: string;
+  title: string;
+  rationale: string;
+  triggered_by: string[];
+  status: "candidate";
+  validation: "not evaluated" | "measured";
+  measured?: {
+    delta_mri?: number;
+    delta_asr?: number;
+    baseline_run_id?: string;
+    verify_run_id?: string;
+  } | null;
+  references: string[];
+  narrative?: string | null;
+  narrative_source: "rules" | "llm";
+};
+export type MRIRecord = {
+  run_id?: string;
+  mri?: number;
+  grade?: string;
+  delta?: {
+    baseline_run_id: string;
+    mri_before: number;
+    mri_after: number;
+    delta: number;
+    delta_acc_clean?: number;
+  } | null;
+  subscores?: Record<
+    "S_acc" | "S_asr" | "S_eps" | "S_conf" | "S_expl",
+    number | null
+  >;
+  per_attack?: Record<string, number>;
+  weights?: ScoringWeights;
+  reading?: string;
+  reference_eps?: number;
+  eps_grid?: number[];
+  attack_ids?: string[];
+  measurements?: Measurement[];
+  curve?: CampaignCurvePoint[];
+};
+export type CampaignCurvePoint = {
+  attack_id?: string;
+  family: "clean" | "evasion" | "control";
+  eps: number;
+  accuracy: number;
+  n: number;
+  n_correct: number;
+};
+export type Campaign = {
+  run_id: string;
+  status: string;
+  stage?: string;
+  stages_done: string[];
+  error?: string | null;
+  config: CampaignConfig;
+  target: ModelTarget;
+  attacks: AttackInfo[];
+  provenance?: Record<string, unknown> | null;
+  measurements: Measurement[];
+  observations: Observation[];
+  interpretation: Interpretation[];
+  recommendations: CandidateRecommendation[];
+  limitations: string[];
+  reviewer_notes?: string | null;
+  score?: MRIRecord | null;
+  curve?: CampaignCurvePoint[];
+  findings?: Finding[];
+  completeness: { status: "complete" | "partial"; missing: string[] };
+  score_status?: { status: "pending" | "unavailable"; reason?: string };
+  audit?: { state: "verified" | "broken" | "pending"; events?: number };
+};
+export type ArtifactRow = {
+  id: string;
+  sha256?: string;
+  kind?: string;
+  [key: string]: unknown;
+};
+export type Comparison = {
+  compatible: true;
+  mode: "verify_delta" | "side_by_side";
+  delta_mri?: number | null;
+  delta_dimensions?: Record<string, number>;
+  delta_acc_clean?: number;
+  delta_families?: Array<{
+    family: string;
+    before: number;
+    after: number;
+    n_before: number;
+    n_after: number;
+  }>;
+  delta?: null;
+  scorecards?: MRIRecord[];
+  changed_variables: string[];
+  unchanged_variables: string[];
+  caveats: string[];
+};
+export type MlErrorDetail = {
+  code?: string;
+  message?: string;
+  phase?: string;
+  field?: string;
+  reasons?: string[];
+};
+export type JobHandle = {
+  run_id: string;
+  job_ids: string[];
+  status_url: string;
+};
+
+export function mlErrorDetail(error: unknown): MlErrorDetail {
+  if (error instanceof ApiError) {
+    try {
+      const parsed = JSON.parse(error.body) as {
+        detail?: MlErrorDetail | string;
+      };
+      return typeof parsed.detail === "object" && parsed.detail
+        ? parsed.detail
+        : { message: String(parsed.detail ?? error.body) };
+    } catch {
+      return { message: error.body };
+    }
+  }
+  return { message: String(error) };
+}
+export function startCampaign(
+  modelId: string,
+  config: CampaignRequest,
+): Promise<JobHandle> {
+  return api<JobHandle>(`/v1/models/${encodeURIComponent(modelId)}/attacks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+}
+export function deleteModel(modelId: string): Promise<void> {
+  return api<void>(`/v1/models/${encodeURIComponent(modelId)}`, {
+    method: "DELETE",
+  });
+}
+export function explainFinding(id: string, body: Record<string, unknown> = {}) {
+  return api(`/v1/findings/${encodeURIComponent(id)}/explain`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+export function hardenFinding(id: string, body: Record<string, unknown> = {}) {
+  return api(`/v1/findings/${encodeURIComponent(id)}/harden`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+export function verifyFinding(
+  id: string,
+  defense: string,
+  params: Record<string, unknown> = {},
+) {
+  return api(`/v1/findings/${encodeURIComponent(id)}/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ defense, params }),
+  });
+}
+export function dismissFinding(
+  id: string,
+  reason: string,
+  expectedStatus: string,
+) {
+  return api(`/v1/findings/${encodeURIComponent(id)}/status`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      status: "false_positive",
+      reason,
+      expected_status: expectedStatus,
+    }),
+  });
+}
+export function patchReviewerNotes(runId: string, notes: string) {
+  return api(`/v1/runs/${encodeURIComponent(runId)}/reviewer-notes`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reviewer_notes: notes }),
+  });
+}
+export function compareRuns(runId: string, withId: string) {
+  return api<Comparison>(
+    `/v1/runs/${encodeURIComponent(runId)}/compare?with=${encodeURIComponent(withId)}`,
+  );
+}
+export function artifactUrl(id: string): string {
+  return `${BASE}/v1/artifacts/${encodeURIComponent(id)}`;
+}
 
 export type ProjectMembership = {
   id: string;
@@ -219,10 +686,7 @@ export type OrgCost = {
  * answers 403 if the caller belongs to no project in the org, 404 if the
  * org is unknown — both surface as ApiError to the caller.
  */
-export async function getOrgCost(
-  orgId: string,
-  days = 30,
-): Promise<OrgCost> {
+export async function getOrgCost(orgId: string, days = 30): Promise<OrgCost> {
   return api<OrgCost>(
     `/v1/orgs/${encodeURIComponent(orgId)}/cost?days=${days}`,
   );
@@ -271,7 +735,7 @@ export async function listAuthProfiles(
   const out = await api<AuthProfile[] | { auth_profiles?: AuthProfile[] }>(
     `/v1/auth-profiles?project=${encodeURIComponent(projectId)}`,
   );
-  return Array.isArray(out) ? out : out.auth_profiles ?? [];
+  return Array.isArray(out) ? out : (out.auth_profiles ?? []);
 }
 
 export type CreateAuthProfileRequest = {

@@ -6,7 +6,7 @@
 
 import { type ReactNode } from "react";
 
-export const ROLES = ["scanner", "remediator", "approver", "admin"] as const;
+export const ROLES = ["viewer", "scanner", "remediator", "approver", "admin"] as const;
 export type Role = (typeof ROLES)[number];
 
 export interface RoleGatedProps {
@@ -15,7 +15,7 @@ export interface RoleGatedProps {
   /** The caller's role on the project, or undefined when no membership. */
   callerRole: string | undefined;
   /** Children shown when the caller's role meets/exceeds minRole. */
-  children: ReactNode;
+  children?: ReactNode;
   /** Optional fallback rendered when access is denied. */
   fallback?: ReactNode;
 }

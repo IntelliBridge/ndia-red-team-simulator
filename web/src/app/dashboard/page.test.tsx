@@ -128,8 +128,8 @@ describe("DashboardPage", () => {
     render(h(DashboardPage));
 
     expect(screen.getByText(/No runs yet\./)).toBeTruthy();
-    const link = screen.getByRole("link", { name: "/targets" });
-    expect(link.getAttribute("href")).toBe("/targets");
+    const link = screen.getByRole("link", { name: "/models" });
+    expect(link.getAttribute("href")).toBe("/models");
   });
 
   it("renders a row per run with a link, status badge, project and scanner", () => {

@@ -8,13 +8,18 @@ import {
   createAuthProfile,
   deleteAuthProfile,
   deleteTarget,
+  dismissFinding,
   getOrgCost,
   isCancellable,
   listAuthProfiles,
   listScanners,
+  patchReviewerNotes,
   reportUrl,
   resolveOrgId,
+  startCampaign,
   startScan,
+  verifyFinding,
+  type CampaignRequest,
   type ProjectMembership,
 } from "./api";
 
@@ -159,6 +164,80 @@ describe("typed client helpers", () => {
     expect(reportUrl("run-7", "md")).toBe(
       "http://localhost:8000/v1/runs/run-7/report.md",
     );
+  });
+
+  it("startCampaign POSTs the canonical Phase A request without scoring overrides", async () => {
+    fetchMock.mockResolvedValue(
+      ok(
+        JSON.stringify({
+          run_id: "run-1",
+          job_ids: ["job-1"],
+          status_url: "/v1/runs/run-1",
+        }),
+      ),
+    );
+    const request: CampaignRequest = {
+      attack_ids: ["fgsm", "pgd"],
+      eps_grid: [0.01, 0.03, 0.1],
+      reference_eps: 0.03,
+      finding_asr_threshold: 0.2,
+      dataset_id: "public/images",
+      dataset_revision: "sha256:revision",
+      n_samples: 200,
+      seed: 7,
+      include_control: true,
+      explain_k: 8,
+      auto_recommend: true,
+      llm_narrative: false,
+    };
+
+    await startCampaign("model/1", request);
+
+    expect(lastUrl()).toBe(
+      "http://localhost:8000/v1/models/model%2F1/attacks",
+    );
+    expect(lastInit().method).toBe("POST");
+    expect(lastInit().body).toBe(JSON.stringify(request));
+    expect(lastInit().body).not.toContain("scoring_weights");
+    expect(lastInit().body).not.toContain("sample_size");
+  });
+
+  it("verifyFinding nests defense params under params", async () => {
+    fetchMock.mockResolvedValue(ok("{}"));
+    await verifyFinding("finding/1", "jpeg", { quality: 80 });
+    expect(lastUrl()).toBe(
+      "http://localhost:8000/v1/findings/finding%2F1/verify",
+    );
+    expect(lastInit().method).toBe("POST");
+    expect(lastInit().body).toBe(
+      JSON.stringify({ defense: "jpeg", params: { quality: 80 } }),
+    );
+  });
+
+  it("dismissFinding PATCHes status with reason and optimistic status", async () => {
+    fetchMock.mockResolvedValue(ok("{}"));
+    await dismissFinding("finding-1", "Benign control explains the flag.", "open");
+    expect(lastUrl()).toBe(
+      "http://localhost:8000/v1/findings/finding-1/status",
+    );
+    expect(lastInit().method).toBe("PATCH");
+    expect(lastInit().body).toBe(
+      JSON.stringify({
+        status: "false_positive",
+        reason: "Benign control explains the flag.",
+        expected_status: "open",
+      }),
+    );
+  });
+
+  it("patchReviewerNotes sends the canonical reviewer_notes field", async () => {
+    fetchMock.mockResolvedValue(ok("{}"));
+    await patchReviewerNotes("run-1", "");
+    expect(lastUrl()).toBe(
+      "http://localhost:8000/v1/runs/run-1/reviewer-notes",
+    );
+    expect(lastInit().method).toBe("PATCH");
+    expect(lastInit().body).toBe(JSON.stringify({ reviewer_notes: "" }));
   });
 });
 
