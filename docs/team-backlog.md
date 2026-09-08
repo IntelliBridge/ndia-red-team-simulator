@@ -2,6 +2,8 @@
 
 The initial kickoff workstreams have been expanded into [eight feature packages](../specs/README.md). That feature map and each feature's `tasks.md` are now the source of truth for work breakdown and task status.
 
+Product scope is fixed by the [Adversarial ML Red-Team Simulator — Product Spec](superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md) (2026-09-08); the feature packages are the feature-level layer beneath it, and its Phase A demo-critical order sets what to implement first.
+
 All owners are currently **unassigned**. The specs, plans, and tasks are **drafts for team review**, not assigned platform tasks, completed work, or approval to implement every candidate technology.
 
 | Start here | Suggested role | Dependency | Outcome |

@@ -83,10 +83,9 @@ Strict mode treats these as errors:
 - Links to files mkdocs can't find.
 - References to anchors that don't exist on the target page.
 
-The exception is `docs/architecture/legacy/` — those files are
-intentionally archived and excluded from nav. The
-[`legacy/README.md`](../architecture/legacy/README.md) explains
-what each archived file is.
+Upstream aegis also kept `docs/architecture/legacy/` — archived files
+excluded from nav, each described by its `legacy/README.md`; that
+directory is not carried in this fork.
 
 ## Theming + behaviour
 
