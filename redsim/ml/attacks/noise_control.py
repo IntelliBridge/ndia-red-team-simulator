@@ -2,8 +2,9 @@
 
 No gradient, no query, no model access beyond the final prediction: the adapter
 touches the target only to read the valid clipping range. Family ``control``;
-it never creates a Finding and never enters the MRI. Its ATLAS technique is
-``None`` because a control demonstrates no adversarial technique (spec 27.2).
+it never creates a Finding and never enters the MRI. It has no entry in
+``ATLAS_TECHNIQUES`` because a control demonstrates no adversarial technique
+(spec 27.2).
 """
 
 from __future__ import annotations
@@ -50,7 +51,9 @@ class NoiseControlAdapter:
                          "Never creates a Finding."),
             params_schema=list(self._schema),
             references=["spec section 12.4 (benign random-noise control)"],
-            atlas_technique_id=None, atlas_technique_name=None,
+            # No gradient and no model access beyond the final prediction, so it is listed as
+            # black-box; ``requires_gradients`` is False for the same reason.
+            phase="A", access="black-box", requires_gradients=False, status="available", reason=None,
         )
 
     def resolve_params(self, params: dict[str, Any]) -> dict[str, float | int | bool]:

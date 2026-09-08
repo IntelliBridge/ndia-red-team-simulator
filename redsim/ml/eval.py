@@ -1,18 +1,27 @@
 """Turn predictions into ``Measurement`` rows (spec section 12.5, 14.2).
 
 Everything here is counting. A Measurement carries ``n`` and every denominator
-it uses; rates are derived from the counts and never stored without them. The
-schema in this branch has no dedicated fields for the attack success rate or
-the confidence gap, so those are exposed as helpers (``attack_success_rate``,
-``conf_gap``) for the scoring stage and written into ``Measurement.notes`` with
-their numerator and denominator spelled out.
+it uses; rates are derived from the counts and never stored without them:
 
-``Measurement.severity`` is NEVER set here; ``redsim.ml.scoring.severity_for``
-derives it from the per-eps table (spec section 15.5).
+- ``accuracy = n_correct / n``.
+- ``attack_success_rate = n_flipped_from_clean / n_clean_correct`` (evasion and
+  control rows; ``None`` when the denominator is 0, never 0% or 100%).
+- ``conf_gap_mean`` is the mean over ALL ``n`` samples of
+  ``max(0, max_{j != y} p_j - p_y)`` on the perturbed input, with ``conf_gap_n = n``,
+  so a robust model scores 0 rather than "undefined" (spec 12.5, 15.1).
+- ``pert_first_success_mean`` / ``pert_first_success_n`` are computed by
+  :func:`pert_first_success` from the per-eps flip matrix and belong on the
+  attack's reference-eps row only (spec 15.1); the campaign sets them there.
+- ``expl_shift_*`` are left ``None``; the explain stage fills them on the
+  reference row (spec 13.5).
+
+Severity is a Finding-level value (``redsim.ml.scoring.severity_for``), not a
+Measurement field, so nothing here derives it.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
@@ -33,6 +42,16 @@ def perturbation_norms(x_ref: np.ndarray, x_adv: np.ndarray) -> tuple[float, flo
     linf = np.abs(d).max(axis=1)
     l2 = np.sqrt((d * d).sum(axis=1))
     return float(linf.mean()), float(l2.mean())
+
+
+def per_sample_norm(x: np.ndarray, x_adv: np.ndarray, *, l2: bool = False) -> np.ndarray:
+    """Per-sample perturbation norm, L-inf by default or L2 on request."""
+    a = np.asarray(x, dtype=np.float64)
+    b = np.asarray(x_adv, dtype=np.float64)
+    if a.shape != b.shape:
+        raise ValueError(f"shape mismatch: x {a.shape} vs x_adv {b.shape}")
+    d = (b - a).reshape(a.shape[0], -1)
+    return np.sqrt((d * d).sum(axis=1)) if l2 else np.abs(d).max(axis=1)
 
 
 def attack_success_rate(y_true: np.ndarray, y_pred_clean: np.ndarray,
@@ -68,6 +87,29 @@ def conf_gap(proba_adv: np.ndarray, y_true: np.ndarray) -> float:
     return float(np.clip(gaps, 0.0, 1.0).mean())
 
 
+def pert_first_success(flips: Mapping[float, np.ndarray],
+                       norms: Mapping[float, np.ndarray]) -> tuple[float | None, int]:
+    """``(pert_first_success_mean, pert_first_success_n)`` per spec 15.1.
+
+    ``flips[eps]`` is the per-sample flipped mask at that grid eps and ``norms[eps]`` the
+    per-sample achieved norm of the adversarial example at that eps. For every sample that
+    flips at any grid eps, take the norm at the smallest eps at which it flips; the mean over
+    those samples is returned with their count. ``(None, 0)`` when no sample flipped."""
+    grid = sorted(float(e) for e in flips)
+    if not grid:
+        return None, 0
+    first: list[float] = []
+    n = int(np.asarray(flips[grid[0]]).shape[0])
+    for i in range(n):
+        for e in grid:
+            if bool(np.asarray(flips[e])[i]):
+                first.append(float(np.asarray(norms[e])[i]))
+                break
+    if not first:
+        return None, 0
+    return float(sum(first) / len(first)), len(first)
+
+
 def _per_class(y_true: np.ndarray, y_pred: np.ndarray, class_names: list[str]) -> dict[str, dict[str, int]]:
     out: dict[str, dict[str, int]] = {}
     for idx, name in enumerate(class_names):
@@ -76,20 +118,38 @@ def _per_class(y_true: np.ndarray, y_pred: np.ndarray, class_names: list[str]) -
     return out
 
 
+def _scalar_params(params: Mapping[str, Any] | None, notes: list[str]) -> dict[str, float | int | bool | str]:
+    """Keep the scalar params the schema admits (``float | int | bool | str``); note the rest."""
+    out: dict[str, float | int | bool | str] = {}
+    for k, v in (params or {}).items():
+        if isinstance(v, (bool, int, float, str)) and not isinstance(v, complex):
+            out[str(k)] = v
+        elif isinstance(v, (np.integer, np.floating, np.bool_)):
+            out[str(k)] = v.item()
+        else:
+            notes.append(f"param {k!r}={v!r} omitted from params (non-scalar)")
+    return out
+
+
 def measure(id: str, family: MeasurementFamily, y_true: np.ndarray, y_pred: np.ndarray,
             class_names: list[str], *, attack_id: str | None = None,
-            params: dict[str, Any] | None = None, x_ref: np.ndarray | None = None,
+            params: Mapping[str, Any] | None = None, x_ref: np.ndarray | None = None,
             x_adv: np.ndarray | None = None, y_pred_clean: np.ndarray | None = None,
+            proba: np.ndarray | None = None, queries_mean: float | None = None,
             wall_time_s: float = 0.0, notes: list[str] | None = None) -> Measurement:
     """Build one Measurement row from labels.
 
     - ``n``, ``n_correct``, ``accuracy = n_correct / n`` and ``per_class`` (one entry per class,
       so the per-class ``n`` sum to ``n``) are always filled.
-    - ``n_flipped_from_clean`` is filled when ``y_pred_clean`` is given (evasion / control rows):
-      samples correct on clean and wrong here. The denominator ``n_clean_correct`` and the
-      resulting rate are written to ``notes`` because the schema has no field for them.
+    - ``n_flipped_from_clean``, ``n_clean_correct`` and ``attack_success_rate`` are filled when
+      ``y_pred_clean`` is given (evasion / control rows). The rate is ``None`` with a note when
+      ``n_clean_correct`` is 0.
+    - ``conf_gap_mean`` / ``conf_gap_n`` are filled when ``proba`` (the class probabilities on the
+      input this row measures) is given; ``conf_gap_n`` is ``n``.
     - ``linf_norm_mean`` / ``l2_norm_mean`` are filled when both ``x_ref`` and ``x_adv`` are given.
-    - ``severity`` is left ``None``; it is derived later (spec 15.5).
+    - ``queries_mean`` is copied through (black-box attacks only).
+    - ``pert_first_success_*`` and ``expl_shift_*`` stay ``None``: they belong on the reference
+      row and are set by the campaign (perturbation) and the explain stage (attribution shift).
     """
     yt = np.asarray(y_true).astype(int).ravel()
     yp = np.asarray(y_pred).astype(int).ravel()
@@ -103,6 +163,8 @@ def measure(id: str, family: MeasurementFamily, y_true: np.ndarray, y_pred: np.n
         row_notes.append("not computed (denominator 0): no samples evaluated")
 
     n_flipped: int | None = None
+    n_clean_correct: int | None = None
+    asr: float | None = None
     if y_pred_clean is not None:
         yc = np.asarray(y_pred_clean).astype(int).ravel()
         if yc.shape != yt.shape:
@@ -110,27 +172,27 @@ def measure(id: str, family: MeasurementFamily, y_true: np.ndarray, y_pred: np.n
         n_flipped, n_clean_correct, asr = attack_success_rate(yt, yc, yp)
         if asr is None:
             row_notes.append("attack_success_rate not computed (denominator n_clean_correct = 0)")
-        else:
-            row_notes.append(
-                f"attack_success_rate = {n_flipped}/{n_clean_correct} = {asr:.4f} "
-                f"(n_flipped_from_clean / n_clean_correct)")
+
+    gap: float | None = None
+    gap_n: int | None = None
+    if proba is not None:
+        gap = conf_gap(proba, yt)
+        gap_n = n
 
     linf: float | None = None
     l2: float | None = None
     if x_ref is not None and x_adv is not None:
         linf, l2 = perturbation_norms(x_ref, x_adv)
 
-    clean_params: dict[str, float | int | bool] = {}
-    for k, v in (params or {}).items():
-        if isinstance(v, (bool, int, float)) and not isinstance(v, complex):
-            clean_params[str(k)] = v
-        else:
-            row_notes.append(f"param {k!r}={v!r} omitted from params (non-scalar)")
+    clean_params = _scalar_params(params, row_notes)
 
     return Measurement(
         id=id, family=family, attack_id=attack_id, params=clean_params,
         n=n, n_correct=n_correct, accuracy=accuracy,
-        n_flipped_from_clean=n_flipped, linf_norm_mean=linf, l2_norm_mean=l2,
+        n_flipped_from_clean=n_flipped, n_clean_correct=n_clean_correct, attack_success_rate=asr,
+        linf_norm_mean=linf, l2_norm_mean=l2,
+        conf_gap_mean=gap, conf_gap_n=gap_n,
+        queries_mean=None if queries_mean is None else float(queries_mean),
         per_class=_per_class(yt, yp, class_names), wall_time_s=float(wall_time_s),
         notes=row_notes,
     )
@@ -139,3 +201,11 @@ def measure(id: str, family: MeasurementFamily, y_true: np.ndarray, y_pred: np.n
 def eps_tag(eps: float) -> str:
     """``0.03 -> "eps0.03"``; used for measurement ids ``m.evasion.<a>.eps0.03`` (spec 14.1)."""
     return f"eps{float(eps):g}"
+
+
+def eps_of(m: Measurement) -> float | None:
+    """The ``eps`` a row was measured at, from ``params`` (``None`` for the clean row)."""
+    v = m.params.get("eps")
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return float(v)

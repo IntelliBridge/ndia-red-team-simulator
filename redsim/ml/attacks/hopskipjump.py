@@ -16,7 +16,6 @@ from typing import Any, ClassVar
 import numpy as np
 
 from redsim.ml.attacks import (
-    ATLAS_INFERENCE_API_ACCESS,
     CPU_FLOAT32_NOTE,
     NONDETERMINISM_PREFIX,
     apply_mask,
@@ -63,8 +62,7 @@ class HopSkipJumpAdapter:
             params_schema=list(self._schema),
             references=["Chen, Jordan, Wainwright 2020, arXiv:1904.02144",
                         "art.attacks.evasion.HopSkipJump"],
-            atlas_technique_id=ATLAS_INFERENCE_API_ACCESS[0],
-            atlas_technique_name=ATLAS_INFERENCE_API_ACCESS[1],
+            phase="A", access="black-box", requires_gradients=False, status="available", reason=None,
         )
 
     def resolve_params(self, params: dict[str, Any]) -> dict[str, float | int | bool]:
@@ -116,7 +114,7 @@ class HopSkipJumpAdapter:
         queries_mean = counter["rows"] / n
         return AttackOutput(
             x_adv=x_adv, linf_norm_mean=linf, l2_norm_mean=l2, wall_time_s=wall, params=dict(p),
-            library_versions=library_versions(),
+            library_versions=library_versions(), queries_mean=float(queries_mean),
             notes=[f"norm={'L2' if norm == 2 else 'Linf'}; black-box decision-based; no gradients, no surrogate",
                    ("minimal-norm attack: success at eps is defined by thresholding the achieved perturbation "
                     "norm against each grid eps (spec 15.1)"),

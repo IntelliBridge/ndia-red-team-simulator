@@ -20,6 +20,8 @@ class AttackOutput:
     params: dict[str, float | int | bool]
     library_versions: dict[str, str] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    # Black-box attacks only: mean model ``predict`` rows per sample (spec 12.5 ``queries(a)``).
+    queries_mean: float | None = None
 
 
 @runtime_checkable

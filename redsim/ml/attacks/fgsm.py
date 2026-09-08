@@ -12,7 +12,6 @@ from typing import Any, ClassVar
 import numpy as np
 
 from redsim.ml.attacks import (
-    ATLAS_CRAFT_ADVERSARIAL_DATA,
     CPU_FLOAT32_NOTE,
     NONDETERMINISM_PREFIX,
     apply_mask,
@@ -47,8 +46,7 @@ class FGSMAdapter:
             params_schema=list(self._schema),
             references=["Goodfellow, Shlens, Szegedy 2015, arXiv:1412.6572",
                         "art.attacks.evasion.FastGradientMethod"],
-            atlas_technique_id=ATLAS_CRAFT_ADVERSARIAL_DATA[0],
-            atlas_technique_name=ATLAS_CRAFT_ADVERSARIAL_DATA[1],
+            phase="A", access="white-box", requires_gradients=True, status="available", reason=None,
         )
 
     def resolve_params(self, params: dict[str, Any]) -> dict[str, float | int | bool]:

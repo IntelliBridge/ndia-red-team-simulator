@@ -20,16 +20,27 @@ from typing import Any
 
 import numpy as np
 
-from redsim.ml.schema import ParamSpec
+from redsim.ml.schema import AtlasTechnique, ParamSpec
 
 # Canonical nondeterminism strings (spec 14.4). The worker folds AttackOutput.notes
 # that start with NONDETERMINISM_PREFIX into Provenance.nondeterminism.
 NONDETERMINISM_PREFIX = "nondeterminism: "
 CPU_FLOAT32_NOTE = "CPU float32 reductions; results may differ across BLAS builds and thread counts"
 
-# MITRE ATLAS technique ids (spec 27.2), checked against ATLAS v4.x naming.
-ATLAS_CRAFT_ADVERSARIAL_DATA = ("AML.T0043", "Craft Adversarial Data")
-ATLAS_INFERENCE_API_ACCESS = ("AML.T0040", "ML Model Inference API Access")
+# MITRE ATLAS mapping (spec 27.2, 27.4), Phase B2. The registry is the one place the
+# mapping lives; ``AttackInfo`` carries no ATLAS field and no Phase A record is stamped
+# with a technique. B2 stamps ``MLFindingDetail.atlas_technique`` from this table when a
+# Finding is created and pins the exact ATLAS release it re-verified the names against.
+# The ids and names are the ones written in spec section 27.2; the version string marks
+# the major release those names were read from, not a claim about a specific point
+# release. A control demonstrates no adversarial technique and has no entry.
+ATLAS_VERSION = "4.x"
+ATLAS_TECHNIQUES: dict[str, AtlasTechnique] = {
+    "fgsm": AtlasTechnique(id="AML.T0043", name="Craft Adversarial Data", atlas_version=ATLAS_VERSION),
+    "pgd": AtlasTechnique(id="AML.T0043", name="Craft Adversarial Data", atlas_version=ATLAS_VERSION),
+    "hopskipjump": AtlasTechnique(id="AML.T0040", name="ML Model Inference API Access",
+                                  atlas_version=ATLAS_VERSION),
+}
 
 
 def _pkg_version(dist: str, module: str | None = None) -> str | None:
@@ -46,12 +57,15 @@ def _pkg_version(dist: str, module: str | None = None) -> str | None:
 
 
 def library_versions() -> dict[str, str]:
-    """``art`` and ``numpy`` always, ``torch`` and ``scikit-learn`` when installed (spec 12.5)."""
+    """``art`` and ``numpy`` always; ``torch``, ``scikit-learn``, ``onnxruntime`` and ``xgboost``
+    when installed (spec 12.5, 14.4)."""
     out: dict[str, str] = {}
     for key, dist, module in (("art", "adversarial-robustness-toolbox", "art"),
                               ("numpy", "numpy", "numpy"),
                               ("torch", "torch", "torch"),
-                              ("scikit-learn", "scikit-learn", "sklearn")):
+                              ("scikit-learn", "scikit-learn", "sklearn"),
+                              ("onnxruntime", "onnxruntime", "onnxruntime"),
+                              ("xgboost", "xgboost", "xgboost")):
         v = _pkg_version(dist, module)
         if v is not None:
             out[key] = v
@@ -155,8 +169,12 @@ def apply_mask(x: np.ndarray, x_adv: np.ndarray, mask: np.ndarray | None) -> np.
 
 # --- registration --------------------------------------------------------------------------
 # Imported last so the adapter modules can use the helpers above.
-from redsim.ml.attacks import fgsm, hopskipjump, noise_control, pgd
-from redsim.ml.attacks.registry import ATTACKS, get_attack, list_attacks
+from redsim.ml.attacks import fgsm, hopskipjump, noise_control, pgd  # noqa: E402  (late import: registration)
+from redsim.ml.attacks.registry import (  # noqa: E402  (late import: registration)
+    ATTACKS,
+    get_attack,
+    list_attacks,
+)
 
 for _adapter in (fgsm.ADAPTER, pgd.ADAPTER, hopskipjump.ADAPTER, noise_control.ADAPTER):
     if ATTACKS.maybe_get(_adapter.id) is None:
@@ -164,8 +182,8 @@ for _adapter in (fgsm.ADAPTER, pgd.ADAPTER, hopskipjump.ADAPTER, noise_control.A
 del _adapter
 
 __all__ = [
-    "ATLAS_CRAFT_ADVERSARIAL_DATA",
-    "ATLAS_INFERENCE_API_ACCESS",
+    "ATLAS_TECHNIQUES",
+    "ATLAS_VERSION",
     "ATTACKS",
     "CPU_FLOAT32_NOTE",
     "NONDETERMINISM_PREFIX",

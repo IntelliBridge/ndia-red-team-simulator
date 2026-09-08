@@ -1,25 +1,32 @@
-"""Run one adversarial-ML campaign end to end and assemble its ``RunRecord``.
+"""Run one adversarial-ML campaign end to end and assemble its record.
 
 Pure Python: no Celery, database or HTTP. The worker task calls ``run_campaign``
 inside the sandboxed child and persists the returned record; tests call it on the
 ``TinyTarget`` double with a ``FilesystemSink``.
 
 Stage order follows ``redsim.ml.schema.STAGES``: load_target -> sample -> clean_eval
--> attack (every attack x every eps in the grid) -> control (benign noise at every
-eps) -> explain (at the reference budget; optional and tolerant of a missing or
-failing explainer) -> interpret -> recommend -> report. The explain and recommend
-modules are imported lazily; when one is absent the record says so in an
-``Interpretation`` and a limitation rather than pretending (spec 14.7).
+-> attack (written per attack as ``attack:<attack_id>``, every eps in the grid) ->
+control (benign noise at every eps, the reference eps included) -> explain (at the
+reference budget; optional and tolerant of a missing or failing explainer) -> score
+-> interpret -> recommend -> report. The explain and recommend modules are imported
+lazily; when one is absent or fails the record says so in an ``Interpretation`` and a
+limitation rather than pretending (spec 14.7).
 
 Invariants enforced here (spec 14, 15): measurements, observations, interpretation
 and candidate recommendations stay in separate lists; every Measurement carries
-``n`` and its denominators; a control accompanies the attacks at the same eps;
-severity is derived by ``scoring.severity_for``; the MRI is computed only when all
-five subscores exist and is otherwise ``None`` with the reason in ``limitations``.
+``n`` and its denominators; a control accompanies the attacks at the same eps; the
+MRI is computed only when all five subscores exist and the score record is
+otherwise partial with the reason in ``missing`` and ``limitations``; every
+citation resolves to a recorded id; candidates carry no measured delta.
+
+The returned ``CampaignRecord`` is a ``RunRecord`` plus the queryable projections
+(``curve``, ``settings_hash``, ``completeness``, ``missing``, ``score_status``).
 """
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import importlib
 import inspect
 import io
@@ -45,33 +52,33 @@ from redsim.ml.attacks import (
     library_versions,
 )
 from redsim.ml.errors import AttackNotApplicable, ExplainUnavailable, MLError, TargetUnavailable
-from redsim.ml.eval import conf_gap, eps_tag, measure
+from redsim.ml.eval import eps_tag, measure, per_sample_norm, pert_first_success
 from redsim.ml.schema import (
-    STAGES,
-    STANDING_LIMITATIONS,
     AttackInfo,
+    CampaignConfig,
+    CampaignRecord,
     CandidateRecommendation,
     Interpretation,
     Measurement,
+    MRIRecord,
     Observation,
     Provenance,
-    RunConfig,
-    RunRecord,
-    Scoring,
+    RobustnessCurve,
+    ScoreStatus,
+    standing_limitations,
 )
 from redsim.ml.scoring import (
-    FINDING_ASR_THRESHOLD,
-    eps_bands,
-    first_success,
+    MIN_CLEAN_CORRECT_FOR_FINDING,
+    ONE_POINT_GRID_LIMITATION,
+    finding_inputs,
+    robustness_curves,
     score_run,
-    severity_for,
+    settings_hash,
 )
 from redsim.ml.targets.base import Sample, Target
 from redsim.ml.targets.registry import TARGETS
 
 CONTROL_ATTACK_ID = "noise_control"
-NOISE_SENSITIVITY_THRESHOLD = FINDING_ASR_THRESHOLD   # spec 12.4: control alone degrades by more than this
-MIN_CLEAN_CORRECT_FOR_FINDING = 10                   # spec 12.6 denominator guard
 DEFAULT_MAX_ADV_ARTIFACT_MB = 64.0                   # spec 12.8
 
 REALIZABILITY_CAVEAT = "feature-space perturbation; realizability not established"
@@ -84,7 +91,16 @@ TABULAR_LIMITATION = (
     "Tabular evasion rows are feature-space perturbations; a perturbed feature vector is evidence about "
     "the decision surface and is a realizable attack only if it maps back to a constructible input, which "
     "this run neither constructs nor checks. L-inf budgets on mixed-type features are a further caveat.")
+MRI_SCOPE_LIMITATION = (
+    "The MRI summarises this campaign only (one model, one modality, the declared attack set, eps grid "
+    "and reference budget); it is not comparable across campaigns with different settings and is never "
+    "aggregated across modalities.")
+WHITE_BOX_STANDING = "White-box gradient attacks assume full model access; black-box and physical-world attacks were not evaluated."
+WHITE_BOX_WITH_BLACK_BOX = (
+    "White-box gradient attacks assume full model access; the black-box attack hopskipjump was evaluated "
+    "with label-only query access; physical-world attacks were not evaluated.")
 _EXPLAIN_MODULES = {"image": "redsim.ml.explain.shap_image", "tabular": "redsim.ml.explain.shap_tabular"}
+_THREAD_ENV_VARS = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "REDSIM_ML_SANDBOX_THREADS")
 
 
 def _utcnow() -> datetime:
@@ -170,32 +186,89 @@ def _call_supported(fn: Any, *args: Any, **optional: Any) -> Any:
     return fn(*args, **{k: v for k, v in optional.items() if k in params})
 
 
-def _resolve_target(config: RunConfig) -> Target:
+def _sha256_indices(indices: Any) -> str:
+    arr = np.asarray(indices).astype(np.int64)
+    return hashlib.sha256(arr.tobytes()).hexdigest()
+
+
+def _thread_env() -> dict[str, str]:
+    """``OMP_NUM_THREADS``, ``MKL_NUM_THREADS`` and the torch thread count, as observed (spec 14.4)."""
+    env = {k: os.environ[k] for k in _THREAD_ENV_VARS if os.environ.get(k)}
+    with contextlib.suppress(Exception):  # torch is optional for tabular targets
+        import torch
+        env["torch_threads"] = str(torch.get_num_threads())
+    return env
+
+
+def _as_int(v: Any) -> int | None:
+    if isinstance(v, bool) or not isinstance(v, (int, float, np.integer, np.floating)):
+        return None
+    return int(v)
+
+
+def _as_float(v: Any) -> float | None:
+    if isinstance(v, bool) or not isinstance(v, (int, float, np.integer, np.floating)):
+        return None
+    return float(v)
+
+
+def _defense_provenance(target: Target, config: CampaignConfig) -> dict[str, Any] | None:
+    """``Provenance.defense`` for a verify run: the applied defense as the wrapper describes it (ART class,
+    resolved params, what it does not defend), else the requested ``DefenseConfig`` when the wrapper does
+    not describe itself. ``None`` for an attack run."""
+    if config.defense is None:
+        return None
+    describe = getattr(target, "describe", None)
+    if callable(describe):
+        described = describe()
+        if isinstance(described, dict):
+            return dict(described)
+    return config.defense.model_dump(mode="json")
+
+
+# The reference-row Measurement fields the explain stage supplies (spec 13.5; ``explain.base.MEASUREMENT_FIELDS``).
+_EXPLAIN_FIELDS = ("expl_shift_mean", "expl_shift_n", "expl_shift_n_excluded", "expl_shift_noise_floor",
+                   "expl_shift_noise_floor_n")
+
+
+def _explain_fields(out: Any) -> dict[str, Any]:
+    """The reference-row fields from an explainer's output: ``ExplainOutput.measurement_fields()`` when the
+    output provides it, else the same-named attributes, else the legacy ``meta`` keys."""
+    fields_fn = getattr(out, "measurement_fields", None)
+    if callable(fields_fn):
+        got = fields_fn()
+        if isinstance(got, dict):
+            return dict(got)
+    meta = dict(getattr(out, "meta", {}) or {})
+    return {name: getattr(out, name, meta.get(name)) for name in _EXPLAIN_FIELDS}
+
+
+# --- configuration -> runnable pieces -------------------------------------------------------------------
+
+def _resolve_target(config: CampaignConfig) -> Target:
     target = TARGETS.maybe_get(config.target_id)
     if target is None:
         raise TargetUnavailable(f"unknown target {config.target_id!r}")
     info = target.info()
     if info.status != "available":
         raise TargetUnavailable(info.reason or f"target {config.target_id!r} is {info.status}")
+    if info.domain != config.modality:
+        raise ValueError(f"config.modality {config.modality!r} does not match the target domain {info.domain!r}")
     target.load()
-    if config.defense:
-        defense_id = config.defense.get("id") if isinstance(config.defense, dict) else None
-        if not defense_id:
-            raise ValueError("config.defense must be {id, params}")
+    if config.defense is not None:
         try:
             defenses = importlib.import_module("redsim.ml.defenses")
         except ImportError as exc:
             raise MLError("a defense was requested but redsim.ml.defenses is not available; "
                           "refusing to run an undefended campaign in its place") from exc
-        target = defenses.apply_defense(target, defense_id, dict(config.defense.get("params") or {}))
+        target = defenses.apply_defense(target, config.defense.id, dict(config.defense.params))
     return target
 
 
-def _resolve_attacks(config: RunConfig, domain: str) -> list[Any]:
-    ids = list(config.attack_ids) or ([config.attack_id] if config.attack_id else [])
-    ids = _uniq([i for i in ids if i])
+def _resolve_attacks(config: CampaignConfig, domain: str) -> list[Any]:
+    ids = _uniq([i for i in config.attack_ids if i])
     if not ids:
-        raise ValueError("RunConfig needs attack_ids (or attack_id)")
+        raise ValueError("CampaignConfig.attack_ids is empty")
     adapters = []
     for aid in ids:
         adapter = ATTACKS.maybe_get(aid)
@@ -206,51 +279,45 @@ def _resolve_attacks(config: RunConfig, domain: str) -> list[Any]:
             raise AttackNotApplicable(
                 f"{aid!r} is a {info.family} adapter; the benign control runs automatically and is not "
                 "part of the attack set")
+        if info.status != "available":
+            raise AttackNotApplicable(info.reason or f"attack {aid!r} is {info.status}")
         domains = getattr(adapter, "domains", frozenset({info.domain}))
         if domain not in domains:
             raise AttackNotApplicable(f"attack {aid!r} applies to {sorted(domains)}, not {domain!r}")
+        if config.norm == "l2" and not any(s.name == "norm_l2" for s in info.params_schema):
+            raise AttackNotApplicable(f"attack {aid!r} supports the L-inf norm only; the campaign norm is 'l2'")
         adapters.append(adapter)
     return adapters
 
 
-def _attack_params(config: RunConfig, adapters: list[Any]) -> dict[str, dict[str, Any]]:
-    """Split the shared ``config.params`` per adapter by its ParamSpec names. A key no adapter
-    accepts is a configuration error (typo protection)."""
-    schemas = {a.id: {s.name for s in a.info().params_schema} for a in adapters}
-    control_schema = {s.name for s in ATTACKS.get(CONTROL_ATTACK_ID).info().params_schema}
-    accepted = set().union(*schemas.values()) | control_schema | {"eps_step"}
-    unknown = sorted(k for k in config.params if k not in accepted)
-    if unknown:
-        raise ValueError(f"config.params has key(s) no attack in the set accepts: {unknown}")
+def _attack_params(config: CampaignConfig, adapters: list[Any]) -> dict[str, dict[str, Any]]:
+    """``config.attack_params`` per adapter. ``eps`` comes from the grid and ``norm_l2`` from
+    ``config.norm``, so a caller that sets either per attack has a configuration error."""
     out: dict[str, dict[str, Any]] = {}
+    l2 = config.norm == "l2"
     for a in adapters:
-        out[a.id] = {k: v for k, v in config.params.items() if k in schemas[a.id] and k != "eps"}
+        given = dict(config.attack_params.get(a.id, {}))
+        clash = sorted(k for k in ("eps", "norm_l2") if k in given)
+        if clash:
+            raise ValueError(f"attack_params[{a.id!r}] must not set {clash}: eps comes from eps_grid and the "
+                             "norm from config.norm")
+        if any(s.name == "norm_l2" for s in a.info().params_schema):
+            given["norm_l2"] = l2
+        out[a.id] = given
     return out
 
 
-def _grid(config: RunConfig) -> list[float]:
-    grid = sorted({float(e) for e in config.eps_grid})
-    if not grid:
-        raise ValueError("eps_grid must not be empty")
-    if any(e <= 0 for e in grid):
-        raise ValueError("eps_grid members must be positive")
-    if not any(math.isclose(float(config.reference_eps), e, abs_tol=1e-12) for e in grid):
-        raise ValueError(f"reference_eps {config.reference_eps} must be a member of eps_grid {grid}")
-    return grid
+# --- the run --------------------------------------------------------------------------------------------
 
-
-def _per_sample_norm(x: np.ndarray, x_adv: np.ndarray, l2: bool) -> np.ndarray:
-    d = (np.asarray(x_adv, dtype=np.float64) - np.asarray(x, dtype=np.float64)).reshape(x.shape[0], -1)
-    return np.sqrt((d * d).sum(axis=1)) if l2 else np.abs(d).max(axis=1)
-
-
-def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
-                 narrative_settings: Any | None = None) -> RunRecord:
-    """Run the campaign described by ``config`` and return its ``RunRecord`` (status ``succeeded``).
+def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = True,
+                 narrative_settings: Any | None = None, baseline_run_id: str | None = None,
+                 parent_run_id: str | None = None) -> CampaignRecord:
+    """Run the campaign described by ``config`` and return its record (status ``succeeded``).
 
     Raises ``TargetUnavailable`` / ``AttackNotApplicable`` / ``ValueError`` for configuration
     problems before any stage runs. Explain and recommend failures never fail the run: they are
-    recorded as unavailable (spec 14.7, 16.1)."""
+    recorded as unavailable (spec 14.7, 16.1). ``baseline_run_id`` (verify runs) and
+    ``parent_run_id`` (reruns) are copied onto the provenance and the record when given."""
     started_at = _utcnow()
     run_id = uuid.uuid4().hex
     stages_done: list[str] = []
@@ -267,17 +334,19 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
     info = target.info()
     domain = info.domain
     manifest = dict(target.manifest() or {})
+    model_sha256 = _manifest_get(manifest, "model_sha256", "weights_sha256", "sha256")
     adapters = _resolve_attacks(config, domain)
     params_by_attack = _attack_params(config, adapters)
-    grid = _grid(config)
+    grid = [float(e) for e in config.eps_grid]
     ref = float(config.reference_eps)
-    eps_small, eps_mid, eps_large = eps_bands(grid, ref)
+    l2 = config.norm == "l2"
     for a in adapters:  # validate bounds before running anything (spec 12.1)
         for e in grid:
             if getattr(a, "takes_eps", True):
                 a.resolve_params({**params_by_attack[a.id], "eps": e})
             else:
                 a.resolve_params(params_by_attack[a.id])
+    shash = settings_hash(config, None if model_sha256 is None else str(model_sha256))
     stages_done.append("load_target")
 
     # --- sample ------------------------------------------------------------------------------
@@ -286,10 +355,11 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
     y = np.asarray(sample.y).astype(int)
     n = int(y.shape[0])
     class_names = list(sample.class_names)
-    dataset_name = _manifest_get(manifest, "dataset", "dataset_id", "dataset_name") or info.metadata.get("dataset")
-    dataset_split = _manifest_get(manifest, "split", "dataset_split")
-    slice_note = (f"slice: dataset={dataset_name}, split={dataset_split}, n_samples={n}, seed={config.seed}, "
-                  f"selection=target.sample(n, seed)")
+    dataset_name = (_manifest_get(manifest, "dataset", "dataset_id", "dataset_name")
+                    or info.metadata.get("dataset") or config.dataset_id)
+    dataset_revision = config.dataset_revision or _manifest_get(manifest, "dataset_revision", "revision")
+    slice_note = (f"slice: dataset={dataset_name}, split={config.dataset_split}, n_samples={n}, "
+                  f"seed={config.seed}, selection=target.sample(n, seed)")
     stages_done.append("sample")
 
     # --- clean_eval --------------------------------------------------------------------------
@@ -304,26 +374,18 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
     stages_done.append("clean_eval")
 
     # --- attack ------------------------------------------------------------------------------
-    per_attack: dict[str, dict[float, dict[str, Any]]] = {}
     x_adv_ref: dict[str, np.ndarray] = {}
     proba_adv_ref: dict[str, np.ndarray] = {}
     flip_matrix: dict[str, dict[str, list[bool]]] = {}
-    curve_points: dict[str, list[dict[str, Any]]] = {}
-    atlas: list[str] = []
     max_adv_bytes = _max_adv_artifact_bytes()
     tabular = domain == "tabular"
 
     for adapter in adapters:
         aid = adapter.id
-        ainfo: AttackInfo = adapter.info()
-        if ainfo.atlas_technique_id:
-            atlas.append(ainfo.atlas_technique_id)
-        per_attack[aid] = {}
         flip_matrix[aid] = {}
-        curve_points[aid] = []
-        rows_by_eps: list[tuple[float, Measurement]] = []
+        rows_by_eps: dict[float, Measurement] = {}
         takes_eps = getattr(adapter, "takes_eps", True)
-        outputs: list[tuple[float, np.ndarray, dict[str, Any], list[str], float]] = []
+        outputs: list[tuple[float, np.ndarray, dict[str, Any], list[str], float, float | None]] = []
 
         if takes_eps:
             for e in grid:
@@ -331,15 +393,14 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
                 out = adapter.run(target, x, y, p, config.seed)
                 versions.update(out.library_versions)
                 outputs.append((e, np.asarray(out.x_adv, dtype=np.float32), dict(out.params), list(out.notes),
-                                float(out.wall_time_s)))
+                                float(out.wall_time_s), out.queries_mean))
         else:
             # Minimal-norm attack: one run, then success at eps by thresholding the achieved norm
             # (spec 15.1). Examples over budget revert to the clean input for that eps row.
             p = adapter.resolve_params(params_by_attack[aid])
             out = adapter.run(target, x, y, p, config.seed)
             versions.update(out.library_versions)
-            l2 = bool(p.get("norm_l2", False))
-            norms = _per_sample_norm(x, out.x_adv, l2)
+            norms = per_sample_norm(x, out.x_adv, l2=l2)
             x_adv_full = np.asarray(out.x_adv, dtype=np.float32)
             for e in grid:
                 within = norms <= e + 1e-9
@@ -348,9 +409,12 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
                     (f"thresholded at eps={e:g}: {int(within.sum())}/{n} adversarial examples within budget; "
                      "the rest revert to the clean input for this row"),
                     "wall_time_s is the single attack run shared by every eps row"]
-                outputs.append((e, x_adv_e.astype(np.float32), {**p, "eps": e}, notes, float(out.wall_time_s)))
+                outputs.append((e, x_adv_e.astype(np.float32), {**p, "eps": e}, notes, float(out.wall_time_s),
+                                out.queries_mean))
 
-        for e, x_adv, p, notes, wall in outputs:
+        flips_by_eps: dict[float, np.ndarray] = {}
+        norms_by_eps: dict[float, np.ndarray] = {}
+        for e, x_adv, p, notes, wall, queries in outputs:
             row_notes, nd = _split_notes(notes)
             nondeterminism.extend(nd)
             proba_adv = np.asarray(target.predict_proba(x_adv), dtype=np.float64)
@@ -361,23 +425,13 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
                 if surrogate and aid != "hopskipjump":
                     row_notes.append(f"white-box via surrogate transfer: {surrogate}")
             m = measure(f"m.evasion.{aid}.{eps_tag(e)}", "evasion", y, y_adv, class_names, attack_id=aid,
-                        params={**p, "eps": e}, x_ref=x, x_adv=x_adv, y_pred_clean=y_clean,
-                        wall_time_s=wall, notes=row_notes)
+                        params={**p, "eps": e, "norm": config.norm}, x_ref=x, x_adv=x_adv, y_pred_clean=y_clean,
+                        proba=proba_adv, queries_mean=queries, wall_time_s=wall, notes=row_notes)
             flipped = (y_clean == y) & (y_adv != y)
-            asr = (int(flipped.sum()) / n_clean_correct) if n_clean_correct > 0 else None
-            l2_norm = bool(p.get("norm_l2", False))
-            pert = m.l2_norm_mean if l2_norm else m.linf_norm_mean
-            cg = conf_gap(proba_adv, y)
-            m.notes.append(f"conf_gap_mean = {cg:.4f} over n={n} (mean of max(0, max_j!=y p_j - p_y) on x_adv)")
-            per_attack[aid][e] = {"acc_adv": m.accuracy, "asr": asr, "conf_gap": cg, "expl_shift": None,
-                                  "pert": pert, "n": n, "n_correct": m.n_correct,
-                                  "n_flipped_from_clean": int(flipped.sum()), "n_clean_correct": n_clean_correct}
+            flips_by_eps[e] = flipped
+            norms_by_eps[e] = per_sample_norm(x, x_adv, l2=l2)
             flip_matrix[aid][eps_tag(e)] = [bool(v) for v in flipped]
-            curve_points[aid].append({"eps": e, "n": n, "n_correct": m.n_correct, "accuracy": m.accuracy,
-                                      "n_clean_correct": n_clean_correct,
-                                      "n_flipped_from_clean": int(flipped.sum()), "asr": asr,
-                                      "linf_norm_mean": m.linf_norm_mean, "l2_norm_mean": m.l2_norm_mean})
-            rows_by_eps.append((e, m))
+            rows_by_eps[e] = m
             measurements.append(m)
             if math.isclose(e, ref, abs_tol=1e-12):
                 x_adv_ref[aid] = x_adv
@@ -388,52 +442,34 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
             else:
                 m.notes.append("full adversarial slice not retained (over REDSIM_ML_MAX_ADV_ARTIFACT_MB)")
 
-        # pert at first success (spec 12.5): per sample, the norm at the smallest eps where it flips.
-        first_norms: list[float] = []
-        norm_l2_attack = bool(outputs[0][2].get("norm_l2", False)) if outputs else False
-        per_eps_norms = {e: _per_sample_norm(x, x_adv, norm_l2_attack) for e, x_adv, *_ in outputs}
-        for i in range(n):
-            for e in grid:
-                if flip_matrix[aid][eps_tag(e)][i]:
-                    first_norms.append(float(per_eps_norms[e][i]))
-                    break
-        pert_first = (sum(first_norms) / len(first_norms)) if first_norms else None
+        # pert at first success (spec 15.1) lives on the reference row only.
+        pert_mean, pert_n = pert_first_success(flips_by_eps, norms_by_eps)
+        ref_row = rows_by_eps[next(e for e in rows_by_eps if math.isclose(e, ref, abs_tol=1e-12))]
+        ref_row.pert_first_success_mean = pert_mean
+        ref_row.pert_first_success_n = pert_n
+        ref_row.notes.append(
+            f"pert_first_success_mean = {pert_mean:.6g} ({config.norm}) over {pert_n} flipped samples"
+            if pert_mean is not None else "pert_first_success_mean not computed (no sample flipped at any grid eps)")
 
-        # Derived severity (spec 15.5) with the denominator guard (spec 12.6).
-        fs_eps, fs_asr = first_success(per_attack[aid], FINDING_ASR_THRESHOLD)
-        severity = severity_for(aid, fs_eps, fs_asr, eps_small, eps_mid, eps_large)
-        for e, m in rows_by_eps:
-            if math.isclose(e, ref, abs_tol=1e-12):
-                m.notes.append(
-                    f"pert_first_success_mean = {pert_first:.6g} over {len(first_norms)} flipped samples"
-                    if pert_first is not None else "pert_first_success_mean not computed (no sample flipped)")
-            if n_clean_correct < MIN_CLEAN_CORRECT_FOR_FINDING:
+        # Finding-level facts are derived by scoring.finding_inputs (spec 12.6, 15.5); the rows only
+        # record the threshold crossing and the denominator guard, never a severity.
+        fi = finding_inputs(config, measurements, aid)
+        for e, m in rows_by_eps.items():
+            if not fi.denominator_ok:
                 m.notes.append(f"denominator too small for a finding (n_clean_correct={n_clean_correct} < "
-                               f"{MIN_CLEAN_CORRECT_FOR_FINDING}); severity not derived")
-                continue
-            row_asr = per_attack[aid][e]["asr"]
-            if severity is not None and row_asr is not None and row_asr >= FINDING_ASR_THRESHOLD:
-                m.severity = severity
-                m.notes.append(f"severity {severity!r} derived per spec 15.5 from first success at eps={fs_eps:g} "
-                               f"with ASR {fs_asr:.3f} (eps_small={eps_small:g}, eps_mid={eps_mid:g}, "
-                               f"eps_large={eps_large:g}); threshold {FINDING_ASR_THRESHOLD}")
-
-        sink.put(f"curve/{aid}.json", _json_bytes({
-            "attack_id": aid, "norm": "L2" if norm_l2_attack else "Linf", "eps_grid": grid, "reference_eps": ref,
-            "clean": {"n": n, "n_correct": n_clean_correct, "accuracy": acc_clean},
-            "points": curve_points[aid], "control": [],
-            "pert_first_success_mean": pert_first, "pert_first_success_n": len(first_norms),
-        }), "application/json")
-    stages_done.append("attack")
+                               f"{MIN_CLEAN_CORRECT_FOR_FINDING}); no Finding is created from this row")
+            elif m.attack_success_rate is not None and m.attack_success_rate >= config.finding_asr_threshold:
+                m.notes.append(f"attack_success_rate {m.attack_success_rate:.4f} crosses finding_asr_threshold "
+                               f"{config.finding_asr_threshold:g} (first success at eps={fi.first_success_eps:g})")
+        stages_done.append(f"attack:{aid}")
 
     # --- control -----------------------------------------------------------------------------
-    control_rows: dict[float, Measurement] = {}
     x_ctrl_ref: np.ndarray | None = None   # control slice at the reference eps: the explainer's noise floor (13.5)
+    control_drop = float(config.scoring.interpretation.control_drop)
     if config.include_control:
         control = ATTACKS.get(CONTROL_ATTACK_ID)
-        norm_l2 = bool(config.params.get("norm_l2", False))
         for e in grid:
-            p = control.resolve_params({"eps": e, "norm_l2": norm_l2})
+            p = control.resolve_params({"eps": e, "norm_l2": l2})
             out = control.run(target, x, y, p, config.seed)
             if math.isclose(e, ref, abs_tol=1e-12):
                 x_ctrl_ref = np.asarray(out.x_adv, dtype=np.float32)
@@ -442,33 +478,30 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
             proba_ctrl = np.asarray(target.predict_proba(out.x_adv), dtype=np.float64)
             y_ctrl = proba_ctrl.argmax(axis=1)
             m = measure(f"m.control.noise.{eps_tag(e)}", "control", y, y_ctrl, class_names,
-                        attack_id=CONTROL_ATTACK_ID, params=dict(p), x_ref=x, x_adv=out.x_adv,
-                        y_pred_clean=y_clean, wall_time_s=out.wall_time_s,
+                        attack_id=CONTROL_ATTACK_ID, params={**p, "norm": config.norm}, x_ref=x, x_adv=out.x_adv,
+                        y_pred_clean=y_clean, proba=proba_ctrl, wall_time_s=out.wall_time_s,
                         notes=row_notes + ["control rows never create a Finding and never enter the MRI"])
+            if acc_clean - m.accuracy > control_drop:
+                m.notes.append(f"benign noise alone reduced accuracy from {m_clean.n_correct}/{n} to "
+                               f"{m.n_correct}/{n} at eps={e:g}, more than the configured control_drop "
+                               f"{control_drop:g}")
+                limitations.append(f"The model is noise-sensitive at eps={e:g}: the benign control alone reduced "
+                                   f"accuracy by more than {control_drop:g}, so evasion results at this eps are not "
+                                   "attributable to adversarial alignment alone.")
             measurements.append(m)
-            control_rows[e] = m
-            if acc_clean - m.accuracy > NOISE_SENSITIVITY_THRESHOLD:
-                interpretation.append(Interpretation(
-                    id=f"i.control.{eps_tag(e)}",
-                    statement=(f"The model is noise-sensitive at eps={e:g}: benign uniform noise alone reduced "
-                               f"accuracy from {m_clean.n_correct}/{n} to {m.n_correct}/{n} (more than "
-                               f"{NOISE_SENSITIVITY_THRESHOLD:g}); evasion results at this eps are not "
-                               "attributable to adversarial alignment."),
-                    basis=["m.clean", m.id]))
-        # Append control points to each curve artifact for display beside the attack curve.
-        for aid in per_attack:
-            sink.put(f"curve/{aid}.json", _json_bytes({
-                "attack_id": aid, "eps_grid": grid, "reference_eps": ref,
-                "clean": {"n": n, "n_correct": n_clean_correct, "accuracy": acc_clean},
-                "points": curve_points[aid],
-                "control": [{"eps": e, "n": control_rows[e].n, "n_correct": control_rows[e].n_correct,
-                             "accuracy": control_rows[e].accuracy} for e in grid],
-            }), "application/json")
         stages_done.append("control")
     else:
         limitations.append("The benign noise control was disabled for this run (include_control=false); "
                            "gradient-aligned failure cannot be separated from general noise sensitivity.")
-    sink.put("flip_matrix.json", _json_bytes({"attack_ids": sorted(per_attack), "eps_grid": grid, "n": n,
+
+    # One RobustnessCurve per attack (spec 12.3), read back from the measurement table so the curve and
+    # the rows can never disagree; the control points are the same for every attack.
+    curves: list[RobustnessCurve] = robustness_curves(config, measurements)
+    for curve in curves:
+        sink.put(f"curve/{curve.attack_id}.json", curve.model_dump_json(indent=2).encode("utf-8"),
+                 "application/json")
+    sink.put("flip_matrix.json", _json_bytes({"attack_ids": [a.id for a in adapters], "eps_grid": grid, "n": n,
+                                              "norm": config.norm,
                                               "indices": [int(i) for i in np.asarray(sample.indices)],
                                               "flipped": flip_matrix}), "application/json")
 
@@ -515,8 +548,8 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
                     obs = obs.model_copy(update={"id": f"{obs.id}.{aid}"})
                 seen_obs.add(obs.id)
                 observations.append(obs)
-            shift = getattr(out, "expl_shift_mean", None)
-            per_attack[aid][ref]["expl_shift"] = None if shift is None else float(shift)
+            fields = _explain_fields(out)
+            shift = _as_float(fields.get("expl_shift_mean"))
             meta = dict(getattr(out, "meta", {}) or {})
             nd_meta = meta.get("nondeterminism")
             if isinstance(nd_meta, str):
@@ -528,33 +561,42 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
                 limitations.extend(str(s) for s in lim_meta)
                 explainer_stated_limitations = True
             explain_meta[aid] = meta
+            ref_row = next(m for m in measurements if m.id == ref_row_id)
+            # The explain stage fills the attribution-shift fields on the reference row (spec 13.5).
+            ref_row.expl_shift_n = _as_int(fields.get("expl_shift_n"))
+            ref_row.expl_shift_n_excluded = _as_int(fields.get("expl_shift_n_excluded"))
+            ref_row.expl_shift_noise_floor = _as_float(fields.get("expl_shift_noise_floor"))
+            ref_row.expl_shift_noise_floor_n = _as_int(fields.get("expl_shift_noise_floor_n"))
             if shift is None:
                 limitations.append(f"Explainer for {aid!r} returned no explanation-shift aggregate; S_expl has "
                                    "no input and the MRI is not computed.")
             else:
-                ref_row = next(m for m in measurements if m.id == ref_row_id)
-                ref_row.notes.append(f"expl_shift_mean = {float(shift):.4f} over "
-                                     f"{meta.get('expl_shift_n', 'k')} explained samples (explain stage)")
+                ref_row.expl_shift_mean = shift
+                if ref_row.expl_shift_n is None:
+                    ref_row.expl_shift_n = len([o for o in observations if o.id in seen_obs])
+                ref_row.notes.append(f"expl_shift_mean = {shift:.4f} over {ref_row.expl_shift_n} explained "
+                                     "samples (explain stage, reference budget only)")
         if not explainer_stated_limitations:
             limitations.append(f"Up to {config.explain_k} flipped and {config.explain_k} unflipped samples were "
                                f"explained out of n={n}, at the reference budget eps={ref:g} only.")
         stages_done.append("explain")
 
     # --- score -------------------------------------------------------------------------------
-    basis = ["m.clean"] + [m.id for m in measurements if m.family == "evasion"]
-    scoring, reason = score_run(modality=domain, acc_clean=acc_clean,
-                                per_attack={a: {e: dict(v) for e, v in rows.items()} for a, rows in per_attack.items()},
-                                eps_grid=grid, reference_eps=ref, weights=config.scoring_weights,
-                                basis_measurements=basis)
-    if scoring is None:
-        limitations.append(reason or "MRI not computed.")
+    score, score_reason = score_run(config=config, measurements=measurements, settings_hash=shash,
+                                    computed_at=_utcnow())
+    if score_reason:
+        limitations.append(score_reason)
+    if len(grid) == 1:
+        limitations.append(ONE_POINT_GRID_LIMITATION)
+    stages_done.append("score")
 
     # --- interpret / recommend ---------------------------------------------------------------
-    standing = _standing_limitations(dataset_name, grid, [a.id for a in adapters])
+    standing = _standing(dataset_name, grid, [a.id for a in adapters])
     try:
         rules = importlib.import_module("redsim.ml.recommend.rules")
     except ImportError:
         rules = None
+    meta_flat = _flatten_explain_meta(explain_meta, domain, score_reason)
     if rules is None:
         interpretation.append(Interpretation(
             id="i.rules.unavailable",
@@ -565,18 +607,49 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
                            "were produced.")
         stages_done.extend(["interpret", "recommend"])
     else:
-        # Base contracts: interpret(measurements, observations, scoring) and
-        # recommend(measurements, observations, interpretation, scoring). The extra keywords are passed
-        # only when the rules module declares them.
-        meta_flat = _flatten_explain_meta(explain_meta, domain, reason)
-        interpretation.extend(list(_call_supported(
-            rules.interpret, measurements, observations, scoring,
-            explain_meta=meta_flat, reference_eps=ref, scoring_reason=reason) or []))
+        # Base contracts: interpret(measurements, observations, score) and
+        # recommend(measurements, observations, score, *, interpretation=...). The extra keywords
+        # (thresholds, reference eps, explain meta, ...) are passed only when the rules module declares
+        # them. A failing rule layer is recorded, never faked.
+        try:
+            produced = list(_call_supported(
+                rules.interpret, measurements, observations, score,
+                explain_meta=meta_flat, reference_eps=ref, scoring_reason=score_reason,
+                thresholds=config.scoring.interpretation,
+                finding_asr_threshold=config.finding_asr_threshold) or [])
+        except Exception as exc:  # noqa: BLE001 - the rule layer must never fail the campaign (14.7)
+            produced = []
+            interpretation.append(Interpretation(
+                id="i.rules.unavailable",
+                statement=(f"Interpretation rules failed ({type(exc).__name__}: {exc}); no rule-based statement "
+                           "was produced."),
+                basis=["m.clean"]))
+            limitations.append(f"Rule layer failed during interpretation ({type(exc).__name__}); no candidate "
+                               "recommendations were produced.")
+            rules = None
+        interpretation.extend(_drop_dangling(produced, measurements, observations, interpretation, limitations,
+                                             "interpretation"))
         stages_done.append("interpret")
-        recommendations = list(_call_supported(
-            rules.recommend, measurements, observations, interpretation, scoring,
-            explain_meta=meta_flat, reference_eps=ref, modality=domain, seed=config.seed) or [])
-        stages_done.append("recommend")
+        if rules is not None and config.auto_recommend:
+            try:
+                produced_recs = list(_call_supported(
+                    rules.recommend, measurements, observations, score,
+                    interpretation=interpretation, explain_meta=meta_flat, reference_eps=ref, modality=domain,
+                    seed=config.seed, thresholds=config.scoring.interpretation,
+                    finding_asr_threshold=config.finding_asr_threshold) or [])
+            except Exception as exc:  # noqa: BLE001
+                produced_recs = []
+                limitations.append(f"Rule layer failed during recommendation ({type(exc).__name__}: {exc}); no "
+                                   "candidate recommendations were produced.")
+            recommendations = _drop_dangling(produced_recs, measurements, observations, interpretation,
+                                             limitations, "recommendation")
+            stages_done.append("recommend")
+        elif rules is not None:
+            limitations.append("auto_recommend=false: no candidate recommendations were generated in this run; "
+                               "the harden step can create them later under the same run.")
+
+    llm_provenance: dict[str, Any] | None = None
+    if recommendations:
         settings = narrative_settings
         if settings is None and config.llm_narrative:
             try:
@@ -586,15 +659,16 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
                 settings = None
             if settings is None:
                 limitations.append("An LLM narrative was requested but Pythia is not configured "
-                                   "(PYTHIA_BASE_URL / PYTHIA_API_KEY / REDSIM_LLM_MODEL); recommendations "
+                                   "(PYTHIA_BASE_URL / PYTHIA_API_KEY / REDSIM_ML_LLM_MODEL); recommendations "
                                    "carry rule text only (narrative_source='rules').")
-        if settings is not None and recommendations:
+        if settings is not None:
             try:
                 summary_mod = importlib.import_module("redsim.ml.explain.summary")
                 narrative_mod = importlib.import_module("redsim.ml.recommend.narrative")
                 summary_text = _call_supported(
-                    summary_mod.text_summary, measurements, observations, scoring,
-                    explain_meta=meta_flat, scoring_reason=reason, limitations=standing + limitations)
+                    summary_mod.text_summary, measurements, observations, score,
+                    explain_meta=meta_flat, scoring_reason=score_reason, limitations=standing + limitations,
+                    norm=config.norm)
                 recommendations = list(narrative_mod.add_narrative(recommendations, summary_text, settings))
             except Exception as exc:  # noqa: BLE001 - narrative failure leaves rule output standing (16.1)
                 limitations.append(f"LLM narrative not generated ({type(exc).__name__}: {exc}); recommendations "
@@ -602,7 +676,10 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
             if any(r.narrative_source == "llm" for r in recommendations):
                 nondeterminism.append("LLM narrative is nondeterministic (temperature=0.2); prompt and response "
                                       "hashes recorded")
-        elif settings is None and not config.llm_narrative:
+                redacted = getattr(settings, "redacted", None)
+                llm_provenance = (dict(redacted()) if callable(redacted)
+                                  else {"settings": type(settings).__name__, "redacted": "unavailable"})
+        elif not config.llm_narrative:
             limitations.append("No LLM narrative was requested; recommendations carry rule text only.")
 
     # --- report ------------------------------------------------------------------------------
@@ -610,38 +687,67 @@ def run_campaign(config: RunConfig, sink: ArtifactSink, *, explain: bool = True,
     limitations = standing + limitations
     if tabular:
         limitations.append(TABULAR_LIMITATION)
-    if config.defense:
+    if config.defense is not None:
         limitations.append(DEFENSE_LIMITATION)
-    if scoring is not None:
-        limitations.append("The MRI summarises this campaign only (one model, one modality, the declared attack "
-                           "set, eps grid and reference budget); it is not comparable across campaigns with "
-                           "different settings and is never aggregated across modalities.")
+    if score is not None and score.mri is not None:
+        limitations.append(MRI_SCOPE_LIMITATION)
     provenance = Provenance(
         redsim_version=_redsim_version(), python=platform.python_version(),
         torch=versions.get("torch", "not installed"), art=versions.get("art", "not installed"),
         shap=_dist_version("shap", "shap"), numpy=versions.get("numpy", np.__version__),
-        model_sha256=_manifest_get(manifest, "model_sha256", "weights_sha256", "sha256"),
-        dataset=None if dataset_name is None else str(dataset_name),
-        dataset_split=None if dataset_split is None else str(dataset_split),
-        model_manifest=manifest, started_at=started_at, finished_at=finished_at,
+        onnxruntime=versions.get("onnxruntime"), sklearn=versions.get("scikit-learn"),
+        xgboost=versions.get("xgboost"),
+        model_sha256=None if model_sha256 is None else str(model_sha256),
+        dataset=str(dataset_name),
+        dataset_revision=None if dataset_revision is None else str(dataset_revision),
+        dataset_split=config.dataset_split,
+        sample_indices_sha256=_sha256_indices(sample.indices), settings_hash=shash,
+        baseline_run_id=baseline_run_id, parent_run_id=parent_run_id,
+        defense=_defense_provenance(target, config),
+        llm=llm_provenance, thread_env=_thread_env(),
+        model_manifest={**manifest, "seed": config.seed, "n_samples": n, "library_versions": versions,
+                        "python_executable": sys.executable},
+        started_at=started_at, finished_at=finished_at,
         hostname=socket.gethostname(), device=str(manifest.get("device") or "cpu"),
         nondeterminism=_uniq(nondeterminism),
     )
-    provenance.model_manifest = {**manifest, "seed": config.seed, "n_samples": n,
-                                 "sample_indices_sha256": _sha256_indices(sample.indices),
-                                 "library_versions": versions, "python_executable": sys.executable}
     stages_done.append("report")
-    ordered_stages = [s for s in STAGES if s in stages_done]
 
-    record = RunRecord(
-        run_id=run_id, status="succeeded", stage="report", stages_done=ordered_stages, created_at=started_at,
-        config=config, target=info, attack=adapters[0].info() if len(adapters) == 1 else None,
-        provenance=provenance, measurements=measurements, observations=observations,
-        interpretation=interpretation, recommendations=recommendations, scoring=scoring,
-        atlas_coverage=sorted(set(atlas)), limitations=_uniq(limitations),
+    record = CampaignRecord(
+        run_id=run_id, status="succeeded", stage="report", stages_done=stages_done, created_at=started_at,
+        config=config, target=info, attacks=[a.info() for a in adapters], provenance=provenance,
+        measurements=measurements, observations=observations, interpretation=interpretation,
+        recommendations=recommendations, score=score, limitations=_uniq(limitations),
+        kind="verify" if config.defense is not None else "attack", completed_at=finished_at,
+        settings_hash=shash, baseline_run_id=baseline_run_id, parent_run_id=parent_run_id, curve=curves,
+        completeness=score.completeness if score is not None else "partial",
+        missing=list(score.missing) if score is not None else [score_reason or "score unavailable"],
+        score_status=None if score is not None else ScoreStatus(state="unavailable", reason=score_reason),
     )
     sink.put("run_record.json", record.model_dump_json(indent=2).encode("utf-8"), "application/json")
+    if score is not None:
+        sink.put("score.json", score.model_dump_json(indent=2).encode("utf-8"), "application/json")
     return record
+
+
+# --- helpers ----------------------------------------------------------------------------------------
+
+def _drop_dangling(items: list[Any], measurements: list[Measurement], observations: list[Observation],
+                   interpretation: list[Interpretation], limitations: list[str], what: str) -> list[Any]:
+    """Keep only the statements whose citations resolve to recorded ids (spec 14.1). A dropped statement
+    is named in ``limitations``: it is a rule-layer defect, not evidence."""
+    known = {m.id for m in measurements} | {o.id for o in observations} | {i.id for i in interpretation}
+    kept: list[Any] = []
+    for item in items:
+        cites = list(getattr(item, "basis", None) or getattr(item, "triggered_by", None) or [])
+        dangling = [c for c in cites if c not in known]
+        if dangling:
+            limitations.append(f"Dropped {what} {item.id!r}: it cites ids that were not recorded in this run "
+                               f"({', '.join(dangling)}).")
+            continue
+        kept.append(item)
+        known.add(item.id)
+    return kept
 
 
 def _flatten_explain_meta(per_attack_meta: dict[str, dict[str, Any]], domain: str,
@@ -662,29 +768,13 @@ def _flatten_explain_meta(per_attack_meta: dict[str, dict[str, Any]], domain: st
     return flat
 
 
-def _sha256_indices(indices: Any) -> str:
-    import hashlib
-    arr = np.asarray(indices).astype(np.int64)
-    return hashlib.sha256(arr.tobytes()).hexdigest()
-
-
-def _standing_limitations(dataset_name: Any, grid: list[float], attack_ids: list[str]) -> list[str]:
-    """``STANDING_LIMITATIONS`` with the two conditional substitutions of spec 14.5 and the
-    black-box adjustment when HopSkipJump ran."""
-    out: list[str] = []
-    grid_txt = "[" + ", ".join(f"{e:g}" for e in grid) + "]"
-    for sentence in STANDING_LIMITATIONS:
-        if sentence.startswith("CIFAR-10 is a benign public benchmark") and dataset_name:
-            out.append(f"{dataset_name} is an open, unclassified public benchmark; it is not a proxy for any "
-                       "operational domain, sensor, or deployment condition.")
-        elif sentence.startswith("Results come from a single seed") and len(grid) > 1:
-            out.append(f"Results come from a single seed; the eps grid was {grid_txt}.")
-        elif sentence.startswith("White-box gradient attacks assume full model access") and "hopskipjump" in attack_ids:
-            out.append("White-box gradient attacks assume full model access; the black-box attack hopskipjump "
-                       "was evaluated with label-only query access; physical-world attacks were not evaluated.")
-        else:
-            out.append(sentence)
+def _standing(dataset_name: Any, grid: list[float], attack_ids: list[str]) -> list[str]:
+    """``schema.standing_limitations`` for this campaign, with the white-box sentence adjusted when
+    the black-box HopSkipJump attack ran (the standing text would otherwise be false)."""
+    out = standing_limitations(str(dataset_name), grid)
+    if "hopskipjump" in attack_ids:
+        out = [WHITE_BOX_WITH_BLACK_BOX if s == WHITE_BOX_STANDING else s for s in out]
     return out
 
 
-__all__ = ["Scoring", "run_campaign"]
+__all__ = ["AttackInfo", "CampaignRecord", "MRIRecord", "run_campaign"]

@@ -3,7 +3,9 @@
 Asserts: the eps ball is respected and values stay in [0, 1]; the same seed
 reproduces FGSM / PGD; the benign control stays in the ball with no gradient call;
 ``resolve_params`` fills defaults and rejects out-of-range values; every output
-carries ``art`` and ``torch`` versions and an ATLAS technique where one applies.
+carries ``art`` and ``torch`` versions; ``AttackInfo`` follows the frozen M0
+contract (phase, access, requires_gradients, status, reason, no ATLAS field) and the
+ATLAS mapping is kept aside for Phase B2 rather than stamped on records.
 """
 
 from __future__ import annotations
@@ -16,9 +18,16 @@ pytest.importorskip("art")
 
 import numpy as np
 
-from redsim.ml.attacks import ATTACKS, get_attack, list_attacks, resolve_from_schema
+from redsim.ml.attacks import (
+    ATLAS_TECHNIQUES,
+    ATLAS_VERSION,
+    ATTACKS,
+    get_attack,
+    list_attacks,
+    resolve_from_schema,
+)
 from redsim.ml.attacks.base import AttackAdapter, AttackOutput
-from redsim.ml.schema import ParamSpec
+from redsim.ml.schema import AtlasTechnique, AttackInfo, ParamSpec
 from tests.ml.fakes import TinyTarget
 
 pytestmark = pytest.mark.ml
@@ -41,7 +50,7 @@ def _linf_per_sample(x: np.ndarray, x_adv: np.ndarray) -> np.ndarray:
     return np.abs(x_adv.astype(np.float64) - x.astype(np.float64)).reshape(x.shape[0], -1).max(axis=1)
 
 
-# --- registry ------------------------------------------------------------------------------
+# --- registry and the frozen AttackInfo ------------------------------------------------------
 
 def test_registry_lists_phase_a_adapters():
     assert ATTACKS.ids() == ["fgsm", "hopskipjump", "noise_control", "pgd"]
@@ -54,15 +63,32 @@ def test_registry_lists_phase_a_adapters():
     assert infos["noise_control"].family == "control"
 
 
-def test_atlas_technique_tags():
+def test_attack_info_follows_the_frozen_contract():
     infos = {i.id: i for i in list_attacks()}
+    expected = {"fgsm": ("white-box", True), "pgd": ("white-box", True),
+                "hopskipjump": ("black-box", False), "noise_control": ("black-box", False)}
+    for aid, (access, needs_grad) in expected.items():
+        info = infos[aid]
+        assert isinstance(info, AttackInfo)
+        assert info.phase == "A" and info.status == "available" and info.reason is None
+        assert info.access == access and info.requires_gradients is needs_grad
+        assert info.params_schema and all(isinstance(p, ParamSpec) for p in info.params_schema)
+        assert info.references
+        assert AttackInfo.model_validate(info.model_dump(mode="json")) == info
+    assert not {f for f in AttackInfo.model_fields if "atlas" in f}
+    assert not any("atlas" in k for i in infos.values() for k in i.model_dump())
+
+
+def test_atlas_mapping_is_kept_for_phase_b2_and_never_stamped_in_phase_a():
+    assert set(ATLAS_TECHNIQUES) == {"fgsm", "pgd", "hopskipjump"}
     for aid in ("fgsm", "pgd"):
-        assert infos[aid].atlas_technique_id == "AML.T0043"
-        assert infos[aid].atlas_technique_name == "Craft Adversarial Data"
-    assert infos["hopskipjump"].atlas_technique_id == "AML.T0040"
-    assert infos["hopskipjump"].atlas_technique_name == "ML Model Inference API Access"
+        t = ATLAS_TECHNIQUES[aid]
+        assert isinstance(t, AtlasTechnique)
+        assert t.id == "AML.T0043" and t.name == "Craft Adversarial Data" and t.atlas_version == ATLAS_VERSION
+    assert ATLAS_TECHNIQUES["hopskipjump"].id == "AML.T0040"
+    assert ATLAS_TECHNIQUES["hopskipjump"].name == "ML Model Inference API Access"
     # A control demonstrates no adversarial technique (spec 27.2) and never creates a Finding.
-    assert infos["noise_control"].atlas_technique_id is None
+    assert "noise_control" not in ATLAS_TECHNIQUES
 
 
 # --- eps ball, range, determinism -------------------------------------------------------------
@@ -81,6 +107,7 @@ def test_white_box_attacks_respect_eps_ball_and_range(target, slice_, attack_id,
     assert 0.0 <= out.linf_norm_mean <= eps + TOL
     assert out.l2_norm_mean >= 0.0
     assert out.params["eps"] == eps
+    assert out.queries_mean is None                      # white-box: no query count
     assert "art" in out.library_versions and "torch" in out.library_versions
     assert any(n.startswith("nondeterminism: ") for n in out.notes)
 
@@ -206,6 +233,7 @@ def test_hopskipjump_runs_black_box_and_records_queries(target, slice_, monkeypa
     out = hsj.run(target, small, slice_.y[:4], {"max_iter": 1, "max_eval": 100, "init_eval": 10, "init_size": 3}, seed=0)
     assert out.x_adv.shape == small.shape and out.x_adv.dtype == np.float32
     assert out.x_adv.min() >= 0.0 and out.x_adv.max() <= 1.0
+    assert out.queries_mean is not None and out.queries_mean > 0      # black-box: predict rows per sample
     assert any(n.startswith("queries_mean = ") for n in out.notes)
     assert any("HopSkipJump random initial adversarial point" in n for n in out.notes)
     assert "art" in out.library_versions
