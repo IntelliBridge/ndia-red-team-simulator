@@ -11,11 +11,11 @@
     "prefix": ""
   },
   "aliases": {
-    "components": "@aegis/design-system/src/primitives",
-    "utils": "@aegis/design-system/src/lib/utils",
-    "ui": "@aegis/design-system/src/primitives",
-    "lib": "@aegis/design-system/src/lib",
-    "hooks": "@aegis/design-system/src/hooks"
+    "components": "@redsim/design-system/src/primitives",
+    "utils": "@redsim/design-system/src/lib/utils",
+    "ui": "@redsim/design-system/src/primitives",
+    "lib": "@redsim/design-system/src/lib",
+    "hooks": "@redsim/design-system/src/hooks"
   },
-  "registry": "file:../project_repos/shadcn-ui/apps/v4/registry"
+  "registry": "https://ui.shadcn.com/r"
 }

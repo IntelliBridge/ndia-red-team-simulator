@@ -1,5 +1,8 @@
-# Aegis runtime artifacts
-aegis_output/
+# redsim runtime artifacts
+redsim_output/
+assets/*
+!assets/README.md
+data/
 
 # Python
 __pycache__/
@@ -8,20 +11,10 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-
-# Virtualenvs
 .venv/
 venv/
-env/
-
-# Coverage
 .coverage
-.coverage.*
-coverage.xml
 htmlcov/
-
-# MkDocs build output
-site/
 
 # Node.js
 node_modules/
@@ -30,15 +23,9 @@ node_modules/
 
 # OS / editor
 .DS_Store
-*.swp
-*.swo
 .vscode/
 .idea/
 
-# Corporate proxy CA bundles — machine/org-specific, never commit.
+# Corporate proxy CA bundles — never commit.
 deploy/certs/*.pem
 deploy/certs/*.crt
-
-# desloppify local state
-.desloppify/
-.mypy-baseline.txt

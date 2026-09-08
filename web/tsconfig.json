@@ -16,8 +16,8 @@
     "plugins": [{ "name": "next" }],
     "paths": {
       "@/*": ["./src/*"],
-      "@aegis/design-system": ["../project_repos/design-system/src/index.ts"],
-      "@aegis/design-system/*": ["../project_repos/design-system/src/*"]
+      "@redsim/design-system": ["../packages/design-system/src/index.ts"],
+      "@redsim/design-system/*": ["../packages/design-system/src/*"]
     }
   },
   "include": ["next-env.d.ts", "src/**/*.ts", "src/**/*.tsx", ".next/types/**/*.ts"],

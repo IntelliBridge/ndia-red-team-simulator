@@ -1,9 +1,0 @@
-# pip-audit baseline ignore list for the `deps` CI job (cluster C2).
-#
-# One vulnerability ID per line (e.g. GHSA-xxxx-xxxx-xxxx or PYSEC-YYYY-NNN).
-# Blank lines and `#` comments are ignored; the CI step turns every remaining
-# line into a `--ignore-vuln <id>` flag.
-#
-# Add an entry ONLY for a transitive CVE with no fixed release available, and
-# note the advisory + reason here so it can be removed once upstream ships a
-# fix (tracked in SECURITY.md / C14). Seeded empty: nothing is suppressed yet.
