@@ -86,7 +86,15 @@ beforeEach(() => {
     roles: { default: "approver" },
   });
   mocks.useDefenses.mockReturnValue({
-    data: [{ id: "jpeg", name: "JPEG preprocessing" }],
+    data: [
+      {
+        id: "jpeg",
+        name: "JPEG preprocessing",
+        status: "available",
+        modalities: ["image"],
+        phase: "A",
+      },
+    ],
   });
   mocks.useRunEvents.mockImplementation(
     (_id: string | null, onEvent: (event: RunEvent) => void) => {
@@ -201,6 +209,65 @@ describe("/runs/[id] campaign review", () => {
       expect(mocks.verifyFinding).toHaveBeenCalledWith("finding-1", "jpeg"),
     );
     expect(mocks.mutate).toHaveBeenCalled();
+  });
+
+  it("offers only available defenses that match the target modality", () => {
+    mocks.useDefenses.mockReturnValue({
+      data: [
+        {
+          id: "jpeg",
+          name: "JPEG preprocessing",
+          status: "available",
+          modalities: ["image"],
+          phase: "A",
+        },
+        {
+          id: "scaler",
+          name: "Feature scaling",
+          status: "available",
+          modalities: ["tabular"],
+          phase: "A",
+        },
+        {
+          id: "adv_train",
+          name: "Adversarial training",
+          status: "not_implemented",
+          reason: "Phase B",
+          modalities: ["image"],
+          phase: "B",
+        },
+      ],
+    });
+    const linked = campaign();
+    (linked.recommendations[0] as typeof linked.recommendations[0] & {
+      finding_id: string;
+    }).finding_id = "finding-1";
+    setCampaign(linked);
+    renderPage();
+    expect(
+      screen.getByRole("option", { name: "JPEG preprocessing" }),
+    ).toHaveProperty("disabled", false);
+    expect(
+      screen.getByRole("option", {
+        name: "Feature scaling · not applicable to image targets",
+      }),
+    ).toHaveProperty("disabled", true);
+    expect(
+      screen.getByRole("option", { name: "Adversarial training · Phase B" }),
+    ).toHaveProperty("disabled", true);
+    const select = screen.getByLabelText(
+      "Defense for Evaluate input preprocessing",
+    );
+    fireEvent.change(select, { target: { value: "scaler" } });
+    expect(screen.getByRole("button", { name: "Verify" })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    fireEvent.change(select, { target: { value: "jpeg" } });
+    expect(screen.getByRole("button", { name: "Verify" })).toHaveProperty(
+      "disabled",
+      false,
+    );
   });
 
   it("labels a recommendation as measured only when that candidate has a measured record", () => {

@@ -98,6 +98,23 @@ export default function RunPage({ params }: { params: { id: string } }) {
 
   const campaign = data as Campaign;
   const role = roles[campaign.target.project_id];
+  // Verify answers 501 for a not_implemented defense and 422 for one whose
+  // modalities exclude the target, so neither may be offered as a choice.
+  const targetModality = campaign.target.modality;
+  const defenseBlockedReason = (defense: DefenseInfo): string | null => {
+    if (defense.status !== "available") {
+      return defense.reason ?? "not implemented";
+    }
+    const modalities = (defense.modalities as string[] | undefined) ?? [];
+    if (!modalities.includes(targetModality)) {
+      return `not applicable to ${targetModality} targets`;
+    }
+    return null;
+  };
+  const defenseIsEligible = (id: string) => {
+    const defense = defenses.find((entry: DefenseInfo) => entry.id === id);
+    return defense != null && defenseBlockedReason(defense) == null;
+  };
   const canAnnotate =
     role === "remediator" || role === "approver" || role === "admin";
   const saveNotes = async () => {
@@ -410,11 +427,19 @@ export default function RunPage({ params }: { params: { id: string } }) {
                     className="mt-2 border border-input bg-background p-1"
                   >
                     <option value="">Select defense</option>
-                    {defenses.map((defense: DefenseInfo) => (
-                      <option key={defense.id} value={defense.id}>
-                        {defense.name}
-                      </option>
-                    ))}
+                    {defenses.map((defense: DefenseInfo) => {
+                      const blocked = defenseBlockedReason(defense);
+                      return (
+                        <option
+                          key={defense.id}
+                          value={defense.id}
+                          disabled={blocked != null}
+                        >
+                          {defense.name}
+                          {blocked ? ` · ${blocked}` : ""}
+                        </option>
+                      );
+                    })}
                   </select>
                   <button
                     onClick={async () => {
@@ -431,7 +456,8 @@ export default function RunPage({ params }: { params: { id: string } }) {
                       }
                     }}
                     disabled={
-                      !item.finding_id || !defenseSelections[item.id]
+                      !item.finding_id ||
+                      !defenseIsEligible(defenseSelections[item.id] ?? "")
                     }
                     className="ml-2 border border-border px-2 py-1"
                   >
