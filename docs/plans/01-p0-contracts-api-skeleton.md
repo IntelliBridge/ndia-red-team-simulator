@@ -1,4 +1,4 @@
-# Phase P0 · Milestone M0 · aegis/ml scaffold (v2, aegis substrate)
+# Phase P0 · Milestone M0 · redsim/ml scaffold (v2, redsim substrate)
 
 Status: v2, 2026-09-08. Owner: Backend lead. Wave: Gate 0 (blocking, about
 0.5 to 1 day). Read `docs/plans/00-master-plan.md` sections 2, 5 and 7 first,
@@ -6,10 +6,10 @@ then the canonical spec
 `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md` sections 5,
 6, 7 and 23. Those sources are canonical. Do not invent alternatives.
 
-This phase lands Milestone M0 (Scaffold and contracts) on the restored aegis
-platform. The ML vertical lives in `aegis/ml/`. There is no `redsim/` package,
+This phase lands Milestone M0 (Scaffold and contracts) on the restored redsim
+platform. The ML vertical lives in `redsim/ml/`. There is no `redsim/` package,
 no `RunStore`, no thread pool, and no new `create_app`. ML routers mount on the
-existing `aegis/api/app.py:create_app`.
+existing `redsim/api/app.py:create_app`.
 
 ---
 
@@ -23,16 +23,16 @@ P0 does six things:
 1. Add one Alembic migration, `0010_ml_vertical`, that adds the `targets.detail`
    JSONB column and the `ml_campaigns` table with full row-level-security
    parity.
-2. Widen the config and record types in `aegis/ml/schema.py`: generalise
+2. Widen the config and record types in `redsim/ml/schema.py`: generalise
    `RunConfig` into `CampaignConfig` (attack set, epsilon grid, MRI weight
    vector) and add the campaign, score, manifest and finding-detail models.
 3. Add the seven new `Action` members and the `viewer` rank to
-   `aegis/api/policy.py`, and prune the stale members whose routes are gone.
+   `redsim/api/policy.py`, and prune the stale members whose routes are gone.
 4. Add `onnx2torch` and `safetensors` to the `ml` optional-dependency group,
    and rename the environment variable `REDSIM_LLM_MODEL` to
-   `AEGIS_ML_LLM_MODEL`.
+   `REDSIM_ML_LLM_MODEL`.
 5. Unmount `/v1/scans` from the existing app factory.
-6. Add the `aegis ml build-assets` CLI skeleton and commit a campaign fixture
+6. Add the `redsim ml build-assets` CLI skeleton and commit a campaign fixture
    under `tests/ml/fixtures/` for the UI team.
 
 After P0 merges, the schema, the migration head, the policy table and the
@@ -49,31 +49,31 @@ section 8.
   `org_id` nullable FK, `target_id`, `kind`, `modality`, `baseline_run_id`,
   `parent_run_id`, `settings_hash`, `config`, `provenance`, `score`,
   `limitations`, `reviewer_notes`, `created_at`, `completed_at`. Full RLS
-  parity: the `aegis_set_org_id_ml_campaigns` BEFORE INSERT trigger, the
-  `aegis_check_org_id_ml_campaigns` BEFORE UPDATE guard, `ENABLE` and `FORCE ROW
-  LEVEL SECURITY`, and the `aegis_tenant_isolation` policy, all copied verbatim
+  parity: the `redsim_set_org_id_ml_campaigns` BEFORE INSERT trigger, the
+  `redsim_check_org_id_ml_campaigns` BEFORE UPDATE guard, `ENABLE` and `FORCE ROW
+  LEVEL SECURITY`, and the `redsim_tenant_isolation` policy, all copied verbatim
   from `0006_tenant_rls.py` and `0009_tenant_org_id_guard.py`. `down_revision`
   is `0009_tenant_org_id_guard`. The migration is additive and reversible.
-- **Schema widening in `aegis/ml/schema.py`.** Generalise `RunConfig` into
+- **Schema widening in `redsim/ml/schema.py`.** Generalise `RunConfig` into
   `CampaignConfig` and add `ScoringConfig`, `DefenseConfig`, `MRIInputRow`,
   `MRIRecord`, `MRIDelta`, `MeasuredDelta`, `MLFindingDetail` and
   `MLModelManifest`. Add the `score` stage to `STAGES` after `explain`. Add the
   `MLModelManifest` field set of spec 5.5. Field names and types come from spec
   5.3 and 5.6 exactly.
-- **Policy additions in `aegis/api/policy.py`.** Add the seven `Action` members
+- **Policy additions in `redsim/api/policy.py`.** Add the seven `Action` members
   and their minimum roles (section 4). Add `"viewer": 0` to `_ROLE_RANK`. Prune
   the stale members `AGENT_RUN`, `AGENT_EXECUTE`, `FIX_GENERATE`, `FIX_APPLY`,
   `TOOL_INVOKE`, `TICKET_SYNC` from both `Action` and `_ACTION_MIN_ROLE`.
 - **Dependencies.** Add `onnx2torch` and `safetensors` to the `ml` group in
   `pyproject.toml`. Install `ml` only in `deploy/Dockerfile.worker`.
-- **Environment rename.** Change `REDSIM_LLM_MODEL` to `AEGIS_ML_LLM_MODEL` in
-  `aegis/llm/pythia.py`, the comment in `aegis/ml/schema.py`, and
+- **Environment rename.** Change `REDSIM_LLM_MODEL` to `REDSIM_ML_LLM_MODEL` in
+  `redsim/llm/pythia.py`, the comment in `redsim/ml/schema.py`, and
   `tests/test_llm_pythia.py`, in the same change.
 - **Unmount `/v1/scans`.** Remove the `scans` router include and its import from
-  `aegis/api/app.py`, and delete `aegis/api/v1/scans.py` and its tests.
-- **CLI skeleton `aegis/cli/ml.py`.** Add the `aegis ml build-assets`
+  `redsim/api/app.py`, and delete `redsim/api/v1/scans.py` and its tests.
+- **CLI skeleton `redsim/cli/ml.py`.** Add the `redsim ml build-assets`
   subcommand skeleton, wired into `build_parser` and the dispatch in
-  `aegis/cli/main.py`. The body is a stub that reports not-implemented and
+  `redsim/cli/main.py`. The body is a stub that reports not-implemented and
   exits cleanly.
 - **Fixture `tests/ml/fixtures/run_record.json`.** One campaign record shaped
   like the `GET /v1/runs/{id}/campaign` response (spec 17.2), for the web page
@@ -85,14 +85,14 @@ section 8.
 
 - Any attack, loader, explain, scoring, recommend, sandbox, or defense logic.
   Those land in M1 to M6.
-- The eight new ML routers (`aegis/api/v1/{models,attacks,datasets,defenses,
+- The eight new ML routers (`redsim/api/v1/{models,attacks,datasets,defenses,
   ml_capabilities,artifacts,compare,ml_findings}.py`) and their admission
-  services (`aegis/services/ml_*.py`). Slices 1 to 3 own these.
-- The Celery task modules (`aegis/workers/tasks/{model_validate,attack,explain,
+  services (`redsim/services/ml_*.py`). Slices 1 to 3 own these.
+- The Celery task modules (`redsim/workers/tasks/{model_validate,attack,explain,
   harden}.py`) and the `verify.py` ML branch. M1 to M6 own these.
 - Bundled models, datasets, and the real `build-assets` implementation. M1 and
   M4 own these.
-- Editing an existing field in `aegis/db/models.py`. The migration adds one
+- Editing an existing field in `redsim/db/models.py`. The migration adds one
   column and one table. No existing table changes shape.
 
 ## 3. Prerequisites & dependencies
@@ -100,19 +100,19 @@ section 8.
 - Python 3.12 environment with `pip install -e ".[api,worker,test,dev]"`. The
   default `pytest -q` tier is green today.
 - These files are read-only inputs to P0:
-  - `aegis/ml/schema.py` — the scaffold contract to widen.
-  - `aegis/db/models.py` — the aegis tables the migration extends; `Run` and
+  - `redsim/ml/schema.py` — the scaffold contract to widen.
+  - `redsim/db/models.py` — the redsim tables the migration extends; `Run` and
     `Target` are the FK anchors for `ml_campaigns`.
-  - `aegis/api/app.py` — the existing `create_app` factory that mounts routers.
-  - `aegis/api/v1/__init__.py` — the v1 router collection.
-  - `aegis/api/policy.py` — the `Action` enum, `_ROLE_RANK`, `_ACTION_MIN_ROLE`
+  - `redsim/api/app.py` — the existing `create_app` factory that mounts routers.
+  - `redsim/api/v1/__init__.py` — the v1 router collection.
+  - `redsim/api/policy.py` — the `Action` enum, `_ROLE_RANK`, `_ACTION_MIN_ROLE`
     and `check()`.
-  - `aegis/llm/pythia.py` — `PythiaSettings.from_env`, which reads the LLM model
+  - `redsim/llm/pythia.py` — `PythiaSettings.from_env`, which reads the LLM model
     variable today.
-  - `aegis/db/migrations/versions/0006_tenant_rls.py` and
+  - `redsim/db/migrations/versions/0006_tenant_rls.py` and
     `0009_tenant_org_id_guard.py` — the RLS trigger, guard and policy DDL to
     copy verbatim for `ml_campaigns`.
-  - `aegis/cli/main.py` — `build_parser` and the `_COMMANDS` dispatch table.
+  - `redsim/cli/main.py` — `build_parser` and the `_COMMANDS` dispatch table.
   - `tests/ml/fakes.py` (`TinyTarget`) and `tests/conftest.py` (the sqlite
     session harness) — reused by later tiers.
 - P0 is Gate 0. It blocks all slices. No slice blocks P0. Merge it first.
@@ -121,13 +121,13 @@ section 8.
 
 ### 4.1 Consumed
 
-- From `aegis/db/models.py`: `Base`, `Run`, `Target`. The migration copies the
-  RLS trigger, guard and `aegis_tenant_isolation` policy DDL from
+- From `redsim/db/models.py`: `Base`, `Run`, `Target`. The migration copies the
+  RLS trigger, guard and `redsim_tenant_isolation` policy DDL from
   `0006_tenant_rls.py` and `0009_tenant_org_id_guard.py`.
-- From `aegis/api/policy.py`: the `Action` enum, `_ROLE_RANK`,
+- From `redsim/api/policy.py`: the `Action` enum, `_ROLE_RANK`,
   `_ACTION_MIN_ROLE`, `check()`, `ensure_project_access`.
-- From `aegis/llm/pythia.py`: `PythiaSettings.from_env`.
-- From `aegis/cli/main.py`: `build_parser` and `_COMMANDS`.
+- From `redsim/llm/pythia.py`: `PythiaSettings.from_env`.
+- From `redsim/cli/main.py`: `build_parser` and `_COMMANDS`.
 
 ### 4.2 Exposed
 
@@ -136,7 +136,7 @@ section 8.
   `ml_campaigns`; `downgrade` drops the table and the column.
 - **Column and table.** `targets.detail` (JSONB, holds `MLModelManifest` for
   `ml_model_*` kinds). `ml_campaigns` (1:1 with `runs`, RLS-scoped by `org_id`).
-- **Schema additions in `aegis/ml/schema.py`** (spec 5.3, 5.5, 5.6):
+- **Schema additions in `redsim/ml/schema.py`** (spec 5.3, 5.5, 5.6):
 
   - `CampaignConfig`: `target_id`, `modality`, `attack_ids: list[str]`,
     `attack_params: dict[str, dict]`, `norm: Literal["linf","l2"]`,
@@ -167,20 +167,20 @@ section 8.
 
   `_ROLE_RANK` gains `"viewer": 0`. A `viewer` passes every read gate and fails
   every `check`.
-- **Environment variable.** `AEGIS_ML_LLM_MODEL`, read by
+- **Environment variable.** `REDSIM_ML_LLM_MODEL`, read by
   `PythiaSettings.from_env` alongside `PYTHIA_BASE_URL` and `PYTHIA_API_KEY`.
   All three must be present or the narrative is skipped, never faked.
-- **CLI.** `aegis ml build-assets` (skeleton). Reachable through
-  `aegis/cli/main.py`.
+- **CLI.** `redsim ml build-assets` (skeleton). Reachable through
+  `redsim/cli/main.py`.
 - **Fixture.** `tests/ml/fixtures/run_record.json`, a `GET
   /v1/runs/{id}/campaign` payload for the web page tests.
 - **App surface change.** `POST /v1/scans` is removed from the app factory.
 
 ### 4.3 Reused interfaces, unchanged
 
-ML routers mount on the existing `aegis/api/app.py:create_app`. There is no new
+ML routers mount on the existing `redsim/api/app.py:create_app`. There is no new
 factory. The mount happens through `app.include_router(..., prefix="/v1")`, the
-same call the retained routers use. `aegis/db/models.py` tables (`Run`, `Job`,
+same call the retained routers use. `redsim/db/models.py` tables (`Run`, `Job`,
 `Finding`, `Artifact`, `AuditEvent`) are reused in place, not copied. Nothing
 in P0 references `redsim/`, `RunStore`, a thread pool, or a second `create_app`.
 
@@ -188,25 +188,25 @@ in P0 references `redsim/`, `RunStore`, a thread pool, or a second `create_app`.
 
 1. Branch `p0-ml-scaffold` off the integration branch. Never commit to `main`.
 
-2. Write `aegis/db/migrations/versions/0010_ml_vertical.py`. Set `revision =
+2. Write `redsim/db/migrations/versions/0010_ml_vertical.py`. Set `revision =
    "0010_ml_vertical"` and `down_revision = "0009_tenant_org_id_guard"`. In
    `upgrade`, add `targets.detail` as JSONB nullable, then create `ml_campaigns`
    with the columns of spec 5.6. Copy the RLS trigger
-   (`aegis_set_org_id_ml_campaigns`), the update guard
-   (`aegis_check_org_id_ml_campaigns`), the `ENABLE` and `FORCE ROW LEVEL
-   SECURITY` statements, and the `aegis_tenant_isolation` policy verbatim from
+   (`redsim_set_org_id_ml_campaigns`), the update guard
+   (`redsim_check_org_id_ml_campaigns`), the `ENABLE` and `FORCE ROW LEVEL
+   SECURITY` statements, and the `redsim_tenant_isolation` policy verbatim from
    `0006_tenant_rls.py` and `0009_tenant_org_id_guard.py`, substituting the
    table name. In `downgrade`, drop the policy, the triggers, the functions, the
    table, and the column, in reverse order.
 
-3. Edit `aegis/ml/schema.py`. Generalise `RunConfig` into `CampaignConfig`. Add
+3. Edit `redsim/ml/schema.py`. Generalise `RunConfig` into `CampaignConfig`. Add
    `ScoringConfig`, `DefenseConfig`, `MRIInputRow`, `MRIRecord`, `MRIDelta`,
    `MeasuredDelta`, `MLFindingDetail` and `MLModelManifest`. Point
    `RunRecord.config` at `CampaignConfig`. Add `score` to `STAGES` after
    `explain`. Keep Pydantic v2 style and match the surrounding models. Add only.
    Do not change the meaning of an existing field.
 
-4. Edit `aegis/api/policy.py`. Add the seven `Action` members and their
+4. Edit `redsim/api/policy.py`. Add the seven `Action` members and their
    `_ACTION_MIN_ROLE` rows. Add `"viewer": 0` to `_ROLE_RANK`. Remove
    `AGENT_RUN`, `AGENT_EXECUTE`, `FIX_GENERATE`, `FIX_APPLY`, `TOOL_INVOKE` and
    `TICKET_SYNC` from `Action` and `_ACTION_MIN_ROLE`.
@@ -214,18 +214,18 @@ in P0 references `redsim/`, `RunStore`, a thread pool, or a second `create_app`.
 5. Edit `pyproject.toml`. Add `onnx2torch` and `safetensors` to the `ml`
    optional-dependency group.
 
-6. Rename the environment variable. In `aegis/llm/pythia.py`, change the
-   `from_env` read from `REDSIM_LLM_MODEL` to `AEGIS_ML_LLM_MODEL`. Update the
-   `llm_narrative` comment in `aegis/ml/schema.py`. Update
+6. Rename the environment variable. In `redsim/llm/pythia.py`, change the
+   `from_env` read from `REDSIM_LLM_MODEL` to `REDSIM_ML_LLM_MODEL`. Update the
+   `llm_narrative` comment in `redsim/ml/schema.py`. Update
    `tests/test_llm_pythia.py` in the same change.
 
 7. Unmount `/v1/scans`. Remove `scans` from the import block and the
-   `include_router` call in `aegis/api/app.py`. Delete `aegis/api/v1/scans.py`
+   `include_router` call in `redsim/api/app.py`. Delete `redsim/api/v1/scans.py`
    and its tests.
 
-8. Create `aegis/cli/ml.py`. Add `cmd_ml` and the `aegis ml build-assets`
+8. Create `redsim/cli/ml.py`. Add `cmd_ml` and the `redsim ml build-assets`
    subcommand skeleton. Register the `ml` subparser in `build_parser` and add
-   the dispatch entry in `aegis/cli/main.py` (`_COMMANDS` or a
+   the dispatch entry in `redsim/cli/main.py` (`_COMMANDS` or a
    `_cmd_ml_dispatch`, matching the `status` and `audit` pattern). The body
    reports not-implemented and returns cleanly. It seeds no assets in P0.
 
@@ -247,20 +247,20 @@ in P0 references `redsim/`, `RunStore`, a thread pool, or a second `create_app`.
 
 Create:
 
-- `aegis/db/migrations/versions/0010_ml_vertical.py`
-- `aegis/cli/ml.py`
+- `redsim/db/migrations/versions/0010_ml_vertical.py`
+- `redsim/cli/ml.py`
 - `tests/ml/fixtures/run_record.json`
 - `tests/ml/test_schema.py`
 - `tests/test_api_process_has_no_ml.py`
 
 Modify:
 
-- `aegis/ml/schema.py` (widen the config and record types; add the new models)
-- `aegis/api/policy.py` (new `Action` members, `viewer` rank, prune stale
+- `redsim/ml/schema.py` (widen the config and record types; add the new models)
+- `redsim/api/policy.py` (new `Action` members, `viewer` rank, prune stale
   members)
-- `aegis/api/app.py` (remove the `scans` import and its `include_router` call)
-- `aegis/llm/pythia.py` (environment rename)
-- `aegis/cli/main.py` (register the `ml` subcommand and its dispatch)
+- `redsim/api/app.py` (remove the `scans` import and its `include_router` call)
+- `redsim/llm/pythia.py` (environment rename)
+- `redsim/cli/main.py` (register the `ml` subcommand and its dispatch)
 - `pyproject.toml` (`ml` group gains `onnx2torch`, `safetensors`)
 - `tests/test_llm_pythia.py` (environment rename)
 - `deploy/Dockerfile.worker` (install `.[worker,ml]`; keep the API image free
@@ -268,16 +268,16 @@ Modify:
 
 Remove:
 
-- `aegis/api/v1/scans.py` and its tests
+- `redsim/api/v1/scans.py` and its tests
 
-Do not modify: `aegis/db/models.py` (the migration owns the DDL; the ORM
+Do not modify: `redsim/db/models.py` (the migration owns the DDL; the ORM
 `ml_campaigns` model lands with its service in a later slice), the retained
 routers, or the existing migrations `0001`–`0009`.
 
 ## 7. Testing & validation
 
 The default tier runs offline in under a minute with no services and no `ml`
-extra (the aegis offline-path rule).
+extra (the redsim offline-path rule).
 
 **Migration up and down.**
 
@@ -296,7 +296,7 @@ extra (the aegis offline-path rule).
   router returned `400 unknown scanner`. Confirm the include and the router file
   are gone.
 
-**`tests/test_api_process_has_no_ml.py` (unit).** Import `aegis.api.app` and
+**`tests/test_api_process_has_no_ml.py` (unit).** Import `redsim.api.app` and
 build the app with `torch`, `art`, `onnxruntime` and `shap` blocked in
 `sys.modules`. The app still builds. The API process imports no ML library.
 
@@ -316,9 +316,9 @@ build the app with `torch`, `art`, `onnxruntime` and `shap` blocked in
 - The pruned members (`AGENT_RUN`, `FIX_GENERATE`, and the rest) are absent from
   `Action`.
 
-**Environment rename.** `tests/test_llm_pythia.py` reads `AEGIS_ML_LLM_MODEL`.
+**Environment rename.** `tests/test_llm_pythia.py` reads `REDSIM_ML_LLM_MODEL`.
 `PythiaSettings.from_env` returns `None` when any of `PYTHIA_BASE_URL`,
-`PYTHIA_API_KEY` or `AEGIS_ML_LLM_MODEL` is missing.
+`PYTHIA_API_KEY` or `REDSIM_ML_LLM_MODEL` is missing.
 
 **Fixture.** `tests/ml/fixtures/run_record.json` validates against the campaign
 response shape and holds:
@@ -346,24 +346,24 @@ M0 exit check (spec section 23): `alembic upgrade head` on a fresh database,
 `pytest -q` green, and the API process imports no ML library.
 
 - [ ] `0010_ml_vertical` applies on a fresh database and reverses cleanly.
-      `ml_campaigns` has the `aegis_set_org_id_ml_campaigns` trigger, the
-      `aegis_check_org_id_ml_campaigns` guard, `FORCE ROW LEVEL SECURITY`, and
-      the `aegis_tenant_isolation` policy. `targets.detail` is JSONB nullable.
-- [ ] `aegis/ml/schema.py` defines `CampaignConfig` with the attack set, the
+      `ml_campaigns` has the `redsim_set_org_id_ml_campaigns` trigger, the
+      `redsim_check_org_id_ml_campaigns` guard, `FORCE ROW LEVEL SECURITY`, and
+      the `redsim_tenant_isolation` policy. `targets.detail` is JSONB nullable.
+- [ ] `redsim/ml/schema.py` defines `CampaignConfig` with the attack set, the
       epsilon grid and the MRI weight vector, plus `ScoringConfig`,
       `MRIRecord`, `MRIInputRow`, `MRIDelta`, `MeasuredDelta`, `DefenseConfig`,
       `MLFindingDetail` and `MLModelManifest`. `STAGES` gains `score`. No
       existing field changed meaning.
-- [ ] `aegis/api/policy.py` adds the seven `Action` members with their minimum
+- [ ] `redsim/api/policy.py` adds the seven `Action` members with their minimum
       roles, adds `"viewer": 0` to `_ROLE_RANK`, and removes the six stale
       members.
 - [ ] The `ml` group in `pyproject.toml` lists `onnx2torch` and `safetensors`.
       The worker image installs `.[worker,ml]`; the API image does not.
-- [ ] `PythiaSettings.from_env` reads `AEGIS_ML_LLM_MODEL`. The comment in
-      `aegis/ml/schema.py` and `tests/test_llm_pythia.py` use the new name.
-- [ ] `POST /v1/scans` is unmounted. `aegis/api/v1/scans.py` and its tests are
+- [ ] `PythiaSettings.from_env` reads `REDSIM_ML_LLM_MODEL`. The comment in
+      `redsim/ml/schema.py` and `tests/test_llm_pythia.py` use the new name.
+- [ ] `POST /v1/scans` is unmounted. `redsim/api/v1/scans.py` and its tests are
       removed. `create_app()` still boots and serves `GET /health`.
-- [ ] `aegis ml build-assets` is reachable through `aegis/cli/main.py` and
+- [ ] `redsim ml build-assets` is reachable through `redsim/cli/main.py` and
       returns cleanly as a not-implemented skeleton.
 - [ ] `tests/ml/fixtures/run_record.json` validates against the campaign
       response shape and carries a full `score` block.
@@ -374,13 +374,13 @@ M0 exit check (spec section 23): `alembic upgrade head` on a fresh database,
 
 After merge, treat these as locked. A silent change breaks a parallel slice.
 
-- Every field name and type in `aegis/ml/schema.py`, old and new.
+- Every field name and type in `redsim/ml/schema.py`, old and new.
   `CampaignConfig`, `MRIRecord`, `MLModelManifest` and `MLFindingDetail` are the
   shared contracts.
 - The migration head `0010_ml_vertical` and the `ml_campaigns` column set.
 - The `Action` values and their minimum roles, and the `viewer` rank.
 - The `GET /v1/runs/{id}/campaign` response shape the fixture encodes.
-- The environment variable name `AEGIS_ML_LLM_MODEL`.
+- The environment variable name `REDSIM_ML_LLM_MODEL`.
 
 ### Change protocol after freeze
 
@@ -401,7 +401,7 @@ Special considerations:
 
 - **RLS parity is the risk in the migration.** Copy the trigger, the update
   guard, the `FORCE ROW LEVEL SECURITY` statements and the
-  `aegis_tenant_isolation` policy verbatim from `0006_tenant_rls.py` and
+  `redsim_tenant_isolation` policy verbatim from `0006_tenant_rls.py` and
   `0009_tenant_org_id_guard.py`, changing only the table name to
   `ml_campaigns`. `org_id` is trigger-backfilled on insert and guarded against
   drift on update. ML code never sets `org_id`.
@@ -411,7 +411,7 @@ Special considerations:
   `tests/test_api_process_has_no_ml.py` guard enforces the boundary rather than
   assuming it. Keep the `ml` extra in the worker image only.
 - **The environment rename must land in three places at once.**
-  `aegis/llm/pythia.py`, the comment in `aegis/ml/schema.py`, and
+  `redsim/llm/pythia.py`, the comment in `redsim/ml/schema.py`, and
   `tests/test_llm_pythia.py`. A partial rename leaves `from_env` returning
   `None` and the narrative silently skipped.
 - **Stale-member pruning travels with the route removal.** Remove the six unused

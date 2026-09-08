@@ -1,4 +1,4 @@
-# Phase P4 · Milestones M1-M6 · Feature F004 (v2, aegis substrate)
+# Phase P4 · Milestones M1-M6 · Feature F004 (v2, redsim substrate)
 
 Status: v2, 2026-09-08. Owner: backend lead (WS4). Waves: Slice 1 scaffold,
 Slice 2 complete. This phase is the integration spine of the ML vertical.
@@ -10,7 +10,7 @@ Read these first, in order:
    sections 6, 10, 17.
 3. `specs/004-run-management/spec.md`.
 
-P4 wires the aegis platform so a user starts an attack campaign and watches it
+P4 wires the redsim platform so a user starts an attack campaign and watches it
 finish. It owns the new HTTP routers, the campaign admission service, and the
 Celery tasks that run the pipeline. It consumes the target, attack, explain, and
 scoring modules from P1, P2, and P3. It writes no state to disk. All state lives
@@ -19,7 +19,7 @@ blob store (S3/MinIO), and on the hash-chained audit log.
 
 There is no `redsim/` package. There is no `redsim/runs.py`, no `redsim/jobs.py`,
 no thread pool, no `run.json`, and no new `create_app`. The paths below are the
-real aegis paths on `main`.
+real redsim paths on `main`.
 
 ---
 
@@ -30,16 +30,16 @@ model, end to end, on Celery.
 
 Concretely, deliver four things:
 
-1. New routers under `aegis/api/v1/` (`models.py`, `attacks.py`, `datasets.py`,
+1. New routers under `redsim/api/v1/` (`models.py`, `attacks.py`, `datasets.py`,
    `defenses.py`, `ml_capabilities.py`, `artifacts.py`, `compare.py`,
-   `ml_findings.py`), each mounted on the existing `aegis/api/app.py`
+   `ml_findings.py`), each mounted on the existing `redsim/api/app.py`
    `create_app` under `prefix="/v1"`.
-2. `aegis/services/ml_campaigns.py`, an audit-first admission service that
-   mirrors `aegis/services/scans.py::create_scan_job` and ends in `task.delay`.
-3. The Celery tasks in `aegis/workers/tasks/` (`model_validate.py`, `attack.py`,
+2. `redsim/services/ml_campaigns.py`, an audit-first admission service that
+   mirrors `redsim/services/scans.py::create_scan_job` and ends in `task.delay`.
+3. The Celery tasks in `redsim/workers/tasks/` (`model_validate.py`, `attack.py`,
    `explain.py`, `harden.py`, `verify.py`, `report.py`), each wrapped by
-   `aegis/workers/bootstrap.py::task_context` and writing status through
-   `aegis/workers/job_state.py::set_job_status`.
+   `redsim/workers/bootstrap.py::task_context` and writing status through
+   `redsim/workers/job_state.py::set_job_status`.
 4. Campaign progress through `Run.stage_table` plus the Redis run-event channel,
    and artifact streaming through `GET /v1/artifacts/{id}`.
 
@@ -52,7 +52,7 @@ campaign record served at `GET /v1/runs/{id}/campaign`.
 ### In scope
 
 - The new routers listed in section 1, mounted on the existing app factory.
-- `aegis/services/ml_campaigns.py`: admission for `attack.run`, plus the
+- `redsim/services/ml_campaigns.py`: admission for `attack.run`, plus the
   follow-on admission helpers for `explain.run`, `harden.recommend`, and
   `verify.replay`. Each emits its audit event before any `Run` or `Job` row and
   before `task.delay`.
@@ -60,12 +60,12 @@ campaign record served at `GET /v1/runs/{id}/campaign`.
   machine.
 - Campaign progress through `Run.stage_table` (shape fixed in spec section 6.5)
   and the `run:{run_id}:events` Redis channel via
-  `aegis/workers/events.py::publish_job_event`.
+  `redsim/workers/events.py::publish_job_event`.
 - Artifact streaming through the new `GET /v1/artifacts/{id}` route, path- and
   RLS-confined.
 - The `run.status` roll-up rule (spec section 6.2) evaluated by the worker at
   each job's terminal transition.
-- The cancel amendment: `aegis/services/runs.py::cancel_run` rejects an
+- The cancel amendment: `redsim/services/runs.py::cancel_run` rejects an
   already-terminal run with `409 run_terminal` instead of rewriting
   `Run.status`.
 - Queue routing for the ML tasks and their reaper coverage.
@@ -78,15 +78,15 @@ campaign record served at `GET /v1/runs/{id}/campaign`.
 - The schema and migration. `RunConfig` widening, the `ml_campaigns` table, and
   `targets.detail` are WS0 (`0010_ml_vertical`, master plan section 4). P4
   assumes they exist and fills them.
-- The plugin sandbox and the sandbox child (`aegis/scanners/sandbox.py`,
-  `aegis/scanners/sandbox_worker.py`, and `python -m aegis.ml.sandbox_worker`).
+- The plugin sandbox and the sandbox child (`redsim/scanners/sandbox.py`,
+  `redsim/scanners/sandbox_worker.py`, and `python -m redsim.ml.sandbox_worker`).
   P4 spawns the child from inside the tasks. P1 and WS0 own the child body.
 - The app factory, CORS, auth, tenant middleware, CSRF, and rate limiting. Those
-  exist on `aegis/api/app.py`. P4 mounts routers into that app and touches
+  exist on `redsim/api/app.py`. P4 mounts routers into that app and touches
   nothing else.
 - `/v1/scans`. It is unmounted at M0 (spec section 17.1).
 - The web UI (WS5) and the report renderer body (WS6). P4 calls
-  `aegis/services/reports.py::render_reports` from the `report` stage.
+  `redsim/services/reports.py::render_reports` from the `report` stage.
 - Keycloak, RLS, and the audit chain themselves (F001, F008). P4 reuses them.
 
 ## 3. Prerequisites and dependencies
@@ -95,23 +95,23 @@ campaign record served at `GET /v1/runs/{id}/campaign`.
 
 | From | Import | Used for |
 |---|---|---|
-| P1 | `aegis.ml.targets` registry + `targets/base.py` | resolve the `Target`, load in the sandbox child |
-| P1/WS0 | `aegis.ml.sandbox_worker` (child entry) | run each stage inside the plugin sandbox |
-| P2 | `aegis.ml.attacks` registry + `attacks/base.py` (`resolve_params`) | resolve the attack set, validate params |
-| P2 | `aegis.ml.eval`, `aegis.ml.scoring` | measurements, MRI, severity |
-| P3 | `aegis.ml.explain` (`shap_image`, `shap_tabular`) | observations, `expl_shift`, `S_expl` |
-| P3 | `aegis.ml.recommend.rules`, `aegis.ml.recommend.narrative` | interpretation, candidate recommendations |
-| WS0 | `aegis.ml.schema` (`RunConfig`, `RunRecord`, `Provenance`, `STAGES`, `STANDING_LIMITATIONS`) | campaign record construction |
+| P1 | `redsim.ml.targets` registry + `targets/base.py` | resolve the `Target`, load in the sandbox child |
+| P1/WS0 | `redsim.ml.sandbox_worker` (child entry) | run each stage inside the plugin sandbox |
+| P2 | `redsim.ml.attacks` registry + `attacks/base.py` (`resolve_params`) | resolve the attack set, validate params |
+| P2 | `redsim.ml.eval`, `redsim.ml.scoring` | measurements, MRI, severity |
+| P3 | `redsim.ml.explain` (`shap_image`, `shap_tabular`) | observations, `expl_shift`, `S_expl` |
+| P3 | `redsim.ml.recommend.rules`, `redsim.ml.recommend.narrative` | interpretation, candidate recommendations |
+| WS0 | `redsim.ml.schema` (`RunConfig`, `RunRecord`, `Provenance`, `STAGES`, `STANDING_LIMITATIONS`) | campaign record construction |
 | WS0 | migration `0010_ml_vertical` (`ml_campaigns`, `targets.detail`) | campaign persistence |
-| aegis | `aegis/api/app.py::create_app` | mount point for the new routers |
-| aegis | `aegis/api/auth.py::get_current_user`, `aegis/api/policy.py` (`Action`, `check`, `ensure_project_access`, `accessible_project_ids`) | auth and RBAC |
-| aegis | `aegis/audit/chain.py::resolve_writer`, `aegis/safety.py::authorize` | audit-first admission |
-| aegis | `aegis/workers/bootstrap.py::task_context`, `aegis/workers/job_state.py::set_job_status` | execution wrapper, status machine |
-| aegis | `aegis/workers/events.py::publish_job_event` | live stage and job events |
-| aegis | `aegis/storage` blob store, `aegis/db/models.py` (`Run`, `Job`, `Finding`, `Artifact`) | bytes and rows |
-| aegis | `aegis/services/reports.py::render_reports` | the `report` stage output |
+| redsim | `redsim/api/app.py::create_app` | mount point for the new routers |
+| redsim | `redsim/api/auth.py::get_current_user`, `redsim/api/policy.py` (`Action`, `check`, `ensure_project_access`, `accessible_project_ids`) | auth and RBAC |
+| redsim | `redsim/audit/chain.py::resolve_writer`, `redsim/safety.py::authorize` | audit-first admission |
+| redsim | `redsim/workers/bootstrap.py::task_context`, `redsim/workers/job_state.py::set_job_status` | execution wrapper, status machine |
+| redsim | `redsim/workers/events.py::publish_job_event` | live stage and job events |
+| redsim | `redsim/storage` blob store, `redsim/db/models.py` (`Run`, `Job`, `Finding`, `Artifact`) | bytes and rows |
+| redsim | `redsim/services/reports.py::render_reports` | the `report` stage output |
 
-### Audit chain (from aegis, F008)
+### Audit chain (from redsim, F008)
 
 Admission and execution both write to the hash-chained audit log. Admission uses
 `resolve_writer(config)` (Postgres online, JSONL offline). The worker uses the
@@ -126,13 +126,13 @@ carries model bytes, images, dataset rows, prompt text, or secrets.
 `MODEL_REGISTER` (remediator), `ATTACK_RUN` (scanner), `EXPLAIN_RUN` (scanner),
 `HARDEN_RECOMMEND` (remediator), `FINDING_REVIEW` (approver), `FINDING_ANNOTATE`
 (remediator), `REPORT_EXPORT` (scanner). P4 calls `check(user, Action.X,
-project_id)` at each write route. WS0 adds the rows to `aegis/api/policy.py`.
+project_id)` at each write route. WS0 adds the rows to `redsim/api/policy.py`.
 
 ### Environment
 
-`AEGIS_DB_URL`, `AEGIS_BROKER_URL`, `AEGIS_RESULT_BACKEND`, blob store env, and
-the sandbox budget `AEGIS_ML_SANDBOX_TIMEOUT_S`. The Pythia narrative stays off
-unless `PYTHIA_BASE_URL`, `PYTHIA_API_KEY`, and `AEGIS_ML_LLM_MODEL` are set and
+`REDSIM_DB_URL`, `REDSIM_BROKER_URL`, `REDSIM_RESULT_BACKEND`, blob store env, and
+the sandbox budget `REDSIM_ML_SANDBOX_TIMEOUT_S`. The Pythia narrative stays off
+unless `PYTHIA_BASE_URL`, `PYTHIA_API_KEY`, and `REDSIM_ML_LLM_MODEL` are set and
 `llm_narrative` is true (master plan section 5, spec section 10.8).
 
 ## 4. Interfaces
@@ -167,7 +167,7 @@ Retained routes that P4 amends, not replaces: `GET /v1/runs`, `GET
 /v1/runs/{id}`, `POST /v1/runs/{id}/cancel` (the 409 amendment),
 `GET/PATCH /v1/findings…`, `POST /v1/findings/{id}/verify` (body extended with
 `{defense, params}`), `GET /v1/runs/{id}/report.{md,json,html}` (one `check()`
-added). These live in `aegis/api/v1/runs.py`, `runs_cancel.py`, `findings.py`,
+added). These live in `redsim/api/v1/runs.py`, `runs_cancel.py`, `findings.py`,
 `verify.py`, and `reports.py`.
 
 A campaign starts at `POST /v1/models/{id}/attacks`. There is no generic
@@ -179,18 +179,18 @@ keep passing.
 
 | Task name | `Job.type` | Module | Queue |
 |---|---|---|---|
-| `aegis.model_validate` | `model.validate` | `workers/tasks/model_validate.py` | `scans` |
-| `aegis.attack_run` | `attack.run` (one Job per attack) | `workers/tasks/attack.py` | `scans` |
-| `aegis.explain_run` | `explain.run` | `workers/tasks/explain.py` | `scans` |
-| `aegis.harden_recommend` | `harden.recommend` | `workers/tasks/harden.py` | `default` |
-| `aegis.verify_replay` | `verify.replay` | `workers/tasks/verify.py` (ML branch) | `scans` |
-| `aegis.report_render` | `report.render` | `workers/tasks/report.py` | `default` |
+| `redsim.model_validate` | `model.validate` | `workers/tasks/model_validate.py` | `scans` |
+| `redsim.attack_run` | `attack.run` (one Job per attack) | `workers/tasks/attack.py` | `scans` |
+| `redsim.explain_run` | `explain.run` | `workers/tasks/explain.py` | `scans` |
+| `redsim.harden_recommend` | `harden.recommend` | `workers/tasks/harden.py` | `default` |
+| `redsim.verify_replay` | `verify.replay` | `workers/tasks/verify.py` (ML branch) | `scans` |
+| `redsim.report_render` | `report.render` | `workers/tasks/report.py` | `default` |
 
 Each ML task is declared `bind=True, max_retries=2`, exactly like `scan_start`
 and `verify_replay`. Add the new modules to the `include` list and the queue
-routes in `aegis/workers/celery_app.py`.
+routes in `redsim/workers/celery_app.py`.
 
-### Job state machine (consumed, `aegis/workers/job_state.py`)
+### Job state machine (consumed, `redsim/workers/job_state.py`)
 
 ```
 queued    -> running | cancelled
@@ -208,10 +208,10 @@ cancelled attack never re-fires.
 
 ### Step 1 — mount the routers (Slice 1)
 
-Create the eight router modules under `aegis/api/v1/` as `APIRouter` instances,
-each with its own `prefix` and `tags`, following `aegis/api/v1/targets.py`. Add
+Create the eight router modules under `redsim/api/v1/` as `APIRouter` instances,
+each with its own `prefix` and `tags`, following `redsim/api/v1/targets.py`. Add
 each to the import block and the `include_router(..., prefix="/v1")` block in
-`aegis/api/app.py::create_app`. Start with read-only handlers that return `501`
+`redsim/api/app.py::create_app`. Start with read-only handlers that return `501`
 where the pipeline is not wired yet, so the app boots and the route table is
 complete.
 
@@ -236,9 +236,9 @@ checks only (size cap while streaming, magic bytes, pickle refusal), computes
 on the worker (step 6). `endpoint` returns `501` with `phase: "B"`. Nothing
 deserialises the file in the API process.
 
-### Step 4 — `aegis/services/ml_campaigns.py` (admission)
+### Step 4 — `redsim/services/ml_campaigns.py` (admission)
 
-Mirror `aegis/services/scans.py::create_scan_job`. Write
+Mirror `redsim/services/scans.py::create_scan_job`. Write
 `create_attack_campaign(...)` with this load-bearing order:
 
 1. `authorize("attack.run", target=None, allowlist=config.target_allowlist,
@@ -256,7 +256,7 @@ Mirror `aegis/services/scans.py::create_scan_job`. Write
 5. Return `JobHandle.to_response()` → 202 `{run_id, job_ids, status_url}`.
 
 Add sibling admission helpers `create_explain_job`, `create_harden_job`, and the
-ML branch of `create_verify_job` (or extend `aegis/services/verify.py`), each
+ML branch of `create_verify_job` (or extend `redsim/services/verify.py`), each
 audit-first and each ending in `task.delay`. Reject the guarded cases with the
 spec section 17.3 codes (`model_load_refused`, `unknown_attack`,
 `attack_requires_gradients`, `eps_grid_invalid`, `params_out_of_range`, and so
@@ -270,14 +270,14 @@ the `CampaignConfig` body (Pydantic + manifest compatibility + attack
 `409 model_load_refused`, then call `create_attack_campaign`. Return 202. The
 route runs no pipeline work.
 
-### Step 6 — the Celery tasks (`aegis/workers/tasks/`)
+### Step 6 — the Celery tasks (`redsim/workers/tasks/`)
 
 Build each task on `task_context(job_id, task=self)`. On `ctx.skip`, return
 early. Read config from `Job.detail`. Re-check the world before spawning the
 child (spec section 10.4): assert the `Target` belongs to `Job.project_id` and
 is `available`, recompute the model `sha256`, re-validate the config, and assert
 the dataset revision matches the audit row. Spawn the sandbox child
-(`python -m aegis.ml.sandbox_worker --stage <stage>`), read the returned
+(`python -m redsim.ml.sandbox_worker --stage <stage>`), read the returned
 envelope, verify artifact digests, and persist rows.
 
 - `model_validate.py`: verify sha256, run the validate stage, write
@@ -347,13 +347,13 @@ Add `POST /v1/findings/{id}/explain` and `POST /v1/findings/{id}/harden`. Each
 runs RBAC, rejects a non-terminal campaign with `409 campaign_not_terminal` and
 a duplicate in-flight job with `409 job_in_flight`, then delegates to the
 matching admission helper. `POST /v1/findings/{id}/verify` stays in
-`aegis/api/v1/verify.py`; extend its body with `{defense, params}`.
+`redsim/api/v1/verify.py`; extend its body with `{defense, params}`.
 
 ### Step 11 — cancel amendment
 
-Amend `aegis/services/runs.py::cancel_run` to reject an already-terminal run.
+Amend `redsim/services/runs.py::cancel_run` to reject an already-terminal run.
 When `Run.status` is `succeeded`, `failed`, or `cancelled`, raise a typed error
-that `aegis/api/v1/runs_cancel.py` maps to `409 run_terminal`, and leave the run
+that `redsim/api/v1/runs_cancel.py` maps to `409 run_terminal`, and leave the run
 untouched (provenance preserved, spec section 6.3). For a live run, keep the
 existing behaviour: audit `run.cancel` first, then set `Run.status="cancelled"`,
 flip every `queued`/`running` job to `cancelled` through `set_job_status`, and
@@ -364,9 +364,9 @@ child and SIGKILL the child's process group on `cancelled`.
 ### Step 12 — celery wiring and reaper
 
 Add the six task modules to the `include` list and `task_routes` in
-`aegis/workers/celery_app.py` (`scans` for `model_validate`, `attack_run`,
+`redsim/workers/celery_app.py` (`scans` for `model_validate`, `attack_run`,
 `explain_run`, `verify_replay`; `default` for `harden_recommend` and
-`report_render`). The existing beat reaper (`aegis.reap_stale_jobs`, every 300 s)
+`report_render`). The existing beat reaper (`redsim.reap_stale_jobs`, every 300 s)
 already covers every `running` job past `job_max_runtime_seconds`, so the ML
 tasks need no new reaper.
 
@@ -374,27 +374,27 @@ tasks need no new reaper.
 
 | File | Action | Contents |
 |---|---|---|
-| `aegis/api/v1/models.py` | create | model catalog + upload routes |
-| `aegis/api/v1/attacks.py` | create | attack registry read + `POST /v1/models/{id}/attacks` |
-| `aegis/api/v1/datasets.py` | create | bundled dataset manifest read |
-| `aegis/api/v1/defenses.py` | create | ART defense list read |
-| `aegis/api/v1/ml_capabilities.py` | create | `GET /v1/ml/capabilities` |
-| `aegis/api/v1/artifacts.py` | create | artifact list + `GET /v1/artifacts/{id}` stream |
-| `aegis/api/v1/compare.py` | create | `/campaign`, `/compare`, reviewer-notes |
-| `aegis/api/v1/ml_findings.py` | create | `POST /v1/findings/{id}/{explain,harden}` |
-| `aegis/api/app.py` | modify | import and `include_router` the eight new routers |
-| `aegis/services/ml_campaigns.py` | create | `create_attack_campaign` + follow-on admission helpers |
-| `aegis/services/runs.py` | modify | `cancel_run` rejects a terminal run with 409 |
-| `aegis/services/verify.py` | modify | ML branch of `create_verify_job`, body `{defense, params}` |
-| `aegis/api/v1/verify.py` | modify | extend the verify body |
-| `aegis/api/v1/reports.py` | modify | add the `REPORT_EXPORT` `check()` |
-| `aegis/workers/tasks/model_validate.py` | create | `aegis.model_validate` task |
-| `aegis/workers/tasks/attack.py` | create | `aegis.attack_run` chain task |
-| `aegis/workers/tasks/explain.py` | create | `aegis.explain_run` + score stage |
-| `aegis/workers/tasks/harden.py` | create | `aegis.harden_recommend` + interpret/recommend/report |
-| `aegis/workers/tasks/verify.py` | modify | ML branch of `aegis.verify_replay` |
-| `aegis/workers/tasks/report.py` | modify | ML campaign report render |
-| `aegis/workers/celery_app.py` | modify | `include` + `task_routes` for the ML tasks |
+| `redsim/api/v1/models.py` | create | model catalog + upload routes |
+| `redsim/api/v1/attacks.py` | create | attack registry read + `POST /v1/models/{id}/attacks` |
+| `redsim/api/v1/datasets.py` | create | bundled dataset manifest read |
+| `redsim/api/v1/defenses.py` | create | ART defense list read |
+| `redsim/api/v1/ml_capabilities.py` | create | `GET /v1/ml/capabilities` |
+| `redsim/api/v1/artifacts.py` | create | artifact list + `GET /v1/artifacts/{id}` stream |
+| `redsim/api/v1/compare.py` | create | `/campaign`, `/compare`, reviewer-notes |
+| `redsim/api/v1/ml_findings.py` | create | `POST /v1/findings/{id}/{explain,harden}` |
+| `redsim/api/app.py` | modify | import and `include_router` the eight new routers |
+| `redsim/services/ml_campaigns.py` | create | `create_attack_campaign` + follow-on admission helpers |
+| `redsim/services/runs.py` | modify | `cancel_run` rejects a terminal run with 409 |
+| `redsim/services/verify.py` | modify | ML branch of `create_verify_job`, body `{defense, params}` |
+| `redsim/api/v1/verify.py` | modify | extend the verify body |
+| `redsim/api/v1/reports.py` | modify | add the `REPORT_EXPORT` `check()` |
+| `redsim/workers/tasks/model_validate.py` | create | `redsim.model_validate` task |
+| `redsim/workers/tasks/attack.py` | create | `redsim.attack_run` chain task |
+| `redsim/workers/tasks/explain.py` | create | `redsim.explain_run` + score stage |
+| `redsim/workers/tasks/harden.py` | create | `redsim.harden_recommend` + interpret/recommend/report |
+| `redsim/workers/tasks/verify.py` | modify | ML branch of `redsim.verify_replay` |
+| `redsim/workers/tasks/report.py` | modify | ML campaign report render |
+| `redsim/workers/celery_app.py` | modify | `include` + `task_routes` for the ML tasks |
 | `tests/ml/fakes.py` | create/modify | `TinyTarget` + a small test attack adapter |
 | `tests/ml/test_ml_admission.py` | create | audit-before-Job-row |
 | `tests/ml/test_ml_campaign_api.py` | create | POST → 202 → poll → campaign |
@@ -449,7 +449,7 @@ tests) is WS5 and out of scope here.
    and a grade, the interpretation, the candidate recommendations, and a
    non-empty `limitations`.
 2. Admission appends the `attack.run` audit event before any `Run` or `Job` row
-   and before `task.delay`. `aegis audit verify --run <run_id>` passes for the
+   and before `task.delay`. `redsim audit verify --run <run_id>` passes for the
    campaign chain.
 3. `Run.stage_table` advances monotonically through `STAGES`, and each transition
    publishes a frame on `run:{run_id}:events`.
@@ -475,13 +475,13 @@ queue with the long-running scanner work; `harden.recommend` and `report.render`
 run on `default`. Deploy a dedicated worker pool per queue (spec section 20).
 Keeping the harden/report bookkeeping off `scans` stops a 30-minute campaign
 from starving a report behind it. Add the new task names to
-`aegis/workers/celery_app.py::task_routes` or they inherit `default` and land on
+`redsim/workers/celery_app.py::task_routes` or they inherit `default` and land on
 the wrong pool.
 
 ### Reaper
 
 A task that crashes so hard it never reaches `task_context`'s failure path is
-left `running`. The existing beat reaper (`aegis.reap_stale_jobs`, every 300 s)
+left `running`. The existing beat reaper (`redsim.reap_stale_jobs`, every 300 s)
 flips any `running` job past `job_max_runtime_seconds` (default 3600) to `failed`
 with `error="reaped: exceeded max runtime TTL"`. The ML tasks need no new
 reaper; they only need to respect the redelivery guard so a reaped-then-
@@ -490,12 +490,12 @@ redelivered job is skipped.
 ### Sandbox child
 
 Every stage that touches model bytes runs inside the plugin sandbox as a child
-process (`python -m aegis.ml.sandbox_worker --stage <stage>`), never in the API
+process (`python -m redsim.ml.sandbox_worker --stage <stage>`), never in the API
 process and never in the worker parent. The parent waits on the child in a 5 s
 loop that re-reads `Job.status` in a fresh session, so a cancel can SIGKILL the
 child's process group (spec section 10.7). `harden.recommend` is the one task
 that never loads a model; it runs on the `default` pool and may call Pythia. The
-sandbox wall clock (`AEGIS_ML_SANDBOX_TIMEOUT_S`) raises `SandboxTimeout` per
+sandbox wall clock (`REDSIM_ML_SANDBOX_TIMEOUT_S`) raises `SandboxTimeout` per
 stage; the Celery soft/hard limits (1800/2100 s) are the outer fence.
 
 ### Failure isolation

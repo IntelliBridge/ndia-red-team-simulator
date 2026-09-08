@@ -1,16 +1,21 @@
-# redsim → aegis/ml — Master Implementation Plan (reconciled)
+# redsim/ml — Master Implementation Plan (reconciled)
 
-Status: v2, 2026-09-08. Supersedes v1. This version is rebased on the
-**aegis platform** after the `main` restructure of 2026-09-08.
+Status: v2, 2026-09-08. Supersedes v1. This version is rebased on the full
+**redsim platform** after the `main` restructure of 2026-09-08.
 
 ## 0. What changed since v1 (read this first)
 
-v1 of this plan was written against a standalone `redsim/` package with a
-filesystem store, a thread-pool, no auth, and no audit. That package was
-**deleted on `main`**. The repository now:
+Naming note: on 2026-09-08 the team renamed the whole platform from the `aegis`
+namespace to `redsim`. So the platform, its Python package, its env vars
+(`REDSIM_*`), and its compose services (`redsim-*`) are all `redsim` now. This
+plan uses those names.
 
-- keeps the ML vertical in **`aegis/ml/`** (contracts only today), inside the
-  restored aegis platform;
+v1 of this plan was written against a **stripped-down standalone `redsim/`
+package** with a filesystem store, a thread-pool, no auth, and no audit. That
+stripped package was **deleted on `main`**. The repository now:
+
+- keeps the ML vertical as **`redsim/ml/`** (contracts only today), a vertical
+  inside the full restored platform (not a standalone package);
 - is governed by a new canonical product spec,
   `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md`, which
   supersedes both the hackathon spec and the redsim design spec;
@@ -33,24 +38,24 @@ beyond the Phase A demo (see section 6).
    the D001–D007 clarification register (D006, D007 still open).
 
 The repo `CLAUDE.md` is current after the team's standardization pass: it
-describes the aegis platform, the `aegis/ml/` vertical, and the naming rules
-(product name **redsim**; Python namespace `aegis`; web packages `@redsim/web`
-and `@redsim/design-system`; env `NEXT_PUBLIC_AEGIS_API_URL`). Read it.
+describes the redsim platform, the `redsim/ml/` vertical, and the naming rules
+(product name **redsim**; Python namespace `redsim`; web packages `@redsim/web`
+and `@redsim/design-system`; env `NEXT_PUBLIC_REDSIM_API_URL`). Read it.
 
 ## 2. Substrate correction (v1 → v2)
 
-| Concern | v1 assumption (wrong now) | v2 authoritative (aegis) |
+| Concern | v1 assumption (wrong now) | v2 authoritative (redsim) |
 |---|---|---|
-| Package | `redsim/…` | `aegis/ml/…` (D7); the `redsim/` package is retired, but "redsim" stays the product name |
+| Package | standalone stripped `redsim/` package | `redsim/ml/` vertical inside the full platform (D7); the platform namespace is `redsim` after the 2026-09-08 rename |
 | Persistence | filesystem `RunStore` on EFS | Postgres + RLS; run record as sha256 Artifact; `ml_campaigns` table; S3/MinIO for bytes (D1) |
 | Run progress | `run.json` per stage | `Run.stage_table` JSON column + Redis run-event channel |
-| Jobs | in-process thread pool `redsim/jobs.py` | Celery on Redis; admission→execution split; `aegis/workers/job_state.py` |
-| Model loading | in worker process | sandboxed child subprocess `python -m aegis.ml.sandbox_worker` (D2) |
-| API | new `redsim/api/app.py:create_app` | routers under `aegis/api/v1/` mounted on the existing `aegis/api/app.py` |
+| Jobs | in-process thread pool `redsim/jobs.py` | Celery on Redis; admission→execution split; `redsim/workers/job_state.py` |
+| Model loading | in worker process | sandboxed child subprocess `python -m redsim.ml.sandbox_worker` (D2) |
+| API | new `redsim/api/app.py:create_app` | routers under `redsim/api/v1/` mounted on the existing `redsim/api/app.py` |
 | Auth | none | Keycloak OIDC + NextAuth + session cookie; role ranks `scanner<remediator<approver<admin` (F001) |
 | Audit | none | hash-chained append-only audit + WORM to S3 (F008) |
 | Storage on AWS | EFS + RDS | RDS PostgreSQL 16 + ElastiCache Redis + **S3 (two buckets, one Object-Lock WORM); no EFS** |
-| LLM env | `REDSIM_LLM_MODEL` | `AEGIS_ML_LLM_MODEL`, via Pythia only |
+| LLM env | `REDSIM_LLM_MODEL` | `REDSIM_ML_LLM_MODEL`, via Pythia only |
 | Demo data | CIFAR-10 | `leibnitz-lab/military_vehicles` (image) + Kaggle `sid321axn/malicious-urls-dataset` (tabular); CIFAR-10 is a CI fixture only (D3) |
 
 ## 3. Scope (canonical Phase A)
@@ -75,22 +80,22 @@ delivers.
 
 | WS | Owner | Milestones | Features | Deliverable |
 |---|---|---|---|---|
-| **WS0 Scaffold** | Backend lead | M0 | cross-cutting | `aegis/ml/` package, migration `0010_ml_vertical` (`targets.detail` JSONB + `ml_campaigns` table), schema widening (`RunConfig` → attack set + ε grid + MRI weights), new `Action` members + `viewer` rank, `ml` dep group (+`onnx2torch`, `safetensors`), env rename, `/v1/scans` unmounted, `aegis ml build-assets` CLI skeleton. Blocks all. |
-| **WS1 Catalog & ingest** | Dev A | M1, M4, M5b | F002 | `aegis/ml/targets/`, bundled-model seeding via `build-assets`, `POST /v1/models` upload, `model.validate` sandboxed task, `aegis/services/ml_models.py`, web `/models`. |
-| **WS2 Attacks, engine & scoring** | Dev B | M1, M3, M4, M6 | F003, F004 | `aegis/ml/attacks/`, `campaign.py`, `eval.py`, `scoring.py`; the `attack.run` Celery chain (sample→clean_eval→control→attack); MRI + severity. |
-| **WS3 Explain, recommend & findings** | Dev C | M2, M3, M6 | F005, F006 | `aegis/ml/explain/`, `recommend/{rules,narrative}.py`, `explain.run` / `harden.recommend` / `verify.replay` tasks, `Finding.schema_blob.ml` projection, dismissal + reviewer-notes routes. |
-| **WS4 API & campaign service** | Backend lead | M1–M6 | F004 | routers `aegis/api/v1/{models,attacks,datasets,defenses,ml_capabilities,artifacts,compare,ml_findings}.py` mounted on `aegis/api/app.py`; `aegis/services/ml_campaigns.py`; WS events channel. |
+| **WS0 Scaffold** | Backend lead | M0 | cross-cutting | `redsim/ml/` package, migration `0010_ml_vertical` (`targets.detail` JSONB + `ml_campaigns` table), schema widening (`RunConfig` → attack set + ε grid + MRI weights), new `Action` members + `viewer` rank, `ml` dep group (+`onnx2torch`, `safetensors`), env rename, `/v1/scans` unmounted, `redsim ml build-assets` CLI skeleton. Blocks all. |
+| **WS1 Catalog & ingest** | Dev A | M1, M4, M5b | F002 | `redsim/ml/targets/`, bundled-model seeding via `build-assets`, `POST /v1/models` upload, `model.validate` sandboxed task, `redsim/services/ml_models.py`, web `/models`. |
+| **WS2 Attacks, engine & scoring** | Dev B | M1, M3, M4, M6 | F003, F004 | `redsim/ml/attacks/`, `campaign.py`, `eval.py`, `scoring.py`; the `attack.run` Celery chain (sample→clean_eval→control→attack); MRI + severity. |
+| **WS3 Explain, recommend & findings** | Dev C | M2, M3, M6 | F005, F006 | `redsim/ml/explain/`, `recommend/{rules,narrative}.py`, `explain.run` / `harden.recommend` / `verify.replay` tasks, `Finding.schema_blob.ml` projection, dismissal + reviewer-notes routes. |
+| **WS4 API & campaign service** | Backend lead | M1–M6 | F004 | routers `redsim/api/v1/{models,attacks,datasets,defenses,ml_capabilities,artifacts,compare,ml_findings}.py` mounted on `redsim/api/app.py`; `redsim/services/ml_campaigns.py`; WS events channel. |
 | **WS5 Web UI** | Dev D | M5a, M5b | F005, F006, F007 UI | `@redsim/web` pages `/models`, `/models/[id]` launcher, 13-panel `/runs/[id]`, three-pane `/findings/[id]`; design-system `MriScorecard`, `DimensionBars`, `RobustnessCurve`, `MeasurementTable`, `ObservationCard`. |
-| **WS6 Reports & comparison** | rotates | M3, M6 | F007 | extend `aegis/report.py` to render the ML run record + scorecard; `GET /v1/runs/{id}/compare`; report Artifact rows. |
-| **WS7 Infra, auth & deploy** | Dev D / lead | M7 | F001, F008 | ECS Fargate services (api, worker, beat, web, log-ingest) + ALB; RDS PostgreSQL 16; ElastiCache Redis; two S3 buckets (one Object-Lock); Secrets Manager; Keycloak on Fargate; activate the existing deploy pipeline. Reuse the audit chain (F008) already in aegis. |
+| **WS6 Reports & comparison** | rotates | M3, M6 | F007 | extend `redsim/report.py` to render the ML run record + scorecard; `GET /v1/runs/{id}/compare`; report Artifact rows. |
+| **WS7 Infra, auth & deploy** | Dev D / lead | M7 | F001, F008 | ECS Fargate services (api, worker, beat, web, log-ingest) + ALB; RDS PostgreSQL 16; ElastiCache Redis; two S3 buckets (one Object-Lock); Secrets Manager; Keycloak on Fargate; activate the existing deploy pipeline. Reuse the audit chain (F008) already in redsim. |
 
-F001 (auth) and F008 (audit) are largely **reused aegis foundation**, not new
+F001 (auth) and F008 (audit) are largely **reused redsim foundation**, not new
 builds; the new work is emitting ML audit events on the existing chain and
 wiring Keycloak on Fargate. These are the two features v1 missed entirely.
 
 ## 5. Corrected shared contracts
 
-- **Schema** (`aegis/ml/schema.py`): the `RunRecord`/`Measurement`/`Observation`/
+- **Schema** (`redsim/ml/schema.py`): the `RunRecord`/`Measurement`/`Observation`/
   `Interpretation`/`CandidateRecommendation` evidence model stays. It is written
   as a sha256-addressed Artifact (`ml.run_record`) and **projected** onto
   `ml_campaigns.score` and `findings.schema_blob.ml`; a projection that
@@ -99,15 +104,15 @@ wiring Keycloak on Fargate. These are the two features v1 missed entirely.
 - **Migration**: exactly one — `0010_ml_vertical` — adding `targets.detail`
   (JSONB) and `ml_campaigns` (1:1 with `runs`, full RLS parity). Additive and
   reversible.
-- **API** (all under `/v1`, on the aegis app, auth + RLS enforced): a campaign
+- **API** (all under `/v1`, on the redsim app, auth + RLS enforced): a campaign
   starts with `POST /v1/models/{id}/attacks`, **not** a generic `POST /v1/runs`.
   Read the campaign at `GET /v1/runs/{id}/campaign`; stream a blob at
   `GET /v1/artifacts/{id}`; act on findings via `POST /v1/findings/{id}/{explain,harden,verify}`;
   compare with `GET /v1/runs/{id}/compare?with=`. `POST /v1/scans` is unmounted
   at M0.
-- **Jobs**: Celery tasks `aegis.model_validate`, `aegis.attack_run`,
-  `aegis.explain_run`, `aegis.harden_recommend`, `aegis.verify_replay`,
-  `aegis.report_render`. Attacks run as a chain, one Job per attack. Admission
+- **Jobs**: Celery tasks `redsim.model_validate`, `redsim.attack_run`,
+  `redsim.explain_run`, `redsim.harden_recommend`, `redsim.verify_replay`,
+  `redsim.report_render`. Attacks run as a chain, one Job per attack. Admission
   is audit-first: the audit event is appended before any Run/Job row.
 - **MRI** (unchanged formula): `round(0.35·S_acc + 0.25·S_asr + 0.20·S_eps +
   0.10·S_conf + 0.10·S_expl)`, computed only when all five subscores exist,
@@ -115,8 +120,8 @@ wiring Keycloak on Fargate. These are the two features v1 missed entirely.
   subscores, per-family table, and ε curve. Grade text is attack-scoped; the
   words "hardened", "deployment-ready", "certified", "safe" are banned.
 - **Env**: `PYTHIA_BASE_URL`, `PYTHIA_API_KEY`, `PYTHIA_PERSONA`,
-  `AEGIS_ML_LLM_MODEL`, `AEGIS_ML_WORK_DIR`. LLM calls go through
-  `aegis/llm/pythia.py` under the aegis router and budget.
+  `REDSIM_ML_LLM_MODEL`, `REDSIM_ML_WORK_DIR`. LLM calls go through
+  `redsim/llm/pythia.py` under the redsim router and budget.
 
 ## 6. Interoperability — adopted as Phase B2
 
@@ -164,15 +169,15 @@ bundled vehicle-imagery CNN and the malicious-URLs tabular model runs FGSM and P
 with the noise control and ε sweep; `/runs/[id]` shows the MRI scorecard with
 its subscores, per-family table, and robustness curve; `/findings/[id]` shows
 the three panes and a measured ΔMRI after Verify; every action is on the audit
-chain and `aegis audit verify` passes; access is gated by Keycloak with RLS;
+chain and `redsim audit verify` passes; access is gated by Keycloak with RLS;
 `pytest` and `vitest` pass.
 
 ## 9. Status of the P0–P7 phase files
 
 The eight phase files `01`–`08` in this directory were written for v1 against
 the deleted `redsim/` substrate. Each now carries a reconciliation banner
-mapping it to the aegis milestone(s) and feature(s) and listing its substrate
+mapping it to the redsim milestone(s) and feature(s) and listing its substrate
 corrections. Their detailed bodies (paths, signatures, mechanisms) are
 **superseded** by this master plan, the canonical spec, and `specs/F00#`. Use
 them only for the parallel-execution shape, not for the literal contracts. Ask
-if you want any one of them fully rewritten onto the aegis substrate.
+if you want any one of them fully rewritten onto the redsim substrate.

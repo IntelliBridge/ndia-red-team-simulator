@@ -1,4 +1,4 @@
-# Phase P2 · Milestones M1/M3/M4/M6 · Features F003/F004 + MRI (v2, aegis substrate)
+# Phase P2 · Milestones M1/M3/M4/M6 · Features F003/F004 + MRI (v2, redsim substrate)
 
 Status: v2, 2026-09-08. Owner: Dev B (WS2). Wave: Slice 2 (the engine). Critical
 path: yes.
@@ -11,12 +11,12 @@ Read these first, in order:
    authoritative.
 3. `specs/003-evaluation-profiles/spec.md` (F003, the campaign configuration)
    and `specs/004-run-management/spec.md` (F004, the run lifecycle).
-4. The frozen code: `aegis/ml/attacks/base.py`, `aegis/ml/schema.py`,
-   `aegis/ml/targets/base.py`, `aegis/workers/job_state.py`.
+4. The frozen code: `redsim/ml/attacks/base.py`, `redsim/ml/schema.py`,
+   `redsim/ml/targets/base.py`, `redsim/workers/job_state.py`.
 
-This phase builds the attack and scoring half of a campaign on the aegis
+This phase builds the attack and scoring half of a campaign on the redsim
 platform. It supersedes the deleted `redsim/` plan. Every path below is a real
-aegis path.
+redsim path.
 
 ---
 
@@ -24,8 +24,8 @@ aegis path.
 
 Deliver the attack execution and MRI scoring of one campaign:
 
-1. Five ART attack adapters under `aegis/ml/attacks/`, each satisfying the
-   `AttackAdapter` protocol in `aegis/ml/attacks/base.py` and registering in one
+1. Five ART attack adapters under `redsim/ml/attacks/`, each satisfying the
+   `AttackAdapter` protocol in `redsim/ml/attacks/base.py` and registering in one
    `ATTACKS` registry:
    - `fgsm` — `art.attacks.evasion.FastGradientMethod`, image, white-box.
    - `pgd` — `art.attacks.evasion.ProjectedGradientDescent`, image and tabular.
@@ -35,12 +35,12 @@ Deliver the attack execution and MRI scoring of one campaign:
      surrogate.
    - `noise_control` — benign random noise at the same ε and norm. Family
      `control`. It never creates a Finding (spec 12.4).
-2. `aegis/ml/eval.py` — turn clean, adversarial, and control predictions into
+2. `redsim/ml/eval.py` — turn clean, adversarial, and control predictions into
    `Measurement` objects, one row per (attack, ε) plus one clean row and the
    control rows (spec 12.5).
-3. `aegis/ml/scoring.py` — the five-subscore MRI and the derived Finding
+3. `redsim/ml/scoring.py` — the five-subscore MRI and the derived Finding
    severity, computed exactly per spec section 15. This is a pure function.
-4. `aegis/ml/campaign.py` — assemble the campaign `RunRecord`, write it as a
+4. `redsim/ml/campaign.py` — assemble the campaign `RunRecord`, write it as a
    sha256 `Artifact`, and project it onto `ml_campaigns.score` and
    `Finding.schema_blob.ml`.
 
@@ -56,18 +56,18 @@ scorecard and severity rules read.
 
 ### In scope
 
-- `aegis/ml/attacks/{fgsm,pgd,hopskipjump,noise_control}.py` and the `ATTACKS`
+- `redsim/ml/attacks/{fgsm,pgd,hopskipjump,noise_control}.py` and the `ATTACKS`
   registry that lists them.
-- `aegis/ml/eval.py`: build `Measurement` objects from a `Sample` and
+- `redsim/ml/eval.py`: build `Measurement` objects from a `Sample` and
   predictions, for clean, evasion, and control families.
-- `aegis/ml/scoring.py`: `score_run(...)` and `severity_for(...)`, per spec 15.
-- `aegis/ml/campaign.py`: the `RunRecord` assembly, its sha256 `Artifact`, and
+- `redsim/ml/scoring.py`: `score_run(...)` and `severity_for(...)`, per spec 15.
+- `redsim/ml/campaign.py`: the `RunRecord` assembly, its sha256 `Artifact`, and
   the projection onto `ml_campaigns.score` and `Finding.schema_blob.ml`.
 - The ε sweep `{0.01, 0.03, 0.1}` with `reference_eps = 0.03`, the robustness
   curve inputs, and the benign control at every ε (spec 12.3, 12.4).
 - The tabular surrogate fit and the per-feature ε scaling for the tabular PGD
   row (spec 12.9), and the query counter for HopSkipJump (spec 12.5).
-- The `aegis.attack_run` task body (`aegis/workers/tasks/attack.py`) that drives
+- The `redsim.attack_run` task body (`redsim/workers/tasks/attack.py`) that drives
   the chain and calls `eval.py` and `campaign.py`.
 - Finding creation by ASR threshold and derived severity (spec 12.6, 15.5).
 - Unit tests under `tests/ml/` for attacks, evaluation, scoring, and severity.
@@ -94,22 +94,22 @@ scorecard and severity rules read.
 
 ### Must exist before P2 integrates
 
-- `aegis/ml/schema.py` widened per spec 5.3 and 12.5. P2 needs the new
+- `redsim/ml/schema.py` widened per spec 5.3 and 12.5. P2 needs the new
   `Measurement` fields `n_clean_correct`, `attack_success_rate`, `conf_gap_mean`,
   `conf_gap_n`, `queries_mean`, `pert_first_success_mean`, `pert_first_success_n`,
   and the aggregate `expl_shift_mean` and `expl_shift_n` on the reference-ε row.
   `RunConfig` widens to an attack set, an ε grid, and the MRI weight vector
   (F003). These are WS0 schema work. P2 codes against the widened shapes and
   raises a schema note rather than editing the frozen contract locally.
-- `aegis/ml/attacks/base.py`: the `AttackAdapter` protocol and `AttackOutput`
+- `redsim/ml/attacks/base.py`: the `AttackAdapter` protocol and `AttackOutput`
   dataclass. Present and frozen.
-- `aegis/ml/targets/base.py`: the `Target` protocol and `Sample` dataclass.
+- `redsim/ml/targets/base.py`: the `Target` protocol and `Sample` dataclass.
   Present and frozen. P2 uses `target.art_classifier()`, `target.predict_proba`,
   `target.torch_model()` for the tabular surrogate fit, and `target.manifest()`
   for the perturbable-feature list and the surrogate record.
-- `aegis/registry.py`: the generic `Registry[T]` with duplicate-id detection
+- `redsim/registry.py`: the generic `Registry[T]` with duplicate-id detection
   (spec 12.1).
-- `aegis/workers/job_state.py`: `set_job_status` is the only writer of
+- `redsim/workers/job_state.py`: `set_job_status` is the only writer of
   `Job.status`. P2 never assigns `Job.status` directly.
 - The `ml_campaigns` table and the `Artifact` kinds `ml.run_record`, `ml.score`,
   `ml.curve`, `ml.adv_slice`, and `ml.flip_matrix` (WS0, migration
@@ -145,25 +145,25 @@ scorecard and severity rules read.
   `manifest()`, `info()`.
 - `Sample`: `x` (float32 in `[0, 1]`, NCHW for images), `y` (int labels),
   `indices`, `class_names`.
-- `Registry[T]` from `aegis/registry.py`.
+- `Registry[T]` from `redsim/registry.py`.
 - Schema models: `AttackInfo`, `ParamSpec`, `Measurement`, and the widened
   `RunConfig`.
 
 ### Exposed
 
-**The `ATTACKS` registry** (within `aegis/ml/attacks/`):
+**The `ATTACKS` registry** (within `redsim/ml/attacks/`):
 
 ```python
-from aegis.ml.attacks import ATTACKS      # Registry[AttackAdapter]
+from redsim.ml.attacks import ATTACKS      # Registry[AttackAdapter]
 # ATTACKS.get(id), .maybe_get(id), .ids(), .items(), iteration
 ```
 
 Registered ids: `fgsm`, `pgd`, `hopskipjump`, `noise_control`. Each module
 constructs its adapter and registers it under the capability tags
-`adversarial_ml` and `explainability` (spec 12.1). `aegis/ml/attacks/__init__.py`
+`adversarial_ml` and `explainability` (spec 12.1). `redsim/ml/attacks/__init__.py`
 imports the modules so importing `ATTACKS` registers them all.
 
-**The `AttackAdapter` surface** (per `aegis/ml/attacks/base.py`):
+**The `AttackAdapter` surface** (per `redsim/ml/attacks/base.py`):
 
 ```python
 adapter.id                                       # "fgsm" | "pgd" | "hopskipjump" | "noise_control"
@@ -176,7 +176,7 @@ adapter.run(target, x, y, params, seed) -> AttackOutput
 the worker calls it again before running, so a stale client cannot widen a bound
 (spec 12.1).
 
-**Scoring** (`aegis/ml/scoring.py`, exact signatures):
+**Scoring** (`redsim/ml/scoring.py`, exact signatures):
 
 ```python
 def score_run(measurements: list[Measurement],
@@ -187,16 +187,16 @@ def severity_for(finding_row: dict,
                  settings: ScoringSettings) -> Severity | None: ...
 ```
 
-`score_run` is the pure MRI function of spec 15 (`aegis.ml.scoring.compute_mri`
+`score_run` is the pure MRI function of spec 15 (`redsim.ml.scoring.compute_mri`
 in the spec text). It reads the campaign weights, `eps_grid`, `reference_eps`,
 and `finding_asr_threshold` from `settings`. It returns an `MRIRecord` (spec
 5.6) with `mri`, `grade`, `completeness`, `missing`, the five `subscores` with
 denominators, the `per_attack` breakdown, `weights`, `settings_hash`, and the
 grade `reading`. `severity_for` maps one attack's per-ε table to a `Severity`
-(`aegis/schema.py`) by the rules in spec 15.5. It never sets severity by hand
+(`redsim/schema.py`) by the rules in spec 15.5. It never sets severity by hand
 and never writes `Finding.status`.
 
-**Evaluation** (`aegis/ml/eval.py`, new; the `attack.run` task consumes it):
+**Evaluation** (`redsim/ml/eval.py`, new; the `attack.run` task consumes it):
 
 ```python
 def measure_clean(target, sample, wall_time_s) -> Measurement: ...
@@ -219,7 +219,7 @@ interpretation. Keep them stable.
 
 ## 5. Ordered implementation steps
 
-1. **Registry.** Create the `ATTACKS` registry in `aegis/ml/attacks/__init__.py`
+1. **Registry.** Create the `ATTACKS` registry in `redsim/ml/attacks/__init__.py`
    as `Registry[AttackAdapter]`. Import the four attack modules so registration
    is a side effect of import. Assert no duplicate id.
 
@@ -269,7 +269,7 @@ interpretation. Keep them stable.
    (`"CPU float32 reductions"`, `"HopSkipJump random initialisation"`) for
    `Provenance.nondeterminism` (spec 12.7).
 
-9. **`aegis/ml/eval.py`.** Implement the three builders.
+9. **`redsim/ml/eval.py`.** Implement the three builders.
    - Run `target.predict_proba` on `sample.x` for clean, and on `out.x_adv` for
      evasion and control. Take `argmax` for the predicted label.
    - Set `n`, `n_correct`, `accuracy = n_correct / n`, and `per_class`.
@@ -286,7 +286,7 @@ interpretation. Keep them stable.
    - Set `id`, `family`, `attack_id`, `params` (including `eps` and `norm`), and
      `wall_time_s` per section 4.
 
-10. **`aegis/ml/scoring.py` subscores** (spec 15.2). Each subscore is on 0–100
+10. **`redsim/ml/scoring.py` subscores** (spec 15.2). Each subscore is on 0–100
     and is the unweighted mean over the in-scope attacks. Clamp every ratio to
     `[0, 1]` before scaling.
     - `S_acc` = `100 · mean_a( min_ε acc_adv(a, ε) / acc_clean )`.
@@ -332,12 +332,12 @@ interpretation. Keep them stable.
     at any grid ε. Skip the Finding when `n_clean_correct < 10` at the reference
     budget and note "denominator too small for a finding". Fill `severity` from
     `severity_for`, `scanner_finding_id = "ml.<attack_id>"`,
-    `source_tool = "aegis.ml/<attack_id>"`,
+    `source_tool = "redsim.ml/<attack_id>"`,
     `dedup_key = "ml:<model_sha256[:16]>:<attack_id>:<settings_hash[:16]>"`, and
     the full per-ε derivation into `Finding.schema_blob.ml`. Controls never create
     a Finding. Scoring writes `severity`, never `Finding.status`.
 
-15. **`aegis/ml/campaign.py`.** Assemble the `RunRecord` from the measurements,
+15. **`redsim/ml/campaign.py`.** Assemble the `RunRecord` from the measurements,
     findings, the curve, and (later) observations. Write it as a sha256-addressed
     `Artifact` of kind `ml.run_record`. Project it onto `ml_campaigns.score` (the
     `MRIRecord`, kind `ml.score`) and onto each `Finding.schema_blob.ml`. A
@@ -345,7 +345,7 @@ interpretation. Keep them stable.
     the robustness curve as an `ml.curve` artifact with every point carrying its
     denominator `n`.
 
-16. **The `attack.run` chain** (`aegis/workers/tasks/attack.py`, spec 10.2, 10.3).
+16. **The `attack.run` chain** (`redsim/workers/tasks/attack.py`, spec 10.2, 10.3).
     One `attack.run` Job per attack. Inside the job, spawn the sandbox child
     `--stage attack`. If `chain_position == 0`, run `sample`, `clean_eval`
     (`m.clean`), and the benign `control` at every ε, and write `slice.npz`. Then
@@ -365,24 +365,24 @@ interpretation. Keep them stable.
 
 ### Create
 
-- `aegis/ml/attacks/__init__.py` — the `ATTACKS` registry, imports the modules.
-- `aegis/ml/attacks/fgsm.py` — `FastGradientMethod` adapter.
-- `aegis/ml/attacks/pgd.py` — `ProjectedGradientDescent` adapter, image and
+- `redsim/ml/attacks/__init__.py` — the `ATTACKS` registry, imports the modules.
+- `redsim/ml/attacks/fgsm.py` — `FastGradientMethod` adapter.
+- `redsim/ml/attacks/pgd.py` — `ProjectedGradientDescent` adapter, image and
   tabular-surrogate paths.
-- `aegis/ml/attacks/hopskipjump.py` — `HopSkipJump` adapter, tabular black-box.
-- `aegis/ml/attacks/noise_control.py` — benign-noise control, no gradient.
-- `aegis/ml/eval.py` — `measure_clean`, `measure_evasion`, `measure_control`.
-- `aegis/ml/scoring.py` — `score_run`, `severity_for`, and the subscore helpers.
-- `aegis/ml/campaign.py` — the `RunRecord` assembly, its sha256 `Artifact`, and
+- `redsim/ml/attacks/hopskipjump.py` — `HopSkipJump` adapter, tabular black-box.
+- `redsim/ml/attacks/noise_control.py` — benign-noise control, no gradient.
+- `redsim/ml/eval.py` — `measure_clean`, `measure_evasion`, `measure_control`.
+- `redsim/ml/scoring.py` — `score_run`, `severity_for`, and the subscore helpers.
+- `redsim/ml/campaign.py` — the `RunRecord` assembly, its sha256 `Artifact`, and
   the projections.
-- `aegis/workers/tasks/attack.py` — the `aegis.attack_run` task and the chain
+- `redsim/workers/tasks/attack.py` — the `redsim.attack_run` task and the chain
   driver (shared with WS4 on the admission side).
 - `tests/ml/test_attacks.py`, `tests/ml/test_eval.py`,
   `tests/ml/test_scoring.py`, and fixtures in `tests/ml/fakes.py`.
 
 ### Modify
 
-- `aegis/ml/schema.py` — only through the WS0 schema widening (the new
+- `redsim/ml/schema.py` — only through the WS0 schema widening (the new
   `Measurement` fields and the widened `RunConfig`). P2 does not edit the frozen
   contract locally. If a field is missing at integration, raise a schema note
   (master section 7).
@@ -439,7 +439,7 @@ factory from `tests/conftest.py`.
 
 ## 8. Acceptance criteria (Definition of Done)
 
-1. `from aegis.ml.attacks import ATTACKS` registers `fgsm`, `pgd`,
+1. `from redsim.ml.attacks import ATTACKS` registers `fgsm`, `pgd`,
    `hopskipjump`, and `noise_control`; `ATTACKS.ids()` returns them; each
    satisfies the `AttackAdapter` protocol at registration.
 2. `fgsm` and image `pgd` produce `x_adv` inside the L∞ ε ball and report both

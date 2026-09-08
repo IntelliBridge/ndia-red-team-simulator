@@ -13,24 +13,27 @@ operational facts that are not in the phase files, and the order to read things.
    overlay: workstreams mapped to milestones M0-M7 and features F001-F008, the
    shared contracts, and the build waves.
 4. **Your phase file** — `docs/plans/0N-*.md`. The bodies are v2, rebased on the
-   aegis substrate.
+   redsim substrate.
 5. **Feature detail** — `specs/F001`-`F008` (`spec.md`, `plan.md`, `tasks.md`).
    Where a feature file conflicts with the canonical spec, the spec wins.
-6. **The code you will touch** — `aegis/ml/`, `aegis/api/v1/`, `aegis/workers/`,
-   `aegis/services/`, `aegis/db/`.
+6. **The code you will touch** — `redsim/ml/`, `redsim/api/v1/`, `redsim/workers/`,
+   `redsim/services/`, `redsim/db/`.
 
 ## Repo ground truth
 
-- The package is `aegis-platform` (a fork of aegis). The ML vertical lives in
-  `aegis/ml/` and is **contracts only** today: `schema.py` (the evidence model),
+- The package is `redsim-platform` (formerly the `aegis` security platform,
+  renamed to the `redsim` namespace on 2026-09-08). The ML vertical lives in
+  `redsim/ml/` and is **contracts only** today: `schema.py` (the evidence model),
   `targets/base.py` (`Target` Protocol), `attacks/base.py` (`AttackAdapter`
   Protocol). No concrete targets, attacks, explainers, or ML routes exist yet.
-- The console script is `aegis = aegis.cli:main`. `redsim` is retired.
-- The API factory is `aegis/api/app.py:create_app(settings)`. ML routers mount
+- The console script is `redsim = redsim.cli:main`. Note the earlier
+  stripped-down standalone `redsim/` package is gone; this `redsim/` is the full
+  platform under its new name.
+- The API factory is `redsim/api/app.py:create_app(settings)`. ML routers mount
   on it under `/v1`. There is no separate ML app.
 - Python is pinned to 3.12 (torch and ART have no 3.14 wheels).
 - Dev flow: `make install`, then `make dev`. `make check` runs lint, typecheck,
-  and tests. CI is real now: `.github/workflows/aegis-ci.yml`.
+  and tests. CI is real now: `.github/workflows/redsim-ci.yml`.
 - Corporate proxy: a Zscaler root CA sits at
   `/Users/john.sasser/.certs/zscaler-root-ca.pem`. Export `AWS_CA_BUNDLE` and
   `NODE_EXTRA_CA_CERTS` to that path for `aws` and Node egress.
@@ -61,7 +64,7 @@ Account `140381642432`, region `us-east-1`:
 
 ## Scope decisions that bite
 
-- The substrate is aegis: Postgres with RLS, Celery on Redis, Keycloak auth, the
+- The substrate is redsim: Postgres with RLS, Celery on Redis, Keycloak auth, the
   hash-chained audit log, and S3 (no EFS). See master plan section 2.
 - **Interoperability is Phase B2, not Phase A.** Croissant dataset export, its
   consume side, MITRE ATLAS tagging, and Palantir/Lattice are specified in
@@ -81,7 +84,7 @@ Account `140381642432`, region `us-east-1`:
 - The `/audit` web page expects a `{chains:[...]}` shape, but the API returns a
   single-chain shape.
 - The `audit_events` table is not under RLS.
-- Verify the Makefile lint targets after the aegis restore; they were historically
+- Verify the Makefile lint targets after the redsim restore; they were historically
   broken (`ruff` aimed at a stale path, `next lint` with no ESLint config).
 
 ## Test doubles
