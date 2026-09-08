@@ -89,6 +89,10 @@ class Target(Base):
     kind: Mapped[str] = mapped_column(String(32), nullable=False)   # url|github_repo|image
     value: Mapped[str] = mapped_column(String(1024), nullable=False)
     verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Adversarial-ML manifest, validation state, and source metadata. Migration
+    # 0010 adds the nullable JSONB column so existing non-ML targets remain
+    # unchanged.
+    detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     allowlist_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     installation_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

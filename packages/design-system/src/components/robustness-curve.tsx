@@ -6,11 +6,44 @@ export type RobustnessPoint = {
   n: number;
   n_correct: number;
 };
+export type RobustnessSeries = {
+  attack_id: string;
+  eps_grid: number[];
+  clean: Omit<RobustnessPoint, "attack_id" | "family" | "eps">;
+  points: Array<Omit<RobustnessPoint, "attack_id" | "family">>;
+  control: Array<Omit<RobustnessPoint, "attack_id" | "family">>;
+};
+
+function flattenCurve(
+  evidence: Array<RobustnessPoint | RobustnessSeries>,
+): RobustnessPoint[] {
+  return evidence.flatMap((item) => {
+    if (!("points" in item)) return [item];
+    const clean = item.eps_grid.map((eps) => ({
+      ...item.clean,
+      attack_id: `${item.attack_id}:clean`,
+      family: "clean",
+      eps,
+    }));
+    const attack = item.points.map((point) => ({
+      ...point,
+      attack_id: item.attack_id,
+      family: "evasion",
+    }));
+    const control = item.control.map((point) => ({
+      ...point,
+      attack_id: `${item.attack_id}:control`,
+      family: "control",
+    }));
+    return [...clean, ...attack, ...control];
+  });
+}
+
 const colors = ["#155e63", "#c66a2b", "#67715d", "#8b4f62", "#526d82"];
 export function RobustnessCurve({
   points = [],
 }: {
-  points?: RobustnessPoint[];
+  points?: Array<RobustnessPoint | RobustnessSeries>;
 }) {
   if (!points.length)
     return (
@@ -18,7 +51,8 @@ export function RobustnessCurve({
         Curve unavailable: no evidence recorded
       </p>
     );
-  const grouped = points.reduce<Record<string, RobustnessPoint[]>>(
+  const normalized = flattenCurve(points);
+  const grouped = normalized.reduce<Record<string, RobustnessPoint[]>>(
     (out, point) => {
       const key = point.attack_id ?? point.family;
       (out[key] ??= []).push(point);
@@ -26,7 +60,7 @@ export function RobustnessCurve({
     },
     {},
   );
-  const eps = points.map((point) => point.eps);
+  const eps = normalized.map((point) => point.eps);
   const min = Math.min(...eps);
   const max = Math.max(...eps);
   const x = (value: number) =>

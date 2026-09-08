@@ -16,6 +16,8 @@ from redsim.config import RedsimConfig
 from redsim.safety import authorize
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from redsim.audit.chain import AuditWriter
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,50 @@ class CancelOutcome:
     run_id: str
     status: str
     jobs_cancelled: int
+
+
+class TerminalRunError(RuntimeError):
+    """Cancellation was requested after the run reached a terminal state."""
+
+    code = "run_terminal"
+
+    def __init__(self, run_id: str, run_status: str) -> None:
+        self.run_id = run_id
+        self.run_status = run_status
+        super().__init__(
+            f"run {run_id} is already terminal with status {run_status!r}"
+        )
+
+
+def rollup_run_status(session: Session, run_id: str) -> str:
+    """Derive Run status from its jobs without ever reopening a terminal run."""
+    from sqlalchemy import select
+
+    from redsim.db.models import Job, Run
+
+    run = session.get(Run, run_id)
+    if run is None:
+        raise LookupError(f"run not found: {run_id}")
+    if run.status == "cancelled":
+        return run.status
+    statuses = list(session.execute(
+        select(Job.status).where(Job.run_id == run_id)
+    ).scalars())
+    if not statuses:
+        return run.status
+    terminal = {"succeeded", "failed", "cancelled"}
+    if all(value in terminal for value in statuses):
+        new_status = ("failed" if "failed" in statuses else
+                      "succeeded" if "succeeded" in statuses else "cancelled")
+        run.status = new_status
+        run.completed_at = datetime.now(UTC)
+    elif all(value == "queued" for value in statuses):
+        run.status = "queued"
+        run.completed_at = None
+    else:
+        run.status = "running"
+        run.completed_at = None
+    return run.status
 
 
 def cancel_run(
@@ -53,6 +99,8 @@ def cancel_run(
         run = sess.get(Run, run_id)
         if run is None:
             raise LookupError(f"run not found: {run_id}")
+        if run.status in {"succeeded", "failed", "cancelled"}:
+            raise TerminalRunError(run_id, run.status)
         project_id = run.project_id
 
     authorize(
@@ -68,6 +116,9 @@ def cancel_run(
         run = sess.get(Run, run_id)
         if run is None:
             raise LookupError(f"run not found: {run_id}")
+        # Recheck after authorization: a worker may have completed meanwhile.
+        if run.status in {"succeeded", "failed", "cancelled"}:
+            raise TerminalRunError(run_id, run.status)
         run.status = "cancelled"
         run.completed_at = now
         jobs = sess.execute(
@@ -92,3 +143,8 @@ def cancel_run(
 
     return CancelOutcome(run_id=run_id, status="cancelled",
                          jobs_cancelled=cancelled_count)
+
+
+__all__ = [
+    "CancelOutcome", "TerminalRunError", "cancel_run", "rollup_run_status",
+]

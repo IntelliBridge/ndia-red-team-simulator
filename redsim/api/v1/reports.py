@@ -13,13 +13,14 @@ it ever reached the document.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import FileResponse
 
 from redsim.api.auth import CurrentUser, get_current_user
-from redsim.api.policy import ensure_run_access
+from redsim.api.policy import Action, check, ensure_run_access
 from redsim.api.security_headers import (
     html_report_headers,
     non_html_report_headers,
@@ -27,6 +28,7 @@ from redsim.api.security_headers import (
 from redsim.config import load_config
 
 router = APIRouter(prefix="/runs", tags=["reports"])
+logger = logging.getLogger(__name__)
 
 _CONTENT_TYPES = {
     "md": "text/markdown",
@@ -52,10 +54,45 @@ def get_report(run_id: str, ext: str,
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="ext must be one of md|json|html")
     # F12: project-access gate (also yields 404 for unknown runs).
-    ensure_run_access(user, run_id)
+    project_id = ensure_run_access(user, run_id)
+    check(user, Action.REPORT_EXPORT, project_id)
 
     config = load_config()
     headers = _report_headers(run_id, ext)
+
+    # ML campaign reports are authoritative Artifact rows. Their locations are
+    # opaque blob references, not the legacy runs/<id>/report.<ext> key.
+    try:
+        from sqlalchemy import select
+
+        from redsim.db.models import Artifact
+        from redsim.db.session import get_session
+        from redsim.storage.blobs import open_blob_store
+
+        with get_session() as sess:
+            artifact = sess.execute(select(Artifact).where(
+                Artifact.run_id == run_id,
+                Artifact.project_id == project_id,
+                Artifact.kind == f"ml.report_{ext}",
+            )).scalar_one_or_none()
+            location = str(artifact.location) if artifact is not None else None
+            expected = str(artifact.sha256) if artifact is not None else None
+        if location and expected:
+            data = open_blob_store().get(location)
+            raw = data.encode("utf-8") if isinstance(data, str) else bytes(data)
+            import hashlib
+            if hashlib.sha256(raw).hexdigest() != expected:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="report artifact digest mismatch",
+                )
+            return Response(
+                content=raw, media_type=_CONTENT_TYPES[ext], headers=headers
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.debug("artifact-backed ML report lookup failed", exc_info=True)
 
     # Prefer the blob store when one is configured. Phase 2 / offline
     # callers still have the filesystem path; the worker writes both
@@ -68,8 +105,8 @@ def get_report(run_id: str, ext: str,
                         headers=headers)
     except (FileNotFoundError, KeyError):
         pass
-    except Exception:  # noqa: BLE001, S110 — blob backend not available, try fs
-        pass
+    except Exception:  # blob backend not available, try fs
+        logger.debug("blob-backed report lookup failed; trying filesystem", exc_info=True)
 
     path = Path(config.output_dir) / "runs" / run_id / f"report.{ext}"
     if not path.exists():

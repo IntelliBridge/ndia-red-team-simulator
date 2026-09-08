@@ -93,7 +93,7 @@ def test_unknown_signature_and_declaration_mismatch_refused(tmp_path: Path) -> N
     assert artifact.detect_format(sd) == "torch_state_dict"
     with pytest.raises(UnsupportedArtifact, match="format_mismatch"):
         artifact.detect_format(sd, "onnx")
-    with pytest.raises(UnsupportedArtifact, match="unsupported_model_format"):
+    with pytest.raises(UnsupportedArtifact, match="format_mismatch"):
         artifact.detect_format(sd, "safetensors_state_dict")
     with pytest.raises(UnsupportedArtifact, match="not found"):
         artifact.sniff_format(tmp_path / "nope.pt")
@@ -180,6 +180,30 @@ def test_state_dict_round_trip(tmp_path: Path, tinynet_arch: str, eval_data: tup
     assert mm.manifest_sha256 and m["manifest_sha256"] == mm.manifest_sha256
     info = t.info()
     assert info.status == "available" and info.metadata["gradients"] is True and info.metadata["loaded"] is True
+
+
+def test_safetensors_round_trip(
+    tmp_path: Path,
+    tinynet_arch: str,
+    eval_data: tuple[np.ndarray, np.ndarray],
+) -> None:
+    save_file = pytest.importorskip("safetensors.torch").save_file
+    net = _TinyNet(9).eval()
+    path = tmp_path / "model.safetensors"
+    save_file(net.state_dict(), str(path))
+    assert artifact.detect_format(path, "safetensors_state_dict") == "safetensors_state_dict"
+    target = ArtifactTarget(
+        "safe-1",
+        path,
+        class_names=list(CLASS_NAMES),
+        eval_data=eval_data,
+        dataset_id=DATASET,
+        architecture_id=tinynet_arch,
+        declared_format="safetensors_state_dict",
+    )
+    target.load()
+    assert target.manifest()["format"] == "safetensors_state_dict"
+    assert target.info().metadata["gradients"] is True
 
 
 def test_artifact_target_requires_a_dataset_binding(tmp_path: Path, tinynet_arch: str,

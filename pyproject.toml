@@ -48,6 +48,8 @@ api = [
     "structlog>=24.1",
     "opentelemetry-sdk>=1.24",
     "opentelemetry-exporter-otlp-proto-http>=1.24",
+    # numpy is metadata-only for the API: the catalog registries (redsim.ml.attacks/defenses/targets) import it at module level; torch/ART/onnxruntime/shap/sklearn stay in ml.
+    "numpy>=1.26,<3",
 ]
 worker = [
     "celery[redis]>=5.3",

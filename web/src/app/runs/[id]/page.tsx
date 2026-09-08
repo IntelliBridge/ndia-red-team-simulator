@@ -101,14 +101,18 @@ export default function RunPage({ params }: { params: { id: string } }) {
     );
 
   const campaign = data as Campaign;
-  const role = roles[campaign.target.project_id];
+  const role = roles[campaign.project_id];
   const canAnnotate =
     role === "remediator" || role === "approver" || role === "admin";
-  const availableDefenses = defenses.filter(
-    (defense: DefenseInfo) =>
-      defense.status === "available" &&
-      defense.modalities.includes(campaign.target.modality as "image" | "tabular"),
-  );
+  const campaignModality = campaign.config.modality;
+  const availableDefenses =
+    campaignModality === "llm"
+      ? []
+      : defenses.filter(
+          (defense: DefenseInfo) =>
+            defense.status === "available" &&
+            defense.modalities.includes(campaignModality),
+        );
   const saveNotes = async () => {
     try {
       setNoteError("");
@@ -194,7 +198,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
               {campaign.status === "queued" || campaign.status === "running"
                 ? "Evidence is still arriving; this page refreshes while active."
                 : campaign.status === "succeeded" &&
-                    campaign.completeness.status === "complete"
+                    campaign.completeness === "complete"
                   ? "Campaign stages complete."
                   : campaign.status === "succeeded"
                     ? "Campaign finished with partial evidence."
@@ -281,9 +285,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             <div>
               <dt className="redsim-kicker">framework versions</dt>
               <dd>
-                {Object.entries(
-                  campaign.target.manifest.framework_versions ?? {},
-                )
+                {Object.entries(campaign.target.metadata.framework_versions ?? {})
                   .map(([key, value]) => `${key}=${value}`)
                   .join(", ") || "not recorded"}
               </dd>
@@ -304,7 +306,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             curve={campaign.curve}
             unavailableReason={
               campaign.score_status?.reason ??
-              (campaign.completeness.missing.join(", ") ||
+              (campaign.missing.join(", ") ||
                 "required evidence is incomplete")
             }
           />,
@@ -419,6 +421,8 @@ export default function RunPage({ params }: { params: { id: string } }) {
                         await verifyFinding(
                           item.finding_id,
                           defenseSelections[item.id] ?? "",
+                          {},
+                          item.id,
                         );
                         await mutate();
                       } catch (cause) {
@@ -619,8 +623,14 @@ export default function RunPage({ params }: { params: { id: string } }) {
                   ),
                 )}
                 <p>
-                  Clean-accuracy delta{" "}
-                  {compareResult.delta_acc_clean ?? "not recorded"}
+                  Clean accuracy{" "}
+                  {compareResult.delta_acc_clean?.before.accuracy ??
+                    "not recorded"}{" "}
+                  (n={compareResult.delta_acc_clean?.before.n ?? "—"}) →{" "}
+                  {compareResult.delta_acc_clean?.after.accuracy ??
+                    "not recorded"}{" "}
+                  (n={compareResult.delta_acc_clean?.after.n ?? "—"}) · Δ{" "}
+                  {compareResult.delta_acc_clean?.delta ?? "not recorded"}
                 </p>
                 {!!compareResult.delta_families?.length && (
                   <table className="mt-2 w-full text-left text-xs">
