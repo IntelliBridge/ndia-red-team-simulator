@@ -1,3 +1,7 @@
+> **Superseded on 2026-09-08 by `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md`.**
+> This document is retained unchanged as a source for the reconciliation table in that spec; where the two differ, the canonical spec governs.
+> No further edits are made here.
+
 # Adversarial ML Red-Team Simulator — Hackathon Spec
 
 > Automated red-team simulator for DoD AI models. Upload or connect a model.

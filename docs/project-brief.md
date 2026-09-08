@@ -2,9 +2,9 @@
 
 ## Status and purpose
 
-This is a team kickoff brief, not an implemented product or an approved final specification. It consolidates the supplied use case and the subsequent reference analysis so collaborators can make informed scope decisions.
+This is the team's kickoff brief, not an implemented product or an approved final specification. It consolidates the supplied use case and the subsequent reference analysis so collaborators can make informed scope decisions. On 2026-09-08 the two copies of the brief that existed in this repository (`docs/project-brief.md` and `docs/brief.md`) were folded into this file; the original use-case text, the additional references, and the decisions taken that day now live here.
 
-The immediate goal is to organize a shared project. The proposed next milestone is a general-purpose, non-operational proof of concept using public or synthetic data.
+The brief's reporting principles are design constraints for the product. The product itself is specified in [Adversarial ML Red-Team Simulator — Product Spec](superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md); where the product spec knowingly diverges from this brief, the divergence is recorded in the "Decisions taken (2026-09-08)" section below and in the amendment proposals appended to the [constitution](../.specify/memory/constitution.md).
 
 ## Original context
 
@@ -12,11 +12,23 @@ The supplied document describes a military AI red-teaming concept: users select 
 
 Its requested interface places explanation outputs and recommendations side by side. It references the Adversarial Robustness Toolbox (ART) and SHAP, and discusses both evasion and data poisoning.
 
-This source context is preserved for traceability; it is not authorization to build or optimize combat targeting, weapons, or operational military decision systems. Those applications are outside this starter project's scope.
+This source context is preserved for traceability; it is not authorization to build or optimize combat targeting, weapons, or operational military decision systems. Those applications are outside this project's scope.
 
-The original document alternates between “DoD” and “DoW.” The intended terminology remains unconfirmed.
+The original document alternates between "DoD" and "DoW." The intended terminology remains unconfirmed.
 
 Source: [original supplied document, unchanged](references/original-use-case.docx).
+
+### Original use-case text
+
+The DoD is rapidly deploying AI and Machine Learning models to the tactical edge for target recognition, threat detection, and decision support. However, these models are highly vulnerable to adversarial attacks, such as data poisoning or evasion techniques.
+
+This concept is an automated "Red Team" simulator designed to stress-test military AI models before they hit the battlefield. Users can upload a model (or connect via API), and this will automatically generate adversarial examples designed to trick the system. Beyond just breaking the model, the tool uses explainability frameworks (like SHAP) to show exactly why the model failed (e.g., "The model was over-reliant on the background pixels rather than the target"). It then outputs natural language recommendations for hardening the AI.
+
+*Requirements.* Build an automated red-teaming tool that evaluates the robustness of DoW AI models by generating adversarial attacks, utilizing explainable AI to map vulnerabilities, and recommending defensive countermeasures.
+
+*Expected deliverables.* A web UI where a user can select a model, trigger an adversarial attack, and view the SHAP visual outputs and mitigation recommendations side-by-side.
+
+*Resources.* ART https://github.com/Trusted-AI/adversarial-robustness-toolbox · SHAP https://shap.readthedocs.io/en/latest/ · garak https://github.com/NVIDIA/garak
 
 ## Reference map
 
@@ -26,9 +38,16 @@ Source: [original supplied document, unchanged](references/original-use-case.doc
 | [SHAP](https://shap.readthedocs.io/en/latest/) | Feature attribution and local explanations, including image and text applications. | Attribution is not proof of causality or a definitive explanation of why a failure occurred. |
 | [NVIDIA garak](https://github.com/NVIDIA/garak) | Modular LLM vulnerability scanning, detectors, and structured reports. | Not a replacement for conventional ML evaluation or complete agent/application testing. |
 | [The TIP of the Iceberg — ACL 2025](https://aclanthology.org/2025.acl-long.334/) | Research on Task-in-Prompt failures and the PHRYGE benchmark, informing possible LLM coverage. | The study covers six LLMs and text; automated evaluation has limitations. It does not validate countermeasures. Compatibility with garak has not been established. |
-| [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) | Candidate execution-isolation and lifecycle infrastructure. | Not an evaluation engine or a model defense. Effective isolation depends on the runtime and configuration. No runtime has been installed or validated here. |
+| [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) | Candidate execution-isolation and lifecycle infrastructure. | Not an evaluation engine or a model defense. Effective isolation depends on the runtime and configuration. Not selected (D004); the aegis plugin sandbox is used instead. |
 
 The references describe complementary layers, not interchangeable tools or a pre-integrated stack.
+
+## Additional references
+
+- [IntelliBridge/pythia](https://github.com/IntelliBridge/pythia) — IntelliBridge's OpenAI-compatible agent gateway. Every LLM call the product makes goes through it (`POST {PYTHIA_BASE_URL}/v1/chat/completions`, `Authorization: Bearer pk_…`, optional `X-Pythia-Persona`, canonical model ids `<vendor>/<model>` or `pythia/auto`), so the product holds no provider credential and Pythia's guardrails, metering, and audit apply.
+- [IntelliBridge/ndia-red-team-simulator](https://github.com/IntelliBridge/ndia-red-team-simulator) — this repository, a fork of IntelliBridge's aegis security platform. The aegis platform (FastAPI, Celery, Postgres, Redis, S3/MinIO, Keycloak/NextAuth, RBAC, Postgres RLS, hash-chained audit log, per-task LLM routing and budgets, observability) is reused whole; the ML red-team vertical is added under `aegis/ml/`.
+- [GitHub Spec Kit](https://github.com/github/spec-kit) — the method the feature specifications under `specs/` follow. Its CLI is not installed.
+- garak, the ACL 2025 TIP paper, and OpenSandbox: see the reference map above.
 
 ## Proposed first milestone
 
@@ -47,7 +66,7 @@ Choose **one evaluation domain first**:
 - LLM assistant: observable behavior against defined safety and quality requirements.
 - Agent application: behavior involving tools, files, and permission boundaries; a separate scope requiring additional review.
 
-The earlier image-classification-first recommendation was an assumption, not an approved choice. The additional LLM references do not establish approval to implement all domains at once.
+The earlier image-classification-first recommendation was an assumption, not an approved choice, at the time this section was written. The decision taken on 2026-09-08 (D001, below) selects conventional ML — image and tabular classification — and defers the LLM domain to Phase B. The additional LLM references do not establish approval to implement all domains at once.
 
 ## Reporting principles
 
@@ -60,28 +79,52 @@ The earlier image-classification-first recommendation was an assumption, not an 
 - Treat recommendations as candidates until supported by a separate evaluation.
 - State that passing a test suite does not establish complete safety or operational readiness.
 
+These principles are binding on the product spec. The one knowing divergence — a per-campaign Model Robustness Index — is bounded so that it never mixes domains and always travels with its subscores, denominators, and ε curve (D005 below).
+
 ## Open decisions
 
-| Decision | Current position | Suggested participants |
-| --- | --- | --- |
-| First domain and benign use case | Open; select one before implementation | Product lead and evaluation researcher |
-| Model access method | Open; uploaded artifacts and API access have different risks and capabilities | Evaluation researcher and security reviewer |
-| Dataset and handling rules | Public or synthetic, non-sensitive data proposed | Product lead and security reviewer |
-| Evaluation criteria | Open; define measurable, domain-specific criteria | Evaluation researcher and independent reviewer |
-| Evidence presentation | Appropriate evidence plus recommendations; universal SHAP requirement not assumed | Product designer and evaluation researcher |
-| Execution environment | Open; OpenSandbox is a candidate, not an installed dependency | Platform engineer and security reviewer |
-| Team roles and ownership | Unassigned | Project owner |
+The register of record is [specs/_shared/decisions.md](../specs/_shared/decisions.md). Positions as of 2026-09-08:
 
-No software implementation, provider authorization, deployment, spending commitment, or collaborator invitation is implied by this brief.
+| Decision | Position on 2026-09-08 | Register |
+| --- | --- | --- |
+| First domain and benign use case | Resolved: image classification on open, unclassified, publicly licensed aerial / military-vehicle imagery, plus a tabular classifier; CIFAR-10 is the CI fixture dataset | D001 |
+| Model access method | Resolved: bundled models plus bounded white-box upload (ONNX preferred, `state_dict` with explicit architecture, pickles refused by default, sandboxed worker-side loading); API endpoints Phase B | D003 |
+| Dataset and handling rules | Resolved for the demo data: open, unclassified, clearly licensed public datasets only; retention and export redaction still open | D001, D006 |
+| Evaluation criteria | Resolved: per-family metrics with denominators, benign noise control, ε sweep, SHAP per modality, per-campaign MRI with binding constraints, derived severity | D005 |
+| Evidence presentation | Resolved: measurements, observations, interpretation, and candidate recommendations as separate fields and separate UI panels; SHAP for image and tabular | D005 |
+| Execution environment | Resolved: Celery worker plus the aegis plugin sandbox; OpenSandbox not used | D004 |
+| Managed identity | Resolved: aegis Keycloak OIDC + NextAuth; dev-token mode allowed for the demo | D002 |
+| Retention, export redaction, licence restrictions | Open | D006 |
+| Team roles and ownership | Open; unassigned | D007 |
+
+No provider authorization, deployment, spending commitment, or collaborator invitation is implied by this brief.
+
+## Decisions taken (2026-09-08)
+
+Recorded here so the open decisions above have a traceable answer. The product owner made these decisions; they are final for the hackathon and override every source where they conflict. Divergences from this brief and from the constitution are stated explicitly. The earlier lean-era decisions (CIFAR-10 as the demo dataset, bundled-only ingest, in-process execution without a sandbox, no authentication) are superseded and retained only as history in `docs/superpowers/specs/2026-09-08-redsim-design.md`.
+
+1. **Stack.** Reuse the full aegis platform now: FastAPI, Celery, Postgres, Redis, S3/MinIO, Keycloak/NextAuth authentication, RBAC, Postgres RLS, the hash-chained audit log, per-task LLM routing and budgets, observability. The lean, database-less design is retired.
+2. **Model ingest (Phase A).** Bundled sample models and white-box artifact upload. ONNX preferred; PyTorch `state_dict` with an explicit architecture accepted; full pickles refused by default. Uploaded models are loaded only on the worker inside aegis's plugin sandbox (separate process, no network, rlimits), never in the API process. The black-box endpoint connector is Phase B. *Divergence from this brief:* "Unrestricted execution of uploaded model artifacts" stays excluded; bounded, sandboxed loading of declared formats is included.
+3. **Demo data.** Aerial-target / military-vehicle imagery from open, unclassified, public datasets with a clear licence only. *Divergence from this brief and the constitution's non-operational language,* recorded as a team decision with bounds: open/unclassified data only; the tool evaluates and hardens the robustness of a classifier and never trains, optimizes, or deploys targeting or weapons models; no mission-system connections. CIFAR-10 is the CI and fixture dataset, not the demo dataset.
+4. **Phase A also includes:** the verify-after-harden loop (apply an ART preprocessing defense such as feature squeezing or spatial smoothing, re-attack, report the measured delta); an ε sweep with a robustness curve (for example L∞ ε ∈ {0.01, 0.03, 0.1}); hash-chained audit events for every upload, attack, explain, harden, and verify (Postgres-backed chain, JSONL offline); and a live tabular classifier (bundled sklearn / XGBoost, PGD + HopSkipJump, TreeExplainer SHAP bar and beeswarm).
+5. **LLM access.** Every LLM call goes through Pythia. aegis's per-task routing and budget caps remain the policy layer; Pythia is the only transport (no litellm, no direct provider keys). Environment: `PYTHIA_BASE_URL`, `PYTHIA_API_KEY`, `PYTHIA_PERSONA`, `AEGIS_ML_LLM_MODEL`. The LLM writer receives only metrics and a SHAP text summary — never images or model data — in one plain, non-streaming chat completion with no tools, vision, or structured output.
+6. **garak / LLM-domain red-teaming** is Phase B only; if added, garak's OpenAI-compatible generator points at Pythia.
+7. **Naming.** Product: "Adversarial ML Red-Team Simulator". Python namespace `aegis`, new vertical in `aegis/ml/`. Web app `@aegis/web`. The lean-era name "redsim" is retired except as history.
+8. **Timeline.** The milestones M0–M7 and B1+ from the hackathon spec are kept, as is its "freeze Phase A first" risk. Phase A as decided exceeds a 1–2 day build. The demo-critical order inside Phase A is: image path end-to-end (bundled model, FGSM/PGD, ε sweep, SHAP, rules + LLM writer) → MRI scorecard → verify-after-harden → tabular → ONNX upload → Fargate.
+9. **Scoring.** Adopt the Model Robustness Index (five subscores weighted 0.35 / 0.25 / 0.20 / 0.10 / 0.10, aggregate, grade bands, derived finding severity, ΔMRI on verify) with binding constraints: one MRI per campaign (one model × one modality × declared attack set × declared ε grid × reference budget), never aggregated across modalities or compared across campaigns with different settings; never shown without its subscores, the per-family accuracy table with denominators, and the ε curve; grade readings describe robustness under the in-scope attacks only and no grade is a readiness or certification statement; ΔMRI is the only sanctioned form of "gain" and a recommendation carries no numeric expected gain until a verify measures it; demo-script numbers are illustrative. *Divergence from this brief's "avoid a universal score" principle,* justified as a per-campaign summary that never mixes domains and always travels with its denominators.
+10. **Spec Kit layer.** The feature tree under `specs/` stays as the team's process framework and becomes the feature-level layer beneath the product spec. F001 ↔ aegis Keycloak/NextAuth + RBAC + RLS; F002 ↔ `/v1/models`, `Target.kind` `ml_model_artifact` / `ml_model_endpoint`, bundled datasets, upload rules; F003 ↔ the attack-campaign configuration stored with the Run; F004 ↔ aegis Run/Job and the Celery tasks; F005 ↔ the three-pane findings screen and SHAP artifacts; F006 ↔ Finding, derived severity, candidate recommendations, review; F007 ↔ md/json/html reports and ΔMRI comparison; F008 ↔ audit chain, WORM export, data policy. Implementation locations are aegis paths. aegis's Job state machine and Finding `status` / `validation_state` enums are canonical in code; finding reviewer states are Phase B.
+11. **Decision register.** D001–D005 resolved as above, approver "product owner (hackathon), 2026-09-08". D006 and D007 remain open with no owners assigned.
+12. **Constitution.** Principles are not rewritten. Three amendment proposals — (a) Principle II and vehicle imagery, (b) Principle II and bounded upload, (c) Principle III and the per-campaign score — are appended with status "proposed, pending named approval". Ratification is not claimed.
+13. **Brief consolidation.** `docs/brief.md` is folded into this file and deleted; references in `docs/`, `specs/`, and `.specify/` point here.
 
 ## Not in the first milestone
 
 - Operational or sensitive datasets and live mission-system connections.
-- Combat targeting, weapons integration, or optimization of operational military models.
-- Unrestricted execution of uploaded model artifacts.
+- Combat targeting, weapons integration, or optimization of operational military models. Evaluating and hardening the robustness of a classifier on open, unclassified imagery (D001) is in scope; the exclusion is unchanged.
+- Unrestricted execution of uploaded model artifacts. Bounded, sandboxed, worker-side loading of ONNX and `state_dict` artifacts (D003) is in scope; formats that execute code on load are refused by default.
 - A training-data poisoning pipeline.
-- Simultaneous support for conventional ML, LLMs, and agents.
-- Autonomous application of proposed mitigations.
+- Simultaneous support for conventional ML, LLMs, and agents. The LLM domain is Phase B.
+- Autonomous application of proposed mitigations. The verify-after-harden loop applies a preprocessing defense to a copy of the model for measurement when a user asks; it deploys nothing.
 - Claims of certification, causal certainty, or deployment readiness.
 
 ## Completion criteria for the proposed proof of concept
@@ -93,4 +136,4 @@ No software implementation, provider authorization, deployment, spending commitm
 - Data handling and execution boundaries receive review before accepting uploads or external connections.
 - Known limitations and unsupported paths are visible, not silently bypassed.
 
-See the [feature specifications](../specs/README.md) for the Spec Kit–style breakdown and the [team backlog](team-backlog.md) for kickoff review steps. The feature packages are drafts; unresolved choices above remain open.
+See the [product spec](superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md) for the approved design, the [feature specifications](../specs/README.md) for the Spec Kit–style breakdown, and the [team backlog](team-backlog.md) for kickoff review steps. The feature packages are drafts; D006 and D007 remain open.

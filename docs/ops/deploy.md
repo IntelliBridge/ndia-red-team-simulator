@@ -299,7 +299,7 @@ external decision point; see the runbook below.
 
 | Var                          | Where       | Notes                                                                 |
 |------------------------------|-------------|-----------------------------------------------------------------------|
-| `AEGIS_AUTH_PROFILES_KEY`    | api, worker | Fernet key encrypting auth-profile secrets at rest. Required only when using authenticated DAST — see [`authenticated-dast.md`](authenticated-dast.md). |
+| `AEGIS_AUTH_PROFILES_KEY`    | api, worker | Fernet key encrypting auth-profile secrets at rest. Required only when using authenticated DAST — see `docs/ops/authenticated-dast.md` upstream (not carried in this fork; the authenticated DAST adapters are removed). |
 
 ### Observability
 
@@ -311,8 +311,8 @@ external decision point; see the runbook below.
 
 ### Integrations (ticket sync, target verification, backports)
 
-All optional and **default-off**. See
-[Integrations](../integrations/index.md) for the full behaviour.
+All optional and **default-off**. The upstream aegis Integrations guide
+(`docs/integrations/index.md`) described the full behaviour; it is not carried in this fork, where ticketing and GitHub App integrations are removed.
 
 | Var                              | Where       | Notes                                                                                          |
 |----------------------------------|-------------|------------------------------------------------------------------------------------------------|
@@ -371,7 +371,7 @@ defense-in-depth — process isolation + a minimal allowlisted env (parent
 secrets never reach plugin code) + POSIX rlimits + own process group with
 group-kill on timeout + the Ed25519 signature/allowlist gate. It is **not** a
 network or filesystem jail: a hostile plugin can still open sockets / touch
-files the worker UID can reach. Kernel-level isolation is [ADR-0006](../adr/0006-firecracker-microvm-isolation.md).
+files the worker UID can reach. Kernel-level isolation is upstream ADR-0006 (Firecracker microVM isolation; not carried in this fork).
 See `SECURITY.md` § "Plugin sandbox".
 
 | Var                               | Where  | Notes                                                                             |
@@ -681,7 +681,7 @@ profiles. Set the new key as `AEGIS_AUTH_PROFILES_KEY` and the old one as
 via **MultiFernet** while new writes use the current key. Once profiles have
 been re-saved (or you accept that only current-key ciphertext remains), drop
 `AEGIS_AUTH_PROFILES_KEY_PREVIOUS`. See
-[`authenticated-dast.md`](authenticated-dast.md) § "Key rotation".
+`docs/ops/authenticated-dast.md` § "Key rotation" upstream (not carried in this fork).
 
 ### Database role passwords (`aegis_app` / `aegis_owner`)
 

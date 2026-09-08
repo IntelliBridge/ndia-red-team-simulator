@@ -681,7 +681,7 @@ flowchart TD
 
 ## What's deferred
 
-See the consolidated [Roadmap](../roadmap.md) for the full
+The upstream aegis roadmap (`docs/roadmap.md`, removed in this fork) held the full
 forward-looking list organized by milestone. The Phase-4 plan called
 out items intentionally pushed past v0.4.1. Live-current list:
 
@@ -695,7 +695,7 @@ out items intentionally pushed past v0.4.1. Live-current list:
 Cross-org multi-tenancy, per-tenant cost dashboards, PII / content
 scrubbing, LLM prompt-injection / output filtering, the gVisor sandbox,
 and the SOC 2 / ISO 27001 / FedRAMP evidence pack — previously listed here
-— have all shipped (see the [Changelog](../roadmap.md) and `CHANGELOG.md`).
+— have all shipped (see `CHANGELOG.md`; the upstream roadmap page is removed in this fork).
 
 The CHANGELOG entry for each release also enumerates its deferred
 items if they were called out at the time.

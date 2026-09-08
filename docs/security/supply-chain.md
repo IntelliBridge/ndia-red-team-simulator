@@ -242,8 +242,8 @@ the gate before `docker compose up` / `kubectl apply` — see the
 
 ## What's still deferred
 
-**Nix reproducible builds** remain on the [roadmap](../roadmap.md#security-audit-compliance)
-(see the supply-chain item) as the last remaining piece of supply-chain hardening — bit-for-bit
+**Nix reproducible builds** remain deferred (see [ADR-0008](../adr/0008-nix-reproducible-builds.md);
+the upstream aegis roadmap page is not carried in this fork) as the last remaining piece of supply-chain hardening — bit-for-bit
 reproducible builds so the published image can be independently rebuilt and
 compared. Signed plugins, sigstore image signing, the SBOM attestation, and
 SLSA provenance have all shipped.
