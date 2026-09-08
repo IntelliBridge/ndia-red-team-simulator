@@ -1,9 +1,12 @@
-"""Offline-safe tests for the community scanner/agent adapter marketplace.
+"""Offline-safe tests for the community scanner adapter marketplace.
 
 Exercises the structured discovery report (:func:`aegis.plugins.discover_all`),
 the shared load+report path on :class:`aegis.registry.Registry`, the
-``AEGIS_PLUGINS_ALLOW`` allowlist gate, the reference example package, and the
-``aegis plugins list`` CLI surface.
+``AEGIS_PLUGINS_ALLOW`` allowlist gate, the sandbox wrapping/error envelopes,
+the reference example package (``examples/aegis-plugin-example``, run for real
+through the out-of-process sandbox worker), and the ``aegis plugins list`` CLI
+surface. (The pentest agent-registry group that was also exercised here was
+removed with the pentest domain.)
 
 Everything is monkeypatched: no real package install, no scanner binaries, no
 network. Entry points are faked by patching ``importlib.metadata.entry_points``
@@ -27,7 +30,6 @@ from unittest.mock import patch
 
 import aegis.plugins as plugins
 import aegis.scanners.registry as scanner_registry
-from aegis.agents.registry import AgentResult
 from aegis.scanners.registry import ScanOptions
 from aegis.scanners.sandbox import (
     SandboxConfig,
@@ -76,17 +78,6 @@ class BadScanner:
 
     def health_check(self):
         return True
-
-
-class FakeAgent:
-    def __init__(self, name="fake-mp-agent"):
-        self.name = name
-        self.domain = "offensive"
-        self.effect = "active"
-        self.wired = True
-
-    def invoke(self, prompt, context):  # pragma: no cover - never invoked
-        return AgentResult(status="ok", output="fake")
 
 
 def _fake_ep(name, factory, *, dist_name=None, version=None):
@@ -484,7 +475,13 @@ def fake_module_factory():  # module-level so it has a stable module:qualname
 
 
 class TestSandboxedRunEndToEnd(unittest.TestCase):
-    """Spawns the real worker subprocess against the reference example."""
+    """Spawns the real worker subprocess against the reference example.
+
+    This is the sandbox's *success* path: ``SandboxedScanner.scan`` -> child
+    ``python -m aegis.scanners.sandbox_worker`` -> ok envelope -> a rebuilt
+    ``ScanResult`` with a real finding and an artifact persisted into the run
+    dir. The error-envelope tests below cover the failure paths.
+    """
 
     def setUp(self):
         _example_on_path(self)
@@ -524,6 +521,10 @@ class TestSandboxedRunEndToEnd(unittest.TestCase):
         result = self._sandboxed().scan(run_state, ScanOptions(target=str(target)))
         self.assertEqual(result.exit_code, 0, result.error)
         self.assertEqual(result.findings, [])
+
+
+class TestSandboxedRunChildEnv(unittest.TestCase):
+    """Sandbox child-env policy (does not need the reference example package)."""
 
     def test_network_off_env_strips_proxy_for_child(self):
         """The child env has proxy vars stripped + AEGIS_PLUGINS pinned off."""

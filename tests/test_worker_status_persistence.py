@@ -22,28 +22,5 @@ class TestVerifyStateMap(unittest.TestCase):
         self.assertEqual(_STATE_MAP["inconclusive"], "inconclusive")
 
 
-class TestFixWorkerPersistsFindingStatus(unittest.TestCase):
-    """The worker body runs ``finding_row.status = outcome.status``.
-
-    We exercise that branch directly via reflection rather than spin
-    up Celery; the integration suite covers the end-to-end path.
-    """
-
-    def test_outcome_status_lifted_onto_finding_row(self):
-        from unittest.mock import MagicMock
-
-        from aegis.services.fixes import FixOutcome
-
-        # Simulated worker step: lift outcome.status onto the row.
-        finding_row = MagicMock()
-        finding_row.status = "fixing"
-        outcome = FixOutcome(
-            success=True, strategy="patch", finding_id="f-uuid-1",
-            status="fixed", source="cai",
-        )
-        finding_row.status = outcome.status
-        self.assertEqual(finding_row.status, "fixed")
-
-
 if __name__ == "__main__":
     unittest.main()

@@ -1,8 +1,8 @@
 """Small HTTP client used by the CLI when ``--api`` / ``AEGIS_MODE=api``.
 
-Phase 4 v0.3.1 F4: ``--api`` routes write commands (``scan``, ``fix``,
-``verify``, ``runs cancel``) through ``AEGIS_API_URL`` instead of the
-local admission services. The API itself enforces the same RBAC +
+Phase 4 v0.3.1 F4: ``--api`` routes write commands (``scan``, ``verify``,
+``runs cancel``) through ``AEGIS_API_URL`` instead of the local admission
+services. The API itself enforces the same RBAC +
 audit pipeline (F6), so this is purely a transport-flip.
 
 Authentication is bearer-only for the CLI — cookie auth is a browser
@@ -68,9 +68,11 @@ class ApiClient:
 
     # ----- write endpoints used by the CLI's --api dispatch -----
 
-    def start_scan(self, *, target: str, project_id: str = "default",
-                   scanner: str = "strix", instruction: str | None = None,
+    def start_scan(self, *, target: str, scanner: str,
+                   project_id: str = "default", instruction: str | None = None,
                    override_authorized: bool = False) -> dict[str, Any]:
+        # ``scanner`` is required: the API has no default adapter (the pentest
+        # default "strix" was removed) and rejects an unnamed scanner with 400.
         body: dict[str, Any] = {"target": target, "project_id": project_id,
                                 "scanner": scanner}
         if instruction is not None:
@@ -78,15 +80,6 @@ class ApiClient:
         if override_authorized:
             body["override_authorized"] = True
         return self._request("POST", "/v1/scans", body=body)
-
-    def fix(self, *, finding_id: str, strategy: str = "patch",
-            apply: bool = False, open_pr: bool = False,
-            repo: str | None = None) -> dict[str, Any]:
-        body: dict[str, Any] = {"strategy": strategy, "apply": apply,
-                                "open_pr": open_pr}
-        if repo is not None:
-            body["repo"] = repo
-        return self._request("POST", f"/v1/findings/{finding_id}/fix", body=body)
 
     def verify(self, *, finding_id: str) -> dict[str, Any]:
         return self._request("POST", f"/v1/findings/{finding_id}/verify")

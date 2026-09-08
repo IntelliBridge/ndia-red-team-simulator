@@ -5,11 +5,12 @@ Covers:
   - aegis/api/ws.py
   - aegis/api/v1/targets.py
   - aegis/api/v1/findings.py
-  - aegis/api/v1/fix.py
   - aegis/api/v1/runs_cancel.py
   - aegis/api/v1/verify.py
-  - aegis/api/v1/exports.py
   - aegis/api/v1/runs.py
+
+(The pentest fix.py and exports.py route modules were removed with the
+pentest domain.)
 
 All tests run fully offline: no Postgres, no Redis, no Keycloak.
 Uses FastAPI dependency overrides for auth and unittest.mock.patch for
@@ -1625,6 +1626,122 @@ class TestTargetsApi(unittest.TestCase):
         self.assertEqual(resp.status_code, 403)
 
 
+class TestTargetsVerificationUnavailable(unittest.TestCase):
+    """Target ownership verification was removed with the pentest domain.
+
+    Both routes keep their gates in the original order (404 for an unknown
+    target, then ``ensure_project_access``, then ``check(TARGET_MANAGE)`` on
+    the POST) and only then answer 501 with an explicit reason. Nothing is
+    faked: ``Target.verified`` stays False throughout.
+    """
+
+    def _non_member(self) -> CurrentUser:
+        return CurrentUser(sub="dev:other@test", email="other@test",
+                           project_memberships={"proj-other": "admin"})
+
+    def _verified_flag(self, session_cm) -> bool:
+        from aegis.db.models import Target
+        with session_cm() as s:
+            return bool(s.get(Target, "tgt-1").verified)
+
+    def _post_patches(self):
+        return (
+            patch("aegis.api.v1.targets.resolve_writer",
+                  return_value=_DiscardWriter()),
+            patch("aegis.api.v1.targets.load_config",
+                  return_value=AegisConfig()),
+        )
+
+    # --- GET /v1/targets/{id}/verification -------------------------------
+
+    def test_get_verification_501_for_project_member(self):
+        app, session_cm = _build_app(extra_rows_fn=_seed_target)
+        _override_user(app, _scanner())   # any membership may read
+        client = TestClient(app, raise_server_exceptions=False)
+        with patch("aegis.db.session.get_session", session_cm):
+            resp = client.get("/v1/targets/tgt-1/verification")
+        self.assertEqual(resp.status_code, 501)
+        detail = resp.json()["detail"]
+        self.assertIn("ownership verification is unavailable", detail)
+        self.assertIn("removed with the pentest domain", detail)
+        self.assertFalse(self._verified_flag(session_cm))
+
+    def test_get_verification_404_unknown_target(self):
+        app, session_cm = _build_app(extra_rows_fn=_seed_target)
+        _override_user(app, _admin())
+        client = TestClient(app, raise_server_exceptions=False)
+        with patch("aegis.db.session.get_session", session_cm):
+            resp = client.get("/v1/targets/nonexistent/verification")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_get_verification_403_non_member_before_501(self):
+        app, session_cm = _build_app(extra_rows_fn=_seed_target)
+        _override_user(app, self._non_member())
+        client = TestClient(app, raise_server_exceptions=False)
+        with patch("aegis.db.session.get_session", session_cm):
+            resp = client.get("/v1/targets/tgt-1/verification")
+        self.assertEqual(resp.status_code, 403)
+
+    # --- POST /v1/targets/{id}/verify -------------------------------------
+
+    def test_post_verify_501_for_admin(self):
+        app, session_cm = _build_app(extra_rows_fn=_seed_target)
+        _override_user(app, _admin())
+        client = TestClient(app, raise_server_exceptions=False)
+        p_writer, p_cfg = self._post_patches()
+        with patch("aegis.db.session.get_session", session_cm), p_writer, p_cfg:
+            resp = client.post("/v1/targets/tgt-1/verify")
+        self.assertEqual(resp.status_code, 501)
+        detail = resp.json()["detail"]
+        self.assertIn("ownership verification is unavailable", detail)
+        self.assertIn("removed with the pentest domain", detail)
+        self.assertFalse(self._verified_flag(session_cm))
+
+    def test_post_verify_403_for_non_admin_member(self):
+        """check(TARGET_MANAGE) still gates: a scanner-role member gets 403."""
+        app, session_cm = _build_app(extra_rows_fn=_seed_target)
+        _override_user(app, _scanner())
+        client = TestClient(app, raise_server_exceptions=False)
+        p_writer, p_cfg = self._post_patches()
+        with patch("aegis.db.session.get_session", session_cm), p_writer, p_cfg:
+            resp = client.post("/v1/targets/tgt-1/verify")
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(self._verified_flag(session_cm))
+
+    def test_post_verify_403_for_non_member(self):
+        app, session_cm = _build_app(extra_rows_fn=_seed_target)
+        _override_user(app, self._non_member())
+        client = TestClient(app, raise_server_exceptions=False)
+        p_writer, p_cfg = self._post_patches()
+        with patch("aegis.db.session.get_session", session_cm), p_writer, p_cfg:
+            resp = client.post("/v1/targets/tgt-1/verify")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_post_verify_404_unknown_target(self):
+        app, session_cm = _build_app(extra_rows_fn=_seed_target)
+        _override_user(app, _admin())
+        client = TestClient(app, raise_server_exceptions=False)
+        p_writer, p_cfg = self._post_patches()
+        with patch("aegis.db.session.get_session", session_cm), p_writer, p_cfg:
+            resp = client.post("/v1/targets/nonexistent/verify")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_post_verify_service_unavailable_detail_is_surfaced(self):
+        """The 501 detail is the service's own message, not a generic string."""
+        from aegis.services.targets import TargetVerificationUnavailable
+
+        app, session_cm = _build_app(extra_rows_fn=_seed_target)
+        _override_user(app, _admin())
+        client = TestClient(app, raise_server_exceptions=False)
+        p_writer, p_cfg = self._post_patches()
+        with patch("aegis.db.session.get_session", session_cm), p_writer, p_cfg, \
+             patch("aegis.api.v1.targets.targets_svc.verify_target",
+                   side_effect=TargetVerificationUnavailable("engine gone")):
+            resp = client.post("/v1/targets/tgt-1/verify")
+        self.assertEqual(resp.status_code, 501)
+        self.assertEqual(resp.json()["detail"], "engine gone")
+
+
 # ===========================================================================
 # runs_cancel.py
 # ===========================================================================
@@ -1727,126 +1844,6 @@ class TestRunsCancelApi(unittest.TestCase):
 
 
 # ===========================================================================
-# fix.py
-# ===========================================================================
-
-def _seed_finding_for_fix(sess):
-    from aegis.db.models import Finding, Run
-    sess.add(Run(id="run-fix1", project_id="proj-1", status="done",
-                 mode="live", stage_table={}))
-    sess.add(Finding(
-        id="find-fix-001",
-        scanner_finding_id="strix-fix-001",
-        run_id="run-fix1",
-        project_id="proj-1",
-        schema_blob={"id": "strix-fix-001"},
-        severity="critical",
-        validation_state="unvalidated",
-        status="open",
-    ))
-
-
-class TestFixApi(unittest.TestCase):
-
-    def _remediator(self):
-        return CurrentUser(
-            sub="dev:rem@test", email="rem@test",
-            project_memberships={"proj-1": "remediator"},
-        )
-
-    def test_fix_happy_path_generate(self):
-        app, session_cm = _build_app(extra_rows_fn=_seed_finding_for_fix)
-        _override_user(app, self._remediator())
-        client = TestClient(app)
-
-        handle = JobHandle(run_id="run-fix1", job_id="job-abc")
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.fix.create_fix_job", return_value=handle), \
-             patch("aegis.api.v1.fix.resolve_writer", return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.fix.load_config", return_value=AegisConfig()):
-            resp = client.post("/v1/findings/find-fix-001/fix",
-                               json={"strategy": "patch", "apply": False})
-        self.assertEqual(resp.status_code, 200)
-        body = resp.json()
-        self.assertEqual(body["job_id"], "job-abc")
-        self.assertEqual(body["run_id"], "run-fix1")
-
-    def test_fix_happy_path_apply_requires_approver_role(self):
-        """apply=True requires approver; remediator gets 403."""
-        app, session_cm = _build_app(extra_rows_fn=_seed_finding_for_fix)
-        _override_user(app, self._remediator())
-        client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.fix.resolve_writer", return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.fix.load_config", return_value=AegisConfig()):
-            resp = client.post("/v1/findings/find-fix-001/fix",
-                               json={"strategy": "patch", "apply": True})
-        self.assertEqual(resp.status_code, 403)
-
-    def test_fix_approver_can_apply(self):
-        approver = CurrentUser(
-            sub="dev:appr@test", email="appr@test",
-            project_memberships={"proj-1": "approver"},
-        )
-        app, session_cm = _build_app(extra_rows_fn=_seed_finding_for_fix)
-        _override_user(app, approver)
-        client = TestClient(app)
-
-        handle = JobHandle(run_id="run-fix1", job_id="job-apply")
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.fix.create_fix_job", return_value=handle), \
-             patch("aegis.api.v1.fix.resolve_writer", return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.fix.load_config", return_value=AegisConfig()):
-            resp = client.post("/v1/findings/find-fix-001/fix",
-                               json={"strategy": "patch", "apply": True})
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["job_id"], "job-apply")
-
-    def test_fix_finding_not_found_404(self):
-        app, session_cm = _build_app()
-        _override_user(app, self._remediator())
-        client = TestClient(app)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.fix.resolve_writer", return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.fix.load_config", return_value=AegisConfig()):
-            resp = client.post("/v1/findings/nonexistent/fix", json={})
-        self.assertEqual(resp.status_code, 404)
-
-    def test_fix_authorization_error_403(self):
-        """AuthorizationError from service → 403."""
-        app, session_cm = _build_app(extra_rows_fn=_seed_finding_for_fix)
-        _override_user(app, self._remediator())
-        client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.fix.create_fix_job",
-                   side_effect=AuthorizationError("denied")), \
-             patch("aegis.api.v1.fix.resolve_writer", return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.fix.load_config", return_value=AegisConfig()):
-            resp = client.post("/v1/findings/find-fix-001/fix",
-                               json={"strategy": "patch"})
-        self.assertEqual(resp.status_code, 403)
-
-    def test_fix_no_auth_401(self):
-        app, session_cm = _build_app()
-        client = _no_auth_client(app)
-        with patch("aegis.db.session.get_session", session_cm):
-            resp = client.post("/v1/findings/find-fix-001/fix", json={})
-        self.assertEqual(resp.status_code, 401)
-
-    def test_fix_scanner_role_cannot_generate_fix(self):
-        """scanner role cannot generate fix (requires remediator+)."""
-        app, session_cm = _build_app(extra_rows_fn=_seed_finding_for_fix)
-        _override_user(app, _scanner())
-        client = TestClient(app, raise_server_exceptions=False)
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.fix.resolve_writer", return_value=_DiscardWriter()), \
-             patch("aegis.api.v1.fix.load_config", return_value=AegisConfig()):
-            resp = client.post("/v1/findings/find-fix-001/fix",
-                               json={"strategy": "patch"})
-        self.assertEqual(resp.status_code, 403)
-
-
-# ===========================================================================
 # verify.py
 # ===========================================================================
 
@@ -1927,156 +1924,6 @@ class TestVerifyApi(unittest.TestCase):
         with patch("aegis.db.session.get_session", session_cm):
             resp = client.post("/v1/findings/find-v-001/verify")
         self.assertEqual(resp.status_code, 401)
-
-
-# ===========================================================================
-# exports.py
-# ===========================================================================
-
-def _seed_run_for_export(sess):
-    from aegis.db.models import Run
-    sess.add(Run(id="run-exp1", project_id="proj-1", status="done",
-                 mode="live", stage_table={}))
-
-
-class TestExportsApi(unittest.TestCase):
-
-    def test_vulnfixer_export_blob_hit(self):
-        """When blob store returns data, JSON is served."""
-        app, session_cm = _build_app(extra_rows_fn=_seed_run_for_export)
-        _override_user(app, _admin())
-        client = TestClient(app)
-
-        import json as _json
-        payload = _json.dumps({"findings": [], "run_id": "run-exp1"}).encode()
-
-        fake_blob = MagicMock()
-        fake_blob.get.return_value = payload
-
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.exports.ensure_run_access",
-                   return_value="proj-1"), \
-             patch("aegis.api.v1.exports.load_config", return_value=AegisConfig()), \
-             patch("aegis.storage.open_blob_store", return_value=fake_blob):
-            resp = client.get("/v1/runs/run-exp1/exports/vulnfixer")
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["run_id"], "run-exp1")
-
-    def test_vulnfixer_export_blob_miss_file_fallback(self, tmp_path=None):
-        """When blob misses, fall through to filesystem path."""
-        import json as _json
-        import tempfile
-        from pathlib import Path
-
-        with tempfile.TemporaryDirectory() as tmp:
-            run_dir = Path(tmp) / "runs" / "run-exp1"
-            run_dir.mkdir(parents=True)
-            export_file = run_dir / "vulnfixer-export.json"
-            export_file.write_text(_json.dumps({"findings": [], "source": "fs"}))
-
-            app, session_cm = _build_app(extra_rows_fn=_seed_run_for_export)
-            _override_user(app, _admin())
-            client = TestClient(app)
-
-            fake_blob = MagicMock()
-            fake_blob.get.side_effect = FileNotFoundError
-
-            with patch("aegis.db.session.get_session", session_cm), \
-                 patch("aegis.api.v1.exports.ensure_run_access",
-                       return_value="proj-1"), \
-                 patch("aegis.api.v1.exports.load_config",
-                       return_value=AegisConfig(output_dir=tmp)), \
-                 patch("aegis.storage.open_blob_store",
-                       return_value=fake_blob):
-                resp = client.get("/v1/runs/run-exp1/exports/vulnfixer")
-            self.assertEqual(resp.status_code, 200)
-            self.assertEqual(resp.json()["source"], "fs")
-
-    def test_vulnfixer_export_404_no_file(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
-            app, session_cm = _build_app(extra_rows_fn=_seed_run_for_export)
-            _override_user(app, _admin())
-            client = TestClient(app)
-
-            fake_blob = MagicMock()
-            fake_blob.get.side_effect = FileNotFoundError
-
-            with patch("aegis.db.session.get_session", session_cm), \
-                 patch("aegis.api.v1.exports.ensure_run_access",
-                       return_value="proj-1"), \
-                 patch("aegis.api.v1.exports.load_config",
-                       return_value=AegisConfig(output_dir=tmp)), \
-                 patch("aegis.storage.open_blob_store",
-                       return_value=fake_blob):
-                resp = client.get("/v1/runs/run-exp1/exports/vulnfixer")
-            self.assertEqual(resp.status_code, 404)
-
-    def test_vulnfixer_export_blob_generic_exception_falls_through(self):
-        """Generic blob exception is swallowed; falls through to filesystem."""
-        import json as _json
-        import tempfile
-        from pathlib import Path
-
-        with tempfile.TemporaryDirectory() as tmp:
-            run_dir = Path(tmp) / "runs" / "run-exp1"
-            run_dir.mkdir(parents=True)
-            (run_dir / "vulnfixer-export.json").write_text(
-                _json.dumps({"findings": [], "source": "fs-fallback"})
-            )
-
-            app, session_cm = _build_app(extra_rows_fn=_seed_run_for_export)
-            _override_user(app, _admin())
-            client = TestClient(app)
-
-            fake_blob = MagicMock()
-            fake_blob.get.side_effect = RuntimeError("blob backend error")
-
-            with patch("aegis.db.session.get_session", session_cm), \
-                 patch("aegis.api.v1.exports.ensure_run_access",
-                       return_value="proj-1"), \
-                 patch("aegis.api.v1.exports.load_config",
-                       return_value=AegisConfig(output_dir=tmp)), \
-                 patch("aegis.storage.open_blob_store",
-                       return_value=fake_blob):
-                resp = client.get("/v1/runs/run-exp1/exports/vulnfixer")
-            self.assertEqual(resp.status_code, 200)
-            self.assertEqual(resp.json()["source"], "fs-fallback")
-
-    def test_vulnfixer_export_no_auth_401(self):
-        app, session_cm = _build_app()
-        client = _no_auth_client(app)
-        with patch("aegis.db.session.get_session", session_cm):
-            resp = client.get("/v1/runs/run-exp1/exports/vulnfixer")
-        self.assertEqual(resp.status_code, 401)
-
-    def test_vulnfixer_export_run_not_found_404(self):
-        app, session_cm = _build_app()
-        _override_user(app, _admin())
-        client = TestClient(app)
-
-        from fastapi import HTTPException
-        with patch("aegis.api.v1.exports.ensure_run_access",
-                   side_effect=HTTPException(status_code=404, detail="run not found")), \
-             patch("aegis.api.v1.exports.load_config", return_value=AegisConfig()):
-            resp = client.get("/v1/runs/nonexistent/exports/vulnfixer")
-        self.assertEqual(resp.status_code, 404)
-
-    def test_vulnfixer_export_no_project_membership_403(self):
-        app, session_cm = _build_app(extra_rows_fn=_seed_run_for_export)
-        outsider = CurrentUser(
-            sub="dev:x@x", email="x@x", project_memberships={"other": "admin"}
-        )
-        _override_user(app, outsider)
-        client = TestClient(app)
-
-        from fastapi import HTTPException
-        with patch("aegis.db.session.get_session", session_cm), \
-             patch("aegis.api.v1.exports.ensure_run_access",
-                   side_effect=HTTPException(status_code=403, detail="no access")), \
-             patch("aegis.api.v1.exports.load_config", return_value=AegisConfig()):
-            resp = client.get("/v1/runs/run-exp1/exports/vulnfixer")
-        self.assertEqual(resp.status_code, 403)
 
 
 # ===========================================================================

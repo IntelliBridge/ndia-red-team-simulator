@@ -9,13 +9,13 @@ Phase 4 v0.3.1 F6 splits this layer into two boundaries:
   ``--api`` dispatch. The audit row's ``created_at`` precedes the
   worker setting the job's ``celery_task_id``, so the chain remains
   consistent even if the worker crashes mid-task.
-- **Execution** (``execute_scan_job`` / ``start_scan``): the long-
-  running scanner subprocess + finding persistence. Called from
-  Celery workers (and, for backward compat, the CLI's offline path).
+- **Execution** (``start_scan``): the long-running scanner-adapter run +
+  finding persistence, called from the CLI's offline path (the Celery
+  worker task dispatches through the same registry directly).
 
-The existing ``start_scan`` keeps its v0.3.0 signature so the CLI's
-offline ``aegis scan`` flow doesn't break in v0.3.1; F11 will rename
-it to ``execute_scan_job`` and wire the worker task body to call it.
+Neither boundary has a default scanner: the pentest default (``strix``)
+was removed with the pentest domain, so every caller names the adapter it
+wants dispatched and the registry raises when none is registered.
 """
 
 from __future__ import annotations
@@ -63,9 +63,9 @@ class JobHandle:
     def to_response(self) -> dict[str, str]:
         """The admission JSON every job endpoint returns.
 
-        One shared shape across scan / agent / fix / verify so clients get
-        the same ``run_id`` + ``job_id`` + pollable ``status_url`` regardless
-        of which admission route they hit.
+        One shared shape across scan / verify so clients get the same
+        ``run_id`` + ``job_id`` + pollable ``status_url`` regardless of which
+        admission route they hit.
         """
         return {
             "run_id": self.run_id,
@@ -77,7 +77,7 @@ class JobHandle:
 def create_scan_job(
     *,
     target: str,
-    scanner: str = "strix",
+    scanner: str,
     project_id: str,
     actor: str,
     instruction: str | None = None,
@@ -155,20 +155,26 @@ def start_scan(
     *,
     run_state: RunStateAPI,
     target: str,
-    scanner: str = "strix",
+    scanner: str,
     instruction: str | None = None,
     timeout: int = 1800,
     actor: str,
     config: AegisConfig,
     override_authorized: bool = False,
-    use_strix: bool = True,
 ) -> ScanOutcome:
-    """Run a scan against ``target`` and return a structured outcome.
+    """Run a scan against ``target`` through the scanner-adapter registry.
 
-    For Phase 2 / 3 the only live scanner is Strix; ``scanner`` is reserved
-    for the M6 registry dispatch. When ``use_strix=False`` and an events
-    file is later loaded by the caller, this function is a no-op shell that
-    still emits the authorization audit so the chain is honest.
+    Every scan is dispatched through the registry (``aegis.scanners.dispatch``);
+    the adversarial-ML attack adapters (``aegis.ml.attacks``) register there the
+    same way the removed pentest scanner adapters once did. There is no
+    events-only / no-op mode: the authorization audit row is emitted and then
+    the named adapter runs, or the call raises.
+
+    When no adapter is registered for ``scanner`` the registry raises
+    ``KeyError`` (its message names the missing adapter and points at
+    ``aegis.ml.attacks``) — an explicit, honest failure. Until the ML attack
+    adapters land there is no built-in adapter, so a live scan surfaces that
+    error rather than silently succeeding with an empty result.
     """
     authorize(
         "scan.start",
@@ -179,34 +185,6 @@ def start_scan(
         detail={"actor": actor, "scanner": scanner, "target": target,
                 "instruction_set": bool(instruction)},
     )
-
-    if not use_strix:
-        return ScanOutcome(
-            success=True, partial_success=False, findings=[],
-            scanner=scanner, return_code=None,
-            detail={"mode": "events-only"},
-        )
-
-    if scanner == "strix":
-        from aegis.runners.strix_runner import run_strix
-        result = run_strix(
-            target, run_state,
-            instruction=instruction,
-            timeout=timeout,
-            strix_command=getattr(config, "strix_command", None),
-            strix_path=config.strix_path,
-        )
-        run_state.save_findings(result.findings)
-        return ScanOutcome(
-            success=result.success,
-            partial_success=result.partial_success,
-            findings=result.findings,
-            scanner=scanner,
-            return_code=result.return_code,
-            error=result.error,
-            detail={"command": result.command, "log_path": result.log_path,
-                    "events_path": result.events_path},
-        )
 
     from aegis.scanners import ScanOptions, dispatch
     scan_result = dispatch(

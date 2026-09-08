@@ -155,18 +155,34 @@ class TestQueueRouting(unittest.TestCase):
     def test_long_tasks_route_to_scans(self):
         from aegis.workers.celery_app import app
         routes = app.conf.task_routes
-        for name in ("aegis.scan_start", "aegis.fix_generate",
-                     "aegis.verify_replay", "aegis.agent_run"):
+        for name in ("aegis.scan_start", "aegis.verify_replay"):
             self.assertEqual(routes[name]["queue"], "scans", name)
 
     def test_short_tasks_route_to_default(self):
         from aegis.workers.celery_app import app
         routes = app.conf.task_routes
-        for name in ("aegis.ci_gate", "aegis.report_render",
-                     "aegis.vulnfixer_render", "aegis.parallel_fix",
-                     "aegis.reap_stale_jobs"):
+        for name in ("aegis.report_render", "aegis.reap_stale_jobs",
+                     "aegis.verify_tenant_integrity",
+                     "aegis.export_chains_to_worm"):
             self.assertEqual(routes[name]["queue"], "default", name)
         self.assertEqual(app.conf.task_default_queue, "default")
+
+    def test_removed_pentest_tasks_are_not_routed(self):
+        # fix / agent / vuln-fixer / CI-gate / parallel_fix tasks were removed
+        # with the pentest domain; no dead routes linger in the table.
+        from aegis.workers.celery_app import app
+        routes = app.conf.task_routes
+        for name in ("aegis.fix_generate", "aegis.agent_run",
+                     "aegis.vulnfixer_render", "aegis.ci_gate",
+                     "aegis.parallel_fix"):
+            self.assertNotIn(name, routes)
+        # Every routed task name is one the app actually includes.
+        self.assertEqual(
+            set(routes),
+            {"aegis.scan_start", "aegis.verify_replay", "aegis.report_render",
+             "aegis.reap_stale_jobs", "aegis.verify_tenant_integrity",
+             "aegis.export_chains_to_worm"},
+        )
 
 
 if __name__ == "__main__":

@@ -6,7 +6,6 @@ default ``pytest -q`` install (the ``test`` extra only) can import these
 modules without pulling worker-only dependencies.
 """
 
-from aegis.policy.ci_gate import CIGatePolicy, evaluate
 from aegis.policy.engine import (
     CedarPolicyEngine,
     OPAPolicyEngine,
@@ -20,8 +19,6 @@ from aegis.policy.engine import (
 )
 
 __all__ = [
-    "CIGatePolicy",
-    "evaluate",
     "CedarPolicyEngine",
     "OPAPolicyEngine",
     "PolicyDecision",

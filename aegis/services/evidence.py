@@ -95,7 +95,8 @@ def build_controls_matrix() -> dict[str, Any]:
                 "name": "Security monitoring & anomaly detection",
                 "status": "partial",
                 "evidence": [
-                    "scanner pipeline (Strix/CAI/deepsec) findings",
+                    "registry-dispatched scanner / attack adapter runs, each "
+                    "on its own hash-chained audit chain",
                     "OpenTelemetry collector wiring",
                 ],
                 "note": "monitoring covers scan activity; org-wide SIEM "
@@ -128,18 +129,22 @@ def build_controls_matrix() -> dict[str, Any]:
             "A.8.16": {
                 "name": "Monitoring activities",
                 "status": "partial",
-                "evidence": ["scanner pipeline", "OpenTelemetry traces/metrics"],
+                "evidence": ["registry-dispatched adapter runs",
+                             "OpenTelemetry traces/metrics"],
                 "note": "continuous monitoring depends on the operator's "
                         "telemetry backend.",
             },
             "A.8.8": {
                 "name": "Management of technical vulnerabilities",
-                "status": "supported",
+                "status": "partial",
                 "evidence": [
-                    "DAST/SAST scanner pipeline",
-                    "Trivy dependency scanning",
-                    "automated remediation (CAI CodeAgent) + CI gate",
+                    "registry-dispatched scanner / attack adapter findings",
+                    "PoC-replay verification of findings (verify.replay)",
                 ],
+                "note": "dependency scanning, automated remediation and the "
+                        "CI gate are not part of this build (removed with "
+                        "the pentest domain); findings are tracked, not "
+                        "auto-remediated.",
             },
         },
         "fedramp": {
@@ -176,17 +181,23 @@ def build_controls_matrix() -> dict[str, Any]:
             },
             "SI-2": {
                 "name": "Flaw remediation",
-                "status": "supported",
+                "status": "partial",
                 "evidence": [
-                    "scanner pipeline + automated patch generation",
-                    "CI gate blocks unremediated findings",
+                    "finding lifecycle + PoC-replay verification (verify.replay)",
+                    "hash-chained audit of every scan / verify decision",
                 ],
+                "note": "automated patch generation and the CI gate are not "
+                        "part of this build (removed with the pentest domain); "
+                        "remediation is tracked, not automated.",
             },
             "SI-7": {
                 "name": "Software, firmware & information integrity",
                 "status": "supported",
                 "evidence": [
-                    "sigstore-signed plugins + SLSA provenance",
+                    "Ed25519-signed plugins (aegis.supply_chain) + out-of-process "
+                    "plugin sandbox",
+                    "cosign-signed release images with CycloneDX SBOM + SLSA "
+                    "provenance",
                     "hash-chained audit integrity",
                 ],
             },
@@ -198,7 +209,7 @@ def build_controls_matrix() -> dict[str, Any]:
                     "output filtering",
                     "audit-detail redaction",
                 ],
-                "note": "guardrails apply to agent I/O; coverage scales with "
+                "note": "guardrails apply to LLM I/O; coverage scales with "
                         "enabled guardrail policies.",
             },
         },
@@ -225,11 +236,10 @@ def _enabled_features(config: Any) -> dict[str, Any]:
         "auth_mode": os.environ.get("AEGIS_AUTH_MODE", "dev"),
         "oidc_configured": bool(os.environ.get("AEGIS_OIDC_ISSUER")),
         "tenancy_rls": bool(db_url),
-        "policy_engine": True,  # ci-gate / policy evaluator ships in-tree
+        # RBAC policy engine (static role table / OPA / Cedar) ships in-tree.
+        "policy_engine": True,
         "llm_enabled": not _truthy(os.environ.get("AEGIS_DISABLE_LLM")),
         "guardrails": not _truthy(os.environ.get("AEGIS_DISABLE_LLM")),
-        "deepsec_ai_process": bool(getattr(config, "deepsec_ai_process", False)),
-        "github_app_configured": bool(os.environ.get("AEGIS_GITHUB_APP_ID")),
         "offline_vendor_host": bool(getattr(config, "offline_vendor_host", None)),
         "model": getattr(config, "model", None),
     }

@@ -1,11 +1,12 @@
 """Offline-safe tests for the opt-in third-party plugin-discovery seam.
 
-Both ``aegis.scanners.registry`` and ``aegis.agents.registry`` expose a no-arg
-``maybe_load_entry_points()`` that delegates to an entry-point group and is
-gated by ``AEGIS_PLUGINS=1``. The discovery does a lazy
+``aegis.scanners.registry`` exposes a no-arg ``maybe_load_entry_points()`` that
+delegates to the ``aegis.scanners`` entry-point group and is gated by
+``AEGIS_PLUGINS=1``. The discovery does a lazy
 ``from importlib.metadata import entry_points`` inside the function body, so the
 correct patch target is ``importlib.metadata.entry_points`` (resolved fresh at
-call time).
+call time). (The pentest agent registry that once shared this seam was removed
+with the pentest domain.)
 
 Everything here is monkeypatched: no Postgres/Redis/Keycloak, no real package
 install, no scanner binaries, no network. Global state is always restored --
@@ -18,14 +19,10 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import aegis.agents as agents_pkg
-import aegis.agents.registry as agent_registry
 import aegis.scanners as scanners_pkg
 import aegis.scanners.registry as scanner_registry
-from aegis.agents.registry import AgentResult
 
 SCANNER_NAME = "fake-plugin-scanner"
-AGENT_NAME = "fake-plugin-agent"
 
 
 class FakeScanner:
@@ -44,22 +41,6 @@ class FakeScanner:
 
     def scan(self, run_state, options):  # never called in these tests
         raise NotImplementedError
-
-
-class FakeAgent:
-    """Minimal concrete AgentAdapter with a real string ``.name``."""
-
-    def __init__(self, name=AGENT_NAME):
-        self.name = name
-        self.domain = "offensive"
-        # ``effect`` is part of the AgentAdapter Protocol; the marketplace
-        # conformance check (isinstance against the runtime_checkable Protocol)
-        # rejects an item that omits it, so a conformant fake must declare it.
-        self.effect = "active"
-        self.wired = True
-
-    def invoke(self, prompt, context):  # never called in these tests
-        return AgentResult(status="ok", output="fake")
 
 
 def _fake_entry_point(name, factory):
@@ -113,32 +94,6 @@ class TestScannerPluginDiscovery(unittest.TestCase):
             any("unknown capabilities" in line for line in cm.output),
             cm.output,
         )
-
-
-class TestAgentPluginDiscovery(unittest.TestCase):
-    def test_agent_discovery_on_registers_plugin(self):
-        """AEGIS_PLUGINS=1 + patched entry_points registers the fake agent."""
-        self.addCleanup(agent_registry._REGISTRY.pop, AGENT_NAME, None)
-        fake_ep = _fake_entry_point(AGENT_NAME, lambda: FakeAgent())
-        with patch.dict(os.environ, {"AEGIS_PLUGINS": "1"}), \
-                patch("importlib.metadata.entry_points", return_value=[fake_ep]):
-            agent_registry.maybe_load_entry_points()
-
-        self.assertIn(AGENT_NAME, agent_registry._REGISTRY)
-        self.assertIn(AGENT_NAME, [a["name"] for a in agents_pkg.list_agents()])
-
-    def test_agent_discovery_off_is_noop(self):
-        """Unset AEGIS_PLUGINS: no registration and entry_points never called."""
-        self.addCleanup(agent_registry._REGISTRY.pop, AGENT_NAME, None)
-        entry_points_mock = Mock(return_value=[
-            _fake_entry_point(AGENT_NAME, lambda: FakeAgent()),
-        ])
-        with patch.dict(os.environ, _env_without_plugins(), clear=True), \
-                patch("importlib.metadata.entry_points", entry_points_mock):
-            agent_registry.maybe_load_entry_points()
-
-        self.assertNotIn(AGENT_NAME, agent_registry._REGISTRY)
-        entry_points_mock.assert_not_called()
 
 
 if __name__ == "__main__":

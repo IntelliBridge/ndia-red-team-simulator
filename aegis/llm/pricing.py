@@ -9,8 +9,10 @@ providers' published API rates. Models are matched **by family** on the
 litellm-style identifier the router records (e.g. ``gemini/gemini-2.5-flash``,
 ``anthropic/claude-opus-4-8``, ``openai/gpt-4.1``), so a version/date suffix
 still prices. When a model matches no family, we fall back to litellm's own
-price map if it is importable (it ships with CAI on the execution path);
-failing that the call is recorded uncosted (``0``) rather than mispriced.
+price map if it happens to be importable (litellm is *not* a dependency of
+this fork, so that path is normally absent); failing that the call is
+recorded uncosted (``0``) — logged at WARNING so an unpriced model is visible
+— rather than mispriced.
 
 Standard (non-batch, non-cached) input/output rates only. Costs round to the
 nearest cent, so a sub-cent call records ``0``.
@@ -79,7 +81,10 @@ def cost_cents(model: str, prompt_tokens: int, completion_tokens: int) -> int:
     if rate is None:
         usd = _litellm_usd(model, prompt_tokens, completion_tokens)
         if usd is None:
-            logger.debug("no price for model %r; recording cost_cents=0", model)
+            logger.warning(
+                "no price for model %r (no family match, litellm unavailable); "
+                "recording cost_cents=0 — add a family to _PRICES_PER_MTOK", model,
+            )
             return 0
         return round(usd * 100)
     in_rate, out_rate = rate
