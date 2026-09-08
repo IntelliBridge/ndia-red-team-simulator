@@ -69,9 +69,9 @@ them.
 
 ## What exists and what is not written yet
 
-Verified on `main` at `4320740` (2026-09-08, evening) by importing the app,
-listing the router objects and running the suite with
-`.venv/bin/python`.
+Verified on `main` at `7240220` (2026-09-08, late evening) by importing the
+app, listing the router objects, importing the ML registries and running
+the suite with `.venv/bin/python`.
 
 ### On main
 
@@ -121,16 +121,44 @@ listing the router objects and running the suite with
   `CampaignRecord`, `RunSummary`, `STAGES` including `score`,
   `STANDING_LIMITATIONS` and `standing_limitations()`, `grade_for_mri`,
   `contains_banned_score_word`). `targets/base.py` (`Target` protocol,
-  `Sample`) and `attacks/base.py` (`AttackAdapter`, `AttackOutput`) exist.
-  `explain/` and `recommend/` are empty packages. `redsim/cli/ml.py` is the
-  `redsim ml build-assets` skeleton: it prints `not_implemented` with a
-  reason and writes nothing. `tests/ml/` holds `fakes.py` (`TinyTarget`),
-  `fixtures/run_record.json` and the schema, fixture and CLI tests.
+  `Sample`) and `attacks/base.py` (`AttackAdapter`, `AttackOutput`) are the
+  frozen protocols.
+- `redsim/ml/` implementation, merged on 2026-09-08 from #8 `feat/ml-core`
+  (`ce33d21`) and #9 `feat/ml-assets` (`1725728`): `registry.py`,
+  `artifacts.py`, `errors.py`, `defenses.py`, `eval.py`, `scoring.py`,
+  `campaign.py`, `targets/` (`registry.py`, `architectures.py` with
+  `SmallCNN`, `bundled.py`, `tabular.py`, `artifact.py`, `unavailable.py`),
+  `attacks/` (`registry.py`, `fgsm.py`, `pgd.py`, `hopskipjump.py`,
+  `noise_control.py`), `datasets/` (`cifar10.py`, `image_hub.py`,
+  `sampling.py`, `url_features.py`), `explain/` (`base.py`, `shap_image.py`,
+  `shap_tabular.py`, `stability.py`, `summary.py`), `recommend/` (`rules.py`,
+  `narrative.py`) and `assets/` (`datasets.py`, `build.py`, `train_cnn.py`,
+  `train_url_classifier.py`, `fixture_sample.py`, `manifest.py`).
+  `import redsim.ml.targets, redsim.ml.attacks` registers the targets
+  `cifar10_smallcnn`, `endpoint_stub`, `url_trees`, `vehicles_cnn` and the
+  attacks `fgsm`, `hopskipjump`, `noise_control`, `pgd`. `redsim ml
+  build-assets` is implemented (`redsim/cli/ml.py` over
+  `redsim/ml/assets/build.py`): it fetches the datasets by pinned revision,
+  trains the bundled models on CPU with a fixed seed and writes
+  `assets/MANIFEST.json` on `MLModelManifest`. `tests/ml/` holds `fakes.py`
+  (`TinyTarget`), `fixtures/` (`run_record.json`, `malicious_urls_sample.csv`,
+  `MANIFEST.json`), the schema, fixture and CLI tests and the module tests,
+  with an autouse fixture in `tests/ml/conftest.py` that isolates every ML
+  test from a developer's `.env`. The sandbox child `redsim/ml/sandbox.py`
+  is not written (WS4).
 - Web `@redsim/web` pages: `/`, `/login`, `/dashboard`, `/runs`,
   `/runs/[id]`, `/findings`, `/findings/[id]`, `/projects`,
   `/projects/[slug]/settings`, `/targets`, `/auth-profiles`, `/logs`,
-  `/audit`, `/cost`. `web/src/lib/api.ts` defaults to
-  `http://localhost:8000`, overridable with `NEXT_PUBLIC_REDSIM_API_URL`.
+  `/audit`, `/cost`, and since #16 merged as `1a9204e` (2026-09-08) the P5
+  pages `/models` and `/models/[id]` plus the MRI panels on `/runs/[id]` and
+  the three-pane `/findings/[id]`, with `MriScorecard`, `DimensionBars`,
+  `RobustnessCurve`, `MeasurementTable`, `ObservationCard`, `LabelBadge`,
+  `PanelSection` and `CompatibilityList` in `@redsim/design-system`. The P5
+  pages call the WS4 routes (`/v1/models`, `/v1/models/{id}/attacks`, the
+  campaign, artifacts and compare routes), which are not mounted, and render
+  an explicit `not_implemented` state on 404 or 501 (`7240220` tightened
+  that wording). `web/src/lib/api.ts` defaults to `http://localhost:8000`,
+  overridable with `NEXT_PUBLIC_REDSIM_API_URL`.
 - `deploy/docker-compose.yml`: postgres, redis, keycloak, minio, redsim-api,
   redsim-worker (`-Q scans`), redsim-worker-default (`-Q default`),
   redsim-beat, redsim-web, redsim-log-ingest, plus opt-in profiles `policy`
@@ -139,20 +167,50 @@ listing the router objects and running the suite with
   and runs `alembic upgrade head` before uvicorn, `deploy/Dockerfile.worker`
   installs CPU torch then `.[worker,ml]`. `deploy/helm/redsim` is the chart.
   `deploy-aws.yml` builds api, worker and web images for ECR.
+  `deploy/terraform/` (#19, merged as `b40f7e1` on 2026-09-08) is the
+  code-only Fargate foundation: existing-VPC selection with checks, private
+  endpoints, an ALB with target groups but no listeners, RDS PostgreSQL 16,
+  Redis, two S3 buckets, per-service IAM roles, and mocked-plan tests run by
+  `deploy/terraform/validate.sh`. No task definitions, no services, nothing
+  applied.
 
-### In open pull requests, not on main
+### Merged late on 2026-09-08, after the ML PRs
 
-Both are drafts being adapted to the P0 contracts. Nothing in them may be
-described as existing until it merges.
+No pull request is open. The last two merges of the evening:
 
-- #8 `feat/ml-core`: `redsim/ml/{targets,defenses,datasets}`, the ART
-  adapters `fgsm`, `pgd`, `noise_control`, `hopskipjump`, `eval.py`, MRI
-  scoring, the campaign runner, SHAP explainers, recommendation rules and the
-  Pythia narrative.
-- #9 `feat/ml-assets`: `SmallCNN`, `url_features`, the real `build-assets`
-  implementation and the asset manifest.
-- #16 `feat/replit-redsim-migration` (P5 v2 web UI) and #19
-  `feat/p7-fargate-foundation` (draft) are open against WS5 and WS7.
+- #16 `feat/replit-redsim-migration` (Metz, P5 v2 web UI, WS5) as
+  `1a9204e`: the P5 pages and design-system components listed above.
+  codex-pr-review verdict blocking with 10 confirmed findings, one fix
+  commit per finding landed on the branch before the squash merge, and
+  `7240220` (product owner) tightened the `not_implemented` and
+  compatibility wording on the model pages afterwards. The web CI lanes have
+  not run on `main` since `ea39f97` (skipped downstream of the failing unit
+  job, see Verified state), so nothing from #16 has been built by CI on
+  `main` yet.
+- #19 `feat/p7-fargate-foundation` (William, WS7) as `b40f7e1`: the 26 new
+  files under `deploy/terraform/`. codex-pr-review verdict needs-changes
+  with 2 confirmed findings, both fixed on the branch before merge.
+
+### Datasets and assets: built locally, not committed
+
+The catalog is decided (spec section 11): image demo
+`leibnitz-lab/military_vehicles` (HF, MIT, coarse 7-class task, ground-level
+photographs), image CI fixture `uoft-cs/cifar10`, tabular demo Kaggle
+`sid321axn/malicious-urls-dataset` (CC0, URL strings are data and are never
+fetched, committed stratified sample for CI), tabular fallback
+`lacg030175/UNSW-NB15` (CC-BY-4.0, unused so far). On 2026-09-08
+`redsim ml build-assets --dataset all` fetched the three used datasets by
+pinned revision and trained `vehicles_cnn`, `cifar10_smallcnn` (1-epoch
+fixture, never a demo target) and `url_classifier` (the asset behind the
+`url_trees` target, trained on the full Kaggle set) on CPU. Everything
+under `assets/` except `assets/README.md` is gitignored, so a fresh clone
+has no assets until it runs the build. The Kaggle download reads
+`KAGGLE_API_TOKEN` (sent as a bearer token) from the environment or from
+`.env` (`REDSIM_ENV_FILE`), or the older `KAGGLE_USERNAME` / `KAGGLE_KEY`
+pair, and falls back to the committed CI sample when neither is set. Clean
+accuracy per model and the per-class counts are recorded in
+`assets/MANIFEST.json`. Quote them from the manifest of the build in hand,
+never as a product claim in docs.
 
 ### Not started
 
@@ -168,15 +226,11 @@ described as existing until it merges.
   `/v1/runs/{id}/campaign`, `/v1/runs/{id}/artifacts`, `/v1/artifacts/{id}`,
   `/v1/runs/{id}/compare`, `/v1/runs/{id}/reviewer-notes`, explain and harden
   on findings).
-- WS5 on main: `/models`, `/models/[id]`, the MRI scorecard and panels on
-  `/runs/[id]`, the three-pane body of `/findings/[id]`.
-- WS6 reports and compare, WS7 Fargate.
-- Datasets and models. Nothing is fetched or trained. The catalog is decided
-  (spec section 11): image demo `leibnitz-lab/military_vehicles` (HF, MIT),
-  image CI fixture `uoft-cs/cifar10`, tabular demo Kaggle
-  `sid321axn/malicious-urls-dataset` (CC0, needs a Kaggle token for the
-  one-off build, committed synthetic sample for CI, URL strings are data and
-  are never fetched), tabular fallback `lacg030175/UNSW-NB15` (CC-BY-4.0).
+- WS5 remainder: the P5 pages are on main (#16) but every ML call they make
+  goes to an unmounted WS4 route, so no page shows real campaign data until
+  WS4 lands. CI has not built them on main yet.
+- WS6 reports and compare. WS7 services: the Terraform foundation (#19) has
+  no listeners, task definitions or services, and nothing has been applied.
 
 ## How to run things
 
@@ -285,32 +339,37 @@ scanner. Use `AIKIDO_SKIP_PRE_COMMIT=1 git commit ...` only for commits that
 touch those fixtures, and say so in the commit message. Do not skip the hook
 for anything else, and never add a real credential to make a test pass.
 
-## Verified state (2026-09-08 evening, main 4320740)
+## Verified state (2026-09-08 late evening, main 7240220)
 
 Counts come from running the commands from this tree with the venv
 interpreter, not from memory. Re-run them before quoting them.
 
-- `.venv/bin/python -m pytest -q`: 900 passed, 30 skipped, 21 subtests
-  passed, 18.6 s.
+- `.venv/bin/python -m pytest -q`: 1198 passed, 30 skipped.
+- `pnpm --filter @redsim/web test` (vitest): 274 passed in 41 files.
 - `.venv/bin/ruff check --select E4,E7,E9,F,I redsim tests`: clean. A bare
-  `ruff check redsim tests` reports one finding (RUF100, an unused
-  file-level `noqa: E402` in `redsim/cli/main.py`) that is outside the CI
-  selection.
-- `.venv/bin/mypy redsim`: clean, 135 source files.
+  `ruff check redsim tests` reports three RUF100 findings (unused
+  `noqa: E402` in `redsim/cli/main.py` and `redsim/ml/attacks/__init__.py`)
+  that are outside the CI selection.
+- `.venv/bin/mypy redsim`: clean, 172 source files, from a venv that has
+  `truststore` and `torch` installed. CI's mypy step does not (next bullet).
 - `make -n lint-web` shows the guard: `web/` has no `.eslintrc*` or
   `eslint.config.*`, so `lint-web` prints
   `skip: lint-web (web/ has no ESLint config yet, ...)` and exits 0. `make
   lint` and `make check` pass through the skip. The real fix is `eslint`
   plus `eslint-config-next` and a config in `web/`.
-- Redsim CI on `main` at `4320740`: 11 jobs green (both unit lanes,
-  coverage gate at the 81 floor, API integration, SAST, dependency CVEs,
-  Helm, OTel config, secret scan, leaked-artifacts, E2E skipped by design),
-  2 red. `Next.js build` fails at `pnpm install --frozen-lockfile` with
-  `ERR_PNPM_OUTDATED_LOCKFILE` (the root `pnpm-lock.yaml` is behind
-  `web/package.json` after dependabot #15). `Build images` fails on the web
-  image: `corepack enable && corepack prepare pnpm@10.33.2 --activate` exits
-  127 in `deploy/Dockerfile.web` after dependabot #13 moved the Node base
-  image. Both belong to the web workstream.
+- Redsim CI on `main`: fully green at `ea39f97` (#21 restored the web
+  toolchain, so `Next.js build` and `Build images` pass again, E2E skipped
+  by design). Red on every run from `1725728` (#9) through `7240220`:
+  both unit lanes fail at their mypy step with `no-any-return` in
+  `redsim/ml/datasets/image_hub.py:55` (`truststore.SSLContext(...)` types
+  as `Any` because `truststore` is in no pyproject extra and CI does not
+  install it) and, on the 3.13 lane only, `redsim/ml/assets/train_cnn.py:172`
+  (`model.eval()` is `Any` without the `ml` extra). Local mypy passes
+  because the venv has both packages. `API integration`, `Next.js build`
+  and `Build images` are skipped downstream of the failing `unit` job, so no
+  commit after `ea39f97` has had the web lanes run on `main`, #16's pages
+  included. The fix is a typed return in each function, or `truststore` in
+  the extras, and is not on any branch yet.
 - `Deploy to AWS` fails at "Configure AWS credentials" (OIDC AssumeRole,
   account-side). `Docs` is green, and the Pages deploy is dormant behind the
   repo variable `ENABLE_PAGES` (Pages is off, the plan has no private
