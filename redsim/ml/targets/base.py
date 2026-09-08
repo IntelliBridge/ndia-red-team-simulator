@@ -1,8 +1,9 @@
 """Target protocol (design spec section 2.1).
 
 A target is a model plus the public dataset slice it is evaluated on. The
-image target is live; tabular and LLM targets are registered stubs whose
-``info().status`` is ``not_implemented`` so the UI can show them honestly.
+bundled image and tabular targets are live when their assets are present; the
+LLM endpoint target is a registered stub whose ``info().status`` is
+``not_implemented`` so the UI can show it honestly.
 """
 
 from __future__ import annotations

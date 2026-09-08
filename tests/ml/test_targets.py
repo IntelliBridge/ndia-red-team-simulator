@@ -19,19 +19,20 @@ from typing import Any
 import pytest
 
 pytest.importorskip("numpy")
-torch = pytest.importorskip("torch")
+pytest.importorskip("torch")
 pytest.importorskip("art")
 pytest.importorskip("sklearn")
 
 import joblib
 import numpy as np
+import torch
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from torch import nn
 
 from redsim.ml import targets as targets_pkg
 from redsim.ml.errors import TargetUnavailable, UnsupportedArtifact
-from redsim.ml.schema import TargetInfo
+from redsim.ml.schema import AccuracyPoint, CleanAccuracy, MLModelManifest, SurrogateInfo, TargetInfo
 from redsim.ml.targets import artifact, bundled, tabular, unavailable
 from redsim.ml.targets.base import Target
 from redsim.ml.targets.registry import TARGETS, get_target, list_targets
@@ -72,7 +73,8 @@ def build_image_assets(root: Path, *, model_id: str = "vehicles_cnn", seed: int 
         "input_shape": [3, 8, 8], "n_classes": 3, "class_names": list(CLASS_NAMES),
         "eval_split": "datasets/img/eval.npz", "eval_split_sha256": _sha(split),
         "dataset_id": "synthetic/tiny", "dataset_revision": "deadbeef", "dataset_split": "eval",
-        "license": "test fixture", "clean_accuracy": {"value": 0.5, "n": n, "split": "eval"},
+        "license": "test fixture", "source_url": "https://example.invalid/synthetic-tiny",
+        "clean_accuracy": {"value": 0.5, "n": n, "split": "eval"},
     }
     _write_manifest(root, {model_id: entry})
     return entry
@@ -112,7 +114,7 @@ def build_tabular_assets(root: Path, *, model_id: str = "url_trees", with_sha: b
         sur = root / "models/url/surrogate.joblib"
         joblib.dump(lr, sur)
         entry["surrogate"] = {"kind": "logistic_regression", "path": "models/url/surrogate.joblib",
-                              "sha256": _sha(sur), "agreement_clean": {"value": 0.9, "n": 120}}
+                              "sha256": _sha(sur), "agreement_clean": {"n": 120, "n_correct": 108}}
     _write_manifest(root, {model_id: entry})
     return entry
 
@@ -164,16 +166,21 @@ def test_llm_stub_is_honest_and_leaks_no_secret(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("PYTHIA_API_KEY", "pk_super_secret_value")
     monkeypatch.setenv("PYTHIA_BASE_URL", "https://pythia.example")
     monkeypatch.delenv("REDSIM_ML_LLM_MODEL", raising=False)
-    monkeypatch.delenv("REDSIM_LLM_MODEL", raising=False)
+    monkeypatch.setenv("REDSIM_LLM_MODEL", "pythia/auto")      # the pre-M0 name: no longer honoured anywhere
     stub = get_target("endpoint_stub")
     info = stub.info()
     assert info.status == "not_implemented" and info.domain == "llm" and info.reason
     assert "501" in info.reason and "AuthProfile" in info.reason
     conn = info.metadata["connection"]
     assert conn["chat_path"] == "/v1/chat/completions" and conn["env"]["api_key"] == "PYTHIA_API_KEY"
+    assert conn["env"]["model"] == unavailable.MODEL_ENV == "REDSIM_ML_LLM_MODEL"   # the frozen M0 name only
     assert conn["set"]["api_key"] is True and conn["set"]["model"] is False and conn["configured"] is False
     assert "pk_super_secret_value" not in json.dumps(info.model_dump())
     assert "pk_super_secret_value" not in json.dumps(stub.manifest())
+    monkeypatch.setenv("REDSIM_ML_LLM_MODEL", "pythia/auto")
+    configured = stub.info().metadata["connection"]
+    assert configured["set"]["model"] is True and configured["configured"] is True
+    assert "pythia/auto" not in json.dumps(stub.info().model_dump())   # names of variables, never their values
     for call in (stub.load, lambda: stub.sample(4, 0), lambda: stub.predict_proba(np.zeros((1, 3))),
                  stub.art_classifier, stub.torch_model):
         with pytest.raises(TargetUnavailable):
@@ -237,6 +244,51 @@ def test_bundled_image_target_loads_samples_and_predicts(tmp_path: Path, tinynet
     assert m["weights_sha256_verified"] == entry["sha256"] and m["gradients"] is True
     assert m["eval_per_class"] == {c: 20 for c in CLASS_NAMES} and m["dataset_revision"] == "deadbeef"
     assert "torch" in m["library_versions"]
+    mm = MLModelManifest.model_validate(m)                     # the schema block is a valid spec 5.5 manifest
+    assert mm.name == entry["name"] and mm.modality == "image" and mm.format == "torch_state_dict"
+    assert mm.sha256 == entry["sha256"] and mm.size_bytes == (tmp_path / entry["weights"]).stat().st_size
+    assert mm.architecture_id == "tinynet" and mm.input_shape == [3, 8, 8] and mm.n_classes == 3
+    assert mm.class_names == list(CLASS_NAMES) and mm.features is None and mm.surrogate is None
+    assert mm.dataset_id == "synthetic/tiny" and mm.dataset_revision == "deadbeef" and mm.dataset_split == "eval"
+    assert mm.clean_accuracy == CleanAccuracy(value=0.5, n=60, split="eval")
+    assert mm.status == "available" and mm.refusal_reason is None and mm.gradients is True and mm.bundled is True
+    assert mm.license == "test fixture" and mm.source_url == entry["source_url"]
+    assert mm.manifest_sha256 and m["manifest_sha256"] == mm.manifest_sha256
+    assert m["weights"] == entry["weights"] and m["eval_split"] == entry["eval_split"]   # the raw entry stays
+
+
+def test_bundled_manifest_refuses_entries_that_break_the_model_manifest(tmp_path: Path, tinynet_arch: str) -> None:
+    entry = build_image_assets(tmp_path)
+    no_dataset = {k: v for k, v in entry.items() if k != "dataset_id"}
+    _write_manifest(tmp_path, {"vehicles_cnn": no_dataset})
+    with pytest.raises(UnsupportedArtifact, match=r"(?s)valid model manifest.*dataset_id"):
+        bundled.BundledImageTarget("vehicles_cnn", assets_dir=tmp_path).load()
+    _write_manifest(tmp_path, {"vehicles_cnn": {**entry, "clean_accuracy": {"value": 0.5}}})   # no denominator
+    with pytest.raises(UnsupportedArtifact, match="valid model manifest"):
+        bundled.BundledImageTarget("vehicles_cnn", assets_dir=tmp_path).load()
+    _write_manifest(tmp_path, {"vehicles_cnn": {**entry, "clean_accuracy": 0.5}})
+    with pytest.raises(UnsupportedArtifact, match="clean_accuracy"):
+        bundled.BundledImageTarget("vehicles_cnn", assets_dir=tmp_path).load()
+
+
+def test_manifest_count_blocks_keep_their_denominators() -> None:
+    assert bundled.accuracy_point({"n": 120, "n_correct": 108}) == {"n": 120, "n_correct": 108, "accuracy": 0.9}
+    assert bundled.accuracy_point({"n": 120, "n_correct": 108, "accuracy": 0.9}) == {"n": 120, "n_correct": 108,
+                                                                                    "accuracy": 0.9}
+    assert bundled.accuracy_point({"value": 0.9, "n": 120}) == {"n": 120, "n_correct": 108, "accuracy": 0.9}
+    assert bundled.accuracy_point({"n": 0, "n_correct": 0}) == {"n": 0, "n_correct": 0, "accuracy": None}
+    assert bundled.accuracy_point({"value": 0.9}) is None and bundled.accuracy_point(0.9) is None
+    assert bundled.clean_accuracy_entry(None, "eval") is None
+    assert bundled.clean_accuracy_entry({"value": 0.5, "n": 10}, "eval") == {"value": 0.5, "n": 10, "split": "eval"}
+    assert bundled.clean_accuracy_entry({"value": 0.5, "n": 10, "split": "test"}, "eval")["split"] == "test"
+    with pytest.raises(UnsupportedArtifact, match="clean_accuracy"):
+        bundled.clean_accuracy_entry(0.5, "eval")
+    assert bundled.surrogate_info_entry(None) is None
+    decl = {"kind": "lr", "path": "models/s.joblib", "sha256": "ab" * 32, "agreement_clean": {"value": 0.5, "n": 4}}
+    assert bundled.surrogate_info_entry(decl) == {"kind": "lr", "sha256": "ab" * 32,
+                                                  "agreement_clean": {"n": 4, "n_correct": 2, "accuracy": 0.5}}
+    with pytest.raises(UnsupportedArtifact, match="surrogate"):
+        bundled.surrogate_info_entry("models/s.joblib")
 
 
 def test_bundled_image_hash_mismatch_refused(tmp_path: Path, tinynet_arch: str) -> None:
@@ -311,6 +363,20 @@ def test_bundled_tabular_target_loads_predicts_without_network(tmp_path: Path, n
     assert m["weights_sha256_verified"] == entry["sha256"] and m["torch_model"] is None
     assert m["eval_per_class"] == {c: 30 for c in entry["class_names"]} and "scikit-learn" in m["library_versions"]
     assert m["realizability"] == tabular.REALIZABILITY_NOTE
+    assert m["feature_names"] == t.feature_names and m["perturbable"] == mask.tolist()
+    mm = MLModelManifest.model_validate(m)                     # the schema block is a valid spec 5.5 manifest
+    assert mm.modality == "tabular" and mm.format == "sklearn_joblib" and mm.sha256 == entry["sha256"]
+    assert mm.size_bytes == (tmp_path / entry["weights"]).stat().st_size and mm.architecture_id is None
+    assert mm.input_shape == [16] and mm.n_classes == 4 and mm.class_names == entry["class_names"]
+    assert mm.features is not None and [f.name for f in mm.features] == t.feature_names
+    assert [f.perturbable for f in mm.features] == mask.tolist() and all(f.dtype == "float" for f in mm.features)
+    assert all(f.min is not None and f.max is not None and f.max >= f.min for f in mm.features)
+    assert mm.surrogate == SurrogateInfo(kind="logistic_regression", sha256=entry["surrogate"]["sha256"],
+                                         agreement_clean=AccuracyPoint(n=120, n_correct=108, accuracy=0.9))
+    assert m["surrogate"] == mm.surrogate.model_dump(mode="json")   # the surrogate path stays out of the record
+    assert mm.dataset_id == entry["dataset_id"] and mm.dataset_revision == "csv-sha" and mm.dataset_split == "eval"
+    assert mm.clean_accuracy is None and mm.license == "CC0: Public Domain" and mm.source_url is None
+    assert mm.status == "available" and mm.gradients is True and mm.bundled is True and mm.manifest_sha256
 
 
 def test_bundled_tabular_aligns_string_classes(tmp_path: Path) -> None:
@@ -321,6 +387,19 @@ def test_bundled_tabular_aligns_string_classes(tmp_path: Path) -> None:
     hard = t.sklearn_model().predict(s.x)
     names = np.asarray(s.class_names)
     assert np.array_equal(names[proba.argmax(1)], hard)      # columns follow the manifest class order
+    mm = MLModelManifest.model_validate(t.manifest())
+    assert mm.surrogate is None and mm.gradients is False     # no surrogate declared: no gradients claimed
+
+
+def test_bundled_tabular_without_feature_specs_keeps_the_contract_names(tmp_path: Path) -> None:
+    entry = build_tabular_assets(tmp_path)
+    _write_manifest(tmp_path, {"url_trees": {k: v for k, v in entry.items() if k != "features"}})
+    t = tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path)
+    m = t.manifest()
+    mm = MLModelManifest.model_validate(m)
+    assert mm.features is None and mm.input_shape == [16]      # no FeatureSpec rows are invented
+    assert m["feature_names"] == tabular.contract_feature_names()
+    assert t.perturbable_mask().sum() == 12 and t.feature_ranges() is None
 
 
 def test_bundled_tabular_never_opens_pickle_without_matching_digest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -352,4 +431,8 @@ def test_bundled_tabular_refuses_feature_disagreement(tmp_path: Path) -> None:
         tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path).load()
     _write_manifest(tmp_path, {"url_trees": {**entry, "format": "xgboost_json"}})
     with pytest.raises(UnsupportedArtifact, match="expected sklearn_joblib"):
+        tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path).load()
+    undigested = {"kind": "logistic_regression", "path": "models/url/surrogate.joblib"}   # no sha256
+    _write_manifest(tmp_path, {"url_trees": {**entry, "surrogate": undigested}})
+    with pytest.raises(UnsupportedArtifact, match=r"(?s)valid model manifest.*surrogate\.sha256"):
         tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path).load()

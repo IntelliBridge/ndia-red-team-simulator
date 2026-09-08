@@ -13,6 +13,10 @@ Registered ids:
 * ``endpoint_stub``     LLM / black-box endpoint, ``status="not_implemented"`` (Phase B)
 
 ``ArtifactTarget`` (uploads) is constructed per run by the worker and is not registered.
+
+Every loadable target's ``manifest()`` carries the ``schema.MLModelManifest`` fields (spec 5.5),
+validated at load time, alongside target-specific provenance; ``MLModelManifest.model_validate``
+accepts the dict as is.
 """
 
 from __future__ import annotations

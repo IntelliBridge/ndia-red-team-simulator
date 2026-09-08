@@ -20,14 +20,16 @@ from redsim.ml.schema import TargetInfo
 from redsim.ml.targets.base import Sample
 from redsim.ml.targets.registry import TARGETS
 
+# The frozen M0 names (spec section 20.3, plan 01 section 8): ``redsim.llm.pythia.PythiaSettings.from_env``
+# reads exactly these, so the stub reports the same variables the worker will honour and no legacy alias.
+MODEL_ENV = "REDSIM_ML_LLM_MODEL"
 PYTHIA_ENV = {
     "base_url": "PYTHIA_BASE_URL",
     "api_key": "PYTHIA_API_KEY",
     "persona": "PYTHIA_PERSONA",
     "timeout_s": "PYTHIA_TIMEOUT_S",
+    "model": MODEL_ENV,
 }
-# The scaffold reads REDSIM_LLM_MODEL today; the spec renames it to REDSIM_ML_LLM_MODEL (section 20.3).
-MODEL_ENV_CANDIDATES: tuple[str, ...] = ("REDSIM_ML_LLM_MODEL", "REDSIM_LLM_MODEL")
 CHAT_PATH = "/v1/chat/completions"
 
 REASON = (
@@ -41,15 +43,14 @@ REASON = (
 def pythia_connection() -> dict[str, Any]:
     """Connection shape for the Phase B LLM target: env var names, the chat path, and whether each is set."""
     present = {key: bool(os.environ.get(var, "").strip()) for key, var in PYTHIA_ENV.items()}
-    model_var = next((v for v in MODEL_ENV_CANDIDATES if os.environ.get(v, "").strip()), None)
     return {
         "gateway": "pythia",
         "chat_path": CHAT_PATH,
         "auth": "Authorization: Bearer pk_... (PYTHIA_API_KEY)",
         "persona_header": "X-Pythia-Persona",
-        "env": {**PYTHIA_ENV, "model": " | ".join(MODEL_ENV_CANDIDATES)},
-        "set": {**present, "model": model_var is not None},
-        "configured": present["base_url"] and present["api_key"] and model_var is not None,
+        "env": dict(PYTHIA_ENV),
+        "set": present,
+        "configured": present["base_url"] and present["api_key"] and present["model"],
     }
 
 
@@ -95,5 +96,4 @@ ENDPOINT_STUB = LLMEndpointStub() if "endpoint_stub" not in TARGETS else TARGETS
 if "endpoint_stub" not in TARGETS:
     TARGETS.register(ENDPOINT_STUB)
 
-__all__ = ["CHAT_PATH", "ENDPOINT_STUB", "MODEL_ENV_CANDIDATES", "PYTHIA_ENV", "REASON", "LLMEndpointStub",
-           "pythia_connection"]
+__all__ = ["CHAT_PATH", "ENDPOINT_STUB", "MODEL_ENV", "PYTHIA_ENV", "REASON", "LLMEndpointStub", "pythia_connection"]

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
+import json
 import platform
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -28,10 +29,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from pydantic import ValidationError
 
 from redsim.ml.datasets.sampling import as_model_input, per_class_counts, stratified_sample
 from redsim.ml.errors import UnsupportedArtifact
-from redsim.ml.schema import Domain, TargetInfo
+from redsim.ml.schema import Domain, MLModelManifest, TargetInfo
 from redsim.ml.targets.base import Sample
 
 ArtifactFormat = str  # "onnx" | "torch_state_dict"
@@ -240,6 +242,23 @@ def library_versions(*names: str) -> dict[str, str]:
     return out
 
 
+def model_manifest(what: str, **fields: Any) -> dict[str, Any]:
+    """The ``schema.MLModelManifest`` block of a target manifest, validated and stamped with ``manifest_sha256``.
+
+    ``fields`` are the manifest's own field names (spec 5.5); ``None`` values are dropped so the schema
+    defaults apply. The digest covers the canonical JSON of every other field. A field set that does not
+    form a valid manifest is refused as ``UnsupportedArtifact`` (``what`` names the offending source), so a
+    malformed asset entry fails at load time instead of surfacing as a broken record later.
+    """
+    try:
+        manifest = MLModelManifest(**{k: v for k, v in fields.items() if v is not None})
+    except ValidationError as exc:
+        raise UnsupportedArtifact(f"{what} does not form a valid model manifest: {exc}") from exc
+    payload = manifest.model_dump(mode="json", exclude={"manifest_sha256"})
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {**payload, "manifest_sha256": hashlib.sha256(canonical).hexdigest()}
+
+
 EvalData = tuple[np.ndarray, np.ndarray] | Callable[[], tuple[np.ndarray, np.ndarray]] | str | Path
 
 
@@ -266,8 +285,9 @@ class ArtifactTarget:
 
     ``eval_data`` is the evaluation split the artifact is bound to: ``(x, y)`` arrays, a zero-arg
     callable returning them, or a path to an ``.npz`` with ``x``, ``y`` and optional ``indices``.
-    Images are uint8 or float32 NCHW in [0, 1]; the model must consume x directly (no external
-    normalisation, spec section 11.3.1).
+    ``dataset_id`` names that split's dataset and is required: an upload is bound to a dataset at
+    registration (spec 5.5) and the manifest never guesses one. Images are uint8 or float32 NCHW in
+    [0, 1]; the model must consume x directly (no external normalisation, spec section 11.3.1).
     """
 
     def __init__(
@@ -277,6 +297,7 @@ class ArtifactTarget:
         *,
         class_names: list[str],
         eval_data: EvalData,
+        dataset_id: str,
         declared_format: str | None = None,
         expected_sha256: str | None = None,
         architecture_id: str | None = None,
@@ -284,12 +305,13 @@ class ArtifactTarget:
         input_shape: tuple[int, ...] | None = None,
         name: str | None = None,
         domain: Domain = "image",
-        dataset_id: str | None = None,
         dataset_split: str | None = None,
         dataset_revision: str | None = None,
         license: str | None = None,
         intra_op_threads: int = 2,
     ) -> None:
+        if not isinstance(dataset_id, str) or not dataset_id.strip():
+            raise ValueError("ArtifactTarget needs the dataset_id its evaluation split belongs to")
         self.id = target_id
         self._path = Path(path)
         self._class_names = list(class_names)
@@ -313,6 +335,7 @@ class ArtifactTarget:
         self._indices: np.ndarray | None = None
         self._clf: Any = None
         self._output_kind: str | None = None
+        self._manifest: dict[str, Any] | None = None
 
     # -- protocol ---------------------------------------------------------------------
 
@@ -354,6 +377,15 @@ class ArtifactTarget:
         if probe.ndim != 2 or probe.shape[1] != len(self._class_names):
             raise UnsupportedArtifact(f"shape_mismatch: model emits {probe.shape[1:]} outputs, manifest declares "
                                       f"{len(self._class_names)} classes")
+        self._manifest = model_manifest(
+            f"uploaded model {self._path.name}",
+            name=self._name, modality=self._domain, format=self._format, sha256=self._sha256,
+            size_bytes=self._path.stat().st_size, architecture_id=self._arch_id, input_shape=list(sample_shape),
+            n_classes=len(self._class_names), class_names=self._class_names,
+            dataset_id=self._dataset["dataset_id"], dataset_revision=self._dataset["dataset_revision"],
+            dataset_split=self._dataset["dataset_split"], status="available",
+            gradients=self._module is not None, bundled=False, license=self._dataset["license"],
+        )
         self._x, self._y, self._indices = x, y.astype(np.int64), idx
 
     def sample(self, n: int, seed: int) -> Sample:
@@ -406,18 +438,15 @@ class ArtifactTarget:
         return self._module  # None for ONNX: no differentiable module, never faked
 
     def manifest(self) -> dict[str, Any]:
+        """The ``schema.MLModelManifest`` fields (validated at load) plus upload-specific provenance."""
         self.load()
-        assert self._x is not None and self._y is not None
+        assert self._y is not None and self._manifest is not None
         m: dict[str, Any] = {
-            "source": "uploaded", "file": self._path.name, "format": self._format, "sha256": self._sha256,
-            "size_bytes": self._path.stat().st_size, "architecture_id": self._arch_id,
-            "architecture_kwargs": self._arch_kwargs or None, "input_shape": list(self._x.shape[1:]),
-            "n_classes": len(self._class_names), "class_names": self._class_names,
-            "gradients": self._module is not None, "eval_n": int(self._y.shape[0]),
-            "eval_per_class": per_class_counts(self._y, self._class_names),
+            "source": "uploaded", "file": self._path.name, "architecture_kwargs": self._arch_kwargs or None,
+            "eval_n": int(self._y.shape[0]), "eval_per_class": per_class_counts(self._y, self._class_names),
             "library_versions": {**library_versions("torch", "onnx", "onnxruntime", "adversarial-robustness-toolbox"),
                                  "python": platform.python_version()},
-            **{k: v for k, v in self._dataset.items() if v is not None},
+            **self._manifest,
         }
         if self._onnx is not None:
             m["onnx"] = {"ir_version": self._onnx.ir_version, "opsets": self._onnx.opsets,
@@ -439,6 +468,7 @@ __all__ = [
     "load_onnx_model",
     "load_state_dict_module",
     "looks_like_probabilities",
+    "model_manifest",
     "resolve_architecture",
     "sha256_file",
     "sniff_format",

@@ -8,19 +8,24 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip("numpy")
-torch = pytest.importorskip("torch")
-onnx = pytest.importorskip("onnx")
+pytest.importorskip("torch")
+pytest.importorskip("onnx")
 pytest.importorskip("onnxruntime")
 pytest.importorskip("art")
 
 import numpy as np
+import onnx
+import torch
 from torch import nn
 
 from redsim.ml.errors import UnsupportedArtifact
+from redsim.ml.schema import MLModelManifest
 from redsim.ml.targets import artifact
 from redsim.ml.targets.artifact import ArtifactTarget
 from redsim.ml.targets.base import Target
 from tests.ml.fakes import CLASS_NAMES, _TinyNet
+
+DATASET = "synthetic/eval"        # every upload is bound to a dataset slice at registration (spec 5.5)
 
 pytestmark = [
     pytest.mark.ml,
@@ -134,8 +139,8 @@ def test_state_dict_architecture_mismatch_refused(tmp_path: Path, tinynet_arch: 
 def test_sha256_mismatch_refused(tmp_path: Path, tinynet_arch: str,
                                  eval_data: tuple[np.ndarray, np.ndarray]) -> None:
     p, _ = _state_dict_file(tmp_path / "m.pt")
-    t = ArtifactTarget("up1", p, class_names=list(CLASS_NAMES), eval_data=eval_data, architecture_id=tinynet_arch,
-                       expected_sha256="00" * 32)
+    t = ArtifactTarget("up1", p, class_names=list(CLASS_NAMES), eval_data=eval_data, dataset_id=DATASET,
+                       architecture_id=tinynet_arch, expected_sha256="00" * 32)
     with pytest.raises(UnsupportedArtifact, match="hash_mismatch"):
         t.load()
     assert artifact.verify_sha256(p, artifact.sha256_file(p)) == artifact.sha256_file(p)
@@ -166,8 +171,26 @@ def test_state_dict_round_trip(tmp_path: Path, tinynet_arch: str, eval_data: tup
     assert m["format"] == "torch_state_dict" and m["gradients"] is True and m["sha256"] == artifact.sha256_file(p)
     assert m["eval_per_class"] == {c: int((y == i).sum()) for i, c in enumerate(CLASS_NAMES)}
     assert "torch" in m["library_versions"]
+    mm = MLModelManifest.model_validate(m)                     # the schema block is a valid spec 5.5 manifest
+    assert mm.format == "torch_state_dict" and mm.architecture_id == tinynet_arch and mm.bundled is False
+    assert mm.size_bytes == p.stat().st_size and mm.input_shape == [3, 8, 8] and mm.n_classes == 3
+    assert mm.class_names == list(CLASS_NAMES) and mm.dataset_id == "synthetic" and mm.dataset_split == "eval"
+    assert mm.clean_accuracy is None                           # an upload has no build-time accuracy; the campaign measures it
+    assert mm.status == "available" and mm.gradients is True and mm.refusal_reason is None
+    assert mm.manifest_sha256 and m["manifest_sha256"] == mm.manifest_sha256
     info = t.info()
     assert info.status == "available" and info.metadata["gradients"] is True and info.metadata["loaded"] is True
+
+
+def test_artifact_target_requires_a_dataset_binding(tmp_path: Path, tinynet_arch: str,
+                                                    eval_data: tuple[np.ndarray, np.ndarray]) -> None:
+    p, _ = _state_dict_file(tmp_path / "m.pt")
+    with pytest.raises(TypeError):
+        ArtifactTarget("nods", p, class_names=list(CLASS_NAMES), eval_data=eval_data,  # type: ignore[call-arg]
+                       architecture_id=tinynet_arch)
+    with pytest.raises(ValueError, match="dataset_id"):
+        ArtifactTarget("nods", p, class_names=list(CLASS_NAMES), eval_data=eval_data, architecture_id=tinynet_arch,
+                       dataset_id="  ")
 
 
 def test_eval_data_from_npz_path(tmp_path: Path, tinynet_arch: str, eval_data: tuple[np.ndarray, np.ndarray]) -> None:
@@ -175,7 +198,8 @@ def test_eval_data_from_npz_path(tmp_path: Path, tinynet_arch: str, eval_data: t
     x, y = eval_data
     split = tmp_path / "eval.npz"
     np.savez(split, x=x, y=y, indices=np.arange(100, 130))
-    t = ArtifactTarget("up3", p, class_names=list(CLASS_NAMES), eval_data=split, architecture_id=tinynet_arch)
+    t = ArtifactTarget("up3", p, class_names=list(CLASS_NAMES), eval_data=split, dataset_id=DATASET,
+                       architecture_id=tinynet_arch)
     s = t.sample(9, seed=0)
     assert s.indices.min() >= 100 and s.indices.max() < 130
 
@@ -185,12 +209,14 @@ def test_class_count_and_input_shape_mismatch_refused(tmp_path: Path, tinynet_ar
     p, _ = _state_dict_file(tmp_path / "m.pt")
     x, y = eval_data
     with pytest.raises(UnsupportedArtifact, match="shape_mismatch"):
-        ArtifactTarget("up4", p, class_names=["a", "b", "c", "d"], eval_data=(x, y), architecture_id=tinynet_arch).load()
+        ArtifactTarget("up4", p, class_names=["a", "b", "c", "d"], eval_data=(x, y), dataset_id=DATASET,
+                       architecture_id=tinynet_arch).load()
     with pytest.raises(UnsupportedArtifact, match="shape_mismatch"):
-        ArtifactTarget("up5", p, class_names=list(CLASS_NAMES), eval_data=(x, y), architecture_id=tinynet_arch,
-                       input_shape=(3, 16, 16)).load()
+        ArtifactTarget("up5", p, class_names=list(CLASS_NAMES), eval_data=(x, y), dataset_id=DATASET,
+                       architecture_id=tinynet_arch, input_shape=(3, 16, 16)).load()
     with pytest.raises(UnsupportedArtifact, match="outside the declared class list"):
-        ArtifactTarget("up6", p, class_names=["a", "b"], eval_data=(x, y), architecture_id=tinynet_arch).load()
+        ArtifactTarget("up6", p, class_names=["a", "b"], eval_data=(x, y), dataset_id=DATASET,
+                       architecture_id=tinynet_arch).load()
 
 
 # ----------------------------------------------------------------------------------------
@@ -201,7 +227,8 @@ def test_onnx_round_trip(tmp_path: Path, eval_data: tuple[np.ndarray, np.ndarray
     net = _TinyNet(7).eval()
     p = _onnx_file(tmp_path / "tiny.onnx", net)
     assert artifact.detect_format(p, "onnx") == "onnx"
-    t = ArtifactTarget("onnx1", p, class_names=list(CLASS_NAMES), eval_data=eval_data, declared_format="onnx")
+    t = ArtifactTarget("onnx1", p, class_names=list(CLASS_NAMES), eval_data=eval_data, dataset_id=DATASET,
+                       declared_format="onnx", license="test fixture")
     t.load()
     x, _ = eval_data
     proba = t.predict_proba(x)
@@ -217,6 +244,10 @@ def test_onnx_round_trip(tmp_path: Path, eval_data: tuple[np.ndarray, np.ndarray
     assert m["format"] == "onnx" and m["gradients"] is False
     assert m["onnx"]["opsets"].get("ai.onnx") == 17 and m["onnx"]["output_kind"] == "logits"
     assert m["onnx"]["estimator"] == "BlackBoxClassifier"
+    mm = MLModelManifest.model_validate(m)
+    assert mm.format == "onnx" and mm.gradients is False and mm.architecture_id is None and mm.bundled is False
+    assert mm.sha256 == artifact.sha256_file(p) and mm.size_bytes == p.stat().st_size and mm.input_shape == [3, 8, 8]
+    assert mm.dataset_id == DATASET and mm.dataset_split == "test" and mm.license == "test fixture"
     assert t.info().metadata["gradients"] is False
 
 
@@ -258,10 +289,10 @@ def test_onnx_shape_disagreements_refused(tmp_path: Path, eval_data: tuple[np.nd
     p = _onnx_file(tmp_path / "tiny.onnx", _TinyNet(0).eval())
     x, y = eval_data
     with pytest.raises(UnsupportedArtifact, match="shape_mismatch"):
-        ArtifactTarget("o2", p, class_names=["a", "b", "c", "d"], eval_data=(x, y)).load()
+        ArtifactTarget("o2", p, class_names=["a", "b", "c", "d"], eval_data=(x, y), dataset_id=DATASET).load()
     big = np.random.default_rng(0).random((30, 3, 16, 16), dtype=np.float32)
     with pytest.raises(UnsupportedArtifact, match="shape_mismatch"):
-        ArtifactTarget("o3", p, class_names=list(CLASS_NAMES), eval_data=(big, y)).load()
+        ArtifactTarget("o3", p, class_names=list(CLASS_NAMES), eval_data=(big, y), dataset_id=DATASET).load()
 
 
 def test_looks_like_probabilities() -> None:

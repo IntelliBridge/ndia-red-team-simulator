@@ -12,11 +12,13 @@ import pytest
 pytest.importorskip("httpx")
 pytest.importorskip("numpy")
 pytest.importorskip("PIL")
-pa = pytest.importorskip("pyarrow")
-pq = pytest.importorskip("pyarrow.parquet")
+pytest.importorskip("pyarrow")
+pytest.importorskip("pyarrow.parquet")
 
 import httpx
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
 from PIL import Image
 
 from redsim.ml.datasets import (

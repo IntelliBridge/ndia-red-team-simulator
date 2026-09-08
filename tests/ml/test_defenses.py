@@ -9,14 +9,14 @@ import pytest
 pytest.importorskip("numpy")
 pytest.importorskip("torch")
 pytest.importorskip("art")
-sklearn = pytest.importorskip("sklearn")
+pytest.importorskip("sklearn")
 
 import numpy as np
 from art.defences.preprocessor import FeatureSqueezing, JpegCompression, SpatialSmoothing
 from sklearn.ensemble import RandomForestClassifier
 
 from redsim.ml import defenses
-from redsim.ml.schema import ParamSpec, TargetInfo
+from redsim.ml.schema import DefenseConfig, ParamSpec, TargetInfo
 from redsim.ml.targets.base import Sample, Target
 from tests.ml.fakes import TinyTarget
 
@@ -72,8 +72,45 @@ def test_list_defenses_catalog_shape() -> None:
         assert all(isinstance(p, ParamSpec) for p in r["params_schema"]) and r["params_schema"]
         assert any("adaptive attacks" in ref for ref in r["references"])
         assert "image" in r["domains"]
+        cfg = DefenseConfig(id=r["id"], art_class=r["art_class"])      # every catalog row is a valid DefenseConfig
+        assert defenses.resolve_defense_spec(cfg) == (r["id"], {})
     assert "tabular" in defenses.get_defense("feature_squeezing")["domains"]
     assert "tabular" not in defenses.get_defense("jpeg_compression")["domains"]
+
+
+def test_apply_defense_accepts_a_defense_config() -> None:
+    base = TinyTarget(seed=0)
+    cfg = DefenseConfig(id="feature_squeezing", art_class="art.defences.preprocessor.FeatureSqueezing",
+                        params={"bit_depth": 2})
+    defended = defenses.apply_defense(base, cfg)
+    assert isinstance(defended, defenses.DefendedTarget) and isinstance(defended, Target)
+    assert defended.defense_id == "feature_squeezing" and defended.params == {"bit_depth": 2}
+    assert defended.defense_config() == cfg
+    assert defended.describe()["art_class"] == cfg.art_class and defended.info().metadata["defense"]["id"] == cfg.id
+    x = base.sample(6, seed=1).x
+    by_id = defenses.apply_defense(base, "feature_squeezing", {"bit_depth": 2})     # the (id, params) form
+    assert np.allclose(defended.predict_proba(x), by_id.predict_proba(x))
+    assert by_id.defense_config() == cfg                                              # art_class filled from the catalog
+
+    by_map = defenses.apply_defense(base, {"id": "spatial_smoothing", "params": {"window_size": 5}})
+    assert by_map.defense_config() == DefenseConfig(id="spatial_smoothing", params={"window_size": 5},
+                                                    art_class="art.defences.preprocessor.SpatialSmoothing")
+    defaults = defenses.apply_defense(base, DefenseConfig(id="jpeg_compression"))
+    assert defaults.defense_config().params == {"quality": 50}                        # resolved params are recorded
+
+    with pytest.raises(ValueError, match="is art.defences.preprocessor.FeatureSqueezing, not"):
+        defenses.apply_defense(base, DefenseConfig(id="feature_squeezing",
+                                                   art_class="art.defences.preprocessor.JpegCompression"))
+    with pytest.raises(ValueError, match="inside the DefenseConfig"):
+        defenses.apply_defense(base, cfg, {"bit_depth": 3})
+    with pytest.raises(ValueError, match="invalid defense config"):
+        defenses.apply_defense(base, {"params": {"bit_depth": 3}})
+    with pytest.raises(ValueError, match="unknown defense"):
+        defenses.apply_defense(base, DefenseConfig(id="distillation"))
+    with pytest.raises(ValueError):
+        defenses.apply_defense(base, DefenseConfig(id="feature_squeezing", params={"bit_depth": 9}))
+    with pytest.raises(TypeError):
+        defenses.apply_defense(base, 42)  # type: ignore[arg-type]
 
 
 def test_resolve_params_defaults_and_bounds() -> None:

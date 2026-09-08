@@ -23,6 +23,10 @@ Manifest entry shape (see ``bundled.py`` for the file layout):
 The evaluation split ``.npz`` holds precomputed features ``x`` (n, n_features) float32, labels ``y``
 and optional ``indices``. URL strings are data: nothing here fetches, resolves or renders one, and
 the target never needs the strings at runtime because the features are precomputed at build time.
+
+``manifest()`` returns the ``schema.MLModelManifest`` fields (``features`` as ``FeatureSpec`` rows,
+``surrogate`` as ``SurrogateInfo``, validated at load) merged over the raw asset entry and the
+load-time provenance (``feature_names``, ``perturbable``, ``weights_sha256_verified``, ``eval_per_class``).
 """
 
 from __future__ import annotations
@@ -37,16 +41,18 @@ import numpy as np
 from redsim.ml.datasets.sampling import per_class_counts, stratified_sample
 from redsim.ml.errors import TargetUnavailable, UnsupportedArtifact
 from redsim.ml.schema import TargetInfo
-from redsim.ml.targets.artifact import library_versions, sha256_file, verify_sha256
+from redsim.ml.targets.artifact import library_versions, model_manifest, sha256_file, verify_sha256
 from redsim.ml.targets.base import Sample
 from redsim.ml.targets.bundled import (
     BUILD_HINT,
     MANIFEST_NAME,
     assets_dir,
+    clean_accuracy_entry,
     manifest_entry,
     read_manifest,
     register_once,
     resolve_asset_path,
+    surrogate_info_entry,
 )
 
 # Contract with redsim/ml/datasets/url_features.py (assets branch). Used only when that module is absent.
@@ -97,6 +103,7 @@ class BundledTabularTarget:
         self._column_order: np.ndarray | None = None
         self._sha256: str | None = None
         self._clf: Any = None
+        self._manifest: dict[str, Any] | None = None
 
     @property
     def root(self) -> Path:
@@ -135,7 +142,8 @@ class BundledTabularTarget:
         return TargetInfo(id=self.id, name=str(entry.get("name") or self._name), domain="tabular",
                           status="available", metadata=meta)
 
-    def _load_pickle_after_digest(self, rel: str, expected: Any, what: str) -> tuple[Any, str]:
+    def _load_pickle_after_digest(self, rel: str, expected: Any, what: str) -> tuple[Any, str, Path]:
+        """``(object, verified sha256, path)`` for a bundled joblib file, opened only after its digest matched."""
         path = resolve_asset_path(self.root, rel)
         if not path.is_file():
             raise TargetUnavailable(f"{what} for {self.id!r} not found at {path}; {BUILD_HINT}")
@@ -152,7 +160,7 @@ class BundledTabularTarget:
             obj = joblib.load(path)
         except Exception as exc:
             raise UnsupportedArtifact(f"{what} for {self.id!r} failed to deserialise: {exc}") from exc
-        return obj, digest
+        return obj, digest, path
 
     def load(self) -> None:
         if self._x is not None:
@@ -164,7 +172,7 @@ class BundledTabularTarget:
         rel = entry.get("weights")
         if not isinstance(rel, str):
             raise UnsupportedArtifact(f"manifest entry {self.id!r} has no 'weights' path")
-        model, self._sha256 = self._load_pickle_after_digest(rel, entry.get("sha256"), "model")
+        model, self._sha256, weights = self._load_pickle_after_digest(rel, entry.get("sha256"), "model")
         if not hasattr(model, "predict_proba"):
             raise UnsupportedArtifact(f"bundled model for {self.id!r} has no predict_proba")
 
@@ -211,6 +219,19 @@ class BundledTabularTarget:
         if np.asarray(probe).shape[1] != len(names):
             raise UnsupportedArtifact(f"shape_mismatch: model emits {np.asarray(probe).shape[1]} classes, manifest "
                                       f"declares {len(names)}")
+        surrogate = entry.get("surrogate")
+        self._manifest = model_manifest(
+            f"manifest entry {self.id!r}",
+            name=str(entry.get("name") or self._name), modality="tabular", format="sklearn_joblib",
+            sha256=self._sha256, size_bytes=weights.stat().st_size, architecture_id=entry.get("architecture_id"),
+            input_shape=[int(x.shape[1])], n_classes=len(names), class_names=names,
+            features=features or None, surrogate=surrogate_info_entry(surrogate),
+            dataset_id=entry.get("dataset_id"), dataset_revision=entry.get("dataset_revision"),
+            dataset_split=entry.get("dataset_split"),
+            clean_accuracy=clean_accuracy_entry(entry.get("clean_accuracy"), entry.get("dataset_split")),
+            status="available", gradients=bool(surrogate),  # only via the declared surrogate, never natively
+            bundled=True, license=entry.get("license"), source_url=entry.get("source_url"),
+        )
         self._entry, self._model, self._class_names = entry, model, names
         self._features, self._feature_names = features, feature_names
         self._x, self._y, self._indices = x, y, idx
@@ -275,7 +296,7 @@ class BundledTabularTarget:
         if self._surrogate_clf is None:
             from art.estimators.classification import SklearnClassifier
 
-            self._surrogate, _ = self._load_pickle_after_digest(str(decl["path"]), decl.get("sha256"), "surrogate")
+            self._surrogate, _, _ = self._load_pickle_after_digest(str(decl["path"]), decl.get("sha256"), "surrogate")
             self._surrogate_clf = SklearnClassifier(model=self._surrogate, clip_values=self.feature_ranges())
         return self._surrogate_clf
 
@@ -294,19 +315,20 @@ class BundledTabularTarget:
         return list(self._feature_names)
 
     def manifest(self) -> dict[str, Any]:
+        """Raw asset entry + load-time provenance, with the validated ``MLModelManifest`` fields on top."""
         self.load()
-        assert self._entry is not None and self._y is not None and self._x is not None
+        assert self._entry is not None and self._manifest is not None and self._y is not None and self._x is not None
         return {
             **self._entry,
             "id": self.id, "source": "bundled", "weights_sha256_verified": self._sha256,
-            "class_names": self._class_names, "feature_names": self._feature_names,
-            "perturbable": self.perturbable_mask().tolist(), "n_features": int(self._x.shape[1]),
-            "gradients": bool(self._entry.get("surrogate")), "torch_model": None,
+            "feature_names": self._feature_names, "perturbable": self.perturbable_mask().tolist(),
+            "n_features": int(self._x.shape[1]), "torch_model": None,
             "explainer": "TreeExplainer on the real model", "realizability": REALIZABILITY_NOTE,
             "eval_n": int(self._y.shape[0]), "eval_per_class": per_class_counts(self._y, self._class_names),
             "library_versions": {**library_versions("scikit-learn", "adversarial-robustness-toolbox", "numpy"),
                                  "python": platform.python_version()},
             "assets_dir": str(self.root),
+            **self._manifest,
         }
 
 

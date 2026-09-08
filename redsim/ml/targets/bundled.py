@@ -30,6 +30,10 @@ image-classification layout (``img`` struct, ``label``) is also accepted.
 Every load verifies the weights digest against the manifest before ``torch.load(weights_only=True)``.
 Registration at import touches no file: ``info()`` reads the manifest lazily and reports the target as
 ``not_implemented`` with a reason while the assets are absent, since ``TargetStatus`` has no third value.
+
+``manifest()`` returns the ``schema.MLModelManifest`` fields (validated at load, so a malformed entry is
+refused before anything runs) merged over the raw asset entry and the load-time provenance
+(``weights_sha256_verified``, ``eval_n``, ``eval_per_class``, ``library_versions``).
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ from redsim.ml.targets.artifact import (
     detect_format,
     library_versions,
     load_state_dict_module,
+    model_manifest,
     sha256_file,
     verify_sha256,
 )
@@ -104,6 +109,45 @@ def resolve_asset_path(root: Path, rel: str) -> Path:
     return candidate
 
 
+def accuracy_point(block: Any) -> dict[str, Any] | None:
+    """``schema.AccuracyPoint`` fields from a manifest count block.
+
+    Accepts ``{"n", "n_correct"[, "accuracy"]}`` as written, or the rate form ``{"value", "n"}`` from which
+    ``n_correct`` is ``round(value * n)``. Anything else yields ``None`` (unknown, never guessed).
+    """
+    if not isinstance(block, dict):
+        return None
+    if "n" in block and "n_correct" in block:
+        n, n_correct = int(block["n"]), int(block["n_correct"])
+        acc = block.get("accuracy")
+        accuracy = float(acc) if acc is not None else (n_correct / n if n else None)
+        return {"n": n, "n_correct": n_correct, "accuracy": accuracy}
+    if "n" in block and "value" in block:
+        n, rate = int(block["n"]), float(block["value"])
+        return {"n": n, "n_correct": round(rate * n), "accuracy": rate}
+    return None
+
+
+def clean_accuracy_entry(block: Any, default_split: Any) -> dict[str, Any] | None:
+    """``schema.CleanAccuracy`` fields from an entry's ``clean_accuracy`` block (``split`` falls back to the
+    evaluation split). A block that is not a mapping is malformed and refused."""
+    if block is None:
+        return None
+    if not isinstance(block, dict):
+        raise UnsupportedArtifact(f"clean_accuracy must be a {{value, n, split}} block, got {block!r}")
+    return {**block, "split": block.get("split") or default_split}
+
+
+def surrogate_info_entry(block: Any) -> dict[str, Any] | None:
+    """``schema.SurrogateInfo`` fields from an entry's ``surrogate`` block (its ``path`` stays in the raw entry)."""
+    if block is None:
+        return None
+    if not isinstance(block, dict):
+        raise UnsupportedArtifact(f"surrogate must be a {{kind, path, sha256, agreement_clean}} block, got {block!r}")
+    return {"kind": block.get("kind"), "sha256": block.get("sha256"),
+            "agreement_clean": accuracy_point(block.get("agreement_clean"))}
+
+
 def load_eval_split(path: Path, *, expected_sha256: str | None = None
                     ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, list[str] | None]:
     """``(x, y, indices | None, class_names | None)`` from an ``.npz`` or an HF image parquet."""
@@ -145,6 +189,7 @@ class BundledImageTarget:
         self._class_names: list[str] = []
         self._sha256: str | None = None
         self._clf: Any = None
+        self._manifest: dict[str, Any] | None = None
 
     # -- manifest access -----------------------------------------------------------------
 
@@ -230,6 +275,17 @@ class BundledImageTarget:
         probe = self._logits(module, as_model_input(x[:1]))
         if probe.ndim != 2 or probe.shape[1] != n_classes:
             raise UnsupportedArtifact(f"shape_mismatch: model emits {probe.shape[1:]} outputs for {n_classes} classes")
+        self._manifest = model_manifest(
+            f"manifest entry {self.id!r}",
+            name=str(entry.get("name") or self._name), modality="image", format="torch_state_dict",
+            sha256=self._sha256, size_bytes=weights.stat().st_size, architecture_id=entry.get("architecture_id"),
+            input_shape=[int(d) for d in x.shape[1:]], n_classes=n_classes, class_names=names,
+            dataset_id=entry.get("dataset_id"), dataset_revision=entry.get("dataset_revision"),
+            dataset_split=entry.get("dataset_split"),
+            clean_accuracy=clean_accuracy_entry(entry.get("clean_accuracy"), entry.get("dataset_split")),
+            status="available", gradients=True, bundled=True, license=entry.get("license"),
+            source_url=entry.get("source_url"),
+        )
         self._entry, self._module, self._class_names = entry, module, names
         self._x, self._y, self._indices = x, y, idx
 
@@ -275,17 +331,18 @@ class BundledImageTarget:
         return self._module
 
     def manifest(self) -> dict[str, Any]:
+        """Raw asset entry + load-time provenance, with the validated ``MLModelManifest`` fields on top."""
         self.load()
-        assert self._entry is not None and self._y is not None and self._x is not None
+        assert self._entry is not None and self._manifest is not None and self._y is not None
         return {
             **self._entry,
             "id": self.id, "source": "bundled", "fixture_only": bool(self._entry.get("fixture_only", self._fixture_only)),
-            "weights_sha256_verified": self._sha256, "class_names": self._class_names,
-            "input_shape": [int(d) for d in self._x.shape[1:]], "gradients": True,
+            "weights_sha256_verified": self._sha256,
             "eval_n": int(self._y.shape[0]), "eval_per_class": per_class_counts(self._y, self._class_names),
             "library_versions": {**library_versions("torch", "adversarial-robustness-toolbox", "numpy"),
                                  "python": platform.python_version()},
             "assets_dir": str(self.root),
+            **self._manifest,
         }
 
 
@@ -303,6 +360,6 @@ CIFAR10_SMALLCNN = register_once(BundledImageTarget(
 
 __all__ = [
     "ASSETS_DIR_ENV", "BUILD_HINT", "CIFAR10_SMALLCNN", "DEFAULT_ASSETS_DIR", "MANIFEST_NAME", "VEHICLES_CNN",
-    "BundledImageTarget", "assets_dir", "load_eval_split", "manifest_entry", "read_manifest", "register_once",
-    "resolve_asset_path",
+    "BundledImageTarget", "accuracy_point", "assets_dir", "clean_accuracy_entry", "load_eval_split", "manifest_entry",
+    "read_manifest", "register_once", "resolve_asset_path", "surrogate_info_entry",
 ]

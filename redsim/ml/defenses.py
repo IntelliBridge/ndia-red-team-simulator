@@ -1,10 +1,13 @@
 """ART preprocessing defenses for the verify-after-harden loop (spec section 16.6).
 
-``apply_defense(target, defense_id, params)`` returns a wrapped ``Target`` whose
+``apply_defense(target, defense, params)`` returns a wrapped ``Target`` whose
 ``art_classifier()`` carries the ART preprocessor (``FeatureSqueezing``,
 ``SpatialSmoothing``, ``JpegCompression``) and whose ``predict_proba`` applies the
 same preprocessing, so attacks run through ART and measurements taken through
-``predict_proba`` see one and the same defended model.
+``predict_proba`` see one and the same defended model. ``defense`` is either a
+catalog id with separate ``params`` or a ``schema.DefenseConfig`` (``id``,
+``art_class``, ``params``), the shape ``CampaignConfig.defense`` carries; a config
+whose ``art_class`` contradicts the catalog entry for its id is refused.
 
 The wrapper is honest about what it does not do: ``torch_model()`` still returns
 the undefended module (the preprocessors are numpy transforms with no torch
@@ -17,12 +20,16 @@ them must disclose the adaptive-attack bypass (Athalye, Carlini, Wagner 2018).
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
+from pydantic import ValidationError
 
-from redsim.ml.schema import ParamSpec, TargetInfo
+from redsim.ml.schema import DefenseConfig, ParamSpec, TargetInfo
 from redsim.ml.targets.base import Sample, Target
+
+DefenseSpec = str | DefenseConfig | Mapping[str, Any]
 
 _ADAPTIVE_BYPASS = ("Gradient-masking / input-transformation defenses are bypassed by adaptive attacks "
                     "(Athalye, Carlini, Wagner 2018, arXiv:1802.00420).")
@@ -73,7 +80,33 @@ def get_defense(defense_id: str) -> dict[str, Any]:
     raise ValueError(f"unknown defense: {defense_id!r}; known: {[d['id'] for d in DEFENSES]}")
 
 
-def resolve_defense_params(defense_id: str, params: dict[str, Any] | None) -> dict[str, float | int | bool]:
+def resolve_defense_spec(defense: DefenseSpec, params: Mapping[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+    """``(defense_id, raw params)`` from a catalog id plus ``params``, or from a ``DefenseConfig`` / its mapping form.
+
+    A config carries its own ``params``, so passing ``params`` alongside one is refused rather than merged.
+    ``art_class`` on a config is checked against the catalog: an id that names a different ART class is a
+    contradiction, never a silent override.
+    """
+    if isinstance(defense, str):
+        return defense, dict(params or {})
+    if isinstance(defense, DefenseConfig):
+        cfg = defense
+    elif isinstance(defense, Mapping):
+        try:
+            cfg = DefenseConfig.model_validate(dict(defense))
+        except ValidationError as exc:
+            raise ValueError(f"invalid defense config: {exc}") from exc
+    else:
+        raise TypeError(f"defense must be an id, a DefenseConfig or a mapping, not {type(defense).__name__}")
+    if params:
+        raise ValueError(f"defense {cfg.id!r}: pass parameters inside the DefenseConfig, not alongside it")
+    spec = get_defense(cfg.id)
+    if cfg.art_class is not None and cfg.art_class != spec["art_class"]:
+        raise ValueError(f"defense {cfg.id!r} is {spec['art_class']}, not {cfg.art_class!r}")
+    return cfg.id, dict(cfg.params)
+
+
+def resolve_defense_params(defense_id: str, params: Mapping[str, Any] | None) -> dict[str, float | int | bool]:
     """Fill defaults, coerce types, reject unknown names and out-of-range values (``ValueError``)."""
     spec = get_defense(defense_id)
     schema = {p.name: p for p in spec["params_schema"]}
@@ -164,7 +197,8 @@ def _with_defence(base_clf: Any, preprocessor: Any) -> Any:
 class DefendedTarget:
     """``Target`` whose inputs pass through one ART preprocessing defense before the wrapped model."""
 
-    def __init__(self, base: Target, defense_id: str, params: dict[str, Any] | None = None) -> None:
+    def __init__(self, base: Target, defense: DefenseSpec, params: Mapping[str, Any] | None = None) -> None:
+        defense_id, params = resolve_defense_spec(defense, params)
         spec = get_defense(defense_id)
         base_info = base.info()
         if base_info.domain not in spec["domains"]:
@@ -196,10 +230,14 @@ class DefendedTarget:
         out, _ = self.preprocessor()(np.asarray(x, dtype=np.float32))
         return np.asarray(out, dtype=np.float32)
 
+    def defense_config(self) -> DefenseConfig:
+        """The applied defense as the ``schema.DefenseConfig`` a verify campaign records (resolved params)."""
+        return DefenseConfig(id=self.defense_id, art_class=self._spec["art_class"], params=dict(self.params))
+
     def describe(self) -> dict[str, Any]:
-        return {"id": self.defense_id, "name": self._spec["name"], "params": dict(self.params),
-                "art_class": self._spec["art_class"], "references": list(self._spec["references"]),
-                "torch_model_defended": False}
+        """``defense_config()`` plus the catalog name, references and what the wrapper does not defend."""
+        return {**self.defense_config().model_dump(mode="json"), "name": self._spec["name"],
+                "references": list(self._spec["references"]), "torch_model_defended": False}
 
     # -- Target protocol -------------------------------------------------------------------
 
@@ -232,10 +270,14 @@ class DefendedTarget:
         return {**self.base.manifest(), "defense": self.describe()}
 
 
-def apply_defense(target: Target, defense_id: str, params: dict[str, Any] | None = None) -> Target:
-    """Wrap ``target`` with an ART preprocessing defense. ``ValueError`` on unknown id, bad params or domain."""
-    return DefendedTarget(target, defense_id, params)
+def apply_defense(target: Target, defense: DefenseSpec, params: Mapping[str, Any] | None = None) -> Target:
+    """Wrap ``target`` with an ART preprocessing defense.
+
+    ``defense`` is a catalog id (with ``params``) or a ``schema.DefenseConfig`` / its ``{id, art_class, params}``
+    mapping. ``ValueError`` on an unknown id, bad params, a contradicting ``art_class`` or the wrong domain.
+    """
+    return DefendedTarget(target, defense, params)
 
 
-__all__ = ["DEFENSES", "DefendedTarget", "apply_defense", "build_preprocessor", "get_defense", "list_defenses",
-           "resolve_defense_params"]
+__all__ = ["DEFENSES", "DefendedTarget", "DefenseSpec", "apply_defense", "build_preprocessor", "get_defense",
+           "list_defenses", "resolve_defense_params", "resolve_defense_spec"]
