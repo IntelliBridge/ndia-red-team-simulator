@@ -1,7 +1,14 @@
 # Workstream: Pythia access: gateway URL, key provisioning, connectivity check
 
-Status: placeholder, work in progress (opened 2026-09-08).
+Status: implemented on `feat/pythia-access` (PR #11), opened 2026-09-08.
 
-Wires the hardening writer to the Pythia gateway: PYTHIA_BASE_URL / PYTHIA_API_KEY / PYTHIA_PERSONA / AEGIS_ML_LLM_MODEL in .env.example and deploy config, an aegis ml pythia-check command that lists /v1/models and runs one chat completion, and a note on how the key is provisioned (GovCloud). No secrets committed.
+Wires the hardening writer to the Pythia gateway. Delivered:
 
-Source of truth: docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md.
+- `redsim/llm/pythia.py`: `.env` loading (`REDSIM_ENV_FILE`, default `./.env`, environment wins), `REDSIM_ML_LLM_MODEL` with `AEGIS_ML_LLM_MODEL` as a deprecated alias, TLS verification through the OS trust store (`truststore`) or a PEM bundle (`REDSIM_CA_BUNDLE` / `SSL_CERT_FILE`), and `GET /v1/models`.
+- `python -m redsim.llm.pythia_check`: prints which settings are present (never the key), lists entitled models, runs one short chat completion, exits 0 or 1.
+- `deploy/docker-compose.yml`: `PYTHIA_*` and `REDSIM_ML_LLM_MODEL` passthrough on `redsim-api` and the worker pool.
+- `docs/ops/pythia.md`: operator guide, including the Zscaler note and the entitled model list observed on 2026-09-08.
+
+No secrets committed. The key lives in the gitignored `.env`.
+
+Source of truth: docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md (D5, section 20).
