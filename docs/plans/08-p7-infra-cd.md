@@ -1,3 +1,9 @@
+> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **Milestone M7**; features **F001 auth** + **F008 audit** on Fargate.
+>
+> Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): deploy the **aegis multi-service stack** (api, worker, beat, web, log-ingest), not a two-image redsim stack; **no EFS** — storage is RDS PostgreSQL 16 + ElastiCache Redis + two S3 buckets (one Object-Lock WORM); Keycloak on Fargate; Secrets Manager; the existing OIDC deploy pipeline still applies.
+>
+> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+
 # P7 — Infrastructure & CD to AWS ECS
 
 Owner: Dev D or the backend lead. Wave: 1 (parallel from day 0). Depends on: P0

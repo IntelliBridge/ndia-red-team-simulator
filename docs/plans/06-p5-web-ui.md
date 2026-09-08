@@ -1,3 +1,9 @@
+> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **Milestones M5a/M5b**; UI for features **F002/F005/F006/F007**.
+>
+> Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): app is `@aegis/web`; add auth-aware pages — `/models`, `/models/[id]` launcher, 13-panel `/runs/[id]`, three-pane `/findings/[id]`, plus `/login`/`/projects` from F001 (v1 had no auth screens); new design-system components `MriScorecard`/`DimensionBars`/`RobustnessCurve`; `/targets` redirects to `/models`.
+>
+> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+
 # Phase P5 — Web UI
 
 Status: v1, 2026-09-08. Owner: Dev D (Dev C pairs on the scorecard and

@@ -1,3 +1,9 @@
+> **SUPERSEDED / RECONCILED (2026-09-08 spec update).** This file was written for v1 against the deleted `redsim/` package. It now maps to: **Milestone M0** (scaffold + migration `0010_ml_vertical`); cross-cutting contracts for **F002/F003/F004**.
+>
+> Substrate corrections (see `00-master-plan.md` §2 and the canonical spec): package `redsim/` → `aegis/ml/`; schema lives in `aegis/ml/schema.py`; no new `create_app` — ML routers mount on the existing `aegis/api/app.py`; add `targets.detail` JSONB + `ml_campaigns` table via one Alembic migration; widen `RunConfig` to attack-set + ε-grid + MRI weights.
+>
+> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+
 # P0 — Contracts, schema additions & API skeleton
 
 Status: v1, 2026-09-08. Owner: Backend lead. Wave: 0 (blocking, ~0.5 day).

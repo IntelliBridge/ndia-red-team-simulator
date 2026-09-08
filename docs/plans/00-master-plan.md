@@ -1,288 +1,167 @@
-# redsim — Master Implementation Plan
+# redsim → aegis/ml — Master Implementation Plan (reconciled)
 
-Status: v1, 2026-09-08. Scope: hackathon Phase A + interoperability, deployed
-live on AWS ECS. Team: 3-4 developers working in parallel.
+Status: v2, 2026-09-08. Supersedes v1. This version is rebased on the
+**aegis platform** after the `main` restructure of 2026-09-08.
 
-This is the coordination document. Each phase has its own detailed plan in this
-directory (`01-*.md` through `08-*.md`). Read this file first, then your phase
-file. Build against the **shared contracts** in section 6 so parallel work
-integrates cleanly.
+## 0. What changed since v1 (read this first)
 
----
+v1 of this plan was written against a standalone `redsim/` package with a
+filesystem store, a thread-pool, no auth, and no audit. That package was
+**deleted on `main`**. The repository now:
 
-## 1. Goal
+- keeps the ML vertical in **`aegis/ml/`** (contracts only today), inside the
+  restored aegis platform;
+- is governed by a new canonical product spec,
+  `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md`, which
+  supersedes both the hackathon spec and the redsim design spec;
+- adds a **Spec Kit feature layer**, `specs/F001`–`F008`, as the feature-level
+  source of truth beneath that product spec.
 
-Ship a working adversarial-ML red-team simulator that a judge can drive in a
-browser against the deployed AWS stack. A user picks a model target, launches an
-attack, and sees the adversarial examples, the SHAP explanation, a Model
-Robustness Index (MRI) scorecard, and candidate hardening recommendations, side
-by side. The run's adversarial examples publish as a Croissant dataset another
-team can consume, and every finding carries its MITRE ATLAS technique.
+Every architectural assumption in v1 is overridden. The corrections are in
+sections 2 and 5. Two things we had **missed** and now cover: authentication
+(F001) and the audit chain (F008). One thing that was **dropped** in the
+consolidation: interoperability (see section 6).
 
-The four locked decisions that shape this plan:
+## 1. Authoritative sources (in order)
 
-- **Team:** 3-4 developers. Work is sliced into 8 discrete phases with explicit
-  interface contracts.
-- **Architecture:** the `redsim` package and its design spec
-  (`docs/superpowers/specs/2026-09-08-redsim-design.md`) are authoritative for
-  the core. The hackathon spec (`docs/adversarial-ml-redteam-spec.md`) layers on
-  three additions: MRI scoring, interoperability (Croissant + MITRE ATLAS), and
-  the AWS ECS deployment.
-- **Done bar:** the demo runs live on AWS ECS Fargate. Infrastructure is on the
-  critical path, not a stretch.
-- **Feature scope:** Phase A (image + tabular; FGSM/PGD/noise; SHAP; MRI;
-  recommendations; the two-column UI) plus interoperability (Croissant dataset
-  export, ONNX ingest, MITRE ATLAS tagging). Text, object detection, black-box
-  attacks, and Palantir/Lattice are out of scope for this plan.
+1. `docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md` — the
+   product spec. Decisions D1–D13 are final and override every source.
+2. `specs/` — the Spec Kit feature layer (F001–F008), each with spec, plan, and
+   tasks. Where a feature file conflicts with the product spec, the product spec
+   wins.
+3. `specs/_shared/{architecture,decisions,analysis}.md` — shared contracts and
+   the D001–D007 clarification register (D006, D007 still open).
 
-## 2. Reconciling the two specs
+Note the stale files: the repo `CLAUDE.md` still describes the old `redsim/`
+world (filesystem, `redsim.api.app:create_app`, no Postgres/Celery). It is
+out of date after the restructure. Do not build against it.
 
-The hackathon spec predates the `redsim` restructure, so where they differ, the
-`redsim` design spec wins. Concretely:
+## 2. Substrate correction (v1 → v2)
 
-- **Persistence** is the filesystem `RunStore` (design spec), not Postgres/RLS.
-  On AWS the run directory lives on an EFS mount; S3 holds published datasets
-  and reports.
-- **Jobs** run on an in-process thread pool (`redsim/jobs.py`), not Celery.
-- **The evidence model** is `measurements` / `observations` / `interpretation` /
-  `recommendations` on `RunRecord`, not an aegis-style `Finding` table. MRI and
-  ATLAS attach to these models, defined in Phase 0.
-- **Deployment** is ECS Fargate (hackathon spec), replacing the design spec's
-  local docker-compose as the done bar, while compose stays the local dev target.
+| Concern | v1 assumption (wrong now) | v2 authoritative (aegis) |
+|---|---|---|
+| Package | `redsim/…` | `aegis/ml/…` (D7); "redsim" retired |
+| Persistence | filesystem `RunStore` on EFS | Postgres + RLS; run record as sha256 Artifact; `ml_campaigns` table; S3/MinIO for bytes (D1) |
+| Run progress | `run.json` per stage | `Run.stage_table` JSON column + Redis run-event channel |
+| Jobs | in-process thread pool `redsim/jobs.py` | Celery on Redis; admission→execution split; `aegis/workers/job_state.py` |
+| Model loading | in worker process | sandboxed child subprocess `python -m aegis.ml.sandbox_worker` (D2) |
+| API | new `redsim/api/app.py:create_app` | routers under `aegis/api/v1/` mounted on the existing `aegis/api/app.py` |
+| Auth | none | Keycloak OIDC + NextAuth + session cookie; role ranks `scanner<remediator<approver<admin` (F001) |
+| Audit | none | hash-chained append-only audit + WORM to S3 (F008) |
+| Storage on AWS | EFS + RDS | RDS PostgreSQL 16 + ElastiCache Redis + **S3 (two buckets, one Object-Lock WORM); no EFS** |
+| LLM env | `REDSIM_LLM_MODEL` | `AEGIS_ML_LLM_MODEL`, via Pythia only |
+| Demo data | CIFAR-10 | `leibnitz-lab/military_vehicles` (image) + `lacg030175/UNSW-NB15` (tabular); CIFAR-10 is a CI fixture only (D3) |
 
-## 3. Current state (verified inventory)
+## 3. Scope (canonical Phase A)
 
-- **Backend contracts exist and are frozen-ish:** `schema.py` (all record
-  models), `state.py` (`RunStore`), `registry.py` (`Registry`),
-  `targets/base.py` (`Target` Protocol, `Sample`), `attacks/base.py`
-  (`AttackAdapter` Protocol, `AttackOutput`), `recommend/guardrails.py`,
-  `recommend/pythia_client.py`, `redact.py`, `report.py` (helpers only).
-- **Backend implementations are missing:** every target/attack/explain
-  implementation, `recommend/rules.py`, `recommend/narrative.py`, `runs.py`,
-  `jobs.py`, `api/app.py`, `api/routes.py`, `setup_assets.py`, `cli.py`.
-- **Frontend shell exists:** layout, nav, theming, command palette, and the
-  `api<T>` client (`web/src/lib/api.ts`, base `NEXT_PUBLIC_REDSIM_API_URL` →
-  `http://localhost:8000`). All four feature routes are placeholders. The
-  design system (`@redsim/design-system`) ships `Table`, `Card`, `Alert`,
-  `Input`, `Textarea`, `Tooltip`, `AlertDialog`, `Command`, plus `RunStatusBadge`,
-  `SeverityChip`, `StageTimeline`, `ToastList`.
-- **CI/CD exists:** GitHub OIDC role, three ECR repos, and
-  `.github/workflows/deploy-aws.yml` build both images and hold a deploy job
-  that activates once the ECS repo variables are set.
-- **The API entrypoint is a stub:** `redsim.api.app:create_app` does not exist,
-  so the built `api` image serves nothing yet.
+Image and tabular classifiers, both live end to end. Bundled models plus
+white-box upload (ONNX preferred; PyTorch `state_dict` with declared
+architecture; full pickles refused; loaded only in the sandboxed worker).
+Attacks FGSM and PGD for image, PGD-surrogate and HopSkipJump for tabular, each
+paired with a benign noise control, swept over ε `{0.01, 0.03, 0.1}` with a
+robustness curve. SHAP explanations, the five-subscore MRI, deterministic plus
+Pythia-written recommendations, the verify-after-harden loop with measured
+ΔMRI, hash-chained audit, evidence and reports, the web UI, and Keycloak auth
+with RLS. The spec states plainly that this scope exceeds a 1–2 day build.
 
-## 4. Phase catalog
+## 4. Workstreams for 3–4 developers
 
-| Phase | Name | Owner role | Critical path |
-|---|---|---|---|
-| **P0** | Contracts, schema additions & API skeleton | Backend lead | Yes — blocks all |
-| **P1** | Targets & assets (CIFAR-10 image + tabular) | Dev A | Yes |
-| **P2** | Attacks & MRI scoring | Dev B | Yes |
-| **P3** | Explanation, recommendations & ATLAS | Dev C | Yes |
-| **P4** | Orchestration & API wiring | Backend lead | Yes — integration spine |
-| **P5** | Web UI | Dev D | Yes |
-| **P6** | Interoperability (Croissant + ONNX ingest) | rotates in | No — after P4 |
-| **P7** | Infrastructure & CD to AWS ECS | Dev D or lead | Yes — parallel from day 0 |
+The canonical spec owns the decomposition twice over: milestones **M0–M7**
+(build order) and features **F001–F008** (outcome verticals). This plan does not
+invent a third. It assigns those to parallel workstreams and gives the
+integration waves. Each workstream cites the milestone(s) and feature(s) it
+delivers.
 
-## 5. Dependency graph and wave schedule
+| WS | Owner | Milestones | Features | Deliverable |
+|---|---|---|---|---|
+| **WS0 Scaffold** | Backend lead | M0 | cross-cutting | `aegis/ml/` package, migration `0010_ml_vertical` (`targets.detail` JSONB + `ml_campaigns` table), schema widening (`RunConfig` → attack set + ε grid + MRI weights), new `Action` members + `viewer` rank, `ml` dep group (+`onnx2torch`, `safetensors`), env rename, `/v1/scans` unmounted, `aegis ml build-assets` CLI skeleton. Blocks all. |
+| **WS1 Catalog & ingest** | Dev A | M1, M4, M5b | F002 | `aegis/ml/targets/`, bundled-model seeding via `build-assets`, `POST /v1/models` upload, `model.validate` sandboxed task, `aegis/services/ml_models.py`, web `/models`. |
+| **WS2 Attacks, engine & scoring** | Dev B | M1, M3, M4, M6 | F003, F004 | `aegis/ml/attacks/`, `campaign.py`, `eval.py`, `scoring.py`; the `attack.run` Celery chain (sample→clean_eval→control→attack); MRI + severity. |
+| **WS3 Explain, recommend & findings** | Dev C | M2, M3, M6 | F005, F006 | `aegis/ml/explain/`, `recommend/{rules,narrative}.py`, `explain.run` / `harden.recommend` / `verify.replay` tasks, `Finding.schema_blob.ml` projection, dismissal + reviewer-notes routes. |
+| **WS4 API & campaign service** | Backend lead | M1–M6 | F004 | routers `aegis/api/v1/{models,attacks,datasets,defenses,ml_capabilities,artifacts,compare,ml_findings}.py` mounted on `aegis/api/app.py`; `aegis/services/ml_campaigns.py`; WS events channel. |
+| **WS5 Web UI** | Dev D | M5a, M5b | F005, F006, F007 UI | `@aegis/web` pages `/models`, `/models/[id]` launcher, 13-panel `/runs/[id]`, three-pane `/findings/[id]`; design-system `MriScorecard`, `DimensionBars`, `RobustnessCurve`, `MeasurementTable`, `ObservationCard`. |
+| **WS6 Reports & comparison** | rotates | M3, M6 | F007 | extend `aegis/report.py` to render the ML run record + scorecard; `GET /v1/runs/{id}/compare`; report Artifact rows. |
+| **WS7 Infra, auth & deploy** | Dev D / lead | M7 | F001, F008 | ECS Fargate services (api, worker, beat, web, log-ingest) + ALB; RDS PostgreSQL 16; ElastiCache Redis; two S3 buckets (one Object-Lock); Secrets Manager; Keycloak on Fargate; activate the existing deploy pipeline. Reuse the audit chain (F008) already in aegis. |
+
+F001 (auth) and F008 (audit) are largely **reused aegis foundation**, not new
+builds; the new work is emitting ML audit events on the existing chain and
+wiring Keycloak on Fargate. These are the two features v1 missed entirely.
+
+## 5. Corrected shared contracts
+
+- **Schema** (`aegis/ml/schema.py`): the `RunRecord`/`Measurement`/`Observation`/
+  `Interpretation`/`CandidateRecommendation` evidence model stays. It is written
+  as a sha256-addressed Artifact (`ml.run_record`) and **projected** onto
+  `ml_campaigns.score` and `findings.schema_blob.ml`; a projection that
+  disagrees with the record is a bug. Widen `RunConfig` to an attack set, ε
+  grid, and MRI weight vector.
+- **Migration**: exactly one — `0010_ml_vertical` — adding `targets.detail`
+  (JSONB) and `ml_campaigns` (1:1 with `runs`, full RLS parity). Additive and
+  reversible.
+- **API** (all under `/v1`, on the aegis app, auth + RLS enforced): a campaign
+  starts with `POST /v1/models/{id}/attacks`, **not** a generic `POST /v1/runs`.
+  Read the campaign at `GET /v1/runs/{id}/campaign`; stream a blob at
+  `GET /v1/artifacts/{id}`; act on findings via `POST /v1/findings/{id}/{explain,harden,verify}`;
+  compare with `GET /v1/runs/{id}/compare?with=`. `POST /v1/scans` is unmounted
+  at M0.
+- **Jobs**: Celery tasks `aegis.model_validate`, `aegis.attack_run`,
+  `aegis.explain_run`, `aegis.harden_recommend`, `aegis.verify_replay`,
+  `aegis.report_render`. Attacks run as a chain, one Job per attack. Admission
+  is audit-first: the audit event is appended before any Run/Job row.
+- **MRI** (unchanged formula): `round(0.35·S_acc + 0.25·S_asr + 0.20·S_eps +
+  0.10·S_conf + 0.10·S_expl)`, computed only when all five subscores exist,
+  weights never renormalized, per campaign only, never shown without its
+  subscores, per-family table, and ε curve. Grade text is attack-scoped; the
+  words "hardened", "deployment-ready", "certified", "safe" are banned.
+- **Env**: `PYTHIA_BASE_URL`, `PYTHIA_API_KEY`, `PYTHIA_PERSONA`,
+  `AEGIS_ML_LLM_MODEL`, `AEGIS_ML_WORK_DIR`. LLM calls go through
+  `aegis/llm/pythia.py` under the aegis router and budget.
+
+## 6. Interoperability — dropped, decision needed
+
+The interop work added to the old hackathon spec — Croissant adversarial-dataset
+export, ONNX ingest as an export path, MITRE ATLAS tagging, Palantir/Lattice —
+**does not appear anywhere in the canonical spec or in F001–F008.** The
+consolidation dropped it. Phase A has no dataset upload or export path; only
+model upload. ONNX survives solely as an ingest loader inside F002.
+
+This matters because interoperability is a scored judging criterion. To keep it,
+it must be re-proposed into the product spec as a feature (a `F009` or an
+addition to F007), with the ATLAS technique added to `Finding.schema_blob.ml`
+and a dataset-export endpoint. Until then, treat interop as **deferred**, not
+planned. Flag this to the product owner.
+
+## 7. Integration waves and demo-critical order
+
+Build order follows D8, not numeric milestone order:
 
 ```
-Wave 0  (blocking, ~0.5 day)
-  P0  Contracts + schema additions + booting API skeleton
-        │  freezes schema.py additions, registries, endpoint shapes
-        ▼
-Wave 1  (parallel, the bulk of the build)
-  P1 Targets ──┐
-  P2 Attacks+MRI ─┼─► feed interfaces to P4
-  P3 Explain+Rec ─┘
-  P5 Web UI ........ builds against P0 endpoints + fixtures (no backend block)
-  P7 Infra ......... builds against the P0 booting image (no backend block)
-        │
-        ▼
-Wave 2  (integration)
-  P4  runs.py pipeline wires P1+P2+P3; jobs.py; report builders; POST /runs live
-  P6  Croissant export + ONNX ingest built on real run outputs
-        │
-        ▼
-Wave 3  (end-to-end on AWS)
-  P7+P4+P5 deploy, smoke-test the demo path live, tune
+Gate 0:  WS0 (M0 scaffold + migration)            ── blocks all
+Slice 1: F001 auth · F002 catalog · F008 audit    ── foundation (WS1, WS7 auth)
+Slice 2: F003 profile · F004 runs · F005 evidence ── the engine (WS2, WS3, WS4, WS5)
+Slice 3: F006 findings · F007 reports/compare     ── the tools (WS3, WS6)
 ```
 
-Coordination seams inside Wave 1:
+Demo-critical path (D8): image path end to end → MRI scorecard → verify-after-
+harden → tabular path → ONNX upload → Fargate deploy. **M5a (the image UI
+slice) is the cut line for a demo.** Everything in Phase B waits behind Fargate.
 
-- **P2 needs one value from P3.** The MRI explanation-stability subscore
-  (`S_expl`) consumes `expl_shift` from P3's SHAP output. P2 builds everything
-  else first and integrates `S_expl` last against the agreed function shape in
-  section 6. Until P3 lands, P2 scores with `S_expl` omitted and the weight
-  renormalized.
-- **P4 starts in Wave 1** by scaffolding `runs.py`/`jobs.py` against the
-  Protocols and registries, then completes wiring in Wave 2 as P1-P3 land.
-- **P5 and P7 never block on backend logic.** P5 renders fixtures shaped like
-  the section-6 API responses; P7 needs only `/health` from the P0 skeleton.
+## 8. Definition of done (canonical section 26)
 
-## 6. Shared contracts (the integration boundaries)
+The demo runs live on ECS Fargate: a campaign started from `/models` against the
+bundled vehicle-imagery CNN and the UNSW-NB15 tabular model runs FGSM and PGD
+with the noise control and ε sweep; `/runs/[id]` shows the MRI scorecard with
+its subscores, per-family table, and robustness curve; `/findings/[id]` shows
+the three panes and a measured ΔMRI after Verify; every action is on the audit
+chain and `aegis audit verify` passes; access is gated by Keycloak with RLS;
+`pytest` and `vitest` pass.
 
-Everyone codes to these. P0 lands them first. Do not change a signature without
-announcing it in this section.
+## 9. Status of the P0–P7 phase files
 
-### 6.1 Schema additions (P0, in `redsim/schema.py`)
-
-```python
-class Scoring(BaseModel):
-    mri: int                       # 0-100, rounded
-    grade: Literal["A","B","C","D","F"]
-    subscores: dict[str, float]    # keys: S_acc, S_asr, S_eps, S_conf, S_expl
-    weights: dict[str, float]      # the weight actually applied (renormalized if S_expl absent)
-    reference_eps: float
-    eps_grid: list[float]
-    delta_mri: int | None = None   # set on verify re-run
-
-# additions to existing models
-# AttackInfo:   atlas_technique_id: str | None = None   # e.g. "AML.T0043"
-#               atlas_technique_name: str | None = None  # "Craft Adversarial Data"
-# Measurement:  severity: Literal["critical","high","medium","low"] | None = None
-# RunRecord:    scoring: Scoring | None = None
-#               atlas_coverage: list[str] = []           # technique ids exercised
-```
-
-`ExplainOutput` is a dataclass owned by P3 in `redsim/explain/base.py`:
-
-```python
-@dataclass
-class ExplainOutput:
-    observations: list[Observation]     # schema.Observation, artifacts already written
-    expl_shift_mean: float              # mean 1 - cosine(SHAP_clean, SHAP_adv) over flipped
-    shap_version: str
-    background_size: int
-    nsamples: int
-    wall_time_s: float
-```
-
-### 6.2 Registries
-
-```python
-from redsim.targets.registry import TARGETS   # Registry[Target]   (P1)
-from redsim.attacks.registry import ATTACKS    # Registry[AttackAdapter]  (P2)
-# use .get(id), .maybe_get(id), .ids(), .items(), iteration — NOT .list()
-```
-
-### 6.3 Scoring (P2, `redsim/scoring.py`)
-
-```python
-def score_run(measurements: list[Measurement],
-              expl_shift_mean: float | None,
-              reference_eps: float,
-              eps_grid: list[float]) -> Scoring: ...
-
-def severity_for(measurement: Measurement,
-                 eps_small: float, eps_mid: float) -> str: ...  # critical|high|medium|low
-```
-
-### 6.4 Explanation (P3, `redsim/explain/shap_image.py` and `shap_tabular.py`)
-
-```python
-def explain(target: Target, sample: Sample, x_adv: np.ndarray,
-            k: int, seed: int, store: RunStore) -> ExplainOutput: ...
-```
-
-### 6.5 Interpretation & recommendations (P3, `redsim/recommend/rules.py`)
-
-```python
-def interpret(measurements, observations, scoring) -> list[Interpretation]: ...
-def recommend(measurements, observations, scoring) -> list[CandidateRecommendation]: ...
-# narrative.py rewrites recommendations via pythia_client, guardrailed, off by default
-```
-
-### 6.6 Orchestration (P4)
-
-```python
-# redsim/runs.py
-def run_pipeline(config: RunConfig, store: RunStore) -> RunRecord: ...  # writes run.json after each STAGE
-# redsim/jobs.py
-def submit(config: RunConfig) -> str: ...        # returns run_id, runs pipeline on the pool
-def status(run_id: str) -> RunSummary | None: ...
-```
-
-### 6.7 HTTP API (P0 skeleton, P4 completes; P6 adds dataset routes)
-
-Base `/`, JSON errors `{detail}`, CORS allows `http://localhost:3000`, no auth.
-
-| Method | Path | Owner | Returns |
-|---|---|---|---|
-| GET | `/health` | P0 | `{status:"ok", version}` |
-| GET | `/v1/targets` | P0/P1 | list `TargetInfo` |
-| GET | `/v1/attacks` | P0/P2 | list `AttackInfo` (incl. atlas fields) |
-| POST | `/v1/runs` | P4 | 202 `{run_id}`; 501 stub target; 422 bad params |
-| GET | `/v1/runs` | P4 | list `RunSummary` |
-| GET | `/v1/runs/{id}` | P4 | full `RunRecord` (incl. `scoring`, `atlas_coverage`) |
-| PATCH | `/v1/runs/{id}/reviewer-notes` | P4 | updated `RunRecord` |
-| GET | `/v1/runs/{id}/artifacts/{path}` | P4 | PNG/JSON, path-confined |
-| GET | `/v1/runs/{id}/report.{md,json,html}` | P4 | report; HTML with strict CSP |
-| POST | `/v1/runs/{id}/dataset` | P6 | 202/200 `{dataset_id}` builds Croissant+Parquet |
-| GET | `/v1/datasets/{id}` | P6 | Croissant JSON-LD manifest |
-
-### 6.8 Environment contract (P7 provides, all consume)
-
-`REDSIM_OUTPUT_DIR` (EFS mount on ECS), `REDSIM_S3_BUCKET` (datasets/reports),
-`PYTHIA_BASE_URL` / `PYTHIA_API_KEY` / `REDSIM_LLM_MODEL` (Secrets Manager,
-narrative off unless all set), `NEXT_PUBLIC_REDSIM_API_URL` (web → API ALB URL).
-
-## 7. Integration strategy
-
-- **One integration branch** (`redsim-mvp`) off `main`. Each phase works on a
-  short-lived branch and opens a PR into it. `main` stays releasable.
-- **P0 merges first** and tags the schema as frozen. Later schema changes go
-  through a one-line note in section 6.1 plus a heads-up to the team.
-- **Fixtures unblock the UI.** P0 commits `tests/fixtures/run_record.json`
-  shaped like `GET /v1/runs/{id}`, including `scoring` and `atlas_coverage`, so
-  P5 renders the real screen before P4 is done.
-- **Vertical smoke test** lands as soon as P4 wires one target + FGSM + SHAP:
-  `POST /v1/runs` → poll → `GET /v1/runs/{id}` shows measurements, a scorecard,
-  and observations. That path is the demo and the acceptance gate.
-
-## 8. Suggested ownership for 3-4 developers
-
-- **Backend lead:** P0 then P4 (the API + pipeline spine); pairs on P7.
-- **Dev A:** P1 (targets + assets), then P6 (interop) since ONNX ingest is a
-  target.
-- **Dev B:** P2 (attacks + MRI scoring).
-- **Dev C:** P3 (explain + recommend + ATLAS); pairs into P5 for the scorecard
-  and gallery rendering.
-- **Dev D (if present):** P5 (web UI) and P7 (infra); otherwise the lead and Dev
-  A split P7, and P5 is shared by C and D.
-
-## 9. Risks and mitigations
-
-- **Image size / build time (torch + ART + SHAP).** Mitigate: CPU torch wheel
-  in the worker image (already in `Dockerfile.api`), pin versions, GHA layer
-  cache. Bake trained CNN weights as an asset; never train at container start.
-- **EFS + ECS wiring is fiddly and on the critical path.** Mitigate: P7 starts
-  day 0, proves `/health` behind the ALB with the P0 skeleton before any ML
-  lands. Fallback: single Fargate task with a local volume for the demo.
-- **SHAP on images is slow.** Mitigate: small CNN, small eval slice (default
-  200, allow 50), `explain_k` default 8, cache explanations per run.
-- **P2↔P3 coupling on `S_expl`.** Mitigate: the agreed function shape in 6.1/6.3;
-  P2 renormalizes weights when `expl_shift_mean is None`.
-- **Pythia LLM optional and private.** Mitigate: narrative is off by default;
-  rules-only recommendations are the baseline demo.
-- **Scope creep to text/detection/black-box.** Mitigate: frozen scope in
-  section 1; those stay out until the image+tabular path runs end to end on AWS.
-
-## 10. Global definition of done
-
-1. `POST /v1/runs` against the **deployed AWS ECS** stack runs the full pipeline
-   for the CIFAR-10 image target and a tabular target with FGSM and PGD.
-2. `GET /v1/runs/{id}` returns measurements, an MRI `scoring` block with grade,
-   observations with SHAP artifacts, interpretation, and candidate
-   recommendations; each attack carries its ATLAS technique.
-3. The web UI, served from ECS, renders `/targets`, `/runs`, `/runs/new`, and
-   the two-column `/runs/[id]` with the scorecard, the clean-vs-adversarial
-   gallery, SHAP images, and recommendations.
-4. `POST /v1/runs/{id}/dataset` publishes a Croissant + Parquet adversarial
-   dataset to S3, and `GET /v1/datasets/{id}` returns its manifest.
-5. A push to `main` builds both images and the deploy job rolls the ECS
-   services green (the guard passes because the service variables are set).
-6. `pytest` and `vitest` pass for the new modules and pages.
-7. Every user-facing panel keeps the design spec's honesty labels: candidates
-   are "candidate / not evaluated", heuristics are marked, stubs show a reason.
+The eight phase files `01`–`08` in this directory were written for v1 against
+the deleted `redsim/` substrate. Each now carries a reconciliation banner
+mapping it to the aegis milestone(s) and feature(s) and listing its substrate
+corrections. Their detailed bodies (paths, signatures, mechanisms) are
+**superseded** by this master plan, the canonical spec, and `specs/F00#`. Use
+them only for the parallel-execution shape, not for the literal contracts. Ask
+if you want any one of them fully rewritten onto the aegis substrate.
