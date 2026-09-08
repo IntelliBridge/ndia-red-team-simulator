@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from redsim.schema import RedsimFinding
@@ -79,7 +79,7 @@ def _load_evidence(run_state: RunStateAPI, finding_id: str) -> dict[str, dict] |
 def generate_markdown_report(run_state: RunStateAPI, findings: list[RedsimFinding]) -> str:
     """Produce a full markdown security assessment report."""
     target = _resolve_target(findings)
-    date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    date = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
     severity_counts = Counter(f.severity.lower() for f in findings)
     stages = _load_stage_table(run_state)
     verify_results = _load_verify_results(run_state)
@@ -192,15 +192,14 @@ def generate_markdown_report(run_state: RunStateAPI, findings: list[RedsimFindin
             if verify.get("notes"):
                 _a(f"**Notes:** {verify['notes']}")
             evidence = _load_evidence(run_state, finding.id)
-            if evidence:
-                if "after" in evidence:
-                    after = evidence["after"]
-                    _a("")
-                    _a("**After (post-patch replay)**")
-                    _a(f"- Status: `{after.get('status')}`")
-                    if after.get("body_excerpt"):
-                        excerpt = after["body_excerpt"][:200].replace("\n", " ")
-                        _a(f"- Body excerpt: `{excerpt}`")
+            if evidence and "after" in evidence:
+                after = evidence["after"]
+                _a("")
+                _a("**After (post-patch replay)**")
+                _a(f"- Status: `{after.get('status')}`")
+                if after.get("body_excerpt"):
+                    excerpt = after["body_excerpt"][:200].replace("\n", " ")
+                    _a(f"- Body excerpt: `{excerpt}`")
             _a("")
 
         _a("---")
@@ -241,7 +240,7 @@ def generate_json_report(run_state: RunStateAPI, findings: list[RedsimFinding]) 
 
     report: dict = {
         "run_id": run_state.run_id,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "target": target,
         "summary": {
             "total": len(findings),

@@ -10,7 +10,7 @@ deprecation cycle.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import NotRequired, TypedDict
 
 from sqlalchemy import (
@@ -33,7 +33,7 @@ class Base(DeclarativeBase):
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Organization(Base):

@@ -28,8 +28,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import redsim.plugins as plugins
 import redsim.scanners.registry as scanner_registry
+from redsim import plugins
 from redsim.scanners.registry import ScanOptions
 from redsim.scanners.sandbox import (
     SandboxConfig,
@@ -204,9 +204,9 @@ class TestEagerLoad(unittest.TestCase):
         ep = _fake_ep("cap", lambda: FakeScanner(capabilities={"made-up"}),
                       dist_name="d", version="1")
         with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
-                patch("importlib.metadata.entry_points", return_value=[ep]):
-            with self.assertLogs("redsim.scanners.registry", level="WARNING") as cm:
-                scanner_registry.maybe_load_entry_points()
+                patch("importlib.metadata.entry_points", return_value=[ep]), \
+                self.assertLogs("redsim.scanners.registry", level="WARNING") as cm:
+            scanner_registry.maybe_load_entry_points()
         self.assertIn("fake-mp-scanner", scanner_registry._REGISTRY)
         self.assertTrue(any("unknown capabilities" in line for line in cm.output))
 
@@ -250,10 +250,10 @@ class TestAllowlist(unittest.TestCase):
         env["REDSIM_PLUGINS"] = "1"
         ep = _fake_ep("example", lambda: FakeScanner(), dist_name="d", version="1")
         with patch.dict(os.environ, env, clear=True), \
-                patch("importlib.metadata.entry_points", return_value=[ep]):
-            with self.assertLogs("redsim.registry", level="WARNING") as cm:
-                list(scanner_registry._scanner_registry.scan_entry_points(
-                    "redsim.scanners", register=False))
+                patch("importlib.metadata.entry_points", return_value=[ep]), \
+                self.assertLogs("redsim.registry", level="WARNING") as cm:
+            list(scanner_registry._scanner_registry.scan_entry_points(
+                "redsim.scanners", register=False))
         self.assertTrue(any("no REDSIM_PLUGINS_ALLOW" in line for line in cm.output))
 
 
@@ -399,7 +399,7 @@ class TestSandboxWrapping(unittest.TestCase):
             report = list(scanner_registry._scanner_registry.scan_entry_points(
                 "redsim.scanners", register=True,
                 wrap=scanner_registry._sandbox_wrap))
-        row = [r for r in report if r.name == "fake-mp-scanner"][0]
+        row = next(r for r in report if r.name == "fake-mp-scanner")
         self.assertEqual(row.status, "loaded")
         self.assertIsInstance(scanner_registry._REGISTRY["fake-mp-scanner"], SandboxedScanner)
 

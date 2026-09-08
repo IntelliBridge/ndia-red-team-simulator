@@ -22,7 +22,12 @@ from redsim.cli.main import (
 )
 
 __all__ = [
-    "build_parser", "main",
-    "cmd_doctor", "cmd_init", "cmd_scan", "cmd_findings",
-    "cmd_verify", "cmd_report",
+    "build_parser",
+    "cmd_doctor",
+    "cmd_findings",
+    "cmd_init",
+    "cmd_report",
+    "cmd_scan",
+    "cmd_verify",
+    "main",
 ]

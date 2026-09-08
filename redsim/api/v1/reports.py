@@ -68,7 +68,7 @@ def get_report(run_id: str, ext: str,
                         headers=headers)
     except (FileNotFoundError, KeyError):
         pass
-    except Exception:  # noqa: BLE001 — blob backend not available, try fs
+    except Exception:  # noqa: BLE001, S110 — blob backend not available, try fs
         pass
 
     path = Path(config.output_dir) / "runs" / run_id / f"report.{ext}"

@@ -24,7 +24,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -95,8 +95,8 @@ def build_controls_matrix() -> dict[str, Any]:
                 "name": "Security monitoring & anomaly detection",
                 "status": "partial",
                 "evidence": [
-                    "registry-dispatched scanner / attack adapter runs, each "
-                    "on its own hash-chained audit chain",
+                    ("registry-dispatched scanner / attack adapter runs, each "
+                    "on its own hash-chained audit chain"),
                     "OpenTelemetry collector wiring",
                 ],
                 "note": "monitoring covers scan activity; org-wide SIEM "
@@ -194,10 +194,10 @@ def build_controls_matrix() -> dict[str, Any]:
                 "name": "Software, firmware & information integrity",
                 "status": "supported",
                 "evidence": [
-                    "Ed25519-signed plugins (redsim.supply_chain) + out-of-process "
-                    "plugin sandbox",
-                    "cosign-signed release images with CycloneDX SBOM + SLSA "
-                    "provenance",
+                    ("Ed25519-signed plugins (redsim.supply_chain) + out-of-process "
+                    "plugin sandbox"),
+                    ("cosign-signed release images with CycloneDX SBOM + SLSA "
+                    "provenance"),
                     "hash-chained audit integrity",
                 ],
             },
@@ -205,8 +205,8 @@ def build_controls_matrix() -> dict[str, Any]:
                 "name": "Information input validation / LLM guardrails",
                 "status": "partial",
                 "evidence": [
-                    "LLM guardrails: PII scrubbing + prompt-injection / "
-                    "output filtering",
+                    ("LLM guardrails: PII scrubbing + prompt-injection / "
+                    "output filtering"),
                     "audit-detail redaction",
                 ],
                 "note": "guardrails apply to LLM I/O; coverage scales with "
@@ -295,7 +295,7 @@ def generate_evidence_pack(
     audit_dir = out / "audit"
     audit_dir.mkdir(parents=True, exist_ok=True)
 
-    generated_at = (timestamp or datetime.now(timezone.utc)).isoformat()
+    generated_at = (timestamp or datetime.now(UTC)).isoformat()
 
     # --- export + verify each audit chain ---------------------------------
     writer = resolve_writer(config)

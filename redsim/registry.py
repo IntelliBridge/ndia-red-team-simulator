@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Callable, Generic, Iterator, Protocol, TypeVar, runtime_checkable
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, Protocol, TypeVar, runtime_checkable
 
 if TYPE_CHECKING:
     from redsim.plugins import PluginInfo
@@ -64,7 +65,7 @@ def _dist_meta(ep: object) -> tuple[str | None, str | None]:
     return name, version
 
 
-class Registry(Generic[T]):
+class Registry[T: _Named]:
     """A ``name -> item`` table with an opt-in entry-point discovery hook.
 
     ``kind`` labels error messages and the discovery report (``"scanner"`` /
@@ -145,7 +146,7 @@ class Registry(Generic[T]):
         try:
             from importlib.metadata import entry_points
             eps = list(entry_points(group=group))
-        except Exception:  # pragma: no cover - importlib edge
+        except Exception:  # noqa: BLE001  # pragma: no cover - importlib edge
             return
 
         allow = _allowlist()
@@ -159,7 +160,10 @@ class Registry(Generic[T]):
             dist_name, version = _dist_meta(ep)
 
             def _info(name: str, status: str, detail: str,
-                      signature: str | None = None) -> PluginInfo:
+                      signature: str | None = None, *,
+                      dist_name: str | None = dist_name,
+                      version: str | None = version) -> PluginInfo:
+                # dist_name and version are bound per iteration on purpose.
                 return PluginInfo(
                     name=name, kind=self._kind, group=group,
                     distribution=dist_name, version=version,
@@ -174,7 +178,7 @@ class Registry(Generic[T]):
             try:
                 factory = ep.load()
                 item = factory()
-            except Exception as exc:  # third-party plugin failure
+            except Exception as exc:  # noqa: BLE001 - third-party plugin failure is isolated
                 yield _info(ep.name, "rejected", f"factory failed: {exc}")
                 continue
 
@@ -202,7 +206,7 @@ class Registry(Generic[T]):
             if wrap is not None:
                 try:
                     install = wrap(item, ep)
-                except Exception as exc:  # pragma: no cover - wrap is in-tree
+                except Exception as exc:  # noqa: BLE001  # pragma: no cover - wrap is in-tree
                     yield _info(item.name, "rejected",
                                 f"sandbox wrap failed: {exc}")
                     continue
@@ -211,7 +215,7 @@ class Registry(Generic[T]):
             if register:
                 try:
                     self.register(install)
-                except Exception as exc:  # pragma: no cover - validate raised
+                except Exception as exc:  # noqa: BLE001  # pragma: no cover - validate raised
                     yield _info(item.name, "rejected",
                                 f"registration failed: {exc}")
                     continue

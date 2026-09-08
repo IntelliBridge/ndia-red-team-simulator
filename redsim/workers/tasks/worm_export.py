@@ -51,7 +51,7 @@ def export_chains_to_worm() -> dict[str, Any]:
             success=len(summary.broken_chains) == 0,
             detail=summary.to_dict(),
         )
-    except Exception:  # pragma: no cover - audit emit must not fail the export
+    except Exception:  # noqa: BLE001, S110  # pragma: no cover - audit emit must not fail the export
         pass
 
     logger.info("export_chains_to_worm finished broken_chains=%d",

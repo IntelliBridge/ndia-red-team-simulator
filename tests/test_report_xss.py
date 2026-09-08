@@ -74,7 +74,7 @@ class TestReportResponseHeaders(unittest.TestCase):
         from sqlalchemy.pool import StaticPool
 
         @compiles(JSONB, "sqlite")
-        def _to_text(t, c, **kw):  # noqa: ARG001
+        def _to_text(t, c, **kw):
             return "TEXT"
 
         from redsim.db.models import Base, Organization, Project, Run

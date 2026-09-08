@@ -60,9 +60,8 @@ class TestFernetRoundTrip(unittest.TestCase):
     def test_decrypt_with_wrong_key_raises_invalid_token(self):
         with _key_env(Fernet.generate_key().decode()):
             token = encrypt_secret("s3cret")
-        with _key_env(Fernet.generate_key().decode()):
-            with self.assertRaises(InvalidToken):
-                decrypt_secret(token)
+        with _key_env(Fernet.generate_key().decode()), self.assertRaises(InvalidToken):
+            decrypt_secret(token)
 
 
 class TestKeyRotationOverlap(unittest.TestCase):
@@ -98,9 +97,8 @@ class TestKeyRotationOverlap(unittest.TestCase):
         new = Fernet.generate_key().decode()
         with _key_env(new, previous=old):
             token = encrypt_secret("freshly-encrypted")
-        with _key_env(old):
-            with self.assertRaises(InvalidToken):
-                decrypt_secret(token)
+        with _key_env(old), self.assertRaises(InvalidToken):
+            decrypt_secret(token)
 
     def test_decrypt_fails_when_token_matches_no_configured_key(self):
         old = Fernet.generate_key().decode()
@@ -109,15 +107,14 @@ class TestKeyRotationOverlap(unittest.TestCase):
         # Rotate to two keys, neither of which produced the token.
         new = Fernet.generate_key().decode()
         other = Fernet.generate_key().decode()
-        with _key_env(new, previous=other):
-            with self.assertRaises(InvalidToken):
-                decrypt_secret(token)
+        with _key_env(new, previous=other), self.assertRaises(InvalidToken):
+            decrypt_secret(token)
 
     def test_invalid_previous_key_raises_without_echoing_key(self):
         good = Fernet.generate_key().decode()
-        with _key_env(good, previous="not-a-fernet-key"):
-            with self.assertRaises(AuthProfilesKeyError) as ctx:
-                encrypt_secret("s3cret")
+        with _key_env(good, previous="not-a-fernet-key"), \
+                self.assertRaises(AuthProfilesKeyError) as ctx:
+            encrypt_secret("s3cret")
         message = str(ctx.exception)
         self.assertIn("REDSIM_AUTH_PROFILES_KEY_PREVIOUS", message)
         self.assertNotIn("not-a-fernet-key", message)
@@ -126,23 +123,20 @@ class TestKeyRotationOverlap(unittest.TestCase):
 
 class TestMissingOrInvalidKey(unittest.TestCase):
     def test_encrypt_without_key_raises_clear_error(self):
-        with _key_env(None):
-            with self.assertRaises(AuthProfilesKeyError) as ctx:
-                encrypt_secret("s3cret")
+        with _key_env(None), self.assertRaises(AuthProfilesKeyError) as ctx:
+            encrypt_secret("s3cret")
         message = str(ctx.exception)
         self.assertIn("REDSIM_AUTH_PROFILES_KEY", message)
         # No secret material in the error.
         self.assertNotIn("s3cret", message)
 
     def test_decrypt_without_key_raises_clear_error(self):
-        with _key_env(None):
-            with self.assertRaises(AuthProfilesKeyError):
-                decrypt_secret(b"gAAAAA-not-a-real-token")
+        with _key_env(None), self.assertRaises(AuthProfilesKeyError):
+            decrypt_secret(b"gAAAAA-not-a-real-token")
 
     def test_invalid_key_raises_without_echoing_key(self):
-        with _key_env("not-a-fernet-key"):
-            with self.assertRaises(AuthProfilesKeyError) as ctx:
-                encrypt_secret("s3cret")
+        with _key_env("not-a-fernet-key"), self.assertRaises(AuthProfilesKeyError) as ctx:
+            encrypt_secret("s3cret")
         message = str(ctx.exception)
         self.assertNotIn("not-a-fernet-key", message)
         self.assertNotIn("s3cret", message)

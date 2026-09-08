@@ -49,7 +49,7 @@ _PROBE = textwrap.dedent(
 def test_import_redsim_state_without_sqlalchemy():
     proc = subprocess.run(
         [sys.executable, "-c", _PROBE],
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     )
     assert proc.returncode == 0, proc.stderr
     assert "OK" in proc.stdout

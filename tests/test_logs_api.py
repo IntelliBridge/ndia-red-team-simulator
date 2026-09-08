@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -28,7 +28,7 @@ def _patch_jsonb_for_sqlite() -> None:
     from sqlalchemy.ext.compiler import compiles
 
     @compiles(JSONB, "sqlite")
-    def _to_text(t, c, **kw):  # noqa: ARG001
+    def _to_text(t, c, **kw):
         return "TEXT"
 
 
@@ -49,7 +49,7 @@ def _build_app_with_logs():
     Base.metadata.create_all(bind=engine)
     Session = sessionmaker(engine, expire_on_commit=False)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with Session() as s:
         s.add(Organization(id="org-1", name="A", slug="a"))
         s.add(Project(id="proj-a", org_id="org-1", name="P", slug="proj-a"))

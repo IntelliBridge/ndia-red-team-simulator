@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from redsim.api.auth import CurrentUser, get_current_user
@@ -139,7 +139,7 @@ def list_membership(slug: str,
 
 @router.put("/{slug}/settings")
 def update_settings(slug: str,
-                    body: UpdateSettingsBody = UpdateSettingsBody(),
+                    body: UpdateSettingsBody = Body(default_factory=UpdateSettingsBody),
                     user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """Update project-level settings. Admin-only on the project."""
     from redsim.db.session import get_session

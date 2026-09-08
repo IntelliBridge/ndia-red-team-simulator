@@ -92,7 +92,7 @@ def list_logs(
         stmt = stmt.where(ApplicationLog.request_id == request_id)
     if since:
         try:
-            ts_lower = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            ts_lower = datetime.fromisoformat(since)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

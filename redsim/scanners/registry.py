@@ -165,11 +165,10 @@ def run_cli_scan(
     try:
         proc = subprocess.run(
             argv, capture_output=True, text=True, timeout=timeout,
-            env={**os.environ, **env} if env else None,
+            env={**os.environ, **env} if env else None, check=False,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        logger.error("scanner %s error run_id=%s: %s",
-                     adapter.name, run_id, exc, exc_info=True)
+        logger.exception("scanner %s error run_id=%s", adapter.name, run_id)
         return ScanResult(
             findings=[], adapter_name=adapter.name,
             adapter_version=version,
@@ -250,11 +249,10 @@ def run_cli_scan_jsonl(
                 adapter.name, run_id, timeout)
     try:
         proc = subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeout,
+            argv, capture_output=True, text=True, timeout=timeout, check=False,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        logger.error("scanner %s error run_id=%s: %s",
-                     adapter.name, run_id, exc, exc_info=True)
+        logger.exception("scanner %s error run_id=%s", adapter.name, run_id)
         return ScanResult(
             findings=[], adapter_name=adapter.name,
             adapter_version=version,
@@ -322,7 +320,7 @@ def cli_version(
         if first_line:
             text = text.splitlines()[0] if text else ""
         return text or "unknown"
-    except Exception:
+    except Exception:  # noqa: BLE001 - version probe is best effort
         return "unknown"
 
 

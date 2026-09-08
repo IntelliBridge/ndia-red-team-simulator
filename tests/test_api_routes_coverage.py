@@ -139,7 +139,7 @@ class _FakeClaims(dict):
     end against the genuine authlib boundary instead of being stubbed out.
     """
 
-    def validate(self, now=None):  # noqa: ARG002 - signature mirrors authlib
+    def validate(self, now=None):
         return None
 
 
@@ -268,7 +268,7 @@ class TestAuthHelpers(unittest.TestCase):
     def test_parse_worker_token_valid(self):
         result = _parse_worker_token("worker:v1.w123.9999999999.abc123")
         self.assertIsNotNone(result)
-        version, worker_id, exp, sig = result
+        version, worker_id, exp, _sig = result
         self.assertEqual(version, 1)
         self.assertEqual(worker_id, "w123")
         self.assertEqual(exp, 9999999999)
@@ -551,9 +551,8 @@ class TestAuthHelpers(unittest.TestCase):
 
         settings = APISettings(env="dev", auth_mode="dev")
         with patch("redsim.api.session_cookie.verify_session_cookie",
-                   side_effect=SessionCookieError("bad cookie")):
-            with self.assertRaises(HTTPException) as ctx:
-                _resolve_from_cookie("badcookieval", settings)
+                   side_effect=SessionCookieError("bad cookie")), self.assertRaises(HTTPException) as ctx:
+            _resolve_from_cookie("badcookieval", settings)
         self.assertEqual(ctx.exception.status_code, 401)
 
     # --- JWT success path (lines 232-237), driven via the real authlib seam ---
@@ -652,7 +651,7 @@ class TestWsHelpers(unittest.TestCase):
         from redsim.api.ws import _extract_bearer_subprotocol
         ws = MagicMock()
         ws.headers.get.return_value = "graphql-ws, redsim.bearer.tok42"
-        token, echo = _extract_bearer_subprotocol(ws)
+        token, _echo = _extract_bearer_subprotocol(ws)
         self.assertEqual(token, "tok42")
 
     def test_extract_bearer_subprotocol_none_matching(self):
@@ -715,8 +714,8 @@ class TestWsEndpoint(unittest.TestCase):
                     headers={"Origin": "http://evil.com"},
                 ):
                     pass
-            except Exception:
-                pass  # WebSocketDisconnect or similar is expected
+            except Exception:  # noqa: BLE001, S110 - WebSocketDisconnect or similar is expected
+                pass
 
     def test_ws_no_auth_closes_after_accept(self):
         """WS with valid origin but no auth token should be rejected.
@@ -734,7 +733,7 @@ class TestWsEndpoint(unittest.TestCase):
             try:
                 with client.websocket_connect("/v1/runs/run-ws-1/events"):
                     pass
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - a closed socket is the expected outcome
                 pass
 
     def test_ws_run_not_found_closes(self):
@@ -762,7 +761,7 @@ class TestWsEndpoint(unittest.TestCase):
             try:
                 with client.websocket_connect("/v1/runs/nonexistent/events"):
                     pass
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - a closed socket is the expected outcome
                 pass
 
     def test_ws_no_project_membership_closes(self):
@@ -790,7 +789,7 @@ class TestWsEndpoint(unittest.TestCase):
             try:
                 with client.websocket_connect("/v1/runs/run-ws-1/events"):
                     pass
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - a closed socket is the expected outcome
                 pass
 
     def test_ws_system_user_bypasses_membership(self):
@@ -833,7 +832,7 @@ class TestWsEndpoint(unittest.TestCase):
                 ) as ws:
                     data = ws.receive_json()
                     self.assertEqual(data["type"], "heartbeat")
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - a closed socket is the expected outcome
                 pass
 
 
@@ -1040,8 +1039,8 @@ class TestWsSubprotocolEcho(unittest.TestCase):
                     # consume event so connection stays alive until pubsub ends
                     data = ws.receive_json()
                     self.assertEqual(data["type"], "heartbeat")
-            except Exception:
-                pass  # disconnect is fine here
+            except Exception:  # noqa: BLE001, S110 - disconnect is fine here
+                pass
 
 
 class TestWsRedisPubsubFallback(unittest.IsolatedAsyncioTestCase):
@@ -1516,7 +1515,7 @@ class TestTargetsApi(unittest.TestCase):
         self.assertEqual(resp.status_code, 401)
 
     def test_create_target_happy_path(self):
-        app, session_cm = _build_app()
+        app, _session_cm = _build_app()
         _override_user(app, _admin())
         client = TestClient(app)
 
@@ -1541,7 +1540,7 @@ class TestTargetsApi(unittest.TestCase):
         self.assertEqual(resp.json()["id"], "tgt-new")
 
     def test_create_target_missing_value_400(self):
-        app, session_cm = _build_app()
+        app, _session_cm = _build_app()
         _override_user(app, _admin())
         client = TestClient(app)
         with patch("redsim.api.v1.targets.resolve_writer",
@@ -1557,7 +1556,7 @@ class TestTargetsApi(unittest.TestCase):
 
     def test_create_target_403_scanner_role(self):
         """scanner role cannot manage targets (requires admin)."""
-        app, session_cm = _build_app()
+        app, _session_cm = _build_app()
         _override_user(app, _scanner())
         client = TestClient(app, raise_server_exceptions=False)
         with patch("redsim.api.v1.targets.resolve_writer",

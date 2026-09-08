@@ -60,10 +60,9 @@ def test_factory_session_cm_rolls_back_on_error() -> None:
     from redsim.db.models import Organization
 
     session_cm, _engine, Session = make_sqlite_session_factory()
-    with pytest.raises(RuntimeError):
-        with session_cm() as sess:
-            sess.add(Organization(id="org-2", name="B", slug="b"))
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError), session_cm() as sess:
+        sess.add(Organization(id="org-2", name="B", slug="b"))
+        raise RuntimeError("boom")
     with Session() as sess:
         assert sess.get(Organization, "org-2") is None
 

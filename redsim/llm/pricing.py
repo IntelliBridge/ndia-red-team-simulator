@@ -69,7 +69,7 @@ def _litellm_usd(model: str, prompt_tokens: int, completion_tokens: int) -> floa
             completion_tokens=completion_tokens,
         )
         return float(prompt_cost) + float(completion_cost)
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unpriced model reports None, never a guess
         return None
 
 

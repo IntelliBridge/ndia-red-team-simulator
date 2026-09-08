@@ -23,14 +23,14 @@ from redsim.api.settings import APISettings
 
 
 def _settings(**overrides) -> APISettings:
-    base = dict(
-        env="prod", auth_mode="oidc",
-        worker_signing_key="key-v1",
-        worker_signing_key_previous=None,
-        worker_signing_key_version=1,
-        worker_key_overlap_seconds=300,
-        worker_token_ttl_seconds=300,
-    )
+    base = {
+        "env": "prod", "auth_mode": "oidc",
+        "worker_signing_key": "key-v1",
+        "worker_signing_key_previous": None,
+        "worker_signing_key_version": 1,
+        "worker_key_overlap_seconds": 300,
+        "worker_token_ttl_seconds": 300,
+    }
     base.update(overrides)
     return APISettings(**base)
 

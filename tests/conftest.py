@@ -44,7 +44,8 @@ built (e.g. a stripped-down minimal-deps environment).
 from __future__ import annotations
 
 import contextlib
-from typing import TYPE_CHECKING, Callable, Iterator, NamedTuple
+from collections.abc import Callable, Iterator
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
@@ -66,7 +67,7 @@ def patch_jsonb_for_sqlite() -> None:
     from sqlalchemy.ext.compiler import compiles
 
     @compiles(JSONB, "sqlite")
-    def _compile_jsonb_sqlite(type_, compiler, **kw):  # type: ignore[no-untyped-def]  # noqa: ARG001
+    def _compile_jsonb_sqlite(type_, compiler, **kw):  # type: ignore[no-untyped-def]
         return "TEXT"
 
 
@@ -78,9 +79,9 @@ class SqliteSessionFactory(NamedTuple):
     objects by name for callers that only need one of them.
     """
 
-    session_cm: Callable[[], "contextlib.AbstractContextManager[SASession]"]
-    engine: "Engine"
-    Session: "sessionmaker[SASession]"
+    session_cm: Callable[[], contextlib.AbstractContextManager[SASession]]
+    engine: Engine
+    Session: sessionmaker[SASession]
 
 
 def make_sqlite_session_factory() -> SqliteSessionFactory:
@@ -115,7 +116,7 @@ def make_sqlite_session_factory() -> SqliteSessionFactory:
     )
     try:
         Base.metadata.create_all(bind=engine)
-    except Exception as exc:  # pragma: no cover - env-dependent
+    except Exception as exc:  # noqa: BLE001 - skip on any sqlite failure
         pytest.skip(f"sqlite can't host the schema: {exc}")
     Session = sessionmaker(engine, expire_on_commit=False)
 

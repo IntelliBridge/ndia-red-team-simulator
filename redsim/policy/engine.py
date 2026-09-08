@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 try:
     import httpx
 except ModuleNotFoundError:  # pragma: no cover - exercised in the minimal unit env
-    httpx = None
+    httpx = None  # type: ignore[assignment]
 
 if TYPE_CHECKING:
     from redsim.api.auth import CurrentUser

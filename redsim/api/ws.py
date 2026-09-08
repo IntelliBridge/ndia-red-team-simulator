@@ -82,21 +82,21 @@ async def _resolve_user_for_ws(
     if sub_token:
         try:
             return _resolve_from_token(sub_token, settings)
-        except Exception:
+        except Exception:  # noqa: BLE001 - bad credentials close the socket, never raise
             return None
 
     auth = websocket.headers.get("authorization") or ""
     if auth.lower().startswith("bearer "):
         try:
             return _resolve_from_token(auth.split(" ", 1)[1].strip(), settings)
-        except Exception:
+        except Exception:  # noqa: BLE001 - bad credentials close the socket, never raise
             return None
 
     cookie_value = websocket.cookies.get(settings.api_session_cookie_name)
     if cookie_value:
         try:
             return _resolve_from_cookie(cookie_value, settings)
-        except Exception:
+        except Exception:  # noqa: BLE001 - bad credentials close the socket, never raise
             return None
 
     return None

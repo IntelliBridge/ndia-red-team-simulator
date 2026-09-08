@@ -265,9 +265,8 @@ class TestStateFactory(unittest.TestCase):
         cfg = RedsimConfig(output_dir=self.tmp)
         with patch.dict(os.environ, {"REDSIM_DB_URL": REDSIM_DB}), \
                 patch("redsim.state.postgres.PostgresRunState",
-                      side_effect=RuntimeError("boom")):
-            with self.assertRaises(RuntimeError):
-                open_run_state(cfg, project_id="default")
+                      side_effect=RuntimeError("boom")), self.assertRaises(RuntimeError):
+            open_run_state(cfg, project_id="default")
 
     def test_open_run_state_filesystem_branch(self):
         from redsim.config import RedsimConfig

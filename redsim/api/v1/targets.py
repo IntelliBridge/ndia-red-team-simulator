@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from redsim.api.auth import CurrentUser, get_current_user
@@ -47,7 +47,7 @@ def list_targets(project: str = "default",
 
 
 @router.post("")
-def create_target(body: CreateTargetBody = CreateTargetBody(),
+def create_target(body: CreateTargetBody = Body(default_factory=CreateTargetBody),
                   user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     project_id = body.project_id
     check(user, Action.TARGET_MANAGE, project_id)

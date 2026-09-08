@@ -8,7 +8,7 @@ Two ingress paths converge on the same batched writer:
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -31,13 +31,13 @@ from redsim.log_ingest.writer import (
 class TestLogIngestRow(unittest.TestCase):
     def test_requires_tz_aware_ts(self):
         with self.assertRaises(ValueError):
-            LogIngestRow(ts=datetime(2026, 1, 1),
+            LogIngestRow(ts=datetime(2026, 1, 1),  # noqa: DTZ001 - naive on purpose
                           severity="info", service="api", message="hi")
 
     def test_oversize_message_truncated(self):
         big = "x" * (20 * 1024)
         r = LogIngestRow(
-            ts=datetime.now(timezone.utc),
+            ts=datetime.now(UTC),
             severity="info", service="api", message=big,
         )
         self.assertLess(len(r.message), 20 * 1024)
@@ -154,7 +154,7 @@ class TestMetricsAndHealth(unittest.TestCase):
     def test_metrics_exposes_counters(self):
         writer = LogIngestWriter()
         writer.append(LogIngestRow(
-            ts=datetime.now(timezone.utc),
+            ts=datetime.now(UTC),
             severity="info", service="api", message="hi",
         ))
         app = create_app(writer)

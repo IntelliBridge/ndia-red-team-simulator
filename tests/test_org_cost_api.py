@@ -9,7 +9,7 @@ session, so the patch covers both the gate and the aggregation.
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -34,7 +34,7 @@ def _build_app_with_costs():
 
     session_cm, _engine, Session = make_sqlite_session_factory()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with Session() as s:
         s.add(Organization(id="org-1", name="A", slug="org-1",
                            monthly_llm_budget_cents=10_000))

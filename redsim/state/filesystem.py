@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
@@ -25,7 +25,7 @@ class FilesystemRunState:
 
     def __init__(self, output_dir: str, run_id: str | None = None):
         self.output_dir = Path(output_dir)
-        self.run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:6]
+        self.run_id = run_id or datetime.now(UTC).strftime("%Y%m%d-%H%M%S") + "-" + uuid4().hex[:6]
         self.run_path = self.output_dir / "runs" / self.run_id
         self.run_path.mkdir(parents=True, exist_ok=True)
 
@@ -85,7 +85,7 @@ class FilesystemRunState:
             "action": action,
             "result": result,
             "success": success,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         })
         with open(self.remediation_log_path, "w") as fh:
             json.dump(log, fh, indent=2)
@@ -96,7 +96,7 @@ class FilesystemRunState:
         for f in findings:
             if f["id"] == finding_id:
                 f["status"] = status
-                f["updated_at"] = datetime.now(timezone.utc).isoformat()
+                f["updated_at"] = datetime.now(UTC).isoformat()
                 break
         with open(self.findings_path, "w") as fh:
             json.dump(findings, fh, indent=2)

@@ -24,7 +24,7 @@ from redsim.services.evidence import (
 
 # A token-shaped string we deliberately feed in so we can assert it never
 # lands in the pack.
-SECRET_TOKEN = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # noqa: S105
+SECRET_TOKEN = "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
 
 def _seed_writer(output_dir: Path) -> JsonlAuditWriter:
@@ -191,9 +191,8 @@ class TestEvidencePackCli(unittest.TestCase):
             config = RedsimConfig(output_dir=str(out_root))
             pack_dir = Path(tmp) / "pack"
             args = Namespace(out=str(pack_dir), project=None)
-            with patch.dict("os.environ", {}, clear=True):
-                with self.assertRaises(SystemExit) as cm:
-                    cmd_evidence_pack(args, config)
+            with patch.dict("os.environ", {}, clear=True), self.assertRaises(SystemExit) as cm:
+                cmd_evidence_pack(args, config)
             self.assertEqual(cm.exception.code, 0)
             self.assertTrue((pack_dir / "manifest.json").exists())
 

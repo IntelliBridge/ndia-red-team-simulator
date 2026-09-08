@@ -47,12 +47,11 @@ class TestJwksCacheTtl(unittest.TestCase):
     def test_served_from_cache_within_ttl(self):
         cache = _JwksCache()
         factory, client = _counting_httpx({"keys": ["a"]})
-        with patch("httpx.Client", factory):
-            with patch("redsim.api.auth.time.time", return_value=1000.0):
-                first = cache("https://idp/jwks", 300)
-                # Well within the 300s window → no refetch.
-                with patch("redsim.api.auth.time.time", return_value=1200.0):
-                    second = cache("https://idp/jwks", 300)
+        with patch("httpx.Client", factory), patch("redsim.api.auth.time.time", return_value=1000.0):
+            first = cache("https://idp/jwks", 300)
+            # Well within the 300s window → no refetch.
+            with patch("redsim.api.auth.time.time", return_value=1200.0):
+                second = cache("https://idp/jwks", 300)
         self.assertEqual(first, {"keys": ["a"]})
         self.assertEqual(second, {"keys": ["a"]})
         self.assertEqual(client.get.call_count, 1)
@@ -82,22 +81,20 @@ class TestJwksCacheTtl(unittest.TestCase):
     def test_distinct_urls_cached_independently(self):
         cache = _JwksCache()
         factory, client = _counting_httpx({"keys": []})
-        with patch("httpx.Client", factory):
-            with patch("redsim.api.auth.time.time", return_value=1000.0):
-                cache("https://idp-a/jwks", 300)
-                cache("https://idp-b/jwks", 300)
-                # Re-request A inside its window → still cached.
-                cache("https://idp-a/jwks", 300)
+        with patch("httpx.Client", factory), patch("redsim.api.auth.time.time", return_value=1000.0):
+            cache("https://idp-a/jwks", 300)
+            cache("https://idp-b/jwks", 300)
+            # Re-request A inside its window → still cached.
+            cache("https://idp-a/jwks", 300)
         self.assertEqual(client.get.call_count, 2)
 
     def test_cache_clear_forces_refetch(self):
         cache = _JwksCache()
         factory, client = _counting_httpx({"keys": ["a"]})
-        with patch("httpx.Client", factory):
-            with patch("redsim.api.auth.time.time", return_value=1000.0):
-                cache("https://idp/jwks", 300)
-                cache.cache_clear()
-                cache("https://idp/jwks", 300)
+        with patch("httpx.Client", factory), patch("redsim.api.auth.time.time", return_value=1000.0):
+            cache("https://idp/jwks", 300)
+            cache.cache_clear()
+            cache("https://idp/jwks", 300)
         self.assertEqual(client.get.call_count, 2)
 
     def test_verify_jwt_uses_settings_ttl(self):
@@ -119,13 +116,13 @@ class TestJwksCacheTtl(unittest.TestCase):
             from fastapi import HTTPException
 
             from redsim.api.auth import _verify_jwt
-            with patch("redsim.api.auth.time.time", return_value=5000.0):
-                with self.assertRaises(HTTPException):
-                    _verify_jwt("tok", settings)
+            with patch("redsim.api.auth.time.time", return_value=5000.0), \
+                    self.assertRaises(HTTPException):
+                _verify_jwt("tok", settings)
             # 11s later → past the 10s TTL → refetch.
-            with patch("redsim.api.auth.time.time", return_value=5011.0):
-                with self.assertRaises(HTTPException):
-                    _verify_jwt("tok", settings)
+            with patch("redsim.api.auth.time.time", return_value=5011.0), \
+                    self.assertRaises(HTTPException):
+                _verify_jwt("tok", settings)
         self.assertEqual(client.get.call_count, 2)
 
 

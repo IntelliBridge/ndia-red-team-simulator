@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -78,7 +78,7 @@ def _import_run(sess: Session, run_dir: Path, project_id: str,
         sess.add(Run(
             id=run_id, project_id=project_id, mode="imported",
             status="completed", stage_table=stage_table,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         ))
         sess.flush()
     summary.runs_imported += 1
@@ -180,7 +180,7 @@ def _reanchor_audit(sess: Session, run_dir: Path, run_id: str, project_id: str,
     # Head marker
     marker_record = {
         "chain_id": chain_id, "seq": seq,
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
         "actor": "migrate:fs_to_pg",
         "action": "audit.reanchored",
         "target": None, "allowlist_check": "n/a",
@@ -204,7 +204,7 @@ def _reanchor_audit(sess: Session, run_dir: Path, run_id: str, project_id: str,
         prev_hex = prev_hash.hex() if prev_hash else None
         record = {
             "chain_id": chain_id, "seq": seq,
-            "ts": old.get("ts") or datetime.now(timezone.utc).isoformat(),
+            "ts": old.get("ts") or datetime.now(UTC).isoformat(),
             "actor": old.get("actor") or "legacy",
             "action": old.get("action") or "unknown",
             "target": old.get("target"),
@@ -246,8 +246,8 @@ def migrate(*, source_dir: str | Path,
                 try:
                     _import_run(sess, run_dir, project_id, summary,
                                 blob_store, dry_run)
-                except Exception as exc:
+                except Exception as exc:  # noqa: BLE001 - one bad run is recorded, the import continues
                     summary.failures.append(f"{run_dir.name}: {exc}")
-    except Exception as exc:  # pragma: no cover — surfaces DB connection issues
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover — surfaces DB connection issues
         summary.failures.append(f"db error: {exc}")
     return summary

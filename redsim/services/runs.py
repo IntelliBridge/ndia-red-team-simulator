@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from redsim.config import RedsimConfig
@@ -63,7 +63,7 @@ def cancel_run(
         detail={"actor": actor, "run_id": run_id},
     )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with get_session() as sess:
         run = sess.get(Run, run_id)
         if run is None:
