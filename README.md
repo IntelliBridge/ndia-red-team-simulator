@@ -218,6 +218,20 @@ stated on its distribution page (spec section 11). Nothing is committed: the
 one-off `redsim ml build-assets` run (see Get started) fetches them and
 trains the bundled models locally.
 
+Other teams obtain the Phase A data from the public GitHub repository
+[IntelliBridge/ai-red-teaming-data](https://github.com/IntelliBridge/ai-red-teaming-data)
+(commit `ff6a36b`, CC BY 4.0 for the repository's own contents, upstream
+licenses kept per file): the military vehicles parquet (9,444 JPEGs as
+bytes, MIT), the full malicious-URLs CSV (651,191 rows, CC0) and its
+128,224-row seeded eval split, with `INDEX.csv` hashes and a
+`MANIFEST.json`. No models and no CIFAR-10 are published. The public URL
+CSVs are redacted copies: credential-shaped query-parameter values are
+replaced with the literal `REDACTED` in 2,346 of 651,191 rows (406 of
+128,224 in the eval split), with row count, order and labels unchanged.
+The private build trains on the unredacted Kaggle file, so metrics
+re-derived from the public copy differ slightly on those 0.36 percent of
+rows (spec section 11.7).
+
 | Role | Dataset | Modality | License | Notes |
 |---|---|---|---|---|
 | Demo image dataset | `leibnitz-lab/military_vehicles` (HuggingFace), coarse 7-class task | image | MIT (dataset card) | Ground-level photographs, not aerial imagery. Photo copyright is not cleared by the MIT tag, so images are not redistributed in public releases or reports. |

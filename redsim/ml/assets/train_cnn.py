@@ -169,4 +169,5 @@ def load_small_cnn(path: Path, *, in_channels: int, n_classes: int, image_size: 
     model = SmallCNN(in_channels=in_channels, n_classes=n_classes, image_size=image_size)
     state = torch.load(Path(path), map_location="cpu", weights_only=True)
     model.load_state_dict(state, strict=True)
-    return model.eval()
+    model.eval()
+    return model
