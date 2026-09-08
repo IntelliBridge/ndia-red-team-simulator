@@ -1,0 +1,217 @@
+# MkDocs config for the Aegis docs site.
+#
+# Authoring stays in markdown under docs/. This config renders the
+# same markdown into a browseable site (search, sidebar, dark mode,
+# native mermaid). Build locally:
+#
+#   pip install -e ".[docs]"
+#   mkdocs serve          # http://localhost:8001
+#   mkdocs build          # output: ./site
+#
+# CI builds on every PR; main deploys to GitHub Pages — see
+# .github/workflows/docs.yml.
+
+site_name: Aegis
+site_description: >-
+  Aegis security platform — discover, fix, verify, report. With a
+  hash-chained audit log so what the platform did, against what
+  target, on whose authority, always has a verifiable answer.
+site_url: https://aegis-docs.example.com
+repo_name: aegis
+repo_url: https://github.com/IntelliBridge/aegis
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+
+# Use port 8001 by default so it doesn't collide with FastAPI on 8000.
+dev_addr: 127.0.0.1:8001
+
+# ---------------------------------------------------------------------
+# Theme
+# ---------------------------------------------------------------------
+
+theme:
+  name: material
+  language: en
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    # Top-level tabs for the major sections.
+    - navigation.tabs
+    - navigation.tabs.sticky
+    # Group nav into sections in the sidebar.
+    - navigation.sections
+    # Expanded by default so users see structure at a glance.
+    - navigation.expand
+    # Show breadcrumb path for the current page.
+    - navigation.path
+    # Section landings link to a directory's index.md.
+    - navigation.indexes
+    # "Back to top" button.
+    - navigation.top
+    # Search with suggestions + highlighting.
+    - search.suggest
+    - search.highlight
+    - search.share
+    # Code blocks: copy button + line annotations.
+    - content.code.copy
+    - content.code.annotate
+    # Linked tabs (kept in sync across pages).
+    - content.tabs.link
+    # "Edit this page" link via edit_uri.
+    - content.action.edit
+    # Follow-as-you-scroll TOC.
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+# ---------------------------------------------------------------------
+# Markdown extensions
+# ---------------------------------------------------------------------
+
+markdown_extensions:
+  # Standard Material set.
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+
+  # PyMdown extras — these are bundled with mkdocs-material.
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.snippets:
+      # Allow snippets to pull from repo root (for CHANGELOG etc.).
+      base_path: ["docs", "."]
+      check_paths: true
+  - pymdownx.superfences:
+      custom_fences:
+        # Native mermaid rendering — the markdown we already wrote
+        # (```mermaid blocks) renders without any rewrite.
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+
+# ---------------------------------------------------------------------
+# Plugins
+# ---------------------------------------------------------------------
+
+plugins:
+  - search
+
+# ---------------------------------------------------------------------
+# Build hooks
+# ---------------------------------------------------------------------
+#
+# readme_as_index.py reads ../README.md at build time and rewrites
+# its docs/X.md paths so the README renders cleanly as docs/index.md.
+# Single source of truth: README.md at the repo root.
+
+hooks:
+  - hooks/readme_as_index.py
+
+# `mkdocs serve` watches docs_dir + mkdocs.yml by default; tell it to
+# also rebuild when the README (rendered as index.md via the hook) or
+# the hook itself changes.
+watch:
+  - README.md
+  - hooks/
+
+# ---------------------------------------------------------------------
+# Navigation
+# ---------------------------------------------------------------------
+#
+# CHANGELOG / CONTRIBUTING / SECURITY live at the repo root (GitHub
+# conventions) and aren't duplicated here. The nav points at the
+# GitHub-hosted copy via a full URL — mkdocs renders external URLs
+# as plain nav entries.
+
+nav:
+  - Home: index.md
+  - Roadmap: roadmap.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - Auth: architecture/auth.md
+      - Audit chain: architecture/audit-chain.md
+      - Multi-tenancy: architecture/multi-tenancy.md
+      - Observability: architecture/observability.md
+  - API reference: api/v1.md
+  - Integrations: integrations/index.md
+  - Operations:
+      - Production deployment: ops/deploy.md
+      - Kubernetes (Helm): ops/kubernetes.md
+      - Compliance evidence pack: ops/compliance-evidence.md
+      - Authenticated DAST: ops/authenticated-dast.md
+  - Development:
+      - Local stack: dev/local-stack.md
+      - Testing: dev/testing.md
+      - Frontend: dev/frontend.md
+      - Extending Aegis: dev/extending.md
+      - Editing the docs: dev/docs.md
+  - Security:
+      - Fork-PR safety: security/fork-prs.md
+      - Supply-chain integrity: security/supply-chain.md
+      - "Policy (SECURITY.md)": https://github.com/IntelliBridge/aegis/blob/main/SECURITY.md
+  - ADRs:
+      - "0001 — Vendored submodules": adr/0001-vendored-submodules.md
+      - "0002 — Registry seam + runners": adr/0002-registry-seam-and-runners.md
+      - "0003 — Agent execution path": adr/0003-agent-execution-path.md
+      - "0004 — Unified effect-class gate": adr/0004-unified-effect-class-gate.md
+      - "0005 — Worker autoscaling + DR": adr/0005-worker-autoscaling-and-dr.md
+      - "0006 — Firecracker microVM isolation": adr/0006-firecracker-microvm-isolation.md
+      - "0007 — Native MCP toolbelt": adr/0007-native-mcp-toolbelt.md
+      - "0008 — Nix reproducible builds": adr/0008-nix-reproducible-builds.md
+  - "Changelog ↗": https://github.com/IntelliBridge/aegis/blob/main/CHANGELOG.md
+  - "Contributing ↗": https://github.com/IntelliBridge/aegis/blob/main/CONTRIBUTING.md
+  - Legacy:
+      - About legacy docs: architecture/legacy/README.md
+      - Phase 3 plan: architecture/legacy/PLAN_PHASE3.md
+      - Phase 3 snapshot: architecture/legacy/phase3.md
+
+# ---------------------------------------------------------------------
+# Strictness — fail the build on broken refs so CI catches them.
+# ---------------------------------------------------------------------
+
+# In CI we run with `--strict` (see .github/workflows/docs.yml) which
+# elevates these warnings to errors.
+strict: false
+
+# ---------------------------------------------------------------------
+# Extra footer / metadata
+# ---------------------------------------------------------------------
+
+extra:
+  generator: false
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/IntelliBridge/aegis
+copyright: >-
+  Aegis is Apache-2.0. Vendored upstreams keep their own licenses —
+  see <a href="https://github.com/IntelliBridge/aegis/blob/main/project_repos/AEGIS_VENDORED.md">AEGIS_VENDORED.md</a>.

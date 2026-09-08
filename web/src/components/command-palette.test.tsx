@@ -12,7 +12,7 @@ vi.mock("next/navigation", () => ({
 // the test exercises this component's chord + navigation logic rather than
 // Radix dialog/cmdk portal internals. CommandDialog only renders children
 // when `open`, mirroring the real dialog's mounted-when-open behaviour.
-vi.mock("@redsim/design-system", () => ({
+vi.mock("@aegis/design-system", () => ({
   CommandDialog: ({
     open,
     children,

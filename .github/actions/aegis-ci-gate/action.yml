@@ -1,0 +1,46 @@
+name: Aegis CI Gate
+description: Run the Aegis scanner+policy gate against the current commit.
+inputs:
+  severity-threshold:
+    description: critical | high | medium | low
+    default: high
+  max-findings:
+    description: maximum allowed blocking findings
+    default: ""
+  require-validated:
+    description: only count findings with validation_state=poc_passed
+    default: "false"
+  scanner:
+    description: scanner name (strix | trivy | semgrep | nuclei)
+    default: trivy
+  findings-file:
+    description: pre-rendered findings.json to evaluate
+    default: ""
+  junit-xml:
+    description: write a JUnit XML report to this path
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Install Aegis
+      shell: bash
+      run: pip install -e ".[test]"
+    - name: Run ci-gate
+      shell: bash
+      env:
+        AEGIS_DISABLE_LLM: "1"
+      run: |
+        args=("--severity-threshold" "${{ inputs.severity-threshold }}")
+        if [ -n "${{ inputs.max-findings }}" ]; then
+          args+=("--max-findings" "${{ inputs.max-findings }}")
+        fi
+        if [ "${{ inputs.require-validated }}" = "true" ]; then
+          args+=("--require-validated")
+        fi
+        if [ -n "${{ inputs.findings-file }}" ]; then
+          args+=("--findings-file" "${{ inputs.findings-file }}")
+        fi
+        if [ -n "${{ inputs.junit-xml }}" ]; then
+          args+=("--junit-xml" "${{ inputs.junit-xml }}")
+        fi
+        aegis ci-gate "${args[@]}"

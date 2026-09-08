@@ -1,0 +1,19 @@
+FROM postgres:16
+
+# pgaudit logs DDL + role/GRANT changes out-of-band, so any attempt to disable
+# the audit_events append-only controls (DROP TRIGGER, ALTER ROLE, GRANT) is
+# itself recorded. The stock postgres image doesn't ship the extension; install
+# it from the PGDG repo already configured in the base image.
+#
+# Extra CA trust (Zscaler / corporate proxy) before apt hits the network. The
+# deploy/certs/ dir may be empty off-corp; update-ca-certificates then no-ops.
+COPY deploy/certs/ /usr/local/share/ca-certificates/aegis-extra/
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates postgresql-16-pgaudit \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# pgaudit must be preloaded and its log classes set. Migration 0004 runs
+# CREATE EXTENSION + ALTER ROLE pgaudit.log; these server-level settings are
+# the operator-layer half that can't live in a migration transaction.
+CMD ["postgres", "-c", "shared_preload_libraries=pgaudit", "-c", "pgaudit.log=ddl, role"]
