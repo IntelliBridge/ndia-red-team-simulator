@@ -150,8 +150,13 @@ proof of concept. See `docs/superpowers/specs/2026-09-08-redsim-design.md`.
 - **First domain:** image classification on CIFAR-10 (public, benign). Tabular
   and LLM domains are registered as not implemented.
 - **Model access:** bundled model only. No uploads, no external endpoints. The
-  LLM stub accepts a LiteLLM model string so the connection shape is real, but
-  launching returns HTTP 501.
+  LLM stub describes a connection through Pythia (IntelliBridge's
+  OpenAI-compatible agent gateway: base URL, `pk_…` key, persona, canonical
+  `<vendor>/<model>` id) so the connection shape is real, but launching returns
+  HTTP 501.
+- **LLM gateway:** any LLM call redsim makes (the optional recommendation
+  narrative) goes through Pythia, so redsim never holds a provider credential
+  and Pythia's guardrails, metering and audit apply. Default off.
 - **Dataset:** CIFAR-10 test split, fetched from the HuggingFace mirror
   (`uoft-cs/cifar10`) with torchvision as fallback.
 - **Evaluation criteria:** clean vs. adversarial vs. random-noise-control
@@ -163,6 +168,8 @@ proof of concept. See `docs/superpowers/specs/2026-09-08-redsim-design.md`.
   no untrusted code or artifacts are executed in this milestone.
 
 ## Additional references
+
+- https://github.com/IntelliBridge/pythia (agent gateway used for any LLM access)
 
 - https://github.com/NVIDIA/garak
 - https://aclanthology.org/2025.acl-long.334/

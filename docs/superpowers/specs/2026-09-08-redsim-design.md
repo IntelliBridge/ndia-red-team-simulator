@@ -30,8 +30,10 @@ military systems.
 - A web UI: pick a target, pick an attack, launch, then view evidence and
   recommendations side by side.
 - Tabular and LLM domains **registered but not evaluated**. They appear in the
-  UI as unavailable with a stated reason. The LLM target accepts a LiteLLM model
-  string so the connection shape is real; launching returns HTTP 501.
+  UI as unavailable with a stated reason. The LLM target is described as a
+  connection through **Pythia**, IntelliBridge's OpenAI-compatible agent gateway
+  (base URL, `pk_…` API key, `X-Pythia-Persona`, canonical `<vendor>/<model>`
+  id), so the connection shape is real; launching returns HTTP 501.
 
 ### Explicitly out of scope (from the brief)
 
@@ -64,7 +66,9 @@ restart loses nothing but in-flight work. The frontend polls with SWR.
 
 Python 3.12. Dependencies: `fastapi`, `uvicorn`, `pydantic>=2`, `numpy`,
 `torch` (CPU), `torchvision`, `adversarial-robustness-toolbox`, `shap`,
-`matplotlib`, `pyyaml`. Optional extras: `llm` (`litellm`), `garak` (`garak`),
+`matplotlib`, `pyarrow`, `httpx`, `pyyaml`. Optional extras: `llm` (the
+official `pythia-sdk` from the private IntelliBridge/pythia repo; redsim ships
+an in-repo httpx client with the same contract as fallback), `garak` (`garak`),
 `dev` (`pytest`, `ruff`, `mypy`).
 
 Modules copied from aegis nearly verbatim (rename import paths only):
@@ -82,12 +86,16 @@ New modules:
 - `redsim/schema.py` — Pydantic v2 models (section 3).
 - `redsim/targets/` — `base.py` (`Target` protocol: `domain`, `id`, `name`,
   `status`, `load()`, `sample(n, seed)`, `predict(x)`, `metadata()`),
-  `image_cifar10.py` (live), `tabular_stub.py`, `llm_stub.py`, `registry.py`.
+  `image_cifar10.py` (live), `tabular_stub.py`, `llm_stub.py` (declares the
+  Pythia connection fields: base URL, key env var, persona, model id; garak's
+  OpenAI-compatible generator would point at the same gateway), `registry.py`.
 - `redsim/attacks/` — `base.py` (`AttackAdapter` protocol: `id`, `name`,
   `domain`, `family`, `params_schema`, `run(target, x, y, params) -> AttackOutput`),
   `fgsm.py`, `pgd.py`, `noise_control.py`, `registry.py`.
 - `redsim/explain/shap_image.py` — `explain(target, x_clean, x_adv, seed) -> ExplainOutput`.
-- `redsim/recommend/rules.py` — deterministic rules; `narrative.py` optional LLM.
+- `redsim/recommend/rules.py` — deterministic rules; `narrative.py` optional LLM
+  prose via `redsim/recommend/pythia_client.py` (POST `/v1/chat/completions` on
+  the Pythia gateway; uses `pythia_sdk.PythiaClient` when importable).
 - `redsim/runs.py` — orchestration: create run dir, execute pipeline, write
   `run.json` after each stage.
 - `redsim/jobs.py` — thread pool + in-memory handle table.
@@ -152,10 +160,12 @@ the measurement(s) that triggered it. Initial rules:
 | always | Rerun with a larger slice and a different seed before drawing conclusions |
 
 Every recommendation carries `status: "candidate"` and
-`validation: "not evaluated"`. The optional LLM narrative
-(`REDSIM_LLM_MODEL` set) rewrites rule outputs into prose through the
-guardrails; it may not introduce new claims and is labelled "LLM-generated
-narrative of rule outputs" in the UI. Default off.
+`validation: "not evaluated"`. The optional LLM narrative rewrites rule outputs
+into prose through the guardrails; it may not introduce new claims and is
+labelled "LLM-generated narrative of rule outputs" in the UI. Default off; on
+only when `PYTHIA_BASE_URL`, `PYTHIA_API_KEY` and `REDSIM_LLM_MODEL` are set
+(`PYTHIA_PERSONA` optional). The narrative call goes through Pythia, never to a
+provider directly, so redsim holds no provider credential.
 
 ## 3. Evidence model (`redsim/schema.py`)
 
