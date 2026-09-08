@@ -169,3 +169,14 @@ def pytest_collection_modifyitems(
     for item in items:
         if db_fixtures & set(getattr(item, "fixturenames", ())):
             item.add_marker(pytest.mark.integration)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    """Temporarily expose coverage details through check annotations."""
+    plugin = terminalreporter.config.pluginmanager.getplugin("_cov")
+    if plugin is not None and plugin.cov_controller is not None:
+        total = plugin.cov_controller.cov.report()
+        print(f"::error title=P4 coverage diagnostic::total={total:.2f}")
+    for report in terminalreporter.stats.get("failed", [])[:20]:
+        print(f"::error title=P4 failing test::{report.nodeid}")
