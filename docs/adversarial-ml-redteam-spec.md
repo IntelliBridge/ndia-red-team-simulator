@@ -184,7 +184,87 @@ relied on background pixels rather than the target, which is why the small
 perturbation flipped the label. `aegis/ml/explain` writes both a rendered PNG
 and the raw SHAP values JSON to S3 as `Artifact` rows.
 
-## 8. Hardening recommendations
+## 8. Scoring system — the Model Robustness Index
+
+The tool reduces every campaign to one number: the **Model Robustness Index
+(MRI)**, on a 0 to 100 scale, where higher means more robust. The MRI drives
+the scorecard, the finding severities, and the ranked recommendations. It is
+deterministic and reproducible from the stored metrics, so two runs are
+comparable when they use the same attack set and budget grid.
+
+### 8.1 Inputs
+
+For each attack `a` at each perturbation budget ε, the engine records:
+
+- `acc_clean` — accuracy with no attack (the baseline).
+- `acc_adv(a, ε)` — accuracy on the adversarial examples.
+- `asr(a, ε)` — attack success rate, the fraction of correctly classified
+  inputs the attack flips.
+- `pert(a)` — mean perturbation size at first success, in the attack's Lp norm.
+- `conf_gap(a, ε)` — mean confidence on the wrong label minus the right label.
+- `expl_shift(a, ε)` — `1 − cosine similarity` of the SHAP attributions, clean
+  vs adversarial.
+- `queries(a)` — queries needed to break the model (black-box attacks only).
+
+### 8.2 Dimension subscores
+
+Each subscore is on a 0 to 100 scale, where 100 is ideal. Each is the mean over
+the in-scope attacks.
+
+| Dimension | Symbol | Definition | Weight |
+|---|---|---|---|
+| Robust accuracy | `S_acc` | Worst-case `acc_adv` across ε, divided by `acc_clean`. | 0.35 |
+| Evasion resistance | `S_asr` | `1 − mean ASR` at the reference budget. | 0.25 |
+| Budget resilience | `S_eps` | Normalized area under the robust-accuracy vs ε curve. | 0.20 |
+| Confidence calibration | `S_conf` | `1 − clamp(conf_gap)`; a model that is confidently wrong scores low. | 0.10 |
+| Explanation stability | `S_expl` | `1 − mean expl_shift`. | 0.10 |
+
+Explanation stability is the SHAP-native signal. A model whose reasoning moves
+to irrelevant features under a tiny perturbation is brittle even when its
+accuracy holds. This dimension is unique to this tool.
+
+### 8.3 Aggregate
+
+```
+MRI = round( 0.35·S_acc + 0.25·S_asr + 0.20·S_eps + 0.10·S_conf + 0.10·S_expl )
+```
+
+Weights live in a `scoring` config block and are overridable per project. The
+reference budget and the ε grid are stored with each score, so a score is only
+ever compared against another at the same settings.
+
+### 8.4 Grade bands
+
+| MRI | Grade | Reading |
+|---|---|---|
+| 90–100 | A | Hardened. Resists every in-scope attack at the reference budget. |
+| 75–89 | B | Strong. Minor degradation under the strongest attack. |
+| 60–74 | C | Moderate. Breaks under standard PGD. Harden before fielding. |
+| 40–59 | D | Weak. Cheap attacks succeed. Not deployment-ready. |
+| 0–39 | F | Failing. Flips under near-imperceptible perturbation. |
+
+### 8.5 Finding severity is derived, not hand-set
+
+Each attack that crosses its success threshold becomes a `Finding`. Severity
+follows from the budget at first success and the ASR, so it cannot be gamed by
+inspection:
+
+- **critical** — succeeds at ε ≤ ε_small with ASR ≥ 0.5.
+- **high** — succeeds at ε ≤ ε_small with ASR ≥ 0.2, or at ε_mid with ASR ≥ 0.5.
+- **medium** — succeeds only at ε_mid.
+- **low** — succeeds only at ε_large.
+
+This writes to the existing `Finding.severity` field, so the findings table,
+filters, and audit trail work unchanged.
+
+### 8.6 Score delta on verify
+
+After a hardening defense is applied, the campaign re-runs and the tool reports
+**ΔMRI**, the new score minus the old, plus each per-dimension delta. A
+recommendation's expected gain (section 9) is checked against the actual ΔMRI,
+which closes the loop from finding to proven fix.
+
+## 9. Hardening recommendations
 
 `aegis/ml/harden.py` turns results into action. It runs in two layers.
 
@@ -206,7 +286,7 @@ Each recommendation links to the ART defense that implements it (adversarial
 training, feature squeezing, spatial smoothing, defensive distillation) so a
 Phase B step can apply it and re-measure.
 
-## 9. API surface
+## 10. API surface
 
 Reuse the existing `/v1` router and auth. Add:
 
@@ -225,7 +305,7 @@ Reuse the existing `/v1` router and auth. Add:
 Every mutating call emits a chained audit event before enqueue, exactly as the
 existing scan flow does.
 
-## 10. Web UI
+## 11. Web UI
 
 Extend the Next.js app. Reuse the design system, tables, and RBAC gating.
 
@@ -233,14 +313,15 @@ Extend the Next.js app. Reuse the design system, tables, and RBAC gating.
   sample picker.
 - **`/models/[id]`** — model summary; "Run attack" launcher with modality,
   attack checklist, and budget slider.
-- **`/runs/[id]`** — campaign progress; robustness curve; findings table.
+- **`/runs/[id]`** — campaign progress; the MRI scorecard (score, grade, and
+  the five dimension bars); robustness curve; findings table.
 - **`/findings/[id]`** — the money screen. Three panes side by side:
   1. Original vs adversarial input (image pair, or feature diff table).
   2. SHAP explanation (clean vs adversarial saliency).
   3. Ranked hardening recommendations with expected gain and "Verify fix".
 - Reuse `/audit` to show the tamper-evident trail of the whole campaign.
 
-## 11. AWS deployment (ECS Fargate)
+## 12. AWS deployment (ECS Fargate)
 
 Target: ECS Fargate + RDS Postgres + S3 + ElastiCache Redis. No GPU.
 
@@ -266,7 +347,7 @@ Build steps:
    endpoints.
 4. Seed 3 bundled sample models and 2 sample datasets into S3 on first deploy.
 
-## 12. Security and trust notes
+## 13. Security and trust notes
 
 - **Model files are untrusted input.** Load only in the worker sandbox. Prefer
   ONNX/SavedModel. Refuse full pickle load unless the user checks an explicit
@@ -280,7 +361,7 @@ Build steps:
   hash-chained log. `aegis audit verify` proves the campaign trail.
 - **Data.** Ship only unclassified, open sample data. Document this in the UI.
 
-## 13. Build sequence and milestones
+## 14. Build sequence and milestones
 
 Ordered for a 2-day hackathon. Each milestone is demo-able on its own.
 
@@ -296,20 +377,22 @@ Ordered for a 2-day hackathon. Each milestone is demo-able on its own.
 | M7 | Deploy | Push the three Fargate services + RDS + S3. Run the demo end to end. |
 | B1+ | Stretch | Black-box connector, text and detection modalities, adversarial-training defense. |
 
-## 14. Demo script (target)
+## 15. Demo script (target)
 
 1. Open `/models`. Pick the bundled aerial-target CNN.
 2. Click **Run attack**. Select FGSM + PGD, ε slider at 0.03. Start.
-3. Watch the campaign complete on `/runs/[id]`. A high-severity finding appears.
+3. Watch the campaign complete on `/runs/[id]`. The MRI scorecard lands at
+   about 38 (grade F), and a critical finding appears.
 4. Open the finding. Left: the tank image, clean vs perturbed (near-identical to
    the eye). Middle: SHAP shows the model fixated on background terrain, not the
    vehicle. Right: recommendations — adversarial training, input preprocessing,
    confidence calibration — with expected gain.
 5. Click **Verify fix**. The tool applies feature squeezing and re-attacks.
-   Robust accuracy rises; the finding flips to `verified`.
+   The MRI climbs to about 71 (grade C), the ΔMRI of +33 shows on the
+   scorecard, and the finding flips to `verified`.
 6. Open `/audit`. Show the tamper-evident chain of the whole campaign.
 
-## 15. Open risks
+## 16. Open risks
 
 - **ART + SHAP + torch image size.** Keep it in the worker image only. Use the
   CPU torch wheel. Pin versions early.

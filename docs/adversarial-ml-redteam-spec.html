@@ -216,24 +216,27 @@ Architecture</a></li>
 Attack catalog (ART)</a></li>
 <li><a href="#7-explainability-shap" id="toc-7-explainability-shap">7.
 Explainability (SHAP)</a></li>
-<li><a href="#8-hardening-recommendations"
-id="toc-8-hardening-recommendations">8. Hardening
+<li><a href="#8-scoring-system--the-model-robustness-index"
+id="toc-8-scoring-system--the-model-robustness-index">8. Scoring system
+— the Model Robustness Index</a></li>
+<li><a href="#9-hardening-recommendations"
+id="toc-9-hardening-recommendations">9. Hardening
 recommendations</a></li>
-<li><a href="#9-api-surface" id="toc-9-api-surface">9. API
+<li><a href="#10-api-surface" id="toc-10-api-surface">10. API
 surface</a></li>
-<li><a href="#10-web-ui" id="toc-10-web-ui">10. Web UI</a></li>
-<li><a href="#11-aws-deployment-ecs-fargate"
-id="toc-11-aws-deployment-ecs-fargate">11. AWS deployment (ECS
+<li><a href="#11-web-ui" id="toc-11-web-ui">11. Web UI</a></li>
+<li><a href="#12-aws-deployment-ecs-fargate"
+id="toc-12-aws-deployment-ecs-fargate">12. AWS deployment (ECS
 Fargate)</a></li>
-<li><a href="#12-security-and-trust-notes"
-id="toc-12-security-and-trust-notes">12. Security and trust
+<li><a href="#13-security-and-trust-notes"
+id="toc-13-security-and-trust-notes">13. Security and trust
 notes</a></li>
-<li><a href="#13-build-sequence-and-milestones"
-id="toc-13-build-sequence-and-milestones">13. Build sequence and
+<li><a href="#14-build-sequence-and-milestones"
+id="toc-14-build-sequence-and-milestones">14. Build sequence and
 milestones</a></li>
-<li><a href="#14-demo-script-target" id="toc-14-demo-script-target">14.
+<li><a href="#15-demo-script-target" id="toc-15-demo-script-target">15.
 Demo script (target)</a></li>
-<li><a href="#15-open-risks" id="toc-15-open-risks">15. Open
+<li><a href="#16-open-risks" id="toc-16-open-risks">16. Open
 risks</a></li>
 </ul></li>
 </ul>
@@ -594,7 +597,150 @@ the model relied on background pixels rather than the target, which is
 why the small perturbation flipped the label.
 <code>aegis/ml/explain</code> writes both a rendered PNG and the raw
 SHAP values JSON to S3 as <code>Artifact</code> rows.</p>
-<h2 id="8-hardening-recommendations">8. Hardening recommendations</h2>
+<h2 id="8-scoring-system--the-model-robustness-index">8. Scoring system
+— the Model Robustness Index</h2>
+<p>The tool reduces every campaign to one number: the <strong>Model
+Robustness Index (MRI)</strong>, on a 0 to 100 scale, where higher means
+more robust. The MRI drives the scorecard, the finding severities, and
+the ranked recommendations. It is deterministic and reproducible from
+the stored metrics, so two runs are comparable when they use the same
+attack set and budget grid.</p>
+<h3 id="81-inputs">8.1 Inputs</h3>
+<p>For each attack <code>a</code> at each perturbation budget ε, the
+engine records:</p>
+<ul>
+<li><code>acc_clean</code> — accuracy with no attack (the
+baseline).</li>
+<li><code>acc_adv(a, ε)</code> — accuracy on the adversarial
+examples.</li>
+<li><code>asr(a, ε)</code> — attack success rate, the fraction of
+correctly classified inputs the attack flips.</li>
+<li><code>pert(a)</code> — mean perturbation size at first success, in
+the attack's Lp norm.</li>
+<li><code>conf_gap(a, ε)</code> — mean confidence on the wrong label
+minus the right label.</li>
+<li><code>expl_shift(a, ε)</code> — <code>1 − cosine similarity</code>
+of the SHAP attributions, clean vs adversarial.</li>
+<li><code>queries(a)</code> — queries needed to break the model
+(black-box attacks only).</li>
+</ul>
+<h3 id="82-dimension-subscores">8.2 Dimension subscores</h3>
+<p>Each subscore is on a 0 to 100 scale, where 100 is ideal. Each is the
+mean over the in-scope attacks.</p>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Symbol</th>
+<th>Definition</th>
+<th>Weight</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Robust accuracy</td>
+<td><code>S_acc</code></td>
+<td>Worst-case <code>acc_adv</code> across ε, divided by
+<code>acc_clean</code>.</td>
+<td>0.35</td>
+</tr>
+<tr>
+<td>Evasion resistance</td>
+<td><code>S_asr</code></td>
+<td><code>1 − mean ASR</code> at the reference budget.</td>
+<td>0.25</td>
+</tr>
+<tr>
+<td>Budget resilience</td>
+<td><code>S_eps</code></td>
+<td>Normalized area under the robust-accuracy vs ε curve.</td>
+<td>0.20</td>
+</tr>
+<tr>
+<td>Confidence calibration</td>
+<td><code>S_conf</code></td>
+<td><code>1 − clamp(conf_gap)</code>; a model that is confidently wrong
+scores low.</td>
+<td>0.10</td>
+</tr>
+<tr>
+<td>Explanation stability</td>
+<td><code>S_expl</code></td>
+<td><code>1 − mean expl_shift</code>.</td>
+<td>0.10</td>
+</tr>
+</tbody>
+</table>
+<p>Explanation stability is the SHAP-native signal. A model whose
+reasoning moves to irrelevant features under a tiny perturbation is
+brittle even when its accuracy holds. This dimension is unique to this
+tool.</p>
+<h3 id="83-aggregate">8.3 Aggregate</h3>
+<pre><code>MRI = round( 0.35·S_acc + 0.25·S_asr + 0.20·S_eps + 0.10·S_conf + 0.10·S_expl )</code></pre>
+<p>Weights live in a <code>scoring</code> config block and are
+overridable per project. The reference budget and the ε grid are stored
+with each score, so a score is only ever compared against another at the
+same settings.</p>
+<h3 id="84-grade-bands">8.4 Grade bands</h3>
+<table>
+<thead>
+<tr>
+<th>MRI</th>
+<th>Grade</th>
+<th>Reading</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>90–100</td>
+<td>A</td>
+<td>Hardened. Resists every in-scope attack at the reference
+budget.</td>
+</tr>
+<tr>
+<td>75–89</td>
+<td>B</td>
+<td>Strong. Minor degradation under the strongest attack.</td>
+</tr>
+<tr>
+<td>60–74</td>
+<td>C</td>
+<td>Moderate. Breaks under standard PGD. Harden before fielding.</td>
+</tr>
+<tr>
+<td>40–59</td>
+<td>D</td>
+<td>Weak. Cheap attacks succeed. Not deployment-ready.</td>
+</tr>
+<tr>
+<td>0–39</td>
+<td>F</td>
+<td>Failing. Flips under near-imperceptible perturbation.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="85-finding-severity-is-derived-not-hand-set">8.5 Finding
+severity is derived, not hand-set</h3>
+<p>Each attack that crosses its success threshold becomes a
+<code>Finding</code>. Severity follows from the budget at first success
+and the ASR, so it cannot be gamed by inspection:</p>
+<ul>
+<li><strong>critical</strong> — succeeds at ε ≤ ε_small with ASR ≥
+0.5.</li>
+<li><strong>high</strong> — succeeds at ε ≤ ε_small with ASR ≥ 0.2, or
+at ε_mid with ASR ≥ 0.5.</li>
+<li><strong>medium</strong> — succeeds only at ε_mid.</li>
+<li><strong>low</strong> — succeeds only at ε_large.</li>
+</ul>
+<p>This writes to the existing <code>Finding.severity</code> field, so
+the findings table, filters, and audit trail work unchanged.</p>
+<h3 id="86-score-delta-on-verify">8.6 Score delta on verify</h3>
+<p>After a hardening defense is applied, the campaign re-runs and the
+tool reports <strong>ΔMRI</strong>, the new score minus the old, plus
+each per-dimension delta. A recommendation's expected gain (section 9)
+is checked against the actual ΔMRI, which closes the loop from finding
+to proven fix.</p>
+<h2 id="9-hardening-recommendations">9. Hardening recommendations</h2>
 <p><code>aegis/ml/harden.py</code> turns results into action. It runs in
 two layers.</p>
 <ol type="1">
@@ -618,7 +764,7 @@ and expected robustness gain.</li>
 <p>Each recommendation links to the ART defense that implements it
 (adversarial training, feature squeezing, spatial smoothing, defensive
 distillation) so a Phase B step can apply it and re-measure.</p>
-<h2 id="9-api-surface">9. API surface</h2>
+<h2 id="10-api-surface">10. API surface</h2>
 <p>Reuse the existing <code>/v1</code> router and auth. Add:</p>
 <table>
 <thead>
@@ -681,7 +827,7 @@ jobs.</td>
 </table>
 <p>Every mutating call emits a chained audit event before enqueue,
 exactly as the existing scan flow does.</p>
-<h2 id="10-web-ui">10. Web UI</h2>
+<h2 id="11-web-ui">11. Web UI</h2>
 <p>Extend the Next.js app. Reuse the design system, tables, and RBAC
 gating.</p>
 <ul>
@@ -690,8 +836,9 @@ gating.</p>
 <li><strong><code>/models/[id]</code></strong> — model summary; "Run
 attack" launcher with modality, attack checklist, and budget
 slider.</li>
-<li><strong><code>/runs/[id]</code></strong> — campaign progress;
-robustness curve; findings table.</li>
+<li><strong><code>/runs/[id]</code></strong> — campaign progress; the
+MRI scorecard (score, grade, and the five dimension bars); robustness
+curve; findings table.</li>
 <li><strong><code>/findings/[id]</code></strong> — the money screen.
 Three panes side by side:
 <ol type="1">
@@ -704,7 +851,7 @@ fix".</li>
 <li>Reuse <code>/audit</code> to show the tamper-evident trail of the
 whole campaign.</li>
 </ul>
-<h2 id="11-aws-deployment-ecs-fargate">11. AWS deployment (ECS
+<h2 id="12-aws-deployment-ecs-fargate">12. AWS deployment (ECS
 Fargate)</h2>
 <p>Target: ECS Fargate + RDS Postgres + S3 + ElastiCache Redis. No
 GPU.</p>
@@ -776,7 +923,7 @@ the managed endpoints.</li>
 <li>Seed 3 bundled sample models and 2 sample datasets into S3 on first
 deploy.</li>
 </ol>
-<h2 id="12-security-and-trust-notes">12. Security and trust notes</h2>
+<h2 id="13-security-and-trust-notes">13. Security and trust notes</h2>
 <ul>
 <li><strong>Model files are untrusted input.</strong> Load only in the
 worker sandbox. Prefer ONNX/SavedModel. Refuse full pickle load unless
@@ -795,7 +942,7 @@ proves the campaign trail.</li>
 <li><strong>Data.</strong> Ship only unclassified, open sample data.
 Document this in the UI.</li>
 </ul>
-<h2 id="13-build-sequence-and-milestones">13. Build sequence and
+<h2 id="14-build-sequence-and-milestones">14. Build sequence and
 milestones</h2>
 <p>Ordered for a 2-day hackathon. Each milestone is demo-able on its
 own.</p>
@@ -864,25 +1011,27 @@ adversarial-training defense.</td>
 </tr>
 </tbody>
 </table>
-<h2 id="14-demo-script-target">14. Demo script (target)</h2>
+<h2 id="15-demo-script-target">15. Demo script (target)</h2>
 <ol type="1">
 <li>Open <code>/models</code>. Pick the bundled aerial-target CNN.</li>
 <li>Click <strong>Run attack</strong>. Select FGSM + PGD, ε slider at
 0.03. Start.</li>
-<li>Watch the campaign complete on <code>/runs/[id]</code>. A
-high-severity finding appears.</li>
+<li>Watch the campaign complete on <code>/runs/[id]</code>. The MRI
+scorecard lands at about 38 (grade F), and a critical finding
+appears.</li>
 <li>Open the finding. Left: the tank image, clean vs perturbed
 (near-identical to the eye). Middle: SHAP shows the model fixated on
 background terrain, not the vehicle. Right: recommendations —
 adversarial training, input preprocessing, confidence calibration — with
 expected gain.</li>
 <li>Click <strong>Verify fix</strong>. The tool applies feature
-squeezing and re-attacks. Robust accuracy rises; the finding flips to
+squeezing and re-attacks. The MRI climbs to about 71 (grade C), the ΔMRI
+of +33 shows on the scorecard, and the finding flips to
 <code>verified</code>.</li>
 <li>Open <code>/audit</code>. Show the tamper-evident chain of the whole
 campaign.</li>
 </ol>
-<h2 id="15-open-risks">15. Open risks</h2>
+<h2 id="16-open-risks">16. Open risks</h2>
 <ul>
 <li><strong>ART + SHAP + torch image size.</strong> Keep it in the
 worker image only. Use the CPU torch wheel. Pin versions early.</li>
