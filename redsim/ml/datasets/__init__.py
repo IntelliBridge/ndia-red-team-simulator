@@ -10,7 +10,10 @@ Submodules (import them explicitly, this package stays light):
 * ``sampling``   seeded, stratified evaluation slices -> ``Sample``
 * ``image_hub``  HuggingFace hub helpers (revision lookup, file download, imagefolder decode)
 * ``cifar10``    the ``uoft-cs/cifar10`` parquet loader (CI fixture dataset, never a demo target)
-* ``url_features`` lexical URL features (written by the assets branch, imported lazily)
+* ``url_features`` lexical URL features for the malicious-URLs tabular task (spec section 11.3.3)
+
+Fetching and caching of dataset bytes at build time lives in ``redsim.ml.assets.datasets``
+and runs only inside ``redsim ml build-assets``.
 """
 
 from __future__ import annotations

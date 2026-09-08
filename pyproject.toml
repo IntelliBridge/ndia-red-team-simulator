@@ -120,6 +120,13 @@ target-version = "py312"
 extend-select = ["I"]  # isort
 ignore = ["E501"]  # line length handled by formatter
 
+[tool.ruff.lint.per-file-ignores]
+# ml-tier test modules import the code under test after pytest.importorskip so
+# they skip cleanly without the ml extra (E402 is enabled by CI's --select E4).
+"tests/ml/test_assets_manifest.py" = ["E402"]
+"tests/ml/test_fixture_sample.py" = ["E402"]
+"tests/ml/test_url_classifier_training.py" = ["E402"]
+
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI resolves these at request time, so a call in a default is the
 # documented idiom, not a shared mutable default (B008).
