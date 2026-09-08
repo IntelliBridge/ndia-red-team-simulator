@@ -73,7 +73,7 @@ class RunConfig(BaseModel):
 
 
 class Provenance(BaseModel):
-    aegis_version: str
+    redsim_version: str
     python: str
     torch: str
     art: str
