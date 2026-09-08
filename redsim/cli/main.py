@@ -4,6 +4,8 @@ Usage:
     python -m redsim.cli <command> [options]
     python redsim/cli.py <command> [options]
 """
+# ruff: noqa: E402  (this module re-exports the subcommand entry points after the parser is
+#                    defined; the late imports avoid a circular import with redsim.cli.<subcommand>)
 
 from __future__ import annotations
 
