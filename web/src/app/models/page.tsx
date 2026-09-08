@@ -27,6 +27,12 @@ export default function ModelsPage() {
   } = useModels(authed ? projectId : null);
   const { data: capabilities } = useCapabilities(authed);
   const { data: datasets = [] } = useDatasets(authed);
+  // Artifact registration hard-codes modality=image below, so only datasets
+  // that declare image compatibility can be offered; anything else would be
+  // refused by admission as dataset_incompatible.
+  const uploadDatasets = datasets.filter((dataset) =>
+    dataset.compatible_modalities.includes("image"),
+  );
   // GET /v1/models is not mounted on every API deployment yet; a 404 is
   // the route being absent, which must read as not_implemented rather than
   // as an empty or missing catalog.
@@ -303,12 +309,18 @@ export default function ModelsPage() {
                     className="mt-1 w-full rounded-sm border border-input bg-background px-3 py-2"
                   >
                     <option value="">Select a compatible dataset</option>
-                    {datasets.map((dataset) => (
+                    {uploadDatasets.map((dataset) => (
                       <option key={dataset.id} value={dataset.id}>
                         {dataset.name} · {dataset.revision}
                       </option>
                     ))}
                   </select>
+                  {uploadDatasets.length === 0 && (
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      No registered dataset is compatible with image
+                      artifacts, so an upload cannot be evaluated yet.
+                    </span>
+                  )}
                 </label>
                 <label className="mt-3 block text-sm">
                   License statement

@@ -1,5 +1,11 @@
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 
@@ -19,7 +25,36 @@ vi.mock("@/hooks/useMlCatalog", () => ({
       },
     },
   }),
-  useDatasets: () => ({ data: [] }),
+  useDatasets: () => ({
+    data: [
+      {
+        id: "d1",
+        name: "CIFAR-10 slice",
+        revision: "r1",
+        license: "open",
+        source_url: "https://example.invalid",
+        classes: [],
+        size: 10,
+        format: "parquet",
+        role: "ci_fixture",
+        reachability: "recorded",
+        compatible_modalities: ["image"],
+      },
+      {
+        id: "d2",
+        name: "Phishing URLs",
+        revision: "r2",
+        license: "open",
+        source_url: "https://example.invalid",
+        classes: [],
+        size: 10,
+        format: "parquet",
+        role: "demo",
+        reachability: "recorded",
+        compatible_modalities: ["tabular"],
+      },
+    ],
+  }),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
@@ -58,6 +93,18 @@ describe("/models", () => {
       screen.getByText(/Model catalog not_implemented: GET \/v1\/models is not mounted/),
     ).toBeTruthy();
     expect(screen.queryByText("No registered models")).toBeNull();
+  });
+  it("lists only image-compatible datasets for artifact uploads", () => {
+    render(createElement(ModelsPage));
+    fireEvent.click(screen.getByRole("button", { name: "Add model" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload artifact" }));
+    const select = screen.getByLabelText("Evaluation dataset");
+    expect(
+      within(select).getByRole("option", { name: "CIFAR-10 slice · r1" }),
+    ).toBeTruthy();
+    expect(
+      within(select).queryByRole("option", { name: /Phishing URLs/ }),
+    ).toBeNull();
   });
   it("renders availability state and disables the endpoint connector", () => {
     render(createElement(ModelsPage));
