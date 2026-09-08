@@ -1,0 +1,104 @@
+name: Deploy to AWS
+
+# CI/CD for the redsim adversarial-ML simulator.
+#
+# Auth uses GitHub OIDC — no long-lived AWS keys live in GitHub. The
+# workflow assumes an IAM role scoped to this repo (created out-of-band).
+# Config comes from repo variables (Settings -> Variables), NOT secrets,
+# because none of these values are sensitive:
+#   AWS_ACCOUNT_ID       140381642432
+#   AWS_REGION           us-east-1
+#   AWS_DEPLOY_ROLE_ARN  arn:aws:iam::140381642432:role/ndia-red-team-gha-deploy
+#   ECR_REGISTRY         140381642432.dkr.ecr.us-east-1.amazonaws.com
+# The deploy job stays dormant until the ECS variables below are set:
+#   ECS_CLUSTER, ECS_SERVICE_API, ECS_SERVICE_WEB
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "redsim/**"
+      - "web/**"
+      - "packages/**"
+      - "deploy/Dockerfile.*"
+      - "pyproject.toml"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy-aws.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-aws-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: deploy/Dockerfile.api
+          - name: web
+            dockerfile: deploy/Dockerfile.web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ vars.ECR_REGISTRY }}/ndia-red-team/${{ matrix.name }}:${{ github.sha }}
+            ${{ vars.ECR_REGISTRY }}/ndia-red-team/${{ matrix.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,scope=${{ matrix.name }},mode=max
+
+  deploy:
+    # Activates only once the ECS runtime exists and its cluster variable
+    # is set. Until then it is skipped, so the pipeline is green on build.
+    needs: build-and-push
+    if: ${{ vars.ECS_CLUSTER != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Roll ECS services to the new image
+        run: |
+          set -euo pipefail
+          for svc in "${{ vars.ECS_SERVICE_API }}" "${{ vars.ECS_SERVICE_WEB }}"; do
+            [ -n "$svc" ] || continue
+            echo "Forcing new deployment for $svc"
+            aws ecs update-service \
+              --cluster "${{ vars.ECS_CLUSTER }}" \
+              --service "$svc" \
+              --force-new-deployment >/dev/null
+          done
+          echo "Waiting for services to stabilize..."
+          for svc in "${{ vars.ECS_SERVICE_API }}" "${{ vars.ECS_SERVICE_WEB }}"; do
+            [ -n "$svc" ] || continue
+            aws ecs wait services-stable \
+              --cluster "${{ vars.ECS_CLUSTER }}" --services "$svc"
+          done
