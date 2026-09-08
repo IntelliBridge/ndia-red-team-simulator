@@ -14,9 +14,79 @@ if TYPE_CHECKING:
     from celery import Task
     from sqlalchemy.orm import Session
 
+    from redsim.ml.schema import CampaignRecord, MRIRecord
     from redsim.storage import BlobStore
 
 logger = logging.getLogger(__name__)
+
+# Recorded on a verify run whose MRI delta could not be measured. The outcome
+# (verified / still_vulnerable / inconclusive) does not depend on the delta, so
+# the run still completes and the reason travels with the record.
+DELTA_UNAVAILABLE_LIMITATION = (
+    "MRI delta not computed: {reason}. The verification outcome is projected from "
+    "the recorded attack measurements only, and the recommendation keeps "
+    "validation 'not evaluated' because no delta was measured."
+)
+
+
+def _partial_score_reason(label: str, score: MRIRecord) -> str | None:
+    """Why ``score`` cannot enter a delta, or ``None`` when it carries an MRI."""
+    if score.mri is not None:
+        return None
+    missing = ", ".join(score.missing) or "reason not recorded"
+    return f"the {label} score record is partial and carries no MRI ({missing})"
+
+
+def _attach_verify_delta(
+    record: CampaignRecord,
+    baseline_record: CampaignRecord,
+    *,
+    baseline_run_id: str,
+) -> CampaignRecord:
+    """Attach the measured MRI delta when both scores are complete and comparable.
+
+    ``redsim.ml.scoring.delta`` refuses a partial score (``mri`` is ``None`` on
+    either side, for example because a subscore such as the explanation shift
+    was unavailable) and an incompatible pair. Neither refusal invalidates the
+    verify run itself: its outcome is projected from the recorded attack
+    measurements. So the delta is recorded as unavailable in the run's
+    limitations, with the reason, and the record is otherwise left intact.
+    """
+    from redsim.ml.scoring import delta
+
+    before = baseline_record.score
+    after = record.score
+    if before is None or after is None:
+        raise RuntimeError("verify delta needs a score on both the baseline and the verify record")
+    reasons = [
+        reason
+        for reason in (
+            _partial_score_reason("baseline", before),
+            _partial_score_reason("verify", after),
+        )
+        if reason is not None
+    ]
+    if not reasons:
+        try:
+            measured = delta(
+                before,
+                after,
+                baseline_run_id=baseline_run_id,
+                measurements_before=baseline_record.measurements,
+                measurements_after=record.measurements,
+            )
+        except ValueError as exc:
+            reasons.append(str(exc))
+        else:
+            return record.model_copy(update={
+                "score": after.model_copy(update={"delta": measured}),
+            })
+    limitation = DELTA_UNAVAILABLE_LIMITATION.format(reason="; ".join(reasons))
+    logger.warning("verify run %s: %s", record.run_id, limitation)
+    limitations = list(record.limitations)
+    if limitation not in limitations:
+        limitations.append(limitation)
+    return record.model_copy(update={"limitations": limitations})
 
 
 class DatabaseArtifactSink:
@@ -231,7 +301,6 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
         record = record.model_copy(update={"run_id": ctx.run_id})
         if baseline_run_id and record.status == "succeeded" and record.score is not None:
             from redsim.db.models import Artifact
-            from redsim.ml.scoring import delta
 
             baseline_artifact = ctx.session.execute(select(Artifact).where(
                 Artifact.run_id == baseline_run_id,
@@ -247,8 +316,6 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
             baseline_record = CampaignRecord.model_validate_json(baseline_bytes)
             if baseline_record.score is None:
                 raise RuntimeError("verify baseline score is unavailable")
-            baseline_score = baseline_record.score
-            record_score = record.score
             baseline_provenance = baseline_record.provenance
             record_provenance = record.provenance
             mismatch = (
@@ -274,16 +341,13 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
                 })
                 record = CampaignRecord.model_validate(failed)
             else:
-                measured_delta = delta(
-                    baseline_score,
-                    record_score,
-                    baseline_run_id=str(baseline_run_id),
-                    measurements_before=baseline_record.measurements,
-                    measurements_after=record.measurements,
+                # A partial score on either side (mri is None) or an
+                # incompatible pair leaves the delta unavailable, recorded in
+                # the run's limitations. The verification outcome below is
+                # projected from the measurements and does not need it.
+                record = _attach_verify_delta(
+                    record, baseline_record, baseline_run_id=str(baseline_run_id),
                 )
-                record = record.model_copy(update={
-                    "score": record_score.model_copy(update={"delta": measured_delta}),
-                })
         from redsim.ml.reporting import render_campaign_reports
 
         for name, data, content_type in render_campaign_reports(record):
