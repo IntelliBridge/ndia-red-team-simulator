@@ -7,8 +7,9 @@ then the canonical spec
 6, 7 and 23. Those sources are canonical. Do not invent alternatives.
 
 This phase lands Milestone M0 (Scaffold and contracts) on the restored redsim
-platform. The ML vertical lives in `redsim/ml/`. There is no `redsim/` package,
-no `RunStore`, no thread pool, and no new `create_app`. ML routers mount on the
+platform (the aegis platform under its new name). The ML vertical lives in
+`redsim/ml/`. The v1 standalone `redsim/` package is gone: no `RunStore`, no
+thread pool, and no new `create_app`. ML routers mount on the
 existing `redsim/api/app.py:create_app`.
 
 ---
