@@ -17,6 +17,7 @@ import {
   explainFinding,
   hardenFinding,
   verifyFinding,
+  type AccuracyPoint,
   type DefenseInfo,
   type CandidateRecommendation,
   type Measurement,
@@ -26,6 +27,13 @@ import { useFinding } from "@/hooks/useFinding";
 import { useDefenses } from "@/hooks/useMlCatalog";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
+
+// Accuracy with its denominator; an empty point is reported as absent
+// evidence rather than as zero accuracy.
+function accuracyText(point: AccuracyPoint): string {
+  if (point.n === 0 || point.accuracy == null) return "no evidence recorded";
+  return `${point.accuracy} (n=${point.n})`;
+}
 
 function ArtifactImage({ artifact, alt }: { artifact?: string; alt: string }) {
   const [failed, setFailed] = useState(false);
@@ -413,28 +421,31 @@ export default function FindingPage({ params }: { params: { id: string } }) {
             {ml.verify?.delta && (
               <div className="mt-4 border-t border-border pt-3 text-xs">
                 <strong>Recorded measured verification</strong>
-                <p>ΔMRI {ml.verify.delta.delta}</p>
-                {Object.entries(
-                  ml.verify.delta.dimensions as Record<string, number>,
-                ).map(([key, value]) => (
-                  <p key={key}>
-                    {key}: {value}
+                <p>
+                  ΔMRI {ml.verify.delta.delta} · {ml.verify.delta.mri_before}{" "}
+                  → {ml.verify.delta.mri_after} · baseline{" "}
+                  {ml.verify.delta.baseline_run_id}
+                </p>
+                {Object.entries(ml.verify.delta.delta_subscores ?? {}).map(
+                  ([key, value]) => (
+                    <p key={key}>
+                      {key}: {value ?? "not recorded"}
+                    </p>
+                  ),
+                )}
+                {ml.verify.delta.delta_acc_clean && (
+                  <p>
+                    clean accuracy{" "}
+                    {accuracyText(ml.verify.delta.delta_acc_clean.before)} →{" "}
+                    {accuracyText(ml.verify.delta.delta_acc_clean.after)} · Δ{" "}
+                    {ml.verify.delta.delta_acc_clean.delta ?? "not recorded"}
                   </p>
-                ))}
-                {Object.entries(
-                  (ml.verify.delta.asr_by_attack ?? {}) as Record<
-                    string,
-                    {
-                      before: number;
-                      after: number;
-                      n_before: number;
-                      n_after: number;
-                    }
-                  >,
-                ).map(([attack, value]) => (
-                  <p key={attack}>
-                    {attack} ASR {value.before} (n={value.n_before}) →{" "}
-                    {value.after} (n={value.n_after})
+                )}
+                {(ml.verify.delta.delta_families ?? []).map((family) => (
+                  <p key={family.measurement_id}>
+                    {family.measurement_id}: {accuracyText(family.before)} →{" "}
+                    {accuracyText(family.after)} · Δ{" "}
+                    {family.delta ?? "not recorded"}
                   </p>
                 ))}
               </div>

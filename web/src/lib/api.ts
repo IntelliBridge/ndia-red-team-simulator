@@ -141,21 +141,39 @@ export type DefenseConfig = {
   name: string;
   params: Record<string, number | boolean | string>;
 };
+/** A fraction with its denominator; `accuracy` is null when `n` is 0. */
+export type AccuracyPoint = {
+  n: number;
+  n_correct: number;
+  accuracy?: number | null;
+};
+/** The five MRI dimensions on a 0 to 100 scale; also used for deltas. */
+export type MRISubscores = Record<
+  "S_acc" | "S_asr" | "S_eps" | "S_conf" | "S_expl",
+  number | null
+>;
+export type CleanAccuracyDelta = {
+  before: AccuracyPoint;
+  after: AccuracyPoint;
+  delta?: number | null;
+};
+export type FamilyDelta = {
+  measurement_id: string;
+  before: AccuracyPoint;
+  after: AccuracyPoint;
+  delta?: number | null;
+};
+// Mirrors redsim.ml.schema.MRIDelta (spec 15.6): a verify run's ΔMRI against
+// its baseline. Per-dimension deltas live in `delta_subscores` and per-family
+// accuracy deltas (with denominators) in `delta_families`.
 export type MRIDelta = {
   baseline_run_id: string;
   mri_before: number;
   mri_after: number;
   delta: number;
-  dimensions: Record<string, number>;
-  delta_acc_clean?: {
-    before: { n_correct: number; n: number };
-    after: { n_correct: number; n: number };
-    delta: number;
-  };
-  asr_by_attack?: Record<
-    string,
-    { before: number; after: number; n_before: number; n_after: number }
-  >;
+  delta_subscores?: Partial<MRISubscores>;
+  delta_acc_clean?: CleanAccuracyDelta;
+  delta_families?: FamilyDelta[];
 };
 export type MLFindingDetail = {
   attack_id: string;
@@ -433,17 +451,8 @@ export type MRIRecord = {
   run_id?: string;
   mri?: number;
   grade?: string;
-  delta?: {
-    baseline_run_id: string;
-    mri_before: number;
-    mri_after: number;
-    delta: number;
-    delta_acc_clean?: number;
-  } | null;
-  subscores?: Record<
-    "S_acc" | "S_asr" | "S_eps" | "S_conf" | "S_expl",
-    number | null
-  >;
+  delta?: MRIDelta | null;
+  subscores?: MRISubscores;
   per_attack?: Record<string, number>;
   weights?: ScoringWeights;
   reading?: string;
