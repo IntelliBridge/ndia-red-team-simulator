@@ -5,7 +5,7 @@
 # ``docker build`` MUST be invoked from the repo root with
 # ``-f deploy/Dockerfile.web .``.
 
-FROM node:20-bookworm-slim AS builder
+FROM node:26-bookworm-slim AS builder
 
 WORKDIR /app
 
@@ -47,7 +47,7 @@ RUN pnpm --filter @redsim/web build || true
 # --------------------------------------------------------------------
 # Runtime
 # --------------------------------------------------------------------
-FROM node:20-bookworm-slim
+FROM node:26-bookworm-slim
 WORKDIR /app
 
 # Copy the entire workspace tree as built. pnpm's symlinks point into
