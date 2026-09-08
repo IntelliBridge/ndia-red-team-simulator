@@ -9,6 +9,8 @@ Accepted formats and what loading means for each:
                         (``gradients=False`` in the manifest; white-box attacks are not run silently).
 * ``torch_state_dict``  zip archive, ``torch.load(weights_only=True)``, an architecture id from the
                         in-tree allowlist, ``load_state_dict(strict=True)`` -> ``PyTorchClassifier``.
+* ``safetensors_state_dict``  safetensors header, ``safetensors.torch.load_file``, the same architecture
+                         allowlist and strict state-dict load -> ``PyTorchClassifier``.
 
 Everything else is refused with ``UnsupportedArtifact``: legacy pickles and joblib files (by
 extension and by the ``\\x80`` PROTO opcode), ``weights_only`` failures (what a "full pickle" means
@@ -36,8 +38,8 @@ from redsim.ml.errors import UnsupportedArtifact
 from redsim.ml.schema import Domain, MLModelManifest, TargetInfo
 from redsim.ml.targets.base import Sample
 
-ArtifactFormat = str  # "onnx" | "torch_state_dict"
-ACCEPTED_FORMATS: tuple[str, ...] = ("onnx", "torch_state_dict")
+ArtifactFormat = str  # "onnx" | "torch_state_dict" | "safetensors_state_dict"
+ACCEPTED_FORMATS: tuple[str, ...] = ("onnx", "torch_state_dict", "safetensors_state_dict")
 PICKLE_SUFFIXES: tuple[str, ...] = (".pkl", ".pickle", ".joblib", ".sav", ".dill")
 ZIP_MAGIC = b"PK\x03\x04"
 PICKLE_PROTO_OPCODE = 0x80
@@ -119,6 +121,10 @@ def sniff_format(path: Path) -> ArtifactFormat:
         raise UnsupportedArtifact(f"pickle_refused: {p.name} starts with a pickle PROTO opcode")
     if head[:4] == ZIP_MAGIC:
         return "torch_state_dict"
+    if suffix == ".safetensors" and len(head) >= 9:
+        header_size = int.from_bytes(head[:8], "little", signed=False)
+        if 0 < header_size <= p.stat().st_size - 8 and head[8:9] == b"{":
+            return "safetensors_state_dict"
     if head[0] == _ONNX_IR_VERSION_TAG and suffix == ".onnx":
         return "onnx"
     raise UnsupportedArtifact(f"unsupported_model_format: {p.name} matches none of {ACCEPTED_FORMATS} "
@@ -139,17 +145,33 @@ def detect_format(path: Path, declared: str | None = None) -> ArtifactFormat:
 # Loaders (worker side only)
 # --------------------------------------------------------------------------------------
 
-def load_state_dict_module(path: Path, architecture_id: str | None,
-                           architecture_kwargs: dict[str, Any] | None = None) -> Any:
-    """``torch.load(weights_only=True)`` + allowlisted architecture + ``load_state_dict(strict=True)``."""
+def load_state_dict_module(
+    path: Path,
+    architecture_id: str | None,
+    architecture_kwargs: dict[str, Any] | None = None,
+    *,
+    artifact_format: str = "torch_state_dict",
+) -> Any:
+    """Safely load tensors, then apply them strictly to an allowlisted architecture."""
     import torch
 
     module = resolve_architecture(architecture_id, architecture_kwargs)
-    try:
-        state = torch.load(str(path), map_location="cpu", weights_only=True)
-    except Exception as exc:  # torch raises pickle.UnpicklingError and friends
-        raise UnsupportedArtifact("pickle_refused: weights_only load failed (the archive holds objects other "
-                                  f"than tensors): {str(exc).splitlines()[0][:200]}") from exc
+    if artifact_format == "safetensors_state_dict":
+        try:
+            from safetensors.torch import load_file
+
+            state = load_file(str(path), device="cpu")
+        except Exception as exc:
+            raise UnsupportedArtifact(
+                "unsupported_model_format: safetensors load failed: "
+                f"{str(exc).splitlines()[0][:200]}"
+            ) from exc
+    else:
+        try:
+            state = torch.load(str(path), map_location="cpu", weights_only=True)
+        except Exception as exc:  # torch raises pickle.UnpicklingError and friends
+            raise UnsupportedArtifact("pickle_refused: weights_only load failed (the archive holds objects other "
+                                      f"than tensors): {str(exc).splitlines()[0][:200]}") from exc
     if not isinstance(state, dict) or not all(isinstance(v, torch.Tensor) for v in state.values()):
         raise UnsupportedArtifact("unsupported_model_format: the archive is not a state_dict of tensors")
     try:
@@ -344,7 +366,11 @@ class ArtifactTarget:
             "source": "uploaded", "format": self._format or self._declared, "sha256": self._sha256,
             "architecture_id": self._arch_id, "class_names": self._class_names,
             "n_classes": len(self._class_names), "loaded": self._x is not None,
-            "gradients": None if self._format is None else self._format == "torch_state_dict",
+            "gradients": (
+                None
+                if self._format is None
+                else self._format in {"torch_state_dict", "safetensors_state_dict"}
+            ),
             **{k: v for k, v in self._dataset.items() if v is not None},
         }
         return TargetInfo(id=self.id, name=self._name, domain=self._domain, status="available", metadata=meta)
@@ -363,8 +389,13 @@ class ArtifactTarget:
         if self._declared_input_shape and self._declared_input_shape != sample_shape:
             raise UnsupportedArtifact(f"shape_mismatch: manifest input_shape {self._declared_input_shape} vs "
                                       f"evaluation data {sample_shape}")
-        if self._format == "torch_state_dict":
-            self._module = load_state_dict_module(self._path, self._arch_id, self._arch_kwargs)
+        if self._format in {"torch_state_dict", "safetensors_state_dict"}:
+            self._module = load_state_dict_module(
+                self._path,
+                self._arch_id,
+                self._arch_kwargs,
+                artifact_format=self._format,
+            )
             probe = self._torch_logits(as_model_input(x[:1]))
         else:
             self._onnx = load_onnx_model(self._path, intra_op_threads=self._threads)
@@ -444,7 +475,9 @@ class ArtifactTarget:
         m: dict[str, Any] = {
             "source": "uploaded", "file": self._path.name, "architecture_kwargs": self._arch_kwargs or None,
             "eval_n": int(self._y.shape[0]), "eval_per_class": per_class_counts(self._y, self._class_names),
-            "library_versions": {**library_versions("torch", "onnx", "onnxruntime", "adversarial-robustness-toolbox"),
+            "library_versions": {**library_versions(
+                "torch", "safetensors", "onnx", "onnxruntime", "adversarial-robustness-toolbox",
+            ),
                                  "python": platform.python_version()},
             **self._manifest,
         }

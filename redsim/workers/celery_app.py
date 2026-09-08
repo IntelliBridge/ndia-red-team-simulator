@@ -19,6 +19,8 @@ app = Celery(
         "redsim.workers.tasks.reaper",
         "redsim.workers.tasks.tenant_reconcile",
         "redsim.workers.tasks.worm_export",
+        "redsim.workers.tasks.ml_campaign",
+        "redsim.workers.tasks.ml_model",
     ],
 )
 
@@ -40,6 +42,8 @@ app.conf.task_default_queue = "default"
 app.conf.task_routes = {
     "redsim.scan_start": {"queue": "scans"},
     "redsim.verify_replay": {"queue": "scans"},
+    "redsim.ml_campaign_run": {"queue": "scans"},
+    "redsim.ml_model_validate": {"queue": "scans"},
     "redsim.report_render": {"queue": "default"},
     "redsim.reap_stale_jobs": {"queue": "default"},
     "redsim.verify_tenant_integrity": {"queue": "default"},

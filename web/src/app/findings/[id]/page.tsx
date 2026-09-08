@@ -143,6 +143,13 @@ export default function FindingPage({ params }: { params: { id: string } }) {
       row.attack_id === ml.attack_id &&
       Number(row.params.eps) === ml.reference_eps,
   );
+  const recommendationForDefense = ml?.recommendations.find(
+    (recommendation: CandidateRecommendation) =>
+      recommendation.references.includes(
+        defenses.find((defense: DefenseInfo) => defense.id === defenseId)
+          ?.art_class ?? "",
+      ),
+  );
   const act = async (
     name: typeof pending,
     action: () => Promise<unknown>,
@@ -401,16 +408,22 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                     Harden
                   </button>
                   <button
-                    disabled={!!pending || !defenseId}
+                    disabled={
+                      !!pending || !defenseId || !recommendationForDefense
+                    }
                     onClick={() => {
                       try {
+                        if (!recommendationForDefense) return;
                         const values = parsedParams();
                         void act(
                           "verify",
                           () =>
-                            verifyFinding(data.id, defenseId, {
-                              ...values,
-                            }),
+                            verifyFinding(
+                              data.id,
+                              defenseId,
+                              { ...values },
+                              recommendationForDefense.id,
+                            ),
                           "Verification accepted; measured results pending.",
                         );
                       } catch (cause) {
