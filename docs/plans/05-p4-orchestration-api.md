@@ -17,8 +17,8 @@ scoring modules from P1, P2, and P3. It writes no state to disk. All state lives
 in Postgres (`runs`, `jobs`, `findings`, `artifacts`, `ml_campaigns`), in the
 blob store (S3/MinIO), and on the hash-chained audit log.
 
-There is no `redsim/` package. There is no `redsim/runs.py`, no `redsim/jobs.py`,
-no thread pool, no `run.json`, and no new `create_app`. The paths below are the
+The v1 standalone `redsim/` package is gone: no `redsim/runs.py`, no
+`redsim/jobs.py`, no thread pool, no `run.json`, and no new `create_app`. The paths below are the
 real redsim paths on `main`.
 
 ---

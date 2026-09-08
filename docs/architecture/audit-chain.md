@@ -1,6 +1,6 @@
 # Audit chain
 
-Every operation Aegis takes — start a scan, apply a fix, run a Kali
+Every operation Redsim takes — start a scan, apply a fix, run a Kali
 tool, query the log mirror — lands as an event on a **hash-chained**
 audit log. Each event commits to the previous event's hash, so any
 tampering with history breaks every event downstream.
@@ -14,7 +14,7 @@ The chain has three load-bearing properties:
 
 1. **Append-only.** Writers acquire a row-level lock on
    `audit_chain_heads` so two concurrent appends serialise.
-2. **Verifiable in isolation.** `aegis audit verify --all` walks each
+2. **Verifiable in isolation.** `redsim audit verify --all` walks each
    chain end-to-end and recomputes every hash; a mismatch tells you
    which event broke the chain.
 3. **Partitioned by `chain_id`.** Run-scoped events go on
@@ -52,31 +52,31 @@ The chain has three load-bearing properties:
 
 `detail` carries forensic context. For Kali tool invocations, the
 shape is the one produced by
-`aegis.audit.forensic.tool_detail` — **digests + refs, not raw
+`redsim.audit.forensic.tool_detail` — **digests + refs, not raw
 bytes**: stdout / stderr land in the blob store and the audit row
 carries `{sha256, location, kind}` so a 50 MB scanner output never
 inflates an audit row.
 
-`aegis.audit.chain.redact_audit_detail` runs at write-time to scrub
+`redsim.audit.chain.redact_audit_detail` runs at write-time to scrub
 known-sensitive keys (tokens, passwords, etc.).
 
 ---
 
 ## Writer modes
 
-Each Aegis caller mode resolves to one `AuditWriter` instance:
+Each Redsim caller mode resolves to one `AuditWriter` instance:
 
 ```mermaid
 flowchart LR
-  off["AEGIS_DB_URL unset<br/>offline CLI"] --> jsonl["JsonlAuditWriter<br/>aegis_output/audit/chain.jsonl"]
-  api["AEGIS_DB_URL set<br/>api or worker"] --> pg["PostgresAuditWriter<br/>audit_events + audit_chain_heads"]
-  test["AEGIS_TEST_AUDIT=memory"] --> mem["InMemoryAuditWriter<br/>list"]
+  off["REDSIM_DB_URL unset<br/>offline CLI"] --> jsonl["JsonlAuditWriter<br/>redsim_output/audit/chain.jsonl"]
+  api["REDSIM_DB_URL set<br/>api or worker"] --> pg["PostgresAuditWriter<br/>audit_events + audit_chain_heads"]
+  test["REDSIM_TEST_AUDIT=memory"] --> mem["InMemoryAuditWriter<br/>list"]
 ```
 
 Construction:
 
 ```python
-from aegis.audit.writers import open_writer
+from redsim.audit.writers import open_writer
 
 writer = open_writer("api")        # explicit
 writer = open_writer(None)         # infer from env
@@ -127,16 +127,16 @@ parallel.
 CLI:
 
 ```bash
-aegis audit verify --all          # walk every chain
-aegis audit verify --run run-abc  # one run
-aegis audit verify --project proj-a
+redsim audit verify --all          # walk every chain
+redsim audit verify --run run-abc  # one run
+redsim audit verify --project proj-a
 ```
 
 API (admin only):
 
 ```bash
 curl -H "Authorization: Bearer …" \
-  "$AEGIS_API_URL/v1/audit/verify?all=1"
+  "$REDSIM_API_URL/v1/audit/verify?all=1"
 ```
 
 The verifier checks, for each chain:
@@ -164,7 +164,7 @@ off-DB into immutable object storage:
    trigger `RAISE EXCEPTION`s for everyone — table owner and superuser
    included. A privileged operator can't quietly rewrite a row.
 2. **Cryptographic hash-chain verification** (`verify_chain`, above). Even
-   if the trigger were dropped (which needs `aegis_owner` DDL, itself
+   if the trigger were dropped (which needs `redsim_owner` DDL, itself
    pgaudit-logged), re-signing a chain end-to-end is detectable: every
    downstream `this_hash` would have to be recomputed and the
    `audit_chain_heads` pointer rewritten in lockstep.
@@ -176,7 +176,7 @@ off-DB into immutable object storage:
    `COMPLIANCE` mode, not even by root). This is what makes the chain
    tamper-*resistant* off-DB, not merely tamper-*evident*.
 
-`aegis/storage/worm.py` holds `WormArchive`, which wraps the S3 blob store
+`redsim/storage/worm.py` holds `WormArchive`, which wraps the S3 blob store
 pointed at the WORM bucket.
 
 ### Export object layout
@@ -195,7 +195,7 @@ chain head under a stable, content-derived key prefix
 
 `sha8` is the first 8 hex chars of the JSONL's sha256. Both objects are put
 with the bucket's Object Lock retention (`retain_until` =
-now + `AEGIS_WORM_RETENTION_DAYS`).
+now + `REDSIM_WORM_RETENTION_DAYS`).
 
 ### Idempotency
 
@@ -212,19 +212,19 @@ A broken chain is still archived (so the evidence is preserved) but its
 manifest records `verified: false` and the chain id lands in
 `ExportSummary.broken_chains`.
 
-- **Daily beat task.** `aegis.export_chains_to_worm`
-  (`aegis/workers/tasks/worm_export.py`) is registered in
-  `celery beat` at interval `AEGIS_WORM_INTERVAL` (default 86400s / daily).
-  It **self-gates**: when `AEGIS_WORM_EXPORT` is off it early-returns
+- **Daily beat task.** `redsim.export_chains_to_worm`
+  (`redsim/workers/tasks/worm_export.py`) is registered in
+  `celery beat` at interval `REDSIM_WORM_INTERVAL` (default 86400s / daily).
+  It **self-gates**: when `REDSIM_WORM_EXPORT` is off it early-returns
   `{"status": "disabled"}`, so a deployment without WORM configured no-ops
   on every tick. Each successful run emits an `audit.worm_export` event
   (summary counts only — no creds, no event contents) back onto the chain.
-- **On-demand CLI.** `aegis audit export` archives chains immediately:
+- **On-demand CLI.** `redsim audit export` archives chains immediately:
 
   ```bash
-  aegis audit export --all                 # every chain
-  aegis audit export --chain run:run-abc   # one chain
-  aegis audit export --all --no-verify     # skip the pre-archive verify
+  redsim audit export --all                 # every chain
+  redsim audit export --chain run:run-abc   # one chain
+  redsim audit export --all --no-verify     # skip the pre-archive verify
   ```
 
   With WORM disabled or misconfigured the command prints an actionable
@@ -237,7 +237,7 @@ the JSONL object and feed it back through the verifier:
 
 ```python
 import json
-from aegis.audit.chain import verify_chain
+from redsim.audit.chain import verify_chain
 
 events = [json.loads(line) for line in jsonl_bytes.decode().splitlines()]
 result = verify_chain(events)        # walks seq / prev_hash / this_hash
@@ -245,7 +245,7 @@ assert result.verified
 ```
 
 Because the JSONL preserves `this_hash`, the recomputation is byte-identical
-to the live `aegis audit verify` walk; the manifest's `jsonl_sha256` lets you
+to the live `redsim audit verify` walk; the manifest's `jsonl_sha256` lets you
 confirm the downloaded bytes match what was sealed.
 
 ---
@@ -261,7 +261,7 @@ confirm the downloaded bytes match what was sealed.
 | `verify.replay`     | `services.verify.create_verify_job` (admission), worker re-check |
 | `run.cancel`        | `services.runs.cancel_run`                                  |
 | `target.manage`     | `services.targets.create_target` / `delete_target`          |
-| `kali.<tool>`       | `aegis.tools.kali_client._audit` per invocation             |
+| `kali.<tool>`       | `redsim.tools.kali_client._audit` per invocation             |
 | `cai.live_hardening` | `services.fixes._generate_live_fix`                        |
 | `deps.bump`         | `services.fixes._generate_deps_fix`                         |
 | `github.open_pr`    | CLI / service when opening a PR via the GitHub App          |
@@ -278,7 +278,7 @@ chain backend handles serialisation, hash linking, and persistence.
 
 Phase-4 v0.3.1 F8 retired the per-tool side-channel
 (`tool-calls.jsonl`). Every Kali tool invocation now lands on the
-canonical chain with the shape `aegis.audit.forensic.tool_detail`
+canonical chain with the shape `redsim.audit.forensic.tool_detail`
 produces:
 
 ```jsonc
@@ -293,7 +293,7 @@ produces:
   "stderr_bytes": 0,
   "artifact_refs": [
     { "sha256": "f31a…",
-      "location": "s3://aegis/blobs/runs/run-1/kali/nmap.stdout",
+      "location": "s3://redsim/blobs/runs/run-1/kali/nmap.stdout",
       "kind": "stdout" }
   ],
   "request_id": "req-…"
@@ -317,7 +317,7 @@ carries only the descriptor.
 | Append succeeded but Celery enqueue failed (worker crash) | Chain has the event, job stays `queued`. Reapeable, never a half-state.    |
 | Raw scanner output exfiltrates secrets via audit rows | Forensic detail carries digests + blob refs only; raw bytes stay out.            |
 | Multi-megabyte audit rows                             | Detail capped at 64 KiB; oversize attrs spill to the blob store with a logged warning. |
-| Privileged operator re-signs a chain end-to-end       | `audit_events` is append-only **at the database**: a `BEFORE UPDATE OR DELETE`/`TRUNCATE` trigger `RAISE EXCEPTION`s for everyone (owner + superuser included). Re-signing needs `DROP TRIGGER`/owner DDL, which only `aegis_owner` holds and pgaudit logs. (Migration `0004`.) |
+| Privileged operator re-signs a chain end-to-end       | `audit_events` is append-only **at the database**: a `BEFORE UPDATE OR DELETE`/`TRUNCATE` trigger `RAISE EXCEPTION`s for everyone (owner + superuser included). Re-signing needs `DROP TRIGGER`/owner DDL, which only `redsim_owner` holds and pgaudit logs. (Migration `0004`.) |
 | Attacker with full DB control rewrites *and* re-signs the chain | Chains are exported off-DB to an Object-Lock bucket (`COMPLIANCE` mode). The sealed copy can't be overwritten or deleted before its retention expires; download the JSONL and re-run `verify_chain` to compare against the live DB. (WORM archival, above.) |
 
 The off-DB tamper-resistance the chain used to lack is now in place — see
@@ -325,9 +325,9 @@ The off-DB tamper-resistance the chain used to lack is now in place — see
 
 - Database-side append-only enforcement (migration `0004`): a
   row-immutability trigger blocks `UPDATE`/`DELETE`/`TRUNCATE` on
-  `audit_events` even for the table owner, the runtime `aegis_app` role is
+  `audit_events` even for the table owner, the runtime `redsim_app` role is
   granted only `INSERT, SELECT` on it, and `pgaudit` logs DDL + role/GRANT
-  changes out-of-band. Only a holder of `aegis_owner` (DDL) can
+  changes out-of-band. Only a holder of `redsim_owner` (DDL) can
   `DROP`/`DISABLE` the trigger or set `session_replication_role = replica`,
   and any such action is itself pgaudit-logged. Cryptographic verification
   (`verify_chain`) and the WORM archive stay as layered controls. See
@@ -359,8 +359,8 @@ Offline JSONL (per chain file):
 
 ```bash
 jq -r '. | "\(.seq)\t\(.action)\t\(.target)\t\(.success)"' \
-  aegis_output/audit/run:run-abc123.jsonl
+  redsim_output/audit/run:run-abc123.jsonl
 ```
 
-The CLI's `aegis audit verify` is the canonical reader; treat raw
+The CLI's `redsim audit verify` is the canonical reader; treat raw
 queries as a forensic / dashboards tool.

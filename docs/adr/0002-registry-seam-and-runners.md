@@ -1,5 +1,7 @@
 # ADR 0002 — Registry seam + runner/adapter split
 
+> Inherited from the upstream `IntelliBridge/aegis` project and kept as history. Names below are the upstream `aegis` identifiers at the time of the decision. In this fork the package is `redsim/`, environment variables are `REDSIM_*`, the console script is `redsim` and the chart is `deploy/helm/redsim`.
+
 - **Status:** Accepted
 - **Date:** 2026-05-29
 - **Scope:** the registry / runner layer (`aegis/registry.py`,

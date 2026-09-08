@@ -1,18 +1,18 @@
 # Compliance evidence pack
 
-`aegis evidence-pack` bundles Aegis's audit + controls evidence into a
+`redsim evidence-pack` bundles Redsim's audit + controls evidence into a
 self-contained directory that a **SOC 2 / ISO 27001 / FedRAMP** reviewer
 can inspect offline — no live access to the platform required. It is the
 machine-generated counterpart to the hardening posture documented in
-[`SECURITY.md`](https://github.com/IntelliBridge/aegis/blob/main/SECURITY.md).
+[`SECURITY.md`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/SECURITY.md).
 
 ```bash
-aegis evidence-pack --out ./aegis-evidence
+redsim evidence-pack --out ./redsim-evidence
 # optional: scope to a single project's audit chain
-aegis evidence-pack --out ./aegis-evidence --project acme
+redsim evidence-pack --out ./redsim-evidence --project acme
 ```
 
-The command prints the Aegis version, the number of audit chains
+The command prints the Redsim version, the number of audit chains
 exported, the file count, and the overall pack hash. `--out DIR` is
 required.
 
@@ -25,7 +25,7 @@ required.
   audit/<chain_id>.jsonl   one file per hash-chained audit chain
   verification.json        per-chain verify_chain() verdict (verified / count / broken_at)
   controls.json            SOC 2 / ISO 27001 / FedRAMP controls crosswalk
-  system.json              Aegis version + secret-free enabled-features summary
+  system.json              Redsim version + secret-free enabled-features summary
   manifest.json            sha256 of every file + the overall pack hash
 ```
 
@@ -38,7 +38,7 @@ required.
   auditor can confirm the exported log is intact and re-verify it
   independently.
 - **`controls.json`** — the auditor-facing crosswalk (see below).
-- **`system.json`** — Aegis version, generation timestamp, and a
+- **`system.json`** — Redsim version, generation timestamp, and a
   **secret-free** enabled-features summary (backend *names* and booleans
   only — e.g. `auth_mode`, `oidc_configured`, `tenancy_rls`,
   `offline_vendor_host: true/false`). See [No secrets](#no-secrets).
@@ -52,7 +52,7 @@ required.
 ## Frameworks covered
 
 `controls.json` maps representative controls from three frameworks to the
-concrete Aegis features that supply evidence:
+concrete Redsim features that supply evidence:
 
 | Framework | Example controls mapped |
 |---|---|
@@ -62,7 +62,7 @@ concrete Aegis features that supply evidence:
 
 !!! note "Partials are flagged honestly"
     The crosswalk is deliberately conservative: it only maps a control to
-    a feature Aegis genuinely ships. Anything with deployment-dependent or
+    a feature Redsim genuinely ships. Anything with deployment-dependent or
     incomplete coverage is marked `"status": "partial"` with a `note`
     explaining the gap (e.g. monitoring controls depend on the operator's
     SIEM / telemetry backend; LLM-guardrail input-validation coverage

@@ -1,5 +1,7 @@
 # ADR 0004 — Unified effect-class human-in-the-loop gate
 
+> Inherited from the upstream `IntelliBridge/aegis` project and kept as history. Names below are the upstream `aegis` identifiers at the time of the decision. In this fork the package is `redsim/`, environment variables are `REDSIM_*`, the console script is `redsim` and the chart is `deploy/helm/redsim`.
+
 - **Status:** Accepted
 - **Date:** 2026-06-01
 - **Scope:** the gate spine (`aegis/effects.py`), the agent seam

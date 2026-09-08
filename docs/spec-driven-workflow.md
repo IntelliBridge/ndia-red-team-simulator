@@ -51,7 +51,7 @@ Never describe a UI-only stub as a completed integration, or an implemented back
 
 ## Research versus implementation
 
-D001–D005 were resolved on 2026-09-08 (see `specs/_shared/decisions.md`): image + tabular via ART, SHAP for both, Celery worker + aegis plugin sandbox; OpenSandbox not used. The paragraph below is kept as the method statement.
+D001–D005 were resolved on 2026-09-08 (see `specs/_shared/decisions.md`): image + tabular via ART, SHAP for both, Celery worker + redsim plugin sandbox; OpenSandbox not used. The paragraph below is kept as the method statement.
 
 Research may reduce uncertainty without selecting a dependency. The ART/garak choice depends on the approved domain. SHAP support depends on the selected model and explanation method. OpenSandbox feasibility depends on the approved execution environment. The TIP paper informs potential coverage, not a promise of garak compatibility or validated defenses.
 

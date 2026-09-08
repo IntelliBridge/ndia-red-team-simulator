@@ -2,7 +2,7 @@
 
 For the contributor workflow (how to install extras and what must stay green
 on every PR), see
-[`CONTRIBUTING.md`](https://github.com/IntelliBridge/aegis/blob/main/CONTRIBUTING.md)
+[`CONTRIBUTING.md`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CONTRIBUTING.md)
 § "Run the test suite". This page documents the shared test plumbing.
 
 ## Shared fixtures (`tests/conftest.py`)

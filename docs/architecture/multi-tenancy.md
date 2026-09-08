@@ -1,13 +1,13 @@
 # Multi-tenancy
 
-Aegis is multi-tenant on the **Organization**. An org is the top entity
+Redsim is multi-tenant on the **Organization**. An org is the top entity
 in the data model; every `Project` carries an `org_id`, and every
 project-scoped row (runs, findings, jobs, …) belongs to exactly one org
 through its project. The tenant boundary *is* the org boundary.
 
 Isolation is **layered**. The app layer already scopes every read to the
 caller's project memberships (`ensure_project_access` / `ensure_run_access`
-in `aegis/api/policy.py`). The database layer adds **Postgres Row-Level
+in `redsim/api/policy.py`). The database layer adds **Postgres Row-Level
 Security (RLS)** keyed on `org_id` as defense-in-depth: a single forgotten
 `WHERE` clause can no longer leak rows across tenants, because the database
 itself refuses to return another org's rows.
@@ -65,13 +65,13 @@ subqueried `projects` would recurse through that table's own RLS.
 ### 2. `ENABLE` + `FORCE ROW LEVEL SECURITY` + one policy
 
 Each of the nine tables gets RLS **enabled and forced**, plus a single
-policy `aegis_tenant_isolation`:
+policy `redsim_tenant_isolation`:
 
 ```sql
 ALTER TABLE <t> ENABLE ROW LEVEL SECURITY;
 ALTER TABLE <t> FORCE  ROW LEVEL SECURITY;   -- also binds the table OWNER
 
-CREATE POLICY aegis_tenant_isolation ON <t>
+CREATE POLICY redsim_tenant_isolation ON <t>
   USING (
     coalesce(current_setting('app.current_tenants', true), '') = ''
     OR org_id = ANY (string_to_array(current_setting('app.current_tenants', true), ','))
@@ -95,10 +95,10 @@ the owner). `ENABLE` already binds ordinary roles.
     A Postgres **superuser bypasses RLS unconditionally** — `FORCE` does **not**
     bind superusers, only the table owner. So org isolation only enforces when
     the application connects as a **non-superuser** role. Production must point
-    `AEGIS_DB_URL` at the restricted **`aegis_app`** role (provisioned in
+    `REDSIM_DB_URL` at the restricted **`redsim_app`** role (provisioned in
     migration `0004` + the [deploy runbook](../ops/deploy.md)); the dev
-    docker-compose uses the `aegis` superuser for convenience, where RLS is a
-    no-op. `aegis.db.session` logs a one-time **warning** when it detects a
+    docker-compose uses the `redsim` superuser for convenience, where RLS is a
+    no-op. `redsim.db.session` logs a one-time **warning** when it detects a
     superuser connection with a tenant scope in effect. The Postgres-gated
     `tests/test_tenant_rls.py` therefore `SET ROLE`s to a dedicated
     non-superuser role to exercise the policies faithfully.
@@ -115,7 +115,7 @@ the owner). `ENABLE` already binds ordinary roles.
 
 The GUC is set per request and cleared after.
 
-- **`aegis/db/session.py`** — `set_current_tenants(org_ids)` pins a
+- **`redsim/db/session.py`** — `set_current_tenants(org_ids)` pins a
   request-scoped `ContextVar`; `get_session()` issues
   `SELECT set_config('app.current_tenants', :v, is_local => true)` at the
   start of the transaction so the value is scoped to that transaction and
@@ -123,7 +123,7 @@ The GUC is set per request and cleared after.
   value is **bound as a parameter**, never interpolated. `None` / empty
   list ⇒ `''` ⇒ system (full access). This is **Postgres-only** —
   `set_config` doesn't exist on sqlite, so unit tests are unaffected.
-- **`aegis/api/middleware/tenant.py`** — after auth resolves the caller,
+- **`redsim/api/middleware/tenant.py`** — after auth resolves the caller,
   it computes the distinct org ids of the caller's *member projects* and
   pins them for the request, resetting in a `finally`. System principals
   (`is_system` — workers, service accounts) and callers with no
@@ -173,7 +173,7 @@ Migration `0006` adds two nullable columns to `organizations`:
 
 ### Budget enforcement
 
-`DbBudgetChecker` (`aegis/llm/budget.py`) gains:
+`DbBudgetChecker` (`redsim/llm/budget.py`) gains:
 
 - **`remaining_org(org_id)`** — `monthly_llm_budget_cents` minus this UTC
   calendar month's `llm_usage.cost_cents` for the org (matched on the
@@ -182,10 +182,10 @@ Migration `0006` adds two nullable columns to `organizations`:
 - **`model_override(org_id, task)`** — reads
   `organizations.llm_model_overrides[task]`.
 
-`route(..., org_id=…)` (`aegis/llm/router.py`) then:
+`route(..., org_id=…)` (`redsim/llm/router.py`) then:
 
 1. **Model selection** — a per-tenant override
-   (`llm_model_overrides[task]`) wins; otherwise the `AegisConfig`
+   (`llm_model_overrides[task]`) wins; otherwise the `RedsimConfig`
    default. The override is consulted only when both `org_id` and a
    checker exposing `model_override` are supplied, so it degrades to the
    config default absent a DB.
@@ -197,7 +197,7 @@ Migration `0006` adds two nullable columns to `organizations`:
 
 ### The cost endpoint + dashboard
 
-`GET /v1/orgs/{org_id}/cost?days=30` (`aegis/api/v1/org_cost.py`)
+`GET /v1/orgs/{org_id}/cost?days=30` (`redsim/api/v1/org_cost.py`)
 aggregates `llm_usage` for the org into a chargeback view: `total_cents`,
 `call_count`, and `by_day` / `by_model` / `by_task` breakdowns over the
 trailing `days` window, plus a month-to-date budget block (cap, spent,

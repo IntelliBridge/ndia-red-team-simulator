@@ -1,7 +1,7 @@
 # Frontend development
 
 This doc covers the Next.js app, the design-system workspace, and
-Storybook. For the deep auth flow (NextAuth + Aegis-signed cookie),
+Storybook. For the deep auth flow (NextAuth + Redsim-signed cookie),
 see [`docs/architecture/auth.md`](../architecture/auth.md); for the
 API surface the SPA consumes, see
 [`docs/api/v1.md`](../api/v1.md).
@@ -10,7 +10,7 @@ API surface the SPA consumes, see
 
 ```
 pnpm-workspace.yaml             # root manifest
-web/                            # @aegis/web — Next.js 14 app
+web/                            # @redsim/web — Next.js 14 app
   src/
     app/                        # App Router pages
     lib/                        # api(), auth helpers
@@ -21,9 +21,9 @@ web/                            # @aegis/web — Next.js 14 app
   tsconfig.json
   package.json
 project_repos/
-  design-system/                # @aegis/design-system — shared components
+  design-system/                # @redsim/design-system — shared components
     src/
-      components/               # Aegis-branded compositions + .stories.tsx
+      components/               # Redsim-branded compositions + .stories.tsx
       primitives/               # dependency-free shadcn leaves (table/card/skeleton/alert/input/textarea)
       lib/utils.ts              # cn(...)
       index.ts                  # public surface
@@ -34,13 +34,13 @@ Everything is one workspace. From the repo root:
 
 ```bash
 pnpm install --frozen-lockfile      # honours web/pnpm-lock.yaml
-pnpm --filter @aegis/web dev        # next dev -p 3000
-pnpm --filter @aegis/web typecheck
-pnpm --filter @aegis/web build
-pnpm --filter @aegis/web storybook
+pnpm --filter @redsim/web dev        # next dev -p 3000
+pnpm --filter @redsim/web typecheck
+pnpm --filter @redsim/web build
+pnpm --filter @redsim/web storybook
 ```
 
-The web tsconfig's `paths` resolves `@aegis/design-system` to the
+The web tsconfig's `paths` resolves `@redsim/design-system` to the
 source folder so a `next dev` hot-reload picks up DS edits without a
 build step.
 
@@ -48,8 +48,8 @@ build step.
 
 - **Composed, not imported.** shadcn primitives live in
   `project_repos/design-system/src/primitives/`, then are wrapped by
-  Aegis-branded compositions in `src/components/`. The web app imports
-  only from `@aegis/design-system`'s public surface (`src/index.ts`),
+  Redsim-branded compositions in `src/components/`. The web app imports
+  only from `@redsim/design-system`'s public surface (`src/index.ts`),
   never from the vendored upstream directly.
 
 - **Base primitive set.** The dependency-free shadcn leaves —
@@ -70,8 +70,8 @@ build step.
 
 - **Storybook is the spec.** Every component exported from
   `index.ts` must have a story file co-located (`*.stories.tsx`). The
-  CI `web-build` job now enforces a blocking `@aegis/design-system`
-  typecheck plus the `@aegis/web` vitest suite, so the component layer
+  CI `web-build` job now enforces a blocking `@redsim/design-system`
+  typecheck plus the `@redsim/web` vitest suite, so the component layer
   must type-check and pass tests on every PR.
 
 - **CSP-friendly.** No inline scripts in components. CSS-only badges
@@ -96,7 +96,7 @@ flowchart LR
 
 ## Component inventory
 
-The first eight components shipped in `@aegis/design-system`. Each has
+The first eight components shipped in `@redsim/design-system`. Each has
 a story; every page in the web app uses at least one of them:
 
 | Component         | Where it appears                                  |
@@ -160,12 +160,12 @@ api<T>(path, init?)         // GET by default
 api<T>(path, { method: "POST", body: JSON.stringify(...), headers: {…} })
 ```
 
-- Auto-attaches `X-Aegis-Request-ID` per call.
-- Bearer wins: when `localStorage.aegis_token` (or `init.token`) is
+- Auto-attaches `X-Redsim-Request-ID` per call.
+- Bearer wins: when `localStorage.redsim_token` (or `init.token`) is
   set, `Authorization: Bearer …` is sent and `credentials: omit`.
 - Otherwise `credentials: include` so the cookie rides, and on
-  mutating methods the `X-Aegis-CSRF` header is auto-attached from
-  the `aegis_csrf` cookie.
+  mutating methods the `X-Redsim-CSRF` header is auto-attached from
+  the `redsim_csrf` cookie.
 - Non-2xx surfaces as `ApiError(status, body)` — pages render the
   detail directly.
 
@@ -178,14 +178,14 @@ gate the pages use.
 
 The Keycloak code flow lives at
 `web/src/app/api/auth/[...nextauth]/route.ts`. The session callback
-mints two cookies via the server-only `web/src/server/aegis-session.ts`:
+mints two cookies via the server-only `web/src/server/redsim-session.ts`:
 
-- `aegis_api_session` — httpOnly + secure-in-prod + sameSite=Lax;
+- `redsim_api_session` — httpOnly + secure-in-prod + sameSite=Lax;
   RS256-signed via `jose`.
-- `aegis_csrf` — NOT httpOnly so the SPA can read it.
+- `redsim_csrf` — NOT httpOnly so the SPA can read it.
 
 There's also `/api/auth/refresh-api-session` (POST) for re-minting
-without bouncing through Keycloak, and `/api/auth/signout-aegis`
+without bouncing through Keycloak, and `/api/auth/signout-redsim`
 (POST) for clearing both cookies during logout.
 
 ## Adding a new page
@@ -195,7 +195,7 @@ without bouncing through Keycloak, and `/api/auth/signout-aegis`
 2. Use `requireAuth(router)` at the top to bounce unauthenticated
    visitors to `/login`.
 3. Fetch via `useSWR(authed ? "/v1/…" : null, fetcher)`.
-4. Compose UI from `@aegis/design-system` — don't write a one-off
+4. Compose UI from `@redsim/design-system` — don't write a one-off
    badge inline.
 5. Wrap any mutating control in `<RoleGated minRole=… callerRole=
    {roles[projectId]}>`.
@@ -205,7 +205,7 @@ without bouncing through Keycloak, and `/api/auth/signout-aegis`
 1. If it's a primitive shadcn already ships, generate it:
 
    ```bash
-   pnpm --filter @aegis/design-system exec shadcn add <component>
+   pnpm --filter @redsim/design-system exec shadcn add <component>
    ```
 
    This drops a file under `src/primitives/`.
@@ -217,17 +217,17 @@ without bouncing through Keycloak, and `/api/auth/signout-aegis`
    `@radix-ui/react-tooltip`, and `cmdk` are already in the lockfile
    (they back `AlertDialog` / `Tooltip` / `Command`).
 
-2. Compose the Aegis-branded wrapper under `src/components/`; export
+2. Compose the Redsim-branded wrapper under `src/components/`; export
    from `src/index.ts`. Co-locate a `*.stories.tsx` file.
 
 3. Update the table in this doc.
 
-4. Type-check: `pnpm --filter @aegis/design-system run typecheck`
+4. Type-check: `pnpm --filter @redsim/design-system run typecheck`
    (`tsconfig.build.json`, stories excluded). This is the blocking CI
    gate in `web-build`; the real component + primitive source must
    compile clean.
 
-5. Storybook: `pnpm --filter @aegis/web storybook` to preview.
+5. Storybook: `pnpm --filter @redsim/web storybook` to preview.
 
 ## Lock-file discipline (F2)
 
@@ -236,8 +236,8 @@ without bouncing through Keycloak, and `/api/auth/signout-aegis`
 dependency:
 
 ```bash
-pnpm --filter @aegis/web add <pkg>
-pnpm --filter @aegis/design-system add <pkg>
+pnpm --filter @redsim/web add <pkg>
+pnpm --filter @redsim/design-system add <pkg>
 git add web/pnpm-lock.yaml web/package.json …/package.json
 ```
 
