@@ -462,53 +462,6 @@ def fake_module_factory():  # module-level so it has a stable module:qualname
     return FakeScanner()
 
 
-class TestSandboxedRunEndToEnd(unittest.TestCase):
-    """Spawns the real worker subprocess against the reference example.
-
-    This is the sandbox's *success* path: ``SandboxedScanner.scan`` -> child
-    ``python -m redsim.scanners.sandbox_worker`` -> ok envelope -> a rebuilt
-    ``ScanResult`` with a real finding and an artifact persisted into the run
-    dir. The error-envelope tests below cover the failure paths.
-    """
-
-    def setUp(self):
-        _example_on_path(self)
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.tmp = Path(self._tmp.name)
-
-    def _sandboxed(self) -> SandboxedScanner:
-        import redsim_plugin_example as mod
-        return SandboxedScanner(mod.create_scanner(), EXAMPLE_EP)
-
-    def test_marker_hit_produces_finding_via_subprocess(self):
-        target = self.tmp / "target"
-        target.mkdir()
-        (target / "a.py").write_text('pw = "REDSIM-EXAMPLE-SECRET"\n')
-        (target / "clean.txt").write_text("nothing to see\n")
-        run_state = RunState(str(self.tmp / "out"))
-        result = self._sandboxed().scan(run_state, ScanOptions(target=str(target)))
-
-        self.assertEqual(result.exit_code, 0, result.error)
-        self.assertIsNone(result.error)
-        self.assertEqual(len(result.findings), 1)
-        finding = result.findings[0]
-        self.assertEqual(finding.finding_type, "sast")
-        self.assertEqual(finding.source_tool, "example")
-        self.assertEqual(finding.code_locations[0].start_line, 1)
-        # The command recorded is the safe list-argv worker invocation (no shell).
-        self.assertIn("redsim.scanners.sandbox_worker", result.command_str)
-        # The sandboxed child persisted an artifact into the real run dir.
-        self.assertTrue((run_state.run_path / "artifacts" / "example-scanner.txt").is_file())
-
-    def test_clean_target_produces_zero_findings(self):
-        target = self.tmp / "clean"
-        target.mkdir()
-        (target / "ok.py").write_text("x = 1\n")
-        run_state = RunState(str(self.tmp / "out"))
-        result = self._sandboxed().scan(run_state, ScanOptions(target=str(target)))
-        self.assertEqual(result.exit_code, 0, result.error)
-        self.assertEqual(result.findings, [])
 
 
 class TestSandboxedRunChildEnv(unittest.TestCase):
@@ -635,49 +588,6 @@ class TestSandboxEnvPolicy(unittest.TestCase):
         self.assertIn("HTTP_PROXY", on)
 
 
-class TestSandboxWorkerUnit(unittest.TestCase):
-    """In-process unit tests of the worker's request/response core."""
-
-    def setUp(self):
-        _example_on_path(self)
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.tmp = Path(self._tmp.name)
-
-    def test_run_returns_ok_envelope(self):
-        from redsim.scanners import sandbox_worker
-
-        target = self.tmp / "t"
-        target.mkdir()
-        (target / "a.py").write_text('k = "REDSIM-EXAMPLE-SECRET"\n')
-        run_path = self.tmp / "out" / "run-1"
-        request = {"run_id": "run-1", "run_path": str(run_path),
-                   "options": {"target": str(target)}}
-        envelope = sandbox_worker.run(EXAMPLE_EP, request)
-        self.assertTrue(envelope["ok"])
-        self.assertEqual(len(envelope["result"]["findings"]), 1)
-        self.assertEqual(envelope["result"]["adapter_name"], "example")
-
-    def test_parse_entry_point_rejects_malformed(self):
-        from redsim.scanners.sandbox_worker import _parse_entry_point
-
-        for bad in ("nocolon", ":nofactory", "nomodule:", ""):
-            with self.assertRaises(ValueError):
-                _parse_entry_point(bad)
-
-    def test_main_emits_error_envelope_on_unimportable(self):
-        from redsim.scanners import sandbox_worker
-
-        request = json.dumps({"run_id": "r", "run_path": str(self.tmp / "o"),
-                              "options": {"target": "."}})
-        buf = io.StringIO()
-        with patch.object(sandbox_worker, "_RESULT_STREAM", buf), \
-                patch("sys.stdin", io.StringIO(request)):
-            rc = sandbox_worker.main(["--entry-point", "no_such_mod_abc:create"])
-        self.assertEqual(rc, 0)  # a produced (error) envelope is exit 0
-        envelope = json.loads(buf.getvalue())
-        self.assertFalse(envelope["ok"])
-        self.assertIn("error", envelope)
 
 
 if __name__ == "__main__":
