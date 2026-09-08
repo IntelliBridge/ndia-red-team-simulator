@@ -5,10 +5,46 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from redsim.ml.schema import CampaignConfig
+
+# Same name ``redsim.ml.targets.bundled.assets_dir`` reads; kept as a literal so
+# applying it needs no ML import (numpy, torch) before the request is trusted.
+ASSETS_DIR_ENV = "REDSIM_ML_ASSETS_DIR"
+
+
+def _apply_assets_dir(request: dict[str, Any]) -> Path | None:
+    """Point every asset lookup in this process at the parent's resolved tree.
+
+    The parent strips the whole ``REDSIM_*`` namespace from the child env and
+    hands the bundled asset directory over explicitly as ``request["assets_dir"]``
+    (see ``redsim.ml.sandbox._run_child``). Bundled targets, tabular targets and
+    ``services.ml_models._evaluation_binding`` all read ``REDSIM_ML_ASSETS_DIR``
+    at call time, so setting it here, before any of them is imported, is what
+    makes a non-default assets mount work inside the child.
+
+    Only an absolute path string is accepted: a relative value would silently
+    re-anchor on the child's working directory, which is exactly the ambiguity
+    the explicit hand-off exists to remove. A request without the field leaves
+    the environment untouched (the parent's env copy, when present, still wins).
+    """
+    raw = request.get("assets_dir")
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(
+            f"sandbox request assets_dir must be a non-empty path string, got {raw!r}"
+        )
+    path = Path(raw)
+    if not path.is_absolute():
+        raise ValueError(
+            f"sandbox request assets_dir must be absolute, got {raw!r}"
+        )
+    os.environ[ASSETS_DIR_ENV] = str(path)
+    return path
 
 
 class DirectoryArtifactSink:
@@ -127,6 +163,9 @@ def main() -> int:
     request = json.loads(Path(args.request).read_text(encoding="utf-8"))
     if not isinstance(request, dict):
         raise TypeError("sandbox request must be an object")
+    # Must precede the lazy ML imports in _campaign/_validate: they resolve the
+    # manifest from REDSIM_ML_ASSETS_DIR the moment a target is built or loaded.
+    _apply_assets_dir(request)
     if request.get("mode") == "campaign":
         _campaign(request, work_dir)
     elif request.get("mode") == "validate":

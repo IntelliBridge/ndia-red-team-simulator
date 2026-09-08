@@ -1,4 +1,16 @@
-"""Credential-free child-process envelope for adversarial-ML execution."""
+"""Credential-free child-process envelope for adversarial-ML execution.
+
+The child inherits the generic plugin-sandbox allowlist (``_SAFE_ENV_KEYS``),
+which strips every ``REDSIM_*`` variable so credentials never reach it. The one
+operator setting the child legitimately needs is the bundled asset tree
+(``REDSIM_ML_ASSETS_DIR``): bundled targets, tabular targets and the evaluation
+split of uploaded models all resolve ``MANIFEST.json`` from it. The parent
+therefore resolves that directory once, to an absolute path, and hands it to the
+child explicitly, both as the ``assets_dir`` field of the request JSON (which
+``sandbox_worker`` applies before any ML import) and as the single non-secret
+``REDSIM_*`` variable in the child env. No other ``REDSIM_*`` value, proxy
+setting or API token crosses the boundary.
+"""
 
 from __future__ import annotations
 
@@ -29,6 +41,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Mirrors ``redsim.ml.targets.bundled.ASSETS_DIR_ENV`` / ``DEFAULT_ASSETS_DIR``.
+# Declared here rather than imported so the Celery parent never pulls numpy or
+# registers bundled targets as a side effect of building the envelope
+# (``tests/test_review22_sandbox_assets.py`` pins the two pairs together).
+ASSETS_DIR_ENV = "REDSIM_ML_ASSETS_DIR"
+DEFAULT_ASSETS_DIR = "./assets"
+
 
 def _timeout_seconds() -> int:
     raw = os.environ.get("REDSIM_ML_SANDBOX_TIMEOUT_S", "1800")
@@ -36,6 +55,21 @@ def _timeout_seconds() -> int:
         return max(1, int(raw))
     except ValueError:
         return 1800
+
+
+def _assets_dir() -> Path:
+    """The operator's bundled asset tree, anchored as an absolute path for the child.
+
+    Reads ``REDSIM_ML_ASSETS_DIR`` (default ``./assets``) exactly as
+    ``redsim.ml.targets.bundled.assets_dir`` does, then normalizes it (``~``,
+    ``..``, symlinks, cwd) so the value the child receives no longer depends on
+    the child's working directory or environment. Existence is deliberately not
+    required here: a missing or malformed manifest surfaces inside the child as
+    an explicit ``TargetUnavailable`` / ``UnsupportedArtifact`` with the path in
+    the message, which is the evidence operators need.
+    """
+    raw = os.environ.get(ASSETS_DIR_ENV, "").strip() or DEFAULT_ASSETS_DIR
+    return Path(raw).expanduser().resolve()
 
 
 def _safe_name(name: str) -> Path:
@@ -158,16 +192,23 @@ def _run_child(
     on_stage: Callable[[str], None] | None,
     is_cancelled: Callable[[], bool] | None,
 ) -> dict[str, Any]:
+    assets = str(_assets_dir())
     with tempfile.TemporaryDirectory(prefix="redsim-ml-sandbox-") as raw_dir:
         work_dir = Path(raw_dir)
         request_path = work_dir / "request.json"
-        request_path.write_text(json.dumps(request), encoding="utf-8")
+        request_path.write_text(
+            json.dumps({**request, "assets_dir": assets}), encoding="utf-8"
+        )
         cfg = SandboxConfig.from_env(timeout_s=_timeout_seconds())
         env = _child_env(cfg)
         env.update({
             "PYTHONUNBUFFERED": "1",
             "OMP_NUM_THREADS": "1",
             "MKL_NUM_THREADS": "1",
+            # The only REDSIM_* value the child receives: a resolved directory,
+            # never a credential. Every other REDSIM_*, KAGGLE_*, PYTHIA_* and
+            # proxy variable stays behind with the allowlist in _child_env.
+            ASSETS_DIR_ENV: assets,
         })
         argv = [
             sys.executable,
@@ -332,6 +373,8 @@ def validate_model_sandboxed(
 
 
 __all__ = [
+    "ASSETS_DIR_ENV",
+    "DEFAULT_ASSETS_DIR",
     "partial_campaign_record",
     "run_campaign_sandboxed",
     "validate_model_sandboxed",
