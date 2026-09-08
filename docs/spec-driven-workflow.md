@@ -2,6 +2,8 @@
 
 We follow GitHub Spec Kit's distinction between the **what**, the **how**, and the **work to do**. Start with the [feature map](../specs/README.md).
 
+The product-level **what** is the [Adversarial ML Red-Team Simulator — Product Spec](superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md); feature specs decompose it and must agree with it.
+
 ## Workflow and responsibilities
 
 | Stage | Team activity | File or output | Reviewer |
@@ -28,7 +30,7 @@ Official reference: [GitHub Spec Kit](https://github.com/github/spec-kit).
 ## Example: taking one story into development
 
 1. The owner selects `F002/US1` from the catalog specification.
-2. Product and evaluation reviewers agree on what registration means; D003 determines the allowed references. Arbitrary file upload must not slip in as an implementation detail.
+2. Product and evaluation reviewers agree on what registration means; D003 (resolved 2026-09-08) fixes the allowed references: bundled sample models, and ONNX / PyTorch `state_dict` uploads loaded only on the sandboxed worker, with full pickles refused and endpoint connectors deferred to Phase B. Arbitrary file upload must not slip in as an implementation detail.
 3. Engineering finalizes the catalog plan, version semantics, access checks, and API contract.
 4. The owner assigns relevant `F002/T…` tasks. A frontend contributor and a backend contributor may work in parallel only after the shared contract is stable.
 5. The reviewer checks the acceptance scenarios, including rejected and archived records—not only the happy path.
@@ -48,6 +50,8 @@ Each contribution should state:
 Never describe a UI-only stub as a completed integration, or an implemented backend without its required UI as a completed user story.
 
 ## Research versus implementation
+
+D001–D005 were resolved on 2026-09-08 (see `specs/_shared/decisions.md`): image + tabular via ART, SHAP for both, Celery worker + aegis plugin sandbox; OpenSandbox not used. The paragraph below is kept as the method statement.
 
 Research may reduce uncertainty without selecting a dependency. The ART/garak choice depends on the approved domain. SHAP support depends on the selected model and explanation method. OpenSandbox feasibility depends on the approved execution environment. The TIP paper informs potential coverage, not a promise of garak compatibility or validated defenses.
 

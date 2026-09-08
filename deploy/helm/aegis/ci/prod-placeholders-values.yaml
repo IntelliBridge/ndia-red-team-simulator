@@ -1,0 +1,13 @@
+# CI fixture: a prod deployment that LEFT the dev secret placeholders in place
+# and wired no external secret. `helm template` with this file MUST fail via the
+# aegis.validateProdSecret guard (see templates/secret.yaml / _helpers.tpl).
+# Exercised by the helm-lint job in .github/workflows/aegis-ci.yml.
+config:
+  env: prod
+  secret:
+    existingSecret: ""
+    s3AccessKeyId: aegis
+    s3SecretAccessKey: aegis-secret
+    nextAuthSecret: dev-secret-change-me
+    externalSecrets:
+      enabled: false

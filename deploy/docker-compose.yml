@@ -51,15 +51,6 @@ services:
     volumes:
       - minio-data:/data
 
-  kali:
-    image: aegis-kali:dev
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.kali
-    ports: ["5000:5000"]
-    environment:
-      AEGIS_KALI_ALLOW_GENERIC_COMMAND: "0"
-
   aegis-api:
     image: aegis-api:dev
     build:
@@ -83,10 +74,9 @@ services:
       AEGIS_CORS_ORIGINS: http://localhost:3300
       AEGIS_OIDC_ISSUER: http://keycloak:8080/realms/aegis
       AEGIS_OIDC_JWKS_URL: http://keycloak:8080/realms/aegis/protocol/openid-connect/certs
-      AEGIS_KALI_URL: http://kali:5000
     ports: ["8000:8000"]
 
-  # Long-running offensive/remediation work (-Q scans). Needs the kali belt.
+  # Long-running attack/explain/verify work (-Q scans).
   aegis-worker:
     image: aegis-worker:dev
     build:
@@ -96,7 +86,6 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-      kali: { condition: service_started }
     environment: &worker-env
       AEGIS_ENV: dev
       AEGIS_DB_URL: postgresql+psycopg://aegis:aegis@postgres:5432/aegis
@@ -107,7 +96,6 @@ services:
       AEGIS_S3_BUCKET: aegis
       AEGIS_S3_ACCESS_KEY_ID: aegis
       AEGIS_S3_SECRET_ACCESS_KEY: aegis-secret
-      AEGIS_KALI_URL: http://kali:5000
       AEGIS_DISABLE_LLM: "1"
 
   # Fast bookkeeping (-Q default): reports, CI gate, exports, parallel_fix

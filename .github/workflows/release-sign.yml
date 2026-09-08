@@ -1,0 +1,190 @@
+# Release supply-chain integrity.
+#
+# Runs ONLY on version tags (v*) — never on PRs or branch pushes. The
+# existing `docker-images` job in aegis-ci.yml stays a no-push PR build;
+# this workflow is the release-only, push-and-sign counterpart.
+#
+# For each of the four service images (api, worker, web, log_ingest) it:
+#   1. Builds and pushes to GHCR by digest.
+#   2. Keyless-signs the pushed image with cosign (ambient OIDC — no keys).
+#   3. Generates a CycloneDX SBOM (Syft) and attaches it as a cosign
+#      attestation.
+#   4. Generates SLSA-3 build provenance via the official
+#      slsa-github-generator container reusable workflow.
+#
+# Operators verify images before deploy with the cosign commands at the
+# bottom of this file (and in scripts/verify-release.sh).
+#
+# NOTE: everything here executes in GitHub Actions at release time; it
+# cannot be run locally.
+
+name: Release sign
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+# Least-privilege at the top; jobs elevate only what they need.
+permissions:
+  contents: read
+
+jobs:
+  build-push-sign:
+    name: Build, push, sign, SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to GHCR
+      id-token: write # keyless cosign OIDC
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api
+            file: deploy/Dockerfile.api
+          - service: worker
+            file: deploy/Dockerfile.worker
+          - service: web
+            file: deploy/Dockerfile.web
+          - service: log_ingest
+            file: deploy/Dockerfile.log_ingest
+    outputs:
+      # Per-service digests consumed by the SLSA provenance jobs below.
+      digest-api: ${{ steps.export.outputs.digest-api }}
+      digest-worker: ${{ steps.export.outputs.digest-worker }}
+      digest-web: ${{ steps.export.outputs.digest-web }}
+      digest-log_ingest: ${{ steps.export.outputs.digest-log_ingest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ghcr.io/<owner>/<repo>/<service>; lower-cased because GHCR
+      # rejects upper-case path segments and the org is mixed-case.
+      - name: Compute image name
+        id: img
+        run: |
+          name="ghcr.io/${GITHUB_REPOSITORY}/${{ matrix.service }}"
+          echo "ref=$(echo "$name" | tr '[:upper:]' '[:lower:]')" >>"$GITHUB_OUTPUT"
+
+      - name: Image metadata (tags + labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.img.outputs.ref }}
+          tags: |
+            type=ref,event=tag
+            type=sha
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Keyless: cosign uses the ambient GitHub OIDC token (id-token:
+      # write). No private keys are stored anywhere. Signing by digest
+      # pins the exact pushed image.
+      - name: Sign image (keyless)
+        env:
+          REF: ${{ steps.img.outputs.ref }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${REF}@${DIGEST}"
+
+      - name: Generate SBOM (Syft, CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.img.outputs.ref }}@${{ steps.build.outputs.digest }}
+          format: cyclonedx-json
+          output-file: sbom-${{ matrix.service }}.cdx.json
+
+      - name: Attest SBOM (keyless)
+        env:
+          REF: ${{ steps.img.outputs.ref }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SBOM: sbom-${{ matrix.service }}.cdx.json
+        run: cosign attest --yes --predicate "${SBOM}" --type cyclonedx "${REF}@${DIGEST}"
+
+      # Surface this matrix leg's digest under a service-keyed output so
+      # the SLSA jobs can pick the right one (matrix legs can't each own
+      # a distinctly named static output, so we key by service here).
+      - name: Export digest output
+        id: export
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "digest-${{ matrix.service }}=${DIGEST}" >>"$GITHUB_OUTPUT"
+
+  # SLSA-3 build provenance via the official generator. We prefer the
+  # reusable container generator over `cosign attest --type
+  # slsaprovenance` because it produces signed, non-falsifiable SLSA-3
+  # provenance from an isolated builder and attaches it to the image in
+  # GHCR for `cosign verify-attestation`. One invocation per image
+  # (the reusable workflow targets a single image+digest), fanned out
+  # with a matrix.
+  provenance:
+    name: SLSA provenance (${{ matrix.service }})
+    needs: build-push-sign
+    permissions:
+      id-token: write # sign provenance via Sigstore (keyless)
+      packages: write # push the provenance attestation to GHCR
+      actions: read # read the workflow run for the provenance subject
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, worker, web, log_ingest]
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml@v2.0.0
+    with:
+      image: ghcr.io/${{ github.repository }}/${{ matrix.service }}
+      digest: ${{ needs.build-push-sign.outputs[format('digest-{0}', matrix.service)] }}
+      registry-username: ${{ github.actor }}
+    secrets:
+      registry-password: ${{ secrets.GITHUB_TOKEN }}
+
+# ---------------------------------------------------------------------------
+# Operator verification (run before deploy). Replace <service> with one of
+# api | worker | web | log_ingest and <DIGEST> with the sha256 digest.
+# The certificate-identity-regexp matches this repo's release workflow on a
+# tag; the OIDC issuer is GitHub's Actions token service. See also
+# scripts/verify-release.sh.
+#
+#   IMAGE="ghcr.io/intellibridge/aegis/<service>@<DIGEST>"
+#   IDENTITY='^https://github.com/IntelliBridge/aegis/.github/workflows/release-sign.yml@refs/tags/v.*$'
+#   ISSUER='https://token.actions.githubusercontent.com'
+#
+#   # 1. Verify the keyless image signature.
+#   cosign verify \
+#     --certificate-identity-regexp "$IDENTITY" \
+#     --certificate-oidc-issuer "$ISSUER" \
+#     "$IMAGE"
+#
+#   # 2. Verify the SBOM attestation (CycloneDX).
+#   cosign verify-attestation --type cyclonedx \
+#     --certificate-identity-regexp "$IDENTITY" \
+#     --certificate-oidc-issuer "$ISSUER" \
+#     "$IMAGE"
+#
+#   # 3. Verify the SLSA provenance attestation. The provenance is signed
+#   #    by the slsa-github-generator reusable workflow, so its identity
+#   #    differs from this repo's workflow:
+#   cosign verify-attestation --type slsaprovenance \
+#     --certificate-identity-regexp '^https://github.com/slsa-framework/slsa-github-generator/.*$' \
+#     --certificate-oidc-issuer "$ISSUER" \
+#     "$IMAGE"
+# ---------------------------------------------------------------------------
