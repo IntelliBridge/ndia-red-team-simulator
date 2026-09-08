@@ -1,0 +1,76 @@
+{{/*
+aegis-log-ingest — receives OTLP/Logs + direct JSON batches and writes the
+Postgres mirror (application_logs). Listens on :4319. Mirrors the
+aegis-log-ingest service in deploy/docker-compose.yml. Minimal image →
+readOnlyRootFilesystem defaults true.
+*/}}
+{{- $component := "log-ingest" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aegis.componentName" (dict "ctx" . "component" $component) }}
+  labels:
+    {{- include "aegis.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  replicas: {{ .Values.logIngest.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aegis.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "aegis.componentLabels" (dict "ctx" . "component" $component) | nindent 8 }}
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- include "aegis.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: log-ingest
+          image: {{ include "aegis.image" (dict "ctx" . "image" .Values.logIngest.image) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "aegis.containerSecurityContext" (dict "readOnlyRootFilesystem" .Values.logIngest.readOnlyRootFilesystem) | nindent 12 }}
+          ports:
+            - name: otlp
+              containerPort: 4319
+          # log-ingest only needs the DB URL from the shared config.
+          env:
+            - name: AEGIS_DB_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "aegis.configMapName" . }}
+                  key: AEGIS_DB_URL
+          # TCP probe: the uvicorn server accepting connections on 4319 is a
+          # sufficient health signal for the ingest sidecar.
+          livenessProbe:
+            tcpSocket:
+              port: otlp
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 6
+          readinessProbe:
+            tcpSocket:
+              port: otlp
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.logIngest.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aegis.componentName" (dict "ctx" . "component" $component) }}
+  labels:
+    {{- include "aegis.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+spec:
+  type: {{ .Values.logIngest.service.type }}
+  selector:
+    {{- include "aegis.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 4 }}
+  ports:
+    - name: otlp
+      port: {{ .Values.logIngest.service.port }}
+      targetPort: otlp
