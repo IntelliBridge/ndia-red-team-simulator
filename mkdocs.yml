@@ -13,9 +13,9 @@
 
 site_name: Aegis
 site_description: >-
-  Aegis security platform — discover, fix, verify, report. With a
-  hash-chained audit log so what the platform did, against what
-  target, on whose authority, always has a verifiable answer.
+  Aegis adversarial-ML red-team simulator — attack, measure, explain,
+  recommend. With a hash-chained audit log so what the platform did,
+  against what target, on whose authority, always has a verifiable answer.
 site_url: https://aegis-docs.example.com
 repo_name: aegis
 repo_url: https://github.com/IntelliBridge/aegis
@@ -155,7 +155,6 @@ watch:
 
 nav:
   - Home: index.md
-  - Roadmap: roadmap.md
   - Architecture:
       - Overview: architecture/overview.md
       - Auth: architecture/auth.md
@@ -163,12 +162,10 @@ nav:
       - Multi-tenancy: architecture/multi-tenancy.md
       - Observability: architecture/observability.md
   - API reference: api/v1.md
-  - Integrations: integrations/index.md
   - Operations:
       - Production deployment: ops/deploy.md
       - Kubernetes (Helm): ops/kubernetes.md
       - Compliance evidence pack: ops/compliance-evidence.md
-      - Authenticated DAST: ops/authenticated-dast.md
   - Development:
       - Local stack: dev/local-stack.md
       - Testing: dev/testing.md
@@ -176,24 +173,16 @@ nav:
       - Extending Aegis: dev/extending.md
       - Editing the docs: dev/docs.md
   - Security:
-      - Fork-PR safety: security/fork-prs.md
       - Supply-chain integrity: security/supply-chain.md
       - "Policy (SECURITY.md)": https://github.com/IntelliBridge/aegis/blob/main/SECURITY.md
   - ADRs:
       - "0001 — Vendored submodules": adr/0001-vendored-submodules.md
       - "0002 — Registry seam + runners": adr/0002-registry-seam-and-runners.md
-      - "0003 — Agent execution path": adr/0003-agent-execution-path.md
       - "0004 — Unified effect-class gate": adr/0004-unified-effect-class-gate.md
       - "0005 — Worker autoscaling + DR": adr/0005-worker-autoscaling-and-dr.md
-      - "0006 — Firecracker microVM isolation": adr/0006-firecracker-microvm-isolation.md
-      - "0007 — Native MCP toolbelt": adr/0007-native-mcp-toolbelt.md
       - "0008 — Nix reproducible builds": adr/0008-nix-reproducible-builds.md
   - "Changelog ↗": https://github.com/IntelliBridge/aegis/blob/main/CHANGELOG.md
   - "Contributing ↗": https://github.com/IntelliBridge/aegis/blob/main/CONTRIBUTING.md
-  - Legacy:
-      - About legacy docs: architecture/legacy/README.md
-      - Phase 3 plan: architecture/legacy/PLAN_PHASE3.md
-      - Phase 3 snapshot: architecture/legacy/phase3.md
 
 # ---------------------------------------------------------------------
 # Strictness — fail the build on broken refs so CI catches them.
@@ -213,5 +202,4 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/IntelliBridge/aegis
 copyright: >-
-  Aegis is Apache-2.0. Vendored upstreams keep their own licenses —
-  see <a href="https://github.com/IntelliBridge/aegis/blob/main/project_repos/AEGIS_VENDORED.md">AEGIS_VENDORED.md</a>.
+  Aegis is Apache-2.0. Bundled components keep their own licenses.

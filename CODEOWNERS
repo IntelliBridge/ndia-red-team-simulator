@@ -7,9 +7,7 @@
 /aegis/db/             @noah-behrick
 /aegis/audit/          @noah-behrick
 /aegis/scanners/       @noah-behrick
-/aegis/agents/         @noah-behrick
 /aegis/services/       @noah-behrick
-/aegis/integrations/   @noah-behrick
 /aegis/llm/            @noah-behrick
 
 /web/                  @noah-behrick
