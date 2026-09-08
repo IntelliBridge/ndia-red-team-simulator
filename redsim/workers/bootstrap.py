@@ -32,6 +32,19 @@ Two subtleties worth knowing:
 A periodic reaper (``redsim.workers.tasks.reaper``, on the Celery beat schedule)
 is the backstop for jobs that crash so hard they never reach step 6 — it flips
 ``'running'`` rows past their TTL to ``'failed'``.
+
+``commit_running`` (opt-in, default off): by default step 2 is only *flushed*,
+so the body runs inside the same transaction and the Job/Run row locks taken
+by that flush are held until the body finishes. A concurrent ``cancel_run``
+UPDATE then blocks on those locks, and a body that polls ``Job.status`` from a
+fresh session (the ML sandbox ``is_cancelled`` probe) keeps reading the
+committed ``'queued'`` — a long sandbox run could never be cancelled. Tasks
+that poll for cancellation pass ``commit_running=True`` to commit the
+``'running'`` transition before the body starts; the body then continues in a
+new transaction on the same session. Once ``'running'`` is durable the failure
+and retry paths below see ``'running'`` (or ``'cancelled'``) after their
+rollback, so ``running → failed`` / ``running → queued`` are the legal edges
+and a row that went ``'cancelled'`` meanwhile is left untouched.
 """
 
 from __future__ import annotations
@@ -98,11 +111,22 @@ def _publish(run_id: str, job_id: str, status: str) -> None:
 
 
 @contextmanager
-def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
+def task_context(
+    job_id: str,
+    task: Any = None,
+    *,
+    commit_running: bool = False,
+) -> Iterator[TaskContext]:
     """Wrap a job-scoped task body. See module docstring.
 
     ``task`` is the bound Celery task instance (``bind=True``); when supplied it
     enables transient-error retries. Pass ``task=self`` from the task body.
+
+    ``commit_running`` commits the ``queued → running`` transition (and the
+    Run's ``running`` roll-up) *before* yielding, so other sessions can read
+    and update the rows while the body runs. Off by default: only bodies that
+    poll for a concurrent cancellation need it, and it means partial body
+    writes are no longer implicitly discarded with the status transition.
     """
     from redsim.audit.chain import PostgresAuditWriter
     from redsim.config import load_config
@@ -110,7 +134,7 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
     from redsim.db.session import get_session, init_engine
     from redsim.state import PostgresRunState
     from redsim.storage import open_blob_store
-    from redsim.workers.job_state import set_job_status
+    from redsim.workers.job_state import ALLOWED, set_job_status
 
     db_url = os.environ.get("REDSIM_DB_URL")
     if db_url:
@@ -155,6 +179,15 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
         sess.flush()
         run_id = job.run_id
         project_id = job.project_id
+        actor = job.created_by or "system:worker"
+        if commit_running:
+            # Make queued->running durable before the body starts. This
+            # releases the Job/Run row locks the flush above took, so a
+            # concurrent ``cancel_run`` can commit and a fresh-session poll in
+            # the body observes it. The body continues in a new transaction on
+            # this session; the success path re-reads and locks the rows before
+            # its terminal write, so a cancellation is still honoured there.
+            sess.commit()
 
         audit_writer = PostgresAuditWriter(session_factory=get_session)
         run_state = PostgresRunState(
@@ -164,7 +197,7 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
         ctx = TaskContext(
             job_id=job_id, run_id=run_id, project_id=project_id,
             run_state=run_state, session=sess, audit_writer=audit_writer,
-            blob_store=blob_store, actor=job.created_by or "system:worker",
+            blob_store=blob_store, actor=actor,
         )
         _publish(run_id, job_id, "running")
         try:
@@ -225,24 +258,56 @@ def task_context(job_id: str, task: Any = None) -> Iterator[TaskContext]:
             if (task is not None and isinstance(exc, _transient_errors())
                     and task.request.retries < (task.max_retries or 0)):
                 sess.rollback()
-                requeued = sess.get(Job, job_id)
-                if requeued is not None:
-                    set_job_status(requeued, "queued")
-                    requeued.started_at = None
-                    sess.commit()
-                logger.warning(
-                    "task_context: transient error on job %s, retrying "
-                    "(%d/%s): %s",
-                    job_id, task.request.retries + 1, task.max_retries, exc,
+                # Read the live row, not the identity map: when the body made
+                # no writes on this session the rollback has nothing to expire
+                # and a plain get() would hand back the pre-body snapshot.
+                requeued = sess.get(
+                    Job, job_id, populate_existing=True, with_for_update=True,
                 )
-                raise task.retry(exc=exc)
+                if (requeued is not None
+                        and "queued" not in ALLOWED.get(requeued.status, set())):
+                    # The row went terminal (cancelled) from another session
+                    # while the body ran — reachable once 'running' has been
+                    # committed. The redelivery guard would skip the retry
+                    # anyway and ``cancelled → queued`` is illegal, so fall
+                    # through to the terminal path, which leaves the row alone.
+                    logger.info(
+                        "task_context: job %s is %r after a transient error; "
+                        "not retrying", job_id, requeued.status,
+                    )
+                else:
+                    if requeued is not None:
+                        set_job_status(requeued, "queued")
+                        requeued.started_at = None
+                        sess.commit()
+                    logger.warning(
+                        "task_context: transient error on job %s, retrying "
+                        "(%d/%s): %s",
+                        job_id, task.request.retries + 1, task.max_retries, exc,
+                    )
+                    raise task.retry(exc=exc)
 
             # Terminal failure. get_session() rolls back on exception, which
             # would discard a status write made here; roll back ourselves first
             # (releasing the job-row lock), then persist 'failed' and commit so
             # it survives the re-raise.
             sess.rollback()
-            failed = sess.get(Job, job_id)
+            failed = sess.get(
+                Job, job_id, populate_existing=True, with_for_update=True,
+            )
+            if (failed is not None
+                    and "failed" not in ALLOWED.get(failed.status, set())):
+                # 'failed' is not a legal transition from the row's current
+                # status (it was cancelled from another session while the body
+                # ran). The state machine forbids overwriting a terminal
+                # status and publishing 'failed' for a cancelled job would
+                # mislead consumers: surface the body's error and stop.
+                logger.info(
+                    "task_context: job %s is %r; 'failed' is not a legal "
+                    "transition from it, leaving the row untouched",
+                    job_id, failed.status,
+                )
+                raise
             if failed is not None:
                 set_job_status(failed, "failed")
                 failed.completed_at = _now()

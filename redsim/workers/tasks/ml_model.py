@@ -32,7 +32,12 @@ def ml_model_validate(self: Task, job_id: str) -> dict[str, Any]:
     from redsim.services.ml_models import uploaded_model_file
     from redsim.workers.bootstrap import task_context
 
-    with task_context(job_id, task=self) as ctx:
+    # ``commit_running`` makes the queued->running transition durable (and
+    # releases the Job/Run row locks) before the sandbox child starts. The
+    # ``is_cancelled`` probe below reads ``Job.status`` from a fresh session,
+    # which can only observe a concurrent ``cancel_run`` once that UPDATE is no
+    # longer blocked behind this task's own uncommitted transaction.
+    with task_context(job_id, task=self, commit_running=True) as ctx:
         if ctx.skip:
             return {"job_id": job_id, "skipped": True}
         assert ctx.audit_writer is not None
