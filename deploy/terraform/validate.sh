@@ -39,6 +39,8 @@ plugin_args=()
 if [[ -d "$root/.terraform/providers" ]]; then
   plugin_args+=("-plugin-dir=$root/.terraform/providers")
 fi
-clean_tf init -backend=false -lockfile=readonly -input=false -no-color "${plugin_args[@]}"
+# Bash 3.2 (stock macOS) treats "${arr[@]}" on an empty array as unbound under
+# set -u, so guard the expansion; it stays empty in a fresh checkout.
+clean_tf init -backend=false -lockfile=readonly -input=false -no-color ${plugin_args[@]+"${plugin_args[@]}"}
 clean_tf validate -no-color
 clean_tf test -no-color
