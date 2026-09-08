@@ -211,6 +211,12 @@ pair, and falls back to the committed CI sample when neither is set. Clean
 accuracy per model and the per-class counts are recorded in
 `assets/MANIFEST.json`. Quote them from the manifest of the build in hand,
 never as a product claim in docs.
+The Phase A datasets are also published for other teams at
+https://github.com/IntelliBridge/ai-red-teaming-data (public, commit `ff6a36b`,
+spec 11.7). Its URL CSVs are redacted copies (credential-shaped query
+values replaced with `REDACTED` in 0.36 percent of rows, so their hashes
+differ from the manifest) while the local build trains on the unredacted
+Kaggle file, so metrics re-derived from the public copy differ slightly.
 
 ### Not started
 

@@ -1269,6 +1269,7 @@ Caveat: 1999-era email features and a less compelling security narrative than UR
 | `mstz/spambase` | "cc" (card); CC BY 4.0 at UCI | The dataset. | CI fixture and second fallback; vendored into `tests/ml/fixtures/` with attribution. |
 | `uoft-cs/cifar10` | "unknown" (card) | No formal statement exists. | Test fixture only; never presented as results. Pinned 500-image subset vendored for CI. |
 | garak bundled probe corpora under `garak/data` (11.6) | Apache-2.0 for the garak package. Upstream licences per subset: HarmBench ships its own LICENSE and README, the in-the-wild jailbreak set's upstream licence is to be confirmed before any redistribution outside garak. | garak's packaging of the files it loads. Each subset keeps its upstream terms. | Phase B, LLM-track probe material loaded by garak's own probe classes and detectors, never extracted or re-packaged for this tool and never redistributed by it. Sent only through the permission-gate-only Pythia persona. Never a Phase A or classifier dataset, never an MRI input. |
+| Public copies in `IntelliBridge/ai-red-teaming-data` (11.7) | CC BY 4.0 for the repository's own contents (`README.md`, `INDEX.csv`, `MANIFEST.json`, the redaction record). Upstream licences kept per file: MIT for `data/military_vehicles.parquet`, CC0 for the two URL CSVs. | The team's packaging and metadata. The photo copyright in the vehicle images is still not cleared by the MIT tag. | Public GitHub repository, commit `ff6a36b`, the way other teams obtain the Phase A data. The URL CSVs are redacted copies: credential-shaped query-parameter values replaced with the literal `REDACTED` in 2,346 of 651,191 rows of the full file and 406 of 128,224 rows of the eval split, row count, order and labels unchanged. Their sha256 therefore differs from the unredacted Kaggle file the private build trains on. No models and no CIFAR-10 are published. |
 
 Handling rules common to all:
 
@@ -1298,6 +1299,27 @@ Note: the `idllresearch/malicious-gpt` corpus was considered for this track and 
 - **Licences.** garak's packaging is Apache-2.0. Each bundled subset keeps its upstream terms (HarmBench ships its own LICENSE). garak loads the files itself and this tool redistributes none of them, so the 11.1 rule (a licence stated on the distribution page) is met by the garak package. Any redistribution outside garak needs the upstream licence of that subset confirmed first.
 - **Handling rules.** Prompts are untrusted data: never executed, never pasted into a production prompt, never sent to a production system. A probe run sends them only to an explicitly entitled Pythia persona with the permission-gate-only guardrail default (`docs/ops/pythia.md`), provisioned as a separate key from the hardening writer's `default` persona. No prompt text is committed to the repository or quoted in documentation, and a report shows one only as the recorded input of a specific probe result.
 - **Evidence model for the LLM track.** An LLM assessment records, per probe, the test context (probe id, the garak data file and record, persona and model), the observed response, the criterion, the detector result and the reviewer assessment. SHAP is not required. Measurements, observations, interpretation and candidates stay separate fields and separate panels (section 14). No MRI, no grade and no cross-modality aggregate is derived from these results.
+
+### 11.7 Public dataset repository
+
+Recorded 2026-09-08 (later, owner decision). The Phase A datasets were published as a public GitHub repository, [IntelliBridge/ai-red-teaming-data](https://github.com/IntelliBridge/ai-red-teaming-data) (title "AI Red Teaming", commit `ff6a36b`). This is the way other teams obtain the data. The repository's own contents are CC BY 4.0 and every data file keeps its upstream licence, recorded per file in `INDEX.csv`.
+
+| File | What it is | Upstream and licence |
+|---|---|---|
+| `data/military_vehicles.parquet` | 81 MB. 9,444 JPEGs as bytes with `split`, `label` and `filename` columns. | HuggingFace `leibnitz-lab/military_vehicles` at revision `9f4ab217bda7a1dffbe0ff9c079fb2d0036cdf4a`, MIT. |
+| `data/malicious_urls.csv` | 651,191 rows, columns `url` and `type`. Redacted copy (below). | Kaggle `sid321axn/malicious-urls-dataset`, CC0. |
+| `data/malicious_urls_eval_split.csv` | 128,224 rows, the seeded 20 percent holdout behind the URL classifier metrics. Redacted copy (below). | Same source, CC0. |
+| `INDEX.csv` | Size, sha256, source and licence per file. | Repository contents, CC BY 4.0. |
+| `MANIFEST.json` | One entry per dataset plus a redaction record. | Repository contents, CC BY 4.0. |
+| `README.md`, `LICENSE` | Repository description and the CC BY 4.0 text. | Repository contents, CC BY 4.0. |
+
+No models and no CIFAR-10 are published. The local zip and the `assets/export` folder that produced the upload were removed after publication.
+
+**Redaction.** The public CSV copies have credential-shaped query-parameter values replaced with the literal `REDACTED`: the parameters `password`, `token`, `guestaccesstoken`, `sid`, `key` and `access_token`, and one AWS-key-shaped string. This touched 2,346 of 651,191 rows in the full file and 406 of 128,224 rows in the eval split. Row count, row order and labels are unchanged, so row indices still match the upstream file. The public file hashes are `a514e7cc8534d68030adcfb6d992414647f919a749761ca802d716454a56a1cb` (full) and `068c8effcaef088dab0494544709a9c8ddece94552dc2a1f59fb03ff6b1aabde` (eval split). The unredacted upstream hash stays `d83ce942075dd63ed4d11560cfdcd9d512caa3d680e292f22cab484e8f074d01` and remains the `dataset_revision` the private build records (11.3.3).
+
+**Consequence for anyone re-deriving metrics.** The private redsim build still trains and evaluates on the unredacted Kaggle file (the manifest hash above). Lexical features such as `url_length`, `count_equals` and `shannon_entropy` change on a redacted row, so anyone who retrains or re-evaluates from the public copy will see small differences confined to the 0.36 percent of rows that were redacted. The public copy is a reproduction aid, not a bit-identical replay of the manifest, and this is stated plainly wherever the public copy is cited.
+
+The owner's publication of the parquet copy supersedes the "not redistributed in any public release" wording of the first row of 11.5 for the dataset copy itself. The photo-copyright caveat in that row is unchanged: the MIT tag covers the compilation and labels, not the photographs.
 
 ## 12. Attack catalog
 
