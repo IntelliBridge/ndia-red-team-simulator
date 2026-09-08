@@ -1,9 +1,9 @@
 {
-  "name": "@aegis/design-system",
+  "name": "@redsim/design-system",
   "version": "0.4.0-dev",
   "private": true,
   "license": "Apache-2.0",
-  "description": "Aegis-curated component layer composed on top of vendored shadcn/ui primitives.",
+  "description": "redsim-curated component layer composed on top of vendored shadcn/ui primitives.",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {

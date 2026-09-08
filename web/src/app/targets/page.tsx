@@ -15,13 +15,15 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
   RoleGated,
-} from "@aegis/design-system";
+} from "@redsim/design-system";
 import {
   api,
   deleteTarget,
   listAuthProfiles,
+  listScanners,
   startScan,
   type AuthProfile,
+  type ScannerInfo,
 } from "@/lib/api";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
@@ -32,10 +34,18 @@ type Target = {
 
 const fetcher = (path: string) => api<{ targets: Target[] }>(path);
 
-// Scanners that take a URL target. DAST scanners can additionally scan
-// behind a login via an auth profile (feat/authenticated-dast).
-const SCANNERS = ["trivy", "zap", "nuclei"] as const;
-const DAST_SCANNERS = new Set(["zap", "nuclei"]);
+// The scanner roster is data, not a literal list: it comes from
+// GET /v1/scanners (the live adapter registry). The pentest built-ins were
+// removed with the pentest domain, so until an ML attack adapter
+// (aegis.ml.attacks) or a signed plugin registers, the roster is empty and
+// Start scan must be disabled with an explicit notice. POST /v1/scans rejects
+// any unregistered name with 400, so offering one would only ever fail.
+// Adapters that declare the "dast" capability can additionally scan behind a
+// login via an auth profile.
+const scannersFetcher = () => listScanners();
+const NO_ADAPTER_NOTICE =
+  "No attack adapter is registered. Start scan is disabled until an ML attack " +
+  "adapter (aegis.ml.attacks) or a signed plugin registers through aegis.scanners.";
 
 const profilesFetcher = () => listAuthProfiles("default");
 
@@ -50,10 +60,21 @@ export default function TargetsPage() {
   const [value, setValue] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [scanner, setScanner] = useState<string>("trivy");
+  const [scannerChoice, setScannerChoice] = useState<string>("");
   const [authProfileId, setAuthProfileId] = useState("");
 
-  const isDast = DAST_SCANNERS.has(scanner);
+  const { data: scannersData, error: scannersError } = useSWR(
+    authed ? "/v1/scanners" : null, scannersFetcher,
+  );
+  const scanners: ScannerInfo[] = Array.isArray(scannersData) ? scannersData : [];
+  const noAdapters = scanners.length === 0;
+  // Fall back to the first registered adapter until the user picks one; a
+  // stale choice (adapter unregistered since) is never sent to the API.
+  const scanner = scanners.some((s) => s.name === scannerChoice)
+    ? scannerChoice
+    : (scanners[0]?.name ?? "");
+  const isDast =
+    scanners.find((s) => s.name === scanner)?.capabilities.includes("dast") ?? false;
   const { data: profilesData } = useSWR(
     authed && isDast ? "/v1/auth-profiles?project=default" : null,
     profilesFetcher,
@@ -84,6 +105,12 @@ export default function TargetsPage() {
   };
 
   const launchScan = async (target: Target) => {
+    if (!scanner) {
+      // Defensive: the button is disabled in this state, but never POST an
+      // empty scanner (the API would 400 with "scanner required").
+      setErr(NO_ADAPTER_NOTICE);
+      return;
+    }
     setBusy(true);
     try {
       setErr(null);
@@ -122,16 +149,30 @@ export default function TargetsPage() {
           {err}
         </p>
       )}
+      {noAdapters && (
+        <p
+          role="status"
+          className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground"
+        >
+          {scannersError
+            ? "Could not load the attack adapter roster (GET /v1/scanners). Start scan is disabled."
+            : scannersData === undefined
+              ? "Loading attack adapters…"
+              : NO_ADAPTER_NOTICE}
+        </p>
+      )}
       <div className="flex flex-wrap items-start gap-3">
         <label className="flex flex-col text-sm">
           <span className="mb-1">Scanner</span>
           <select
             value={scanner}
-            onChange={(e) => { setScanner(e.target.value); setAuthProfileId(""); }}
-            className="rounded-md border border-border bg-background px-2 py-1.5"
+            disabled={noAdapters}
+            onChange={(e) => { setScannerChoice(e.target.value); setAuthProfileId(""); }}
+            className="rounded-md border border-border bg-background px-2 py-1.5 disabled:opacity-50"
           >
-            {SCANNERS.map((s) => (
-              <option key={s} value={s}>{s}</option>
+            {noAdapters && <option value="">No attack adapter registered</option>}
+            {scanners.map((s) => (
+              <option key={s.name} value={s.name}>{s.name}</option>
             ))}
           </select>
         </label>
@@ -151,7 +192,7 @@ export default function TargetsPage() {
               </select>
             </label>
             <span className="mt-1 text-xs text-muted-foreground">
-              Lets DAST scanners test behind a login. Manage profiles under Auth Profiles.
+              Lets adapters with the dast capability test behind a login. Manage profiles under Auth Profiles.
             </span>
           </div>
         )}
@@ -179,7 +220,8 @@ export default function TargetsPage() {
                   <div className="flex items-center gap-2">
                     <button
                       className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                      disabled={busy}
+                      disabled={busy || noAdapters}
+                      title={noAdapters ? NO_ADAPTER_NOTICE : undefined}
                       onClick={() => launchScan(t)}
                     >
                       Start scan

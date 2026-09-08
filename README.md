@@ -1,137 +1,70 @@
-# Aegis
+# redsim — Adversarial ML Red-Team Simulator
 
-> **Discover. Exploit. Remediate. Harden.**
->
-> A full-lifecycle AI security platform that closes the loop from
-> *"we found a vulnerability"* to *"we shipped the fix"* — and proves
-> the whole trail on a tamper-evident audit log.
+redsim stress-tests a machine-learning classifier under adversarial evasion
+attacks before anyone relies on it. A user picks a model (a bundled sample or
+an uploaded ONNX / PyTorch `state_dict` artifact), launches an attack campaign
+(ART attacks such as FGSM, PGD and HopSkipJump across an epsilon sweep, each
+paired with a benign random-noise control), and reads the SHAP explanation and
+the candidate hardening recommendations side by side, with every step recorded
+on a hash-chained audit log. It is a non-operational proof of concept on open,
+unclassified, public data. It evaluates and hardens the robustness of a
+classifier and nothing else: it never trains, optimizes or deploys targeting or
+weapons models, it connects to no mission system, it applies defenses only to
+an evaluation copy inside a campaign, and no score or grade it produces is a
+safety, readiness or certification statement. Measurements, per-sample
+observations, inferred interpretation and candidate recommendations are kept
+in separate fields and separate UI panels, and every succeeded run carries its
+limitations.
 
-Aegis unifies four production-grade open-source security tools —
-[**Strix**](https://github.com/usestrix/strix) (autonomous DAST),
-[**CAI**](https://github.com/aliasrobotics/cai) (multi-agent LLM
-runtime), [**mcp-kali-server**](https://gitlab.com/kalilinux/packages/mcp-kali-server)
-(offensive toolbelt over MCP), and [**vulnerability-fixer**](https://github.com/OpenHands/vulnerability-fixer)
-(remediation harness) — into one multi-user, multi-tenant platform.
-Every action, from the first scan to the merged pull request, is gated
-by a fail-closed authorization policy engine and recorded on an
-append-only, hash-chained audit log (enforced at the database, with
-WORM export to S3 Object Lock), so the question *"what did the platform
-do, against what target, on whose authority?"* always has a verifiable
-answer. Cross-org tenants are isolated by Postgres Row-Level Security.
+The product is built as one new vertical, `aegis/ml/`, inside IntelliBridge's
+aegis security platform. This repository is a fork of that platform with the
+penetration-testing domain removed.
 
----
+## Status
 
-## Why this exists
+As of 2026-09-08. The decisions behind this table are in
+[`docs/project-brief.md`](docs/project-brief.md) under "Decisions taken", and
+the target design is the
+[product spec](docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md).
+Anything that does not hold on the deployed stack is listed here as not
+implemented, never simulated in the UI.
 
-Modern security has three structural problems that point-tools don't
-solve:
-
-| Problem | What it looks like |
+| Area | State |
 |---|---|
-| **Security can't keep up.** | Teams deploy continuously; pentests happen annually. Vulnerabilities ship undetected for months. |
-| **Finding isn't fixing.** | Pentest reports pile up while developers struggle to interpret findings. Mean-time-to-remediate stays high. |
-| **Tools are siloed.** | Scanners, exploit tools, and remediation live in separate worlds. No platform closes the loop end-to-end. |
+| aegis platform: FastAPI `/v1` API (`aegis.api.app:create_app`), Celery workers (`aegis.workers.celery_app`), Postgres with Alembic migrations (`alembic.ini`, `aegis/db/migrations`), Redis, S3/MinIO blob store, Keycloak/NextAuth auth, RBAC and Postgres RLS, hash-chained audit log, per-task LLM routing and budgets, OTel observability and `aegis-log-ingest` | Restored from aegis and importable: `create_app()` builds and the Celery app loads. A code fix-up is bringing the test suite back to green after the pentest removal. Current counts are in [`CLAUDE.md`](CLAUDE.md). |
+| Pentest domain (14 scanner adapters, Kali, CAI agents, GitHub remediation, ticketing, CI gate) | Deleted for good. The seams it filled fail explicitly rather than pretend: `GET /v1/scanners` returns an empty roster, `POST /v1/scans` rejects every scanner name with 400, `aegis scan --scanner X` exits 1 without writing a findings file, the web Start scan button is disabled behind a notice, target ownership verification answers 501, dependency re-scan verification reports its engine unavailable, and `aegis doctor` lists the adapter roster as information only. `POST /v1/scans` stays mounted for the ML adapters and is scheduled for review at milestone M0. |
+| ML vertical `aegis/ml/`: evidence schema (`schema.py`), `Target` and `AttackAdapter` protocols (`targets/base.py`, `attacks/base.py`), `explain/` and `recommend/` packages | Contracts only. The packages `explain/` and `recommend/` exist and are empty. |
+| ML vertical: model loaders, sandboxed loader subprocess, FGSM / PGD / HopSkipJump adapters, noise control, epsilon sweep, SHAP explainers, Model Robustness Index (MRI) scoring, recommendation rules, Celery tasks (`model.validate`, `attack.run`, `explain.run`, `harden.recommend`, ML branch of `verify.replay`), `/v1/models`, `/v1/attacks`, `/v1/datasets`, `/v1/defenses`, `/v1/ml/capabilities`, `/v1/artifacts/{id}`, campaign and compare routes, `aegis ml build-assets` CLI, dataset catalog | Not implemented. Nothing under `aegis/ml/` runs an attack today. |
+| Pythia LLM transport (`aegis/llm/pythia.py`, `tests/test_llm_pythia.py`) | Exists and tested. It reads `REDSIM_LLM_MODEL` today. The spec renames that variable to `AEGIS_ML_LLM_MODEL` at M0. |
+| Web app `@redsim/web` (Next.js 14) and `@redsim/design-system` | Platform pages present: `/login`, `/dashboard`, `/runs`, `/runs/[id]`, `/findings`, `/findings/[id]`, `/projects`, `/projects/[slug]/settings`, `/targets`, `/auth-profiles`, `/logs`, `/audit`, `/cost`. ML pages (`/models`, `/models/[id]`, the MRI scorecard on `/runs/[id]`, the three-pane `/findings/[id]`) are not written. |
+| Deployment: `deploy/docker-compose.yml` (postgres, redis, keycloak, minio, aegis-api, aegis-worker, aegis-worker-default, aegis-beat, aegis-web, aegis-log-ingest, optional opa / otel-collector / loki / jaeger / elasticsearch / kibana), `deploy/helm`, `deploy/Dockerfile.*` | Compose topology and Helm chart are the aegis ones and stay named `aegis-*`. `deploy/Dockerfile.api` copies `aegis/` and `alembic.ini`, installs `.[api,worker,ml]` and runs `alembic upgrade head` before uvicorn. `deploy/Dockerfile.web` builds `@redsim/web`. `deploy-aws.yml` builds api, worker and web images and rolls whichever ECS services are configured. Not yet exercised end to end on the restored tree. |
+| Demo data | Decided, not fetched: open, unclassified aerial / military-vehicle imagery for the image classifier and the Kaggle malicious-URLs dataset (lexical features only, URLs are never fetched) for the tabular classifier. CIFAR-10 is the CI fixture, not a demo dataset. |
+| Docs site (`mkdocs.yml`, `make docs-*`) | Config exists. Requires the `docs` extra, which the local venv does not install by default. |
 
-Aegis is the loop. One platform turns *"vulnerability detected"* into
-*"PR merged, fix verified"* without manual hand-off.
+## Architecture at a glance
 
----
+Three layers, described in full in
+[section 8 of the product spec](docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md#8-architecture).
 
-## The lifecycle
-
-```mermaid
-flowchart LR
-  D["1. Discover<br/>scanners + recon agents<br/>map the attack surface"]
-  E["2. Exploit<br/>generate working PoCs;<br/>only validated findings<br/>land in the report"]
-  R["3. Remediate<br/>AI-generated code patches<br/>via PR; runtime hardening<br/>against live targets"]
-  V["4. Verify<br/>replay the original PoC<br/>against the patched state"]
-  A["audit chain<br/>every step,<br/>cryptographically linked"]
-
-  D --> E --> R --> V --> D
-  D -.-> A
-  E -.-> A
-  R -.-> A
-  V -.-> A
-```
-
-Concretely, against a target you control:
-
-```bash
-aegis demo --repo /path/to/juice-shop --apply
-```
-
-…walks Strix → CAI → patch → verify → report in one command, with
-the entire trail on `aegis audit verify ✓`.
-
----
-
-## Where Aegis is today
-
-Aegis is **operational software**, not a vision deck. The v0.12.0 tag
-shipped June 2026 with 1329 tests passing (21 skipped offline) on Python
-3.12 and 3.13.
-
-| Capability | Status |
-|---|---|
-| Offline CLI lifecycle (`scan` → `fix` → `verify` → `report`) | ✅ Shipped |
-| Multi-user FastAPI + Postgres + Celery backend | ✅ Shipped |
-| Browser auth — Keycloak + NextAuth + Aegis-signed cookie | ✅ Shipped |
-| CSRF double-submit, CSP-hardened HTML reports, WS Origin gate | ✅ Shipped |
-| Hash-chained audit log with CLI / admin verifier | ✅ Shipped |
-| GitHub PR-scoped scans with fork-restricted mode | ✅ Shipped |
-| Three-profile observability (Postgres mirror / Loki / Elasticsearch) + OTel security-log pipeline (host audit sources, secrets redacted before export) | ✅ Shipped |
-| Scanner adapters: Strix · Trivy · Semgrep · Nuclei · ZAP · CodeQL · Bandit · Grype · Checkov · Trufflehog · SonarQube · Syft · Bumblebee · Deepsec | ✅ Shipped |
-| Authenticated DAST flows — encrypted auth profiles (form / bearer / header / cookie) injected into ZAP + Nuclei scans, secrets redacted everywhere | ✅ Shipped |
-| Kali toolbelt via MCP — nmap, sqlmap, nikto, hydra, +6 more | ✅ Shipped |
-| Unified tool catalog: 42 effect-classified tools (10 Kali + 14 scanner adapters + 17 CAI function-tools + Camoufox OSINT web search) | ✅ Shipped |
-| CAI agents: 36 wired + 5 multi-agent patterns (offsec / redteam-swarm / bb-triage / 2 red-blue), incl. 12 Aegis-native authored specialists, runnable via `POST /v1/agents/{name}/run`; active specialists reach the live Kali belt over MCP | ✅ Shipped |
-| Unified human-in-the-loop gate (propose → approve → act) across agents, Kali tools, and remediation | ✅ Shipped |
-| Agentic remediation strategy (vuln-fixer engine) — diff by default, opens the human-reviewed PR on approval | ✅ Shipped |
-| Multi-format finding ingestion (Snyk · Veracode · Trivy · SARIF → `AegisFinding`) | ✅ Shipped |
-| Bidirectional ticket sync — Jira / ServiceNow / Linear (default-off, env-selected) | ✅ Shipped |
-| Cloud-target ownership verification (DNS TXT / GitHub repo linkage) gating `verified` | ✅ Shipped |
-| Backport / release-train awareness for generated fix PRs | ✅ Shipped |
-| Per-task LLM routing with budget caps | ✅ Shipped |
-| Cross-org multi-tenancy — Postgres RLS (`FORCE`) on tenant tables, per-tenant monthly budget + LLM routing, `/cost` chargeback dashboard | ✅ Shipped |
-| `@aegis/design-system` workspace + Storybook — curated domain components over ported shadcn base primitives (table / card / alert / input / …) plus Radix/`cmdk` interactive primitives (alert-dialog / tooltip / command) | ✅ Shipped |
-| Web UI for the full backend surface — cancel run, delete target, report / vulnfixer-export downloads, `/agents` + `/tools` run pages, `/audit` chain visualization, dark mode, Cmd/Ctrl-K command palette (all RBAC-gated) | ✅ Shipped |
-| Production Helm chart — hardened pod specs (non-root / dropped caps / seccomp), `*.enabled` dep toggles, gVisor sandbox, HA Keycloak | ✅ Shipped |
-| Air-gapped vendor mirror (`AEGIS_OFFLINE_VENDOR_HOST`) for offline submodule fetches | ✅ Shipped |
-| SOC 2 / ISO 27001 / FedRAMP compliance evidence pack (`aegis evidence-pack`) | ✅ Shipped |
-| 60+ specialized agents (full roster from the OnePager; 36 wired + 5 patterns today) | 🔨 Roadmap |
-| Per-scan sandbox isolation — Firecracker microVM (gVisor `RuntimeClass` shipped) | 🔨 Roadmap |
-
-See [`CHANGELOG.md`](CHANGELOG.md) for per-release detail and the
-consolidated [`docs/roadmap.md`](docs/roadmap.md) for the full
-forward-looking roadmap.
-
----
-
-## What Aegis does for a single finding
-
-When a scanner produces a finding, Aegis can:
-
-1. **Validate** it by replaying / generating a proof-of-concept. Only
-   findings with a working PoC reach the report — no severity-by-
-   inspection hand-waves.
-2. **Remediate** it. Either as a code patch landed via a GitHub PR
-   (the CAI `CodeAgent` generates the diff; `aegis fix --apply
-   --open-pr` ships it on a deterministic branch with auto-rollback
-   on failure), or as a runtime hardening change against a live
-   target (the CAI `BlueteamAgent`).
-3. **Verify** the fix. The original PoC is replayed against the
-   patched state; the verifier reports `verified` / `still_vulnerable` /
-   `inconclusive` and lifts the result onto `findings.validation_state`.
-4. **Report** the whole trail. Markdown / JSON / HTML reports stream
-   from the API with strict CSP, `X-Content-Type-Options: nosniff`,
-   and `Content-Disposition: inline`. The audit chain confirms what
-   ran, who triggered it, against what target.
-
-Every step is RBAC-checked server-side (the web `<RoleGated>` is
-cosmetic) and emits a chained audit event *before* the worker task is
-enqueued — a worker crash mid-enqueue can never produce a half-state.
-
----
+1. **aegis platform.** Browser to `@redsim/web` (Next.js, NextAuth against
+   Keycloak, dev-token mode allowed for the demo) to `aegis-api` (FastAPI
+   `/v1`, RBAC through `aegis/api/policy.py`, tenant GUC for Postgres RLS,
+   CSRF, rate limit, request-id correlation). Every mutating call appends a
+   hash-chained audit event before it writes `Run` and `Job` rows and before it
+   touches Celery. Postgres holds runs, jobs, findings, artifacts and the audit
+   chain, S3/MinIO holds bytes, Redis is the Celery broker and the live-event
+   channel behind `/v1/runs/{id}/events`.
+2. **`aegis/ml/` vertical.** Runs only on the worker. `attack.run`,
+   `explain.run`, `harden.recommend` and the ML branch of `verify.replay` load
+   the model inside a sandboxed child process (separate process, rlimits,
+   wall-clock kill, no network), run ART attacks and SHAP, compute the MRI per
+   campaign, and write `Measurement`, `Observation`, `Interpretation` and
+   `CandidateRecommendation` records plus `Artifact` rows. The API process
+   never imports torch, ART, onnxruntime or SHAP.
+3. **Pythia.** The only LLM transport. The `harden.recommend` task sends
+   metrics and a SHAP text summary, never images or model bytes, to
+   `{PYTHIA_BASE_URL}/v1/chat/completions` under aegis's per-task routing and
+   budget caps. No provider key exists anywhere in the deployment.
 
 ## Get started
 
@@ -139,9 +72,17 @@ enqueued — a worker crash mid-enqueue can never produce a half-state.
 
 | Tool | Version | Notes |
 |---|---|---|
-| Python | 3.12.x | `torch` and `adversarial-robustness-toolbox` do not publish wheels for 3.14 yet. `make install` finds a 3.12 for you. |
+| Python | 3.12.x | `pyproject.toml` requires 3.12 or newer. `torch` and `adversarial-robustness-toolbox` do not publish wheels for newer interpreters yet, so 3.12 is the working choice. |
+| uv | any recent | `/opt/homebrew/bin/uv` on the team laptops. The local `.venv` is created by uv and has no `pip` module, so use `uv pip ...` or `.venv/bin/python -m ...`, never `.venv/bin/pip`. |
 | Node.js | 20 or newer | |
-| pnpm | 10 or newer | Workspaces are declared in `pnpm-workspace.yaml`. |
+| pnpm | 10 | Workspaces are declared in `pnpm-workspace.yaml` (`web`, `packages/design-system`). |
+| Docker | 24 or newer, Compose v2 | Only for the full stack (`make up`). |
+
+Behind a corporate TLS proxy (Zscaler and similar), uv needs the system trust
+store: pass `--native-tls` to every `uv` command, for example
+`uv pip install --native-tls -e ".[api,worker,test,dev,ml]"`. The Dockerfiles
+under `deploy/` copy any `.pem` / `.crt` files from `deploy/certs/` into the
+image trust store for the same reason.
 
 ### Install
 
@@ -149,11 +90,25 @@ enqueued — a worker crash mid-enqueue can never produce a half-state.
 make install
 ```
 
-Creates `.venv` when it is missing, picking an interpreter in this order:
-pyenv's newest 3.12.x, then `python3.12` on `PATH`, then `python3`. It then
-runs `pip install -e ".[dev]"` and `pnpm install` for the `web` and
-`packages/design-system` workspaces. Re-running it is safe and does not
-recreate an existing venv.
+Creates `.venv` when it is missing (pyenv's newest 3.12.x, then `python3.12`
+on `PATH`, then `python3`), installs the Python package with the extras in
+`EXTRAS` (default `api,worker,test,dev,ml`, override with
+`EXTRAS=api,worker,test,dev,ml,docs make install`), and runs `pnpm install`
+for the two workspaces. It uses `uv pip install --native-tls` when uv is on
+`PATH` and falls back to `ensurepip` plus pip otherwise. Re-running it is
+safe. To do the same by hand:
+
+```bash
+uv venv --python 3.12 .venv
+uv pip install --native-tls -e ".[api,worker,test,dev,ml]"
+pnpm install
+```
+
+The extras are `api`, `worker`, `test`, `dev`, `security`, `docs`, `ml`
+(torch, torchvision, onnx, onnxruntime, scikit-learn, ART, SHAP, matplotlib,
+pyarrow, httpx), `llm` (the optional private `pythia-sdk`, not needed because
+`aegis/llm/pythia.py` falls back to an in-repo httpx client) and `garak`
+(Phase B only).
 
 ### Run
 
@@ -161,245 +116,179 @@ recreate an existing venv.
 make dev
 ```
 
-Runs the Python test suite once as a sanity check, then serves the Next.js app
-on <http://localhost:3000> in the foreground.
+Runs the Python tests once as a sanity check, then serves the API and the web
+app together under `make -j` in the foreground. The web app is at
+<http://localhost:3000>, the API at <http://localhost:8000> (`/docs` and
+`/health` outside prod). With no `AEGIS_DB_URL` set the API still boots and
+`/health` reports `db_configured=false`, but every database-backed route
+raises until Postgres and Redis are up and the `AEGIS_*` variables from
+`.env.example` are exported (`cp .env.example .env`, then
+`set -a; source .env; set +a` in the shell that runs `make dev`).
 
-There is no backend process to start yet. `redsim/api/__init__.py` is a
-one-line stub with no FastAPI app, and `redsim/cli.py` does not exist, so the
-`redsim` console script declared in `pyproject.toml` is a dangling entry point.
-The recipe already runs its services under `make -j`, so adding the API later
-is a `dev-api` target plus one word on that line. `web/src/lib/api.ts` defaults
-to `http://localhost:8000`, which is the port it will expect.
+The Celery worker is a separate target, `make dev-worker`, because it needs
+Redis, Postgres and the `ml` extra up front. Run it in a second terminal once
+the stack is up, or `make -j dev-api dev-web dev-worker`.
 
-### Targets
+Full stack in containers:
+
+```bash
+make up          # docker compose -f deploy/docker-compose.yml up -d --build
+make down        # docker compose ... down
+```
+
+`aegis-api` runs `alembic upgrade head` on start. The finer helpers live in
+`deploy/Makefile` (`cd deploy && make seed` creates `default-org`, project
+`default` and user `admin`, `make token-for` mints a dev bearer token when
+`AEGIS_AUTH_MODE=dev`, plus `logs`, `psql`, `rebuild`, `down-clean`, `up-obs`).
+Ports: web `3300`, API `8000`, Keycloak `8080`, Postgres `5432`, Redis `6379`,
+MinIO `9100` / `9101`, log ingest `4319`. `docker compose --profile obs up -d`
+adds OTel Collector, Loki and Jaeger. The worker image installs
+`.[worker,ml]` (CPU-only torch wheels first), so expect it to be the slowest
+to build.
+
+### Pythia
+
+Every LLM call goes through Pythia. Set these on the worker that runs
+`harden.recommend` (the `default` queue) when the narrative should run:
+
+| Variable | Meaning |
+|---|---|
+| `PYTHIA_BASE_URL` | Gateway base URL. The client posts to `{PYTHIA_BASE_URL}/v1/chat/completions`. |
+| `PYTHIA_API_KEY` | `pk_...` gateway key, sent as `Authorization: Bearer`. The only LLM credential anywhere. |
+| `PYTHIA_PERSONA` | Optional, sent as `X-Pythia-Persona`. |
+| `PYTHIA_TIMEOUT_S` | Optional request timeout, default 60. |
+| `AEGIS_ML_LLM_MODEL` | Canonical model id, `<vendor>/<model>` or `pythia/auto`. The code still reads `REDSIM_LLM_MODEL` until the M0 rename lands. |
+
+When any required variable is missing the narrative is skipped, not faked:
+recommendations render from the rule layer with `narrative_source = "rules"`
+and the UI says so. Do not set provider keys (`OPENAI_API_KEY` and friends
+still appear in `.env.example` from aegis and are unused by this vertical).
+
+### Make targets
 
 | Target | What it runs |
 |---|---|
-| `make install` | Venv, `pip install -e ".[dev]"`, `pnpm install` |
-| `make dev` | pytest, then the web dev server on :3000 |
+| `make install` | Venv, `uv pip install --native-tls -e ".[$(EXTRAS)]"` (or pip), `pnpm install` |
+| `make require-install` | Fails fast with one clear line when `.venv` or `node_modules` is missing. Every dev, test, lint and typecheck target depends on it. |
+| `make dev` | pytest, then `dev-api` and `dev-web` under `make -j` |
+| `make dev-api` | `uvicorn aegis.api.app:create_app --factory --reload --port 8000` |
+| `make dev-web` | `pnpm --filter @redsim/web dev` on :3000 |
+| `make dev-worker` | `celery -A aegis.workers.celery_app worker -Q scans,default`. Not on the `dev` line, needs Redis and Postgres first. |
 | `make test` | `pytest -q` plus `pnpm --filter @redsim/web test` |
-| `make test-cov` | pytest with `--cov=redsim --cov-report=term-missing` |
-| `make lint` | `ruff check redsim tests`, then `next lint` |
-| `make typecheck` | `mypy redsim`, then `tsc --noEmit` |
+| `make test-cov` | pytest with `--cov=aegis --cov-report=term-missing` |
+| `make lint` | `lint-py` (`ruff check aegis tests`) then `lint-web` (`next lint`, printed as a skip line while `web/` has no ESLint config) |
+| `make typecheck` | `typecheck-py` (`mypy aegis`) then `typecheck-web` (`tsc --noEmit`) |
 | `make check` | lint, typecheck, test |
+| `make up` / `make down` | `docker compose -f deploy/docker-compose.yml up -d --build` / `down` |
+| `make docs-serve` / `docs-build` / `docs-build-strict` / `docs-clean` | MkDocs Material on :8001. Needs `uv pip install --native-tls -e ".[docs]"` first. |
 
-Both halves of `lint` and `typecheck` are available on their own as `lint-py`,
-`lint-web`, `typecheck-py` and `typecheck-web`. Recipes call the venv
-interpreter by path, so no target needs an activated shell.
+Recipes call the venv interpreter by path, so no target needs an activated
+shell. `make check` is the only gate today: `.github/workflows/aegis-ci.yml`
+carries the aegis lint, mypy, pytest, coverage, SAST and web-build jobs, and
+`deploy-aws.yml` only builds images and rolls ECS services.
 
-Every target except `install` stops immediately when the tree is not installed:
+### Tests
 
-```
-error: .venv is missing. Run 'make install' first.
-```
-
-### Known gaps
-
-`make lint` does not pass on a clean checkout, and `make check` inherits that.
-`lint-py` reports nine pre-existing ruff findings, seven of them fixable with
-`.venv/bin/ruff check redsim tests --fix`. `lint-web` runs `next lint` in a
-workspace that has no ESLint config, which drops into Next's interactive setup
-prompt, so it needs `eslint` and `eslint-config-next` added as dev dependencies
-before it can work unattended.
-
-`make test` and `make typecheck` both pass. The pytest suite currently covers
-only the Pythia client, not the suite described in section 7 of the design
-spec.
-
----
-
-## Architecture
-
-```mermaid
-flowchart LR
-  subgraph Clients
-    CLI["aegis CLI"]
-    UI["Next.js web"]
-    GH["GitHub webhooks"]
-  end
-
-  subgraph Aegis
-    API["FastAPI<br/>aegis-api"]
-    W["Celery worker<br/>aegis-worker"]
-    LI["aegis-log-ingest"]
-    DB[("Postgres<br/>runs / jobs / findings<br/>audit_events<br/>application_logs")]
-    RDS[("Redis<br/>broker")]
-    BLOB[("MinIO / S3<br/>artifacts + reports")]
-  end
-
-  subgraph Scanners
-    STRIX["Strix"]
-    KALI["mcp-kali"]
-    CAI["CAI agents"]
-  end
-
-  CLI -- "bearer" --> API
-  UI  -- "cookie + CSRF" --> API
-  GH  -- "HMAC webhook" --> API
-  API -- "enqueue" --> RDS
-  RDS -- "task" --> W
-  W -- "runs" --> STRIX
-  W -- "runs" --> CAI
-  W -- "runs" --> KALI
-  W -- "writes" --> DB
-  W -- "writes" --> BLOB
-  API -- "reads" --> DB
-  API -- "serves" --> BLOB
-  W -- "OTel logs" --> LI
-  LI -- "inserts" --> DB
+```bash
+.venv/bin/python -m pytest -q                  # Python suite (unit + sqlite-backed integration)
+.venv/bin/python -m ruff check aegis tests     # lint
+pnpm --filter @redsim/web typecheck            # tsc --noEmit
+pnpm --filter @redsim/web test                 # vitest
 ```
 
-The architecture deep dive — full deployment topology, the
-admission-vs-execution service split, the data model, every auth
-path, the OTel pipeline — lives in
-[`docs/architecture/overview.md`](docs/architecture/overview.md).
+Markers are declared in `pyproject.toml`. `unit` and `integration` run by
+default. The `integration` tests use the shared sqlite harness in
+`tests/conftest.py` and need no running services. `docker`, `e2e`, `slow` and
+`auth_required` are opt-in with `-m` (they need Docker, a live stack, or the
+Keycloak cookie flow), and `pytest -m ml` selects the tests that need the `ml`
+extra. The engine-unavailable paths listed under Status are pinned by tests
+(`tests/test_cli_commands_coverage.py`, `tests/test_m6_dispatch.py`,
+`tests/test_api_routes_coverage.py`, `tests/test_doctor.py`), so a faked empty
+result fails the suite rather than passing as a clean run.
 
----
+## Layout
 
-## Open-source foundation
-
-| Component | Role | License |
-|---|---|---|
-| [`usestrix/strix`](https://github.com/usestrix/strix) | Application security engine — 21+ vulnerability classes, multi-agent DAST, headless CI/CD-friendly mode | Apache-2.0 |
-| [`aliasrobotics/cai`](https://github.com/aliasrobotics/cai) | Multi-domain agent framework — red + blue + DFIR agents, 300+ LLM model routing via litellm | MIT |
-| [`kalilinux/mcp-kali-server`](https://gitlab.com/kalilinux/packages/mcp-kali-server) | Tool execution layer — Kali Linux arsenal (nmap, Metasploit, sqlmap, hydra, …) over an MCP-style HTTP API | MIT |
-| [`OpenHands/vulnerability-fixer`](https://github.com/OpenHands/vulnerability-fixer) | Remediation harness — common-schema parsing, AI fix generation, auto-PR | MIT |
-| [`perplexityai/bumblebee`](https://github.com/perplexityai/bumblebee) | Supply-chain / MCP-host exposure scanner (NDJSON) — `supply_chain` capability | Apache-2.0 |
-| [`vercel-labs/deepsec`](https://github.com/vercel-labs/deepsec) | AI whole-repo code audit (SAST) — `code_audit` capability | Apache-2.0 |
-| [`shadcn-ui/ui`](https://github.com/shadcn-ui/ui) | Design-system primitive registry — generated into `@aegis/design-system` via `pnpm dlx shadcn add` | MIT |
-| [`opentelemetry-collector-contrib`](https://github.com/open-telemetry/opentelemetry-collector-contrib) | Observability fan-out (Loki + Jaeger + Postgres mirror via `aegis-log-ingest`) | Apache-2.0 |
-
-Each upstream is vendored as a pinned-SHA submodule. See
-[`project_repos/AEGIS_VENDORED.md`](project_repos/AEGIS_VENDORED.md)
-for the manifest and the
-[ADR](docs/adr/0001-vendored-submodules.md) for the rebase policy.
-
----
-
-## Who Aegis is for
-
-- **National security & DoD programs.** Continuous security testing
-  with automatic remediation across mission-critical systems, plus a
-  cryptographically verifiable audit trail for every action.
-- **Federal civilian agencies.** Full-lifecycle automation from
-  discovery through verified fix deployment, with FISMA-aligned RBAC
-  + audit.
-- **Enterprise DevSecOps.** Close the loop from finding to fix
-  *inside* the CI/CD pipeline. PR-scoped scans, Check Run posting,
-  bot-driven fix PRs — no manual hand-off.
-
----
+```
+aegis/                  Python package (namespace kept from aegis)
+  api/                  FastAPI app factory, /v1 routers, middleware, auth, policy
+  audit/                hash-chained audit log: chain, writers, forensic export, redaction
+  cli/                  `aegis` console script: audit verify, migrate, doctor, plugins, ...
+  db/                   SQLAlchemy models, session, Alembic migrations 0001-0009
+  llm/                  per-task routing, budgets, pricing, guardrails, Pythia transport
+  log_ingest/           OTLP logs to Postgres mirror service
+  migrate/              filesystem to Postgres migration helpers
+  ml/                   the adversarial-ML vertical: schema, target and attack protocols
+  policy/               static / OPA / Cedar policy engines behind the RBAC check
+  scanners/             registry, capability vocabulary, out-of-process plugin sandbox
+  services/             admission services (audit event, Run/Job rows, enqueue)
+  state/                run-state facade: filesystem and Postgres backends
+  storage/              blob store: filesystem, S3/MinIO, WORM export
+  supply_chain/         plugin signing and marketplace checks
+  workers/              Celery app, bootstrap, job state machine, tasks/
+web/                    Next.js 14 app (@redsim/web): app router pages, NextAuth, api() client
+packages/design-system/ @redsim/design-system: curated components over shadcn primitives
+tests/                  pytest suite (unit and integration markers), tests/ml/fakes.py TinyTarget
+deploy/                 docker-compose.yml, Dockerfile.{api,worker,web,postgres,log_ingest}, helm, keycloak, opa, cedar, otel, loki
+docs/                   product spec, project brief, platform architecture docs, ADRs, ops and dev guides
+specs/                  Spec Kit feature layer: F001-F008 plus _shared/ (decisions, architecture, readiness)
+.specify/               Spec Kit constitution and templates
+.github/                aegis-ci.yml, deploy-aws.yml, docs.yml, release-sign.yml, dependabot
+hooks/                  mkdocs build hook that renders this README as the docs index
+exports/                ai-assurance-spec-pack.zip (spec pack export)
+alembic.ini             Alembic entry point for aegis/db/migrations
+aegis.yaml              default runtime configuration read by aegis/config.py
+mkdocs.yml              docs site configuration
+pyproject.toml          package metadata, extras, pytest markers, ruff and mypy settings
+pnpm-workspace.yaml     web and packages/design-system workspaces
+```
 
 ## Documentation
 
-The `docs-serve`, `docs-build`, `docs-build-strict` and `docs-clean` targets
-are still in the Makefile, but nothing backs them yet. There is no `mkdocs.yml`
-in the tree and `mkdocs` is not a dependency in `pyproject.toml`, so all four
-fail until both are added. Section 6 of the design spec lists `mkdocs.yml`
-among the files removed when redsim was stripped out of aegis.
-
-The docs that do exist:
+Read in this order. Where two documents disagree, the earlier one in this list
+wins.
 
 | Doc | What it is |
 |---|---|
-| [`docs/brief.md`](docs/brief.md) | The team project brief. Authoritative: where it and the design spec disagree, the brief wins. |
-| [`docs/superpowers/specs/2026-09-08-redsim-design.md`](docs/superpowers/specs/2026-09-08-redsim-design.md) | The design spec that every stub in `redsim/` defers to. |
-| [`docs/adversarial-ml-redteam-spec.md`](docs/adversarial-ml-redteam-spec.md) | An earlier hackathon spec, also rendered as `.html`. It assumes building on the Aegis platform and audit chain, which the brief drops, so read it for the ART and SHAP framing rather than for architecture. |
+| [`docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md`](docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md) | The consolidated product spec, 27 sections: scope and phasing, domain model, architecture, attacks, SHAP, MRI scoring, recommendations, API surface, web UI, deployment, testing, milestones, completion criteria. |
+| [`docs/project-brief.md`](docs/project-brief.md) | Governance brief. Its reporting principles are design constraints, and its "Decisions taken (2026-09-08)" section records the product owner's decisions and every knowing divergence. |
+| [`specs/README.md`](specs/README.md) and `specs/00N-*/` | Spec Kit feature layer beneath the product spec: F001 project access through F008 audit and governance, each with `spec.md`, `plan.md`, `tasks.md`. `specs/_shared/` holds the decision register, the shared architecture and the readiness checklist. |
+| [`docs/spec-driven-workflow.md`](docs/spec-driven-workflow.md) | How the team works spec-first with Spec Kit's stages. The Spec Kit CLI is not installed. |
+| [`docs/architecture/overview.md`](docs/architecture/overview.md), [`auth.md`](docs/architecture/auth.md), [`audit-chain.md`](docs/architecture/audit-chain.md), [`multi-tenancy.md`](docs/architecture/multi-tenancy.md), [`observability.md`](docs/architecture/observability.md) | aegis platform architecture. Still accurate for the platform. |
+| [`docs/dev/local-stack.md`](docs/dev/local-stack.md), [`docs/dev/frontend.md`](docs/dev/frontend.md), [`docs/dev/testing.md`](docs/dev/testing.md), [`docs/ops/deploy.md`](docs/ops/deploy.md), [`docs/ops/kubernetes.md`](docs/ops/kubernetes.md), [`docs/api/v1.md`](docs/api/v1.md) | Platform dev and ops guides. Some still mention submodules, Kali or routes that were removed with the pentest domain. The spec schedules the `docs/api/v1.md` prune for M0. |
+| [`docs/adr/0002-registry-seam-and-runners.md`](docs/adr/0002-registry-seam-and-runners.md), [`docs/adr/0004-unified-effect-class-gate.md`](docs/adr/0004-unified-effect-class-gate.md) | The two seams the ML attack adapters reuse: the scanner registry that `aegis.ml.attacks` registers into (dispatch by name or capability, entry-point plugins, signing, sandbox) and the effect-class gate (`aegis/effects.py`) that classifies every adapter action as read, active or external. The other ADRs ([`0001`](docs/adr/0001-vendored-submodules.md), [`0005`](docs/adr/0005-worker-autoscaling-and-dr.md), [`0008`](docs/adr/0008-nix-reproducible-builds.md)) record platform decisions. |
+| [`SECURITY.md`](SECURITY.md), [`CONTRIBUTING.md`](CONTRIBUTING.md), [`CHANGELOG.md`](CHANGELOG.md) | Inherited from aegis. `CONTRIBUTING.md` still describes the aegis submodule checkout and `CHANGELOG.md` is the aegis release history. |
 
-### Topic map
+Superseded and kept for history only: `docs/adversarial-ml-redteam-spec.md`
+(and its `.html`) and `docs/superpowers/specs/2026-09-08-redsim-design.md`.
 
-| Topic | Doc |
-|---|---|
-| Roadmap (forward-looking work) | [`docs/roadmap.md`](docs/roadmap.md) |
-| System architecture (mermaid diagrams) | [`docs/architecture/overview.md`](docs/architecture/overview.md) |
-| Auth — cookie / bearer / WS / worker SA | [`docs/architecture/auth.md`](docs/architecture/auth.md) |
-| Hash-chained audit log | [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md) |
-| Logs, traces, metrics pipeline | [`docs/architecture/observability.md`](docs/architecture/observability.md) |
-| `/v1/*` HTTP API reference | [`docs/api/v1.md`](docs/api/v1.md) |
-| Integrations (ticket sync · ownership verification · backports) | [`docs/integrations/index.md`](docs/integrations/index.md) |
-| Production deployment runbook | [`docs/ops/deploy.md`](docs/ops/deploy.md) |
-| Local development stack | [`docs/dev/local-stack.md`](docs/dev/local-stack.md) |
-| Frontend (workspace, design system, Storybook) | [`docs/dev/frontend.md`](docs/dev/frontend.md) |
-| Security posture | [`SECURITY.md`](SECURITY.md) |
-| Fork-PR safety policy | [`docs/security/fork-prs.md`](docs/security/fork-prs.md) |
-| Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-| Vendored upstreams (pinned SHAs) | [`project_repos/AEGIS_VENDORED.md`](project_repos/AEGIS_VENDORED.md) |
-| ADRs — vendoring · registry seam · agent execution · effect-class gate | [`0001`](docs/adr/0001-vendored-submodules.md) · [`0002`](docs/adr/0002-registry-seam-and-runners.md) · [`0003`](docs/adr/0003-agent-execution-path.md) · [`0004`](docs/adr/0004-unified-effect-class-gate.md) |
+## Team conventions
 
-Legacy planning docs and phase-3 snapshots live under
-[`docs/architecture/legacy/`](docs/architecture/legacy/README.md) —
-kept for history, not for orientation.
+- Commits are `type(topic): description`.
+- Branch before committing. Never commit to `main` directly.
+- Work spec-first: a changed requirement updates the spec before
+  implementation continues. See
+  [`docs/spec-driven-workflow.md`](docs/spec-driven-workflow.md) and the
+  readiness checklist in `specs/_shared/`.
+- Prose in docs and comments avoids em dashes and semicolons.
+- No fixture data is ever presented as a result, and unimplemented paths are
+  shown as unavailable with a reason, never faked.
 
-### Release history
+## Provenance
 
-| Release | Theme | Tag |
-|---|---|---|
-| Phase 2 | Offline CLI: discover → fix → verify | (no tag) |
-| Phase 3 | Multi-user backend platform | `v0.3.0` |
-| Phase 4 v0.3.1 | Stabilization (audit, admission, project access) | `v0.3.1` |
-| Phase 4 v0.4.0 | Identity & UX (NextAuth, CSRF, CSP, design system) | `v0.4.0` |
-| Phase 4 v0.4.1 | Observability + GitHub PR scoping | `v0.4.1` |
-| Phase 4 v0.4.2 | Forensic/wireless agents + 8 scanner adapters | `v0.4.2` |
-| v0.5.0 | Hardened registry seam (plugin discovery, open capabilities) | `v0.5.0` |
-| v0.5.1 | Bumblebee supply-chain scanner | `v0.5.1` |
-| v0.5.2 | Corrected Bumblebee + Strix adapters; `scan_mode` | `v0.5.2` |
-| v0.6.0 | Agent execution path wired + read-only recon agent; toolbelt 3→10 | `v0.6.0` |
-| v0.7.0 | Deepsec AI code-audit scanner (`code_audit`) | `v0.7.0` |
-| v0.8.0 | Unified human-in-the-loop gate + agentic remediation + finding ingestion | `v0.8.0` |
-| v0.9.0 | Live Kali tool belt over MCP + CAI multi-agent patterns | `v0.9.0` |
-| v0.10.0 | Strix code-scope depth + real Kali tool args | `v0.10.0` |
-| v0.11.0 | OTel security-log pipeline + design-system base primitives | `v0.11.0` |
-| v0.12.0 | Finish the seams: multi-scanner dispatch, budget caps, API sunsets | `v0.12.0` |
+This repository is `IntelliBridge/ndia-red-team-simulator`, forked from
+`IntelliBridge/aegis` (restored from aegis head `5eb24ca` and then pruned).
 
-Full per-release detail in [`CHANGELOG.md`](CHANGELOG.md).
+Removed for good: the 14 pentest scanner adapters, `aegis/agents`,
+`aegis/tools`, `aegis/integrations`, `aegis/remediate`, `aegis/runners`, the
+Kali image, the CAI agents, the GitHub App and webhooks, ticketing, the CI
+gate, demo and vendor tooling, every git submodule, and the `agents` and
+`tools` web pages.
 
----
+Names that remain: the Python namespace is `aegis` (`import aegis...`), the
+console script is `aegis`, environment variables are `AEGIS_*`, the API title
+is "Aegis API", the session cookie is `aegis_api_session`, and the compose
+services, images and Helm chart are `aegis-*`. The web workspace packages are
+`@redsim/web` and `@redsim/design-system`, and the product and UI name is
+redsim.
 
-## Project layout
-
-```
-aegis/                  Python package — services, API, workers, audit
-  agents/               CAI agent definitions + multi-agent patterns
-  api/                  FastAPI app + routes + middleware
-  audit/                hash-chained audit (chain, writers, forensic)
-  cli/                  argparse entry point + --api dispatch client
-  db/                   SQLAlchemy models + Alembic migrations
-  integrations/         external service clients (GitHub App, …)
-  llm/                  per-task LLM routing + budget caps
-  log_ingest/           OTLP/Logs → Postgres mirror service
-  migrate/              data / schema migration helpers
-  policy/               CI gate policy (no Celery dependency)
-  remediate/            CAI runner + patch / deps workflows
-  runners/              subprocess runners + finding converter (Strix, Trivy, vuln-fixer)
-  scanners/             14 scanner adapters (Strix · Trivy · Semgrep · Nuclei · ZAP · CodeQL · Bandit · Grype · Checkov · Trufflehog · SonarQube · Syft · Bumblebee · Deepsec)
-  services/             admission + execution services (CLI + API + worker)
-  state/                run-state persistence (RunStateAPI Protocol, filesystem + Postgres backends, open_run_state factory)
-  storage/              pluggable blob storage (BlobStore Protocol, filesystem + S3/MinIO backends, open_blob_store factory)
-  tools/                Kali toolbelt + MCP tool wrappers
-  workers/              Celery tasks + bootstrap
-
-web/                    Next.js 14 app (@aegis/web workspace package)
-  src/app/              App-router pages + NextAuth route
-  src/lib/              api() helper, auth helpers
-  src/hooks/            useRoles, etc.
-  .storybook/           Storybook 8 config
-
-project_repos/          Vendored upstreams pinned at SHAs
-  cai, strix, mcp-kali-server, vulnerability-fixer
-  bumblebee, deepsec    scanner upstreams (supply_chain, code_audit)
-  shadcn-ui, opentelemetry-collector-contrib
-  design-system/        @aegis/design-system workspace package
-
-deploy/                 Docker compose stack + service Dockerfiles
-docs/                   Architecture, API, ops, dev, security, ADRs
-hooks/                  mkdocs build hooks (README-as-index)
-tests/                  pytest suite (unit + integration markers)
-```
-
----
-
-## License
-
-Apache-2.0 unless a vendored submodule states otherwise. See
-[`project_repos/AEGIS_VENDORED.md`](project_repos/AEGIS_VENDORED.md)
-for the upstream license matrix.
+License: Apache-2.0.

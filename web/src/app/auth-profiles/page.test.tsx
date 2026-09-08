@@ -25,7 +25,7 @@ const useRolesMock = vi.hoisted(() =>
 vi.mock("@/hooks/useRoles", () => ({ useRoles: useRolesMock }));
 
 // Stub RoleGated — pass through children so admin-only sections render.
-vi.mock("@aegis/design-system", () => ({
+vi.mock("@redsim/design-system", () => ({
   RoleGated: ({ children }: { children: ReactNode }) =>
     h(Fragment, null, children),
 }));

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 
-import { FindingCard, RoleGated } from "@aegis/design-system";
+import { FindingCard, RoleGated } from "@redsim/design-system";
 import { api, type Finding } from "@/lib/api";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
@@ -35,23 +35,6 @@ export default function FindingPage({ params }: { params: { id: string } }) {
 
   const callerRole = roles[data.project_id];
 
-  const applyFix = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api(`/v1/findings/${data.id}/fix`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ strategy: "patch", apply: true, open_pr: true }),
-      });
-      mutate();
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const triggerVerify = async () => {
     setBusy(true);
     setErr(null);
@@ -75,26 +58,15 @@ export default function FindingPage({ params }: { params: { id: string } }) {
         target={blob.target}
         validationState={data.validation_state}
         actions={
-          <>
-            <RoleGated minRole="remediator" callerRole={callerRole}>
-              <button
-                onClick={triggerVerify}
-                disabled={busy}
-                className="rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
-              >
-                Verify
-              </button>
-            </RoleGated>
-            <RoleGated minRole="approver" callerRole={callerRole}>
-              <button
-                onClick={applyFix}
-                disabled={busy}
-                className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-              >
-                Apply patch + open PR
-              </button>
-            </RoleGated>
-          </>
+          <RoleGated minRole="remediator" callerRole={callerRole}>
+            <button
+              onClick={triggerVerify}
+              disabled={busy}
+              className="rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
+            >
+              Verify
+            </button>
+          </RoleGated>
         }
       >
         {blob.description}

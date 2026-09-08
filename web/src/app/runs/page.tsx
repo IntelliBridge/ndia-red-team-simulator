@@ -18,7 +18,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@aegis/design-system";
+} from "@redsim/design-system";
 import { api, type Run } from "@/lib/api";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 

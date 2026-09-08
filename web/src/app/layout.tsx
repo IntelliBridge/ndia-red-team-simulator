@@ -5,8 +5,8 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { CommandPalette } from "@/components/command-palette";
 
 export const metadata = {
-  title: "Aegis",
-  description: "Aegis security platform",
+  title: "redsim",
+  description: "Adversarial ML Red-Team Simulator",
 };
 
 const NAV_LINKS: { href: string; label: string }[] = [
@@ -40,7 +40,7 @@ export default function RootLayout({
           <header className="border-b border-border bg-card">
             <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
               <div className="text-lg font-semibold tracking-tight">
-                <a href="/dashboard">Aegis</a>
+                <a href="/dashboard">redsim</a>
               </div>
               <nav className="flex items-center gap-4 text-sm">
                 {NAV_LINKS.map((link) => (

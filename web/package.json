@@ -1,5 +1,5 @@
 {
-  "name": "@aegis/web",
+  "name": "@redsim/web",
   "version": "0.4.0-dev",
   "private": true,
   "scripts": {
@@ -15,7 +15,7 @@
     "storybook:test-runner": "test-storybook"
   },
   "dependencies": {
-    "@aegis/design-system": "workspace:*",
+    "@redsim/design-system": "workspace:*",
     "@radix-ui/react-alert-dialog": "^1.1.16",
     "@radix-ui/react-dialog": "^1.1.16",
     "@radix-ui/react-tooltip": "^1.2.9",

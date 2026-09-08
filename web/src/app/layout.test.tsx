@@ -40,14 +40,32 @@ describe("RootLayout", () => {
     }
   });
 
-  it("renders nav links for the new Agents and Kali tools pages", () => {
-    renderLayout();
+  it("renders exactly the pruned nav, in order, with no Agents / Kali tools links", () => {
+    const { container } = render(
+      React.createElement(
+        RootLayout,
+        null,
+        React.createElement("div", null, "child-sentinel"),
+      ),
+    );
 
-    const agents = screen.getByText("Agents", { selector: "a" });
-    expect(agents.getAttribute("href")).toBe("/agents");
+    const navLinks = Array.from(
+      container.querySelectorAll("header nav a"),
+    ).map((a) => [a.textContent, a.getAttribute("href")]);
+    expect(navLinks).toEqual([
+      ["Dashboard", "/dashboard"],
+      ["Runs", "/runs"],
+      ["Projects", "/projects"],
+      ["Targets", "/targets"],
+      ["Auth Profiles", "/auth-profiles"],
+      ["Findings", "/findings"],
+      ["Logs", "/logs"],
+      ["Audit", "/audit"],
+      ["Cost", "/cost"],
+    ]);
 
-    const tools = screen.getByText("Kali tools", { selector: "a" });
-    expect(tools.getAttribute("href")).toBe("/tools");
+    expect(screen.queryByText("Agents", { selector: "a" })).toBeNull();
+    expect(screen.queryByText("Kali tools", { selector: "a" })).toBeNull();
   });
 
   it("mounts the theme toggle button in the header", () => {
@@ -112,11 +130,11 @@ describe("RootLayout", () => {
 
   it("exported metadata has a truthy title equal to the defined string", () => {
     expect(metadata.title).toBeTruthy();
-    expect(metadata.title).toBe("Aegis");
+    expect(metadata.title).toBe("redsim");
   });
 
   it("exported metadata has a truthy description", () => {
     expect(metadata.description).toBeTruthy();
-    expect(metadata.description).toBe("Aegis security platform");
+    expect(metadata.description).toBe("Adversarial ML Red-Team Simulator");
   });
 });

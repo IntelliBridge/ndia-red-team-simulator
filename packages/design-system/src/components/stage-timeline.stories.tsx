@@ -16,7 +16,7 @@ export const Mixed: Story = {
       { name: "target.up", mode: "live", success: true,
         detail: "juice-shop on http://localhost:3000" },
       { name: "scan.start", mode: "live", success: true,
-        detail: "strix returned 3 finding(s)" },
+        detail: "scanner returned 3 finding(s)" },
       { name: "remediate", mode: "golden_patch", success: true,
         detail: "vuln-0001 fixed via fixture" },
       { name: "verify", mode: "live", success: true,
@@ -32,7 +32,7 @@ export const PartialFailure: Story = {
     stages: [
       { name: "target.up", mode: "live", success: true, detail: "ok" },
       { name: "scan.start", mode: "live", success: false,
-        detail: "strix exited rc=2; 1 finding emitted (partial)" },
+        detail: "scanner exited rc=2; 1 finding emitted (partial)" },
       { name: "remediate", mode: "fixture", success: true,
         detail: "golden patch applied" },
     ],

@@ -6,7 +6,8 @@
 # routine bumps to one PR per ecosystem.
 version: 2
 updates:
-  # Python deps resolved from pyproject.toml (+ uv.lock) at the repo root.
+  # Python deps resolved from pyproject.toml at the repo root (no lockfile
+  # is committed).
   - package-ecosystem: pip
     directory: "/"
     schedule:
@@ -41,7 +42,7 @@ updates:
           - "*"
 
   # Base images for the deploy Dockerfiles (api, worker, web, log_ingest,
-  # kali, postgres). `directories` globs every Dockerfile under deploy/.
+  # postgres). `directories` globs every Dockerfile under deploy/.
   - package-ecosystem: docker
     directories:
       - "/deploy"

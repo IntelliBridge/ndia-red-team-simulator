@@ -98,8 +98,8 @@ services:
       AEGIS_S3_SECRET_ACCESS_KEY: aegis-secret
       AEGIS_DISABLE_LLM: "1"
 
-  # Fast bookkeeping (-Q default): reports, CI gate, exports, parallel_fix
-  # orchestration, and the reaper. Kept off the scans pool so long scans can't
+  # Fast bookkeeping (-Q default): report rendering, the stale-job reaper,
+  # tenant reconciliation, and WORM export. Kept off the scans pool so long scans can't
   # starve it. Reuses the worker image + env via the &worker-env anchor.
   aegis-worker-default:
     image: aegis-worker:dev

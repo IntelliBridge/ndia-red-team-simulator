@@ -34,7 +34,7 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 // Isolate the page: stub the only design-system symbol it renders.
-vi.mock("@aegis/design-system", () => ({
+vi.mock("@redsim/design-system", () => ({
   RunStatusBadge: ({ status }: { status: string }) =>
     h("span", { "data-testid": "run-status" }, status),
 }));
