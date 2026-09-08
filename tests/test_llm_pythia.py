@@ -21,6 +21,8 @@ def clean_env(monkeypatch, tmp_path):
               pythia.MODEL_ENV, *pythia.DEPRECATED_MODEL_ENV):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setenv(pythia.ENV_FILE_VAR, str(tmp_path / "absent.env"))
+    # The repo-root fallback must not find a developer's real .env during tests.
+    monkeypatch.setattr(pythia, "_REPO_ROOT", tmp_path)
     return tmp_path
 
 
