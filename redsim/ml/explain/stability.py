@@ -21,7 +21,7 @@ def channel_sum(attr: np.ndarray) -> np.ndarray:
     """Collapse an image attribution to H x W by summing over channels.
 
     Accepts ``(C, H, W)`` or ``(H, W, C)`` when the channel axis is the small
-    one (<= 4); 2-D input is returned unchanged. Tabular vectors pass through.
+    one (<= 4). 2-D input is returned unchanged. Tabular vectors pass through.
     """
     a = np.asarray(attr, dtype=np.float64)
     if a.ndim == 3:
@@ -57,7 +57,7 @@ def is_defined(value: float | None) -> TypeGuard[float]:
 
 
 def aggregate(values: Iterable[float | None]) -> tuple[float | None, int, int]:
-    """``(mean over defined values, n_defined, n_excluded)``; mean is ``None`` when nothing is defined."""
+    """``(mean over defined values, n_defined, n_excluded)``. The mean is ``None`` when nothing is defined."""
     items = list(values)  # materialise once: a generator must not be consumed twice
     defined = [float(v) for v in items if is_defined(v)]
     n_excluded = len(items) - len(defined)

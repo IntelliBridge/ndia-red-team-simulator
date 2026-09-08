@@ -4,8 +4,15 @@
 the guarded fallback) explains the **clean-predicted class** on the clean and
 adversarial input so ``expl_shift`` compares where the model looks for the
 same decision. For flipped samples the adversarial predicted class is shown as
-a third, labelled map. Artifacts go through the ``ArtifactSink``; every PNG,
+a third, labelled map. Artifacts go through the ``ArtifactSink``. Every PNG,
 ``.npz`` and meta file is hashed into ``Observation.artifact_sha256``.
+
+Each ``Observation`` carries its own ``expl_shift`` (``None`` when the pair is
+undefined) and empty ``top_features_*`` lists: images have no feature
+identifiers. The returned ``ExplainOutput`` carries the reference-row
+``Measurement`` fields (``expl_shift_mean`` with its ``n`` and exclusions, and
+the benign-noise floor with its ``n``) for the campaign to write onto the
+evasion measurement at the reference budget (spec 13.5).
 
 Nothing here is faked: no differentiable module -> ``ExplainUnavailable``.
 """
@@ -22,7 +29,7 @@ import numpy as np
 
 from redsim.ml.artifacts import ArtifactSink
 from redsim.ml.errors import ExplainUnavailable
-from redsim.ml.explain.base import ExplainOutput
+from redsim.ml.explain.base import SHAP_LIMITATION, ExplainOutput
 from redsim.ml.explain.stability import aggregate, channel_sum, expl_shift, is_defined
 from redsim.ml.schema import Observation
 from redsim.ml.targets.base import Sample, Target
@@ -32,10 +39,10 @@ if TYPE_CHECKING:
     from matplotlib.figure import Figure
 
 CLASS_SELECTION_RULE = ("phi_clean and phi_adv explain the clean-predicted class on the clean and adversarial "
-                        "input; for flipped samples phi_adv_predclass explains the adversarial predicted class")
+                        "input. For flipped samples phi_adv_predclass explains the adversarial predicted class")
 DISPLAY_PX = 128
-CENTER_BOX_NOTE = ("center_mass_ratio = share of |SHAP| inside the central 50% of the image; "
-                   "a proxy for attention on the subject, not a segmentation.")
+# The frozen default of ``Observation.metric_note``, repeated in the per-sample meta file.
+CENTER_BOX_NOTE: str = str(Observation.model_fields["metric_note"].default)
 
 
 # --------------------------------------------------------------------------- heuristics
@@ -143,7 +150,7 @@ def _select(sv: Any, j: int, cls: int) -> np.ndarray:
 
 def _attributions(shap: Any, torch: Any, model: Any, background: Any, batches: list[np.ndarray],
                   nsamples: int, seed: int) -> tuple[str, list[Any]]:
-    """Try GradientExplainer, then DeepExplainer; raise ExplainUnavailable when both fail."""
+    """Try GradientExplainer, then DeepExplainer. Raise ExplainUnavailable when both fail."""
     errors: list[str] = []
     for name in ("GradientExplainer", "DeepExplainer"):
         try:
@@ -192,14 +199,14 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
             eps: float | None = None) -> ExplainOutput:
     """Explain the first ``k`` flipped and first ``k`` unflipped samples (slice order) at the reference budget.
 
-    ``x_ctrl`` (optional) is the benign-noise control input at the same eps; when
-    given, the explanation noise floor of spec 13.5 is computed and recorded in
-    ``meta`` beside ``expl_shift_mean``. ``eps`` fixes the ``diff.png`` scale; it
-    defaults to the observed L-inf distance so maps stay comparable.
+    ``x_ctrl`` (optional) is the benign-noise control input at the same eps. When
+    given, the explanation noise floor of spec 13.5 is computed and returned as
+    ``expl_shift_noise_floor`` with its ``n``. ``eps`` fixes the ``diff.png`` scale
+    and defaults to the observed L-inf distance so maps stay comparable.
     """
     model = target.torch_model()
     if model is None:
-        raise ExplainUnavailable("target exposes no differentiable torch module; SHAP GradientExplainer needs one")
+        raise ExplainUnavailable("target exposes no differentiable torch module, which SHAP GradientExplainer needs")
     if k <= 0:
         raise ExplainUnavailable("explain_k = 0: no samples were requested for explanation, so S_expl has no input")
 
@@ -341,6 +348,8 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
             flipped=is_flipped, confidence_clean=float(pc[i].max()), confidence_adv=float(pa[i].max()),
             artifacts=artifacts, artifact_sha256=hashes,
             center_mass_ratio_clean=cmr_clean, center_mass_ratio_adv=cmr_adv,
+            expl_shift=sample_meta["expl_shift"],
+            top_features_clean=[], top_features_adv=[],   # image: no feature identifiers (schema default)
         ))
         per_sample[obs_id] = {
             "flipped": is_flipped, "expl_shift": sample_meta["expl_shift"],
@@ -349,7 +358,9 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
         }
 
     shift_mean, shift_n, shift_excluded = aggregate(shifts)
-    noise_mean, noise_n, noise_excluded = aggregate(noise_shifts) if noise_shifts else (None, 0, 0)
+    # Noise floor (spec 13.5): the same statistic between the clean attributions and those of the
+    # benign-noise control at the same eps. Not computed (None) when no control was explained.
+    noise_mean, noise_n, noise_excluded = aggregate(noise_shifts) if xc is not None else (None, None, None)
     wall = time.perf_counter() - t0
     nondeterminism = [(f"SHAP {explainer_name} background sampling (background_size={int(bg_idx.size)}, "
                        f"nsamples={effective_nsamples})")]
@@ -370,7 +381,7 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
         "center_mass_ratio_mean": cmr_summary, "per_sample": per_sample,
         "diff_png_scale_eps": diff_scale, "wall_time_s": wall, "nondeterminism": nondeterminism,
         "limitations": [
-            "SHAP attributions describe the model's sensitivity, not the cause of a failure; they are not causal proof.",
+            SHAP_LIMITATION,
             (f"Explanations were computed on {int(explained.size)} of {int(n)} samples (at most 2 x explain_k = {2 * k}) "
              "at the reference budget only."),
             "The centre-mass heuristic assumes a centred subject and is a proxy, not a segmentation.",
@@ -383,4 +394,6 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
                                                             indent=1).encode(), "application/json")
     meta["artifacts"] = {"shap_summary.json": summary_path}
     meta["artifact_sha256"] = {"shap_summary.json": sink.sha256(summary_path)}
-    return ExplainOutput(observations=observations, expl_shift_mean=shift_mean, meta=meta)
+    return ExplainOutput(observations=observations, expl_shift_mean=shift_mean, expl_shift_n=shift_n,
+                         expl_shift_n_excluded=shift_excluded, expl_shift_noise_floor=noise_mean,
+                         expl_shift_noise_floor_n=noise_n, meta=meta)

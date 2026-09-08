@@ -1,15 +1,21 @@
 """SHAP explanations for tabular targets (spec sections 13.2-13.6, tabular rows).
 
 ``shap.TreeExplainer`` (``tree_path_dependent``, exact and deterministic) on
-the real tree model; ``shap.KernelExplainer`` over ``predict_proba`` with a
-small seeded background otherwise. Attributions of the clean-predicted class
-are compared clean vs adversarial (``expl_shift``); per-sample top features
-are written as JSON, campaign-level bar and beeswarm plots share the feature
-order (fixed by the clean ranking) and the x-axis range.
+the real tree model, otherwise ``shap.KernelExplainer`` over ``predict_proba``
+with a small seeded background. Attributions of the clean-predicted class
+are compared clean vs adversarial (``expl_shift``, recorded per sample on the
+``Observation``). The per-sample top features are the ``Observation``'s
+``top_features_clean`` / ``top_features_adv`` (feature identifiers ranked by
+|SHAP|) and are also written as JSON. Campaign-level bar and beeswarm plots
+share the feature order (fixed by the clean ranking) and the x-axis range. The
+returned ``ExplainOutput`` carries the reference-row ``Measurement`` fields
+(``expl_shift_mean`` with its ``n`` and exclusions, the benign-noise floor with
+its ``n``) for the campaign to write onto the evasion measurement (spec 13.5).
 
 Only numeric feature vectors and the manifest's feature identifiers are ever
-written. No raw URL string -- or any other source row text -- enters an
-artifact, an observation, or the summary (spec 11.3.3 / 13.7).
+written. No raw URL string, and no other source row text, enters an artifact,
+an observation, or the summary (spec 11.3.3 / 13.7). A feature identifier that
+is itself URL-shaped is refused.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ import io
 import json
 import logging
 import math
+import re
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -26,7 +33,7 @@ import numpy as np
 
 from redsim.ml.artifacts import ArtifactSink
 from redsim.ml.errors import ExplainUnavailable
-from redsim.ml.explain.base import ExplainOutput
+from redsim.ml.explain.base import SHAP_LIMITATION, ExplainOutput
 from redsim.ml.explain.stability import aggregate, expl_shift, is_defined
 from redsim.ml.schema import Observation
 from redsim.ml.targets.base import Sample, Target
@@ -37,8 +44,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TOP_K = 5
-TABULAR_METRIC_NOTE = ("tabular target: no centre-mass analogue (ratios are None); the per-sample evidence is the "
-                       "ranking of feature identifiers by |SHAP|, clean vs adversarial, for the clean-predicted class")
+TABULAR_METRIC_NOTE = ("tabular target: no centre-mass analogue (ratios are None). The per-sample evidence is the "
+                       "ranking of feature identifiers by |SHAP| for the clean-predicted class, clean vs adversarial "
+                       "(top_features_clean / top_features_adv), and the per-sample expl_shift.")
+_URL_SHAPED = re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*://|^www\.)")
 
 
 # --------------------------------------------------------------------------- model resolution
@@ -158,7 +167,7 @@ def render_beeswarm(values: np.ndarray, features: np.ndarray, names: list[str], 
     ax.invert_yaxis()
     v = max(float(xmax), 1e-12)
     ax.set_xlim(-v, v)
-    ax.set_xlabel("SHAP value (clean-predicted class); colour = scaled feature value", fontsize=8)
+    ax.set_xlabel("SHAP value (clean-predicted class), colour = scaled feature value", fontsize=8)
     ax.set_title(title, fontsize=9)
     return _png(fig)
 
@@ -196,20 +205,35 @@ def _jsonable(obj: Any) -> Any:
     return obj
 
 
+def _check_identifiers(names: list[str]) -> None:
+    """Feature identifiers are manifest names, never source row text. URL-shaped strings are refused (not echoed)."""
+    bad = [i for i, nm in enumerate(names) if _URL_SHAPED.search(nm)]
+    if bad:
+        raise ExplainUnavailable(f"{len(bad)} feature identifier(s) at positions {bad[:5]} look like URL strings. The "
+                                 "tabular explainer records manifest feature identifiers only")
+
+
 def _feature_names(target: Target, feature_names: list[str] | None, n_features: int) -> tuple[list[str], str]:
     """Resolve feature identifiers: explicit list, else the target manifest, else generic ``feature_<i>``."""
+    names: list[str] | None = None
+    source = "generic (no feature identifiers supplied)"
     if feature_names is not None:
-        return [str(f) for f in feature_names], "argument"
-    try:
-        manifest = target.manifest() or {}
-    except Exception:  # noqa: BLE001 -- a manifest failure must not block the explanation
-        manifest = {}
-    for key in ("feature_names", "features"):
-        feats = manifest.get(key)
-        if isinstance(feats, list) and len(feats) == n_features:
-            names = [str(f.get("name", i)) if isinstance(f, dict) else str(f) for i, f in enumerate(feats)]
-            return names, f"manifest.{key}"
-    return [f"feature_{i:02d}" for i in range(n_features)], "generic (no feature identifiers supplied)"
+        names, source = [str(f) for f in feature_names], "argument"
+    else:
+        try:
+            manifest = target.manifest() or {}
+        except Exception:  # noqa: BLE001 -- a manifest failure must not block the explanation
+            manifest = {}
+        for key in ("feature_names", "features"):
+            feats = manifest.get(key)
+            if isinstance(feats, list) and len(feats) == n_features:
+                names = [str(f.get("name", i)) if isinstance(f, dict) else str(f) for i, f in enumerate(feats)]
+                source = f"manifest.{key}"
+                break
+    if names is None:
+        names = [f"feature_{i:02d}" for i in range(n_features)]
+    _check_identifiers(names)
+    return names, source
 
 
 def _ranking(v: np.ndarray, names: list[str], top: int) -> list[str]:
@@ -330,7 +354,7 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
             "expl_shift_noise": None if not is_defined(noise) else noise,
             "nsamples": effective_nsamples, "background_size": effective_bg, "seed": seed,
             "features": feature_rows,
-            "note": "feature identifiers and numeric values only; no source row text",
+            "note": "feature identifiers and numeric values only, no source row text",
         }
         artifacts: dict[str, str] = {}
         artifacts["top_features.json"] = sink.put(f"{prefix}/top_features.json",
@@ -355,8 +379,9 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
             confidence_clean=float(pc[i].max()), confidence_adv=float(pa[i].max()),
             artifacts=artifacts, artifact_sha256=hashes,
             center_mass_ratio_clean=None, center_mass_ratio_adv=None,
-            metric_note=(f"{TABULAR_METRIC_NOTE}; top features clean: {', '.join(top_clean)}; "
-                         f"adversarial: {', '.join(top_adv)}"),
+            expl_shift=top_json["expl_shift"],
+            top_features_clean=top_clean, top_features_adv=top_adv,   # feature identifiers only, never row text
+            metric_note=TABULAR_METRIC_NOTE,
         ))
         per_sample[obs_id] = {
             "flipped": is_flipped, "expl_shift": top_json["expl_shift"], "expl_shift_noise": top_json["expl_shift_noise"],
@@ -389,7 +414,9 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
     top5_adv = [names[int(i)] for i in np.argsort(-mean_abs_adv, kind="stable")[:TOP_K]]
     n_rank_changes = sum(1 for pos, nm in enumerate(top5_clean) if pos >= len(top5_adv) or top5_adv[pos] != nm)
     shift_mean, shift_n, shift_excluded = aggregate(shifts)
-    noise_mean, noise_n, noise_excluded = aggregate(noise_shifts) if noise_shifts else (None, 0, 0)
+    # Noise floor (spec 13.5): the same statistic between the clean attributions and those of the
+    # benign-noise control at the same eps. Not computed (None) when no control was explained.
+    noise_mean, noise_n, noise_excluded = aggregate(noise_shifts) if xc is not None else (None, None, None)
     n_flipped_expl = int(flipped_idx.size)
     top3_fraction = (sum(top3_changed_flags) / len(top3_changed_flags)) if top3_changed_flags else None
     wall = time.perf_counter() - t0
@@ -410,15 +437,17 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
         "top3_changed_fraction_flipped": top3_fraction, "top3_changed_n_flipped": len(top3_changed_flags),
         "per_sample": per_sample, "wall_time_s": wall, "nondeterminism": nondeterminism,
         "limitations": [
-            "SHAP attributions describe the model's sensitivity, not the cause of a failure; they are not causal proof.",
+            SHAP_LIMITATION,
             (f"Explanations were computed on {int(m)} of {int(n)} rows (at most 2 x explain_k = {2 * k}) "
              "at the reference budget only."),
-            "Tabular perturbations act in feature space; feature identifiers are the only per-sample evidence recorded.",
+            "Tabular perturbations act in feature space. Feature identifiers are the only per-sample evidence recorded.",
         ] + ([] if deterministic else
-             ["KernelExplainer attributions are sampled; nsamples and the background size are recorded."]),
+             ["KernelExplainer attributions are sampled. The nsamples and background size are recorded."]),
     }
     summary_path = sink.put("shap_summary.json", json.dumps(_jsonable(meta), indent=1).encode(), "application/json")
     campaign_artifacts["shap_summary.json"] = summary_path
     meta["artifacts"] = campaign_artifacts
     meta["artifact_sha256"] = {nm: sink.sha256(p) for nm, p in campaign_artifacts.items()}
-    return ExplainOutput(observations=observations, expl_shift_mean=shift_mean, meta=meta)
+    return ExplainOutput(observations=observations, expl_shift_mean=shift_mean, expl_shift_n=shift_n,
+                         expl_shift_n_excluded=shift_excluded, expl_shift_noise_floor=noise_mean,
+                         expl_shift_noise_floor_n=noise_n, meta=meta)

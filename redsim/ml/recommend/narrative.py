@@ -18,12 +18,13 @@ from typing import Any
 
 from redsim.llm.guardrails import GuardrailViolation, guard_input, guard_output
 from redsim.llm.pythia import ChatBackend, PythiaSettings, chat_text
-from redsim.ml.schema import CandidateRecommendation
+from redsim.ml.schema import BANNED_SCORE_WORDS, CandidateRecommendation
 
 logger = logging.getLogger(__name__)
 
-BANNED_WORDS: tuple[str, ...] = ("validated", "proven", "guaranteed", "hardened", "deployment-ready",
-                                 "deployment ready", "certified", "safe", "fielding")
+# The frozen score-word ban (schema.BANNED_SCORE_WORDS) plus the writer's own validation words.
+BANNED_WORDS: tuple[str, ...] = tuple(dict.fromkeys(
+    ("validated", "proven", "guaranteed", *BANNED_SCORE_WORDS, "deployment ready")))
 
 SYSTEM_PROMPT = """You rewrite the rule outputs of an adversarial-ML robustness evaluation into concise plain-language prose for a technical reader.
 

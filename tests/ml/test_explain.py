@@ -1,4 +1,8 @@
-"""Explain stage: SHAP image/tabular explainers, stability metric, text summary (spec 13, 22.3)."""
+"""Explain stage: SHAP image/tabular explainers, stability metric, text summary (spec 13, 22.3).
+
+Built against the frozen M0 contract: ``Observation.expl_shift`` / ``top_features_*`` per sample, the
+reference-row ``Measurement`` fields on ``ExplainOutput``, and ``MRIRecord`` in the text summary.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +10,7 @@ import hashlib
 import json
 import math
 import string
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -19,13 +24,24 @@ import numpy as np
 from redsim.ml.artifacts import FilesystemSink
 from redsim.ml.errors import ExplainUnavailable
 from redsim.ml.explain import (
+    MEASUREMENT_FIELDS,
     ExplainOutput,
     shap_image,
     shap_tabular,
 )
 from redsim.ml.explain.stability import aggregate, channel_sum, expl_shift
 from redsim.ml.explain.summary import FIXED_SENTENCE, text_summary
-from redsim.ml.schema import Measurement, Observation, Scoring, TargetInfo
+from redsim.ml.schema import (
+    GRADE_STATEMENT,
+    Measurement,
+    MRIInputRow,
+    MRIRecord,
+    MRIWeights,
+    Observation,
+    Subscores,
+    TargetInfo,
+    contains_banned_score_word,
+)
 from redsim.ml.targets.base import Sample
 from tests.ml.fakes import TinyTarget
 
@@ -57,7 +73,7 @@ FEATURES = ["url_length", "digit_ratio", "letter_ratio", "count_dot", "count_hyp
 
 
 class TinyTabularTarget:
-    """RandomForest on a seeded 12-feature, 3-class synthetic table (local double; fakes.py is not ours)."""
+    """RandomForest on a seeded 12-feature, 3-class synthetic table (a local double, fakes.py is not ours)."""
 
     id = "tiny_tabular"
 
@@ -114,6 +130,13 @@ def _tabular_case(kind: str = "tree", n: int = 40, seed: int = 0):
 
 def _sha(path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _ref_row(out: ExplainOutput, attack: str = "fgsm", n: int = 24) -> Measurement:
+    """The campaign's use of ``measurement_fields()``: written onto the evasion row at the reference budget."""
+    base = Measurement(id=f"m.evasion.{attack}.eps0.03", family="evasion", attack_id=attack,
+                       params={"eps": 0.03, "norm": "linf"}, n=n, n_correct=n // 2, accuracy=0.5)
+    return base.model_copy(update=out.measurement_fields())
 
 
 # --------------------------------------------------------------------------- stability
@@ -201,6 +224,9 @@ def test_image_explain_writes_pngs_ratios_and_hashes(tmp_path):
         meta = json.loads((tmp_path / o.artifacts["shap_meta.json"]).read_bytes())
         assert meta["metric_kind"] == "heuristic" and meta["class_explained"] == o.pred_clean
         assert meta["expl_shift"] is None or 0.0 <= meta["expl_shift"] <= 1.0
+        # per-sample explanation shift lives on the Observation (frozen schema); images have no feature identifiers
+        assert o.expl_shift == meta["expl_shift"] and (o.expl_shift is None or 0.0 <= o.expl_shift <= 1.0)
+        assert o.top_features_clean == [] and o.top_features_adv == []
     assert out.expl_shift_mean is not None and 0.0 <= out.expl_shift_mean <= 1.0
     m = out.meta
     assert m["explainer"] in ("GradientExplainer", "DeepExplainer") and m["shap_version"]
@@ -211,6 +237,16 @@ def test_image_explain_writes_pngs_ratios_and_hashes(tmp_path):
     assert any("SHAP" in s and "nsamples=20" in s for s in m["nondeterminism"])
     assert (tmp_path / m["artifacts"]["shap_summary.json"]).exists()
     assert set(m["per_sample"]) == {o.id for o in out.observations}
+    # reference-row Measurement fields (spec 13.5) come back on the output with their denominators
+    assert out.expl_shift_n + out.expl_shift_n_excluded == len(out.observations) and out.expl_shift_n >= 1
+    assert (out.expl_shift_n, out.expl_shift_n_excluded) == (m["expl_shift_n"], m["expl_shift_n_excluded"])
+    assert out.expl_shift_noise_floor == m["expl_shift_noise_floor"] and out.expl_shift_noise_floor_n >= 1
+    defined = [o.expl_shift for o in out.observations if o.expl_shift is not None]
+    assert out.expl_shift_mean == pytest.approx(sum(defined) / len(defined)) and len(defined) == out.expl_shift_n
+    assert set(out.measurement_fields()) == set(MEASUREMENT_FIELDS)
+    ref = _ref_row(out)
+    assert ref.expl_shift_mean == out.expl_shift_mean and ref.expl_shift_noise_floor_n == out.expl_shift_noise_floor_n
+    assert Measurement.model_validate(ref.model_dump(mode="json")) == ref
 
 
 def test_image_explain_is_deterministic_for_same_seed(tmp_path):
@@ -221,6 +257,11 @@ def test_image_explain_is_deterministic_for_same_seed(tmp_path):
     assert a.expl_shift_mean == pytest.approx(b.expl_shift_mean)
     assert [o.artifact_sha256["shap_values.npz"] for o in a.observations] == \
         [o.artifact_sha256["shap_values.npz"] for o in b.observations]
+    assert [o.expl_shift for o in a.observations] == [o.expl_shift for o in b.observations]
+    # no control was explained: the noise floor is "not computed", never 0
+    assert a.expl_shift_noise_floor is None and a.expl_shift_noise_floor_n is None
+    assert a.meta["expl_shift_noise_floor"] is None and a.meta["expl_shift_noise_floor_n"] is None
+    assert _ref_row(a).expl_shift_noise_floor is None
 
 
 def test_image_explain_raises_when_no_torch_module_or_k_zero(tmp_path):
@@ -247,18 +288,55 @@ def test_tabular_tree_explain_writes_plots_and_top_features(tmp_path):
     assert 1 <= len(out.observations) <= 6
     for o in out.observations:
         assert o.center_mass_ratio_clean is None and o.center_mass_ratio_adv is None
-        assert o.metric_kind == "heuristic" and "top features clean" in o.metric_note
+        assert o.metric_kind == "heuristic" and "feature identifiers" in o.metric_note
+        # tabular per-sample evidence: feature identifiers ranked by |SHAP| on the Observation itself
+        assert 1 <= len(o.top_features_clean) <= 5 and set(o.top_features_clean) <= set(FEATURES)
+        assert 1 <= len(o.top_features_adv) <= 5 and set(o.top_features_adv) <= set(FEATURES)
+        assert o.expl_shift is None or 0.0 <= o.expl_shift <= 1.0
         top = json.loads((tmp_path / o.artifacts["top_features.json"]).read_bytes())
-        assert set(top["top_features_clean"]) <= set(FEATURES) and set(top["top_features_adv"]) <= set(FEATURES)
+        assert top["top_features_clean"] == o.top_features_clean and top["top_features_adv"] == o.top_features_adv
+        assert top["expl_shift"] == o.expl_shift
         assert len(top["features"]) == len(FEATURES) and {f["name"] for f in top["features"]} == set(FEATURES)
         assert o.artifact_sha256["top_features.json"] == _sha(tmp_path / o.artifacts["top_features.json"])
         assert (tmp_path / o.artifacts["shap_pair.png"]).read_bytes()[:8] == PNG_MAGIC
+        dumped = json.dumps(o.model_dump(mode="json"))
+        assert "http://" not in dumped and "https://" not in dumped and "www." not in dumped
     assert set(out.meta["top5_clean"]) <= set(FEATURES) and 0 <= out.meta["n_rank_changes"] <= 5
     assert out.expl_shift_mean is None or 0.0 <= out.expl_shift_mean <= 1.0
+    assert out.expl_shift_n + out.expl_shift_n_excluded == len(out.observations)
+    assert out.expl_shift_noise_floor is None and out.expl_shift_noise_floor_n is None   # no control passed
+    assert Measurement.model_validate(_ref_row(out, n=40).model_dump(mode="json")).expl_shift_n == out.expl_shift_n
     # no raw URL-shaped string anywhere in the artifacts
     for p in (tmp_path / "artifacts").rglob("*.json"):
         text = p.read_text()
         assert "http://" not in text and "https://" not in text and "www." not in text
+
+
+def test_tabular_explain_with_control_reports_the_noise_floor(tmp_path):
+    target, sample, x_adv, pc, pa = _tabular_case("tree")
+    rng = np.random.default_rng(11)
+    x_ctrl = np.clip(sample.x + rng.uniform(-0.03, 0.03, sample.x.shape).astype(np.float32), 0, 1)
+    out = shap_tabular.explain(target, sample, x_adv, pc, pa, FilesystemSink(tmp_path), k=3, seed=0,
+                               feature_names=FEATURES, x_ctrl=x_ctrl)
+    assert out.expl_shift_noise_floor_n is not None and out.expl_shift_noise_floor_n >= 1
+    assert out.expl_shift_noise_floor is None or 0.0 <= out.expl_shift_noise_floor <= 1.0
+    assert out.expl_shift_noise_floor_n + out.meta["expl_shift_noise_floor_n_excluded"] == len(out.observations)
+    for o in out.observations:
+        with np.load(tmp_path / o.artifacts["shap_values.npz"]) as z:
+            assert "control" in z.files
+
+
+def test_tabular_explain_refuses_url_shaped_feature_identifiers(tmp_path):
+    """Feature identifiers are manifest names. A raw URL string must never become per-sample evidence."""
+    target, sample, x_adv, pc, pa = _tabular_case("tree")
+    bad = ["https://example.invalid/login?user=x"] + FEATURES[1:]
+    with pytest.raises(ExplainUnavailable) as exc:
+        shap_tabular.explain(target, sample, x_adv, pc, pa, FilesystemSink(tmp_path), k=2, seed=0, feature_names=bad)
+    assert "URL" in str(exc.value) and "example.invalid" not in str(exc.value)   # refused without echoing it
+    with pytest.raises(ExplainUnavailable):
+        shap_tabular.explain(target, sample, x_adv, pc, pa, FilesystemSink(tmp_path), k=2, seed=0,
+                             feature_names=["www.example.invalid"] + FEATURES[1:])
+    assert list((tmp_path / "artifacts").rglob("*")) == []   # nothing written before the refusal
 
 
 def test_tabular_kernel_fallback_for_non_tree_model(tmp_path):
@@ -297,59 +375,89 @@ def test_tabular_feature_names_fall_back_to_manifest_then_generic(tmp_path):
 
 # --------------------------------------------------------------------------- text summary
 
-def _measurements() -> list[Measurement]:
+T = datetime(2026, 9, 8, tzinfo=UTC)
+
+
+def _measurements(with_expl: bool = True) -> list[Measurement]:
+    ref = {"expl_shift_mean": 0.55, "expl_shift_n": 4, "expl_shift_n_excluded": 0, "expl_shift_noise_floor": 0.1,
+           "expl_shift_noise_floor_n": 4, "conf_gap_mean": 0.62, "conf_gap_n": 100} if with_expl else {}
     return [
         Measurement(id="m.clean", family="clean", n=100, n_correct=80, accuracy=0.8),
-        Measurement(id="m.evasion.fgsm.eps0.03", family="evasion", attack_id="fgsm", params={"eps": 0.03}, n=100,
-                    n_correct=40, accuracy=0.4, n_flipped_from_clean=40, linf_norm_mean=0.03, severity="high"),
-        Measurement(id="m.control.noise.eps0.03", family="control", attack_id="noise", params={"eps": 0.03}, n=100,
-                    n_correct=79, accuracy=0.79),
+        Measurement(id="m.evasion.fgsm.eps0.03", family="evasion", attack_id="fgsm", params={"eps": 0.03, "norm": "linf"},
+                    n=100, n_correct=40, accuracy=0.4, n_flipped_from_clean=40, n_clean_correct=80,
+                    attack_success_rate=0.5, linf_norm_mean=0.03, **ref),
+        Measurement(id="m.control.noise.eps0.03", family="control", attack_id="noise_control",
+                    params={"eps": 0.03, "norm": "linf"}, n=100, n_correct=79, accuracy=0.79),
     ]
+
+
+def _score(**over) -> MRIRecord:
+    base = {"scoring_version": "mri-1", "weights": MRIWeights(), "eps_grid": [0.01, 0.03, 0.1], "reference_eps": 0.03,
+            "norm": "linf", "attack_ids": ["fgsm"], "finding_asr_threshold": 0.2, "settings_hash": "h" * 64,
+            "inputs": [MRIInputRow(attack_id="fgsm", eps=0.03, acc_clean=0.8, acc_adv=0.4, asr=0.5, conf_gap=0.62,
+                                   expl_shift=0.55, n=100, n_correct_clean=80, n_attacked=100, n_explained=4)],
+            "subscores": Subscores(S_acc=50.0, S_asr=50.0, S_eps=30.0, S_conf=40.0, S_expl=45.0), "mri": 41,
+            "grade": "D", "completeness": "complete",
+            "reading": "The cheapest in-scope attack succeeded at the reference budget.", "computed_at": T}
+    base.update(over)
+    return MRIRecord(**base)
 
 
 def test_text_summary_contains_metrics_scoring_and_fixed_sentence():
     obs = [Observation(id="o.001", sample_index=1, true_label="a", pred_clean="a", pred_adv="b", flipped=True,
                        confidence_clean=0.9, confidence_adv=0.8, artifacts={}, center_mass_ratio_clean=0.7,
-                       center_mass_ratio_adv=0.4)]
-    scoring = Scoring(mri=41, grade="D", reading="The cheapest in-scope attack succeeded at the reference budget.",
-                      subscores={"S_acc": 50.0, "S_asr": 50.0, "S_eps": 30.0, "S_conf": 40.0, "S_expl": 45.0},
-                      weights={"S_acc": 0.35, "S_asr": 0.25, "S_eps": 0.2, "S_conf": 0.1, "S_expl": 0.1},
-                      reference_eps=0.03, eps_grid=[0.01, 0.03, 0.1], attack_ids=["fgsm"], modality="image")
-    meta = {"modality": "image", "expl_shift_mean": 0.55, "expl_shift_n": 4, "expl_shift_noise_floor": 0.1,
-            "expl_shift_noise_floor_n": 4, "n_flipped_explained": 2, "n_unflipped_explained": 2,
+                       center_mass_ratio_adv=0.4, expl_shift=0.6)]
+    meta = {"modality": "image", "n_flipped_explained": 2, "n_unflipped_explained": 2,
             "center_mass_ratio_mean": {"flipped": {"clean": 0.7, "adv": 0.4, "n": 2}}, "explainer": "GradientExplainer",
-            "shap_version": "0.52.0", "nsamples": 200, "background_size": 50,
-            "per_sample": {"o.001": {"expl_shift": 0.6}}}
-    text = text_summary(_measurements(), obs, scoring, explain_meta=meta, limitations=["small slice"])
+            "shap_version": "0.52.0", "nsamples": 200, "background_size": 50}
+    text = text_summary(_measurements(), obs, _score(), explain_meta=meta, limitations=["small slice"])
     assert "m.clean" in text and "80/100" in text and "40/80" in text and "ASR 0.500" in text
-    assert "MRI = 41" in text and "grade D" in text and "S_expl=45.0" in text
-    assert "expl_shift of 0.550 over n = 4" in text and "0.100 over n = 4" in text
+    assert "MRI = 41" in text and "grade D" in text and "S_expl=45.0" in text and "acc=0.35" in text
+    assert "Reading: The cheapest in-scope attack" in text and GRADE_STATEMENT in text
+    # the reference-row aggregates with their denominators (spec 13.5), read from the Measurement fields
+    assert "For fgsm at eps = 0.03 (L-inf)" in text and "0.550 over n = 4" in text and "0.100 over n = 4" in text
+    assert "conf_gap_mean=0.620 over n=100" in text
     assert "o.001" in text and "0.700" in text and "0.400" in text and "expl_shift=0.600" in text
+    assert "GradientExplainer" in text and "nsamples=200" in text
     assert "heuristic" in text and "small slice" in text
     assert text.rstrip().endswith(FIXED_SENTENCE)
-    for banned in ("hardened", "deployment-ready", "certified"):
-        assert banned not in text.lower()
+    assert not contains_banned_score_word(text)
 
 
-def test_text_summary_without_scoring_and_scrubs_secrets():
+def test_text_summary_without_score_and_scrubs_secrets():
     # Assembled at runtime so secret scanners do not see an AWS-key-shaped literal in the source.
     fake_key = "AKIA" + string.ascii_uppercase[:16]
-    ms = _measurements()
+    ms = _measurements(with_expl=False)
     ms[0] = ms[0].model_copy(update={"notes": [f"token {fake_key} leaked into a note"]})
     text = text_summary(ms, [], None, scoring_reason="S_expl unavailable (explain stage absent)")
-    assert "MRI not computed" in text and "S_expl unavailable" in text
+    assert "MRI not computed" in text and "S_expl unavailable" in text and "never renormalised" in text
     assert fake_key not in text and "REDACTED" in text
     assert "Observations: none" in text and "S_expl has no input" in text
     assert text.rstrip().endswith(FIXED_SENTENCE)
 
 
+def test_text_summary_partial_score_record_names_the_missing_dimension():
+    partial = _score(mri=None, grade=None, completeness="partial", missing=["S_expl unavailable (explain stage absent)"],
+                     subscores=Subscores(S_acc=50.0, S_asr=50.0, S_eps=30.0, S_conf=40.0), inputs=[])
+    text = text_summary(_measurements(with_expl=False), [], partial)
+    assert "MRI not computed: S_expl unavailable (explain stage absent)" in text
+    assert "S_acc=50.0" in text and "S_expl" not in text.split("MRI not computed")[1].split("Weights")[0].replace(
+        "S_expl unavailable (explain stage absent)", "")
+    assert "MRI =" not in text and "grade" not in text.lower().split("scoring")[1].split("\n")[1]
+    assert text.rstrip().endswith(FIXED_SENTENCE)
+
+
 def test_text_summary_tabular_uses_feature_identifiers_only():
     obs = [Observation(id="o.002", sample_index=2, true_label="benign", pred_clean="benign", pred_adv="malicious",
-                       flipped=True, confidence_clean=0.9, confidence_adv=0.7, artifacts={})]
-    meta = {"modality": "tabular", "expl_shift_mean": 0.3, "expl_shift_n": 2, "top5_clean": ["url_length", "count_dot"],
-            "top5_adv": ["count_dot", "url_length"], "n_rank_changes": 2, "n_explained": 2,
-            "top3_changed_fraction_flipped": 0.5, "top3_changed_n_flipped": 2, "explainer": "TreeExplainer",
-            "per_sample": {"o.002": {"top_features_clean": ["url_length"], "top_features_adv": ["count_dot"]}}}
-    text = text_summary(_measurements(), obs, None, explain_meta=meta)
+                       flipped=True, confidence_clean=0.9, confidence_adv=0.7, artifacts={}, expl_shift=0.3,
+                       top_features_clean=["url_length", "count_dot"], top_features_adv=["count_dot", "url_length"])]
+    ms = _measurements(with_expl=False)
+    ms[1] = ms[1].model_copy(update={"expl_shift_mean": 0.3, "expl_shift_n": 2, "expl_shift_n_excluded": 1})
+    meta = {"modality": "tabular", "top5_clean": ["url_length", "count_dot"], "top5_adv": ["count_dot", "url_length"],
+            "n_rank_changes": 2, "n_explained": 2, "top3_changed_fraction_flipped": 0.5, "top3_changed_n_flipped": 2,
+            "explainer": "TreeExplainer"}
+    text = text_summary(ms, obs, None, explain_meta=meta)
     assert "url_length, count_dot" in text and "2 of the top 5 changed rank" in text
-    assert "top features clean: url_length" in text and "http" not in text
+    assert "0.300 over n = 2 (1 pairs excluded as undefined)" in text and "not computed (no control explained)" in text
+    assert "top features clean: url_length, count_dot" in text and "adversarial: count_dot, url_length" in text
+    assert "http" not in text
