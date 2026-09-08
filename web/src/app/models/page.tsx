@@ -27,11 +27,14 @@ export default function ModelsPage() {
   } = useModels(authed ? projectId : null);
   const { data: capabilities } = useCapabilities(authed);
   const { data: datasets = [] } = useDatasets(authed);
+  // GET /v1/models is not mounted on every API deployment yet; a 404 is
+  // the route being absent, which must read as not_implemented rather than
+  // as an empty or missing catalog.
   const catalogError =
     error instanceof ApiError
       ? ({
           403: "Unauthorized for this project.",
-          404: "Model catalog not found.",
+          404: "Model catalog not_implemented: GET /v1/models is not mounted on this API deployment, so no model can be listed or registered here yet.",
           503: "Model service unavailable. Retry when the service is restored.",
         }[error.status] ?? `Model catalog refused (${error.status}).`)
       : "Model catalog unavailable. Retry.";
