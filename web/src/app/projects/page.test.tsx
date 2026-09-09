@@ -63,10 +63,10 @@ describe("ProjectsPage", () => {
     expect(el.textContent).toContain("forbidden");
   });
 
-  it("renders 'Signing in…' when not authed", () => {
+  it("renders 'Redirecting to sign in…' when not authed", () => {
     useRequireAuthMock.mockReturnValue(false);
     render(React.createElement(ProjectsPage));
-    const el = screen.getByText("Signing in…");
+    const el = screen.getByText("Redirecting to sign in…");
     expect(el.tagName.toLowerCase()).toBe("p");
   });
 

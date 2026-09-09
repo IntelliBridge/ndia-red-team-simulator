@@ -194,17 +194,17 @@ export default function ModelPage({
         <h1 className="text-2xl font-semibold">
           {model ? modelDisplayName(model) : "Model detail"}
         </h1>
-        <p className="redsim-prose mt-2 text-base">
+        <p className="mt-1 text-sm text-muted-foreground">
           {model?.reason ??
             (llmTarget
               ? "Registered Pythia target, probe launcher, and recorded probe runs. Attack campaigns and the MRI never apply (D9)."
               : "Manifest, compatibility, and recorded campaign history.")}
         </p>
       </header>
-      <div className="grid gap-x-10 lg:grid-cols-[1fr_1.3fr]">
+      <div className="gap-4 lg:grid-cols-[1fr_1.3fr] grid">
         {llmTarget ? (
           <PanelSection title="LLM target" eyebrow="identity">
-            <dl className="grid grid-cols-2 gap-4 text-sm text-ink-1 [&_dd]:m-0">
+            <dl className="gap-4 text-sm grid grid-cols-2">
               <div>
                 <dt className="redsim-kicker">target id</dt>
                 <dd className="break-all">{model?.id ?? params.id}</dd>
@@ -274,7 +274,7 @@ export default function ModelPage({
           </PanelSection>
         ) : (
           <PanelSection title="Manifest" eyebrow="identity">
-            <dl className="grid grid-cols-2 gap-4 text-sm text-ink-1 [&_dd]:m-0">
+            <dl className="gap-4 text-sm grid grid-cols-2">
               <div>
                 <dt className="redsim-kicker">model id</dt>
                 <dd className="break-all">{model?.id ?? params.id}</dd>
@@ -347,7 +347,7 @@ export default function ModelPage({
               </div>
             </dl>
             {modelDataset?.role === "ci_fixture" && (
-              <p className="redsim-prose mt-3 text-sm">
+              <p className="mt-3 text-xs text-muted-foreground">
                 {modelDataset.name} is a CI fixture — not the demo dataset.
               </p>
             )}
@@ -355,7 +355,6 @@ export default function ModelPage({
         )}
         {llmTarget ? (
           <PanelSection title="Probe launcher" eyebrow="declare settings">
-            <div className="redsim-panel p-5">
             <ProbeLauncher
               modelId={params.id}
               enabled={authed}
@@ -364,17 +363,15 @@ export default function ModelPage({
               callerRole={roles[model?.project_id ?? ""]}
               onStarted={(runId) => router.push(`/runs/${runId}`)}
             />
-            </div>
           </PanelSection>
         ) : (
           <PanelSection title="Campaign launcher" eyebrow="declare settings">
-            <div className="redsim-panel p-5">
-            <p className="mb-4 text-xs text-ink-3">
+            <p className="mb-4 text-xs text-muted-foreground">
               Settings are recorded with this campaign and remain the comparison
               boundary.
             </p>
             {preselect && (
-              <p className="mb-4 text-xs text-ink-3">
+              <p className="mb-4 text-xs text-muted-foreground">
                 Preselected from the Tests catalog:{" "}
                 <span className="font-mono">
                   {preselect.honoured.join(", ") || "none"}
@@ -406,7 +403,7 @@ export default function ModelPage({
                         return (
                           <label
                             key={a.id}
-                            className="flex items-center gap-3 border-b border-line py-2 text-sm text-ink-1"
+                            className="gap-3 border-border py-2 text-sm flex items-center border-b"
                           >
                             <input
                               type="checkbox"
@@ -422,7 +419,7 @@ export default function ModelPage({
                             />{" "}
                             <span>{a.name}</span>
                             {phase === "B" && <LabelBadge variant="phase-b" />}
-                            <span className="ml-auto text-xs text-ink-3">
+                            <span className="text-xs text-muted-foreground ml-auto">
                               {reason ?? a.family}
                             </span>
                           </label>
@@ -431,13 +428,13 @@ export default function ModelPage({
                     )}
                 </div>
               ))}
-              <div className="grid grid-cols-2 gap-3 text-sm text-ink-1">
+              <div className="gap-3 text-sm grid grid-cols-2">
                 <label className="col-span-2">
                   Dataset
                   <select
                     value={datasetId}
                     onChange={(e) => setDatasetId(e.target.value)}
-                    className="redsim-input mt-1"
+                    className="mt-1 border-input bg-background px-2 py-1 w-full border"
                   >
                     <option value="">Select server dataset</option>
                     {datasets.map((dataset: DatasetInfo) => (
@@ -465,9 +462,9 @@ export default function ModelPage({
                 </label>
                 <fieldset className="col-span-2">
                   <legend className="redsim-kicker">ε grid</legend>
-                  <div className="mt-1 flex gap-4 text-ink-1">
+                  <div className="mt-1 gap-4 flex">
                     {[0.01, 0.03, 0.1].map((value) => (
-                      <label key={value} className="flex gap-1">
+                      <label key={value} className="gap-1 flex">
                         <input
                           type="checkbox"
                           checked={epsGrid.includes(value)}
@@ -493,7 +490,7 @@ export default function ModelPage({
                   <select
                     value={eps}
                     onChange={(e) => setEps(e.target.value)}
-                    className="redsim-input mt-1"
+                    className="mt-1 border-input bg-background px-2 py-1 w-full border"
                   >
                     {epsGrid.map((value) => (
                       <option key={value} value={value}>
@@ -510,7 +507,7 @@ export default function ModelPage({
                     max="500"
                     value={samples}
                     onChange={(e) => setSamples(e.target.value)}
-                    className="redsim-input mt-1"
+                    className="mt-1 border-input bg-background px-2 py-1 w-full border"
                   />
                 </label>
                 <label>
@@ -519,7 +516,7 @@ export default function ModelPage({
                     type="number"
                     value={seed}
                     onChange={(e) => setSeed(e.target.value)}
-                    className="redsim-input mt-1"
+                    className="mt-1 border-input bg-background px-2 py-1 w-full border"
                   />
                 </label>
                 <label>
@@ -530,7 +527,7 @@ export default function ModelPage({
                     max="32"
                     value={explainK}
                     onChange={(e) => setExplainK(e.target.value)}
-                    className="redsim-input mt-1"
+                    className="mt-1 border-input bg-background px-2 py-1 w-full border"
                   />
                 </label>
                 <label>
@@ -542,11 +539,11 @@ export default function ModelPage({
                     step="0.01"
                     value={threshold}
                     onChange={(e) => setThreshold(e.target.value)}
-                    className="redsim-input mt-1"
+                    className="mt-1 border-input bg-background px-2 py-1 w-full border"
                   />
                 </label>
               </div>
-              <label className="flex gap-2 text-sm text-ink-1">
+              <label className="gap-2 text-sm flex">
                 <input
                   type="checkbox"
                   checked={control}
@@ -554,7 +551,7 @@ export default function ModelPage({
                 />{" "}
                 Include benign noise control
               </label>
-              <div className="rounded-[4px] bg-ground p-3 text-xs text-ink-3">
+              <div className="border-border bg-muted p-3 text-xs text-muted-foreground border">
                 <div className="redsim-kicker">Scoring weights · read only</div>
                 {capabilities?.scoring_weights
                   ? Object.entries(capabilities.scoring_weights)
@@ -564,7 +561,7 @@ export default function ModelPage({
                 Per-project scoring overrides are Phase B and cannot be edited
                 here.
               </div>
-              <label className="flex gap-2 text-sm text-ink-1">
+              <label className="gap-2 text-sm flex">
                 <input
                   type="checkbox"
                   checked={llm}
@@ -583,13 +580,13 @@ export default function ModelPage({
                 <button
                   disabled={!available || busy || !configIsValid}
                   onClick={launch}
-                  className="redsim-cta w-full"
+                  className="bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground w-full disabled:opacity-40"
                 >
                   {busy ? "Starting campaign…" : "Start campaign"}
                 </button>
               </RoleGated>
               {!available && (
-                <p className="text-xs text-ink-3">
+                <p className="text-xs text-muted-foreground">
                   {model?.status !== "available"
                     ? "Launcher unavailable: " +
                       (model?.reason ?? "target status is not available.")
@@ -603,7 +600,7 @@ export default function ModelPage({
                 </p>
               )}
               {!selectedDataset && datasets.length > 0 && (
-                <p className="text-xs text-ink-3">
+                <p className="text-xs text-muted-foreground">
                   Select a compatible dataset before launching.
                 </p>
               )}
@@ -619,13 +616,12 @@ export default function ModelPage({
                   </p>
                 )}
               {defenses.length > 0 && (
-                <p className="text-xs text-ink-3">
+                <p className="text-xs text-muted-foreground">
                   Verify defenses available:{" "}
                   {defenses.map((d: DefenseInfo) => d.name).join(", ")}
                 </p>
               )}
               {err && <p className="text-sm text-destructive">{err}</p>}
-            </div>
             </div>
           </PanelSection>
         )}
@@ -633,35 +629,35 @@ export default function ModelPage({
       {llmTarget ? (
         <PanelSection title="Probe run history" eyebrow="recorded runs">
           {probeHistory.length === 0 ? (
-            <p className="text-sm text-ink-3">
+            <p className="text-sm text-muted-foreground">
               No probe runs recorded for this target.
             </p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="text-xs w-full text-left">
                 <thead>
-                  <tr className="border-b border-line-strong">
-                    <th className="px-3 py-2.5">Run</th>
-                    <th className="px-3 py-2.5">Probes</th>
-                    <th className="px-3 py-2.5">Started</th>
-                    <th className="px-3 py-2.5">Status</th>
-                    <th className="px-3 py-2.5">Evidence</th>
+                  <tr className="border-border border-b">
+                    <th className="p-2">Run</th>
+                    <th className="p-2">Probes</th>
+                    <th className="p-2">Started</th>
+                    <th className="p-2">Status</th>
+                    <th className="p-2">Evidence</th>
                   </tr>
                 </thead>
                 <tbody>
                   {probeHistory.map((run) => {
                     const ids = run.probe_ids ?? [];
                     return (
-                      <tr key={run.run_id} className="border-b border-line last:border-0">
-                        <td className="px-3 py-2.5">
+                      <tr key={run.run_id} className="border-border border-b">
+                        <td className="p-2">
                           <a
-                            className="redsim-link"
+                            className="text-primary underline"
                             href={`/runs/${run.run_id}`}
                           >
                             {run.run_id}
                           </a>
                         </td>
-                        <td className="px-3 py-2.5">
+                        <td className="p-2">
                           {run.probe_set ? (
                             <span className="font-mono">{run.probe_set}</span>
                           ) : null}
@@ -674,14 +670,14 @@ export default function ModelPage({
                               ? ""
                               : "not recorded"}
                         </td>
-                        <td className="px-3 py-2.5 font-mono text-xs">
+                        <td className="p-2 font-mono">
                           {run.created_at ?? "—"}
                         </td>
-                        <td className="px-3 py-2.5">{run.status}</td>
-                        <td className="px-3 py-2.5">
+                        <td className="p-2">{run.status}</td>
+                        <td className="p-2">
                           {run.scorecard_url ? (
                             <a
-                              className="redsim-link"
+                              className="text-primary underline"
                               href={`/runs/${run.run_id}`}
                             >
                               scorecard
@@ -701,39 +697,39 @@ export default function ModelPage({
       ) : (
         <PanelSection title="Campaign history" eyebrow="measured runs">
           {history.length === 0 ? (
-            <p className="text-sm text-ink-3">
+            <p className="text-sm text-muted-foreground">
               No campaigns recorded for this model.
             </p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
+              <table className="text-xs w-full text-left">
                 <thead>
-                  <tr className="border-b border-line-strong">
-                    <th className="px-3 py-2.5">Run</th>
-                    <th className="px-3 py-2.5">Attacks</th>
-                    <th className="px-3 py-2.5">Reference ε</th>
-                    <th className="px-3 py-2.5">Status</th>
-                    <th className="px-3 py-2.5">Evidence</th>
+                  <tr className="border-border border-b">
+                    <th className="p-2">Run</th>
+                    <th className="p-2">Attacks</th>
+                    <th className="p-2">Reference ε</th>
+                    <th className="p-2">Status</th>
+                    <th className="p-2">Evidence</th>
                   </tr>
                 </thead>
                 <tbody>
                   {history.map((run: CampaignHistory) => (
-                    <tr key={run.run_id} className="border-b border-line last:border-0">
-                      <td className="px-3 py-2.5">
+                    <tr key={run.run_id} className="border-border border-b">
+                      <td className="p-2">
                         <a
-                          className="redsim-link"
+                          className="text-primary underline"
                           href={`/runs/${run.run_id}`}
                         >
                           {run.run_id}
                         </a>
                       </td>
-                      <td className="px-3 py-2.5">{run.attacks.join(", ")}</td>
-                      <td className="px-3 py-2.5 font-mono text-xs">{run.reference_eps}</td>
-                      <td className="px-3 py-2.5">{run.status}</td>
-                      <td className="px-3 py-2.5">
+                      <td className="p-2">{run.attacks.join(", ")}</td>
+                      <td className="p-2 font-mono">{run.reference_eps}</td>
+                      <td className="p-2">{run.status}</td>
+                      <td className="p-2">
                         {run.scorecard_available ? (
                           <a
-                            className="redsim-link"
+                            className="text-primary underline"
                             href={`/runs/${run.run_id}`}
                           >
                             scorecard
