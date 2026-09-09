@@ -11,12 +11,17 @@
 #   2. mypy             mypy redsim                                            26.27
 #   3. unit             pytest -q -p no:cacheprovider --ignore=tests/e2e       26.27
 #   4. ml               pytest -q -m ml tests/ml                               26.27
-#   5. garak            pytest -q -m garak tests (exit 5 = nothing selected,   26.20
-#                       counts as a pass with a notice)
+#   5. garak            pytest -q -m garak tests; needs the garak extra. The   26.20
+#                       tree carries garak-marked tests (tests/ml/test_llm_core.py,
+#                       tests/ml/test_llm_routes.py, tests/e2e/test_ml_llm.py), so
+#                       exit 5 (nothing collected), a missing extra (every item
+#                       skipped) or a run in which no test passed FAILS the step
 #   6. e2e              REDSIM_E2E=1 pytest -q -m e2e tests/e2e; when          26.2 to 26.24
 #                       REDSIM_E2E_POSTGRES_URL is set the Postgres RLS lane
 #                       runs inside the same invocation and the step fails if
-#                       the harness still reports "Postgres lane is off"
+#                       the harness still reports "Postgres lane is off".
+#                       From a git worktree the checkout under test is put
+#                       first on PYTHONPATH (see "Worktrees" below)
 #   7. docs             mkdocs build --strict                                  26.11
 #   8. docs-consistency pytest -q tests/test_docs_phase_b_consistency.py       26.11, 26.24
 #   9. probes           HTTP probes against a running stack, only when         26.9, 26.17,
@@ -43,6 +48,19 @@
 #                            the newest succeeded run with a rendered PDF)
 #   REDSIM_DB_URL            the stack's database, read by `redsim audit verify --all`
 #
+# Worktrees:
+#   The e2e tier spawns subprocesses: the ML sandbox child
+#   (python -m redsim.ml.sandbox_worker) and the CLI (`redsim audit verify`).
+#   They import redsim the way the interpreter does from any other directory,
+#   through the editable install, which points at the checkout that ran
+#   `make install`. From that main checkout nothing is needed. From a git
+#   worktree the editable install points at the OTHER tree, so the e2e step
+#   detects the mismatch, prints a notice and runs pytest with
+#   PYTHONPATH=<this checkout> first (the sandbox allowlist forwards
+#   PYTHONPATH to the child: redsim/scanners/sandbox.py _SAFE_ENV_KEYS). To run
+#   the tier by hand from a worktree, export PYTHONPATH=<worktree> yourself;
+#   tests/e2e/README.md "Running" says the same.
+#
 # The test tiers (steps 3 to 6 and 8) run with REDSIM_DB_URL, the broker
 # variables, REDSIM_API_URL, REDSIM_API_TOKEN and every PYTHIA_* variable
 # removed from the environment, exactly as the CI lanes run them: the tiers are
@@ -54,6 +72,10 @@
 #   scripts/phase_b_gate.sh --list       print the steps and their criteria
 #   scripts/phase_b_gate.sh --only NAME  run one step (CI calls --only e2e,
 #                                        --only docs-consistency and --only garak)
+#
+# The e2e-python CI job runs `--only e2e` then `--only docs-consistency` and the
+# garak-offline job `--only garak`, each with PY=python, so a lane and a local
+# `make check-phase-b` run the same command in the same scrubbed environment.
 #
 # The HTTP probe program lives between the PHASE_B_PROBES markers below.
 # tests/test_docs_phase_b_consistency.py extracts and runs it against a fake
@@ -79,7 +101,7 @@ STEPS=(
   "mypy|26.27|mypy redsim"
   "unit|26.27|pytest -q -p no:cacheprovider --ignore=tests/e2e (default tier)"
   "ml|26.27|pytest -q -p no:cacheprovider -m ml tests/ml"
-  "garak|26.20|pytest -q -p no:cacheprovider -m garak tests (exit 5 = nothing selected, passes with a notice)"
+  "garak|26.20|pytest -q -p no:cacheprovider -m garak tests (needs the garak extra; exit 5, an all-skipped run or a missing extra fails)"
   "e2e|26.2 to 26.24|REDSIM_E2E=1 pytest -q -p no:cacheprovider -m e2e tests/e2e (Postgres RLS lane on when REDSIM_E2E_POSTGRES_URL is set)"
   "docs|26.11|mkdocs build --strict"
   "docs-consistency|26.11, 26.24|pytest -q -p no:cacheprovider tests/test_docs_phase_b_consistency.py"
@@ -159,28 +181,64 @@ step_ml() {
 }
 
 step_garak() {
-  local rc
+  local rc log
+  # Without the garak extra tests/conftest.py skips every garak-marked item at
+  # collection, so pytest would exit 0 having proved nothing. Fail first, with
+  # the install line, rather than pass vacuously (docs/dev/ci.md "The garak
+  # offline job"). find_spec never imports garak.
+  if ! "$PY" -c 'import importlib.util, sys; sys.exit(0 if importlib.util.find_spec("garak") else 1)' 2>/dev/null; then
+    echo "    FAIL  garak: the garak extra is not installed for $PY, so every garak-marked test would be skipped" \
+         "and the step would prove nothing (pip install -e '.[garak]', CPU torch first) -> spec 26 criterion 26.20"
+    return 1
+  fi
+  log="$(mktemp "${TMPDIR:-/tmp}/phase-b-garak.XXXXXX")"
   show "$PY -m pytest -q -p no:cacheprovider -m garak tests"
-  scrubbed_env "$PY" -m pytest -q -p no:cacheprovider -m garak tests
+  scrubbed_env "$PY" -m pytest -q -p no:cacheprovider -m garak tests | tee "$log"
   rc=$?
   if [[ $rc -eq 5 ]]; then
-    echo "    notice: no garak-marked tests were collected; this step proves only that the marker selects" \
-         "cleanly and the extra (when installed) imports, nothing more"
-    return 0
+    # Exit 5 was mapped to success from wave B0 to wave B1, when no garak test
+    # existed. Since wave B2 the tree carries them, so nothing collected is a
+    # marker or collection regression, never an empty tier.
+    echo "    FAIL  garak: pytest collected no garak-marked test (exit 5). The tree carries them" \
+         "(tests/ml/test_llm_core.py, tests/ml/test_llm_routes.py, tests/e2e/test_ml_llm.py), so this is a" \
+         "marker or collection regression, not an empty tier -> spec 26 criterion 26.20"
+    rm -f "$log"
+    return 1
   fi
+  if [[ $rc -eq 0 ]] && ! grep -Eq '(^|[^0-9])[1-9][0-9]* passed' "$log"; then
+    echo "    FAIL  garak: pytest exited 0 but no garak-marked test passed (every selected item was skipped" \
+         "or deselected), so the step proved nothing -> spec 26 criterion 26.20"
+    rm -f "$log"
+    return 1
+  fi
+  rm -f "$log"
   return $rc
 }
 
 step_e2e() {
-  local rc log
+  local rc log resolved
   # shellcheck disable=SC2206  # PHASE_B_PYTEST_ARGS is a space-separated argument list by contract
   local extra=(${PHASE_B_PYTEST_ARGS:-})
+  # Worktrees (header "Worktrees"): the sandbox child and the CLI subprocess
+  # import redsim through the editable install, which points at the checkout
+  # that ran `make install`. Resolve it from a neutral directory (from this
+  # checkout the current directory would mask the answer); when it is not this
+  # tree, put this tree first on PYTHONPATH for the step so the subprocesses run
+  # the code under test. From the main checkout the two agree and nothing is set.
+  local pythonpath_args=()
+  resolved="$(cd "${TMPDIR:-/tmp}" && "$PY" -c 'import os, redsim; print(os.path.dirname(os.path.dirname(os.path.abspath(redsim.__file__))))' 2>/dev/null)"
+  if [[ -n "$resolved" && "$resolved" != "$REPO_ROOT" ]]; then
+    echo "    notice: $PY imports redsim from $resolved, not from this checkout ($REPO_ROOT); the step runs with" \
+         "PYTHONPATH=$REPO_ROOT first so the sandbox child and the CLI subprocess run the tree under test" \
+         "(a git worktree; from the main checkout nothing is needed)"
+    pythonpath_args=(PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}")
+  fi
   log="$(mktemp "${TMPDIR:-/tmp}/phase-b-e2e.XXXXXX")"
   # ${extra[@]+"${extra[@]}"} expands to nothing for an empty array under set -u on bash 3.2 (macOS /bin/bash).
   if [[ -n "${REDSIM_E2E_POSTGRES_URL:-}" ]]; then
     echo "    Postgres RLS lane: on (REDSIM_E2E_POSTGRES_URL is set; the database must be migrated)"
-    show "REDSIM_E2E=1 REDSIM_E2E_POSTGRES_URL=... $PY -m pytest -q -p no:cacheprovider -rs -m e2e tests/e2e ${extra[*]-}"
-    scrubbed_env REDSIM_E2E=1 REDSIM_E2E_POSTGRES_URL="$REDSIM_E2E_POSTGRES_URL" \
+    show "${pythonpath_args[*]-} REDSIM_E2E=1 REDSIM_E2E_POSTGRES_URL=... $PY -m pytest -q -p no:cacheprovider -rs -m e2e tests/e2e ${extra[*]-}"
+    scrubbed_env ${pythonpath_args[@]+"${pythonpath_args[@]}"} REDSIM_E2E=1 REDSIM_E2E_POSTGRES_URL="$REDSIM_E2E_POSTGRES_URL" \
       "$PY" -m pytest -q -p no:cacheprovider -rs -m e2e tests/e2e ${extra[@]+"${extra[@]}"} | tee "$log"
     rc=$?
     if [[ $rc -eq 0 ]] && grep -q "Postgres lane is off" "$log"; then
@@ -189,8 +247,8 @@ step_e2e() {
     fi
   else
     echo "    Postgres RLS lane: skipped (set REDSIM_E2E_POSTGRES_URL to a migrated database to run it)"
-    show "REDSIM_E2E=1 $PY -m pytest -q -p no:cacheprovider -rs -m e2e tests/e2e ${extra[*]-}"
-    scrubbed_env -u REDSIM_E2E_POSTGRES_URL REDSIM_E2E=1 \
+    show "${pythonpath_args[*]-} REDSIM_E2E=1 $PY -m pytest -q -p no:cacheprovider -rs -m e2e tests/e2e ${extra[*]-}"
+    scrubbed_env -u REDSIM_E2E_POSTGRES_URL ${pythonpath_args[@]+"${pythonpath_args[@]}"} REDSIM_E2E=1 \
       "$PY" -m pytest -q -p no:cacheprovider -rs -m e2e tests/e2e ${extra[@]+"${extra[@]}"} | tee "$log"
     rc=$?
   fi
