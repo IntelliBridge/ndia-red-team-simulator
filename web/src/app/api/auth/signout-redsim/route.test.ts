@@ -133,16 +133,30 @@ describe("GET /api/auth/signout-redsim (the server-prefetch hop)", () => {
     expect(response.cookies.getAll()).toEqual([]);
   });
 
-  it("refuses a request with no token and one with no cookie", async () => {
+  it("refuses a request that carries a credential but no token", async () => {
     const { GET } = await import("./route");
     const noToken = await GET(
       new Request("http://localhost:3000/api/auth/signout-redsim", {
         headers: withCookie(FAKE_SESSION),
       }),
     );
-    expect(noToken.status).toBe(403);
 
-    const noCookie = await GET(new Request(await hopUrl(FAKE_SESSION)));
-    expect(noCookie.status).toBe(403);
+    expect(noToken.status).toBe(403);
+    expect(noToken.cookies.getAll()).toEqual([]);
+  });
+
+  it("sends a request with nothing to clear to /login rather than refusing it", async () => {
+    // The app router asks for this hop twice: the flight fetch that does the
+    // clearing, then a hard document navigation to the same URL, because a 303
+    // is not flight data it can apply. The second leg arrives with the jar the
+    // first one emptied. Refusing it made that 403 the response the browser
+    // painted, so a rejected session ended on a browser error page instead of
+    // the login screen. Nothing is cleared here, so this cannot log anyone out.
+    const { GET } = await import("./route");
+    const response = await GET(new Request(await hopUrl(FAKE_SESSION)));
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toContain("/login?reason=rejected");
+    expect(response.cookies.getAll()).toEqual([]);
   });
 });

@@ -77,6 +77,22 @@ export async function GET(request: Request): Promise<NextResponse> {
     cookie(env.REDSIM_API_SESSION_COOKIE) ?? cookie(env.REDSIM_DEV_TOKEN_COOKIE);
   const token = new URL(request.url).searchParams.get("hop");
 
+  // A request with nothing to clear lands on /login rather than being refused.
+  // The app router asks for this hop twice: once as the flight fetch that does
+  // the clearing, and then, because a 303 is not flight data it can apply, as a
+  // hard document navigation to the same URL. That second leg arrives after the
+  // first has emptied the jar, and a 403 with an empty body is what the browser
+  // paints, so refusing it strands the user on a browser error page instead of
+  // the login screen this hop exists to reach.
+  //
+  // The refusal below still covers the case it was written for. A request that
+  // carries a credential must present a token minted for that credential, so a
+  // cross-site link cannot log anyone out; this branch clears nothing and can
+  // only send a browser holding no redsim cookie to a fixed internal path.
+  if (credential === undefined) {
+    return NextResponse.redirect(new URL(LOGIN_TARGET, request.url), 303);
+  }
+
   if (!(await verifyHopToken(env.BETTER_AUTH_SECRET ?? "", token, credential))) {
     return new NextResponse(null, { status: 403 });
   }
