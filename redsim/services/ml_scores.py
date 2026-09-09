@@ -91,6 +91,27 @@ def aggregate_llm(scorecards: Iterable[Mapping[str, Any]]) -> dict[str, Any] | N
     return {"kind": "llm", "n_runs": len(cards), "families": families, "note": LLM_NOTE}
 
 
+# Per-process cache of summaries: the LLM branch reads one scorecard artifact
+# per succeeded probe run from the blob store, which made the model list take
+# seconds. A target's summary changes only when a run finishes, so it is kept
+# for a short window and re-read after it.
+_CACHE_TTL_S = 120.0
+_cache: dict[str, tuple[float, dict[str, Any] | None]] = {}
+
+
+def cached_score_summary(session: Session, target: Any) -> dict[str, Any] | None:
+    """``score_summary`` with a 120 s per-process cache keyed by target id."""
+    import time
+
+    now = time.monotonic()
+    hit = _cache.get(str(target.id))
+    if hit is not None and now - hit[0] < _CACHE_TTL_S:
+        return hit[1]
+    value = score_summary(session, target)
+    _cache[str(target.id)] = (now, value)
+    return value
+
+
 def score_summary(session: Session, target: Any) -> dict[str, Any] | None:
     """The summary for one ``Target`` row, or ``None`` when nothing scored exists or a read fails."""
     try:
