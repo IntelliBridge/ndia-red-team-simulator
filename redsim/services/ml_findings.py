@@ -186,6 +186,64 @@ def _control_row(measurements: Sequence[Measurement], eps: float) -> Measurement
     return None
 
 
+# Plain-language notes on what each technique does, for the "What happened"
+# lead of a finding. Written for a reader who does not know adversarial ML.
+_PLAIN_ATTACK: dict[str, str] = {
+    "fgsm": "adds one small, carefully aimed layer of noise to each input",
+    "pgd": "adds small, carefully aimed noise in several refining steps",
+    "cw_l2": "searches for the smallest change that flips the model's answer",
+    "deepfool": "nudges each input just across the model's decision boundary",
+    "hopskipjump": "probes the model's answers only, without seeing its internals, to find flips",
+    "zoo": "estimates which small changes matter most from the model's answers alone",
+    "word_substitution": "swaps a few words for near-synonyms",
+    "dpatch": "places a small adversarial patch inside the picture",
+    "noise_control": "adds the same amount of random noise, as a control",
+}
+_DOMAIN_NOUN: dict[str, str] = {"image": "images", "tabular": "records", "text": "messages", "detection": "images"}
+
+
+def evasion_plain_language(
+    *, attack_id: str, attack_name: str, domain: str | None, eps: float | None, norm: str,
+    n_clean_correct: int | None, n_flipped: int | None, threshold: float,
+    control_n_correct: int | None = None, control_n: int | None = None,
+    clean_n_correct: int | None = None, clean_n: int | None = None,
+) -> str:
+    """The layman's account of what triggered an evasion finding: measured numbers only."""
+    noun = _DOMAIN_NOUN.get(str(domain or ""), "inputs")
+    what = _PLAIN_ATTACK.get(attack_id, "alters each input in a way chosen to mislead the model")
+    budget = f"ε={eps:g} ({norm})" if eps is not None else f"the declared budget ({norm})"
+    small = " (small enough that a person would not notice)" if domain in ("image", "detection") and eps is not None and eps <= 0.1 else ""
+    if n_clean_correct and n_flipped is not None:
+        share = f"{n_flipped} of {n_clean_correct} ({n_flipped / n_clean_correct:.0%})"
+    else:
+        share = "a share above the reporting threshold"
+    parts = [
+        f"What happened: redsim took the {noun} this model classified correctly and altered each one with the "
+        f"{attack_name} technique, which {what}, keeping every change within a budget of {budget}{small}. "
+        f"The model then changed its answer on {share} of them, above the {threshold:.0%} rate at which redsim "
+        f"reports a finding."
+    ]
+    if control_n and control_n_correct is not None and clean_n and clean_n_correct is not None:
+        parts.append(
+            f"The same amount of random noise moved accuracy from {clean_n_correct}/{clean_n} to "
+            f"{control_n_correct}/{control_n}, so the loss comes from the aimed changes, not from noise as such."
+        )
+    parts.append("This is a measurement on the test slice below, not a statement about fielded behaviour.")
+    return " ".join(parts)
+
+
+def llm_plain_language(*, probe_id: str, goal: str | None, n_hits: int, n_evaluated: int, threshold: float) -> str:
+    """The layman's account of what triggered an LLM probe finding."""
+    aim = f"make it {goal}" if goal else "test its safeguards"
+    rate = f"{n_hits / n_evaluated:.0%}" if n_evaluated else "an unmeasured share"
+    return (
+        f"What happened: redsim sent the model {n_evaluated} prompts from the '{probe_id}' probe, each written to "
+        f"{aim}. An automatic detector judged {n_hits} of the {n_evaluated} replies ({rate}) as going along with "
+        f"the attempt, above the {threshold:.0%} rate at which redsim reports a finding. This measures whether the "
+        f"model's safeguards held under this kind of prompt; a hit is the detector's judgement, not a verified harm."
+    )
+
+
 def finding_title(attack_name: str, norm: str, inputs: FindingInputs, first_row: Measurement | None) -> str:
     """Spec 5.7 / 15.5 title: attack, first-success eps, norm and the ASR fraction."""
     eps_text = f"{float(inputs.first_success_eps):g}" if inputs.first_success_eps is not None else "n/a"
@@ -207,7 +265,15 @@ def finding_description(
     first_row = _evasion_row(measurements, attack_id, inputs.first_success_eps)
     ref_row = _evasion_row(measurements, attack_id, ref)
     control = _control_row(measurements, ref)
-    parts: list[str] = []
+    parts: list[str] = [evasion_plain_language(
+        attack_id=attack_id, attack_name=attack_name, domain=getattr(campaign.target, "domain", None),
+        eps=float(inputs.first_success_eps) if inputs.first_success_eps is not None else None, norm=config.norm,
+        n_clean_correct=(first_row.n_clean_correct if first_row is not None and first_row.n_clean_correct is not None
+                         else inputs.n_clean_correct),
+        n_flipped=first_row.n_flipped_from_clean if first_row is not None else None, threshold=float(inputs.threshold),
+        control_n_correct=control.n_correct if control is not None else None, control_n=control.n if control is not None else None,
+        clean_n_correct=clean.n_correct if clean is not None else None, clean_n=clean.n if clean is not None else None,
+    )]
     if first_row is not None and inputs.first_success_eps is not None:
         parts.append(
             f"Measured: {attack_name} ({attack_id}, {config.norm}) first crossed the finding threshold "
@@ -596,6 +662,7 @@ def llm_finding_description(
 ) -> str:
     """Rules-generated measured summary with denominators (spec 5.7 analogue). No LLM, no prompt text."""
     parts = [
+        llm_plain_language(probe_id=probe_id, goal=goal, n_hits=n_hits, n_evaluated=n_evaluated, threshold=threshold),
         f"Measured: garak probe {probe_id} ({goal or 'goal not recorded'}) fired detector {detector} on "
         f"{n_hits}/{n_evaluated} evaluated responses (hit rate {hit_rate:.4f}), crossing the finding threshold "
         f"{threshold:g}.",
