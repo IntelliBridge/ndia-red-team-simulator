@@ -369,3 +369,20 @@ sent to that permission-gate-only persona, never to the `default` persona and
 never to a production system. HarmBench material is excluded (`fitd.FITD`,
 owner default LLM-08), as are `dan.AutoDAN`, `grandma.GrandmaIntent` and the
 uncapped corpus variants, each an excluded catalog row with its reason.
+
+### Gateway concurrency (brief 13 L2)
+
+`REDSIM_LLM_PROBE_MAX_CONCURRENT_PER_GATEWAY` defaults to 2. Admission
+counts running and already-dispatched `llm.probe` jobs for the same normalized
+gateway host and persona across projects. A third admission is queued with
+`detail.deferred=true` and a `capacity_deferred` response marker; no broker
+message is sent until a slot is reserved. Postgres advisory transaction locks
+serialize count/reservation/commit; SQLite uses a local lock. The global
+admission query reads only a count and immediately restores the tenant GUC.
+
+The existing `redsim.ml_dispatch_deferred` sweep and probe completion hook
+reserve deferred jobs and dispatch them to the default queue. Broker failures
+restore deferral for the next pass. `/v1/ml/capacity` exposes
+`limits.llm_probe_max_concurrent_per_gateway`. A batch containing LLM targets
+cannot raise its `max_parallel` above this deployment cap; this does not add
+LLM support to classifier-only batch operations.

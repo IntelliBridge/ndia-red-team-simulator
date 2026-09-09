@@ -1002,8 +1002,8 @@ def ml_llm_probe_run(self: Task, job_id: str) -> dict[str, Any]:
     from redsim.services.ml_findings import project_llm_findings
     from redsim.services.ml_llm import PROBE_AUTH_KIND, is_llm_target, standing_limitations
     from redsim.workers.bootstrap import task_context
-
-    with task_context(job_id, task=self, commit_running=True) as ctx:
+    from redsim.workers.tasks.capacity import deferred_continuation
+    with deferred_continuation(job_id), task_context(job_id, task=self, commit_running=True) as ctx:
         if ctx.skip:
             return {"job_id": job_id, "skipped": True}
         audit_writer = ctx.audit_writer

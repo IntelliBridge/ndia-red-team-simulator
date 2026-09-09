@@ -44,6 +44,7 @@ import logging
 import os
 import re
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal, NoReturn, TypedDict, cast
@@ -211,6 +212,8 @@ class LLMProbeHandle:
 
     run_id: str
     job_ids: list[str]
+    deferred: bool = False
+    capacity: dict[str, Any] = field(default_factory=dict)
 
     def to_response(self) -> dict[str, Any]:
         return {
@@ -219,6 +222,8 @@ class LLMProbeHandle:
             "status_url": f"/v1/runs/{self.run_id}",
             "scorecard_url": f"/v1/runs/{self.run_id}/llm-scorecard",
             "kind": LLM_RUN_KIND,
+            "deferred": self.deferred,
+            **({"capacity": self.capacity} if self.deferred else {}),
         }
 
 
@@ -871,6 +876,7 @@ def admit_llm_probe_run(
     from redsim.db.models import AuthProfile, Job, Run, Target
     from redsim.db.session import get_session
     from redsim.safety import AuthorizationError, authorize
+    from redsim.services.llm_capacity import capacity_marker, count_gateway_active, gateway_cap, gateway_lock
 
     body = body if body is not None else LLMProbeRequest()
     context: dict[str, Any] = {"target_id": target_id, "kind": LLM_RUN_KIND}
@@ -879,7 +885,7 @@ def admit_llm_probe_run(
         _refuse(audit_writer, action=ADMISSION_ACTION, actor=actor, project_id=project_id, exc=exc,
                 **context, **more)
 
-    with get_session() as sess:
+    with ExitStack() as locks, get_session() as sess:
         target = sess.get(Target, target_id)
         if target is None or target.kind not in {"ml_model_artifact", "ml_model_endpoint"}:
             refuse(ApiError(NOT_FOUND, "model not found"))
@@ -925,6 +931,11 @@ def admit_llm_probe_run(
             refuse(ApiError(PARAMS_OUT_OF_RANGE, f"max_prompts_per_probe {body.max_prompts_per_probe} exceeds the "
                             f"deployment cap {cap} ({MAX_PROMPTS_ENV})", field="max_prompts_per_probe",
                             maximum=cap))
+        locks.enter_context(gateway_lock(sess, host, persona))
+        active = count_gateway_active(sess, host, persona)
+        gateway_limit = gateway_cap(environ)
+        deferred = active >= gateway_limit
+        marker = capacity_marker(active, gateway_limit) if deferred else {}
         in_flight = _in_flight_probe_job(sess, project_id=project_id, target_id=target_id)
         if in_flight is not None:
             refuse(ApiError(JOB_IN_FLIGHT, "a probe run is already queued or running for this target",
@@ -975,7 +986,7 @@ def admit_llm_probe_run(
                     "seed": int(body.seed), "detector_mode": body.detector_mode,
                     "finding_hit_threshold": float(body.finding_hit_threshold),
                     "catalog_garak_version": catalog.garak_version,
-                    "prompt_estimate": job_detail["prompt_estimate"],
+                    "prompt_estimate": job_detail["prompt_estimate"], "deferred": deferred,
                 },
             )
         except AuthorizationError as exc:
@@ -984,14 +995,14 @@ def admit_llm_probe_run(
             id=run_id, project_id=project_id, target_id=target_id, mode="api", status="queued",
             scanner=LLM_SCANNER, created_by=actor,
             stage_table={"stage": None, "stages_done": [], "jobs": {}, "kind": LLM_RUN_KIND,
-                         "probe_ids": list(probe_ids)},
+                         "probe_ids": list(probe_ids), "deferred": deferred, "capacity": marker},
         ))
         sess.flush()
         sess.add(Job(id=job_id, run_id=run_id, project_id=project_id, type=LLM_JOB_TYPE, status="queued",
-                     created_by=actor, detail=dict(job_detail)))
+                     created_by=actor, detail={**dict(job_detail), "deferred": deferred, "capacity": marker}))
         sess.flush()
 
-    if enqueue:
+    if enqueue and not deferred:
         try:
             task_id = _enqueue(job_id)
         except Exception as exc:  # noqa: BLE001 - the broker refused: the admission is undone, never half-done
@@ -1004,7 +1015,7 @@ def admit_llm_probe_run(
                 job = sess.get(Job, job_id)
                 if job is not None:
                     job.celery_task_id = task_id
-    return LLMProbeHandle(run_id=run_id, job_ids=[job_id])
+    return LLMProbeHandle(run_id=run_id, job_ids=[job_id], deferred=deferred, capacity=marker)
 
 
 # ---------------------------------------------------------------------------

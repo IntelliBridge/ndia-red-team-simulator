@@ -558,6 +558,9 @@ def dispatch_deferred(
     for pid in targets:
         dispatch_project(session, pid, enqueue=enqueue, exclude_job_ids=exclude_job_ids,
                          audit_writer=audit_writer, report=report, now=now)
+    from redsim.services.llm_capacity import dispatch_gateway_deferred
+    dispatch_gateway_deferred(session, report=report, enqueue=enqueue,
+                              exclude_job_ids=exclude_job_ids, audit_writer=audit_writer)
     return report
 
 

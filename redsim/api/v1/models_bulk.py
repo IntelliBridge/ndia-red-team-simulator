@@ -644,6 +644,7 @@ def ml_capacity(project: str | None = None, user: CurrentUser = Depends(get_curr
     from redsim.db.models import Project
     from redsim.db.session import get_session
     from redsim.services import ml_capacity as capacity
+    from redsim.services.llm_capacity import gateway_cap
 
     if project is not None:
         ensure_project_access(user, project)
@@ -663,6 +664,7 @@ def ml_capacity(project: str | None = None, user: CurrentUser = Depends(get_curr
         "projects": projects,
         "limits": {
             "max_concurrent_runs_default": capacity.default_max_concurrent_runs(),
+            "llm_probe_max_concurrent_per_gateway": gateway_cap(),
             "daily_run_budget_default": capacity.default_daily_run_budget(),
             "env": {"max_concurrent_runs": capacity.MAX_CONCURRENT_ENV,
                     "daily_run_budget": [capacity.DAILY_BUDGET_ENV, capacity.DAILY_BUDGET_ENV_ALIAS],

@@ -454,6 +454,8 @@ def create_campaign_batch(
         _check_member_cap(len(ids), cap, what="models")
         with get_session() as sess:
             resolved = _resolve_batch_targets(sess, project_id, ids)
+            from redsim.services.llm_capacity import cap_batch_parallel
+            parallel = cap_batch_parallel(parallel, (target for target, _ in resolved))
         groups: dict[str, list[str]] = {}
         for target, modality in resolved:
             groups.setdefault(modality or "unknown", []).append(str(target.id))

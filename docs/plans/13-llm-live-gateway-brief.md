@@ -255,5 +255,13 @@ No key material, no prompt text, no completion text, no readiness wording.
   worker job detail, run summary, scorecard and execute audit rows. This uses
   the brief's permitted first-request abort path, rather than sending further
   prompts to an upstream already declared unavailable.
-- L2, L6 and packages R/A/D remain open. No live gateway traffic or runtime
+- **L2 implemented:** gateway/persona admission reservations span projects,
+  use transaction locking on Postgres, defer surplus jobs, and dispatch through
+  the existing sweep and completion hook. Capacity and batch limits expose the
+  deployment cap. Tests cover concurrent reservations, cross-project counting,
+  broker recovery and restoration of the caller's Postgres RLS scope.
+- **L6 implemented:** `docs/ops/pythia.md` documents the retry bounds, headers,
+  terminal/continuing outcomes, concurrency limit and ledger counters;
+  `docs/architecture/ml-vertical.md` documents blocked-output denominators.
+- Packages R/A/D remain open. No live gateway traffic or runtime
   changes were made for this test-helper increment.
