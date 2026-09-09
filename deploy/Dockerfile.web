@@ -43,8 +43,12 @@ RUN pnpm install --frozen-lockfile --filter @redsim/web...
 COPY web/ ./web/
 COPY packages/design-system/ ./packages/design-system/
 
-# Next.js embeds browser configuration at build time.
-ARG NEXT_PUBLIC_REDSIM_API_URL=http://localhost:8000
+# Next.js embeds browser configuration at build time. The argument has no
+# default on purpose: an image built without it would send every browser to
+# its own machine. docker-compose.yml passes the local value explicitly and
+# deploy-aws.yml passes the public https origin after its guard.
+ARG NEXT_PUBLIC_REDSIM_API_URL
+RUN test -n "${NEXT_PUBLIC_REDSIM_API_URL}" || { echo "build-arg NEXT_PUBLIC_REDSIM_API_URL is required (the API origin browsers will call)" >&2; exit 1; }
 ENV NEXT_PUBLIC_REDSIM_API_URL=${NEXT_PUBLIC_REDSIM_API_URL}
 
 # Off, and set explicitly rather than left unset. web/src/server/trpc/upstream.ts

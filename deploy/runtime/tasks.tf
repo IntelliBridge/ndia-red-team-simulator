@@ -41,7 +41,13 @@ locals {
       # The T3 refactor replaced NextAuth with Better Auth, and web/src/env.js
       # refuses to boot without this name. It is also the origin the tRPC
       # mutation gate compares against when a request carries no fetch
-      # metadata, so it has to be the browser-facing value.
+      # metadata, so it has to be the browser-facing value. BETTER_AUTH_SECRET
+      # arrives beside it as a secret (service_secrets.web).
+      #
+      # NEXTAUTH_URL is gone rather than carried alongside. PR #24 is merged,
+      # so every image this runtime pulls is a Better Auth image, and
+      # prepare_secrets.py already retires NEXTAUTH_SECRET, which would leave
+      # the URL without its secret.
       BETTER_AUTH_URL    = local.origin
       REDSIM_API_URL     = local.api_internal
       KEYCLOAK_CLIENT_ID = "redsim-web"
@@ -73,13 +79,21 @@ locals {
     command = ["celery", "-A", "redsim.workers.celery_app", "beat", "--schedule=/tmp/celerybeat-schedule", "--loglevel=info"] }
     migration = { image = "api", cpu = 512, memory = 1024, port = 0,
     command = ["python", "-c", file("${path.module}/scripts/migrate.py")] }
+    # The one-off assets task: the load-assets init container below extracts the
+    # pinned bundle into the shared volume, then the main container validates
+    # the mounted tree the way a worker would (manifest digests, the ml extra,
+    # a sandbox child launch) and exits. Operators run seed_project.py and
+    # "redsim ml seed" through this task definition with a command override
+    # (scripts/run_task.py --command), so the seed sees the same read-only tree.
     assets = { image = "worker", cpu = 2048, memory = 8192, port = 0,
-    command = ["python", "-c", file("${path.module}/scripts/load_assets.py")] }
+    command = ["redsim", "doctor", "--worker-mode"] }
     identity = { image = "identity", cpu = 512, memory = 2048, port = 8080,
     command = ["start", "--import-realm"] }
   }
   service_names = toset(["api", "web", "scans", "default", "beat", "identity"])
-  target_groups = merge(local.network.target_group_arns, { identity = aws_lb_target_group.identity.arn })
+  # Tasks that receive the extracted asset bundle at /app/assets (read-only).
+  bundle_consumers = ["api", "scans", "default", "assets"]
+  target_groups    = merge(local.network.target_group_arns, { identity = aws_lb_target_group.identity.arn })
   # Services registered into the private DNS namespace, keyed by service name.
   discovery_services = {
     identity = aws_service_discovery_service.identity.arn
@@ -108,8 +122,8 @@ resource "aws_ecs_task_definition" "runtime" {
     environment     = [for name, value in local.service_environment[each.key] : { name = name, value = value }]
     secrets         = [for name, ref in lookup(var.service_secrets, each.key, {}) : { name = name, valueFrom = ref }]
     portMappings    = each.value.port == 0 ? [] : [{ containerPort = each.value.port, protocol = "tcp" }]
-    mountPoints     = contains(["api", "scans", "default"], each.key) && var.asset_bundle != null ? [{ sourceVolume = "assets", containerPath = "/app/assets", readOnly = true }] : []
-    dependsOn       = contains(["api", "scans", "default"], each.key) && var.asset_bundle != null ? [{ containerName = "load-assets", condition = "SUCCESS" }] : []
+    mountPoints     = contains(local.bundle_consumers, each.key) && var.asset_bundle != null ? [{ sourceVolume = "assets", containerPath = "/app/assets", readOnly = true }] : []
+    dependsOn       = contains(local.bundle_consumers, each.key) && var.asset_bundle != null ? [{ containerName = "load-assets", condition = "SUCCESS" }] : []
     stopTimeout     = 120
     linuxParameters = { initProcessEnabled = true }
     logConfiguration = {
@@ -121,7 +135,7 @@ resource "aws_ecs_task_definition" "runtime" {
       }
     }
     }, each.value.command == null ? {} : { command = each.value.command })],
-    contains(["api", "scans", "default"], each.key) && var.asset_bundle != null ? [{
+    contains(local.bundle_consumers, each.key) && var.asset_bundle != null ? [{
       name        = "load-assets"
       image       = var.images[each.value.image]
       essential   = false

@@ -122,8 +122,11 @@ test-cov: require-install
 
 lint: lint-py lint-web
 
+# The same rule selection as the ``Lint (ruff)`` step of redsim-ci.yml. A
+# bare ``ruff check`` applies ruff's much wider default set and is not the
+# contract (docs/dev/ci.md, "Lint and type gates").
 lint-py: require-install
-	$(VENV)/bin/ruff check redsim tests
+	$(VENV)/bin/ruff check --select E4,E7,E9,F,I redsim tests
 
 # The flat config lives at the repo root (eslint.config.mjs), scoped to web/
 # with basePath, because that is where the ESLint binary is installed. Nothing
@@ -141,9 +144,19 @@ typecheck-web: require-install
 	pnpm --filter $(WEB) typecheck
 
 # Full local gate, mirroring the lint/typecheck/test jobs in
-# .github/workflows/redsim-ci.yml. deploy-aws.yml does not run it: that
-# workflow only builds images and rolls ECS services.
+# .github/workflows/redsim-ci.yml: ruff with the CI selection, mypy, the
+# Python default tier, then the web typecheck and vitest (``typecheck-web``
+# and the second line of ``test``). A failing vitest test fails this target.
+# deploy-aws.yml does not run it: that workflow only builds images and rolls
+# ECS services.
 check: lint typecheck test
+
+# API-level smoke against a live runtime (remaining-work brief E8):
+# health, OIDC discovery, 401 unauthenticated, then the authenticated reads
+# and an optional campaign when a token or a demo user is in the environment.
+# See scripts/smoke_live.sh for the variables.
+smoke-live:
+	scripts/smoke_live.sh
 
 # ---------------------------------------------------------------------
 # Full stack (docker compose)
@@ -160,6 +173,14 @@ up:
 
 down:
 	$(COMPOSE) down
+
+# Scripted spec-24 demo against a running `make up` stack (no UI): seed the
+# bundled models, run the image campaign, verify one finding, download the
+# report and verify every audit chain. Reads REDSIM_DEMO_API (default
+# http://localhost:8000) and REDSIM_DEMO_TOKEN (default the dev bearer token
+# for admin@example.com, so the stack must run with REDSIM_AUTH_MODE=dev).
+demo:
+	bash scripts/demo.sh
 
 # ---------------------------------------------------------------------
 # Docs (MkDocs Material)
@@ -183,10 +204,10 @@ docs-build-strict:
 docs-clean:
 	rm -rf site/
 
-.PHONY: install require-install \
+.PHONY: install require-install smoke-live \
 	dev dev-api dev-web dev-worker \
 	test test-cov \
 	lint lint-py lint-web \
 	typecheck typecheck-py typecheck-web \
-	check up down \
+	check up down demo \
 	docs-serve docs-build docs-build-strict docs-clean
