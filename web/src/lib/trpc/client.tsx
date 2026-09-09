@@ -31,20 +31,40 @@ function getQueryClient(onUnauthorized: (client: QueryClient) => void): QueryCli
   return browserQueryClient;
 }
 
+/**
+ * Whether a sign-out is already in flight.
+ *
+ * The QueryClient's onError fires once per errored query, and one batch can
+ * carry up to MAX_BATCH_ITEMS calls that all answer 401 together. Without this
+ * flag a full batch fired that many sign-out posts, cache clears and
+ * navigations. Module level rather than a ref, because every provider instance
+ * shares the one browser QueryClient below.
+ */
+let signingOut = false;
+
 export function TRPCReactProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   const [queryClient] = useState(() =>
     getQueryClient((client) => {
+      if (signingOut) return;
+      signingOut = true;
       // A rejected cookie has to be cleared before /login renders: the
       // middleware gate checks presence alone and would bounce straight back
       // to /dashboard otherwise (KTD7).
-      void fetch("/api/auth/signout-redsim", { method: "POST" }).finally(() => {
-        // Including hydrated data, so a second user in the same tab never sees
-        // the previous user's rows out of the 30 s stale window.
-        client.clear();
-        router.replace("/login");
-      });
+      void fetch("/api/auth/signout-redsim", { method: "POST" })
+        // Best effort. Offline the post never lands, and the local clear and
+        // the redirect still have to happen. The catch is also what keeps that
+        // case quiet: `finally` re-propagates the original rejection, so
+        // without it an offline sign-out surfaced as an unhandled rejection.
+        .catch(() => undefined)
+        .finally(() => {
+          // Including hydrated data, so a second user in the same tab never
+          // sees the previous user's rows out of the 30 s stale window.
+          client.clear();
+          router.replace("/login");
+          signingOut = false;
+        });
     }),
   );
 
