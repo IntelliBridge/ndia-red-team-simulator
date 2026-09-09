@@ -189,6 +189,13 @@ def _explain_lines(measurements: list[Measurement], explain_meta: dict[str, Any]
     if meta.get("explainer"):
         lines.append(f"Explainer: {meta.get('explainer')} (shap {meta.get('shap_version', 'n/a')}, "
                      f"nsamples={meta.get('nsamples')}, background_size={meta.get('background_size')}).")
+        if meta.get("explainer") == "PartitionExplainer":
+            lines.append("PartitionExplainer masking attributions are not the same quantity as gradient attributions "
+                         "and are not compared across paths.")
+    cache = meta.get("cache")
+    if isinstance(cache, dict) and isinstance(cache.get("hits"), int) and cache["hits"] > 0:
+        lines.append(f"Explanation cache: {cache['hits']} of {cache.get('n', 'n/a')} per-sample attributions were "
+                     "reused from a previous run with matching input digests.")
     return lines
 
 

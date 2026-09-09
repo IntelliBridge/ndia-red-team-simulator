@@ -6,16 +6,23 @@ with a small seeded background. Attributions of the clean-predicted class
 are compared clean vs adversarial (``expl_shift``, recorded per sample on the
 ``Observation``). The per-sample top features are the ``Observation``'s
 ``top_features_clean`` / ``top_features_adv`` (feature identifiers ranked by
-|SHAP|) and are also written as JSON. Campaign-level bar and beeswarm plots
-share the feature order (fixed by the clean ranking) and the x-axis range. The
-returned ``ExplainOutput`` carries the reference-row ``Measurement`` fields
-(``expl_shift_mean`` with its ``n`` and exclusions, the benign-noise floor with
-its ``n``) for the campaign to write onto the evasion measurement (spec 13.5).
+|SHAP|). Per sample the spec 5.8 / 13.6 files are written: ``feature_diff.json``
+(per-feature clean / adversarial values, delta raw and scaled, frozen flags,
+the SHAP vectors and rankings; kind ``ml.feature_diff``) and
+``shap_force_<i>.png`` (per-feature contribution plot, clean vs adversarial;
+kind ``ml.shap.force``). The pre-rename names ``top_features.json`` /
+``shap_pair.png`` stay readable through ``explain.base.artifact_path``.
+Campaign-level bar and beeswarm plots share the feature order (fixed by the
+clean ranking) and the x-axis range. The returned ``ExplainOutput`` carries the
+reference-row ``Measurement`` fields (``expl_shift_mean`` with its ``n`` and
+exclusions, the benign-noise floor with its ``n``) for the campaign to write
+onto the evasion measurement (spec 13.5).
 
 Only numeric feature vectors and the manifest's feature identifiers are ever
 written. No raw URL string, and no other source row text, enters an artifact,
 an observation, or the summary (spec 11.3.3 / 13.7). A feature identifier that
-is itself URL-shaped is refused.
+is itself URL-shaped is refused. When SHAP cannot run on the model,
+``ExplainerUnavailable`` is raised and nothing is written.
 """
 
 from __future__ import annotations
@@ -32,8 +39,14 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from redsim.ml.artifacts import ArtifactSink
-from redsim.ml.errors import ExplainUnavailable
-from redsim.ml.explain.base import SHAP_LIMITATION, ExplainOutput
+from redsim.ml.errors import ExplainerUnavailable, ExplainUnavailable
+from redsim.ml.explain.base import (
+    FEATURE_DIFF_NAME,
+    LEGACY_ARTIFACT_NAMES,
+    SHAP_LIMITATION,
+    ExplainOutput,
+    force_plot_name,
+)
 from redsim.ml.explain.stability import aggregate, expl_shift, is_defined
 from redsim.ml.schema import Observation
 from redsim.ml.targets.base import Sample, Target
@@ -112,7 +125,7 @@ def _attributions(shap: Any, model: Any, predict_proba: Callable[[np.ndarray], n
         return "KernelExplainer", outs, errors
     except Exception as exc:  # noqa: BLE001
         errors.append(f"KernelExplainer: {type(exc).__name__}: {str(exc)[:160]}")
-    raise ExplainUnavailable("SHAP could not explain this tabular model: " + " | ".join(errors))
+    raise ExplainerUnavailable("SHAP could not explain this tabular model: " + " | ".join(errors))
 
 
 # --------------------------------------------------------------------------- plots (Figure + Agg, no pyplot state)
@@ -241,16 +254,83 @@ def _ranking(v: np.ndarray, names: list[str], top: int) -> list[str]:
     return [names[int(i)] for i in order[:top]]
 
 
+def _as_range(v: Any) -> tuple[float, float] | None:
+    if isinstance(v, dict):
+        lo, hi = v.get("min"), v.get("max")
+    elif isinstance(v, (list, tuple)) and len(v) == 2:
+        lo, hi = v
+    else:
+        return None
+    if isinstance(lo, bool) or isinstance(hi, bool) or not isinstance(lo, (int, float)) or not isinstance(hi, (int, float)):
+        return None
+    return float(lo), float(hi)
+
+
+def _feature_diff_context(target: Target, names: list[str], feature_ranges: dict[str, Any] | None,
+                          frozen_features: list[str] | None) -> tuple[dict[str, tuple[float, float]], set[str] | None,
+                                                                       dict[str, str]]:
+    """Per-feature ranges (for the scaled delta) and the frozen set, from the arguments else the manifest.
+
+    Ranges: ``feature_ranges`` (name -> [min, max] or {"min", "max"}), else ``manifest["feature_ranges"]``,
+    else a ``range`` / ``min`` + ``max`` entry on each ``manifest["features"]`` dict. Frozen flags:
+    ``frozen_features``, else ``manifest["frozen_features"]``, else a ``frozen`` flag on each feature dict.
+    Whatever is not known is reported as unavailable: ``delta_scaled`` / ``frozen`` become ``None``, never 0
+    or ``False``. The third element says where each came from.
+    """
+    try:
+        manifest = target.manifest() or {}
+    except Exception:  # noqa: BLE001 -- a manifest failure only removes the optional context
+        manifest = {}
+    feats = manifest.get("features")
+    feat_dicts = {str(f.get("name")): f for f in feats if isinstance(f, dict)} if isinstance(feats, list) else {}
+    ranges: dict[str, tuple[float, float]] = {}
+    sources = {"ranges": "unavailable (no feature ranges supplied or in the manifest)",
+               "frozen": "unavailable (no frozen-feature list supplied or in the manifest)"}
+    candidates: list[tuple[str, Any]] = [("argument", feature_ranges), ("manifest.feature_ranges",
+                                                                        manifest.get("feature_ranges"))]
+    for source, mapping in candidates:
+        if isinstance(mapping, dict):
+            found = {nm: r for nm in names if (r := _as_range(mapping.get(nm))) is not None}
+            if found:
+                ranges, sources["ranges"] = found, source
+                break
+    if not ranges and feat_dicts:
+        found = {}
+        for nm in names:
+            fd = feat_dicts.get(nm)
+            if fd is None:
+                continue
+            r = _as_range(fd.get("range")) or _as_range({"min": fd.get("min"), "max": fd.get("max")})
+            if r is not None:
+                found[nm] = r
+        if found:
+            ranges, sources["ranges"] = found, "manifest.features[].range"
+    frozen: set[str] | None = None
+    listed = frozen_features if frozen_features is not None else manifest.get("frozen_features")
+    if isinstance(listed, (list, tuple, set)):
+        frozen = {str(f) for f in listed}
+        sources["frozen"] = "argument" if frozen_features is not None else "manifest.frozen_features"
+    elif feat_dicts and any("frozen" in fd for fd in feat_dicts.values()):
+        frozen = {nm for nm, fd in feat_dicts.items() if bool(fd.get("frozen"))}
+        sources["frozen"] = "manifest.features[].frozen"
+    return ranges, frozen, sources
+
+
 # --------------------------------------------------------------------------- entry point
 
 def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.ndarray,
             proba_adv: np.ndarray, sink: ArtifactSink, *, k: int, seed: int, feature_names: list[str] | None,
-            x_ctrl: np.ndarray | None = None, nsamples: int = 200, background_size: int = 100) -> ExplainOutput:
+            x_ctrl: np.ndarray | None = None, nsamples: int = 200, background_size: int = 100,
+            eps: float | None = None, attack_id: str | None = None, feature_ranges: dict[str, Any] | None = None,
+            frozen_features: list[str] | None = None) -> ExplainOutput:
     """Explain the first ``k`` flipped and first ``k`` unflipped rows at the reference budget.
 
     ``feature_names`` are the manifest's feature identifiers. When ``None`` the target manifest's
     ``feature_names`` / ``features`` entry is used, else generic ``feature_<i>`` identifiers, and
-    ``meta["feature_names_source"]`` says which.
+    ``meta["feature_names_source"]`` says which. ``eps`` and ``attack_id`` are recorded in the
+    per-sample ``feature_diff.json``; ``feature_ranges`` (name -> [min, max]) scale the per-feature delta
+    and ``frozen_features`` mark the features the attack held fixed -- both fall back to the manifest
+    and are reported as unavailable (``None``) when unknown.
     """
     if k <= 0:
         raise ExplainUnavailable("explain_k = 0: no samples were requested for explanation, so S_expl has no input")
@@ -267,6 +347,7 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
     names, names_source = _feature_names(target, feature_names, x.shape[1])
     if len(names) != x.shape[1]:
         raise ExplainUnavailable(f"{len(names)} feature names for {x.shape[1]} feature columns")
+    ranges, frozen, context_sources = _feature_diff_context(target, names, feature_ranges, frozen_features)
     n, n_features = x.shape
     pc = np.asarray(proba_clean)
     pa = np.asarray(proba_adv)
@@ -341,30 +422,43 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
         prefix = f"obs_{i:03d}"
         obs_id = f"o.{i:03d}"
 
-        feature_rows = [{
-            "name": names[f], "value_clean": float(x[i, f]), "value_adv": float(xa[i, f]),
-            "delta": float(xa[i, f] - x[i, f]), "shap_clean": float(v_clean[f]), "shap_adv": float(v_adv[f]),
-        } for f in range(n_features)]
+        feature_rows = []
+        for f in range(n_features):
+            delta = float(xa[i, f] - x[i, f])
+            rng_f = ranges.get(names[f])
+            span = (rng_f[1] - rng_f[0]) if rng_f is not None else None
+            feature_rows.append({
+                "name": names[f], "value_clean": float(x[i, f]), "value_adv": float(xa[i, f]),
+                "delta": delta,
+                "delta_scaled": (delta / span) if span is not None and span > 1e-12 else None,
+                "range": None if rng_f is None else [rng_f[0], rng_f[1]],
+                "frozen": None if frozen is None else (names[f] in frozen),
+                "shap_clean": float(v_clean[f]), "shap_adv": float(v_adv[f]),
+            })
         top_json = {
             "observation_id": obs_id, "sample_index": i, "source_index": int(sample.indices[i]),
+            "attack_id": attack_id, "eps": None if eps is None else float(eps),
             "explainer": explainer_name, "shap_version": shap.__version__, "class_explained": name_c,
             "class_explained_index": c, "adv_pred_class": name_a, "flipped": is_flipped,
             "top_features_clean": top_clean, "top_features_adv": top_adv, "top3_changed": top3_changed,
             "expl_shift": None if not is_defined(shift) else shift,
             "expl_shift_noise": None if not is_defined(noise) else noise,
             "nsamples": effective_nsamples, "background_size": effective_bg, "seed": seed,
+            "scaling": {"delta_scaled": "delta / (max - min) of the feature range", "ranges_source": context_sources["ranges"],
+                        "frozen_source": context_sources["frozen"]},
             "features": feature_rows,
             "note": "feature identifiers and numeric values only, no source row text",
         }
         artifacts: dict[str, str] = {}
-        artifacts["top_features.json"] = sink.put(f"{prefix}/top_features.json",
-                                                  json.dumps(_jsonable(top_json), indent=1).encode(),
-                                                  "application/json")
+        artifacts[FEATURE_DIFF_NAME] = sink.put(f"{prefix}/{FEATURE_DIFF_NAME}",
+                                                json.dumps(_jsonable(top_json), indent=1).encode(),
+                                                "application/json")
         order = np.argsort(-np.abs(v_clean), kind="stable")
-        artifacts["shap_pair.png"] = sink.put(
-            f"{prefix}/shap_pair.png",
+        force_name = force_plot_name(i)
+        artifacts[force_name] = sink.put(
+            f"{prefix}/{force_name}",
             render_pair(v_clean[order], v_adv[order], [names[int(o)] for o in order],
-                        f"{obs_id} SHAP clean vs adversarial | class={name_c}"), "image/png")
+                        f"{obs_id} SHAP per-feature contributions clean vs adversarial | class={name_c}"), "image/png")
         npz_buf = io.BytesIO()
         arrays: dict[str, Any] = {"clean": v_clean.astype(np.float32), "adv": v_adv.astype(np.float32),
                                          "indices": np.asarray([i, int(sample.indices[i])], dtype=np.int64)}
@@ -425,7 +519,14 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
     meta: dict[str, Any] = {
         "modality": "tabular", "explainer": explainer_name, "explainers_tried": tried, "shap_version": shap.__version__,
         "deterministic": deterministic, "nsamples": effective_nsamples, "background_size": effective_bg,
-        "seed": seed, "explain_k": k, "feature_names": names, "feature_names_source": names_source,
+        "seed": seed, "explain_k": k, "explain_k_requested": k, "attack_id": attack_id,
+        "eps": None if eps is None else float(eps),
+        "feature_names": names, "feature_names_source": names_source,
+        "feature_ranges_source": context_sources["ranges"], "frozen_features_source": context_sources["frozen"],
+        "per_sample_artifact_names": [FEATURE_DIFF_NAME, LEGACY_ARTIFACT_NAMES["shap_pair.png"]],
+        "legacy_artifact_names": dict(LEGACY_ARTIFACT_NAMES),
+        "cache": {"enabled": False, "hits": 0, "n": 0,
+                  "reason": "no explanation cache on the tabular path (TreeExplainer is exact and cheap; spec 13.10)"},
         "n_slice": int(n), "n_flipped_total": int(flipped.sum()),
         "n_explained": int(m), "n_flipped_explained": n_flipped_expl, "n_unflipped_explained": int(unflipped_idx.size),
         "expl_shift_mean": shift_mean, "expl_shift_n": shift_n, "expl_shift_n_excluded": shift_excluded,

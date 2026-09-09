@@ -22,10 +22,17 @@ pytest.importorskip("shap")
 import numpy as np
 
 from redsim.ml.artifacts import FilesystemSink
-from redsim.ml.errors import ExplainUnavailable
+from redsim.ml.errors import ExplainerUnavailable, ExplainUnavailable
 from redsim.ml.explain import (
+    CACHE_KEY_FIELDS,
+    FEATURE_DIFF_NAME,
+    LEGACY_ARTIFACT_NAMES,
     MEASUREMENT_FIELDS,
     ExplainOutput,
+    ExplanationCache,
+    artifact_path,
+    force_plot_name,
+    resolve_cache_dir,
     shap_image,
     shap_tabular,
 )
@@ -64,8 +71,22 @@ def _image_case(n: int = 24, seed: int = 0):
 
 
 class _NoTorchTarget(TinyTarget):
+    """A predict_proba-only image target (converted-ONNX failure, black-box wrapper): the Partition path."""
+
     def torch_model(self) -> Any:
         return None
+
+
+class _NoShapTarget(_NoTorchTarget):
+    """Neither a differentiable module nor a working predict_proba: SHAP cannot run on any path."""
+
+    def predict_proba(self, x: np.ndarray) -> np.ndarray:
+        raise RuntimeError("inference endpoint unavailable")
+
+
+class _UnknownDigestTarget(TinyTarget):
+    def manifest(self) -> dict[str, Any]:
+        return {"dataset": "synthetic"}   # no weights_sha256: the cache cannot bind entries to one model
 
 
 FEATURES = ["url_length", "digit_ratio", "letter_ratio", "count_dot", "count_hyphen", "count_at", "count_query",
@@ -264,14 +285,162 @@ def test_image_explain_is_deterministic_for_same_seed(tmp_path):
     assert _ref_row(a).expl_shift_noise_floor is None
 
 
-def test_image_explain_raises_when_no_torch_module_or_k_zero(tmp_path):
+def test_image_explain_raises_when_shap_cannot_run_or_k_zero(tmp_path):
     target, sample, x_adv, _, pc, pa = _image_case()
-    with pytest.raises(ExplainUnavailable):
-        shap_image.explain(_NoTorchTarget(), sample, x_adv, pc, pa, FilesystemSink(tmp_path), k=2, seed=0)
+    # no differentiable module and no usable predict_proba: neither SHAP path can run -> typed refusal
+    with pytest.raises(ExplainerUnavailable) as exc:
+        shap_image.explain(_NoShapTarget(), sample, x_adv, pc, pa, FilesystemSink(tmp_path), k=2, seed=0, nsamples=50)
+    assert exc.value.code == "explainer_unavailable" and "PartitionExplainer" in str(exc.value)
+    assert isinstance(exc.value, ExplainUnavailable)   # callers that catch the base class still do
+    # a forced gradient explainer on a predict_proba-only target is refused, not silently swapped
+    with pytest.raises(ExplainerUnavailable):
+        shap_image.explain(_NoTorchTarget(), sample, x_adv, pc, pa, FilesystemSink(tmp_path), k=2, seed=0,
+                           explainer="GradientExplainer")
     with pytest.raises(ExplainUnavailable):
         shap_image.explain(target, sample, x_adv, pc, pa, FilesystemSink(tmp_path), k=0, seed=0)
-    # nothing is faked: a refused explanation writes no artifact at all
+    with pytest.raises(ExplainUnavailable):
+        shap_image.explain(target, sample, x_adv, pc, pa, FilesystemSink(tmp_path), k=2, seed=0, explainer="magic")
+    # nothing is faked: a refused explanation writes no artifact and no cache entry at all
     assert list((tmp_path / "artifacts").rglob("*")) == []
+    assert not (tmp_path / "explain_cache").exists()
+
+
+def test_partition_explainer_fallback(tmp_path):
+    """G-EXP1 / spec 13.2: a predict_proba-only image target takes the PartitionExplainer path, k capped at 8."""
+    target, sample, x_adv, x_ctrl, pc, pa = _image_case()
+    target = _NoTorchTarget(seed=0)
+    sink = FilesystemSink(tmp_path)
+    out = shap_image.explain(target, sample, x_adv, pc, pa, sink, k=10, seed=0, x_ctrl=x_ctrl, nsamples=100,
+                             attack_id="fgsm", eps=0.03)
+    m = out.meta
+    assert m["explainer"] == "PartitionExplainer" and m["explainer_path"] == "partition"
+    assert m["explain_k"] == shap_image.PARTITION_K_CAP == 8 and m["explain_k_requested"] == 10
+    assert m["explain_k_cap"] == 8 and m["nsamples"] == 100 and m["attack_id"] == "fgsm" and m["eps"] == 0.03
+    n_flipped_total = int((pc.argmax(1) != pa.argmax(1)).sum())
+    assert 1 <= len(out.observations) <= 16
+    assert sum(o.flipped for o in out.observations) == min(8, n_flipped_total)
+    assert sum(not o.flipped for o in out.observations) == min(8, len(sample.y) - n_flipped_total)
+    for o in out.observations:
+        # the explainer used is recorded on the existing Observation field and in the per-sample meta file
+        assert "PartitionExplainer" in o.metric_note and o.metric_kind == "heuristic"
+        meta = json.loads((tmp_path / o.artifacts["shap_meta.json"]).read_bytes())
+        assert meta["explainer"] == "PartitionExplainer" and meta["explainer_path"] == "partition"
+        assert meta["nsamples"] == 100 and meta["attack_id"] == "fgsm"
+        for name in REQUIRED_IMAGE_PNGS:
+            path = tmp_path / o.artifacts[name]
+            assert path.read_bytes()[:8] == PNG_MAGIC and o.artifact_sha256[name] == _sha(path)
+        with np.load(tmp_path / o.artifacts["shap_values.npz"]) as z:
+            # same CHW layout as the gradient path, so downstream readers need not know the path
+            assert z["clean"].shape == sample.x.shape[1:] and z["adv"].shape == sample.x.shape[1:]
+            assert "control" in z.files
+            assert float(np.abs(z["clean"]).sum()) > 0.0   # real masking attributions, not zeros
+        assert o.center_mass_ratio_clean is not None and 0.0 <= o.center_mass_ratio_clean <= 1.0
+        assert o.expl_shift is None or 0.0 <= o.expl_shift <= 1.0
+    assert out.expl_shift_mean is not None and 0.0 <= out.expl_shift_mean <= 1.0
+    assert out.expl_shift_noise_floor is not None and out.expl_shift_noise_floor_n >= 1
+    assert any("PartitionExplainer" in s and "max_evals=100" in s for s in m["nondeterminism"])
+    assert shap_image.PARTITION_LIMITATION in m["limitations"]
+    assert any("capped at 8" in s and "requested 10" in s for s in m["limitations"])
+    # the text summary states the not-comparable-across-paths caveat
+    text = text_summary(_measurements(), out.observations, None, explain_meta=m)
+    assert "PartitionExplainer" in text and "not compared across paths" in text
+    # forcing the partition explainer on a target that does have a torch module also takes that path
+    forced = shap_image.explain(TinyTarget(seed=0), sample, x_adv, pc, pa, FilesystemSink(tmp_path / "forced"), k=1,
+                                seed=0, nsamples=60, explainer="PartitionExplainer")
+    assert forced.meta["explainer"] == "PartitionExplainer" and forced.meta["explain_k"] == 1
+    # the gradient path is untouched by the fallback: k is not capped there
+    grad = shap_image.explain(TinyTarget(seed=0), sample, x_adv, pc, pa, FilesystemSink(tmp_path / "grad"), k=10,
+                              seed=0, nsamples=10)
+    assert grad.meta["explainer"] == "GradientExplainer" and grad.meta["explain_k"] == 10
+    assert grad.meta["explain_k_cap"] is None and shap_image.PARTITION_LIMITATION not in grad.meta["limitations"]
+    assert all("PartitionExplainer" not in o.metric_note for o in grad.observations)
+
+
+def test_clean_attribution_cache_hit(tmp_path, monkeypatch):
+    """G-EXP3 / spec 13.10: attributions are cached on disk by the spec key and reused on an identical request."""
+    assert CACHE_KEY_FIELDS[:8] == ("model_sha256", "dataset_revision", "sample_index", "attack_id", "eps",
+                                    "explainer", "nsamples", "seed")
+    target, sample, x_adv, x_ctrl, pc, pa = _image_case()
+    cache_dir = tmp_path / "shared_cache"
+    common = dict(k=2, seed=0, x_ctrl=x_ctrl, nsamples=20, attack_id="fgsm", eps=0.03, dataset_revision="rev-1",
+                  cache_dir=cache_dir)
+
+    first = shap_image.explain(target, sample, x_adv, pc, pa, FilesystemSink(tmp_path / "explain_run"), **common)
+    n_expl = len(first.observations)
+    c1 = first.meta["cache"]
+    assert c1["enabled"] is True and c1["dir"] == str(cache_dir) and c1["source"] == "argument"
+    assert c1["hits"] == 0 and c1["misses"] == n_expl and c1["stored"] == n_expl and c1["n"] == n_expl
+    assert c1["explainer_key"] == "GradientExplainer" and c1["key_fields"] == list(CACHE_KEY_FIELDS)
+    assert first.meta["model_sha256"] == target.manifest()["weights_sha256"]
+    assert first.meta["dataset_revision"] == "rev-1"
+    entries = sorted(cache_dir.rglob("*.npz"))
+    assert len(entries) == n_expl and len(list(cache_dir.rglob("*.json"))) == n_expl
+    sidecar = json.loads(entries[0].with_suffix(".json").read_text())
+    assert sidecar["key"]["model_sha256"] == target.manifest()["weights_sha256"] and sidecar["key"]["attack_id"] == "fgsm"
+    assert set(sidecar["input_sha256"]) == {"clean", "adv", "control"} and sidecar["explainer"] == "GradientExplainer"
+    for o in first.observations:
+        meta = json.loads((tmp_path / "explain_run" / o.artifacts["shap_meta.json"]).read_bytes())
+        assert meta["cache_hit"] is False and len(meta["cache_key"]) == 64
+
+    # second run (a verify replay of the same inputs): every attribution is served from the cache and the
+    # explainer is not invoked at all
+    def _must_not_run(*_a, **_k):
+        raise AssertionError("SHAP explainer ran despite a full cache hit")
+
+    monkeypatch.setattr(shap_image, "_attributions", _must_not_run)
+    second = shap_image.explain(target, sample, x_adv, pc, pa, FilesystemSink(tmp_path / "verify_run"), **common)
+    c2 = second.meta["cache"]
+    assert c2["hits"] == n_expl and c2["misses"] == 0 and c2["stale"] == 0 and c2["stored"] == 0
+    assert second.meta["explainer"] == "GradientExplainer" and second.meta["nsamples"] == 20
+    assert [o.id for o in second.observations] == [o.id for o in first.observations]
+    assert [o.expl_shift for o in second.observations] == [o.expl_shift for o in first.observations]
+    assert second.expl_shift_mean == first.expl_shift_mean
+    assert second.expl_shift_noise_floor == first.expl_shift_noise_floor
+    assert [o.artifact_sha256["shap_values.npz"] for o in second.observations] == \
+        [o.artifact_sha256["shap_values.npz"] for o in first.observations]
+    for o in second.observations:
+        meta = json.loads((tmp_path / "verify_run" / o.artifacts["shap_meta.json"]).read_bytes())
+        assert meta["cache_hit"] is True
+        assert (tmp_path / "verify_run" / o.artifacts["shap_clean.png"]).read_bytes()[:8] == PNG_MAGIC
+    assert any("Explanation cache reused" in s and f"{n_expl} of {n_expl}" in s for s in second.meta["nondeterminism"])
+    assert f"Explanation cache: {n_expl} of {n_expl}" in text_summary(_measurements(), second.observations, None,
+                                                                      explain_meta=second.meta)
+    monkeypatch.undo()
+
+    # different adversarial pixels under the same key (same explained set, same classes) are never served from
+    # the cache: the input digests differ, so every entry is counted stale and recomputed
+    other_adv = np.clip(x_adv + 1e-3, 0.0, 1.0).astype(np.float32)
+    third = shap_image.explain(target, sample, other_adv, pc, pa, FilesystemSink(tmp_path / "other"), **common)
+    c3 = third.meta["cache"]
+    assert len(third.observations) == n_expl
+    assert c3["hits"] == 0 and c3["stale"] == n_expl and c3["misses"] == 0 and c3["stored"] == n_expl
+    assert [o.artifact_sha256["shap_values.npz"] for o in third.observations] != \
+        [o.artifact_sha256["shap_values.npz"] for o in first.observations]
+    # a different attack id is a different key: a miss, not a stale entry
+    fourth = shap_image.explain(target, sample, x_adv, pc, pa, FilesystemSink(tmp_path / "pgd"),
+                                **(common | {"attack_id": "pgd"}))
+    assert fourth.meta["cache"]["hits"] == 0 and fourth.meta["cache"]["misses"] == len(fourth.observations)
+
+    # the cache is off, with the reason recorded, when the caller disables it or the model digest is unknown
+    off = shap_image.explain(target, sample, x_adv, pc, pa, FilesystemSink(tmp_path / "off"),
+                             **(common | {"use_cache": False}))
+    assert off.meta["cache"]["enabled"] is False and "caller" in off.meta["cache"]["reason"]
+    nodigest = shap_image.explain(_UnknownDigestTarget(seed=0), sample, x_adv, pc, pa,
+                                  FilesystemSink(tmp_path / "nodigest"), **common)
+    assert nodigest.meta["cache"]["enabled"] is False and "sha256 unknown" in nodigest.meta["cache"]["reason"]
+    assert nodigest.meta["cache"]["hits"] == 0 and nodigest.observations
+
+    # resolution order without an explicit dir: the environment variable, then the sink's work dir / root
+    monkeypatch.delenv("REDSIM_ML_EXPLAIN_CACHE", raising=False)
+    sink = FilesystemSink(tmp_path / "plain")
+    assert resolve_cache_dir(sink, None) == (tmp_path / "plain" / "explain_cache", "sink.root")
+    assert resolve_cache_dir(object(), None)[0] is None   # no work dir, no root, no env: disabled with a reason
+    monkeypatch.setenv("REDSIM_ML_EXPLAIN_CACHE", str(tmp_path / "env_cache"))
+    assert resolve_cache_dir(sink, None) == (tmp_path / "env_cache", "REDSIM_ML_EXPLAIN_CACHE")
+    assert resolve_cache_dir(object(), None) == (tmp_path / "env_cache", "REDSIM_ML_EXPLAIN_CACHE")
+    disabled = ExplanationCache(None, model_sha256="x", dataset_revision=None, explainer="GradientExplainer",
+                                nsamples=20, seed=0, attack_id=None, eps=None, background_size=None, source="none")
+    assert disabled.enabled is False and disabled.stats()["reason"] == "none"
 
 
 # --------------------------------------------------------------------------- tabular explainer
@@ -293,15 +462,33 @@ def test_tabular_tree_explain_writes_plots_and_top_features(tmp_path):
         assert 1 <= len(o.top_features_clean) <= 5 and set(o.top_features_clean) <= set(FEATURES)
         assert 1 <= len(o.top_features_adv) <= 5 and set(o.top_features_adv) <= set(FEATURES)
         assert o.expl_shift is None or 0.0 <= o.expl_shift <= 1.0
-        top = json.loads((tmp_path / o.artifacts["top_features.json"]).read_bytes())
+        # spec 5.8 / 13.6 per-sample names: feature_diff.json (ml.feature_diff) and shap_force_<i>.png (ml.shap.force)
+        force_name = force_plot_name(o.sample_index)
+        assert set(o.artifacts) == {FEATURE_DIFF_NAME, force_name, "shap_values.npz"}
+        assert "top_features.json" not in o.artifacts and "shap_pair.png" not in o.artifacts
+        top = json.loads((tmp_path / o.artifacts[FEATURE_DIFF_NAME]).read_bytes())
         assert top["top_features_clean"] == o.top_features_clean and top["top_features_adv"] == o.top_features_adv
         assert top["expl_shift"] == o.expl_shift
         assert len(top["features"]) == len(FEATURES) and {f["name"] for f in top["features"]} == set(FEATURES)
-        assert o.artifact_sha256["top_features.json"] == _sha(tmp_path / o.artifacts["top_features.json"])
-        assert (tmp_path / o.artifacts["shap_pair.png"]).read_bytes()[:8] == PNG_MAGIC
+        for row in top["features"]:
+            assert row["delta"] == pytest.approx(row["value_adv"] - row["value_clean"], abs=1e-6)
+            # no feature ranges or frozen list is known for this double: reported as unavailable, never as 0 / False
+            assert row["delta_scaled"] is None and row["frozen"] is None and row["range"] is None
+        assert top["scaling"]["ranges_source"].startswith("unavailable")
+        assert top["scaling"]["frozen_source"].startswith("unavailable")
+        assert o.artifact_sha256[FEATURE_DIFF_NAME] == _sha(tmp_path / o.artifacts[FEATURE_DIFF_NAME])
+        assert (tmp_path / o.artifacts[force_name]).read_bytes()[:8] == PNG_MAGIC
+        # the pre-rename names stay readable through the helper, resolving to the same files
+        assert artifact_path(o, "top_features.json") == o.artifacts[FEATURE_DIFF_NAME]
+        assert artifact_path(o, "shap_pair.png") == o.artifacts[force_name]
+        assert artifact_path(o, FEATURE_DIFF_NAME) == o.artifacts[FEATURE_DIFF_NAME]
+        assert artifact_path(o, "clean.png") is None   # never invented for a tabular observation
         dumped = json.dumps(o.model_dump(mode="json"))
         assert "http://" not in dumped and "https://" not in dumped and "www." not in dumped
     assert set(out.meta["top5_clean"]) <= set(FEATURES) and 0 <= out.meta["n_rank_changes"] <= 5
+    assert out.meta["legacy_artifact_names"] == LEGACY_ARTIFACT_NAMES
+    assert out.meta["per_sample_artifact_names"] == [FEATURE_DIFF_NAME, "shap_force_<i>.png"]
+    assert out.meta["cache"]["enabled"] is False and out.meta["cache"]["hits"] == 0   # recorded, not implied
     assert out.expl_shift_mean is None or 0.0 <= out.expl_shift_mean <= 1.0
     assert out.expl_shift_n + out.expl_shift_n_excluded == len(out.observations)
     assert out.expl_shift_noise_floor is None and out.expl_shift_noise_floor_n is None   # no control passed
@@ -346,7 +533,17 @@ def test_tabular_kernel_fallback_for_non_tree_model(tmp_path):
     assert out.meta["explainer"] == "KernelExplainer" and out.meta["nsamples"] == 60
     assert out.meta["background_size"] == 15
     assert any("KernelExplainer" in s for s in out.meta["nondeterminism"])
-    assert out.observations and all(o.artifacts.get("top_features.json") for o in out.observations)
+    assert out.observations and all(o.artifacts.get(FEATURE_DIFF_NAME) for o in out.observations)
+
+
+class _BrokenTabularTarget(TinyTabularTarget):
+    """No reachable estimator and a failing predict_proba: neither TreeExplainer nor KernelExplainer can run."""
+
+    def art_classifier(self) -> Any:
+        raise RuntimeError("no estimator")
+
+    def predict_proba(self, x: np.ndarray) -> np.ndarray:
+        raise RuntimeError("inference unavailable")
 
 
 def test_tabular_explain_rejects_bad_inputs(tmp_path):
@@ -355,6 +552,43 @@ def test_tabular_explain_rejects_bad_inputs(tmp_path):
         shap_tabular.explain(target, sample, x_adv, pc, pa, FilesystemSink(tmp_path), k=0, seed=0, feature_names=FEATURES)
     with pytest.raises(ExplainUnavailable):
         shap_tabular.explain(target, sample, x_adv, pc, pa, FilesystemSink(tmp_path), k=2, seed=0, feature_names=["a"])
+    # SHAP cannot run on the model: the typed refusal, and nothing written
+    with pytest.raises(ExplainerUnavailable) as exc:
+        shap_tabular.explain(_BrokenTabularTarget(), sample, x_adv, pc, pa, FilesystemSink(tmp_path), k=2, seed=0,
+                             feature_names=FEATURES, nsamples=20, background_size=5)
+    assert exc.value.code == "explainer_unavailable" and "KernelExplainer" in str(exc.value)
+    assert list((tmp_path / "artifacts").rglob("*")) == []
+
+
+class _RangedTabularTarget(TinyTabularTarget):
+    def manifest(self) -> dict[str, Any]:
+        feats = [{"name": nm, "range": [0.0, 2.0], "frozen": nm == "has_ip_host"} for nm in FEATURES]
+        return {"dataset": "synthetic", "feature_names": FEATURES, "features": feats}
+
+
+def test_tabular_feature_diff_scaled_delta_and_frozen_flags(tmp_path):
+    """spec 13.6 feature_diff.json: delta raw and scaled over the feature range, frozen flags, sources recorded."""
+    target, sample, x_adv, pc, pa = _tabular_case("tree")
+    ranges = {nm: [0.0, 4.0] for nm in FEATURES}
+    out = shap_tabular.explain(target, sample, x_adv, pc, pa, FilesystemSink(tmp_path / "arg"), k=2, seed=0,
+                               feature_names=FEATURES, feature_ranges=ranges, frozen_features=["count_at", "path_depth"],
+                               attack_id="pgd", eps=0.1)
+    assert out.meta["feature_ranges_source"] == "argument" and out.meta["frozen_features_source"] == "argument"
+    assert out.meta["attack_id"] == "pgd" and out.meta["eps"] == 0.1
+    for o in out.observations:
+        top = json.loads((tmp_path / "arg" / o.artifacts[FEATURE_DIFF_NAME]).read_bytes())
+        assert top["attack_id"] == "pgd" and top["eps"] == 0.1 and top["scaling"]["ranges_source"] == "argument"
+        for row in top["features"]:
+            assert row["range"] == [0.0, 4.0] and row["delta_scaled"] == pytest.approx(row["delta"] / 4.0)
+            assert row["frozen"] is (row["name"] in ("count_at", "path_depth"))
+    # the same context read from the target manifest when the caller passes nothing
+    out2 = shap_tabular.explain(_RangedTabularTarget(), sample, x_adv, pc, pa, FilesystemSink(tmp_path / "man"), k=1,
+                                seed=0, feature_names=None)
+    assert out2.meta["feature_ranges_source"] == "manifest.features[].range"
+    assert out2.meta["frozen_features_source"] == "manifest.features[].frozen"
+    top2 = json.loads((tmp_path / "man" / out2.observations[0].artifacts[FEATURE_DIFF_NAME]).read_bytes())
+    assert all(r["delta_scaled"] == pytest.approx(r["delta"] / 2.0) for r in top2["features"])
+    assert [r["frozen"] for r in top2["features"]] == [nm == "has_ip_host" for nm in FEATURES]
 
 
 def test_tabular_feature_names_fall_back_to_manifest_then_generic(tmp_path):
