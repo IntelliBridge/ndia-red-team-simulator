@@ -81,6 +81,41 @@ describe("/models", () => {
     });
   });
   afterEach(() => cleanup());
+  it("renders the manifest clean-accuracy block as text (value, n, split)", () => {
+    // The live API returns redsim.ml.schema.CleanAccuracy, an object; rendering
+    // it as a React child was React error #31 on /models.
+    useModels.mockReturnValue({
+      data: [
+        {
+          id: "vehicles_cnn-1234abcd",
+          project_id: "demo",
+          name: "Vehicles CNN",
+          source: "bundled",
+          modality: "image",
+          format: "torch_state_dict",
+          sha256: "432569ef744c",
+          manifest: { clean_accuracy: { value: 0.5990129549660703, n: 1621, split: "test_coarse" } },
+          status: "available",
+        },
+        {
+          id: "legacy-number",
+          project_id: "demo",
+          name: "Legacy",
+          source: "bundled",
+          modality: "image",
+          format: "onnx",
+          sha256: null,
+          manifest: { clean_accuracy: 0.82, clean_n: 50 },
+          status: "available",
+        },
+      ],
+      isLoading: false,
+      mutate: vi.fn(),
+    });
+    render(createElement(ModelsPage));
+    expect(screen.getByText("0.599 (n=1621, test_coarse)")).toBeTruthy();
+    expect(screen.getByText("0.82 (n=50)")).toBeTruthy();
+  });
   it("states that the catalog API is not implemented when /v1/models answers 404", () => {
     useModels.mockReturnValue({
       data: undefined,
