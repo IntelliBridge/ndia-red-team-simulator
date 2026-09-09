@@ -62,12 +62,12 @@ export function ObservationCard({
   const tabular = observation.modality === "tabular";
   return (
     <article
-      className="redsim-panel p-3"
+      className="redsim-panel rounded-sm p-3"
       aria-label={`Evidence for sample ${observation.sample_index}`}
     >
-      <header className="mb-3 flex items-center justify-between gap-3 text-xs">
-        <span className="font-mono text-ink-1">sample {observation.sample_index}</span>
-        <span className={observation.flipped ? "font-medium text-data-adv" : "text-ink-3"}>
+      <header className="mb-3 flex items-center justify-between text-xs">
+        <span className="font-mono">sample {observation.sample_index}</span>
+        <span>
           true {observation.true_label} ·{" "}
           {observation.flipped ? "prediction flipped" : "prediction unchanged"}
         </span>
@@ -114,7 +114,7 @@ export function ObservationCard({
       ) : (
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
           {artifactNames.map((name) => (
-            <figure key={name} className="m-0 overflow-hidden rounded-[3px] bg-ground">
+            <figure key={name} className="overflow-hidden bg-muted">
               {observation.artifacts[name] ? (
                 <EvidenceImage
                   src={artifactUrl(observation.artifacts[name])}
@@ -125,14 +125,14 @@ export function ObservationCard({
                   {name.replaceAll("_", " ")} unavailable
                 </figcaption>
               )}
-              <figcaption className="px-1 py-1 text-[11px] text-ink-3">
+              <figcaption className="p-1 text-[10px]">
                 {name.replaceAll("_", " ")}
               </figcaption>
             </figure>
           ))}
         </div>
       )}
-      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs [&_dt]:text-ink-3 [&_dd]:m-0 [&_dd]:text-ink-1">
+      <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
         <div>
           <dt>Clean</dt>
           <dd className="font-mono">
@@ -165,7 +165,7 @@ export function ObservationCard({
           Explanation unavailable: {observation.explanation_unavailable_reason}
         </p>
       )}
-      <p className="mt-3 text-[11px] text-ink-3">
+      <p className="mt-2 text-[11px] text-muted-foreground">
         <LabelBadge variant="heuristic" /> center-mass ratio{" "}
         {observation.center_mass_ratio_clean ?? "—"} /{" "}
         {observation.center_mass_ratio_adv ?? "—"}. {observation.metric_note}

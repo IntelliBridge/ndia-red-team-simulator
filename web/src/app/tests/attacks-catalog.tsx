@@ -94,12 +94,13 @@ const runHref = (modelId: string, attackIds: string[]) =>
     .join(",")}`;
 
 const Chip = ({ children }: { children: React.ReactNode }) => (
-  <span className="redsim-chip">
+  <span className="inline-flex rounded-sm border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
     {children}
   </span>
 );
 
-const selectClass = "redsim-input py-1 text-xs";
+const selectClass =
+  "rounded-sm border border-input bg-background px-2 py-1 text-xs";
 
 export function AttacksCatalog() {
   const router = useRouter();
@@ -203,46 +204,46 @@ export function AttacksCatalog() {
     <div className="space-y-6">
       <PanelSection title="What the platform can run" eyebrow="summary">
         {attacksLoading && !attacksResp ? (
-          <p className="text-sm text-ink-3">Loading attack catalog…</p>
+          <p className="text-sm text-muted-foreground">Loading attack catalog…</p>
         ) : catalogError ? (
           <p className="text-sm text-destructive">
             Attack catalog unavailable. Retry after the catalog service is
             restored.
           </p>
         ) : (
-          <dl className="m-0 grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
-            <div className="redsim-stat">
+          <dl className="grid grid-cols-2 gap-4 text-sm md:grid-cols-4">
+            <div>
               <dt className="redsim-kicker">attacks available</dt>
-              <dd className="redsim-numeral m-0 text-3xl">
+              <dd className="text-2xl font-semibold">
                 {availableCount}
                 {attacks.length !== availableCount ? (
-                  <span className="ml-1 text-xs font-normal tracking-normal text-ink-3">
+                  <span className="ml-1 text-xs font-normal text-muted-foreground">
                     of {attacks.length}
                   </span>
                 ) : null}
               </dd>
             </div>
-            <div className="redsim-stat">
+            <div>
               <dt className="redsim-kicker">families</dt>
-              <dd className="m-0 mt-1 flex flex-wrap gap-1">
+              <dd className="mt-1 flex flex-wrap gap-1">
                 {families.map((f) => (
                   <Chip key={f}>{f}</Chip>
                 ))}
               </dd>
             </div>
-            <div className="redsim-stat">
+            <div>
               <dt className="redsim-kicker">modalities covered</dt>
-              <dd className="m-0 mt-1 flex flex-wrap gap-1">
+              <dd className="mt-1 flex flex-wrap gap-1">
                 {modalities.map((m) => (
                   <Chip key={m}>{m}</Chip>
                 ))}
               </dd>
             </div>
-            <div className="redsim-stat">
+            <div>
               <dt className="redsim-kicker">runnable targets</dt>
-              <dd className="redsim-numeral m-0 text-3xl">
+              <dd className="text-2xl font-semibold">
                 {models.length}
-                <span className="ml-1 text-xs font-normal tracking-normal text-ink-3">
+                <span className="ml-1 text-xs font-normal text-muted-foreground">
                   registered · available
                 </span>
               </dd>
@@ -250,7 +251,7 @@ export function AttacksCatalog() {
           </dl>
         )}
         {atlas ? (
-          <p className="mt-4 border-t border-line pt-3 text-xs text-ink-3">
+          <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
             Technique ids follow MITRE ATLAS
             {atlas.release ? ` ${atlas.release}` : ""}
             {atlas.published ? ` (published ${atlas.published})` : ""}.{" "}
@@ -258,7 +259,7 @@ export function AttacksCatalog() {
           </p>
         ) : null}
         {attacksResp?.plugins?.enabled ? (
-          <p className="mt-2 text-xs text-ink-3">
+          <p className="mt-2 text-xs text-muted-foreground">
             Attack plugins are enabled in this deployment.
           </p>
         ) : null}
@@ -282,7 +283,7 @@ export function AttacksCatalog() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="name, id, ATLAS technique, capability…"
-              className="redsim-input mt-1"
+              className="mt-1 w-full rounded-sm border border-input bg-background px-2 py-1 text-sm"
             />
           </label>
           <label>
@@ -315,14 +316,14 @@ export function AttacksCatalog() {
               ))}
             </select>
           </label>
-          <span className="pb-1 text-ink-3">
+          <span className="pb-1 text-muted-foreground">
             {visible.length} of {attacks.length} shown
             {selected.length > 0 ? ` · ${selected.length} selected` : ""}
           </span>
         </div>
 
         {byFamily.length === 0 && attacks.length > 0 ? (
-          <p className="text-sm text-ink-3">
+          <p className="text-sm text-muted-foreground">
             No attacks match the current filters.
           </p>
         ) : null}
@@ -332,14 +333,14 @@ export function AttacksCatalog() {
             <div key={f}>
               <div className="mb-2 flex items-baseline gap-3">
                 <div className="redsim-kicker">{f}</div>
-                <span className="text-xs text-ink-3">
+                <span className="text-xs text-muted-foreground">
                   {FAMILY_BLURB[f] ?? ""}
                 </span>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
                   <thead>
-                    <tr className="border-b border-line-strong">
+                    <tr className="border-b border-border">
                       <th className="w-6 p-2">
                         <input
                           type="checkbox"
@@ -381,7 +382,7 @@ export function AttacksCatalog() {
                         <tr
                           key={a.id}
                           {...rowLink(`/tests/attacks/${encodeURIComponent(a.id)}`)}
-                          className={`border-b border-line align-top last:border-0 ${rowLink("").className}`}
+                          className={`border-b border-border align-top ${rowLink("").className}`}
                         >
                           <td className="p-2">
                             <input
@@ -393,7 +394,7 @@ export function AttacksCatalog() {
                           </td>
                           <td className="p-2">
                             <div className="text-sm font-medium">{a.name}</div>
-                            <div className="font-mono text-[11px] text-ink-3">
+                            <div className="font-mono text-[11px] text-muted-foreground">
                               {a.id}
                             </div>
                           </td>
@@ -418,7 +419,7 @@ export function AttacksCatalog() {
                             </div>
                             {a.reason ? (
                               <div
-                                className="mt-1 max-w-[12rem] truncate text-[11px] text-ink-3"
+                                className="mt-1 max-w-[12rem] truncate text-[11px] text-muted-foreground"
                                 title={a.reason}
                               >
                                 {a.reason}
@@ -427,7 +428,7 @@ export function AttacksCatalog() {
                           </td>
                           <td className="p-2">
                             {techniques.length === 0 ? (
-                              <span className="text-ink-3">—</span>
+                              <span className="text-muted-foreground">—</span>
                             ) : (
                               <div className="flex flex-col gap-0.5">
                                 {techniques.map((t) => (
@@ -456,9 +457,9 @@ export function AttacksCatalog() {
                           </td>
                           <td className="p-2">
                             {targets.length === 0 ? (
-                              <span className="text-ink-3">
+                              <span className="text-muted-foreground">
                                 No registered model for {domains.join("/") || "this modality"} —{" "}
-                                <Link href="/models" className="redsim-link">
+                                <Link href="/models" className="text-primary underline">
                                   register one
                                 </Link>
                               </span>
@@ -485,7 +486,7 @@ export function AttacksCatalog() {
                                   type="button"
                                   disabled={!chosen}
                                   onClick={() => router.push(runHref(chosen, [a.id]))}
-                                  className="redsim-cta redsim-btn-sm"
+                                  className="rounded-sm bg-primary px-2 py-1 text-xs font-semibold text-primary-foreground disabled:opacity-40"
                                 >
                                   Go
                                 </button>
@@ -503,8 +504,8 @@ export function AttacksCatalog() {
         </div>
 
         {selected.length > 0 ? (
-          <div className="redsim-panel sticky bottom-2 mt-4 flex flex-wrap items-center gap-3 p-3 text-xs shadow-lg">
-            <span className="font-semibold text-ink-1">
+          <div className="sticky bottom-2 mt-4 flex flex-wrap items-center gap-3 rounded-sm border border-border bg-background p-3 text-xs shadow-sm">
+            <span className="font-semibold">
               Run {selected.length} selected on
             </span>
             <select
@@ -527,7 +528,7 @@ export function AttacksCatalog() {
               type="button"
               disabled={!bulkTarget || bulkCompatible.length === 0}
               onClick={runBulk}
-              className="redsim-cta redsim-btn-sm"
+              className="rounded-sm bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground disabled:opacity-40"
             >
               Go{bulkTarget ? ` (${bulkCompatible.length})` : ""}
             </button>
@@ -537,12 +538,12 @@ export function AttacksCatalog() {
                 setSelected([]);
                 setBulkNote("");
               }}
-              className="redsim-ghost redsim-btn-sm"
+              className="rounded-sm border border-border px-3 py-1 text-xs"
             >
               Clear
             </button>
             {bulkTarget && bulkSkipped.length > 0 ? (
-              <span className="text-ink-3">
+              <span className="text-muted-foreground">
                 Skipped (not compatible with {bulkTarget.modality}):{" "}
                 <span className="font-mono">
                   {bulkSkipped.map((a) => a.id).join(", ")}
@@ -550,9 +551,9 @@ export function AttacksCatalog() {
               </span>
             ) : null}
             {models.length === 0 ? (
-              <span className="text-ink-3">
+              <span className="text-muted-foreground">
                 No registered model is available —{" "}
-                <Link href="/models" className="redsim-link">
+                <Link href="/models" className="text-primary underline">
                   register one
                 </Link>
                 .
@@ -570,14 +571,14 @@ export function AttacksCatalog() {
         {defensesError ? (
           <p className="text-sm text-destructive">Defense catalog unavailable.</p>
         ) : defenses.length === 0 ? (
-          <p className="text-sm text-ink-3">
+          <p className="text-sm text-muted-foreground">
             {defensesResp ? "No defenses registered." : "Loading defense catalog…"}
           </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
               <thead>
-                <tr className="border-b border-line-strong">
+                <tr className="border-b border-border">
                   <th className="p-2">Defense</th>
                   <th className="p-2">Kind</th>
                   <th className="p-2">Phase</th>
@@ -588,10 +589,10 @@ export function AttacksCatalog() {
               </thead>
               <tbody>
                 {defenses.map((d) => (
-                  <tr key={d.id} className="border-b border-line align-top last:border-0">
+                  <tr key={d.id} className="border-b border-border align-top">
                     <td className="p-2">
                       <div className="text-sm font-medium">{d.name}</div>
-                      <div className="font-mono text-[11px] text-ink-3">
+                      <div className="font-mono text-[11px] text-muted-foreground">
                         {d.id}
                       </div>
                     </td>
@@ -624,7 +625,7 @@ export function AttacksCatalog() {
             </table>
           </div>
         )}
-        <p className="mt-3 text-xs text-ink-3">
+        <p className="mt-3 text-xs text-muted-foreground">
           Defenses are not launched from this catalogue. A completed campaign
           proposes them as candidate actions; apply and re-measure from the
           run&apos;s scorecard.

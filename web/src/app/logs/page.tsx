@@ -31,34 +31,32 @@ interface LogsResponse {
 const fetcher = (path: string) => api<LogsResponse>(path);
 
 const SEV_TONE: Record<string, string> = {
-  trace: "text-ink-3",
-  debug: "text-ink-3",
-  info: "text-ink-2",
+  trace: "text-muted-foreground",
+  debug: "text-muted-foreground",
+  info: "text-foreground",
   // Amber and orange, never red: red is the brand accent in this UI.
-  warn: "border-amber-400/50 text-amber-300",
-  error: "border-orange-400/50 text-orange-400",
-  fatal: "border-orange-400/50 font-semibold text-orange-300",
+  warn: "text-amber-300",
+  error: "text-orange-400",
+  fatal: "font-semibold text-orange-300",
 };
 
 function LogTableRow({ row }: { row: LogRow }) {
   return (
-    <tr className="border-b border-line last:border-0">
-      <td className="px-3 py-2 font-mono tabular-nums text-ink-3">
+    <tr className="border-t border-border">
+      <td className="px-2 py-1 font-mono text-muted-foreground">
         {new Date(row.ts).toLocaleTimeString()}
       </td>
-      <td className="px-3 py-2">
-        <span
-          className={`redsim-chip font-mono ${
-            SEV_TONE[row.severity] ?? "text-ink-2"
-          }`}
-        >
-          {row.severity}
-        </span>
+      <td
+        className={`px-2 py-1 font-mono uppercase ${
+          SEV_TONE[row.severity] ?? "text-foreground"
+        }`}
+      >
+        {row.severity}
       </td>
-      <td className="px-3 py-2 text-ink-2">{row.service}</td>
-      <td className="px-3 py-2 font-mono text-ink-1">{row.message}</td>
-      <td className="px-3 py-2 font-mono text-ink-3">{row.run_id ?? "—"}</td>
-      <td className="px-3 py-2 font-mono text-ink-3">
+      <td className="px-2 py-1">{row.service}</td>
+      <td className="px-2 py-1 font-mono">{row.message}</td>
+      <td className="px-2 py-1 font-mono text-muted-foreground">{row.run_id ?? "—"}</td>
+      <td className="px-2 py-1 font-mono text-muted-foreground">
         {row.request_id ?? "—"}
       </td>
     </tr>
@@ -80,11 +78,11 @@ function LogsView() {
   );
 
   if (!authed)
-    return <p className="text-ink-3">Signing in…</p>;
-  if (isLoading) return <p className="text-ink-3">Loading…</p>;
+    return <p className="text-muted-foreground">Signing in…</p>;
+  if (isLoading) return <p className="text-muted-foreground">Loading…</p>;
   if (error)
     return (
-      <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+      <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
         Failed to load: {String(error)}
       </p>
     );
@@ -95,30 +93,30 @@ function LogsView() {
     <div className="space-y-6">
       <header className="flex items-end justify-between">
         <div>
-          <h1>Logs</h1>
-          <p className="mt-1 text-sm text-ink-3">
+          <h1 className="text-2xl font-semibold">Logs</h1>
+          <p className="text-sm text-muted-foreground">
             Newest first.{" "}
             {runFilter ? `Filtered to run ${runFilter}.` : "Across all runs."}
           </p>
         </div>
       </header>
 
-      <div className="overflow-x-auto">
+      <div className="overflow-hidden rounded-md border border-border bg-card">
         <table className="w-full text-xs">
-          <thead className="text-left">
-            <tr className="border-b border-line-strong">
-              <th className="px-3 py-2">ts</th>
-              <th className="px-3 py-2">sev</th>
-              <th className="px-3 py-2">service</th>
-              <th className="px-3 py-2">message</th>
-              <th className="px-3 py-2">run</th>
-              <th className="px-3 py-2">request</th>
+          <thead className="bg-muted text-left text-[10px] uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="px-2 py-1">ts</th>
+              <th className="px-2 py-1">sev</th>
+              <th className="px-2 py-1">service</th>
+              <th className="px-2 py-1">message</th>
+              <th className="px-2 py-1">run</th>
+              <th className="px-2 py-1">request</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-3 py-4 text-center text-ink-3">
+                <td colSpan={6} className="px-3 py-4 text-center text-muted-foreground">
                   No log rows match these filters.
                 </td>
               </tr>
@@ -135,7 +133,7 @@ function LogsView() {
 
 export default function LogsPage() {
   return (
-    <Suspense fallback={<p className="text-ink-3">Loading…</p>}>
+    <Suspense fallback={<p className="text-muted-foreground">Loading…</p>}>
       <LogsView />
     </Suspense>
   );

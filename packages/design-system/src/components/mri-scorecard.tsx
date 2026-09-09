@@ -1,9 +1,3 @@
-// MriScorecard — the per-campaign Model Robustness Index with everything it
-// may never be shown without: the subscores, the per-family table with
-// denominators, and the caveat. The number is set large in the regular
-// weight, the grade beside it as a small bordered mark, the measured delta
-// as a plain sentence.
-
 import { DimensionBars } from "./dimension-bars";
 
 export interface MriScorecardProps {
@@ -35,64 +29,55 @@ export function MriScorecard({
     !!curve?.length;
   if (!ready)
     return (
-      <p className="border border-dashed border-line-strong p-4 text-sm text-ink-3">
+      <p className="border border-dashed border-border p-4 text-sm text-muted-foreground">
         Score unavailable: {unavailableReason}
       </p>
     );
   return (
-    <div className="grid gap-6 md:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
-      <div className="flex flex-col gap-3">
-        <div className="flex items-baseline gap-3">
-          <strong className="redsim-numeral text-[4.5rem]">{score.mri}</strong>
-          <span className="inline-flex h-6 items-center rounded-[3px] border border-line-strong px-2 text-xs font-semibold text-ink-1">
-            {score.grade}
-          </span>
-        </div>
-        <div className="redsim-kicker">Model Robustness Index, this campaign</div>
+    <div className="space-y-4">
+      <div className="flex items-end gap-3">
+        <strong className="font-mono text-5xl tracking-tighter">
+          {score.mri}
+        </strong>
+        <span className="mb-2 rounded-sm bg-muted px-2 py-1 text-xs font-semibold">
+          {score.grade}
+        </span>
         {measuredDelta != null && (
-          <p className="m-0 text-sm text-ink-2">
-            Measured change{" "}
-            <span className="tabular-nums text-ink-1">
-              {measuredDelta > 0 ? "+" : ""}
-              {measuredDelta}
-            </span>{" "}
-            against the baseline run.
-          </p>
+          <span className="mb-2 text-xs text-primary">
+            measured ΔMRI {measuredDelta > 0 ? "+" : ""}
+            {measuredDelta}
+          </span>
         )}
       </div>
-      <div className="min-w-0 space-y-5">
-        <DimensionBars
-          values={Object.fromEntries(
-            dimensions.map((key) => [key, score.subscores![key]!]),
-          )}
-        />
-        <table className="w-full text-left text-xs">
-          <thead>
-            <tr className="border-b border-line-strong">
-              <th className="pb-1.5 font-medium">Family</th>
-              <th className="pb-1.5 text-right font-medium">Accuracy</th>
-              <th className="pb-1.5 text-right font-medium">n</th>
+      <DimensionBars
+        values={Object.fromEntries(
+          dimensions.map((key) => [key, score.subscores![key]!]),
+        )}
+      />
+      <table className="w-full text-left text-xs">
+        <thead>
+          <tr>
+            <th>Family</th>
+            <th>Accuracy</th>
+            <th>n</th>
+          </tr>
+        </thead>
+        <tbody>
+          {familyRows!.map((row) => (
+            <tr key={row.family} className="border-t border-border">
+              <td className="py-2">{row.family}</td>
+              <td>
+                {row.n === 0 ? "no evidence recorded" : row.accuracy}
+              </td>
+              <td>{row.n === 0 ? "—" : row.n}</td>
             </tr>
-          </thead>
-          <tbody>
-            {familyRows!.map((row) => (
-              <tr key={row.family} className="border-b border-line last:border-0">
-                <td className="py-1.5 text-ink-1">{row.family}</td>
-                <td className="py-1.5 text-right tabular-nums">
-                  {row.n === 0 ? "no evidence recorded" : row.accuracy}
-                </td>
-                <td className="py-1.5 text-right tabular-nums text-ink-3">
-                  {row.n === 0 ? "—" : row.n}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p className="m-0 text-xs text-ink-3">
-          Per-campaign summary under the recorded attacks and settings. Not a
-          readiness or certification statement.
-        </p>
-      </div>
+          ))}
+        </tbody>
+      </table>
+      <p className="text-[11px] text-muted-foreground">
+        Per-campaign summary under the recorded attacks and settings. Not a
+        readiness or certification statement.
+      </p>
     </div>
   );
 }

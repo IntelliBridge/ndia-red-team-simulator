@@ -24,7 +24,7 @@ export type ProbeLauncherProps = {
   onStarted: (runId: string) => void;
 };
 
-const inputClass = "redsim-input mt-1";
+const inputClass = "mt-1 w-full border border-input bg-background px-2 py-1";
 
 function describeError(e: unknown): string {
   const d = mlErrorDetail(e);
@@ -132,7 +132,7 @@ export function ProbeLauncher({
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-ink-3">
+      <p className="text-xs text-muted-foreground">
         garak {catalog?.garak_version ?? "…"} probes run through the Pythia
         gateway against the registered persona. Probe set, prompt cap, seed and
         detector mode are recorded with the run; no MRI or grade is derived
@@ -182,16 +182,16 @@ export function ProbeLauncher({
           {selectedSet &&
             effectiveDetector === "offline" &&
             selectedSet.n_offline < selectedSet.n_probes && (
-              <span className="mt-1 text-xs text-ink-3 block">
+              <span className="mt-1 text-xs text-muted-foreground block">
                 {selectedSet.n_probes - selectedSet.n_offline} extended probes
                 in this set need detector_mode=hf and will not run.
               </span>
             )}
         </label>
       ) : (
-        <div className="max-h-96 space-y-3 rounded-[4px] border border-line bg-ground p-3 text-sm overflow-y-auto">
+        <div className="max-h-96 space-y-3 border-border p-2 text-sm overflow-y-auto border">
           {!catalog && (
-            <p className="text-xs text-ink-3">Loading catalog…</p>
+            <p className="text-xs text-muted-foreground">Loading catalog…</p>
           )}
           {families.map(([family, probes]) => (
             <div key={family}>
@@ -201,7 +201,7 @@ export function ProbeLauncher({
                 return (
                   <label
                     key={p.id}
-                    className="gap-3 border-line py-2 flex items-start border-b last:border-0"
+                    className="gap-3 border-border py-2 flex items-start border-b"
                   >
                     <input
                       type="checkbox"
@@ -218,11 +218,11 @@ export function ProbeLauncher({
                     />
                     <span className="flex-1">
                       <span className="font-mono text-xs">{p.short_id}</span>
-                      <span className="text-xs text-ink-3 block">
+                      <span className="text-xs text-muted-foreground block">
                         {p.goal}
                       </span>
                     </span>
-                    <span className="text-xs text-ink-3 ml-auto max-w-[40%] text-right">
+                    <span className="text-xs text-muted-foreground ml-auto max-w-[40%] text-right">
                       {blocked ??
                         `${p.status ?? "offline"} · ${p.tier === null || p.tier === 9 ? "unranked" : `tier ${p.tier}`}`}
                     </span>
@@ -246,7 +246,7 @@ export function ProbeLauncher({
             onChange={(e) => setMaxPrompts(e.target.value)}
             className={inputClass}
           />
-          <span className="mt-1 text-xs text-ink-3 block">
+          <span className="mt-1 text-xs text-muted-foreground block">
             1 to {maxAllowed}
           </span>
         </label>
@@ -283,7 +283,7 @@ export function ProbeLauncher({
               className={inputClass}
             />
           )}
-          <span className="mt-1 text-xs text-ink-3 block">
+          <span className="mt-1 text-xs text-muted-foreground block">
             {hf
               ? catalog?.statuses.extended
               : "HF detectors are not enabled on this API"}
@@ -300,13 +300,13 @@ export function ProbeLauncher({
             onChange={(e) => setThreshold(e.target.value)}
             className={inputClass}
           />
-          <span className="mt-1 text-xs text-ink-3 block">
+          <span className="mt-1 text-xs text-muted-foreground block">
             above 0, at most 1
           </span>
         </label>
       </div>
 
-      <div className="rounded-[4px] border border-line bg-ground p-3 text-xs text-ink-3">
+      <div className="border-border bg-muted p-3 text-xs text-muted-foreground border">
         <div className="redsim-kicker">Prompt estimate</div>
         {nProbes} probes × {Number.isFinite(maxPromptsN) ? maxPromptsN : 0}{" "}
         prompts ≈ <span className="font-mono">{estimate}</span> prompts at most;
@@ -317,25 +317,25 @@ export function ProbeLauncher({
         <button
           disabled={!available || busy || !configIsValid}
           onClick={launch}
-          className="redsim-cta w-full"
+          className="bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground w-full disabled:opacity-40"
         >
           {busy ? "Starting probe run…" : "Start probe run"}
         </button>
       </RoleGated>
 
       {!available && (
-        <p className="text-xs text-ink-3">
+        <p className="text-xs text-muted-foreground">
           Launcher unavailable:{" "}
           {unavailableReason ?? "target status is not available."}
         </p>
       )}
       {mode === "pick" && catalog && picked.length === 0 && (
-        <p className="text-xs text-ink-3">
+        <p className="text-xs text-muted-foreground">
           Pick at least one probe before launching.
         </p>
       )}
       {isLoading && (
-        <p className="text-xs text-ink-3">Loading probe catalog…</p>
+        <p className="text-xs text-muted-foreground">Loading probe catalog…</p>
       )}
       {catalogError && (
         <p className="text-sm text-destructive">
@@ -348,7 +348,7 @@ export function ProbeLauncher({
         </p>
       )}
       {catalog?.limitations?.length ? (
-        <details className="text-xs text-ink-3">
+        <details className="text-xs text-muted-foreground">
           <summary>Standing limitations ({catalog.limitations.length})</summary>
           <ul className="mt-1 space-y-1 pl-4 list-disc">
             {catalog.limitations.map((l) => (
