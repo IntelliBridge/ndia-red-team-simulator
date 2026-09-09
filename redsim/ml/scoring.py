@@ -17,7 +17,19 @@ grid x one reference budget; nothing here aggregates across those boundaries
 (D9 i). ``severity_for`` derives the Finding-level severity from the first
 success budget and the ASR against ``SeverityThresholds`` (spec 15.5); nothing
 sets severity by hand and no ``Measurement`` carries one. ``delta`` builds the
-``MRIDelta`` of a verify run and refuses incompatible campaigns (spec 15.6).
+``MRIDelta`` of a verify run and refuses incompatible campaigns (spec 15.6)
+with ``IncompatibleCampaigns`` (the 409 ``incompatible_campaigns`` of spec
+17.3), including two campaigns of different modality. A (attack, eps) cell
+present on one side only is reported as a ``FamilyDelta`` whose absent side has
+``n = 0`` and whose ``delta`` is ``None``: no evidence is never a delta of 0.
+
+``control_preserves_accuracy`` is the spec 12.4 predicate the rule layer's
+first rule reads: the benign control did not degrade accuracy when its
+``n_correct / n`` is within two percentage points of the clean accuracy or is
+not significantly below it under a one-sided exact binomial test. The spec 12.3
+default budgets (``DEFAULT_EPS_GRID_LINF``, ``DEFAULT_EPS_GRID_L2``,
+``DEFAULT_REFERENCE_EPS``) live here so admission and the campaign runner
+share one source.
 """
 
 from __future__ import annotations
@@ -31,6 +43,7 @@ from datetime import UTC, datetime
 from itertools import pairwise
 from typing import Any, Literal
 
+from redsim.ml.errors import MLError
 from redsim.ml.eval import eps_of, eps_tag
 from redsim.ml.schema import (
     GRADE_STATEMENT,
@@ -65,6 +78,56 @@ WEIGHT_FIELD: dict[str, str] = {"S_acc": "acc", "S_asr": "asr", "S_eps": "eps", 
 SCORING_VERSION = "mri-1"
 # Spec 12.6 denominator guard: below this many clean-correct samples no Finding is created.
 MIN_CLEAN_CORRECT_FOR_FINDING = 10
+
+# --- spec 12.3 default budgets (register G-ATK6) -----------------------------------------------------
+# L-inf and L2 are different test families: they never share a curve, a grid or an MRI. The admission
+# layer fills these in when a request omits them; the campaign runner reads the same names.
+DEFAULT_EPS_GRID_LINF: tuple[float, ...] = (0.01, 0.03, 0.1)     # fraction of the [0, 1] pixel range
+DEFAULT_EPS_GRID_L2: tuple[float, ...] = (0.25, 0.5, 1.0)        # L2 radius; not on the demo path
+DEFAULT_REFERENCE_EPS = 0.03                                     # member of the L-inf grid (spec 12.3)
+# Spec 12.8: at most this many grid members by default; more only by explicit configuration.
+DEFAULT_MAX_EPS_GRID_MEMBERS = 3
+
+# --- spec 12.4 control predicate (register G-SCORE1) ------------------------------------------------
+# "Control preserves accuracy": within two percentage points of the clean accuracy, or not significantly
+# below it. The floor keeps a one-sample miss on a tiny or perfectly classified slice from counting as
+# degradation; the significance level is the rule layer's default and is printed next to every statement.
+CONTROL_ACCURACY_FLOOR = 0.02
+DEFAULT_CONTROL_ALPHA = 0.05
+
+
+def default_eps_grid(norm: str = "linf") -> list[float]:
+    """The spec 12.3 default grid for ``norm`` (``"linf"`` or ``"l2"``) as a fresh, ascending list."""
+    if norm == "linf":
+        return list(DEFAULT_EPS_GRID_LINF)
+    if norm == "l2":
+        return list(DEFAULT_EPS_GRID_L2)
+    raise ValueError(f"no default eps grid for norm {norm!r} (expected 'linf' or 'l2')")
+
+
+def default_reference_eps(norm: str = "linf") -> float:
+    """The default reference budget for ``norm``: spec 12.3's 0.03 for L-inf. The spec names no L2
+    reference, so the middle member of the L2 grid is used (the same fallback ``eps_bands`` applies when the
+    reference is not strictly inside the grid); callers record whatever they admit in the config."""
+    grid = default_eps_grid(norm)
+    if norm == "linf":
+        return DEFAULT_REFERENCE_EPS
+    return grid[len(grid) // 2]
+
+
+class IncompatibleCampaigns(MLError, ValueError):
+    """Two campaigns whose scores must not be compared (spec 15.6 preconditions, 15.8 i).
+
+    A ``ValueError`` too, so callers that already catch ``ValueError`` from ``delta`` keep working. ``code``
+    is the spec 17.3 entry the API maps to ``409 incompatible_campaigns``; ``reasons`` lists every failed
+    precondition so the UI can show "not comparable: <reason>".
+    """
+
+    code = "incompatible_campaigns"
+
+    def __init__(self, reasons: Sequence[str]) -> None:
+        self.reasons = [str(r) for r in reasons]
+        super().__init__("incompatible campaigns: " + "; ".join(self.reasons))
 
 # Attack-scoped grade readings (spec 15.5, D9 iii). Checked against the banned list on use.
 GRADE_READINGS: dict[str, str] = {
@@ -155,6 +218,76 @@ def trapezoid_auc_normalized(xs: Sequence[float], ys: Sequence[float]) -> float:
     if width <= 0:
         return pairs[0][1]
     return area / width
+
+
+# --- benign-control predicate (spec 12.4) -----------------------------------------------------------
+
+def binomial_cdf(k: int, n: int, p: float) -> float:
+    """``P[X <= k]`` for ``X ~ Binomial(n, p)``, exact, summed in log space (no scipy needed; ``n`` is at
+    most the 1000-sample cap of ``CampaignConfig.n_samples``)."""
+    if n < 0:
+        raise ValueError("n must be non-negative")
+    if not 0.0 <= p <= 1.0:
+        raise ValueError("p must lie in [0, 1]")
+    if k < 0:
+        return 0.0
+    if k >= n:
+        return 1.0
+    if p <= 0.0:
+        return 1.0                       # X == 0 <= k always
+    if p >= 1.0:
+        return 0.0                       # X == n > k always (k < n here)
+    log_p, log_q = math.log(p), math.log1p(-p)
+    lg_n = math.lgamma(n + 1)
+    total = 0.0
+    for i in range(k + 1):
+        total += math.exp(lg_n - math.lgamma(i + 1) - math.lgamma(n - i + 1) + i * log_p + (n - i) * log_q)
+    return max(0.0, min(1.0, total))
+
+
+def control_degradation_pvalue(clean: Measurement, control: Measurement) -> float | None:
+    """One-sided exact binomial p-value that the benign control's accuracy is below the clean accuracy:
+    ``P[X <= control.n_correct | n = control.n, p = clean.n_correct / clean.n]``. ``None`` when either
+    denominator is 0 (no evidence, never a number)."""
+    _require_rows(clean, control)
+    if clean.n <= 0 or control.n <= 0:
+        return None
+    p0 = min(1.0, max(0.0, clean.n_correct / clean.n))
+    return binomial_cdf(int(control.n_correct), int(control.n), p0)
+
+
+def _require_rows(clean: Any, control: Any) -> None:
+    """The control predicate reads counts, not accuracies: a caller passing floats gets ``TypeError`` (the
+    campaign runner's fallback path), never a silently wrong answer."""
+    for name, row in (("clean", clean), ("control", control)):
+        if not isinstance(row, Measurement):
+            raise TypeError(f"control_preserves_accuracy takes Measurement rows; {name} is {type(row).__name__}")
+
+
+def control_preserves_accuracy(clean: Measurement, control: Measurement, alpha: float = DEFAULT_CONTROL_ALPHA) -> bool:
+    """Spec 12.4: the benign random-noise control did not degrade accuracy.
+
+    ``True`` when the control's ``n_correct / n`` is within ``CONTROL_ACCURACY_FLOOR`` (two percentage
+    points) of the clean accuracy, or is not significantly below it: the one-sided exact binomial test of
+    the control's correct count against ``p0 = acc_clean`` does not reject at ``alpha`` (``p >= alpha``).
+    A control above the clean accuracy always preserves it. Both rows are computed on the same slice, so
+    ``n`` normally agrees; the test uses the control row's own denominator. ``False`` when either
+    denominator is 0: with no evidence nothing is asserted. This is the predicate rules I1 / R1 use in
+    place of a fixed tolerance (spec 12.4, register G-SCORE1).
+    """
+    _require_rows(clean, control)
+    if isinstance(alpha, bool) or not isinstance(alpha, (int, float)):
+        raise TypeError(f"alpha must be a float in (0, 1), got {type(alpha).__name__}")
+    if not 0.0 < float(alpha) < 1.0:
+        raise ValueError("alpha must lie strictly between 0 and 1")
+    if clean.n <= 0 or control.n <= 0:
+        return False
+    acc_clean = clean.n_correct / clean.n
+    acc_control = control.n_correct / control.n
+    if acc_control >= acc_clean - CONTROL_ACCURACY_FLOOR - 1e-12:
+        return True
+    p = control_degradation_pvalue(clean, control)
+    return p is not None and p >= alpha
 
 
 # --- reading the measurement table --------------------------------------------------------------
@@ -455,40 +588,82 @@ def score_run(*, config: CampaignConfig, measurements: Sequence[Measurement],
 
 # --- delta MRI on verify (spec 15.6) ----------------------------------------------------------------
 
+def _point(n: int, n_correct: int, accuracy: float | None) -> AccuracyPoint:
+    """An ``AccuracyPoint`` whose ``accuracy`` is ``None`` when the denominator is 0 (spec 14.2)."""
+    return AccuracyPoint(n=n, n_correct=n_correct, accuracy=None if n <= 0 else accuracy)
+
+
+def _absent_point() -> AccuracyPoint:
+    """The side of a family delta for which no row exists: ``n = 0``, nothing counted, no accuracy."""
+    return AccuracyPoint(n=0, n_correct=0, accuracy=None)
+
+
 def _clean_point(record: MRIRecord, measurements: Sequence[Measurement] | None) -> AccuracyPoint:
     if measurements is not None:
         m = clean_row(measurements)
         if m is not None:
-            return AccuracyPoint(n=m.n, n_correct=m.n_correct, accuracy=m.accuracy)
+            return _point(m.n, m.n_correct, m.accuracy)
     if not record.inputs:
         raise ValueError("score record has no inputs; cannot recover the clean accuracy")
     row = record.inputs[0]
     if row.n_correct_clean is None or row.acc_clean is None:
         raise ValueError("score record inputs lack the clean denominators")
-    return AccuracyPoint(n=row.n, n_correct=row.n_correct_clean, accuracy=row.acc_clean)
+    return _point(row.n, row.n_correct_clean, row.acc_clean)
 
 
-def _adv_point(row: MRIInputRow, measurements: Sequence[Measurement] | None) -> AccuracyPoint:
-    mid = f"m.evasion.{row.attack_id}.{eps_tag(row.eps)}"
+def _input_row(record: MRIRecord, attack_id: str, eps: float) -> MRIInputRow | None:
+    return next((r for r in record.inputs if r.attack_id == attack_id and _same_eps(r.eps, eps)), None)
+
+
+def _adv_point(attack_id: str, eps: float, row: MRIInputRow | None,
+               measurements: Sequence[Measurement] | None) -> AccuracyPoint:
+    """The (attack, eps) accuracy point: the measurement row when given, else the score input row, else
+    the absent point (``n = 0``, ``accuracy None``) when neither side recorded that cell."""
+    mid = f"m.evasion.{attack_id}.{eps_tag(eps)}"
     if measurements is not None:
         m = next((x for x in measurements if x.id == mid), None)
         if m is not None:
-            return AccuracyPoint(n=m.n, n_correct=m.n_correct, accuracy=m.accuracy)
+            return _point(m.n, m.n_correct, m.accuracy)
+    if row is None:
+        return _absent_point()
     if row.acc_adv is None:
         raise ValueError(f"score record input {mid} lacks acc_adv")
-    return AccuracyPoint(n=row.n, n_correct=round(row.acc_adv * row.n), accuracy=row.acc_adv)
+    return _point(row.n, round(row.acc_adv * row.n), row.acc_adv)
+
+
+def _cells(record: MRIRecord) -> list[tuple[str, float]]:
+    """The distinct (attack, eps) cells of a score record's inputs, in input order."""
+    out: list[tuple[str, float]] = []
+    for r in record.inputs:
+        if not any(a == r.attack_id and _same_eps(e, r.eps) for a, e in out):
+            out.append((r.attack_id, float(r.eps)))
+    return out
 
 
 def delta(before: MRIRecord, after: MRIRecord, *, baseline_run_id: str,
           measurements_before: Sequence[Measurement] | None = None,
-          measurements_after: Sequence[Measurement] | None = None) -> MRIDelta:
+          measurements_after: Sequence[Measurement] | None = None,
+          modality_before: str | None = None,
+          modality_after: str | None = None) -> MRIDelta:
     """The measured ΔMRI of a verify run against its baseline (spec 15.6).
 
     Both records must be complete and share ``settings_hash``, scoring version, eps grid, reference
-    budget, norm, attack set and weight vector; otherwise ``ValueError`` (surfaced by the API as 409
-    incompatible_campaigns). The clean-accuracy change always travels with the delta. Family deltas
-    are exact when the measurement lists are given and are otherwise reconstructed from the
-    ``inputs`` rows (``n_correct = round(acc_adv * n)``)."""
+    budget, norm, attack set and weight vector; otherwise ``IncompatibleCampaigns`` (a ``ValueError``
+    the API surfaces as 409 ``incompatible_campaigns``). Two modalities are never compared (spec 15.8 i):
+    pass ``modality_before`` / ``modality_after`` (the campaigns' ``config.modality``) and a mismatch is
+    refused before anything else is looked at; the guard is explicit because ``MRIRecord`` carries no
+    modality field and the settings hash is opaque. A partial record on either side is a plain
+    ``ValueError`` (not comparable, but not a cross-campaign mismatch).
+
+    The clean-accuracy change always travels with the delta. Family deltas are exact when the
+    measurement lists are given and are otherwise reconstructed from the ``inputs`` rows
+    (``n_correct = round(acc_adv * n)``). A (attack, eps) cell recorded on one side only is still
+    reported: the absent side is ``n = 0`` with no accuracy and the cell's ``delta`` is ``None``, so a
+    report renders "no evidence recorded" rather than a delta of 0 (spec 14.2, register G-SCORE2).
+    Both denominators are always present on every ``FamilyDelta``."""
+    if modality_before is not None and modality_after is not None and str(modality_before) != str(modality_after):
+        raise IncompatibleCampaigns([f"modality {str(modality_before)!r} != {str(modality_after)!r}; "
+                                     "scores are never compared across modalities"])
     if before.mri is None or after.mri is None:
         raise ValueError("delta needs two complete score records (mri computed on both)")
     problems: list[str] = []
@@ -507,7 +682,7 @@ def delta(before: MRIRecord, after: MRIRecord, *, baseline_run_id: str,
     if before.weights.as_dict() != after.weights.as_dict():
         problems.append("weight vectors differ")
     if problems:
-        raise ValueError("incompatible campaigns: " + "; ".join(problems))
+        raise IncompatibleCampaigns(problems)
 
     sub_delta = Subscores(**{
         k: round(float(getattr(after.subscores, k)) - float(getattr(before.subscores, k)), 1) for k in SUBSCORE_KEYS})
@@ -515,15 +690,16 @@ def delta(before: MRIRecord, after: MRIRecord, *, baseline_run_id: str,
     clean_a = _clean_point(after, measurements_after)
     clean_delta = (None if clean_a.accuracy is None or clean_b.accuracy is None
                    else float(clean_a.accuracy) - float(clean_b.accuracy))
+    cells = _cells(before)
+    for cell in _cells(after):
+        if not any(a == cell[0] and _same_eps(e, cell[1]) for a, e in cells):
+            cells.append(cell)
     families: list[FamilyDelta] = []
-    for rb in before.inputs:
-        ra = next((r for r in after.inputs if r.attack_id == rb.attack_id and _same_eps(r.eps, rb.eps)), None)
-        if ra is None:
-            continue
-        pb = _adv_point(rb, measurements_before)
-        pa = _adv_point(ra, measurements_after)
+    for attack_id, eps in cells:
+        pb = _adv_point(attack_id, eps, _input_row(before, attack_id, eps), measurements_before)
+        pa = _adv_point(attack_id, eps, _input_row(after, attack_id, eps), measurements_after)
         d = None if pa.accuracy is None or pb.accuracy is None else float(pa.accuracy) - float(pb.accuracy)
-        families.append(FamilyDelta(measurement_id=f"m.evasion.{rb.attack_id}.{eps_tag(rb.eps)}",
+        families.append(FamilyDelta(measurement_id=f"m.evasion.{attack_id}.{eps_tag(eps)}",
                                     before=pb, after=pa, delta=d))
     return MRIDelta(
         baseline_run_id=baseline_run_id, mri_before=int(before.mri), mri_after=int(after.mri),
@@ -577,6 +753,12 @@ def robustness_curves(config: CampaignConfig, measurements: Sequence[Measurement
 
 
 __all__ = [
+    "CONTROL_ACCURACY_FLOOR",
+    "DEFAULT_CONTROL_ALPHA",
+    "DEFAULT_EPS_GRID_L2",
+    "DEFAULT_EPS_GRID_LINF",
+    "DEFAULT_MAX_EPS_GRID_MEMBERS",
+    "DEFAULT_REFERENCE_EPS",
     "GRADE_READINGS",
     "GRADE_SENTENCE",
     "MIN_CLEAN_CORRECT_FOR_FINDING",
@@ -585,13 +767,19 @@ __all__ = [
     "SUBSCORE_KEYS",
     "Confidence",
     "FindingInputs",
+    "IncompatibleCampaigns",
     "Severity",
     "asr_by_eps",
+    "binomial_cdf",
     "canonical_settings_json",
     "clean_row",
     "confidence_for",
     "contains_banned_wording",
+    "control_degradation_pvalue",
+    "control_preserves_accuracy",
     "control_rows",
+    "default_eps_grid",
+    "default_reference_eps",
     "delta",
     "eps_bands",
     "evasion_rows",

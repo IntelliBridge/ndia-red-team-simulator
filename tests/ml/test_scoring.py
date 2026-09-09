@@ -16,9 +16,11 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from redsim.ml.errors import MLError
 from redsim.ml.eval import eps_tag
 from redsim.ml.schema import (
     GRADE_STATEMENT,
+    AccuracyPoint,
     CampaignConfig,
     ConfidenceThresholds,
     DefenseConfig,
@@ -34,13 +36,25 @@ from redsim.ml.schema import (
     grade_for_mri,
 )
 from redsim.ml.scoring import (
+    CONTROL_ACCURACY_FLOOR,
+    DEFAULT_CONTROL_ALPHA,
+    DEFAULT_EPS_GRID_L2,
+    DEFAULT_EPS_GRID_LINF,
+    DEFAULT_MAX_EPS_GRID_MEMBERS,
+    DEFAULT_REFERENCE_EPS,
     GRADE_READINGS,
     GRADE_SENTENCE,
     SCORING_VERSION,
     SUBSCORE_KEYS,
+    IncompatibleCampaigns,
+    binomial_cdf,
     canonical_settings_json,
     confidence_for,
     contains_banned_wording,
+    control_degradation_pvalue,
+    control_preserves_accuracy,
+    default_eps_grid,
+    default_reference_eps,
     delta,
     eps_bands,
     finding_inputs,
@@ -428,3 +442,177 @@ def test_robustness_curves_one_per_attack_with_the_control_at_the_same_eps():
     assert robustness_curves(config(), ms[:4])[0].control == []
     with pytest.raises(ValueError, match="no clean row"):
         robustness_curves(config(), ms[1:])
+
+
+# --- spec 12.3 default budgets (register G-ATK6) --------------------------------------------------------
+
+def test_default_grid_constants_match_spec_12_3_and_admit_as_campaigns():
+    assert DEFAULT_EPS_GRID_LINF == (0.01, 0.03, 0.1)
+    assert DEFAULT_EPS_GRID_L2 == (0.25, 0.5, 1.0)
+    assert DEFAULT_REFERENCE_EPS == 0.03 and DEFAULT_REFERENCE_EPS in DEFAULT_EPS_GRID_LINF
+    assert DEFAULT_MAX_EPS_GRID_MEMBERS == 3
+    for grid in (DEFAULT_EPS_GRID_LINF, DEFAULT_EPS_GRID_L2):
+        assert len(grid) <= DEFAULT_MAX_EPS_GRID_MEMBERS and list(grid) == sorted(grid)
+        assert all(0.0 < e <= 1.0 for e in grid)
+    assert default_eps_grid() == list(DEFAULT_EPS_GRID_LINF) == default_eps_grid("linf")
+    assert default_eps_grid("l2") == list(DEFAULT_EPS_GRID_L2)
+    assert default_eps_grid() is not default_eps_grid()                 # a fresh list, never the shared tuple
+    assert default_reference_eps() == default_reference_eps("linf") == DEFAULT_REFERENCE_EPS
+    assert default_reference_eps("l2") == 0.5 and default_reference_eps("l2") in DEFAULT_EPS_GRID_L2
+    with pytest.raises(ValueError, match="no default eps grid"):
+        default_eps_grid("l1")
+    # the defaults admit through the frozen CampaignConfig, and L2 never shares the L-inf grid or hash
+    linf = config(norm="linf", eps_grid=default_eps_grid("linf"), reference_eps=default_reference_eps("linf"))
+    l2 = config(norm="l2", eps_grid=default_eps_grid("l2"), reference_eps=default_reference_eps("l2"))
+    assert linf.eps_grid == [0.01, 0.03, 0.1] and linf.reference_eps == 0.03
+    assert l2.eps_grid == [0.25, 0.5, 1.0] and l2.reference_eps == 0.5
+    assert settings_hash(linf) != settings_hash(l2)
+    assert eps_bands(linf.eps_grid, linf.reference_eps) == (0.01, 0.03, 0.1)
+
+
+# --- spec 12.4 control predicate (register G-SCORE1) -----------------------------------------------------
+
+def _cdf_brute(k: int, n: int, p: float) -> float:
+    return sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(k + 1))
+
+
+def ctrl_row(n_correct: int, n: int) -> Measurement:
+    return Measurement(id=f"m.control.noise.{eps_tag(REF)}", family="control", attack_id="noise_control",
+                       params={"eps": REF, "norm": "linf"}, n=n, n_correct=n_correct,
+                       accuracy=(n_correct / n) if n else 0.0)
+
+
+def clean_counts(n_correct: int, n: int) -> Measurement:
+    return Measurement(id="m.clean", family="clean", n=n, n_correct=n_correct, accuracy=(n_correct / n) if n else 0.0)
+
+
+def test_binomial_cdf_is_exact_and_handles_the_edges():
+    for n, k, p in [(10, 3, 0.5), (20, 14, 0.8), (100, 72, 0.8), (7, 0, 0.3), (50, 49, 0.99)]:
+        assert binomial_cdf(k, n, p) == pytest.approx(_cdf_brute(k, n, p), rel=1e-9)
+    assert binomial_cdf(-1, 10, 0.5) == 0.0 and binomial_cdf(10, 10, 0.5) == 1.0 and binomial_cdf(12, 10, 0.5) == 1.0
+    assert binomial_cdf(3, 10, 0.0) == 1.0 and binomial_cdf(3, 10, 1.0) == 0.0 and binomial_cdf(10, 10, 1.0) == 1.0
+    assert 0.0 < binomial_cdf(500, 1000, 0.8) < 1e-90     # the log-space sum survives where p**k underflows to 0
+    with pytest.raises(ValueError):
+        binomial_cdf(1, -1, 0.5)
+    with pytest.raises(ValueError):
+        binomial_cdf(1, 5, 1.5)
+
+
+def test_control_preserves_accuracy_is_a_binomial_predicate_with_a_two_point_floor():
+    assert CONTROL_ACCURACY_FLOOR == 0.02 and DEFAULT_CONTROL_ALPHA == 0.05
+    c100 = clean_counts(80, 100)
+    # within two points of clean: preserved whatever the test says (spec 12.4 floor)
+    assert control_preserves_accuracy(c100, ctrl_row(78, 100))
+    # below the floor but not significantly below at alpha 0.05 (one-sided exact binomial, H0: p = acc_clean)
+    assert control_degradation_pvalue(c100, ctrl_row(76, 100)) == pytest.approx(0.189, abs=1e-3)
+    assert control_degradation_pvalue(c100, ctrl_row(73, 100)) == pytest.approx(0.056, abs=1e-3)
+    assert control_preserves_accuracy(c100, ctrl_row(76, 100)) and control_preserves_accuracy(c100, ctrl_row(73, 100))
+    # significantly below: degraded
+    assert control_degradation_pvalue(c100, ctrl_row(72, 100)) == pytest.approx(0.034, abs=1e-3)
+    assert not control_preserves_accuracy(c100, ctrl_row(72, 100))
+    # small n: a ten-point drop is within binomial noise (a fixed 0.05 tolerance would have called it degraded)
+    c20 = clean_counts(16, 20)
+    assert control_degradation_pvalue(c20, ctrl_row(14, 20)) == pytest.approx(0.196, abs=1e-3)
+    assert control_preserves_accuracy(c20, ctrl_row(14, 20)) and not control_preserves_accuracy(c20, ctrl_row(12, 20))
+    # large n: a three-point drop is significant (a fixed 0.05 tolerance would have called it flat)
+    c1000 = clean_counts(800, 1000)
+    assert control_degradation_pvalue(c1000, ctrl_row(770, 1000)) == pytest.approx(0.011, abs=1e-3)
+    assert not control_preserves_accuracy(c1000, ctrl_row(770, 1000))
+    assert control_preserves_accuracy(c1000, ctrl_row(780, 1000))          # exactly two points: the floor
+    # a perfectly classified slice: any miss is significant, the floor still absorbs a small one
+    assert control_preserves_accuracy(clean_counts(1000, 1000), ctrl_row(985, 1000))
+    assert control_degradation_pvalue(clean_counts(10, 10), ctrl_row(8, 10)) == 0.0
+    assert not control_preserves_accuracy(clean_counts(10, 10), ctrl_row(8, 10))
+    # a control above the clean accuracy always preserves it; alpha is honoured
+    assert control_preserves_accuracy(c100, ctrl_row(90, 100))
+    assert not control_preserves_accuracy(c100, ctrl_row(76, 100), alpha=0.2)
+    assert control_preserves_accuracy(c100, ctrl_row(72, 100), alpha=0.01)
+    # no evidence is never "preserved": a zero denominator on either side is False and has no p-value
+    assert control_degradation_pvalue(clean_counts(0, 0), ctrl_row(0, 0)) is None
+    assert not control_preserves_accuracy(clean_counts(0, 0), ctrl_row(78, 100))
+    assert not control_preserves_accuracy(c100, ctrl_row(0, 0))
+    # counts, not accuracies: floats are refused loudly, and alpha must be a probability
+    with pytest.raises(TypeError, match="Measurement rows"):
+        control_preserves_accuracy(0.8, 0.78, 100)  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        control_degradation_pvalue(c100, 0.78)  # type: ignore[arg-type]
+    for bad in (0.0, 1.0, 1.5, -0.1):
+        with pytest.raises(ValueError, match="alpha"):
+            control_preserves_accuracy(c100, ctrl_row(78, 100), alpha=bad)
+
+
+# --- delta: absent cells and the modality guard (register G-SCORE2, G-SCORE3) ------------------------------
+
+def _pair():
+    ms_b = [clean(), *rows("fgsm", [0.4, 0.3, 0.1], asr=0.6, conf_gap=0.5, expl_shift=0.5)]
+    ms_a = [clean(), *rows("fgsm", [0.6, 0.5, 0.3], asr=0.3, conf_gap=0.2, expl_shift=0.2)]
+    before, _ = score_run(config=config(), measurements=ms_b, computed_at=T)
+    after, _ = score_run(config=config(), measurements=ms_a, computed_at=T)
+    return ms_b, ms_a, before, after
+
+
+def test_delta_absent_cell_renders_unavailable_not_zero():
+    ms_b, ms_a, before, after = _pair()
+    # the verify record lost its eps 0.1 cell (input row and measurement): the family is still listed, with the
+    # absent side at n = 0 and no delta, so a report renders "no evidence recorded" rather than 0
+    after_missing = after.model_copy(update={"inputs": [r for r in after.inputs if not math.isclose(r.eps, 0.1)]})
+    ms_a_missing = [m for m in ms_a if not m.id.endswith(eps_tag(0.1))]
+    d = delta(before, after_missing, baseline_run_id="b", measurements_before=ms_b, measurements_after=ms_a_missing)
+    assert [f.measurement_id for f in d.delta_families] == [f"m.evasion.fgsm.{eps_tag(e)}" for e in GRID]
+    absent = d.delta_families[2]
+    assert absent.before == AccuracyPoint(n=N, n_correct=10, accuracy=0.1)
+    assert absent.after == AccuracyPoint(n=0, n_correct=0, accuracy=None)
+    assert absent.delta is None
+    assert d.delta_families[0].delta == pytest.approx(0.2) and d.delta_families[1].delta == pytest.approx(0.2)
+    assert all(f.before.n is not None and f.after.n is not None for f in d.delta_families)   # both denominators
+    assert MRIDelta.model_validate(d.model_dump(mode="json")) == d
+    # the same when the family points are reconstructed from the inputs rows
+    d2 = delta(before, after_missing, baseline_run_id="b")
+    assert d2.delta_families[2].after == AccuracyPoint(n=0, n_correct=0, accuracy=None)
+    assert d2.delta_families[2].delta is None and d2.delta_families[2].before.n_correct == 10
+    # a cell recorded only on the verify side is listed too, with the baseline side absent
+    d3 = delta(after_missing, before, baseline_run_id="b")
+    assert d3.delta_families[2].measurement_id == f"m.evasion.fgsm.{eps_tag(0.1)}"
+    assert d3.delta_families[2].before.n == 0 and d3.delta_families[2].before.accuracy is None
+    assert d3.delta_families[2].after.n_correct == 10 and d3.delta_families[2].delta is None
+    # an after row with n == 0 is no evidence either: accuracy None and delta None, never 0.0
+    zero = ms_a[3].model_copy(update={"n": 0, "n_correct": 0, "accuracy": 0.0})
+    d4 = delta(before, after, baseline_run_id="b", measurements_before=ms_b, measurements_after=[*ms_a[:3], zero])
+    assert d4.delta_families[2].after == AccuracyPoint(n=0, n_correct=0, accuracy=None)
+    assert d4.delta_families[2].delta is None
+    # nothing absent: every cell carries a numeric delta
+    full = delta(before, after, baseline_run_id="b", measurements_before=ms_b, measurements_after=ms_a)
+    assert all(f.delta is not None and f.before.n == N and f.after.n == N for f in full.delta_families)
+
+
+def test_delta_refuses_mixing_two_modalities():
+    _, _, before, after = _pair()
+    with pytest.raises(IncompatibleCampaigns, match="modality 'image' != 'tabular'") as info:
+        delta(before, after, baseline_run_id="b", modality_before="image", modality_after="tabular")
+    exc = info.value
+    assert isinstance(exc, ValueError) and isinstance(exc, MLError)        # existing callers keep catching it
+    assert exc.code == "incompatible_campaigns" == IncompatibleCampaigns.code   # the spec 17.3 409 code
+    assert exc.reasons == ["modality 'image' != 'tabular'; scores are never compared across modalities"]
+    assert str(exc).startswith("incompatible campaigns: modality")
+    # the guard is explicit: it fires before anything else is compared, even on a partial record
+    partial, _ = score({"fgsm": rows("fgsm", [0.4, 0.3, 0.1], expl_shift=None)})
+    with pytest.raises(IncompatibleCampaigns, match="modality"):
+        delta(before, partial, baseline_run_id="b", modality_before="tabular", modality_after="image")
+    # the same modality on both sides passes; an unknown side does not fire the guard
+    assert delta(before, after, baseline_run_id="b", modality_before="image", modality_after="image").delta == \
+        after.mri - before.mri
+    assert delta(before, after, baseline_run_id="b", modality_before="image").delta == after.mri - before.mri
+    assert delta(before, after, baseline_run_id="b", modality_after="tabular").delta == after.mri - before.mri
+    # the other spec 15.6 preconditions raise the same typed error, listing every failed one
+    other, _ = score_run(config=config(attack_ids=["pgd"], eps_grid=[0.03], reference_eps=0.03),
+                         measurements=[clean(), row("pgd", 0.03, 0.4, expl_shift=0.0)])
+    with pytest.raises(IncompatibleCampaigns) as info2:
+        delta(before, other, baseline_run_id="b")
+    assert info2.value.code == "incompatible_campaigns"
+    assert any(r.startswith("settings_hash") for r in info2.value.reasons)
+    assert any(r.startswith("eps grid") for r in info2.value.reasons)
+    assert any(r.startswith("attack set") for r in info2.value.reasons)
+    # a partial record on either side is "not comparable", not a cross-campaign mismatch
+    with pytest.raises(ValueError, match="complete") as info3:
+        delta(before, partial, baseline_run_id="b")
+    assert not isinstance(info3.value, IncompatibleCampaigns)

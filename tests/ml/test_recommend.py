@@ -36,6 +36,7 @@ from redsim.ml.schema import (
     TargetInfo,
     contains_banned_score_word,
 )
+from redsim.ml.scoring import DEFAULT_CONTROL_ALPHA, control_preserves_accuracy
 
 pytestmark = pytest.mark.unit
 
@@ -140,9 +141,11 @@ def test_default_thresholds_mirror_the_frozen_interpretation_thresholds():
     assert THRESHOLDS["cmr_drop"] == it.center_mass_drop and THRESHOLDS["expl_shift"] == it.expl_shift_high
     assert THRESHOLDS["conf_gap"] == it.conf_gap_high and THRESHOLDS["asr"] == CampaignConfig.model_fields[
         "finding_asr_threshold"].default
+    assert THRESHOLDS["control_alpha"] == DEFAULT_CONTROL_ALPHA == 0.05      # the binomial predicate's level
     assert effective_thresholds(None, None) == THRESHOLDS
     eff = effective_thresholds(InterpretationThresholds(expl_shift_high=0.9), 0.4)
     assert eff["expl_shift"] == 0.9 and eff["asr"] == 0.4 and eff["any_drop"] == THRESHOLDS["any_drop"]
+    assert eff["control_alpha"] == DEFAULT_CONTROL_ALPHA
 
 
 def test_thresholds_from_the_score_record_and_keyword_are_honoured():
@@ -268,6 +271,89 @@ def test_interpretation_reads_expl_shift_from_explain_meta_when_score_absent():
 def test_flat_set_yields_no_interpretation():
     assert interpret(_flat(), _obs(n_flipped=0), _score(conf_gap=0.05, expl_shift=0.02)) == []
     assert interpret([], [], None) == []
+
+
+def _scaled(n: int, clean_ok: int, ctrl_ok: int, *, fgsm=(0.6, 0.5, 0.3), flipped=(0.3, 0.4, 0.6)) -> list[Measurement]:
+    """Clean, three FGSM rows with explicit ASR denominators and one control row at eps_ref, all at slice size ``n``."""
+    ms = [_m("m.clean", "clean", clean_ok, n=n)]
+    for e, acc, fl in zip(GRID, fgsm, flipped, strict=True):
+        k = round(fl * clean_ok)
+        ms.append(_m(f"m.evasion.fgsm.eps{e:g}", "evasion", round(acc * n), attack="fgsm", eps=e, n=n,
+                     n_flipped_from_clean=k, n_clean_correct=clean_ok, attack_success_rate=k / clean_ok))
+    ms.append(_m("m.control.noise.eps0.03", "control", ctrl_ok, attack="noise_control", eps=0.03, n=n))
+    return ms
+
+
+def test_i1_and_r1_read_the_binomial_control_predicate_not_a_fixed_tolerance():
+    """Spec 12.4 / register G-SCORE1: the control comparison is ``scoring.control_preserves_accuracy``."""
+    # small slice: clean 16/20, control 14/20 is a ten-point drop but inside binomial noise (p = 0.196 at alpha 0.05);
+    # a fixed 0.05 tolerance would have withheld I1 and R1 here
+    small = _scaled(20, 16, 14, fgsm=(0.5, 0.4, 0.2))
+    assert control_preserves_accuracy(small[0], small[-1])
+    out = interpret(small, [], None)
+    i1 = _by_code(out, "I1")
+    assert len(i1) == 1 and set(i1[0].basis) == {"m.clean", "m.evasion.fgsm.eps0.03", "m.control.noise.eps0.03"}
+    s = i1[0].statement
+    assert "control 14/20 vs clean 16/20" in s and "p = 0.196" in s and "alpha = 0.05" in s and "floor 0.02" in s
+    assert "drop > 0.2" in s and "|delta|" not in s
+    assert not _by_code(out, "I2")
+    recs = recommend(small, [], None, interpretation=out)
+    r1 = _rec(recs, "R1")
+    assert r1 is not None and "p = 0.196" in r1.rationale and "alpha = 0.05" in r1.rationale
+    assert _measurement_ids(r1) == {"m.evasion.fgsm.eps0.01", "m.control.noise.eps0.03", "m.clean"}
+    assert _interp_ids(r1) == {i1[0].id} and _rec(recs, "R1b") is None
+
+    # large slice: clean 800/1000, control 770/1000 is only a three-point drop but significant (p = 0.011);
+    # a fixed 0.05 tolerance would have called the control flat. It is short of control_drop (0.10) too, so
+    # neither the gradient-aligned nor the noise-sensitive statement is made and no R1 / R1b candidate exists.
+    large = _scaled(1000, 800, 770)
+    assert not control_preserves_accuracy(large[0], large[-1])
+    out = interpret(large, [], None)
+    assert not _by_code(out, "I1") and not _by_code(out, "I2")
+    recs = recommend(large, [], None, interpretation=out)
+    assert _rec(recs, "R1") is None and _rec(recs, "R1b") is None and _rec(recs, "R7") is not None
+
+    # a control that is significantly below clean and past control_drop: I2 and R1b, never I1 / R1
+    noisy = _scaled(1000, 800, 650)
+    out = interpret(noisy, [], None)
+    i2 = _by_code(out, "I2")
+    assert not _by_code(out, "I1") and len(i2) == 1 and set(i2[0].basis) == {"m.control.noise.eps0.03", "m.clean"}
+    assert "control 650/1000 vs clean 800/1000" in i2[0].statement and "p = 0.000" in i2[0].statement
+    assert "drop > 0.1" in i2[0].statement
+    recs = recommend(noisy, [], None, interpretation=out)
+    assert _rec(recs, "R1") is None
+    r1b = _rec(recs, "R1b")
+    assert r1b is not None and "p = 0.000" in r1b.rationale and _interp_ids(r1b) == {i2[0].id}
+    # the default level is the scoring module's, and it is printed rather than assumed
+    assert THRESHOLDS["control_alpha"] == DEFAULT_CONTROL_ALPHA
+    assert not any(contains_banned_score_word(i.statement) for i in out)
+
+
+def test_i8_noise_sensitive_eps_cites_the_control_and_clean_rows():
+    """Spec 12.4: the control alone crossing finding_asr_threshold at some grid eps is an Interpretation
+    (kind inferred, basis = control + clean ids), not a caption on a measurement."""
+    assert not _by_code(interpret(_degraded(), [], None), "I8")
+    ms = _degraded() + [_m("m.control.noise.eps0.1", "control", 45, attack="noise_control", eps=0.1, flipped=35)]
+    out = interpret(ms, [], None)
+    i8 = _by_code(out, "I8")
+    assert len(i8) == 1 and i8[0].basis == ["m.control.noise.eps0.1", "m.clean"] and i8[0].kind == "inferred"
+    s = i8[0].statement
+    assert "noise-sensitive at eps=0.1" in s and "80/100 to 45/100" in s and "not attributable" in s
+    assert "control ASR 0.438 >= 0.2" in s                       # the control's own ASR against the campaign threshold
+    # the threshold is the campaign's: a stricter one silences the rule, and the score record's value is read too
+    assert not _by_code(interpret(ms, [], None, finding_asr_threshold=0.5), "I8")
+    assert not _by_code(interpret(ms, [], _score().model_copy(update={"finding_asr_threshold": 0.5})), "I8")
+    # without ASR fields on the control row, the accuracy drop is read against the same threshold
+    plain = _m("m.control.noise.eps0.1", "control", 45, attack="noise_control", eps=0.1)
+    s2 = _by_code(interpret(_degraded() + [plain], [], None), "I8")[0].statement
+    assert "accuracy drop 0.350 > 0.2" in s2
+    # I1 at eps_ref still fires: the control at 0.03 is flat while the one at 0.1 is not; I8 sits with I1/I2
+    assert _by_code(out, "I1") and not _by_code(out, "I2")
+    assert [i.id for i in out] == [f"i.{n}" for n in range(1, len(out) + 1)]
+    assert not any(contains_banned_score_word(i.statement) for i in out)
+    # a flat control at every eps yields no I8
+    assert not _by_code(interpret(_flat() + [_m("m.control.noise.eps0.1", "control", 79, attack="noise_control",
+                                                 eps=0.1, flipped=1)], [], None), "I8")
 
 
 # --------------------------------------------------------------------------- recommendations

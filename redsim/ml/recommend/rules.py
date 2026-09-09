@@ -24,6 +24,14 @@ No rule asserts a cause in the training data or architecture. No rule states a
 numeric gain: direction only, until a verify run measures a delta MRI.
 Thresholds are printed next to each statement. Rule ids are stable (``r.R3``
 means the same rule in every run).
+
+The benign-control comparison in I1 / R1 (and its complement in I2 / R1b) is
+``redsim.ml.scoring.control_preserves_accuracy``, the spec 12.4 binomial
+predicate, not a fixed tolerance: a control is "flat" when its accuracy is
+within two percentage points of the clean accuracy or not significantly below
+it (one-sided exact binomial test at ``THRESHOLDS["control_alpha"]``). I8 is
+the spec 12.4 noise-sensitivity statement: the control alone crossing
+``finding_asr_threshold`` at some grid eps.
 """
 
 from __future__ import annotations
@@ -44,6 +52,12 @@ from redsim.ml.schema import (
     Observation,
     ScoringConfig,
 )
+from redsim.ml.scoring import (
+    CONTROL_ACCURACY_FLOOR,
+    DEFAULT_CONTROL_ALPHA,
+    control_degradation_pvalue,
+    control_preserves_accuracy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +67,8 @@ _DEFAULT_IT = InterpretationThresholds()
 # Defaults. ``effective_thresholds`` overlays the campaign's InterpretationThresholds and ASR threshold.
 THRESHOLDS: dict[str, float] = {
     "attack_drop": _DEFAULT_IT.evasion_drop,          # I1: attack accuracy drop vs clean at eps_ref
-    "control_flat": _DEFAULT_IT.control_tolerance,    # I1 / R1: |control - clean| within this = noise did not degrade
+    "control_alpha": DEFAULT_CONTROL_ALPHA,           # I1 / R1: significance level of the binomial control predicate
+    "control_flat": _DEFAULT_IT.control_tolerance,    # mirrored from the frozen schema; retired from I1 / R1 (spec 12.4)
     "control_drop": _DEFAULT_IT.control_drop,         # I2 / R1b: control reduced accuracy by at least this
     "iterative_gap": _DEFAULT_IT.iterative_margin,    # I3 / R2: pgd worse than fgsm by at least this at the same eps
     "cmr_drop": _DEFAULT_IT.center_mass_drop,         # I4 / R3: centre-mass drop on flipped samples (heuristic)
@@ -309,6 +324,35 @@ def _eps_txt(e: float | None) -> str:
     return "reference" if e is None else f"{e:g}"
 
 
+def _eps_sort_key(m: Measurement) -> float:
+    e = _eps(m)
+    return math.inf if e is None else e
+
+
+def _control_flat(clean: Measurement, ctrl: Measurement, t: dict[str, float]) -> bool:
+    """Spec 12.4 predicate: the control did not degrade accuracy (binomial, not a fixed tolerance)."""
+    return control_preserves_accuracy(clean, ctrl, alpha=t["control_alpha"])
+
+
+def _control_verdict(clean: Measurement, ctrl: Measurement, t: dict[str, float]) -> str:
+    """The counts and the test printed next to every I1 / I2 / R1 / R1b statement (spec 14.6: thresholds
+    travel with the sentence)."""
+    p = control_degradation_pvalue(clean, ctrl)
+    p_txt = "undefined (denominator 0)" if p is None else f"{p:.3f}"
+    return (f"control {ctrl.n_correct}/{ctrl.n} vs clean {clean.n_correct}/{clean.n}; one-sided exact binomial "
+            f"p = {p_txt} at alpha = {t['control_alpha']:g}, floor {CONTROL_ACCURACY_FLOOR:g}")
+
+
+def _control_crosses_asr(ctx: _Ctx, ctrl: Measurement, acc_clean: float) -> tuple[bool, str]:
+    """Spec 12.4 noise sensitivity: the control alone crosses ``finding_asr_threshold`` at this eps, read as the
+    control row's ASR when recorded (flipped / clean-correct), else as its accuracy drop against the clean row."""
+    asr = ctx.asr(ctrl)
+    if asr is not None:
+        return asr >= ctx.t["asr"], f"control ASR {asr:.3f} >= {ctx.t['asr']:g}"
+    drop = acc_clean - float(ctrl.accuracy)
+    return drop > ctx.t["asr"] + 1e-9, f"accuracy drop {drop:.3f} > {ctx.t['asr']:g}"
+
+
 # --------------------------------------------------------------------------- interpretation
 
 def interpret(measurements: list[Measurement], observations: list[Observation], score: MRIRecord | None,
@@ -339,23 +383,33 @@ def interpret(measurements: list[Measurement], observations: list[Observation], 
     ctrl = ctx.control_at(ctx.ref_eps)
     ref_txt = _eps_txt(ctx.ref_eps)
 
-    # I1 -- gradient-aligned failure: attack degrades, noise does not.
-    if ctrl is not None and abs(float(ctrl.accuracy) - acc_clean) <= t["control_flat"]:
+    # I1 -- gradient-aligned failure: attack degrades, noise does not (spec 12.4 binomial predicate).
+    ctrl_flat = ctrl is not None and _control_flat(ctx.clean, ctrl, t)
+    if ctrl is not None and ctrl_flat:
         for a in ctx.attack_ids():
             m = ctx.at(a, ctx.ref_eps)
             if m is not None and float(m.accuracy) < acc_clean - t["attack_drop"]:
-                add("I1", f"Random noise at eps={ref_txt} did not reduce accuracy ({ctrl.n_correct}/{ctrl.n} vs clean "
-                          f"{ctx.clean.n_correct}/{ctx.clean.n}, |delta| <= {t['control_flat']:g}) while {a} did "
-                          f"({m.n_correct}/{m.n}, drop > {t['attack_drop']:g}). The degradation is aligned with the "
-                          "loss gradient rather than with general noise sensitivity.",
+                add("I1", f"Random noise at eps={ref_txt} did not reduce accuracy ({_control_verdict(ctx.clean, ctrl, t)}) "
+                          f"while {a} did ({m.n_correct}/{m.n}, drop > {t['attack_drop']:g}). The degradation is "
+                          "aligned with the loss gradient rather than with general noise sensitivity.",
                     [ctx.clean.id, m.id, ctrl.id])
 
-    # I2 -- benign noise also degrades.
-    if ctrl is not None and float(ctrl.accuracy) < acc_clean - t["control_drop"]:
-        add("I2", f"Benign noise at eps={ref_txt} also reduced accuracy ({ctrl.n_correct}/{ctrl.n} vs clean "
-                  f"{ctx.clean.n_correct}/{ctx.clean.n}, drop > {t['control_drop']:g}). Part of the attack effect is "
-                  "general input sensitivity, not only adversarial structure.",
+    # I2 -- benign noise also degrades: significantly below clean AND by at least control_drop.
+    if ctrl is not None and not ctrl_flat and float(ctrl.accuracy) < acc_clean - t["control_drop"]:
+        add("I2", f"Benign noise at eps={ref_txt} also reduced accuracy ({_control_verdict(ctx.clean, ctrl, t)}; "
+                  f"drop > {t['control_drop']:g}). Part of the attack effect is general input sensitivity, not only "
+                  "adversarial structure.",
             [ctrl.id, ctx.clean.id])
+
+    # I8 -- noise-sensitive at some grid eps (spec 12.4): the control alone crosses finding_asr_threshold.
+    for m_ctrl in sorted(ctx.controls, key=_eps_sort_key):
+        crossed, reason = _control_crosses_asr(ctx, m_ctrl, acc_clean)
+        if crossed:
+            add("I8", f"The model is noise-sensitive at eps={_eps_txt(_eps(m_ctrl))}: the benign control alone "
+                      f"reduced accuracy from {ctx.clean.n_correct}/{ctx.clean.n} to {m_ctrl.n_correct}/{m_ctrl.n} "
+                      f"({reason}, the finding_asr_threshold). Evasion results at this eps are not attributable to "
+                      "adversarial alignment.",
+                [m_ctrl.id, ctx.clean.id])
 
     # I3 -- iterative vs single-step gap at the same eps.
     fgsm_ids = [a for a in ctx.attack_ids() if _attack_is(a, "fgsm")]
@@ -519,22 +573,21 @@ def recommend(measurements: list[Measurement], observations: list[Observation], 
             if m_small is None or asr_small is None or asr_small < t["asr"] or ctrl is None:
                 continue
             f_ref = ctx.at(f_id, ctx.ref_eps)
-            if abs(float(ctrl.accuracy) - acc_clean) <= t["control_flat"]:
+            if _control_flat(clean, ctrl, t):
                 add("R1", "Adversarial training (PGD-based) and gradient-masking review",
                     f"Single-step {f_id} succeeded at the smallest eps={_eps_txt(ctx.eps_small())} "
                     f"({m_small.n_flipped_from_clean}/{n_cc} flipped, ASR {asr_small:.3f} >= {t['asr']:g}) while random "
-                    f"noise at eps={ref_txt} did not reduce accuracy ({ctrl.n_correct}/{ctrl.n} vs clean "
-                    f"{clean.n_correct}/{clean.n}, |delta| <= {t['control_flat']:g}), so the failure is gradient-aligned. "
-                    "Adversarial training targets this directly. Review the model for gradient masking before trusting "
-                    "any defense that only hides gradients.",
+                    f"noise at eps={ref_txt} did not reduce accuracy ({_control_verdict(clean, ctrl, t)}), so the "
+                    "failure is gradient-aligned. Adversarial training targets this directly. Review the model for "
+                    "gradient masking before trusting any defense that only hides gradients.",
                     [m_small.id, ctrl.id, clean.id,
                      *(_interp_ids(interpretation, "I1", [f_ref.id]) if f_ref is not None else [])],
                     _refs(["adversarial_training"], "Known limit: robustness is specific to the training threat model and eps"))
             elif float(ctrl.accuracy) < acc_clean - t["control_drop"]:
                 add("R1b", "Noise-robust training and input-quality controls",
                     f"Both {f_id} at eps={_eps_txt(ctx.eps_small())} ({m_small.n_flipped_from_clean}/{n_cc} flipped, "
-                    f"ASR {asr_small:.3f}) and benign noise at eps={ref_txt} ({ctrl.n_correct}/{ctrl.n} vs clean "
-                    f"{clean.n_correct}/{clean.n}, drop > {t['control_drop']:g}) degraded accuracy, so part of the "
+                    f"ASR {asr_small:.3f}) and benign noise at eps={ref_txt} ({_control_verdict(clean, ctrl, t)}; "
+                    f"drop > {t['control_drop']:g}) degraded accuracy, so part of the "
                     "exposure is general input sensitivity. Augmentation with the same noise family and input-quality "
                     "checks are candidates alongside adversarial training.",
                     [m_small.id, ctrl.id, clean.id, *_interp_ids(interpretation, "I2", [ctrl.id])],
