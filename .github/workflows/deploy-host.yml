@@ -45,10 +45,16 @@ jobs:
           set -euo pipefail
           # The ref is a dispatch input; only a git-ref character set reaches the host command.
           [[ "$REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::invalid ref '$REF'" >&2; exit 1; }
+          # AWS-RunShellScript runs as root on this host, so no sudo: the host's sudo
+          # broke on 2026-09-09 17:16Z ("sudo: unknown user redsim", sudoers_audit),
+          # which failed two deploys before any of our commands ran. Fall back to sudo
+          # only when the agent is not root.
+          HOST_CMD="if [ \"\$(id -u)\" = 0 ]; then /usr/local/bin/redsim-deploy $REF $BUILD; else sudo /usr/local/bin/redsim-deploy $REF $BUILD; fi"
+          PARAMS="$(jq -cn --arg c "$HOST_CMD" '{commands: [$c]}')"
           cmd_id="$(aws ssm send-command --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript --timeout-seconds 900 \
             --comment "redsim deploy $SHA" \
-            --parameters "commands=[\"sudo /usr/local/bin/redsim-deploy $REF $BUILD\"]" \
+            --parameters "$PARAMS" \
             --query Command.CommandId --output text)"
           echo "SSM command $cmd_id"
           status=Pending

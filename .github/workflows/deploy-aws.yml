@@ -140,10 +140,12 @@ jobs:
           # then roll. Both files are a few KB, far under the SSM parameter limit.
           render_b64="$(base64 -w0 deploy/ec2/redsim-render-env.sh)"
           roll_b64="$(base64 -w0 deploy/ec2/redsim-roll.sh)"
+          # AWS-RunShellScript runs as root on the host, so no sudo (the host's sudo
+          # broke on 2026-09-09 and failed deploys before any command ran).
           params="$(jq -cn --arg r "$render_b64" --arg l "$roll_b64" --arg sha "$SHA" '{commands: [
-            "echo \($r) | base64 -d | sudo tee /usr/local/bin/redsim-render-env >/dev/null && sudo chmod 0755 /usr/local/bin/redsim-render-env",
-            "echo \($l) | base64 -d | sudo tee /usr/local/bin/redsim-roll >/dev/null && sudo chmod 0755 /usr/local/bin/redsim-roll",
-            "sudo /usr/local/bin/redsim-roll \($sha)"
+            "echo \($r) | base64 -d > /usr/local/bin/redsim-render-env && chmod 0755 /usr/local/bin/redsim-render-env",
+            "echo \($l) | base64 -d > /usr/local/bin/redsim-roll && chmod 0755 /usr/local/bin/redsim-roll",
+            "/usr/local/bin/redsim-roll \($sha)"
           ]}')"
           cmd_id="$(aws ssm send-command --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript --timeout-seconds 900 \

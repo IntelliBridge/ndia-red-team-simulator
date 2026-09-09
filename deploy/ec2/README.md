@@ -66,7 +66,7 @@ By hand, from a machine with the hackathon profile:
 ```bash
 export AWS_PROFILE=ndia-hackathon AWS_CA_BUNDLE=$HOME/.aws/Zscaler_Root_CA.pem AWS_REGION=us-east-1
 aws ssm send-command --instance-ids i-0cc7eb0ee0880ea3b --document-name AWS-RunShellScript \
-  --parameters 'commands=["sudo redsim-roll <sha-or-latest>"]'
+  --parameters 'commands=["/usr/local/bin/redsim-deploy main"]'   # SSM runs as root; no sudo
 # or interactively
 aws ssm start-session --target i-0cc7eb0ee0880ea3b
 ssh -i ~/.ssh/redsim-ec2.pem ubuntu@100.61.75.31
