@@ -178,7 +178,8 @@ describe("DashboardPage", () => {
         ],
         findings: [
           { id: "f-1", run_id: "run-1", severity: "high", status: "open",
-            schema_blob: { title: "PGD flips predictions", description: "What happened: redsim took the images this model classified correctly. Measured: PGD ..." } },
+            schema_blob: { title: "PGD flips predictions", target: "bundled:vehicles_cnn", affected_component: "vehicles_cnn-1234abcd",
+              description: "What happened: redsim took the images this model classified correctly. Measured: PGD ..." } },
           { id: "f-2", run_id: "run-1", severity: "low", status: "open", schema_blob: { title: "Low one" } },
           { id: "f-3", run_id: "run-1", severity: "critical", status: "false_positive", schema_blob: { title: "Dismissed" } },
         ],
@@ -205,6 +206,8 @@ describe("DashboardPage", () => {
     expect(screen.getByRole("link", { name: "PGD flips predictions" }).getAttribute("href")).toBe("/findings/f-1");
     expect(screen.getByText("redsim took the images this model classified correctly.")).toBeTruthy();
     expect(screen.queryByText("Dismissed")).toBeNull();
+    // The model the finding is about, linked to its page.
+    expect(screen.getByRole("link", { name: "vehicles_cnn" }).getAttribute("href")).toBe("/models/vehicles_cnn-1234abcd");
   });
 
   it("shows the session email from getEmail()", () => {
