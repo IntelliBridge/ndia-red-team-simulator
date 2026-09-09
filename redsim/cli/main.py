@@ -121,6 +121,10 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="Verify a specific project's chain")
     p_audit_verify.add_argument("--all", action="store_true",
                                 help="Verify every chain known to the writer")
+    p_audit_verify.add_argument("--run-dir", dest="run_dir", default=None, metavar="PATH",
+                                help="Verify the offline single-file chain at PATH/audit.jsonl "
+                                     "(the layout `redsim ml attack` writes under <out>/<run_id>/). "
+                                     "PATH may also be the .jsonl file itself")
     p_audit_export = audit_sub.add_parser(
         "export", help="Export audit chains to the WORM (Object-Lock) bucket")
     p_audit_export.add_argument("--all", action="store_true",
