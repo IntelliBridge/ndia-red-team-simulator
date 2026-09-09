@@ -25,9 +25,9 @@ export function FindingSummaryCard({ finding: f, leadMax = 600 }: { finding: Fin
           {f.status}
         </span>
       </div>
-      {lead && <p className="mt-2 max-w-4xl text-sm leading-relaxed text-foreground/90">{lead}</p>}
+      {lead && <p className="mt-2 text-sm leading-relaxed text-foreground/90">{lead}</p>}
       {!lead && f.schema_blob.description && (
-        <p className="mt-2 max-w-4xl text-sm leading-relaxed text-muted-foreground">{f.schema_blob.description}</p>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{f.schema_blob.description}</p>
       )}
       <dl className="mt-3 flex flex-wrap gap-x-8 gap-y-2 text-xs">
         <div>
