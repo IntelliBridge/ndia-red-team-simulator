@@ -130,6 +130,15 @@ SURROGATE_TRANSFER_LIMITATION_TEMPLATE = (
     "realizability is not established.")
 # Spec 12.2 / 12.9 row label for surrogate-transfer rows (the adapters use the same prefix).
 SURROGATE_NOTE_PREFIX = "white-box via surrogate transfer: "
+# Spec 10.8 / 16.1: the child records that a requested narrative is the parent's job; the worker parent
+# replaces this sentence with the narrative outcome (generated, or why not) after the envelope returns.
+# It names the configuration gap deliberately: Pythia is not configured inside the sandbox child.
+NARRATIVE_DEFERRED_LIMITATION = (
+    "An LLM narrative was requested. Pythia is not configured inside the sandbox child (it holds no "
+    "PYTHIA_BASE_URL / PYTHIA_API_KEY / REDSIM_ML_LLM_MODEL); the narrative is produced by the worker parent "
+    "after this record is returned, and until then recommendations carry rule text only "
+    "(narrative_source='rules').")
+NARRATIVE_NOT_REQUESTED_LIMITATION = "No LLM narrative was requested; recommendations carry rule text only."
 CURVE_PNG_NAME = "curve/robustness_curve.png"          # spec 12.3, Artifact kind ml.curve (rendered form)
 SHAP_SUMMARY_TEXT_NAME = "shap_summary.txt"            # spec 13.6 / 13.7, Artifact kind ml.shap.summary_text
 _EXPLAIN_MODULES = {"image": "redsim.ml.explain.shap_image", "tabular": "redsim.ml.explain.shap_tabular"}
@@ -547,7 +556,12 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
     Raises ``TargetUnavailable`` / ``AttackNotApplicable`` / ``ValueError`` for configuration
     problems before any stage runs. Explain and recommend failures never fail the run: they are
     recorded as unavailable (spec 14.7, 16.1). ``baseline_run_id`` (verify runs) and
-    ``parent_run_id`` (reruns) are copied onto the provenance and the record when given."""
+    ``parent_run_id`` (reruns) are copied onto the provenance and the record when given.
+
+    ``narrative_settings`` is an explicit, offline-only injection (CLI, tests): this function never
+    reads ``PYTHIA_*`` from the environment. Inside the platform the sandbox child leaves it ``None``
+    and the worker parent produces the Pythia narrative after the record returns (spec 10.8); a
+    requested narrative is recorded here as :data:`NARRATIVE_DEFERRED_LIMITATION`."""
     started_at = _utcnow()
     run_id = uuid.uuid4().hex
     stages_done: list[str] = []
@@ -996,17 +1010,12 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
 
     llm_provenance: dict[str, Any] | None = None
     if recommendations:
+        # Spec 10.8 / 16.1: the Pythia writer runs in the worker parent after this child returns.
+        # This process never reads PYTHIA_* / REDSIM_ML_LLM_MODEL (the sandbox strips them) and
+        # only narrates when an offline caller injects ``narrative_settings`` explicitly.
         settings = narrative_settings
         if settings is None and config.llm_narrative:
-            try:
-                from redsim.llm.pythia import PythiaSettings
-                settings = PythiaSettings.from_env()
-            except Exception:  # noqa: BLE001
-                settings = None
-            if settings is None:
-                limitations.append("An LLM narrative was requested but Pythia is not configured "
-                                   "(PYTHIA_BASE_URL / PYTHIA_API_KEY / REDSIM_ML_LLM_MODEL); recommendations "
-                                   "carry rule text only (narrative_source='rules').")
+            limitations.append(NARRATIVE_DEFERRED_LIMITATION)
         if settings is not None:
             try:
                 summary_mod = importlib.import_module("redsim.ml.explain.summary")
@@ -1026,7 +1035,7 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
                 llm_provenance = (dict(redacted()) if callable(redacted)
                                   else {"settings": type(settings).__name__, "redacted": "unavailable"})
         elif not config.llm_narrative:
-            limitations.append("No LLM narrative was requested; recommendations carry rule text only.")
+            limitations.append(NARRATIVE_NOT_REQUESTED_LIMITATION)
 
     # --- report ------------------------------------------------------------------------------
     finished_at = _utcnow()
@@ -1140,4 +1149,12 @@ def _standing(dataset_name: Any, grid: list[float], attack_ids: list[str]) -> li
     return out
 
 
-__all__ = ["AttackInfo", "CampaignRecord", "MRIRecord", "render_curve_png", "run_campaign"]
+__all__ = [
+    "NARRATIVE_DEFERRED_LIMITATION",
+    "NARRATIVE_NOT_REQUESTED_LIMITATION",
+    "AttackInfo",
+    "CampaignRecord",
+    "MRIRecord",
+    "render_curve_png",
+    "run_campaign",
+]

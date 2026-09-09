@@ -4,11 +4,12 @@
 (a subscore such as the explanation shift was unavailable) and the campaign
 runner still stamps that record ``succeeded``. ``redsim.ml.scoring.delta``
 refuses such a record with ``ValueError``. The worker must not let that refusal
-fail the whole verify job: the outcome (verified / still_vulnerable /
-inconclusive) comes from the recorded attack measurements, the delta is
-recorded as unavailable in the run's limitations, and the recommendation stays
-``validation="not evaluated"``. When both scores are complete the
-``MeasuredDelta`` is written as before.
+fail the whole verify job: the run and job succeed, the delta is recorded as
+unavailable in the run's limitations, the recommendation stays
+``validation="not evaluated"``, and the finding outcome follows spec 6.4, where
+a partial verify score is ``inconclusive`` (``validation_state="inconclusive"``,
+``status="open"``). When both scores are complete the ``MeasuredDelta`` is
+written and the outcome comes from the recorded attack measurements.
 
 The task body runs end to end through the real ``task_context`` on a file-backed
 sqlite database (one connection per session, as in production). The sandboxed
@@ -311,22 +312,27 @@ def test_partial_verify_score_finishes_and_projects_the_outcome_without_a_delta(
         ).mappings().one()
     assert job is not None and job.status == "succeeded", job.error if job else None
     assert run is not None and run.status == "succeeded"
-    # The verify stage was audited on the way through, as for any verify job.
-    assert any(
-        event["action"] == "verify.replay" and event["detail"]["job_id"] == VERIFY_JOB_ID
-        for event in verify_harness["audit_events"]
-    )
+    # The verify outcome was audited as ``verify.execute`` (spec 5.11 / 10.5) on the run chain; an
+    # inconclusive outcome is a ``success=False`` row naming the reason.
+    verify_rows = [
+        event for event in verify_harness["audit_events"]
+        if event["action"] == "verify.execute" and event["detail"]["job_id"] == VERIFY_JOB_ID
+    ]
+    assert len(verify_rows) == 1
+    assert verify_rows[0]["success"] is False
+    assert verify_rows[0]["detail"]["outcome"] == "inconclusive"
+    assert "partial" in verify_rows[0]["detail"]["inconclusive_reason"]
 
-    # The outcome is projected from the attack measurements: the fixture's FGSM
-    # rows still cross the ASR threshold, so the defense did not close the finding.
+    # Spec 6.4: ``score.completeness = "partial"`` on the verify run is ``inconclusive``; the
+    # finding stays ``open`` (never ``failed`` or ``fixed`` on a partial verify record).
     assert finding is not None
     verify = finding.schema_blob["ml"]["verify"]
     assert verify["run_id"] == VERIFY_RUN_ID
-    assert verify["outcome"] == "still_vulnerable"
+    assert verify["outcome"] == "inconclusive"
     assert verify["delta"] is None
     assert verify["defense"]["id"] == DEFENSE["id"]
-    assert finding.validation_state == "poc_failed"
-    assert finding.status == "failed"
+    assert finding.validation_state == "inconclusive"
+    assert finding.status == "open"
 
     # No delta was measured, so the recommendation is not promoted.
     recommendation = _recommendation(finding)

@@ -102,6 +102,19 @@ class RedsimConfig:
     llm_budget_strict: bool = field(
         default_factory=lambda: os.environ.get("REDSIM_ENV", "dev").lower() == "prod"
     )
+    # Per-task model routing (``redsim.llm.router.route``): ``{task: model id}``.
+    # A task absent from the map falls back to ``model``, except the Pythia-only
+    # tasks (``ml.harden_narrative``), which are refused rather than routed to
+    # the provider-style default. ``_apply_env_overrides`` seeds
+    # ``ml.harden_narrative`` from ``REDSIM_ML_LLM_MODEL`` (spec 10.8, 16.3)
+    # when the YAML did not map it; the env never overrides an explicit entry.
+    task_models: dict[str, str] = field(default_factory=dict)
+
+
+#: Router task name of the adversarial-ML hardening narrative (spec 5.12, 10.8).
+ML_HARDEN_NARRATIVE_TASK = "ml.harden_narrative"
+#: Canonical name of the Pythia model-id variable (mirrors ``redsim.llm.pythia.MODEL_ENV``).
+ML_LLM_MODEL_ENV = "REDSIM_ML_LLM_MODEL"
 
 
 def load_config(path: str | None = None) -> RedsimConfig:
@@ -166,4 +179,12 @@ def _apply_env_overrides(config: RedsimConfig) -> RedsimConfig:
     config.llm_budget_strict = _env_bool(
         "REDSIM_LLM_BUDGET_STRICT", config.llm_budget_strict
     )
+    # Seed the Pythia narrative task from REDSIM_ML_LLM_MODEL (additive: an
+    # explicit YAML mapping wins, and an unset variable leaves the task
+    # unmapped so the router refuses it instead of using ``model``).
+    if not isinstance(config.task_models, dict):
+        config.task_models = {}
+    narrative_model = os.environ.get(ML_LLM_MODEL_ENV, "").strip()
+    if narrative_model and not config.task_models.get(ML_HARDEN_NARRATIVE_TASK):
+        config.task_models[ML_HARDEN_NARRATIVE_TASK] = narrative_model
     return config

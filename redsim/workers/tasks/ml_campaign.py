@@ -1,9 +1,55 @@
-"""Celery wrapper for one complete adversarial-ML campaign."""
+"""Celery wrapper for one complete adversarial-ML campaign (spec 10.3 to 10.8).
+
+The task validates the frozen admission snapshot, runs the pure campaign inside
+the credential-free sandbox child (``redsim.ml.sandbox``), and turns the
+returned envelope into durable evidence:
+
+* **Artifacts** through :class:`DatabaseArtifactSink`, whose explicit
+  name-to-kind table is the spec 5.8 vocabulary (``ml.curve``, ``ml.shap.*``,
+  ``ml.feature_diff``, ``ml.harden.*``, ``report.md`` / ``report.json`` /
+  ``report.html``; a killed child's files under ``ml/partial/`` become
+  ``ml.partial.*``).
+* **Run.stage_table** in the spec 6.5 shape: ``stage``, ``stages_done``, a
+  ``stages`` map with per-stage ``status`` (``queued | running | succeeded |
+  failed | skipped | cancelled | timed_out``), ``started_at`` / ``finished_at``
+  and ``job_id``, the ``jobs`` map and ``completeness``; every transition is
+  also published as a ``{"type": "stage", "name": ..., "status": ...}`` frame.
+* **Audit rows** in the spec 10.5 order through ``redsim.safety.authorize``:
+  ``model.load``, ``attack.execute.<attack_id>``, ``explain.execute``,
+  ``campaign.score``, ``harden.execute``, ``verify.execute``, ``report.render``
+  (with ``formats``) and ``job.complete``, actor ``worker:<job type>`` with the
+  requesting principal in ``detail.requested_by``; refused or failed steps are
+  ``success=False`` rows. Details carry ids, digests and counts only.
+* **The Pythia narrative** (spec 10.8, 16.3) in this parent process, after the
+  envelope returns: model through ``redsim.llm.router.route("ml.harden_narrative")``
+  with the ``DbBudgetChecker``, transport ``redsim.llm.pythia.chat_text`` wrapped
+  in the guardrails, prompt and completion stored as ``ml.harden.prompt`` /
+  ``ml.harden.completion`` artifacts with digests on the ``harden.execute`` row,
+  and one ``LLMUsage(task="ml.harden_narrative")`` row. Every failure keeps the
+  rule output with ``narrative_source="rules"`` and the skip reason; nothing
+  here fails the job.
+* **Findings**: ``attack.run`` projects threshold crossings; ``explain.run`` and
+  ``harden.recommend`` merge the child's observations, interpretation and
+  candidates back into the parent finding's ``schema_blob["ml"]``;
+  ``verify.replay`` attaches the ``MeasuredDelta`` to the recommendation naming
+  the defense, maps the outcome through ``verify._STATE_MAP`` and spec 6.4
+  (``inconclusive`` -> ``open``), writes the ``RemediationAttempt`` row and the
+  ``verify.execute`` audit row.
+
+``SandboxTimeout`` / ``SandboxKilled`` / ``EnvelopeInvalid`` from the child are
+Job failures with the stage marked ``timed_out`` / ``failed``, completeness
+``partial``, the files the child had written kept under ``ml/partial/``, a
+``job.complete`` row with ``success=False`` and the error class, and, for a
+verify job, the finding left ``inconclusive`` / ``open``.
+"""
 
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import os
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -14,7 +60,9 @@ if TYPE_CHECKING:
     from celery import Task
     from sqlalchemy.orm import Session
 
-    from redsim.ml.schema import CampaignRecord, MRIRecord
+    from redsim.audit.chain import AuditWriter
+    from redsim.config import RedsimConfig
+    from redsim.ml.schema import CampaignConfig, CampaignRecord, MRIRecord
     from redsim.storage import BlobStore
 
 logger = logging.getLogger(__name__)
@@ -27,6 +75,59 @@ DELTA_UNAVAILABLE_LIMITATION = (
     "the recorded attack measurements only, and the recommendation keeps "
     "validation 'not evaluated' because no delta was measured."
 )
+
+#: Router task of the hardening narrative (spec 5.12, 10.8); mirrors ``redsim.llm.router``.
+NARRATIVE_TASK = "ml.harden_narrative"
+#: Report formats ``render_campaign_reports`` writes; the ``report.render`` audit row lists them.
+REPORT_FORMATS: tuple[str, ...] = ("md", "json", "html")
+#: Prefix of files a killed / timed-out child had written (mirrors ``redsim.ml.sandbox.PARTIAL_PREFIX``).
+PARTIAL_PREFIX = "ml/partial/"
+#: Spec 6.5 per-stage status vocabulary.
+STAGE_STATUSES: tuple[str, ...] = (
+    "queued", "running", "succeeded", "failed", "skipped", "cancelled", "timed_out",
+)
+# Spec 6.4 / 16.5: verify outcome -> Finding.status. validation_state comes from verify._STATE_MAP.
+VERIFY_STATUS_MAP: dict[str, str] = {
+    "verified": "fixed",
+    "still_vulnerable": "failed",
+    "inconclusive": "open",
+}
+# Artifact names the parent writes for the narrative (spec 5.8 ``ml.harden.*``).
+HARDEN_PROMPT_NAME = "harden/prompt.txt"
+HARDEN_COMPLETION_NAME = "harden/completion.txt"
+HARDEN_NARRATIVE_NAME = "harden/narrative.md"
+SHAP_SUMMARY_TEXT_NAME = "shap_summary.txt"
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_LOAD_ERROR_CLASSES = (
+    "ModelLoadRefused", "UnsupportedArtifact", "ArtifactDigestMismatch", "TargetUnavailable",
+    "DatasetUnavailable", "MlExtraUnavailable",
+)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _iso(value: datetime) -> str:
+    return value.isoformat()
+
+
+def _truthy(raw: str | None) -> bool:
+    return (raw or "").strip().lower() in _TRUE_VALUES
+
+
+def _error_class(message: str | None) -> str | None:
+    """``"ModelLoadRefused"`` from ``"ModelLoadRefused: ..."``; ``None`` when the text has no class prefix."""
+    if not message:
+        return None
+    head, sep, _rest = message.partition(":")
+    head = head.strip()
+    return head if sep and head.isidentifier() else None
+
+
+# ---------------------------------------------------------------------------
+# Verify delta (unchanged helpers, tested by tests/test_review22_partial_delta.py)
+# ---------------------------------------------------------------------------
 
 
 def _partial_score_reason(label: str, score: MRIRecord) -> str | None:
@@ -89,8 +190,86 @@ def _attach_verify_delta(
     return record.model_copy(update={"limitations": limitations})
 
 
+# ---------------------------------------------------------------------------
+# Artifact kinds (spec 5.8) and the database sink
+# ---------------------------------------------------------------------------
+
+# Exact artifact names -> kind. Observation-level files are matched on their
+# basename (the explainers write them under ``obs_<i>/``), campaign-level files
+# on their full name.
+_EXACT_KINDS: dict[str, str] = {
+    "run_record.json": "ml.run_record",
+    "score.json": "ml.score",
+    "flip_matrix.json": "ml.flip_matrix",
+    "validation_report.json": "ml.validation_report",
+    "shap_summary.json": "ml.shap.summary",
+    SHAP_SUMMARY_TEXT_NAME: "ml.shap.summary_text",
+    "shap_bar_clean.png": "ml.shap.bar",
+    "shap_bar_adv.png": "ml.shap.bar",
+    "shap_beeswarm_clean.png": "ml.shap.beeswarm",
+    "shap_beeswarm_adv.png": "ml.shap.beeswarm",
+    HARDEN_PROMPT_NAME: "ml.harden.prompt",
+    HARDEN_COMPLETION_NAME: "ml.harden.completion",
+    HARDEN_NARRATIVE_NAME: "ml.harden.narrative",
+    "report.md": "report.md",
+    "report.json": "report.json",
+    "report.html": "report.html",
+}
+_BASENAME_KINDS: dict[str, str] = {
+    "clean.png": "ml.input.clean",
+    "adv.png": "ml.input.adv",
+    "diff.png": "ml.perturbation",
+    "shap_clean.png": "ml.shap.image",
+    "shap_adv.png": "ml.shap.image",
+    "shap_adv_predclass.png": "ml.shap.image",
+    "shap_values.npz": "ml.shap.values",
+    "shap_meta.json": "ml.shap.meta",
+    "feature_diff.json": "ml.feature_diff",
+    # Pre-rename tabular names (redsim.ml.explain.base.LEGACY_ARTIFACT_NAMES) keep their kinds.
+    "top_features.json": "ml.feature_diff",
+    "shap_pair.png": "ml.shap.force",
+    "events.jsonl": "ml.events",
+}
+_PREFIX_KINDS: tuple[tuple[str, str], ...] = (
+    ("curve/", "ml.curve"),
+    ("adv_slice/", "ml.adv_slice"),
+)
+
+
+def artifact_kind(name: str) -> str:
+    """The spec 5.8 ``Artifact.kind`` for a run-relative artifact ``name``.
+
+    A file the child had written before it was killed (``ml/partial/<name>``)
+    is ``ml.partial.<kind minus its ml. prefix>`` so the run's evidence keeps
+    its provenance while never masquerading as a completed artifact. Unknown
+    names fall back to ``ml.<stem>`` so nothing is dropped.
+    """
+    if name.startswith(PARTIAL_PREFIX):
+        inner = artifact_kind(name[len(PARTIAL_PREFIX):])
+        return f"ml.partial.{inner[3:] if inner.startswith('ml.') else inner}"
+    if name in _EXACT_KINDS:
+        return _EXACT_KINDS[name]
+    for prefix, kind in _PREFIX_KINDS:
+        if name.startswith(prefix):
+            return kind
+    base = name.rsplit("/", 1)[-1]
+    if base in _BASENAME_KINDS:
+        return _BASENAME_KINDS[base]
+    if base.startswith("shap_force_") and base.endswith(".png"):
+        return "ml.shap.force"
+    if base.startswith("report."):
+        return f"report.{base.rsplit('.', 1)[-1]}"
+    return f"ml.{base.rsplit('.', 1)[0]}"
+
+
 class DatabaseArtifactSink:
-    """ArtifactSink backed by content-addressed BlobStore and Artifact rows."""
+    """ArtifactSink backed by content-addressed BlobStore and Artifact rows.
+
+    Rows are unique on ``(run_id, kind, sha256)``; a second put of identical
+    bytes under the same kind reuses the row. ``ids`` maps every name written
+    to its ``Artifact.id`` and ``get`` reads a named artifact back, digest
+    checked, for the parent-side steps (the narrative payload).
+    """
 
     def __init__(self, session: Session, blob_store: BlobStore, *,
                  run_id: str, project_id: str) -> None:
@@ -99,23 +278,14 @@ class DatabaseArtifactSink:
         self.run_id = run_id
         self.project_id = project_id
         self._hashes: dict[str, str] = {}
+        self._locations: dict[str, str] = {}
+        self.ids: dict[str, str] = {}
+        self.kinds: dict[str, str] = {}
         self.finalizing_run_record = False
 
     @staticmethod
     def _kind(name: str) -> str:
-        if name == "run_record.json":
-            return "ml.run_record"
-        if name == "score.json":
-            return "ml.score"
-        if name == "flip_matrix.json":
-            return "ml.flip_matrix"
-        if name.startswith("curve/"):
-            return "ml.curve"
-        if name.startswith("adv_slice/"):
-            return "ml.adv_slice"
-        if name.startswith("report."):
-            return f"ml.report_{name.rsplit('.', 1)[-1]}"
-        return f"ml.{name.rsplit('/', 1)[-1].rsplit('.', 1)[0]}"
+        return artifact_kind(name)
 
     def put(self, name: str, data: bytes,
             content_type: str = "application/octet-stream") -> str:
@@ -151,26 +321,860 @@ class DatabaseArtifactSink:
             self.session.commit()
         self._hashes[name] = digest
         self._hashes[existing.id] = digest
+        self._locations[name] = str(existing.location)
+        self.ids[name] = existing.id
+        self.kinds[name] = kind
         return existing.id
 
     def sha256(self, name: str) -> str:
         return self._hashes[name]
 
+    def get(self, name: str) -> bytes | None:
+        """The bytes written under ``name`` in this run, or ``None``; a digest mismatch is ``None`` too."""
+        location = self._locations.get(name)
+        if location is None:
+            return None
+        try:
+            data = self.blob_store.get(location)
+        except Exception:  # noqa: BLE001 - a missing blob is "unavailable", never a crash in the parent
+            logger.warning("artifact %r could not be read back from %s", name, location, exc_info=True)
+            return None
+        raw = data.encode("utf-8") if isinstance(data, str) else bytes(data)
+        if hashlib.sha256(raw).hexdigest() != self._hashes.get(name):
+            logger.warning("artifact %r digest changed since it was written", name)
+            return None
+        return raw
 
-def _publish_stage(run_id: str, job_id: str, stage: str) -> None:
+
+# ---------------------------------------------------------------------------
+# Stage table (spec 6.5) and stage frames
+# ---------------------------------------------------------------------------
+
+
+def _publish_stage(run_id: str, job_id: str, stage: str, status: str = "succeeded") -> None:
+    """``{"type": "stage", "name": <stage>, "status": <status>}`` on the run channel (best effort)."""
     from redsim.workers.events import publish_job_event
 
     publish_job_event(
-        run_id, job_id, "running", type="stage", stage=stage,
+        run_id, job_id, status, type="stage", name=stage, stage=stage,
     )
+
+
+def expected_stages(config: CampaignConfig) -> list[str]:
+    """The stage keys this campaign is expected to write, in order (spec 6.5, ``schema.STAGES``)."""
+    out = ["load_target", "sample", "clean_eval"]
+    out.extend(f"attack:{aid}" for aid in config.attack_ids)
+    if config.include_control:
+        out.append("control")
+    if config.explain_k > 0:
+        out.append("explain")
+    out.extend(["score", "interpret"])
+    if config.auto_recommend:
+        out.append("recommend")
+    out.append("report")
+    return out
+
+
+class _StageTracker:
+    """Keeps ``Run.stage_table`` in the spec 6.5 shape and publishes stage frames.
+
+    The child reports a stage when it *finishes*, so a stage's ``started_at`` is
+    the previous stage's ``finished_at`` (or the job start) and the next expected
+    stage is marked ``running``. An expected stage that never completes before a
+    later one does (an attack recorded ``not_run``, an explain stage that was
+    skipped) becomes ``skipped``; the stage running when the child died becomes
+    ``failed`` / ``timed_out`` / ``cancelled``.
+    """
+
+    def __init__(self, session: Session, *, run_id: str, job_id: str, job_type: str,
+                 config: CampaignConfig) -> None:
+        self.session = session
+        self.run_id = run_id
+        self.job_id = job_id
+        self.job_type = job_type
+        self.attack_ids = list(config.attack_ids)
+        self.expected = expected_stages(config)
+        self.started_at = _iso(_now())
+        self._cursor = self.started_at
+        self.done: list[str] = []
+
+    # -- helpers ---------------------------------------------------------------
+
+    def _live_run(self) -> Any:
+        from redsim.db.models import Run
+
+        run = self.session.get(Run, self.run_id)
+        if run is None or run.status in {"succeeded", "failed", "cancelled"}:
+            return None
+        return run
+
+    def _table(self, run: Any) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        table = dict(run.stage_table or {})
+        stages = dict(table.get("stages") or {})
+        jobs = dict(table.get("jobs") or {})
+        return table, stages, jobs
+
+    def _store(self, run: Any, table: dict[str, Any], stages: dict[str, Any], jobs: dict[str, Any],
+               *, stage: str | None, job_status: str) -> None:
+        jobs[self.job_id] = {
+            **dict(jobs.get(self.job_id) or {}),
+            "type": self.job_type, "status": job_status, "stage": stage,
+            "attack_ids": self.attack_ids,
+        }
+        table.update({
+            "stage": stage,
+            "stages_done": list(self.done),
+            "stages": stages,
+            "jobs": jobs,
+        })
+        table.setdefault("error", None)
+        run.stage_table = table
+        self.session.commit()
+
+    def _next_expected(self, stage: str) -> str | None:
+        if stage in self.expected:
+            idx = self.expected.index(stage)
+            return self.expected[idx + 1] if idx + 1 < len(self.expected) else None
+        # ``attack`` without an id (older children): the next stage after the last attack.
+        if stage == "attack" and self.attack_ids:
+            return self._next_expected(f"attack:{self.attack_ids[-1]}")
+        return None
+
+    def _open_stage(self, stages: dict[str, Any]) -> str | None:
+        """The stage currently marked running/queued, or the next expected one after the last done."""
+        for name, entry in stages.items():
+            if isinstance(entry, dict) and entry.get("status") in {"running", "queued"}:
+                return name
+        if self.done:
+            return self._next_expected(self.done[-1])
+        return self.expected[0] if self.expected else None
+
+    # -- transitions -----------------------------------------------------------
+
+    def begin(self) -> None:
+        run = self._live_run()
+        if run is None:
+            return
+        table, stages, jobs = self._table(run)
+        first = self.expected[0]
+        stages.setdefault(first, {
+            "status": "running", "started_at": self.started_at, "finished_at": None, "job_id": self.job_id,
+        })
+        table.setdefault("completeness", None)
+        self._store(run, table, stages, jobs, stage=None, job_status="running")
+        _publish_stage(self.run_id, self.job_id, first, "running")
+
+    def completed(self, stage: str) -> None:
+        now = _iso(_now())
+        if stage not in self.done:
+            self.done.append(stage)
+        run = self._live_run()
+        if run is not None:
+            table, stages, jobs = self._table(run)
+            existing = stages.get(stage)
+            previous: dict[str, Any] = existing if isinstance(existing, dict) else {}
+            stages[stage] = {
+                "status": "succeeded",
+                "started_at": previous.get("started_at") or self._cursor,
+                "finished_at": now,
+                "job_id": self.job_id,
+            }
+            # Expected stages before this one that never finished were skipped (not_run attacks, ...).
+            if stage in self.expected:
+                for earlier in self.expected[: self.expected.index(stage)]:
+                    entry = stages.get(earlier)
+                    if entry is None or (isinstance(entry, dict) and entry.get("status") in {"running", "queued"}):
+                        stages[earlier] = {
+                            "status": "skipped",
+                            "started_at": (entry or {}).get("started_at") if isinstance(entry, dict) else None,
+                            "finished_at": now,
+                            "job_id": self.job_id,
+                        }
+            nxt = self._next_expected(stage)
+            if nxt is not None and nxt not in stages:
+                stages[nxt] = {"status": "running", "started_at": now, "finished_at": None, "job_id": self.job_id}
+            self._store(run, table, stages, jobs, stage=stage, job_status="running")
+        self._cursor = now
+        _publish_stage(self.run_id, self.job_id, stage, "succeeded")
+        if run is not None:
+            nxt = self._next_expected(stage)
+            if nxt is not None:
+                _publish_stage(self.run_id, self.job_id, nxt, "running")
+
+    def finish(self, record: CampaignRecord) -> None:
+        """Close the table for a returned record: leftover expected stages are ``skipped``."""
+        now = _iso(_now())
+        run = self._live_run()
+        if run is None:
+            return
+        table, stages, jobs = self._table(run)
+        for stage in record.stages_done:
+            if stage not in self.done:
+                self.done.append(stage)
+            if stage not in stages:
+                stages[stage] = {"status": "succeeded", "started_at": None, "finished_at": now, "job_id": self.job_id}
+        for name, entry in list(stages.items()):
+            if isinstance(entry, dict) and entry.get("status") in {"running", "queued"}:
+                stages[name] = {**entry, "status": "skipped", "finished_at": now}
+        for name in self.expected:
+            if name not in stages:
+                stages[name] = {"status": "skipped", "started_at": None, "finished_at": now, "job_id": self.job_id}
+        table["completeness"] = record.completeness
+        table["error"] = record.error
+        self._store(run, table, stages, jobs, stage=record.stage, job_status="running")
+
+    def aborted(self, status: str, error: str, *, stages_done: list[str] | None = None) -> str | None:
+        """Mark the open stage ``failed`` / ``timed_out`` / ``cancelled``; returns the stage named."""
+        now = _iso(_now())
+        for stage in stages_done or []:
+            if stage not in self.done:
+                self.done.append(stage)
+        run = self._live_run()
+        if run is None:
+            return None
+        table, stages, jobs = self._table(run)
+        open_stage = self._open_stage(stages)
+        if open_stage is not None:
+            existing = stages.get(open_stage)
+            entry: dict[str, Any] = existing if isinstance(existing, dict) else {}
+            stages[open_stage] = {
+                "status": status,
+                "started_at": entry.get("started_at") or self._cursor,
+                "finished_at": now,
+                "job_id": self.job_id,
+            }
+        table["completeness"] = "partial"
+        table["error"] = error
+        self._store(run, table, stages, jobs, stage=open_stage, job_status="running")
+        if open_stage is not None:
+            _publish_stage(self.run_id, self.job_id, open_stage, status)
+        return open_stage
+
+
+# ---------------------------------------------------------------------------
+# Audit emission (spec 5.11 / 10.5)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _AuditEmitter:
+    """Emits the worker's spec 10.5 vocabulary on the run chain through ``safety.authorize``.
+
+    ``authorize`` always records ``success=True`` for a ``target=None`` event,
+    so refused / failed steps go through the same writer with ``success=False``
+    and the identical row shape (``allowlist_check="n/a"``). ``detail`` never
+    carries text, bytes or secrets: ids, digests, counts and redacted settings.
+    """
+
+    writer: AuditWriter
+    allowlist: list[str]
+    job_id: str
+    job_type: str
+    run_id: str
+    project_id: str
+    requested_by: str | None
+    emitted: list[tuple[str, bool]] = field(default_factory=list)
+
+    @property
+    def actor(self) -> str:
+        return f"worker:{self.job_type}"
+
+    def emit(self, action: str, detail: dict[str, Any], *, success: bool = True) -> None:
+        from redsim.safety import authorize
+
+        payload: dict[str, Any] = {
+            "job_id": self.job_id, "job_type": self.job_type, "requested_by": self.requested_by, **detail,
+        }
+        if success:
+            authorize(
+                action, None, allowlist=self.allowlist, actor=self.actor, writer=self.writer,
+                run_id=self.run_id, project_id=self.project_id, detail=payload,
+            )
+        else:
+            payload.setdefault("actor", self.actor)
+            self.writer.append(
+                action=action, actor=self.actor, target=None, allowlist_check="n/a",
+                override=False, success=False, detail=payload,
+                run_id=self.run_id, project_id=self.project_id,
+            )
+        self.emitted.append((action, success))
+
+    def has(self, action: str) -> bool:
+        return any(a == action for a, _ok in self.emitted)
+
+
+def _target_load_detail(config: CampaignConfig, target: Any) -> dict[str, Any]:
+    """Non-secret ``model.load`` fields from the target row and the admission snapshot."""
+    detail = getattr(target, "detail", None)
+    detail = dict(detail) if isinstance(detail, dict) else {}
+    manifest = detail.get("manifest")
+    manifest = dict(manifest) if isinstance(manifest, dict) else {}
+    validation = detail.get("validation")
+    validation = dict(validation) if isinstance(validation, dict) else {}
+    onnx = manifest.get("onnx")
+    onnx = dict(onnx) if isinstance(onnx, dict) else {}
+    value = str(getattr(target, "value", "") or "")
+    agreement = (
+        validation.get("onnx_torch_argmax_agreement")
+        if validation.get("onnx_torch_argmax_agreement") is not None
+        else manifest.get("onnx_torch_argmax_agreement", onnx.get("argmax_agreement"))
+    )
+    return {
+        "target_id": config.target_id,
+        "source": "bundled" if value.startswith("bundled") else "upload",
+        "format": detail.get("format") or manifest.get("format"),
+        "sha256": detail.get("sha256") or manifest.get("sha256"),
+        "architecture_id": detail.get("architecture_id") or manifest.get("architecture_id"),
+        "gradients": detail.get("gradients", manifest.get("gradients")),
+        "onnx_torch_argmax_agreement": agreement,
+        "modality": config.modality,
+        "dataset_id": config.dataset_id,
+        "dataset_revision": config.dataset_revision,
+    }
+
+
+def _attack_detail(config: CampaignConfig, attack_id: str) -> dict[str, Any]:
+    return {
+        "attack_id": attack_id,
+        "norm": config.norm,
+        "eps_grid": list(config.eps_grid),
+        "reference_eps": config.reference_eps,
+        "params": dict(config.attack_params.get(attack_id) or {}),
+        "n_samples": config.n_samples,
+        "seed": config.seed,
+    }
+
+
+def _not_run_reasons(record: CampaignRecord) -> dict[str, str]:
+    """``attack_id -> reason`` for attacks the child recorded ``not_run`` (interpretation ``i.attack.not_run.<id>``)."""
+    out: dict[str, str] = {}
+    prefix = "i.attack.not_run."
+    for item in record.interpretation:
+        if item.id.startswith(prefix):
+            out[item.id[len(prefix):]] = item.statement
+    return out
+
+
+# ---------------------------------------------------------------------------
+# The Pythia narrative, in the parent (spec 10.8, 16.3)
+# ---------------------------------------------------------------------------
+
+
+def _narrative_limitation(status: str, model: str | None) -> str:
+    if status == "ok":
+        return (f"LLM narrative generated via Pythia ({model}): the rule outputs were rephrased for a technical "
+                "reader; it adds no claim, number or recommendation (narrative_source='llm').")
+    return f"LLM narrative: {status}; recommendations carry rule text only (narrative_source='rules')."
+
+
+def _summary_text(record: CampaignRecord, sink: DatabaseArtifactSink) -> str:
+    """The SHAP text summary (``ml.shap.summary_text``) the child wrote, else the same template recomputed here."""
+    raw = sink.get(SHAP_SUMMARY_TEXT_NAME)
+    if raw:
+        return raw.decode("utf-8", errors="replace")
+    from redsim.ml.explain.summary import text_summary
+
+    reason = record.score_status.reason if record.score_status is not None else None
+    return str(text_summary(
+        record.measurements, record.observations, record.score,
+        scoring_reason=reason, limitations=list(record.limitations), norm=record.config.norm,
+    ))
+
+
+def _org_id(session: Session, project_id: str) -> str | None:
+    from redsim.db.models import Project
+
+    project = session.get(Project, project_id)
+    return getattr(project, "org_id", None) if project is not None else None
+
+
+def _route_narrative_model(
+    redsim_config: RedsimConfig, *, project_id: str, org_id: str | None, seed_model: str,
+) -> tuple[str | None, str | None]:
+    """``(model, skip_reason)`` from the router with the DB budget checker (spec 10.8 step 1)."""
+    from redsim.llm.budget import DbBudgetChecker
+    from redsim.llm.router import BudgetExceeded, ModelNotConfigured, route
+
+    task_models = getattr(redsim_config, "task_models", None)
+    if not isinstance(task_models, dict):
+        task_models = {}
+        redsim_config.task_models = task_models
+    task_models.setdefault(NARRATIVE_TASK, seed_model)
+    strict = bool(getattr(redsim_config, "llm_budget_strict", False))
+    try:
+        spec = route(NARRATIVE_TASK, redsim_config, project_id=project_id, org_id=org_id,
+                     budget_checker=DbBudgetChecker())
+    except BudgetExceeded as exc:
+        return None, f"budget exceeded ({exc})"
+    except ModelNotConfigured as exc:
+        return None, f"not configured ({exc})"
+    except Exception as exc:  # noqa: BLE001 - the budget store could not be read
+        if strict:
+            return None, f"budget could not be verified ({type(exc).__name__}); denied (llm_budget_strict)"
+        logger.warning("LLM budget check unavailable (%s); routing without a budget gate", type(exc).__name__)
+        try:
+            spec = route(NARRATIVE_TASK, redsim_config, project_id=project_id, org_id=org_id)
+        except ModelNotConfigured as exc2:
+            return None, f"not configured ({exc2})"
+    return spec.model, None
+
+
+def _parent_narrative(
+    ctx: Any, *, config: CampaignConfig, record: CampaignRecord, sink: DatabaseArtifactSink,
+    redsim_config: RedsimConfig, allowed: bool = True,
+) -> tuple[CampaignRecord, dict[str, Any]]:
+    """Run the Pythia writer over the child's candidates; returns the updated record and the audit fields.
+
+    Every path returns: a missing configuration, ``REDSIM_DISABLE_LLM=1``, an
+    exhausted budget, an HTTP error, a guardrail block or a post-check rejection
+    all leave the rule output standing with ``narrative_source="rules"`` and the
+    reason in the record's limitations and on the ``harden.execute`` row.
+    """
+    from redsim.ml.campaign import NARRATIVE_DEFERRED_LIMITATION
+    from redsim.ml.recommend import narrative as narrative_mod
+
+    recs = list(record.recommendations)
+    audit: dict[str, Any] = {
+        "rules_fired": [r.id for r in recs],
+        "n_candidates": len(recs),
+        "llm_requested": bool(config.llm_narrative),
+        "llm_used": False,
+        "narrative_source": "rules",
+        "skipped_reason": None,
+        "prompt_sha256": None,
+        "completion_sha256": None,
+        # Token counts as usage.{prompt,completion}: the audit redactor blanks any key naming "token".
+        "usage": {"prompt": None, "completion": None},
+    }
+    limitations = [item for item in record.limitations if item != NARRATIVE_DEFERRED_LIMITATION]
+
+    def skipped(reason: str, *, note: bool = True) -> tuple[CampaignRecord, dict[str, Any]]:
+        audit["skipped_reason"] = reason
+        if note:
+            sentence = _narrative_limitation(reason, None)
+            if sentence not in limitations:
+                limitations.append(sentence)
+        logger.info("LLM narrative skipped for run %s: %s", record.run_id, reason)
+        return record.model_copy(update={"limitations": limitations}), audit
+
+    if not recs:
+        return skipped("no recommendations to narrate", note=False)
+    if not config.llm_narrative:
+        # The child already recorded "No LLM narrative was requested".
+        return skipped("not requested", note=False)
+    if not allowed:
+        return skipped("not attempted on a verify.replay job (only harden.recommend calls Pythia)")
+    if _truthy(os.environ.get("REDSIM_DISABLE_LLM")):
+        return skipped("disabled (REDSIM_DISABLE_LLM=1)")
+    try:
+        from redsim.llm.pythia import PythiaSettings
+
+        settings = PythiaSettings.from_env()
+    except Exception as exc:  # noqa: BLE001 - a malformed .env is "not configured", not a job failure
+        settings = None
+        logger.warning("Pythia settings unreadable: %s", type(exc).__name__)
+    if settings is None:
+        return skipped("not configured (PYTHIA_BASE_URL / PYTHIA_API_KEY / REDSIM_ML_LLM_MODEL)")
+    org_id = _org_id(ctx.session, ctx.project_id)
+    model, reason = _route_narrative_model(
+        redsim_config, project_id=ctx.project_id, org_id=org_id, seed_model=settings.model,
+    )
+    if model is None or reason is not None:
+        return skipped(reason or "not configured")
+    settings = replace(settings, model=model)
+    audit["llm"] = settings.redacted()
+    audit["model"] = model
+    try:
+        summary_text = _summary_text(record, sink)
+        outcome = narrative_mod.narrate(recs, summary_text, settings, config=redsim_config)
+    except Exception as exc:  # noqa: BLE001 - nothing in the writer may fail the job
+        logger.warning("LLM narrative failed in the parent: %s", type(exc).__name__, exc_info=True)
+        return skipped(f"unavailable ({type(exc).__name__})")
+    audit.update(outcome.audit_detail())
+    # Prompt and completion are artifacts; only their digests travel on the audit row.
+    if outcome.prompt is not None:
+        sink.put(HARDEN_PROMPT_NAME, outcome.prompt.encode("utf-8"), "text/plain; charset=utf-8")
+    if outcome.completion is not None:
+        sink.put(HARDEN_COMPLETION_NAME, outcome.completion.encode("utf-8"), "text/plain; charset=utf-8")
+    narrative_md = outcome.narrative_markdown()
+    if narrative_md is not None:
+        sink.put(HARDEN_NARRATIVE_NAME, narrative_md.encode("utf-8"), "text/markdown; charset=utf-8")
+    if outcome.responded:
+        # One LLMUsage row per metered call (spec 5.12); a transport failure consumed nothing.
+        _record_llm_usage(ctx, org_id=org_id, model=model, outcome=outcome, audit=audit)
+    sentence = _narrative_limitation(outcome.status, model)
+    if sentence not in limitations:
+        limitations.append(sentence)
+    update: dict[str, Any] = {"limitations": limitations, "recommendations": outcome.recommendations}
+    if outcome.ok and record.provenance is not None:
+        nondeterminism = list(record.provenance.nondeterminism)
+        note = "LLM narrative is nondeterministic (temperature=0.2); prompt and response hashes recorded"
+        if note not in nondeterminism:
+            nondeterminism.append(note)
+        update["provenance"] = record.provenance.model_copy(update={
+            "llm": outcome.provenance_llm(), "nondeterminism": nondeterminism,
+        })
+    return record.model_copy(update=update), audit
+
+
+def _record_llm_usage(ctx: Any, *, org_id: str | None, model: str, outcome: Any, audit: dict[str, Any]) -> None:
+    """One ``LLMUsage(task="ml.harden_narrative")`` row per Pythia call (spec 5.12); zero cost when unpriced."""
+    from redsim.db.models import LLMUsage
+    from redsim.llm import pricing
+
+    prompt_tokens = int(outcome.prompt_tokens or 0)
+    completion_tokens = int(outcome.completion_tokens or 0)
+    try:
+        cost = int(pricing.cost_cents(model, prompt_tokens, completion_tokens))
+    except Exception:  # noqa: BLE001 - pricing is accounting, never evidence
+        cost = 0
+    rate_fn = getattr(pricing, "_static_rate", None)
+    priced = bool(callable(rate_fn) and rate_fn(model) is not None)
+    audit["cost_cents"] = cost
+    if not priced and cost == 0:
+        audit["unpriced_model"] = model
+    ctx.session.add(LLMUsage(
+        project_id=ctx.project_id, org_id=org_id, run_id=ctx.run_id, model=model,
+        task=NARRATIVE_TASK, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+        cost_cents=cost,
+    ))
+    ctx.session.flush()
+
+
+# ---------------------------------------------------------------------------
+# Finding projections: verify (spec 6.4, 16.4, 16.5) and follow-on merge (G-FOLLOW1)
+# ---------------------------------------------------------------------------
+
+
+def _cited(items: list[Any], known: set[str], attr: str) -> list[Any]:
+    """Keep statements whose citations resolve to ``known`` ids (interpretation ids join progressively)."""
+    kept: list[Any] = []
+    for item in items:
+        cites = list(getattr(item, attr, None) or [])
+        if cites and any(c in known for c in cites):
+            kept.append(item)
+            known.add(item.id)
+    return kept
+
+
+def _merge_followon(ctx: Any, *, job: Any, record: CampaignRecord, sink: DatabaseArtifactSink) -> str | None:
+    """Merge an ``explain.run`` / ``harden.recommend`` child record into the parent finding's ``ml`` block.
+
+    Scoped to the finding's attack: the clean and control rows plus that attack's
+    evasion rows, every observation (observations carry no attack id; the
+    explainer emits them for the campaign), and the interpretation / candidates
+    that cite that evidence. ``review`` and ``verify`` are untouched. Returns the
+    finding id, or ``None`` when the job names none.
+    """
+    from redsim.db.models import Finding
+    from redsim.ml.schema import MLFindingDetail
+
+    finding_id = (job.detail or {}).get("finding_id")
+    if not finding_id:
+        return None
+    finding = ctx.session.get(Finding, finding_id)
+    if finding is None:
+        raise RuntimeError("follow-on finding is missing")
+    schema_blob = dict(finding.schema_blob or {})
+    ml_detail = MLFindingDetail.model_validate(schema_blob.get("ml") or {})
+    attack_id = ml_detail.attack_id
+    measurements = [
+        m for m in record.measurements
+        if m.attack_id == attack_id or m.family in ("clean", "control")
+    ]
+    observations = list(record.observations)
+    # Citation anchors mirror ``project_campaign_findings``: this attack's evasion rows and the
+    # observations. Clean and control rows travel on every finding and would otherwise pull in
+    # statements about another attack.
+    known = {m.id for m in measurements if m.attack_id == attack_id} | {o.id for o in observations}
+    interpretation = _cited(list(record.interpretation), known, "basis")
+    recommendations = _cited(list(record.recommendations), known, "triggered_by")
+    artifacts = dict(ml_detail.artifacts)
+    for obs in observations:
+        artifacts.update(obs.artifacts)
+    if "run_record.json" in sink.ids:
+        artifacts[f"{job.type}:run_record"] = sink.ids["run_record.json"]
+    update: dict[str, Any] = {
+        "measurements": measurements or ml_detail.measurements,
+        "observations": observations or ml_detail.observations,
+        "interpretation": interpretation or ml_detail.interpretation,
+        "limitations": list(record.limitations) or ml_detail.limitations,
+        "artifacts": artifacts,
+    }
+    if job.type == "harden.recommend" or recommendations:
+        update["recommendations"] = recommendations
+    merged = ml_detail.model_copy(update=update)
+    schema_blob["ml"] = MLFindingDetail.model_validate(merged.model_dump(mode="json")).model_dump(mode="json")
+    schema_blob["updated_at"] = _now().isoformat()
+    finding.schema_blob = schema_blob
+    finding.updated_at = _now()
+    ctx.session.flush()
+    return str(finding_id)
+
+
+def _verify_outcome(record: CampaignRecord, attack_id: str) -> tuple[str, str | None]:
+    """``(outcome, inconclusive_reason)`` per spec 6.4 from the verify record's measurements and completeness."""
+    from redsim.ml.scoring import finding_inputs
+
+    if record.status != "succeeded":
+        return "inconclusive", record.error or f"verify run {record.status}"
+    if record.score is None or record.score.completeness != "complete":
+        missing = "; ".join(record.score.missing) if record.score is not None else (
+            record.score_status.reason if record.score_status is not None else "score unavailable")
+        return "inconclusive", f"verify score is partial ({missing})"
+    inputs = finding_inputs(record.config, record.measurements, attack_id)
+    if not inputs.denominator_ok:
+        return "inconclusive", "clean-correct denominator too small at these settings"
+    return ("still_vulnerable" if inputs.crosses_threshold else "verified"), None
+
+
+def _project_verify(
+    ctx: Any, *, job: Any, record: CampaignRecord, baseline_run_id: str | None, emitter: _AuditEmitter,
+) -> dict[str, Any]:
+    """Write the verify outcome onto the baseline finding (spec 6.4, 16.4, 16.5) and emit ``verify.execute``."""
+    from redsim.db.models import Finding, RemediationAttempt
+    from redsim.ml.schema import FindingVerify, MeasuredDelta, MLFindingDetail
+    from redsim.services.ml_campaigns import recommendation_defense_ids
+    from redsim.workers.tasks.verify import _STATE_MAP
+
+    detail = dict(job.detail or {})
+    finding = ctx.session.get(Finding, detail.get("finding_id"))
+    if finding is None:
+        raise RuntimeError("verify finding is missing")
+    schema_blob = dict(finding.schema_blob or {})
+    ml_detail = MLFindingDetail.model_validate(schema_blob.get("ml") or {})
+    defense = record.config.defense
+    if defense is None:
+        raise RuntimeError("verify campaign carries no defense")
+    outcome, reason = _verify_outcome(record, ml_detail.attack_id)
+    score_delta = record.score.delta if record.score is not None else None
+    ml_detail.verify = FindingVerify(run_id=ctx.run_id, defense=defense, outcome=outcome, delta=score_delta)
+
+    measured_for: list[str] = []
+    if (
+        outcome != "inconclusive"
+        and score_delta is not None
+        and record.settings_hash is not None
+        and baseline_run_id
+    ):
+        measured = MeasuredDelta(
+            verify_run_id=ctx.run_id, baseline_run_id=str(baseline_run_id), defense=defense,
+            delta_mri=score_delta.delta, delta_subscores=score_delta.delta_subscores,
+            delta_acc_clean=score_delta.delta_acc_clean, settings_hash=record.settings_hash,
+            measured_at=_now(),
+        )
+        named = str(detail.get("recommendation_id") or "") or None
+        updated = []
+        for recommendation in ml_detail.recommendations:
+            names_defense = defense.id in recommendation_defense_ids(recommendation)
+            is_named = named is None or recommendation.id == named
+            if names_defense and is_named:
+                measured_for.append(recommendation.id)
+                updated.append(recommendation.model_copy(update={"validation": "measured", "measured": measured}))
+            else:
+                updated.append(recommendation)
+        ml_detail.recommendations = updated
+        if named is not None and named not in measured_for:
+            logger.warning("verify run %s: recommendation %r does not name defense %r; no delta attached",
+                           ctx.run_id, named, defense.id)
+
+    validation_state = _STATE_MAP.get(outcome, "inconclusive")
+    status = VERIFY_STATUS_MAP[outcome]
+    schema_blob["ml"] = MLFindingDetail.model_validate(ml_detail.model_dump(mode="json")).model_dump(mode="json")
+    schema_blob["updated_at"] = _now().isoformat()
+    schema_blob["status"] = status
+    finding.schema_blob = schema_blob
+    finding.validation_state = validation_state
+    finding.status = status
+    finding.validated_at = _now()
+    finding.updated_at = _now()
+
+    summary = {
+        "verify_run_id": ctx.run_id, "baseline_run_id": baseline_run_id, "defense": defense.model_dump(mode="json"),
+        "outcome": outcome, "validation_state": validation_state, "status": status,
+        "delta_mri": score_delta.delta if score_delta is not None else None,
+        "inconclusive_reason": reason, "measured_for": measured_for,
+    }
+    # Spec 10.2: append_remediation_log(finding_id, action="ml.verify.<defense>", result=<json>, success=<bool>).
+    # The finding belongs to the baseline run, so the row is written directly rather than through the
+    # verify run's RunState facade (which resolves findings within its own run only).
+    ctx.session.add(RemediationAttempt(
+        finding_id=finding.id, project_id=finding.project_id, action=f"ml.verify.{defense.id}",
+        success=outcome == "verified", detail={"result": json.dumps(summary, sort_keys=True, default=str)},
+    ))
+    ctx.session.flush()
+    emitter.emit("verify.execute", {
+        "finding_id": finding.id,
+        "defense": defense.model_dump(mode="json"),
+        "outcome": outcome,
+        "validation_state": validation_state,
+        "finding_status": status,
+        "delta_mri": score_delta.delta if score_delta is not None else None,
+        "delta_subscores": score_delta.delta_subscores.model_dump() if score_delta is not None else None,
+        "delta_acc_clean": score_delta.delta_acc_clean.model_dump() if score_delta is not None else None,
+        "measured_for": measured_for,
+        "inconclusive_reason": reason,
+        "baseline_run_id": baseline_run_id,
+    }, success=outcome != "inconclusive")
+    return summary
+
+
+def _verify_inconclusive_on_failure(ctx: Any, *, job: Any, error: str) -> None:
+    """A verify job that did not return a record leaves its finding ``inconclusive`` / ``open`` (spec 6.4)."""
+    from redsim.db.models import Finding
+    from redsim.ml.schema import FindingVerify, MLFindingDetail
+    from redsim.workers.tasks.verify import _STATE_MAP
+
+    detail = dict(job.detail or {})
+    finding = ctx.session.get(Finding, detail.get("finding_id"))
+    if finding is None:
+        return
+    schema_blob = dict(finding.schema_blob or {})
+    try:
+        ml_detail = MLFindingDetail.model_validate(schema_blob.get("ml") or {})
+        config = dict(detail.get("campaign_config") or {})
+        defense = config.get("defense")
+        if isinstance(defense, dict) and defense.get("id"):
+            from redsim.ml.schema import DefenseConfig
+
+            ml_detail.verify = FindingVerify(
+                run_id=ctx.run_id, defense=DefenseConfig.model_validate(defense), outcome="inconclusive",
+            )
+            schema_blob["ml"] = ml_detail.model_dump(mode="json")
+    except Exception:  # noqa: BLE001 - the state write below is what matters
+        logger.debug("verify failure: could not stamp FindingVerify", exc_info=True)
+    schema_blob["updated_at"] = _now().isoformat()
+    schema_blob["status"] = VERIFY_STATUS_MAP["inconclusive"]
+    finding.schema_blob = schema_blob
+    finding.validation_state = _STATE_MAP["inconclusive"]
+    finding.status = VERIFY_STATUS_MAP["inconclusive"]
+    finding.validated_at = _now()
+    finding.updated_at = _now()
+    logger.warning("verify run %s failed (%s); finding %s left inconclusive/open", ctx.run_id, error, finding.id)
+
+
+# ---------------------------------------------------------------------------
+# The task
+# ---------------------------------------------------------------------------
+
+
+def _load_baseline_record(ctx: Any, baseline_run_id: str) -> CampaignRecord:
+    from sqlalchemy import select
+
+    from redsim.db.models import Artifact
+    from redsim.ml.schema import CampaignRecord
+
+    baseline_artifact = ctx.session.execute(select(Artifact).where(
+        Artifact.run_id == baseline_run_id,
+        Artifact.kind == "ml.run_record",
+    ).order_by(Artifact.created_at.desc())).scalars().first()
+    if baseline_artifact is None:
+        raise RuntimeError("verify baseline campaign record is missing")
+    baseline_bytes = ctx.blob_store.get(str(baseline_artifact.location))
+    if isinstance(baseline_bytes, str):
+        baseline_bytes = baseline_bytes.encode("utf-8")
+    if hashlib.sha256(baseline_bytes).hexdigest() != baseline_artifact.sha256:
+        raise RuntimeError("verify baseline ml.run_record digest mismatch")
+    baseline_record = CampaignRecord.model_validate_json(baseline_bytes)
+    if baseline_record.score is None:
+        raise RuntimeError("verify baseline score is unavailable")
+    return baseline_record
+
+
+def _apply_verify_baseline(record: CampaignRecord, baseline_record: CampaignRecord, *,
+                           baseline_run_id: str) -> CampaignRecord:
+    """Identity check against the baseline, then the delta (or its unavailability) on the record."""
+    from redsim.ml.schema import CampaignRecord
+
+    baseline_provenance = baseline_record.provenance
+    record_provenance = record.provenance
+    mismatch = (
+        baseline_provenance is None
+        or record_provenance is None
+        or baseline_provenance.model_sha256 != record_provenance.model_sha256
+        or baseline_provenance.sample_indices_sha256 != record_provenance.sample_indices_sha256
+        or baseline_record.settings_hash != record.settings_hash
+    )
+    if mismatch:
+        failed = record.model_dump(mode="json")
+        failed.update({
+            "status": "failed",
+            "error": "verify identity mismatch: model, sample, or settings changed",
+            "score": None,
+            "score_status": {"state": "unavailable", "reason": "verify identity mismatch"},
+            "completeness": "partial",
+            "missing": ["verify model, sample, or settings identity mismatch"],
+        })
+        return CampaignRecord.model_validate(failed)
+    # A partial score on either side (mri is None) or an incompatible pair leaves the delta
+    # unavailable, recorded in the run's limitations. The verification outcome does not need it.
+    return _attach_verify_delta(record, baseline_record, baseline_run_id=baseline_run_id)
+
+
+def _emit_record_audit(
+    emitter: _AuditEmitter, *, config: CampaignConfig, record: CampaignRecord, sink: DatabaseArtifactSink,
+    load_detail: dict[str, Any], harden_audit: dict[str, Any] | None,
+) -> None:
+    """The spec 10.5 rows a returned record justifies, in order, skipping any already emitted live."""
+    provenance = record.provenance
+    versions = dict(provenance.model_manifest.get("library_versions") or {}) if provenance is not None else {}
+    if not emitter.has("model.load"):
+        loaded = "load_target" in record.stages_done
+        error_class = _error_class(record.error)
+        emitter.emit("model.load", {
+            **load_detail,
+            "sha256": (provenance.model_sha256 if provenance is not None and provenance.model_sha256
+                       else load_detail.get("sha256")),
+            "library_versions": versions,
+            "reason": None if loaded else (record.error or "load_target did not complete"),
+            "error_class": None if loaded else error_class,
+        }, success=loaded)
+    not_run = _not_run_reasons(record)
+    executed = {m.attack_id for m in record.measurements if m.family == "evasion" and m.attack_id}
+    for attack_id in config.attack_ids:
+        action = f"attack.execute.{attack_id}"
+        if attack_id in not_run:
+            emitter.emit(action, {**_attack_detail(config, attack_id), "not_run": not_run[attack_id]},
+                         success=False)
+        elif not emitter.has(action):
+            emitter.emit(action, {**_attack_detail(config, attack_id), "executed": attack_id in executed},
+                         success=attack_id in executed)
+    if "explain" in record.stages_done:
+        digests = sorted({d for o in record.observations for d in o.artifact_sha256.values()})
+        emitter.emit("explain.execute", {
+            "n_observations": len(record.observations),
+            "explain_k": config.explain_k,
+            "artifact_ids": sorted({a for o in record.observations for a in o.artifacts.values()})[:64],
+            "artifact_sha256": digests[:64],
+            "expl_shift": {
+                m.attack_id: {"mean": m.expl_shift_mean, "n": m.expl_shift_n}
+                for m in record.measurements
+                if m.family == "evasion" and m.expl_shift_mean is not None and m.attack_id
+            },
+        })
+    if record.score is not None:
+        emitter.emit("campaign.score", {
+            "mri": record.score.mri,
+            "grade": record.score.grade,
+            "completeness": record.score.completeness,
+            "missing": list(record.score.missing),
+            "settings_hash": record.score.settings_hash,
+            "scoring_version": record.score.scoring_version,
+            "score_sha256": sink._hashes.get("score.json"),
+            "delta_mri": record.score.delta.delta if record.score.delta is not None else None,
+        })
+    if harden_audit is not None and ("recommend" in record.stages_done or record.recommendations):
+        emitter.emit("harden.execute", dict(harden_audit))
 
 
 @app.task(name="redsim.ml_campaign_run", bind=True, max_retries=2)
 def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
-    """Validate frozen input, run the pure campaign, and persist projections."""
+    """Validate frozen input, run the pure campaign in the sandbox, and persist projections."""
+    from redsim.config import load_config
     from redsim.db.models import Job, Run, Target
+    from redsim.ml.errors import EnvelopeInvalid, SandboxKilled, SandboxTimeout
     from redsim.ml.sandbox import run_campaign_sandboxed
-    from redsim.ml.schema import CampaignConfig, CampaignRecord
+    from redsim.ml.schema import CampaignConfig
     from redsim.services.ml_campaigns import persist_campaign_record
     from redsim.workers.bootstrap import task_context
 
@@ -197,56 +1201,41 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
             raise RuntimeError(
                 f"campaign target is not available (status={target_status!r})"
             )
-
+        redsim_config = load_config()
+        emitter = _AuditEmitter(
+            writer=audit_writer, allowlist=list(redsim_config.target_allowlist), job_id=job_id,
+            job_type=str(job.type), run_id=ctx.run_id, project_id=ctx.project_id,
+            requested_by=job.created_by,
+        )
+        load_detail = _target_load_detail(config, target)
         sink = DatabaseArtifactSink(
             ctx.session, ctx.blob_store,
             run_id=ctx.run_id, project_id=ctx.project_id,
         )
+        tracker = _StageTracker(
+            ctx.session, run_id=ctx.run_id, job_id=job_id, job_type=str(job.type), config=config,
+        )
+        tracker.begin()
 
         def on_stage(stage: str) -> None:
-            live_run = ctx.session.get(Run, ctx.run_id)
-            if live_run is not None and live_run.status not in {
-                "succeeded", "failed", "cancelled",
-            }:
-                table = dict(live_run.stage_table or {})
-                stages_done = list(table.get("stages_done") or [])
-                if stage not in stages_done:
-                    stages_done.append(stage)
-                jobs = dict(table.get("jobs") or {})
-                jobs[job_id] = {
-                    "type": "attack.run", "status": "running", "stage": stage,
-                }
-                table.update({
-                    "stage": stage, "stages_done": stages_done, "jobs": jobs,
-                })
-                live_run.stage_table = table
-                ctx.session.commit()
-            action = {
-                "attack": "attack.run",
-                "explain": "explain.run",
-                "score": "score.compute",
-                "harden": "harden.recommend",
-                "report": (
-                    "verify.replay"
-                    if job.type == "verify.replay"
-                    else "report.render"
-                ),
-            }.get(stage)
-            if action is not None:
-                audit_writer.append(
-                    action=action,
-                    actor=ctx.actor,
-                    target=None,
-                    allowlist_check="pass",
-                    override=False,
-                    success=True,
-                    detail={"job_id": job_id, "stage": stage},
-                    project_id=ctx.project_id,
-                    run_id=ctx.run_id,
-                )
-            _publish_stage(ctx.run_id, job_id, stage)
+            tracker.completed(stage)
+            # Live rows: model.load once the child loaded the model, one attack.execute.<id> per
+            # attack as its stage completes with the executed configuration (a not_run attack has
+            # no stage and gets its refused row from the record once the child returns).
+            if stage == "load_target" and not emitter.has("model.load"):
+                emitter.emit("model.load", dict(load_detail), success=True)
+            if stage == "attack":
+                for attack_id in config.attack_ids:
+                    action = f"attack.execute.{attack_id}"
+                    if not emitter.has(action):
+                        emitter.emit(action, _attack_detail(config, attack_id))
+            elif stage.startswith("attack:"):
+                attack_id = stage.split(":", 1)[1]
+                action = f"attack.execute.{attack_id}"
+                if attack_id in config.attack_ids and not emitter.has(action):
+                    emitter.emit(action, _attack_detail(config, attack_id))
 
-        from sqlalchemy import MetaData, Table, select
+        from sqlalchemy import MetaData, Table
 
         campaign_table = Table(
             "ml_campaigns", MetaData(), autoload_with=ctx.session.get_bind(),
@@ -256,6 +1245,7 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
         ).mappings().one()
         baseline_run_id = campaign_row.get("baseline_run_id")
         parent_run_id = campaign_row.get("parent_run_id")
+        is_verify = job.type == "verify.replay"
 
         def is_cancelled() -> bool:
             from redsim.db.session import get_session
@@ -270,179 +1260,73 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
                     or live_run.status == "cancelled"
                 )
 
-        if str(target.value).startswith("bundled:"):
-            record = run_campaign_sandboxed(
-                config,
-                sink,
-                on_stage=on_stage,
-                is_cancelled=is_cancelled,
-                baseline_run_id=baseline_run_id,
-                parent_run_id=parent_run_id,
-            )
-        else:
-            from redsim.services.ml_models import uploaded_model_file
+        def complete(status: str, *, success: bool, record: CampaignRecord | None,
+                     error_class: str | None = None, n_findings: int = 0) -> None:
+            emitter.emit("job.complete", {
+                "status": status,
+                "n_findings": n_findings,
+                "n_artifacts": len(sink.ids),
+                "n_measurements": len(record.measurements) if record is not None else 0,
+                "n_observations": len(record.observations) if record is not None else 0,
+                "stages_done": list(record.stages_done) if record is not None else list(tracker.done),
+                "completeness": record.completeness if record is not None else "partial",
+                "envelope_sha256": sink._hashes.get("run_record.json"),
+                "error_class": error_class,
+            }, success=success)
 
-            with uploaded_model_file(target, ctx.blob_store) as (
-                materialized_path,
-                materialized_detail,
-            ):
+        try:
+            if str(target.value).startswith("bundled:"):
                 record = run_campaign_sandboxed(
                     config,
                     sink,
-                    target_file=materialized_path,
-                    target_detail=materialized_detail,
                     on_stage=on_stage,
                     is_cancelled=is_cancelled,
                     baseline_run_id=baseline_run_id,
                     parent_run_id=parent_run_id,
+                    job_id=job_id,
                 )
+            else:
+                from redsim.services.ml_models import uploaded_model_file
+
+                with uploaded_model_file(target, ctx.blob_store) as (
+                    materialized_path,
+                    materialized_detail,
+                ):
+                    record = run_campaign_sandboxed(
+                        config,
+                        sink,
+                        target_file=materialized_path,
+                        target_detail=materialized_detail,
+                        on_stage=on_stage,
+                        is_cancelled=is_cancelled,
+                        baseline_run_id=baseline_run_id,
+                        parent_run_id=parent_run_id,
+                        job_id=job_id,
+                    )
+        except (SandboxTimeout, SandboxKilled, EnvelopeInvalid) as exc:
+            # Spec 10.6: a typed infrastructure failure, never a model outcome. The files the child
+            # had written are already under ml/partial/ (the sandbox persisted them through the sink).
+            error_class = type(exc).__name__
+            stage_status = "timed_out" if isinstance(exc, SandboxTimeout) else "failed"
+            error = f"{error_class}: {exc}"
+            tracker.aborted(stage_status, error)
+            if is_verify:
+                _verify_inconclusive_on_failure(ctx, job=job, error=error)
+            if not emitter.has("model.load") and "load_target" not in tracker.done:
+                emitter.emit("model.load", {**load_detail, "reason": error, "error_class": error_class},
+                             success=False)
+            complete("failed", success=False, record=None, error_class=error_class)
+            # Body writes must survive task_context's failure-path rollback.
+            ctx.session.commit()
+            raise
+
         # run_campaign is storage-agnostic and allocates a local id. The
         # platform run id is authoritative at this boundary.
         record = record.model_copy(update={"run_id": ctx.run_id})
-        if baseline_run_id and record.status == "succeeded" and record.score is not None:
-            from redsim.db.models import Artifact
-
-            baseline_artifact = ctx.session.execute(select(Artifact).where(
-                Artifact.run_id == baseline_run_id,
-                Artifact.kind == "ml.run_record",
-            )).scalar_one_or_none()
-            if baseline_artifact is None:
-                raise RuntimeError("verify baseline campaign record is missing")
-            baseline_bytes = ctx.blob_store.get(str(baseline_artifact.location))
-            if isinstance(baseline_bytes, str):
-                baseline_bytes = baseline_bytes.encode("utf-8")
-            if hashlib.sha256(baseline_bytes).hexdigest() != baseline_artifact.sha256:
-                raise RuntimeError("verify baseline ml.run_record digest mismatch")
-            baseline_record = CampaignRecord.model_validate_json(baseline_bytes)
-            if baseline_record.score is None:
-                raise RuntimeError("verify baseline score is unavailable")
-            baseline_provenance = baseline_record.provenance
-            record_provenance = record.provenance
-            mismatch = (
-                baseline_provenance is None
-                or record_provenance is None
-                or baseline_provenance.model_sha256 != record_provenance.model_sha256
-                or baseline_provenance.sample_indices_sha256
-                != record_provenance.sample_indices_sha256
-                or baseline_record.settings_hash != record.settings_hash
-            )
-            if mismatch:
-                failed = record.model_dump(mode="json")
-                failed.update({
-                    "status": "failed",
-                    "error": "verify identity mismatch: model, sample, or settings changed",
-                    "score": None,
-                    "score_status": {
-                        "state": "unavailable",
-                        "reason": "verify identity mismatch",
-                    },
-                    "completeness": "partial",
-                    "missing": ["verify model, sample, or settings identity mismatch"],
-                })
-                record = CampaignRecord.model_validate(failed)
-            else:
-                # A partial score on either side (mri is None) or an
-                # incompatible pair leaves the delta unavailable, recorded in
-                # the run's limitations. The verification outcome below is
-                # projected from the measurements and does not need it.
-                record = _attach_verify_delta(
-                    record, baseline_record, baseline_run_id=str(baseline_run_id),
-                )
-        from redsim.ml.reporting import render_campaign_reports
-
-        for name, data, content_type in render_campaign_reports(record):
-            sink.put(name, data, content_type)
-        record_json = record.model_dump_json(indent=2).encode("utf-8")
-        sink.finalizing_run_record = True
-        sink.put("run_record.json", record_json, "application/json")
-        persist_campaign_record(ctx.session, ctx.run_id, record)
-        from redsim.services.ml_findings import project_campaign_findings
-
-        if job.type == "attack.run" and record.status == "succeeded":
-            project_campaign_findings(ctx.session, record)
-        elif job.type == "verify.replay" and record.status == "succeeded":
-            from redsim.db.models import Finding
-            from redsim.ml.schema import (
-                FindingVerify,
-                MeasuredDelta,
-                MLFindingDetail,
-            )
-            from redsim.ml.scoring import finding_inputs
-
-            finding = ctx.session.get(Finding, (job.detail or {}).get("finding_id"))
-            if finding is None:
-                raise RuntimeError("verify finding is missing")
-            schema_blob = dict(finding.schema_blob or {})
-            ml_detail = MLFindingDetail.model_validate(schema_blob.get("ml") or {})
-            inputs = finding_inputs(
-                record.config, record.measurements, ml_detail.attack_id,
-            )
-            outcome = (
-                "inconclusive"
-                if not inputs.denominator_ok
-                else "still_vulnerable"
-                if inputs.crosses_threshold
-                else "verified"
-            )
-            ml_detail.verify = FindingVerify(
-                run_id=ctx.run_id,
-                defense=record.config.defense,
-                outcome=outcome,
-                delta=record.score.delta if record.score is not None else None,
-            )
-            if (
-                record.score is not None
-                and record.score.delta is not None
-                and record.config.defense is not None
-                and record.settings_hash is not None
-            ):
-                score_delta = record.score.delta
-                measured = MeasuredDelta(
-                    verify_run_id=ctx.run_id,
-                    baseline_run_id=str(baseline_run_id),
-                    defense=record.config.defense,
-                    delta_mri=score_delta.delta,
-                    delta_subscores=score_delta.delta_subscores,
-                    delta_acc_clean=score_delta.delta_acc_clean,
-                    settings_hash=record.settings_hash,
-                    measured_at=datetime.now(UTC),
-                )
-                art_class = record.config.defense.art_class
-                recommendation_id = str(
-                    (job.detail or {}).get("recommendation_id") or ""
-                )
-                ml_detail.recommendations = [
-                    recommendation.model_copy(update={
-                        "validation": "measured",
-                        "measured": measured,
-                    })
-                    if (
-                        recommendation.id == recommendation_id
-                        and art_class in recommendation.references
-                    )
-                    else recommendation
-                    for recommendation in ml_detail.recommendations
-                ]
-            schema_blob["ml"] = ml_detail.model_dump(mode="json")
-            schema_blob["updated_at"] = datetime.now(UTC).isoformat()
-            finding.schema_blob = schema_blob
-            finding.validation_state = {
-                "verified": "poc_passed",
-                "still_vulnerable": "poc_failed",
-                "inconclusive": "inconclusive",
-            }[outcome]
-            finding.status = {
-                "verified": "fixed",
-                "still_vulnerable": "failed",
-                "inconclusive": "open",
-            }[outcome]
-            finding.validated_at = datetime.now(UTC)
-
-        run = ctx.session.get(Run, ctx.run_id)
-        stages = list(record.stages_done)
-        if record.status == "cancelled" or (
-            run is not None and run.status == "cancelled"
-        ):
+        if record.status == "cancelled" or is_cancelled():
+            tracker.aborted("cancelled", str(record.error or "campaign cancelled"),
+                            stages_done=list(record.stages_done))
+            complete("cancelled", success=False, record=record, error_class=None)
             # Preserve the authoritative partial record and campaign projection.
             # task_context will then observe the committed cancellation and
             # suppress its terminal success write.
@@ -451,25 +1335,84 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
                 "run_id": ctx.run_id,
                 "job_id": job_id,
                 "status": "cancelled",
-                "stages_done": stages,
+                "stages_done": list(record.stages_done),
             }
-        if run is not None and run.status != "cancelled":
-            run.stage_table = {
-                "stage": record.stage,
-                "stages_done": stages,
-                "jobs": {
-                    job_id: {
-                        "type": job.type,
-                        "status": "running",
-                        "stage": record.stage,
-                    }
-                },
-            }
+        if baseline_run_id and record.status == "succeeded" and record.score is not None:
+            baseline_record = _load_baseline_record(ctx, str(baseline_run_id))
+            record = _apply_verify_baseline(record, baseline_record, baseline_run_id=str(baseline_run_id))
+
+        harden_audit: dict[str, Any] | None = None
+        if record.status == "succeeded":
+            # Spec 10.8: only the harden stage of an attack / harden job leaves the boundary; a verify
+            # job re-measures and never narrates (its trail carries verify.execute, not harden.execute).
+            record, harden_audit = _parent_narrative(
+                ctx, config=config, record=record, sink=sink, redsim_config=redsim_config,
+                allowed=not is_verify,
+            )
+            if is_verify:
+                harden_audit = None
+
+        from redsim.ml.reporting import render_campaign_reports
+
+        for name, data, content_type in render_campaign_reports(record):
+            sink.put(name, data, content_type)
+        record_json = record.model_dump_json(indent=2).encode("utf-8")
+        sink.finalizing_run_record = True
+        sink.put("run_record.json", record_json, "application/json")
+        persist_campaign_record(ctx.session, ctx.run_id, record)
+
+        n_findings = 0
+        verify_summary: dict[str, Any] | None = None
+        _emit_record_audit(emitter, config=config, record=record, sink=sink, load_detail=load_detail,
+                           harden_audit=harden_audit)
+        if job.type == "attack.run" and record.status == "succeeded":
+            from redsim.services.ml_findings import project_campaign_findings
+
+            n_findings = len(project_campaign_findings(ctx.session, record))
+        elif job.type in {"explain.run", "harden.recommend"} and record.status == "succeeded":
+            n_findings = 1 if _merge_followon(ctx, job=job, record=record, sink=sink) else 0
+        elif is_verify:
+            verify_summary = _project_verify(
+                ctx, job=job, record=record, baseline_run_id=baseline_run_id, emitter=emitter,
+            )
+            n_findings = 1
+        emitter.emit("report.render", {
+            "formats": list(REPORT_FORMATS),
+            "artifact_ids": {f"report.{ext}": sink.ids.get(f"report.{ext}") for ext in REPORT_FORMATS},
+            "sha256": {f"report.{ext}": sink._hashes.get(f"report.{ext}") for ext in REPORT_FORMATS},
+        })
+
         if record.status == "failed":
+            failed_class = _error_class(record.error)
+            tracker.aborted("failed", record.error or "ML campaign failed", stages_done=list(record.stages_done))
+            complete("failed", success=False, record=record, error_class=failed_class, n_findings=n_findings)
+            ctx.session.commit()
             raise RuntimeError(record.error or "ML campaign failed")
+
+        tracker.finish(record)
+        complete("succeeded", success=True, record=record, n_findings=n_findings)
         logger.info("ML campaign completed run=%s job=%s", ctx.run_id, job_id)
-        return {"run_id": ctx.run_id, "job_id": job_id,
-                "status": record.status, "stages_done": stages}
+        result: dict[str, Any] = {
+            "run_id": ctx.run_id, "job_id": job_id, "status": record.status,
+            "stages_done": list(record.stages_done), "n_findings": n_findings,
+        }
+        if verify_summary is not None:
+            result["verify"] = {k: verify_summary[k] for k in ("outcome", "validation_state", "status")}
+        return result
 
 
-__all__ = ["DatabaseArtifactSink", "ml_campaign_run"]
+__all__ = [
+    "DELTA_UNAVAILABLE_LIMITATION",
+    "HARDEN_COMPLETION_NAME",
+    "HARDEN_NARRATIVE_NAME",
+    "HARDEN_PROMPT_NAME",
+    "NARRATIVE_TASK",
+    "PARTIAL_PREFIX",
+    "REPORT_FORMATS",
+    "STAGE_STATUSES",
+    "VERIFY_STATUS_MAP",
+    "DatabaseArtifactSink",
+    "artifact_kind",
+    "expected_stages",
+    "ml_campaign_run",
+]
