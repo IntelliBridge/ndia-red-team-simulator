@@ -306,6 +306,31 @@ describe("network failure hygiene", () => {
     expect(error.cause).toBeUndefined();
   });
 
+  it("becomes service_unavailable when the body is severed after the headers arrive", async () => {
+    // The abort timeout cuts the body stream too, so a response whose headers
+    // landed in time and whose body did not throws on the read. Read outside
+    // the try, that throw escaped untyped and reached a component as
+    // unknown_error rather than the 503 this function promises.
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.reject(new Error(`aborted reading from ${API_HOST}`)),
+    });
+    const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });
+    const error = (await upstreamFetch(ctx, {
+      method: "GET",
+      segments: ["v1", "runs"],
+    }).catch((e: unknown) => e)) as Error & { code: string; cause?: unknown };
+
+    expect(error.code).toBe("SERVICE_UNAVAILABLE");
+    expect(upstreamError(error)).toMatchObject({ status: 503, code: "service_unavailable" });
+    // The same hygiene as a failed connection: no host, no cause, one line.
+    expect(error.message).not.toContain(API_HOST);
+    expect(error.cause).toBeUndefined();
+    expect(logged.mock.calls.flat().map(String).join(" ")).not.toContain(API_HOST);
+  });
+
   it("logs neither the credential headers, the host, nor the fetch error text", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
     fetchMock.mockRejectedValue(new Error(`connect ECONNREFUSED ${API_HOST}:8000`));

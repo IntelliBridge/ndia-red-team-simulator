@@ -195,6 +195,7 @@ export async function upstreamFetch<T>(ctx: ProcedureContext, init: UpstreamRequ
   if (init.body !== undefined) headers["Content-Type"] = "application/json";
 
   let response: Response;
+  let text: string;
   try {
     response = await fetch(url, {
       method: init.method,
@@ -203,6 +204,12 @@ export async function upstreamFetch<T>(ctx: ProcedureContext, init: UpstreamRequ
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
       signal: AbortSignal.timeout(init.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
+    // Inside the same try as the fetch, because the same abort signal cuts the
+    // body stream: a response whose headers arrived before the timeout and
+    // whose body did not throws here. Read outside, that throw escaped as an
+    // untyped error, skipped the refusal below and reached a component as
+    // unknown_error rather than the 503 this function promises.
+    text = await response.text();
   } catch {
     // Deliberately not `catch (cause)`: the cause of a fetch failure names the
     // API host, and this line is the one that reaches the logs.
@@ -216,7 +223,6 @@ export async function upstreamFetch<T>(ctx: ProcedureContext, init: UpstreamRequ
     );
   }
 
-  const text = await response.text();
   if (!response.ok) throw refuse(response.status, blockFromBody(text, response.status), ctx.requestId);
   if (!text) return {} as T;
   try {
