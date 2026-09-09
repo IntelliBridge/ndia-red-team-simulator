@@ -21,20 +21,15 @@ name: Deploy to AWS
 # cluster that runs only api + web (no worker service yet) still deploys.
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "redsim/**"
-      - "web/**"
-      - "packages/**"
-      - "deploy/Dockerfile.*"
-      - "deploy/docker-compose.yml"
-      - "deploy/runtime/identity/**"
-      - "pyproject.toml"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/deploy-aws.yml"
+  # Manual only since 2026-09-09: the host deploys from source on every push
+  # to main (deploy-host.yml). Run this to refresh the dependency images in
+  # ECR when pyproject.toml or a Dockerfile changes.
   workflow_dispatch:
-
+    inputs:
+      run_e2e:
+        description: "unused; kept for the dispatch form"
+        type: boolean
+        default: false
 concurrency:
   group: deploy-aws-${{ github.ref }}
   cancel-in-progress: false
