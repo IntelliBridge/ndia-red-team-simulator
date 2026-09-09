@@ -28,7 +28,6 @@ const NAV_LINKS: { href: string; label: string }[] = [
   { href: "/models", label: "Models" },
   { href: "/runs", label: "Runs" },
   { href: "/tests", label: "Tests" },
-  { href: "/projects", label: "Projects" },
   { href: "/auth-profiles", label: "Auth Profiles" },
   { href: "/findings", label: "Findings" },
   { href: "/logs", label: "Logs" },

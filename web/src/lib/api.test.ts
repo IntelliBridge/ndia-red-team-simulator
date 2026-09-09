@@ -92,6 +92,26 @@ describe("api() request shaping", () => {
     expect(headerOf(init, "X-Redsim-CSRF")).toBeUndefined();
   });
 
+  it("drops a stale localStorage bearer on 401 and retries once on the cookie", async () => {
+    localStorage.setItem("redsim_token", "stale-not-a-jwt");
+    fetchMock
+      .mockResolvedValueOnce(new Response('{"detail":"invalid token"}', { status: 401 }))
+      .mockResolvedValueOnce(ok(JSON.stringify({ runs: [] })));
+    const body = await api<{ runs: unknown[] }>("/v1/runs");
+    expect(body.runs).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const retry = lastInit();
+    expect(headerOf(retry, "Authorization")).toBeUndefined();
+    expect(retry.credentials).toBe("include");
+    expect(localStorage.getItem("redsim_token")).toBeNull();
+  });
+
+  it("does not retry a 401 for an explicitly supplied bearer", async () => {
+    fetchMock.mockResolvedValue(new Response("nope", { status: 401 }));
+    await expect(api("/v1/runs", { token: "explicit" })).rejects.toBeInstanceOf(ApiError);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("echoes the CSRF cookie header on cookie-authed mutations", async () => {
     fetchMock.mockResolvedValue(ok("{}"));
     document.cookie = "redsim_api_session=opaque";
