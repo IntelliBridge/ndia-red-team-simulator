@@ -21,7 +21,11 @@ vi.mock("@/hooks/useFinding", () => ({
   useFinding,
 }));
 vi.mock("@/hooks/useMlCatalog", () => ({
-  useDefenses: () => ({ data: [{ id: "jpeg", name: "JPEG preprocessing" }] }),
+  useDefenses: () => ({
+    data: [
+      { id: "jpeg", name: "JPEG preprocessing", art_class: "JpegCompression" },
+    ],
+  }),
 }));
 vi.mock("@/lib/api", async () => ({
   ...(await vi.importActual("@/lib/api")),
@@ -104,9 +108,12 @@ describe("/findings/[id]", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
     await waitFor(() =>
-      expect(verify).toHaveBeenCalledWith("fixture-finding", "jpeg", {
-        quality: 72,
-      }),
+      expect(verify).toHaveBeenCalledWith(
+        "fixture-finding",
+        "jpeg",
+        { quality: 72 },
+        "r1",
+      ),
     );
   });
   it("renders tabular evidence as a recorded diff", () => {

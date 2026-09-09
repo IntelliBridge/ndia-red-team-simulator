@@ -1,5 +1,6 @@
 {
   "run_id": "fixture-run-001",
+  "project_id": "default",
   "status": "succeeded",
   "stage": "report",
   "stages_done": ["load_target", "sample", "clean_eval", "attack", "control", "explain", "interpret", "recommend", "report"],
@@ -26,14 +27,11 @@
   "settings_hash": "fixture-settings-hash",
   "target": {
     "id": "fixture-model",
-    "project_id": "default",
     "name": "Illustrative image classifier",
-    "source": "bundled",
-    "modality": "image",
-    "format": "onnx",
-    "sha256": "fixture-sha256",
-    "manifest": {"dataset_id": "fixture-public-image", "dataset_revision": "fixture-revision", "clean_accuracy": 0.82, "clean_n": 50, "gradients": false},
-    "status": "available"
+    "domain": "image",
+    "status": "available",
+    "reason": null,
+    "metadata": {"dataset_id": "fixture-public-image", "dataset_revision": "fixture-revision", "clean_accuracy": 0.82, "clean_n": 50, "gradients": false, "framework_versions": {"onnxruntime": "1.20.1"}}
   },
   "attacks": [{"id": "fgsm", "name": "FGSM", "domain": "image", "family": "evasion", "description": "Illustrative fixture attack", "params_schema": [], "references": [], "phase": "A", "access": "white-box", "requires_gradients": true, "status": "available"}],
   "measurements": [
@@ -47,7 +45,24 @@
   "limitations": ["FIXTURE — illustrative values are not evidence for a deployed model."],
   "provenance": {"dataset_id": "fixture-public-image", "dataset_revision": "fixture-revision", "seed": 7},
   "reviewer_notes": null,
-  "completeness": {"status": "complete", "missing": []},
+  "completeness": "complete",
+  "missing": [],
   "score": {"mri": 0.58, "grade": "C", "subscores": {"S_acc": 0.82, "S_asr": 0.59, "S_eps": 0.5, "S_conf": 0.55, "S_expl": 0.45}, "per_attack": {"fgsm": 0.58}, "weights": {"acc": 0.35, "asr": 0.25, "eps": 0.2, "conf": 0.1, "expl": 0.1}, "reading": "Robustness under the recorded in-scope attack at the reference budget.", "reference_eps": 0.03, "eps_grid": [0.01, 0.03, 0.1], "attack_ids": ["fgsm"]},
-  "curve": [{"attack_id": "fgsm", "family": "evasion", "eps": 0.03, "accuracy": 0.48, "n": 50, "n_correct": 24}, {"attack_id": "noise_control", "family": "control", "eps": 0.03, "accuracy": 0.76, "n": 50, "n_correct": 38}]
+  "curve": [
+    {
+      "attack_id": "fgsm",
+      "norm": "linf",
+      "eps_grid": [0.01, 0.03, 0.1],
+      "reference_eps": 0.03,
+      "clean": {"accuracy": 0.82, "n": 50, "n_correct": 41},
+      "points": [
+        {"eps": 0.01, "accuracy": 0.66, "n": 50, "n_correct": 33, "n_clean_correct": 41, "n_flipped_from_clean": 8, "asr": 0.2},
+        {"eps": 0.03, "accuracy": 0.48, "n": 50, "n_correct": 24, "n_clean_correct": 41, "n_flipped_from_clean": 17, "asr": 0.41},
+        {"eps": 0.1, "accuracy": 0.22, "n": 50, "n_correct": 11, "n_clean_correct": 41, "n_flipped_from_clean": 30, "asr": 0.73}
+      ],
+      "control": [
+        {"eps": 0.03, "accuracy": 0.76, "n": 50, "n_correct": 38, "n_clean_correct": 41, "n_flipped_from_clean": 3, "asr": 0.07}
+      ]
+    }
+  ]
 }
