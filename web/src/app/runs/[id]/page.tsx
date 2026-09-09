@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import useSWR from "swr";
 import {
   AuditChainBadge,
   LabelBadge,
@@ -15,6 +16,7 @@ import {
   type StageEntry,
 } from "@redsim/design-system";
 import {
+  api,
   artifactUrl,
   ApiError,
   cancelRun,
@@ -25,20 +27,77 @@ import {
   reportUrl,
   startCampaign,
   verifyFinding,
+  type ArtifactRow,
   type Campaign,
   type Comparison,
   type DefenseInfo,
+  type Finding,
+  type RunDetail,
 } from "@/lib/api";
 import { useCampaign } from "@/hooks/useCampaign";
+import { useLlmScorecard } from "@/hooks/useLlm";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
 import { useRunEvents } from "@/hooks/useRunEvents";
 import { useDefenses } from "@/hooks/useMlCatalog";
+import { LlmScorecardPanel } from "./llm-scorecard";
+
+// Run.scanner / stage_table.kind of a garak probe run (redsim/services/ml_llm.py
+// LLM_SCANNER / LLM_RUN_KIND). Such a run has no campaign record: /campaign
+// answers 404 campaign_not_found (or 409 llm_target_required), so the page
+// falls back to GET /v1/runs/{id} to learn what kind of run it is.
+const LLM_SCANNER = "ml.llm_probe";
+const LLM_RUN_KIND = "llm_probe";
+const ACTIVE_RUN = new Set(["queued", "running"]);
+const REPORT_KIND_PREFIX = "ml.report_";
 
 export default function RunPage({ params }: { params: { id: string } }) {
   const authed = useRequireAuth();
   const { data, error, mutate } = useCampaign(authed ? params.id : "");
   const { roles } = useRoles();
+  const campaignMissing =
+    error instanceof ApiError && (error.status === 404 || error.status === 409);
+  const { data: runDetail, error: runError } = useSWR<RunDetail>(
+    authed && campaignMissing
+      ? `/v1/runs/${encodeURIComponent(params.id)}`
+      : null,
+    (p: string) => api<RunDetail>(p),
+    {
+      refreshInterval: (run?: RunDetail) =>
+        run?.status && ACTIVE_RUN.has(run.status) ? 5000 : 0,
+    },
+  );
+  const isLlmRun =
+    data?.config?.modality === "llm" ||
+    runDetail?.scanner === LLM_SCANNER ||
+    runDetail?.stage_table?.kind === LLM_RUN_KIND;
+  const runStatus = data?.status ?? runDetail?.status ?? null;
+  const llmActive = !runStatus || ACTIVE_RUN.has(runStatus);
+  const llm = useLlmScorecard(authed && isLlmRun ? params.id : null, {
+    // Poll while the run is active; on a terminal run without a scorecard
+    // there is nothing to wait for (job events still revalidate below).
+    refreshInterval: llmActive ? 5000 : 0,
+  });
+  const { data: llmArtifacts, mutate: mutateArtifacts } = useSWR<{
+    artifacts: ArtifactRow[];
+    count: number;
+  }>(
+    authed && isLlmRun
+      ? `/v1/runs/${encodeURIComponent(params.id)}/artifacts`
+      : null,
+    (p: string) => api<{ artifacts: ArtifactRow[]; count: number }>(p),
+    { refreshInterval: llmActive ? 10000 : 0 },
+  );
+  const { data: llmFindings, mutate: mutateFindings } = useSWR<{
+    findings: Finding[];
+    count: number;
+  }>(
+    authed && isLlmRun && !data
+      ? `/v1/findings?run=${encodeURIComponent(params.id)}`
+      : null,
+    (p: string) => api<{ findings: Finding[]; count: number }>(p),
+    { refreshInterval: llmActive ? 10000 : 0 },
+  );
   const [stages, setStages] = useState<StageEntry[]>([]);
   const [notes, setNotes] = useState<string | null>(null);
   const [noteError, setNoteError] = useState("");
@@ -54,6 +113,11 @@ export default function RunPage({ params }: { params: { id: string } }) {
   useRunEvents(authed ? params.id : null, (event) => {
     if (event.type === "job") {
       void mutate();
+      if (isLlmRun) {
+        void llm.mutate();
+        void mutateArtifacts();
+        void mutateFindings();
+      }
       return;
     }
     if (!event.name) return;
@@ -69,18 +133,289 @@ export default function RunPage({ params }: { params: { id: string } }) {
               ? false
               : null,
       };
-      return [
-        ...current.filter((stage) => stage.name !== next.name),
-        next,
-      ];
+      return [...current.filter((stage) => stage.name !== next.name), next];
     });
     void mutate();
   });
 
+  const cancel = async () => {
+    if (
+      !window.confirm(
+        "Cancel this run? Recorded partial evidence will be preserved.",
+      )
+    )
+      return;
+    try {
+      setCancelError("");
+      await cancelRun(params.id);
+      await mutate();
+    } catch (e) {
+      setCancelError(String(e));
+    }
+  };
+  const panel = (number: number, title: string, children: React.ReactNode) => (
+    <div data-testid={`run-panel-${number}`} key={number}>
+      <PanelSection eyebrow={`${number}`.padStart(2, "0")} title={title}>
+        {children}
+      </PanelSection>
+    </div>
+  );
+
   if (!authed) return <p>Redirecting to sign in…</p>;
+
+  if (isLlmRun) {
+    // An LLM probe run: k/n scorecard, never an MRI (spec 15.9, D9). The
+    // campaign-only panels (MRI, eps curve, defenses, compare) do not apply.
+    const projectId = data?.project_id ?? runDetail?.project_id ?? "";
+    const llmRole = roles[projectId];
+    const stageTable = (runDetail?.stage_table ?? {}) as Record<
+      string,
+      unknown
+    >;
+    const stagesDone = Array.isArray(stageTable.stages_done)
+      ? (stageTable.stages_done as unknown[]).map(String)
+      : (data?.stages_done ?? []);
+    const stageError =
+      (typeof stageTable.error === "string" ? stageTable.error : null) ??
+      data?.error ??
+      null;
+    const probeIds = Array.isArray(stageTable.probe_ids)
+      ? (stageTable.probe_ids as unknown[]).map(String)
+      : [];
+    const artifacts = llmArtifacts?.artifacts ?? [];
+    const hasReport = artifacts.some((row) =>
+      String(row.kind ?? "").startsWith(REPORT_KIND_PREFIX),
+    );
+    const findings = data?.findings ?? llmFindings?.findings ?? [];
+    return (
+      <div className="space-y-4">
+        <header className="gap-4 flex flex-wrap items-end justify-between">
+          <div>
+            <div className="redsim-kicker">LLM probe review</div>
+            <h1 className="font-mono text-2xl">{params.id}</h1>
+            <div className="mt-2">
+              <RunStatusBadge status={runStatus ?? "queued"} />
+            </div>
+          </div>
+          <div className="gap-3 text-sm flex items-center">
+            {hasReport &&
+              (["html", "json", "md"] as const).map((ext) => (
+                <RoleGated key={ext} minRole="scanner" callerRole={llmRole}>
+                  <a
+                    className="text-primary underline"
+                    href={reportUrl(params.id, ext)}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {ext.toUpperCase()}
+                  </a>
+                </RoleGated>
+              ))}
+            {isCancellable(runStatus) && (
+              <RoleGated minRole="remediator" callerRole={llmRole}>
+                <button
+                  onClick={cancel}
+                  className="border-destructive/30 px-3 py-1 text-destructive border"
+                >
+                  Cancel run
+                </button>
+              </RoleGated>
+            )}
+          </div>
+        </header>
+        <StageTimeline stages={stages} />
+        {cancelError && (
+          <p className="border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive border">
+            {cancelError}
+          </p>
+        )}
+        <div className="space-y-4">
+          {panel(
+            1,
+            "Run status",
+            <div>
+              <p>
+                {runStatus === "queued"
+                  ? "Probe run is queued; the worker has not started it yet."
+                  : runStatus === "running"
+                    ? "Probe run in progress; this page refreshes while active."
+                    : runStatus === "succeeded"
+                      ? "Probe run complete; the k/n scorecard is below."
+                      : runStatus === "failed"
+                        ? "Probe run failed. Recorded partial artifacts are preserved."
+                        : runStatus === "cancelled"
+                          ? "Probe run was cancelled. Recorded partial artifacts are preserved."
+                          : runError
+                            ? "Run status unavailable."
+                            : "Resolving run status…"}
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {stagesDone.join(" · ") || "No completed stages recorded"}
+                {stageError ? ` — ${stageError}` : ""}
+              </p>
+              {probeIds.length > 0 && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {probeIds.length} probes requested: {probeIds.join(", ")}
+                </p>
+              )}
+              {runDetail?.completed_at && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  completed {runDetail.completed_at}
+                </p>
+              )}
+            </div>,
+          )}
+          {panel(
+            2,
+            "LLM probe scorecard",
+            <LlmScorecardPanel
+              response={llm.data}
+              ready={llm.ready}
+              error={llm.error}
+              runStatus={runStatus}
+              runError={stageError}
+            />,
+          )}
+          {panel(
+            3,
+            "Artifacts",
+            artifacts.length ? (
+              <table className="text-xs w-full text-left">
+                <thead>
+                  <tr>
+                    <th>Kind</th>
+                    <th>Size</th>
+                    <th>sha256</th>
+                    <th>Artifact</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {artifacts.map((row) => (
+                    <tr key={row.id} className="border-border border-t">
+                      <td className="font-mono">{row.kind ?? "—"}</td>
+                      <td>
+                        {typeof row.size_bytes === "number"
+                          ? `${row.size_bytes} B`
+                          : "—"}
+                      </td>
+                      <td className="font-mono text-muted-foreground break-all">
+                        {row.sha256 ? row.sha256.slice(0, 16) : "—"}
+                      </td>
+                      <td>
+                        <a
+                          href={artifactUrl(row.id)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-primary underline"
+                        >
+                          {row.id}
+                        </a>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {llmActive
+                  ? "No artifacts yet; they are written as the probe run progresses."
+                  : "No artifacts were recorded for this run."}
+              </p>
+            ),
+          )}
+          {panel(
+            4,
+            "Findings",
+            findings.length ? (
+              <table className="text-xs w-full text-left">
+                <thead>
+                  <tr>
+                    <th>Severity</th>
+                    <th>Status</th>
+                    <th>Finding</th>
+                    <th>Review</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {findings.map((finding) => (
+                    <tr key={finding.id} className="border-border border-t">
+                      <td>{finding.severity}</td>
+                      <td>{finding.status}</td>
+                      <td>
+                        <a
+                          href={`/findings/${finding.id}`}
+                          className="text-primary underline"
+                        >
+                          {finding.schema_blob.title ?? finding.id}
+                        </a>
+                      </td>
+                      <td>
+                        <RoleGated minRole="approver" callerRole={llmRole}>
+                          <button
+                            onClick={async () => {
+                              const reason = window.prompt(
+                                "Reason for dismissal",
+                              );
+                              if (!reason) return;
+                              try {
+                                setActionError("");
+                                await dismissFinding(
+                                  finding.id,
+                                  reason,
+                                  finding.status,
+                                );
+                                await Promise.all([mutate(), mutateFindings()]);
+                              } catch (cause) {
+                                setActionError(String(cause));
+                              }
+                            }}
+                            className="border-border px-2 py-1 border"
+                          >
+                            Dismiss
+                          </button>
+                        </RoleGated>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                {llmActive
+                  ? "Findings are raised when the probe run completes."
+                  : "No findings were raised for this run."}
+              </p>
+            ),
+          )}
+          {actionError && (
+            <p className="text-sm text-destructive">{actionError}</p>
+          )}
+          {panel(
+            5,
+            "Audit chain",
+            <AuditChainBadge
+              state={data?.audit?.state ?? "pending"}
+              events={data?.audit?.events}
+              chainId={`run:${params.id}`}
+            />,
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (error && campaignMissing && !runDetail && !runError)
+    // The campaign record is missing; wait for GET /v1/runs/{id} to say
+    // whether this is a probe run before reporting the campaign as absent.
+    return (
+      <div className="space-y-3">
+        <div className="h-8 w-64 animate-pulse bg-muted" />
+        <div className="h-40 animate-pulse bg-muted" />
+      </div>
+    );
   if (error)
     return (
-      <div className="border border-destructive/40 bg-destructive/10 p-4 text-sm">
+      <div className="border-destructive/40 bg-destructive/10 p-4 text-sm border">
         {error instanceof ApiError
           ? ({
               403: "Access denied for this campaign.",
@@ -125,32 +460,9 @@ export default function RunPage({ params }: { params: { id: string } }) {
       setNoteError(String(e));
     }
   };
-  const cancel = async () => {
-    if (
-      !window.confirm(
-        "Cancel this run? Recorded partial evidence will be preserved.",
-      )
-    )
-      return;
-    try {
-      setCancelError("");
-      await cancelRun(params.id);
-      await mutate();
-    } catch (e) {
-      setCancelError(String(e));
-    }
-  };
-  const panel = (number: number, title: string, children: React.ReactNode) => (
-    <div data-testid={`run-panel-${number}`} key={number}>
-      <PanelSection eyebrow={`${number}`.padStart(2, "0")} title={title}>
-        {children}
-      </PanelSection>
-    </div>
-  );
-
   return (
     <div className="space-y-4">
-      <header className="flex flex-wrap items-end justify-between gap-4">
+      <header className="gap-4 flex flex-wrap items-end justify-between">
         <div>
           <div className="redsim-kicker">campaign review</div>
           <h1 className="font-mono text-2xl">{params.id}</h1>
@@ -158,7 +470,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             <RunStatusBadge status={campaign.status} />
           </div>
         </div>
-        <div className="flex items-center gap-3 text-sm">
+        <div className="gap-3 text-sm flex items-center">
           {(["html", "json", "md"] as const).map((ext) => (
             <RoleGated key={ext} minRole="scanner" callerRole={role}>
               <a
@@ -175,7 +487,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             <RoleGated minRole="remediator" callerRole={role}>
               <button
                 onClick={cancel}
-                className="border border-destructive/30 px-3 py-1 text-destructive"
+                className="border-destructive/30 px-3 py-1 text-destructive border"
               >
                 Cancel run
               </button>
@@ -185,7 +497,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
       </header>
       <StageTimeline stages={stages} />
       {cancelError && (
-        <p className="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <p className="border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive border">
           {cancelError}
         </p>
       )}
@@ -216,7 +528,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
         {panel(
           2,
           "Campaign settings",
-          <dl className="grid grid-cols-2 gap-4 text-sm md:grid-cols-3">
+          <dl className="gap-4 text-sm md:grid-cols-3 grid grid-cols-2">
             <div>
               <dt className="redsim-kicker">attacks</dt>
               <dd>{campaign.config.attack_ids.join(", ")}</dd>
@@ -239,9 +551,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             </div>
             <div>
               <dt className="redsim-kicker">finding ASR threshold</dt>
-              <dd>
-                {campaign.config.finding_asr_threshold ?? "not recorded"}
-              </dd>
+              <dd>{campaign.config.finding_asr_threshold ?? "not recorded"}</dd>
             </div>
             <div>
               <dt className="redsim-kicker">dataset</dt>
@@ -285,7 +595,9 @@ export default function RunPage({ params }: { params: { id: string } }) {
             <div>
               <dt className="redsim-kicker">framework versions</dt>
               <dd>
-                {Object.entries(campaign.target.metadata.framework_versions ?? {})
+                {Object.entries(
+                  campaign.target.metadata.framework_versions ?? {},
+                )
                   .map(([key, value]) => `${key}=${value}`)
                   .join(", ") || "not recorded"}
               </dd>
@@ -306,15 +618,14 @@ export default function RunPage({ params }: { params: { id: string } }) {
             curve={campaign.curve}
             unavailableReason={
               campaign.score_status?.reason ??
-              (campaign.missing.join(", ") ||
-                "required evidence is incomplete")
+              (campaign.missing.join(", ") || "required evidence is incomplete")
             }
           />,
         )}
         {panel(
           4,
           "Measurements & robustness",
-          <div className="grid gap-5 lg:grid-cols-[1.2fr_1fr]">
+          <div className="gap-5 lg:grid-cols-[1.2fr_1fr] grid">
             <MeasurementTable measurements={campaign.measurements} />
             <RobustnessCurve points={campaign.curve} />
           </div>,
@@ -322,7 +633,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
         {panel(
           5,
           "Observation gallery",
-          <div className="grid gap-3 md:grid-cols-2">
+          <div className="gap-3 md:grid-cols-2 grid">
             {campaign.observations.map((observation) => (
               <ObservationCard
                 key={observation.id}
@@ -339,7 +650,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             {campaign.interpretation.map((item) => (
               <div
                 key={item.id}
-                className="border-l-2 border-accent pl-3 text-sm"
+                className="border-accent pl-3 text-sm border-l-2"
               >
                 <LabelBadge variant="inferred" />{" "}
                 <span className="ml-2">{item.statement}</span>
@@ -364,11 +675,13 @@ export default function RunPage({ params }: { params: { id: string } }) {
           "Candidate actions",
           <div className="space-y-3">
             {campaign.recommendations.map((item) => (
-              <div key={item.id} className="border border-border p-3 text-sm">
+              <div key={item.id} className="border-border p-3 text-sm border">
                 <LabelBadge
                   variant={item.measured ? "measured" : "candidate"}
                   measuredDelta={
-                    item.measured ? (item.measured.delta_mri ?? null) : undefined
+                    item.measured
+                      ? (item.measured.delta_mri ?? null)
+                      : undefined
                   }
                 />
                 <div className="mt-2 font-semibold">{item.title}</div>
@@ -404,7 +717,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                         }),
                       )
                     }
-                    className="mt-2 border border-input bg-background p-1"
+                    className="mt-2 border-input bg-background p-1 border"
                   >
                     <option value="">Select defense</option>
                     {availableDefenses.map((defense: DefenseInfo) => (
@@ -429,10 +742,8 @@ export default function RunPage({ params }: { params: { id: string } }) {
                         setActionError(String(cause));
                       }
                     }}
-                    disabled={
-                      !item.finding_id || !defenseSelections[item.id]
-                    }
-                    className="ml-2 border border-border px-2 py-1"
+                    disabled={!item.finding_id || !defenseSelections[item.id]}
+                    className="ml-2 border-border px-2 py-1 border"
                   >
                     Verify
                   </button>
@@ -450,7 +761,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
         {panel(
           8,
           "Limitations",
-          <ul className="list-disc space-y-1 pl-5 text-sm">
+          <ul className="space-y-1 pl-5 text-sm list-disc">
             {(campaign.limitations.length
               ? campaign.limitations
               : ["Limitations were not recorded; evidence is incomplete."]
@@ -463,7 +774,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
           9,
           "Provenance",
           <div>
-            <dl className="grid grid-cols-2 gap-3 text-sm">
+            <dl className="gap-3 text-sm grid grid-cols-2">
               {Object.entries(campaign.provenance ?? {}).map(([key, value]) => (
                 <div key={key}>
                   <dt className="redsim-kicker">{key}</dt>
@@ -490,7 +801,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                   );
                   window.location.assign(`/runs/${result.run_id}`);
                 }}
-                className="mt-3 border border-border px-3 py-2 text-sm"
+                className="mt-3 border-border px-3 py-2 text-sm border"
               >
                 Rerun same config
               </button>
@@ -507,7 +818,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
               onChange={(event) => setNotes(event.target.value)}
               readOnly={!canAnnotate}
               aria-readonly={!canAnnotate}
-              className="min-h-24 w-full rounded-sm border border-input bg-background p-3 text-sm"
+              className="min-h-24 rounded-sm border-input bg-background p-3 text-sm w-full border"
             />
             <RoleGated minRole="remediator" callerRole={role}>
               <button
@@ -530,7 +841,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
         {panel(
           11,
           "Findings",
-          <table className="w-full text-left text-xs">
+          <table className="text-xs w-full text-left">
             <thead>
               <tr>
                 <th>Severity</th>
@@ -542,7 +853,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             </thead>
             <tbody>
               {campaign.findings?.map((finding) => (
-                <tr key={finding.id} className="border-t border-border">
+                <tr key={finding.id} className="border-border border-t">
                   <td>{finding.severity}</td>
                   <td>{finding.schema_blob.ml?.attack_id ?? "—"}</td>
                   <td>{finding.schema_blob.ml?.first_success_eps ?? "—"}</td>
@@ -572,7 +883,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                             setActionError(String(cause));
                           }
                         }}
-                        className="border border-border px-2 py-1"
+                        className="border-border px-2 py-1 border"
                       >
                         Dismiss
                       </button>
@@ -592,7 +903,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
               <input
                 value={compareId}
                 onChange={(event) => setCompareId(event.target.value)}
-                className="ml-2 border border-input bg-background p-2"
+                className="ml-2 border-input bg-background p-2 border"
               />
             </label>
             <button
@@ -607,12 +918,12 @@ export default function RunPage({ params }: { params: { id: string } }) {
                   setCompareError(String(e));
                 }
               }}
-              className="ml-2 border border-border px-3 py-2 text-sm"
+              className="ml-2 border-border px-3 py-2 text-sm border"
             >
               Compare
             </button>
             {compareResult?.mode === "verify_delta" && (
-              <div className="mt-3 border border-border p-3 text-sm">
+              <div className="mt-3 border-border p-3 text-sm border">
                 <strong>Measured verify comparison</strong>
                 <p>ΔMRI {compareResult.delta_mri ?? "not recorded"}</p>
                 {Object.entries(compareResult.delta_dimensions ?? {}).map(
@@ -633,7 +944,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                   {compareResult.delta_acc_clean?.delta ?? "not recorded"}
                 </p>
                 {!!compareResult.delta_families?.length && (
-                  <table className="mt-2 w-full text-left text-xs">
+                  <table className="mt-2 text-xs w-full text-left">
                     <thead>
                       <tr>
                         <th>Family</th>
@@ -645,7 +956,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                       {compareResult.delta_families.map((family) => (
                         <tr
                           key={family.family}
-                          className="border-t border-border"
+                          className="border-border border-t"
                         >
                           <td>{family.family}</td>
                           <td>
@@ -662,9 +973,9 @@ export default function RunPage({ params }: { params: { id: string } }) {
               </div>
             )}
             {compareResult?.mode === "side_by_side" && (
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
+              <div className="mt-3 gap-3 md:grid-cols-2 grid">
                 {(compareResult.scorecards ?? []).map((scorecard, index) => (
-                  <div key={index} className="border border-border p-3 text-sm">
+                  <div key={index} className="border-border p-3 text-sm border">
                     <strong>
                       Scorecard {index + 1}
                       {scorecard.run_id ? ` · ${scorecard.run_id}` : ""}
