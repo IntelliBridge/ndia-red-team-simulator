@@ -4,6 +4,17 @@
 import type { ModelTarget } from "@/lib/api";
 import { modelDisplayName } from "@/lib/api";
 import { isLlmTarget } from "@/lib/llm";
+import {
+  coverageNote,
+  coverageOf,
+  facetValues as facetValuesOf,
+  numericOrder,
+  stableSort,
+  textOrder,
+  type Comparator,
+  type SortCoverage as Coverage,
+  type SortDirection as Direction,
+} from "@/lib/list-sort";
 
 export type ModelFilters = {
   /** Case-insensitive match on the display name, the id, or the LLM model id. */
@@ -26,7 +37,7 @@ export type SortKey =
   | "score"
   | "clean_accuracy";
 
-export type SortDirection = "asc" | "desc";
+export type SortDirection = Direction;
 
 export type ModelSort = { key: SortKey; direction: SortDirection };
 
@@ -86,7 +97,7 @@ export function modelCleanAccuracy(m: ModelTarget): number | null {
 
 /** Distinct values of one facet across the rows, sorted, for the filter selects. */
 export function facetValues(models: ModelTarget[], pick: (m: ModelTarget) => string): string[] {
-  return Array.from(new Set(models.map(pick).filter(Boolean))).sort();
+  return facetValuesOf(models, pick);
 }
 
 export function filterModels(models: ModelTarget[], filters: ModelFilters): ModelTarget[] {
@@ -106,54 +117,22 @@ export function hasActiveFilters(filters: ModelFilters): boolean {
   return Boolean(filters.query.trim() || filters.domain || filters.status || filters.source);
 }
 
-/** How many of the shown rows carry the metric a numeric sort orders by; null for a text sort. */
-export type SortCoverage = {
-  key: "score" | "clean_accuracy";
-  /** Rows that carry the metric. */
-  withValue: number;
-  total: number;
-  /** The metric as a sentence subject, and where it comes from, for the toolbar note. */
-  metric: string;
-  source: string;
-};
+/** The coverage of a numeric sort over the shown rows; null for a text sort. */
+export type SortCoverage = Coverage;
 
 export function sortCoverage(models: ModelTarget[], sort: ModelSort): SortCoverage | null {
   if (sort.key === "score") {
-    return {
-      key: "score",
-      withValue: models.filter((m) => modelScore(m) !== null).length,
-      total: models.length,
-      metric: "The robustness index",
-      source: "A scored campaign records it.",
-    };
+    return coverageOf(models, modelScore, "The robustness index", "A scored campaign records it.");
   }
   if (sort.key === "clean_accuracy") {
-    return {
-      key: "clean_accuracy",
-      withValue: models.filter((m) => modelCleanAccuracy(m) !== null).length,
-      total: models.length,
-      metric: "Clean accuracy",
-      source: "The asset manifest records it.",
-    };
+    return coverageOf(models, modelCleanAccuracy, "Clean accuracy", "The asset manifest records it.");
   }
   return null;
 }
 
-/**
- * The toolbar note for a numeric sort: says how many rows carry the metric
- * when not all of them do, so an order that cannot change is not read as a
- * broken control. Empty when every row can move or there are no rows.
- */
+/** The toolbar note for a numeric sort; empty when every row can move. */
 export function sortCoverageNote(coverage: SortCoverage | null): string {
-  if (!coverage || coverage.total === 0) return "";
-  const { withValue, total, metric, source } = coverage;
-  if (withValue === total) return "";
-  const known = `${metric} is known for ${withValue} of ${total} model${total === 1 ? "" : "s"}.`;
-  const effect =
-    withValue < 2
-      ? "Nothing to order yet, so the rows stay in name order."
-      : "Rows without one follow in name order.";
-  return `${known} ${effect} ${source}`;
+  return coverageNote(coverage, "model", "name order");
 }
 
 /**
@@ -162,30 +141,15 @@ export function sortCoverageNote(coverage: SortCoverage | null): string {
  * a "high to low" list. Ties fall back to the display name.
  */
 export function sortModels(models: ModelTarget[], sort: ModelSort): ModelTarget[] {
-  const dir = sort.direction === "asc" ? 1 : -1;
-  const byName = (a: ModelTarget, b: ModelTarget) =>
+  const byName: Comparator<ModelTarget> = (a, b) =>
     modelDisplayName(a).localeCompare(modelDisplayName(b), undefined, { sensitivity: "base" });
-  const text = (pick: (m: ModelTarget) => string) => (a: ModelTarget, b: ModelTarget) => {
-    const cmp = pick(a).localeCompare(pick(b), undefined, { sensitivity: "base" });
-    return cmp !== 0 ? cmp * dir : byName(a, b);
-  };
-  const numeric = (pick: (m: ModelTarget) => number | null) => (a: ModelTarget, b: ModelTarget) => {
-    const va = pick(a);
-    const vb = pick(b);
-    if (va === null && vb === null) return byName(a, b);
-    if (va === null) return 1;
-    if (vb === null) return -1;
-    return va !== vb ? (va - vb) * dir : byName(a, b);
-  };
-  const compare = {
-    name: (a: ModelTarget, b: ModelTarget) => byName(a, b) * dir,
-    domain: text(modelDomain),
-    status: text((m) => m.status),
-    source: text((m) => m.source),
-    score: numeric(modelScore),
-    clean_accuracy: numeric(modelCleanAccuracy),
+  const compare: Comparator<ModelTarget> = {
+    name: (a: ModelTarget, b: ModelTarget) => byName(a, b) * (sort.direction === "asc" ? 1 : -1),
+    domain: textOrder(modelDomain, sort.direction, byName),
+    status: textOrder((m: ModelTarget) => m.status, sort.direction, byName),
+    source: textOrder((m: ModelTarget) => m.source, sort.direction, byName),
+    score: numericOrder(modelScore, sort.direction, byName),
+    clean_accuracy: numericOrder(modelCleanAccuracy, sort.direction, byName),
   }[sort.key];
-  return models.map((m, i) => [m, i] as const)
-    .sort(([a, ia], [b, ib]) => compare(a, b) || ia - ib)
-    .map(([m]) => m);
+  return stableSort(models, compare);
 }
