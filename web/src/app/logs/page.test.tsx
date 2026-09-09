@@ -46,11 +46,11 @@ describe("LogsPage", () => {
     expect(el.textContent).toContain("network timeout");
   });
 
-  it("renders the 'Redirecting to sign in…' placeholder when not authed", () => {
+  it("renders the 'Signing in…' placeholder when not authed", () => {
     useRequireAuthMock.mockReturnValue(false);
     useSWRMock.mockReturnValue({ data: undefined, error: undefined, isLoading: false });
     render(React.createElement(LogsPage));
-    const el = screen.getByText("Redirecting to sign in…");
+    const el = screen.getByText("Signing in…");
     expect(el.tagName.toLowerCase()).toBe("p");
   });
 

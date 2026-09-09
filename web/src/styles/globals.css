@@ -3,21 +3,84 @@
 @tailwind utilities;
 
 /*
- * redsim visual language, after labs.agiledefense.com.
+ * redsim visual language: the instrument.
  *
- * One dark theme. Deep navy ground, one red accent, white text at three
- * strengths, Helvetica Neue for prose and JetBrains Mono for labels, nav,
- * kickers and buttons. The semantic tokens keep the shadcn names so every
- * `bg-card`, `text-muted-foreground` and `border-border` in the pages and
- * the design system resolves without edits.
+ * The product measures how a small perturbation moves a decision, and the
+ * interface is built like the instrument that takes that measurement. One
+ * dark theme on a deep navy ground with a static perturbation grain, three
+ * neutral ink surfaces above it, warm white text at four strengths, and two
+ * typefaces that encode the product's own rule: measurements, labels and
+ * controls are set in Public Sans with tabular figures, and the written
+ * interpretation (observations, readings, recommendations) is set in Source
+ * Serif 4. Red is the Agile Defense Labs brand and is spent on three things
+ * only: the mark, primary actions and the current place in the nav. It never
+ * means danger. Severity and run state sit on an amber and orange scale.
  *
- * Red is the brand. It never means danger here: `destructive`, the severity
- * chips and the run-status badges sit on an amber and orange scale so a red
- * element is always an action or an accent, never a warning.
+ * The semantic tokens keep the shadcn names so every `bg-card`,
+ * `text-muted-foreground` and `border-border` in the pages and the design
+ * system resolves without edits. The `redsim-*` classes are the shared
+ * idioms the pages already use; their meaning changed here, their names did
+ * not.
  */
 
-/* JetBrains Mono, SIL OFL 1.1, self-hosted from public/fonts so a build
-   needs no network. Licence beside the files. */
+/* Typefaces, all SIL Open Font Licence 1.1 and self-hosted from public/fonts
+   so a build needs no network. Licences sit beside the files. */
+@font-face {
+  font-family: "Public Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/PublicSans-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Public Sans";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/PublicSans-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Public Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/PublicSans-SemiBold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Public Sans";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/PublicSans-Bold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Source Serif 4";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/SourceSerif4-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Source Serif 4";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/SourceSerif4-It.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Source Serif 4";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/SourceSerif4-Semibold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Source Serif 4";
+  font-style: italic;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/SourceSerif4-SemiboldIt.woff2") format("woff2");
+}
 @font-face {
   font-family: "JetBrains Mono";
   font-style: normal;
@@ -43,52 +106,73 @@
 :root {
   color-scheme: dark;
 
-  /* Labs palette, verbatim. */
-  --navy-deepest: #04060f;
-  --navy-deep: #060c1a;
-  --navy-mid: #0a1628;
-  --navy-surface: #0f1f36;
-  --navy-elevated: #142640;
-  --red-bright: #ff5a58;
-  --red-muted: #d23c3a;
-  --red-dim: rgba(255, 90, 88, 0.12);
-  --ink-1: rgba(255, 255, 255, 1);
-  --ink-2: rgba(255, 255, 255, 0.72);
-  --ink-3: rgba(255, 255, 255, 0.48);
-  --ink-4: rgba(255, 255, 255, 0.2);
-  --glass-bg: rgba(4, 6, 15, 0.55);
-  --glass-bg-mid: rgba(10, 22, 40, 0.5);
-  --glass-border: rgba(255, 90, 88, 0.14);
-  --glass-border-bright: rgba(255, 90, 88, 0.35);
-  --glass-shadow: 0 0 40px rgba(255, 90, 88, 0.04) inset, 0 8px 48px rgba(0, 0, 0, 0.5);
-  --mono: "JetBrains Mono", "Courier New", monospace;
-  --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  /* Ground and surfaces. */
+  --ground: #070a12;
+  --surface-1: #0c111c;
+  --surface-2: #121826;
+  --surface-3: #1a2233;
+
+  /* Ink, warm white at four strengths. */
+  --ink-1: #ece9e2;
+  --ink-2: rgba(236, 233, 226, 0.72);
+  --ink-3: rgba(236, 233, 226, 0.58);
+  --ink-4: rgba(236, 233, 226, 0.26);
+
+  /* Rules. Neutral, never tinted. */
+  --line: rgba(236, 233, 226, 0.1);
+  --line-strong: rgba(236, 233, 226, 0.2);
+
+  /* Brand. */
+  --red: #ff5a58;
+  --red-deep: #c93f3d;
+  --red-dim: rgba(255, 90, 88, 0.14);
+
+  /* Data marks. Bone is the adversarial series, slate the benign-noise
+     control, ink the clean baseline. Every chart uses the same three so a
+     reader learns them once. */
+  --data-adv: #e8dcc4;
+  --data-control: #7e96b3;
+  --data-clean: rgba(236, 233, 226, 0.55);
+
+  /* Marking. UNCLASSIFIED is green by convention. */
+  --marking-unclassified: #4ade80;
+
+  --sans: "Public Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* The Labs navy steps, kept for the `navy-*` utilities the pages use. */
+  --navy-deepest: #070a12;
+  --navy-deep: #0c111c;
+  --navy-mid: #121826;
+  --navy-surface: #1a2233;
+  --navy-elevated: #222c40;
 
   /* Semantic tokens (HSL triplets for the Tailwind theme). */
-  --background: 229 58% 4%;            /* navy-deepest */
-  --foreground: 0 0% 100%;             /* ink-1 */
-  --card: 216 60% 10%;                 /* navy-mid */
-  --card-foreground: 0 0% 100%;
-  --popover: 215 57% 14%;              /* navy-surface */
-  --popover-foreground: 0 0% 100%;
-  --primary: 1 100% 67%;               /* red-bright */
-  --primary-foreground: 229 58% 4%;
-  --secondary: 215 57% 14%;            /* navy-surface */
-  --secondary-foreground: 0 0% 100%;
-  --muted: 216 52% 16%;                /* navy-elevated */
-  --muted-foreground: 222 5% 55%;      /* ink-3 over navy, solid */
-  --accent: 216 52% 16%;               /* hover surface */
-  --accent-foreground: 0 0% 100%;
+  --background: 224 44% 5%;            /* ground */
+  --foreground: 40 20% 91%;            /* ink-1 */
+  --card: 221 40% 8%;                  /* surface-1 */
+  --card-foreground: 40 20% 91%;
+  --popover: 221 36% 11%;              /* surface-2 */
+  --popover-foreground: 40 20% 91%;
+  --primary: 1 100% 67%;               /* red */
+  --primary-foreground: 224 44% 5%;
+  --secondary: 221 36% 11%;            /* surface-2 */
+  --secondary-foreground: 40 20% 91%;
+  --muted: 221 33% 15%;                /* surface-3 */
+  --muted-foreground: 216 3% 56%;      /* ink-3 flattened onto the ground */
+  --accent: 221 33% 15%;               /* hover surface */
+  --accent-foreground: 40 20% 91%;
   --destructive: 30 95% 56%;           /* amber-orange, never red */
-  --destructive-foreground: 229 58% 4%;
+  --destructive-foreground: 224 44% 5%;
   --warning: 38 92% 55%;
-  --warning-foreground: 229 58% 4%;
+  --warning-foreground: 224 44% 5%;
   --success: 152 60% 45%;
-  --success-foreground: 229 58% 4%;
+  --success-foreground: 224 44% 5%;
   --info: 199 80% 62%;
-  --info-foreground: 229 58% 4%;
-  --border: 358 30% 18%;               /* glass-border flattened onto navy */
-  --input: 358 26% 24%;
+  --info-foreground: 224 44% 5%;
+  --border: 222 22% 18%;               /* line flattened onto the ground */
+  --input: 222 18% 26%;
   --ring: 1 100% 67%;
 }
 
@@ -98,106 +182,212 @@
     box-sizing: border-box;
   }
   html {
-    background: var(--navy-deepest);
+    background: var(--ground);
   }
   body {
+    position: relative;
     margin: 0;
     min-height: 100vh;
     color: var(--ink-2);
     font-family: var(--sans);
     font-size: 15px;
-    line-height: 1.6;
-    background-color: var(--navy-deepest);
-    /* The faint red glow and navy lift the Labs pages carry behind their
-       glass. Fixed so it does not scroll with the content. */
-    background-image:
-      radial-gradient(ellipse 60% 40% at 15% 0%, rgba(255, 90, 88, 0.07), transparent 70%),
-      radial-gradient(ellipse 50% 40% at 100% 100%, rgba(15, 31, 54, 0.9), transparent 70%);
-    background-attachment: fixed;
+    line-height: 1.55;
+    background-color: transparent;
+    font-feature-settings: "tnum" 1, "calt" 1;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  /* The perturbation grain: a static fractal-noise field over the ground,
+     heavier at the top left and fading out toward the content. It is the
+     one decorative device in the interface and it never moves. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.93 0 0 0 0 0.91 0 0 0 0 0.89 0 0 0 0.55 0'/></filter><rect width='100%25' height='100%25' filter='url(%23g)'/></svg>");
+    background-size: 220px 220px;
+    opacity: 0.13;
+    -webkit-mask-image: radial-gradient(ellipse 70% 60% at 12% 0%, #000 0%, rgba(0, 0, 0, 0.55) 45%, rgba(0, 0, 0, 0.2) 100%);
+    mask-image: radial-gradient(ellipse 70% 60% at 12% 0%, #000 0%, rgba(0, 0, 0, 0.55) 45%, rgba(0, 0, 0, 0.2) 100%);
   }
   h1, h2, h3, h4 {
     color: var(--ink-1);
     font-family: var(--sans);
-    font-weight: 700;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    line-height: 1.15;
+  }
+  h1 {
+    font-size: 1.75rem;
     letter-spacing: -0.02em;
-    line-height: 1.1;
+  }
+  h2 {
+    font-size: 1.0625rem;
+  }
+  h3 {
+    font-size: 0.9375rem;
   }
   a {
     color: inherit;
   }
   code, kbd, pre, samp {
     font-family: var(--mono);
+    font-size: 0.92em;
   }
   ::selection {
     background: rgba(255, 90, 88, 0.35);
     color: #fff;
   }
   :focus-visible {
-    outline: 2px solid var(--red-bright);
+    outline: 2px solid var(--red);
     outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
-/* Type helpers. Tailwind's `font-mono` / `font-sans` resolve to the same
-   stacks through tailwind.config.ts; these stay for the CSS-only callers. */
+/* Type helpers. Tailwind's `font-mono` / `font-sans` / `font-serif` resolve
+   to the same stacks through tailwind.config.ts; these stay for CSS-only
+   callers. */
 .font-mono {
   font-family: var(--mono);
 }
 .font-sans {
   font-family: var(--sans);
 }
-
-/* Glass panel, the Labs card. `redsim-panel` is the name the pages and the
-   design system already use. */
-.redsim-panel {
-  background: var(--glass-bg-mid);
-  border: 1px solid var(--glass-border);
-  border-radius: 0.5rem;
-  box-shadow: var(--glass-shadow);
-  -webkit-backdrop-filter: blur(20px);
-  backdrop-filter: blur(20px);
-}
-.redsim-panel:hover {
-  border-color: rgba(255, 90, 88, 0.22);
+.font-serif {
+  font-family: var(--serif);
 }
 
-/* Kicker: the small red mono label above a heading ("THE INVERSION"). */
-.redsim-kicker {
-  color: var(--red-bright);
-  font-family: var(--mono);
-  font-size: 0.6875rem;
+/* Written interpretation: observations, readings, recommendations, the
+   plain-language account of a finding. Serif, a little larger, a longer
+   measure. Measurements never use it. */
+.redsim-prose {
+  font-family: var(--serif);
+  font-size: 1.0625rem;
+  line-height: 1.6;
+  color: var(--ink-2);
+  max-width: 68ch;
+}
+.redsim-prose strong {
+  color: var(--ink-1);
+  font-weight: 600;
+}
+
+/* A measured number shown large: the MRI, a stat, a count. Regular weight,
+   tabular figures, tight tracking. */
+.redsim-numeral {
+  font-family: var(--sans);
   font-weight: 400;
-  letter-spacing: 0.14em;
-  line-height: 1.5;
-  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--ink-1);
+}
+
+/* Label: the small caption above a value or a section ("Registered models").
+   Sentence case, muted ink, sans. `redsim-kicker` is the name the pages
+   already use for it. */
+.redsim-kicker {
+  color: var(--ink-3);
+  font-family: var(--sans);
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  line-height: 1.4;
+  text-transform: none;
 }
 .redsim-kicker:empty {
   display: none;
 }
 
-/* Nav link: 11px mono, uppercase, ink-3 resting, white on hover, red when
-   current. */
-.redsim-nav-link {
+/* Sheet: a page section on the ruled sheet. A rule above, a label column at
+   the left on wide screens, the content beside it. Content that is only
+   read lives on the sheet; content that is acted on lives in a panel. */
+.redsim-sheet {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem 2.5rem;
+  padding: 1.5rem 0;
+  border-top: 1px solid var(--line);
+}
+@media (min-width: 768px) {
+  .redsim-sheet {
+    grid-template-columns: 11rem minmax(0, 1fr);
+  }
+}
+.redsim-sheet-label {
+  color: var(--ink-1);
+  font-family: var(--sans);
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1.4;
+}
+.redsim-sheet-label small,
+.redsim-sheet-note {
+  display: block;
+  margin-top: 0.25rem;
   color: var(--ink-3);
-  font-family: var(--mono);
-  font-size: 0.6875rem;
+  font-size: 0.75rem;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.redsim-sheet-body {
+  min-width: 0;
+}
+
+/* Panel: a surface for controls and forms. Flat, one neutral rule, no glow,
+   no blur. `redsim-panel` is the name the pages and the design system use. */
+.redsim-panel {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+/* Rule: a horizontal hairline between blocks. */
+.redsim-rule {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 0;
+}
+
+/* Nav link. Sentence case sans, muted at rest, white on hover, white with a
+   red bar under it when current. Fills the header height so the bar sits on
+   the header's bottom rule. */
+.redsim-nav-link {
+  display: inline-flex;
+  align-items: center;
+  height: 3.5rem;
+  padding: 0 0.125rem;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--ink-3);
+  font-family: var(--sans);
+  font-size: 0.8125rem;
   font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   text-decoration: none;
-  transition: color 0.15s ease;
+  transition: color 0.15s ease, border-color 0.15s ease;
 }
 .redsim-nav-link:hover {
   color: var(--ink-1);
 }
 .redsim-nav-link[aria-current="page"] {
-  color: var(--red-bright);
+  color: var(--ink-1);
+  border-bottom-color: var(--red);
 }
 
-/* Buttons. `redsim-cta` is the filled Labs button (red-muted fill, bright
-   border, white mono caps); `redsim-ghost` the outlined one. Both keep the
-   4px radius of the site. */
+/* Buttons. `redsim-cta` is the filled primary action (red, dark text for
+   contrast); `redsim-ghost` the outlined secondary. Sentence case. */
 .redsim-cta,
 .redsim-ghost {
   display: inline-flex;
@@ -205,35 +395,34 @@
   justify-content: center;
   gap: 0.5rem;
   border-radius: 4px;
-  font-family: var(--mono);
-  font-size: 0.75rem;
+  font-family: var(--sans);
+  font-size: 0.8125rem;
   font-weight: 600;
-  letter-spacing: 0.12em;
-  line-height: 1.5;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  line-height: 1.25;
+  text-transform: none;
   text-decoration: none;
-  padding: 0.75rem 1.5rem;
+  padding: 0.625rem 1rem;
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 .redsim-cta {
-  background: var(--red-muted);
-  border: 1px solid var(--red-bright);
-  color: #fff;
+  background: var(--red);
+  border: 1px solid var(--red);
+  color: #14060a;
 }
 .redsim-cta:hover {
-  background: var(--red-bright);
+  background: #ff7371;
+  border-color: #ff7371;
 }
 .redsim-ghost {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border-bright);
-  color: #fff;
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-1);
 }
 .redsim-ghost:hover {
-  border-color: var(--red-bright);
-  background: var(--red-dim);
+  border-color: var(--ink-2);
+  background: rgba(236, 233, 226, 0.04);
 }
 .redsim-cta:disabled,
 .redsim-ghost:disabled {
@@ -241,31 +430,184 @@
   opacity: 0.5;
 }
 
-/* Tiny status line in the header and footer ("UNCLASSIFIED // OPEN DATA"). */
+/* Small mono line for identifiers, digests and machine names. */
 .redsim-meta {
-  color: rgba(255, 180, 178, 0.85);
+  color: var(--ink-3);
   font-family: var(--mono);
-  font-size: 0.625rem;
-  font-weight: 500;
-  letter-spacing: 0.08em;
+  font-size: 0.6875rem;
+  font-weight: 400;
+  letter-spacing: 0;
   line-height: 1.6;
+  text-transform: none;
 }
 
-/* Footer: a glass band with the standing caveat. */
+/* Classification marking, a bordered chip in the header. */
+.redsim-marking {
+  display: inline-flex;
+  align-items: center;
+  height: 1.375rem;
+  padding: 0 0.5rem;
+  border: 1px solid rgba(74, 222, 128, 0.45);
+  border-radius: 3px;
+  color: var(--marking-unclassified);
+  font-family: var(--sans);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  line-height: 1;
+}
+
+/* Footer: a rule, the wordmark and the standing caveat. */
 .redsim-footer {
-  margin-top: 3rem;
-  border-top: 1px solid var(--glass-border);
+  margin-top: 4rem;
+  border-top: 1px solid var(--line);
   color: var(--ink-3);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   line-height: 1.6;
   padding-top: 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 2.5rem;
+  align-items: baseline;
+}
+.redsim-footer .redsim-wordmark {
+  color: var(--ink-2);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
-/* Tables inherit the Labs hairline. */
+/* Status dot: a filled or half-filled disc beside a state word. */
+.redsim-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  flex: none;
+}
+@keyframes redsim-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.redsim-dot[data-live="true"] {
+  animation: redsim-pulse 1.6s ease-in-out infinite;
+}
+
+/* Tables. Sentence-case sans headers, a strong rule under the header, thin
+   rules between rows, no fills. */
 table {
   border-color: hsl(var(--border));
+  font-variant-numeric: tabular-nums;
 }
 thead {
+  font-family: var(--sans);
+  letter-spacing: 0;
+}
+thead th {
+  color: var(--ink-3);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Native form controls on the panel surface. */
+select,
+input:not([type="checkbox"]):not([type="radio"]),
+textarea {
+  font-family: var(--sans);
+  color-scheme: dark;
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--ink-4);
+}
+
+/* Link inside content: ink with a quiet underline, brighter on hover. Red is
+   not spent on links. */
+.redsim-link {
+  color: var(--ink-1);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.15s ease;
+}
+.redsim-link:hover {
+  text-decoration-color: var(--ink-1);
+}
+
+/* Chip: a small bordered mark for a state word or a machine name. */
+.redsim-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  padding: 0.0625rem 0.375rem;
+  color: var(--ink-2);
+  font-family: var(--sans);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1.1rem;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
+.redsim-chip.font-mono {
   font-family: var(--mono);
-  letter-spacing: 0.08em;
+}
+
+/* Small button variant. */
+.redsim-btn-sm {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.75rem;
+}
+
+/* Text input, select and textarea on a panel. */
+.redsim-input {
+  display: block;
+  width: 100%;
+  border: 1px solid hsl(var(--input));
+  border-radius: 4px;
+  background: var(--ground);
+  color: var(--ink-1);
+  font-family: var(--sans);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  padding: 0.5rem 0.75rem;
+  transition: border-color 0.15s ease;
+}
+.redsim-input:hover {
+  border-color: var(--line-strong);
+}
+.redsim-input:focus-visible {
+  outline: none;
+  border-color: var(--red);
+}
+.redsim-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.redsim-input.font-mono {
+  font-family: var(--mono);
+}
+
+/* Stat: a headline number with its label above and a note beneath, standing
+   on a hairline at its left. Four of them make the dashboard's top row. */
+.redsim-stat {
+  display: block;
+  border-left: 1px solid var(--line-strong);
+  padding: 0.125rem 0 0.125rem 1rem;
+  text-decoration: none;
+  transition: border-color 0.15s ease;
+}
+a.redsim-stat:hover {
+  border-left-color: var(--ink-1);
+}
+.redsim-stat .redsim-numeral {
+  font-size: 2.5rem;
+  margin: 0.375rem 0 0.25rem;
+}
+.redsim-stat-note {
+  color: var(--ink-3);
+  font-size: 0.75rem;
 }

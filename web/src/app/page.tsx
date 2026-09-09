@@ -13,7 +13,7 @@ export default function Home() {
     <div className="space-y-2 pt-8">
       <div className="redsim-kicker">Adversarial ML Red-Team Simulator</div>
       <h1 className="text-3xl">Redsim</h1>
-      <p className="text-muted-foreground">Loading…</p>
+      <p className="text-ink-3">Loading…</p>
     </div>
   );
 }

@@ -1,4 +1,6 @@
-// RunStatusBadge — surfaces the run / job lifecycle state.
+// RunStatusBadge — the run / job lifecycle state as a dot beside its word.
+// A running dot pulses (and holds still under prefers-reduced-motion).
+// `failed` is orange, not red: red is the brand accent in this UI.
 
 import { type HTMLAttributes } from "react";
 import { cn } from "../lib/utils";
@@ -11,15 +13,21 @@ export type RunStatus =
   | "failed"
   | "cancelled";
 
-// Translucent tints on the navy ground. `failed` is orange, not red: red is
-// the brand accent in this UI.
-const TONES: Record<RunStatus, string> = {
-  queued: "border-border bg-muted text-muted-foreground",
-  running: "border-sky-400/40 bg-sky-400/10 text-sky-300",
-  succeeded: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
-  partial_success: "border-amber-400/50 bg-amber-500/15 text-amber-200",
-  failed: "border-orange-400/50 bg-orange-500/20 text-orange-200",
-  cancelled: "border-border bg-muted text-muted-foreground line-through",
+const DOT: Record<RunStatus, string> = {
+  queued: "bg-ink-4",
+  running: "bg-sky-400",
+  succeeded: "bg-emerald-400",
+  partial_success: "bg-amber-400",
+  failed: "bg-orange-400",
+  cancelled: "bg-ink-4",
+};
+const TEXT: Record<RunStatus, string> = {
+  queued: "text-ink-3",
+  running: "text-sky-200",
+  succeeded: "text-emerald-200",
+  partial_success: "text-amber-200",
+  failed: "text-orange-200",
+  cancelled: "text-ink-3 line-through",
 };
 
 export interface RunStatusBadgeProps extends HTMLAttributes<HTMLSpanElement> {
@@ -31,17 +39,23 @@ export function RunStatusBadge({
   className,
   ...rest
 }: RunStatusBadgeProps) {
-  const tone = TONES[(status.toLowerCase() as RunStatus)] ?? TONES.queued;
+  const lower = status.toLowerCase() as RunStatus;
+  const key: RunStatus = lower in DOT ? lower : "queued";
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-sm border px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider",
-        tone,
+        "inline-flex items-center gap-1.5 whitespace-nowrap text-[13px] font-medium",
+        TEXT[key],
         className,
       )}
       aria-label={`run status: ${status}`}
       {...rest}
     >
+      <i
+        className={cn("redsim-dot", DOT[key])}
+        data-live={key === "running" ? "true" : undefined}
+        aria-hidden="true"
+      />
       {status.toLowerCase().replace("_", " ")}
     </span>
   );

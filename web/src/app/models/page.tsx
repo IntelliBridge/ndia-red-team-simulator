@@ -25,7 +25,7 @@ function GatewayBadge({ host }: { host: string }) {
   const label = /pythia/i.test(host) ? "Pythia" : host;
   return (
     <span
-      className="rounded-sm border border-sky-400/50 bg-sky-400/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-sky-200"
+      className="redsim-chip border-sky-400/50 text-sky-200"
       title={`via ${host}`}
     >
       {label}
@@ -62,7 +62,7 @@ function ScoreSummaryBlock({ summary }: { summary: ModelTarget["score_summary"] 
     ? `${summary.n_campaigns} campaign${summary.n_campaigns === 1 ? "" : "s"}`
     : `${summary.n_runs} run${summary.n_runs === 1 ? "" : "s"}`;
   return (
-    <div className="mt-4 border-t border-border pt-3" data-testid="score-summary">
+    <div className="mt-4 border-t border-line pt-3" data-testid="score-summary">
       <button
         type="button"
         aria-expanded={open}
@@ -73,9 +73,9 @@ function ScoreSummaryBlock({ summary }: { summary: ModelTarget["score_summary"] 
           {isMri ? "average robustness index" : "average hit rate by category"}
         </span>
         <span className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground">{count}</span>
-          <span className="text-sm font-semibold tabular-nums">{headline}</span>
-          <span aria-hidden="true" className="text-muted-foreground">
+          <span className="text-xs text-ink-3">{count}</span>
+          <span className="redsim-numeral text-2xl">{headline}</span>
+          <span aria-hidden="true" className="text-ink-3">
             {open ? "▾" : "▸"}
           </span>
         </span>
@@ -86,14 +86,14 @@ function ScoreSummaryBlock({ summary }: { summary: ModelTarget["score_summary"] 
             {dims.map(([key, value]) => (
               <li key={key} className="grid grid-cols-[1fr_6rem_2.5rem] items-center gap-2 text-xs">
                 <span className="truncate">{DIMENSION_LABELS[key] ?? key}</span>
-                <span className="h-2 rounded-sm bg-muted" aria-hidden="true">
-                  <span className="block h-2 rounded-sm bg-primary" style={{ width: `${Math.max(2, Math.min(100, value))}%` }} />
+                <span className="relative block h-px bg-line-strong" aria-hidden="true">
+                  <span className="absolute left-0 top-1/2 block h-[3px] -translate-y-1/2 bg-data-adv" style={{ width: `${Math.max(2, Math.min(100, value))}%` }} />
                 </span>
                 <span className="text-right tabular-nums">{value}</span>
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-[11px] text-muted-foreground" title={summary.note}>
+          <p className="mt-2 text-[11px] text-ink-3" title={summary.note}>
             Mean over this model&apos;s scored campaigns; each scorecard keeps its denominators.
           </p>
         </>
@@ -104,14 +104,14 @@ function ScoreSummaryBlock({ summary }: { summary: ModelTarget["score_summary"] 
             {summary.families.map((f) => (
               <li key={f.family} className="grid grid-cols-[1fr_6rem_3.5rem] items-center gap-2 text-xs">
                 <span className="truncate">{f.family}</span>
-                <span className="h-2 rounded-sm bg-muted" aria-hidden="true">
-                  <span className="block h-2 rounded-sm bg-orange-500" style={{ width: `${Math.max(2, Math.round(f.hit_rate * 100))}%` }} />
+                <span className="relative block h-px bg-line-strong" aria-hidden="true">
+                  <span className="absolute left-0 top-1/2 block h-[3px] -translate-y-1/2 bg-orange-400" style={{ width: `${Math.max(2, Math.round(f.hit_rate * 100))}%` }} />
                 </span>
                 <span className="text-right tabular-nums">{Math.round(f.hit_rate * 100)}%</span>
               </li>
             ))}
           </ul>
-          <p className="mt-2 text-[11px] text-muted-foreground" title={summary.note}>
+          <p className="mt-2 text-[11px] text-ink-3" title={summary.note}>
             Hits over evaluated replies, pooled across runs; a hit is the detector&apos;s judgement.
           </p>
         </>
@@ -259,12 +259,12 @@ export default function ModelsPage() {
           <h1 className="text-2xl font-semibold">Model targets</h1>
         </div>
         <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-sm border border-border text-xs" role="group" aria-label="View">
+          <div className="inline-flex gap-1" role="group" aria-label="View">
             <button
               type="button"
               aria-pressed={view === "cards"}
               onClick={() => chooseView("cards")}
-              className={`px-3 py-1.5 ${view === "cards" ? "bg-muted font-semibold" : "text-muted-foreground"}`}
+              className={`redsim-ghost redsim-btn-sm ${view === "cards" ? "border-ink-1 bg-surface-3" : "text-ink-3"}`}
             >
               Cards
             </button>
@@ -272,7 +272,7 @@ export default function ModelsPage() {
               type="button"
               aria-pressed={view === "list"}
               onClick={() => chooseView("list")}
-              className={`border-l border-border px-3 py-1.5 ${view === "list" ? "bg-muted font-semibold" : "text-muted-foreground"}`}
+              className={`redsim-ghost redsim-btn-sm ${view === "list" ? "border-ink-1 bg-surface-3" : "text-ink-3"}`}
             >
               List
             </button>
@@ -282,7 +282,7 @@ export default function ModelsPage() {
           callerRole={projectId ? roles[projectId] : undefined}
         >
           <button
-            className="rounded-sm bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground"
+            className="redsim-cta redsim-btn-sm"
             onClick={() => setOpen(true)}
           >
             Add model
@@ -291,66 +291,66 @@ export default function ModelsPage() {
         </div>
       </header>
       {error && (
-        <div className="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <div className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {catalogError}
         </div>
       )}
       {err && (
-        <div className="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <div className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {err}
         </div>
       )}
       {isLoading && (
         <div className="grid gap-3 md:grid-cols-2">
-          <div className="h-28 animate-pulse bg-muted" />
-          <div className="h-28 animate-pulse bg-muted" />
+          <div className="h-28 animate-pulse rounded-[4px] bg-surface-2" />
+          <div className="h-28 animate-pulse rounded-[4px] bg-surface-2" />
         </div>
       )}{" "}
       {!isLoading && !error && models.length === 0 && (
         <PanelSection title="No registered models" eyebrow="catalog empty">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-ink-3">
             Add a bundled sample or a supported artifact to begin a campaign.
           </p>
         </PanelSection>
       )}
       {view === "list" && models.length > 0 && (
-        <div className="overflow-x-auto rounded-sm border border-border bg-card">
+        <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <caption className="sr-only">Registered model targets</caption>
-            <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">ID</th>
-                <th className="px-3 py-2">Domain</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Source</th>
-                <th className="px-3 py-2">Clean accuracy / model</th>
-                <th className="px-3 py-2">Digest / persona</th>
+            <thead className="text-left">
+              <tr className="border-b border-line-strong">
+                <th className="px-3 py-2.5">Name</th>
+                <th className="px-3 py-2.5">ID</th>
+                <th className="px-3 py-2.5">Domain</th>
+                <th className="px-3 py-2.5">Status</th>
+                <th className="px-3 py-2.5">Source</th>
+                <th className="px-3 py-2.5">Clean accuracy / model</th>
+                <th className="px-3 py-2.5">Digest / persona</th>
               </tr>
             </thead>
             <tbody>
               {models.map((m: ModelTarget) => (
-                <tr key={m.id} {...rowLink(`/models/${m.id}`)} className={`border-t border-border ${rowLink("").className}`}>
-                  <td className="px-3 py-2 font-medium">
-                    <a className="text-primary underline" href={`/models/${m.id}`}>
+                <tr key={m.id} {...rowLink(`/models/${m.id}`)} className={`border-b border-line last:border-0 ${rowLink("").className}`}>
+                  <td className="px-3 py-2.5 font-medium text-ink-1">
+                    <a className="redsim-link" href={`/models/${m.id}`}>
                       {modelDisplayName(m)}
-                    </a>
+                    </a>{" "}
                     {modelGateway(m) && <GatewayBadge host={modelGateway(m)!} />}
                   </td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{m.id}</td>
-                  <td className="px-3 py-2">{isLlmTarget(m) ? "llm" : m.modality}</td>
-                  <td className="px-3 py-2">
-                    <span className="rounded-sm border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider">
+                  <td className="px-3 py-2.5 font-mono text-xs text-ink-3">{m.id}</td>
+                  <td className="px-3 py-2.5">{isLlmTarget(m) ? "llm" : m.modality}</td>
+                  <td className="px-3 py-2.5">
+                    <span className="redsim-chip">
                       {m.status}
                     </span>
                   </td>
-                  <td className="px-3 py-2">{m.source}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2.5">{m.source}</td>
+                  <td className="px-3 py-2.5 tabular-nums">
                     {isLlmTarget(m)
                       ? (typeof m.manifest.model_id === "string" ? m.manifest.model_id : "—")
                       : formatCleanAccuracy(m.manifest.clean_accuracy, m.manifest.clean_n)}
                   </td>
-                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                  <td className="px-3 py-2.5 font-mono text-xs text-ink-3">
                     {isLlmTarget(m)
                       ? (typeof m.manifest.persona === "string" ? m.manifest.persona : "—")
                       : String(m.sha256 ?? "—").slice(0, 12)}
@@ -362,32 +362,32 @@ export default function ModelsPage() {
         </div>
       )}
       {view === "cards" && (
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="grid gap-x-8 md:grid-cols-2">
         {models.map((m: ModelTarget) => (
-          <article key={m.id} className="redsim-panel rounded-sm p-4">
+          <article key={m.id} className="border-t border-line py-5">
             <button
-              className="w-full text-left transition-transform hover:-translate-y-0.5"
+              className="w-full text-left"
               onClick={() => router.push(`/models/${m.id}`)}
             >
               <div className="flex items-start justify-between">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-lg font-semibold">{modelDisplayName(m)}</span>
+                    <span className="text-lg font-semibold text-ink-1">{modelDisplayName(m)}</span>
                     {modelGateway(m) && <GatewayBadge host={modelGateway(m)!} />}
                   </div>
-                  <div className="mt-1 font-mono text-xs text-muted-foreground">
+                  <div className="mt-1 font-mono text-xs text-ink-3">
                     {m.id}
                   </div>
                 </div>
-                <span className="rounded-sm border border-border bg-muted px-2 py-1 text-[10px] font-semibold uppercase tracking-wider">
+                <span className="redsim-chip">
                   {m.status}
                 </span>
               </div>
-              <div className="mt-5 grid grid-cols-3 gap-3 text-xs">
+              <div className="mt-5 grid grid-cols-3 gap-3 text-xs text-ink-1">
                 <div>
                   <div className="redsim-kicker">domain</div>
                   {isLlmTarget(m) ? (
-                    <span className="rounded-sm border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider">
+                    <span className="redsim-chip">
                       llm
                     </span>
                   ) : (
@@ -425,7 +425,7 @@ export default function ModelsPage() {
                 )}
               </div>
               {m.reason && (
-                <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
+                <p className="redsim-prose mt-3 border-t border-line pt-3 text-sm">
                   {m.reason}
                 </p>
               )}
@@ -433,7 +433,7 @@ export default function ModelsPage() {
             <ScoreSummaryBlock summary={m.score_summary} />
             <RoleGated minRole="admin" callerRole={roles[m.project_id]}>
               <button
-                className="mt-3 border border-destructive/30 px-3 py-1 text-xs text-destructive"
+                className="redsim-ghost redsim-btn-sm mt-3 border-destructive/40 text-destructive"
                 onClick={() => remove(m.id)}
               >
                 Delete model
@@ -444,28 +444,28 @@ export default function ModelsPage() {
       </div>
       )}
       {open && (
-        <div className="fixed inset-0 z-40 grid place-items-center bg-foreground/30 p-4">
+        <div className="fixed inset-0 z-40 grid place-items-center bg-ground/70 p-4">
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="add-model-title"
-            className="redsim-panel w-full max-w-lg rounded-sm p-5"
+            className="redsim-panel w-full max-w-lg p-5"
           >
             <div className="redsim-kicker">register model</div>
-            <h2 id="add-model-title" className="mt-1 text-xl font-semibold">
+            <h2 id="add-model-title" className="mt-1 text-xl font-semibold text-ink-1">
               Add model target
             </h2>
-            <div className="mt-5 flex gap-2">
+            <div className="mt-5 flex flex-wrap gap-2">
               <button
                 aria-pressed={source === "bundled"}
-                className={`border px-3 py-2 text-sm ${source === "bundled" ? "border-primary bg-primary/10" : "border-border"}`}
+                className={`redsim-ghost redsim-btn-sm ${source === "bundled" ? "border-ink-1 bg-surface-3" : "text-ink-3"}`}
                 onClick={() => setSource("bundled")}
               >
                 Bundled sample
               </button>
               <button
                 aria-pressed={source === "upload"}
-                className={`border px-3 py-2 text-sm ${source === "upload" ? "border-primary bg-primary/10" : "border-border"}`}
+                className={`redsim-ghost redsim-btn-sm ${source === "upload" ? "border-ink-1 bg-surface-3" : "text-ink-3"}`}
                 onClick={() => setSource("upload")}
               >
                 Upload artifact
@@ -473,7 +473,7 @@ export default function ModelsPage() {
               {endpointAvailable ? (
                 <button
                   aria-pressed={source === "llm"}
-                  className={`border px-3 py-2 text-sm ${source === "llm" ? "border-primary bg-primary/10" : "border-border"}`}
+                  className={`redsim-ghost redsim-btn-sm ${source === "llm" ? "border-ink-1 bg-surface-3" : "text-ink-3"}`}
                   onClick={() => setSource("llm")}
                 >
                   Connect endpoint
@@ -481,7 +481,7 @@ export default function ModelsPage() {
               ) : (
                 <button
                   disabled
-                  className="border border-border px-3 py-2 text-sm text-muted-foreground"
+                  className="redsim-ghost redsim-btn-sm text-ink-3"
                   title={
                     capabilities?.endpoint_connector?.reason ??
                     "Endpoint connector is unavailable in Phase B"
@@ -500,12 +500,12 @@ export default function ModelsPage() {
               />
             )}
             {source === "bundled" && (
-              <label className="mt-4 block text-sm">
+              <label className="mt-4 block text-sm text-ink-1">
                 Bundled sample
                 <select
                   value={bundledId}
                   onChange={(event) => setBundledId(event.target.value)}
-                  className="mt-1 w-full rounded-sm border border-input bg-background px-3 py-2"
+                  className="redsim-input mt-1"
                 >
                   <option value="">
                     Select a server-registered bundled model
@@ -520,7 +520,7 @@ export default function ModelsPage() {
             )}
             {source === "upload" && (
               <>
-                <label className="mt-4 block text-sm">
+                <label className="mt-4 block text-sm text-ink-1">
                   Artifact
                   <input
                     type="file"
@@ -528,15 +528,15 @@ export default function ModelsPage() {
                     onChange={(event) =>
                       setFile(event.target.files?.[0] ?? null)
                     }
-                    className="mt-1 block w-full rounded-sm border border-input bg-background px-3 py-2"
+                    className="redsim-input mt-1"
                   />
                 </label>
-                <label className="mt-3 block text-sm">
+                <label className="mt-3 block text-sm text-ink-1">
                   Architecture
                   <select
                     value={architecture}
                     onChange={(event) => setArchitecture(event.target.value)}
-                    className="mt-1 w-full rounded-sm border border-input bg-background px-3 py-2"
+                    className="redsim-input mt-1"
                   >
                     <option value="">Select an allowlisted architecture</option>
                     {(capabilities?.architectures ?? []).map((item) => {
@@ -550,12 +550,12 @@ export default function ModelsPage() {
                     })}
                   </select>
                 </label>
-                <label className="mt-3 block text-sm">
+                <label className="mt-3 block text-sm text-ink-1">
                   Evaluation dataset
                   <select
                     value={datasetId}
                     onChange={(event) => setDatasetId(event.target.value)}
-                    className="mt-1 w-full rounded-sm border border-input bg-background px-3 py-2"
+                    className="redsim-input mt-1"
                   >
                     <option value="">Select a compatible dataset</option>
                     {datasets
@@ -569,27 +569,27 @@ export default function ModelsPage() {
                     ))}
                   </select>
                 </label>
-                <label className="mt-3 block text-sm">
+                <label className="mt-3 block text-sm text-ink-1">
                   License statement
                   <input
                     value={license}
                     onChange={(event) => setLicense(event.target.value)}
-                    className="mt-1 w-full rounded-sm border border-input bg-background px-3 py-2"
+                    className="redsim-input mt-1"
                   />
                 </label>
-                <p className="mt-3 bg-muted p-3 text-xs text-muted-foreground">
+                <p className="mt-3 rounded-[4px] bg-ground p-3 text-xs text-ink-3">
                   ONNX or state_dict with an explicit architecture. Full pickles
                   are refused. Refusal rules are shown before choosing a file.
                 </p>
               </>
             )}
             {err && <p className="mt-3 text-sm text-destructive">{err}</p>}
-            <label className="mt-4 block text-sm">
+            <label className="mt-4 block text-sm text-ink-1">
               Model name{source === "llm" ? " (optional)" : ""}
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="mt-1 w-full rounded-sm border border-input bg-background px-3 py-2"
+                className="redsim-input mt-1"
                 placeholder={
                   source === "llm"
                     ? "defaults to the model id"
@@ -599,7 +599,7 @@ export default function ModelsPage() {
             </label>
             <div className="mt-5 flex justify-end gap-2">
               <button
-                className="border border-border px-3 py-2 text-sm"
+                className="redsim-ghost"
                 onClick={() => setOpen(false)}
               >
                 Cancel
@@ -620,7 +620,7 @@ export default function ModelsPage() {
                       !license ||
                       (!file.name.endsWith(".onnx") && !architecture)))
                 }
-                className="bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50"
+                className="redsim-cta"
                 onClick={add}
               >
                 {busy ? "Registering…" : "Register model"}

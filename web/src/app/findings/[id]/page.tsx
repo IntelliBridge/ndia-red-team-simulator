@@ -35,7 +35,7 @@ function ArtifactImage({ artifact, alt }: { artifact?: string; alt: string }) {
       <div
         role="img"
         aria-label={`${alt}; unavailable`}
-        className="flex aspect-square items-center justify-center bg-muted p-3 text-xs text-muted-foreground"
+        className="flex aspect-square items-center justify-center rounded-[3px] bg-ground p-3 text-xs text-ink-3"
       >
         Artifact unavailable
       </div>
@@ -45,7 +45,7 @@ function ArtifactImage({ artifact, alt }: { artifact?: string; alt: string }) {
       src={artifactUrl(artifact)}
       alt={alt}
       onError={() => setFailed(true)}
-      className="aspect-square w-full object-contain bg-muted"
+      className="aspect-square w-full rounded-[3px] bg-ground object-contain"
     />
   );
 }
@@ -57,7 +57,7 @@ function InputEvidence({ observation }: { observation: Observation }) {
     const adv = observation.feature_values_adv;
     if (!clean || !adv) {
       return (
-        <p className="border border-dashed border-border p-3 text-sm text-muted-foreground">
+        <p className="border border-dashed border-line-strong p-3 text-sm text-ink-3">
           Recorded feature values are unavailable for this tabular observation.
           Attribution rankings are shown separately and are not input values.
         </p>
@@ -89,7 +89,7 @@ function InputEvidence({ observation }: { observation: Observation }) {
             artifact={artifacts[key]}
             alt={`${key} evidence for sample ${observation.sample_index}`}
           />
-          <figcaption className="mt-1 text-[10px] uppercase tracking-wider">
+          <figcaption className="mt-1 text-[11px] text-ink-3">
             {key === "control" ? "same-ε control" : key}
           </figcaption>
         </figure>
@@ -105,18 +105,14 @@ function DescriptionBoxes({ description }: { description: string | undefined }) 
     return <p>Measured threshold crossing; inspect the recorded evidence below.</p>;
   }
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="space-y-4">
       {sections.map((s, i) => (
         <section
           key={`${s.key}-${i}`}
-          className={
-            s.plain
-              ? "rounded-md border border-primary/30 bg-primary/5 p-3 sm:col-span-2"
-              : "rounded-md border border-border bg-card p-3"
-          }
+          className={s.plain ? "" : "border-t border-line pt-3 sm:grid sm:grid-cols-[11rem_minmax(0,1fr)] sm:gap-6"}
         >
-          <h3 className="redsim-kicker mb-1 text-xs uppercase tracking-wide text-muted-foreground">{s.heading}</h3>
-          <p className={s.plain ? "text-sm leading-relaxed" : "text-xs leading-relaxed text-muted-foreground"}>{s.text}</p>
+          <h3 className="redsim-kicker mb-1 text-xs">{s.heading}</h3>
+          <p className={s.plain ? "redsim-prose m-0" : "m-0 font-sans text-sm leading-relaxed text-ink-2"}>{s.text}</p>
         </section>
       ))}
     </div>
@@ -148,7 +144,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
           }[error.status] ?? `Finding unavailable (${error.status}).`)
         : "Finding unavailable. Retry.";
     return (
-      <p className="border border-destructive/40 bg-destructive/10 p-4 text-sm">
+      <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
         {message}
       </p>
     );
@@ -156,8 +152,8 @@ export default function FindingPage({ params }: { params: { id: string } }) {
   if (!data)
     return (
       <div aria-label="Loading finding" className="space-y-3">
-        <div className="h-24 animate-pulse bg-muted" />
-        <div className="h-64 animate-pulse bg-muted" />
+        <div className="h-24 animate-pulse rounded-[4px] bg-surface-2" />
+        <div className="h-64 animate-pulse rounded-[4px] bg-surface-2" />
       </div>
     );
 
@@ -237,7 +233,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                     "Dismissal recorded.",
                   );
               }}
-              className="border border-border px-2 py-1 text-xs"
+              className="redsim-ghost redsim-btn-sm"
             >
               Dismiss
             </button>
@@ -249,23 +245,23 @@ export default function FindingPage({ params }: { params: { id: string } }) {
       {feedback && (
         <p
           role="status"
-          className="border border-primary/30 bg-primary/5 p-3 text-sm"
+          className="redsim-panel p-3 text-sm text-ink-1"
         >
           {feedback}
         </p>
       )}
 
       {!ml ? (
-        <p className="border border-dashed border-border p-4 text-sm">
+        <p className="border border-dashed border-line-strong p-4 text-sm text-ink-3">
           ML evidence unavailable: no canonical schema_blob.ml record.
         </p>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div>
           <PanelSection title="Input" eyebrow="pane 01">
             {observation ? (
               <>
                 <InputEvidence observation={observation} />
-                <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-xs [&_dt]:text-xs [&_dt]:font-medium [&_dt]:text-ink-3 [&_dd]:m-0 [&_dd]:mt-0.5 [&_dd]:text-ink-1 sm:grid-cols-4">
                   <div>
                     <dt>Predictions</dt>
                     <dd>
@@ -299,7 +295,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                 </dl>
               </>
             ) : (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-ink-3">
                 Input evidence absent: no observation was recorded.
               </p>
             )}
@@ -319,7 +315,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                 />
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-ink-3">
                 Explanation absent:{" "}
                 {ml.explanation_unavailable_reason ??
                   observation?.explanation_unavailable_reason ??
@@ -327,7 +323,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
               </p>
             )}
             {observation && (
-              <div className="mt-3 text-xs">
+              <div className="mt-3 text-xs leading-6 text-ink-2">
                 <LabelBadge variant="heuristic" /> center-mass{" "}
                 {observation.center_mass_ratio_clean ?? "—"} →{" "}
                 {observation.center_mass_ratio_adv ?? "—"}
@@ -347,7 +343,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                 )
               </div>
             )}
-            <p className="mt-3 text-sm">
+            <p className="redsim-prose mt-3 text-base">
               Attribution describes model sensitivity; it is not causal proof.
             </p>
             {!observation?.artifacts.shap_clean && (
@@ -361,7 +357,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                       "Explanation job accepted (202); evidence remains pending.",
                     )
                   }
-                  className="mt-3 border border-border px-3 py-2 text-sm"
+                  className="redsim-ghost redsim-btn-sm mt-3"
                 >
                   {pending === "explain" ? "Requesting…" : "Explain"}
                 </button>
@@ -375,19 +371,19 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                 (candidate: CandidateRecommendation, index: number) => (
                   <article
                     key={candidate.id}
-                    className="border border-border p-3 text-sm"
+                    className="border-b border-line pb-3 text-sm last:border-0"
                   >
-                    <div className="flex justify-between">
-                      <strong>
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <strong className="text-ink-1">
                         {index + 1}. {candidate.title}
                       </strong>
-                      <span>
+                      <span className="redsim-chip">
                         candidate ·{" "}
                         {candidate.measured ? "measured" : "not evaluated"}
                       </span>
                     </div>
-                    <p className="mt-1">{candidate.rationale}</p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="redsim-prose mt-1 text-base">{candidate.rationale}</p>
+                    <p className="mt-1 text-xs text-ink-3">
                       trigger: {candidate.triggered_by.join(", ")} · source:{" "}
                       {candidate.narrative_source}
                     </p>
@@ -396,12 +392,12 @@ export default function FindingPage({ params }: { params: { id: string } }) {
               )}
             </div>
             <RoleGated minRole="remediator" callerRole={role}>
-              <div className="mt-4 space-y-2">
+              <div className="redsim-panel mt-4 space-y-3 p-4">
                 <select
                   aria-label="Defense"
                   value={defenseId}
                   onChange={(e) => setDefenseId(e.target.value)}
-                  className="w-full border border-input bg-background p-2"
+                  className="redsim-input"
                 >
                   <option value="">Select defense</option>
                   {defenses.map((defense: DefenseInfo) => (
@@ -410,12 +406,12 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                     </option>
                   ))}
                 </select>
-                <label className="block text-xs">
+                <label className="redsim-kicker block">
                   Defense parameters
                   <textarea
                     value={defenseParams}
                     onChange={(e) => setDefenseParams(e.target.value)}
-                    className="mt-1 min-h-16 w-full border border-input bg-background p-2 font-mono"
+                    className="redsim-input font-mono mt-1 min-h-16"
                   />
                 </label>
                 <div className="flex gap-2">
@@ -428,7 +424,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                         "Candidate generation accepted; results pending.",
                       )
                     }
-                    className="border border-border px-3 py-2"
+                    className="redsim-ghost"
                   >
                     Harden
                   </button>
@@ -455,7 +451,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                         setFeedback(String(cause));
                       }
                     }}
-                    className="bg-primary px-3 py-2 text-primary-foreground"
+                    className="redsim-cta"
                   >
                     Verify
                   </button>
@@ -463,8 +459,8 @@ export default function FindingPage({ params }: { params: { id: string } }) {
               </div>
             </RoleGated>
             {ml.verify?.delta && (
-              <div className="mt-4 border-t border-border pt-3 text-xs">
-                <strong>Recorded measured verification</strong>
+              <div className="mt-4 border-t border-line pt-3 text-xs tabular-nums text-ink-2 [&_p]:m-0">
+                <strong className="text-ink-1">Recorded measured verification</strong>
                 <p>ΔMRI {ml.verify.delta.delta}</p>
                 {Object.entries(ml.verify.delta.delta_subscores).map(
                   ([key, value]) => (
@@ -497,7 +493,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
       )}
 
       {ml && (
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div>
           <PanelSection title="Related robustness" eyebrow="recorded curve">
             <RobustnessCurve points={curve} />
           </PanelSection>
@@ -507,7 +503,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
               events={ml.audit?.events}
               chainId={`run:${data.run_id}`}
             />
-            <ul className="mt-3 text-xs">
+            <ul className="m-0 mt-3 list-none p-0 font-mono text-xs text-ink-3">
               {ml.audit?.entries?.map(
                 (entry: { id: string; action: string; at: string }) => (
                   <li key={entry.id}>
@@ -520,7 +516,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
           <PanelSection title="Campaign" eyebrow="source run">
             <a
               href={`/runs/${data.run_id}`}
-              className="font-mono text-primary underline"
+              className="redsim-link font-mono text-sm"
             >
               {data.run_id}
             </a>
