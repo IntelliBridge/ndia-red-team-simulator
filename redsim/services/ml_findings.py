@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 from uuid import uuid4
 
+from redsim.ml.atlas import technique_for_attack
 from redsim.ml.schema import (
     CampaignRecord,
     CandidateRecommendation,
@@ -323,6 +324,8 @@ def build_finding_detail(
         measurements=measurements, observations=observations,
         interpretation=interpretation, recommendations=recommendations,
         limitations=list(campaign.limitations), artifacts=merged,
+        # Spec 27.2 (INTEROP-18): stamped at creation from the registry mapping; never back-filled.
+        atlas_technique=technique_for_attack(attack_id),
     )
 
 
