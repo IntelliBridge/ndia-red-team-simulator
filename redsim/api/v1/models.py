@@ -17,15 +17,38 @@ Three sources share ``POST /v1/models``:
   spec 17.3 code (``model_too_large``, ``unsupported_model_format``,
   ``pickle_refused``, ``architecture_required``, ``architecture_not_allowlisted``,
   ``dataset_incompatible``). Model bytes are never deserialised here.
-* ``source: "endpoint"`` is Phase B: ``501 not_implemented`` with ``phase``.
+* ``source: "endpoint"`` (JSON, Phase B; ENDPOINT-01, -07, -19, -20, -31)
+  registers a black-box predict endpoint. The gate is ``TARGET_MANAGE``
+  (admin): the registration authorises queries against a host, so the bar is
+  the one for managing targets, not ``MODEL_REGISTER``. The static checks run
+  in ``services.ml_models.admit_endpoint_registration``: the body through
+  ``EndpointRegistration`` (URL shape, modality, dataset, class list, the D3
+  ``evaluation_instance_attestation``), the URL through the egress policy
+  (``endpoint_url_invalid`` / ``endpoint_not_allowlisted`` / ``egress_refused``),
+  the AuthProfile by id (same project or ``404 not_found``; kind ``bearer`` or
+  ``header`` or ``auth_profile_kind_unsupported``), the dataset binding
+  (``dataset_incompatible``). Then ``authorize("model.register", url, ...)``
+  writes the chained row with the allowlist verdict, the ``Target`` (kind
+  ``ml_model_endpoint``, value the URL, detail an ``MLModelManifest`` with
+  ``format: "endpoint"`` and the ``EndpointSpec`` block, ``sha256`` the
+  descriptor digest), the ``ml.ingest`` Run and the ``model.validate`` Job are
+  committed and the job is enqueued; a broker outage withdraws the three rows,
+  records the withdrawal on the chain and answers ``503 queue_unavailable``
+  (an endpoint registration is never left waiting for the reaper). Nothing is
+  resolved, connected or queried from this process; the worker probes the
+  endpoint through the predict broker. ``endpoint_kind: "llm"`` is delegated to
+  ``redsim.services.ml_llm.register_llm_target`` when that module is present
+  and answers ``501 not_implemented`` with the reason otherwise.
 
 ``GET /v1/models`` lists the project's registered targets (soft-deleted rows
 hidden), the unregistered bundled catalog entries (fixture-only targets are
 never listed) and the LLM domain as a ``not_implemented`` row with its reason.
-The catalog registries are imported lazily and never pull torch, ART or ONNX
-into this process (``tests/test_api_process_has_no_ml.py``); when a registry
-cannot be imported the route answers ``503 ml_catalog_unavailable`` rather
-than an empty list.
+Endpoint rows carry the host only (never the URL, never a credential), the
+response fingerprint and the black-box attacks that can launch on them. The
+catalog registries are imported lazily and never pull torch, ART or ONNX into
+this process (``tests/test_api_process_has_no_ml.py``); when a registry cannot
+be imported the route answers ``503 ml_catalog_unavailable`` rather than an
+empty list.
 """
 
 from __future__ import annotations
@@ -34,21 +57,27 @@ import hashlib
 import json
 import logging
 import uuid
+from datetime import UTC, datetime
 from pathlib import PurePath
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
+from redsim.api import errors as _errors
 from redsim.api.auth import CurrentUser, get_current_user
 from redsim.api.errors import (
     ARCHITECTURE_NOT_ALLOWLISTED,
     ARCHITECTURE_REQUIRED,
     CAMPAIGN_IN_FLIGHT,
     DATASET_INCOMPATIBLE,
+    ENDPOINT_NOT_ALLOWLISTED,
+    HTTP_STATUS,
+    LICENSE_REQUIRED,
     MODEL_TOO_LARGE,
     NOT_FOUND,
     NOT_IMPLEMENTED,
     PICKLE_REFUSED,
+    QUEUE_UNAVAILABLE,
     UNSUPPORTED_MODEL_FORMAT,
     ApiError,
     api_error,
@@ -65,13 +94,19 @@ from redsim.api.v1.ml_capabilities import (
 # (tests/test_api_process_has_no_ml.py).
 from redsim.services.ml_models import (
     DELETED_STATUS,
+    ENDPOINT_KIND,
     DatasetBindingError,
+    EndpointAdmissionError,
     MlCatalogUnavailable,
+    admit_endpoint_registration,
     audit_refused_admission,
     campaign_history,
     check_upload_dataset,
     delete_model_target,
+    endpoint_auth_profile_id,
+    endpoint_host,
     is_deleted,
+    is_endpoint_target,
     last_run_ids,
     register_bundled_model,
     safe_filename,
@@ -89,10 +124,18 @@ _PICKLE_SUFFIXES = {".pkl", ".pickle", ".joblib", ".sav", ".dill"}
 _PHASE_A_MODALITIES = {"image", "tabular"}
 _CHUNK = 1024 * 1024
 
-#: ``license_statement`` is required (spec 11.1 "no license statement, no
-#: registration", 17.2). The 17.3 table has no row for it; spec 17.4 names the
-#: code for the dataset route and the upload uses the same spelling.
-LICENSE_REQUIRED = "license_required"
+# Phase B addendum codes the endpoint branch needs that the errors table may not
+# carry yet: resolved by name with a fallback to the addendum spelling, as the
+# wave brief allows. ``auth_profile_required`` (422) is the missing-profile
+# refusal of ENDPOINT-06; ``attestation_required`` would be the D3 attestation's
+# own code (ENDPOINT-31) and ``license_required`` stands in for it until then.
+AUTH_PROFILE_REQUIRED: str = getattr(_errors, "AUTH_PROFILE_REQUIRED", "auth_profile_required")
+ATTESTATION_REQUIRED: str = getattr(_errors, "ATTESTATION_REQUIRED", LICENSE_REQUIRED)
+#: Body keys of ``POST /v1/models`` that are not part of the ``EndpointRegistration`` contract.
+_ENDPOINT_ROUTE_KEYS = frozenset({"source", "project_id", "endpoint_kind"})
+#: Keys of the endpoint projection that name what the worker's probe recorded (never a credential).
+_PROBE_KEYS = ("http_status", "latency_ms", "n_rows", "output_kind", "tls_mode", "checked_at", "reason",
+               "error_class", "code", "rule", "rows", "requests")
 
 
 class _Refusal(Exception):
@@ -124,35 +167,99 @@ def _is_deleted(target: Any) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _black_box_attacks(modality: str) -> list[str] | None:
+    """Evasion adapters that launch on a target without gradients (``black_box`` and ``modality:<m>`` tags).
+
+    ``None`` when the attack registry cannot be imported in this process: the
+    row then says nothing rather than an empty list (spec 18.5 honest states).
+    """
+    try:
+        from redsim.ml.attacks import ATTACKS, attack_capabilities
+    except ImportError:
+        return None
+    wanted = {"black_box", "family:evasion", f"modality:{modality}"}
+    out: list[str] = []
+    for attack_id in ATTACKS.ids():
+        adapter = ATTACKS.maybe_get(attack_id)
+        if adapter is None:
+            continue
+        if wanted <= set(attack_capabilities(adapter)):
+            out.append(str(attack_id))
+    return sorted(out)
+
+
+def _endpoint_projection(target: Any, detail: dict[str, Any], manifest: dict[str, Any]) -> dict[str, Any]:
+    """The ``endpoint`` block of a model row (ENDPOINT-17): host, ids, contract, probe summary, fingerprint.
+
+    Never the URL (the path could carry a tenant's routing), never the
+    credential or its ciphertext: the AuthProfile is named by id only.
+    """
+    spec_value = detail.get("endpoint") if isinstance(detail.get("endpoint"), dict) else manifest.get("endpoint")
+    spec: dict[str, Any] = dict(spec_value) if isinstance(spec_value, dict) else {}
+    validation_value = detail.get("validation")
+    validation: dict[str, Any] = validation_value if isinstance(validation_value, dict) else {}
+    probe_value = detail.get("endpoint_probe")
+    if not isinstance(probe_value, dict):
+        probe_value = validation.get("probe")
+    probe_source: dict[str, Any] = probe_value if isinstance(probe_value, dict) else {}
+    probe = {key: probe_source.get(key) for key in _PROBE_KEYS if probe_source.get(key) is not None}
+    fingerprint_value = detail.get("endpoint_fingerprint")
+    fingerprint: dict[str, Any] = dict(fingerprint_value) if isinstance(fingerprint_value, dict) else {}
+    attestation = detail.get("attestation") if isinstance(detail.get("attestation"), dict) else None
+    return {
+        "host": str(spec.get("url_host") or endpoint_host(str(target.value))),
+        "scheme": detail.get("scheme"),
+        "plaintext": detail.get("plaintext"),
+        "auth_profile_id": endpoint_auth_profile_id(detail),
+        "auth_kind": detail.get("auth_kind"),
+        "contract_version": spec.get("contract_version"),
+        "input_format": detail.get("input_format"),
+        "batch_rows": spec.get("batch_rows"),
+        "timeout_s": spec.get("timeout_s"),
+        "fingerprint_sha256": fingerprint.get("sha256") or probe_source.get("fingerprint_sha256"),
+        "fingerprint_label": fingerprint.get("label"),
+        "output_kind": fingerprint.get("output_kind") or probe_source.get("output_kind"),
+        "probe": probe or None,
+        "attestation": attestation,
+        "verified": False,   # ownership verification is not built (ENDPOINT-26, option a)
+    }
+
+
 def _project_model(target: Any) -> dict[str, Any]:
     """The list/detail row of a registered ``Target`` (spec 17.2 ``GET /v1/models``)."""
     detail = _detail(target)
     manifest_value = detail.get("manifest")
     manifest: dict[str, Any] = manifest_value if isinstance(manifest_value, dict) else detail
     value = str(target.value)
+    endpoint = target.kind == ENDPOINT_KIND or is_endpoint_target(detail)
     source = detail.get("source")
     if source not in {"bundled", "upload", "endpoint"}:
-        source = "endpoint" if target.kind == "ml_model_endpoint" else (
-            "bundled" if value.startswith("bundled:") else "upload")
+        source = "endpoint" if endpoint else ("bundled" if value.startswith("bundled:") else "upload")
     bundled_id = detail.get("bundled_id") or (value.split(":", 1)[1] if value.startswith("bundled:") else None)
-    default_status = "not_implemented" if source == "endpoint" else "registered"
-    return {
+    modality = str(detail.get("modality") or manifest.get("modality") or "image")
+    row: dict[str, Any] = {
         "id": target.id,
         "project_id": target.project_id,
         "registered": True,
         "bundled_id": bundled_id,
         "name": str(detail.get("name") or manifest.get("name") or target.id),
         "source": source,
-        "modality": str(detail.get("modality") or manifest.get("modality") or "image"),
-        "format": detail.get("format") or manifest.get("format") or ("endpoint" if source == "endpoint" else None),
+        "modality": modality,
+        "format": detail.get("format") or manifest.get("format") or ("endpoint" if endpoint else None),
         "sha256": detail.get("sha256", manifest.get("sha256")),
         "manifest": manifest,
-        "status": str(detail.get("status") or manifest.get("status") or default_status),
+        # Status comes from the manifest for every kind (registered -> validating -> available | refused).
+        "status": str(detail.get("status") or manifest.get("status") or "registered"),
         "refusal_reason": detail.get("refusal_reason") or manifest.get("refusal_reason"),
         "reason": detail.get("reason"),
         "validation": detail.get("validation"),
         "last_run_id": None,
     }
+    if endpoint:
+        row["gradients"] = False
+        row["endpoint"] = _endpoint_projection(target, detail, manifest)
+        row["available_attacks"] = _black_box_attacks(modality)
+    return row
 
 
 def _registry_infos() -> list[Any]:
@@ -203,7 +310,8 @@ def _catalog_rows(project_id: str) -> list[dict[str, Any]]:
             if metadata.get("fixture_only"):
                 continue          # CI fixtures are never demo targets (spec 5.5, 11.1)
             rows.append(_bundled_row(info, project_id))
-        elif info.domain == "llm" or metadata.get("kind") == "ml_model_endpoint":
+        elif info.domain == "llm":
+            # The LLM domain only: real endpoint targets are Target rows, never registry entries (ENDPOINT-17).
             rows.append(_llm_row(info, project_id))
     return rows
 
@@ -392,14 +500,14 @@ async def register_model(
     source = str(fields.get("source") or ("upload" if upload is not None else "bundled"))
     project_id = str(fields.get("project_id") or project or "default")
     ensure_project_access(user, project_id)
-    check(user, Action.MODEL_REGISTER, project_id)
 
     if source == "endpoint":
-        audit_refused_admission(
-            writer, action="model.register", actor=actor, project_id=project_id,
-            detail={"kind": "ml_model_endpoint", "source": "endpoint", "reason": NOT_IMPLEMENTED, "phase": "B"},
-        )
-        raise api_error(NOT_IMPLEMENTED, "black-box endpoint registration is not implemented", phase="B")
+        # Spec 7.3 / 7.4 (ENDPOINT-20): registering a host to query is TARGET_MANAGE (admin), gated
+        # before any field is read. A denied role is the policy layer's 403; nothing is written.
+        check(user, Action.TARGET_MANAGE, project_id)
+        return _register_endpoint(fields, actor=actor, project_id=project_id, writer=writer, config=config)
+
+    check(user, Action.MODEL_REGISTER, project_id)
 
     if source == "bundled":
         bundled_id = str(fields.get("bundled_id") or "")
@@ -478,10 +586,9 @@ async def register_model(
         # ``dataset_incompatible``). The manifest is read as JSON only; shape
         # and class-count checks stay on the worker.
         if not license_statement:
-            raise _Refusal(HTTPException(status_code=422, detail={
-                "code": LICENSE_REQUIRED,
-                "message": "license_statement is required: only models with a declared licence are registered",
-                "field": "license_statement"}), LICENSE_REQUIRED, field="license_statement")
+            raise _refuse(LICENSE_REQUIRED,
+                          "license_statement is required: only models with a declared licence are registered",
+                          field="license_statement")
         try:
             binding = check_upload_dataset(dataset_id, modality=modality, dataset_split=dataset_split)
         except DatasetBindingError as exc:
@@ -596,6 +703,213 @@ async def register_model(
     return response
 
 
+# ---------------------------------------------------------------------------
+# Endpoint registration (``source: "endpoint"``; ENDPOINT-01, -07, -19, -20, -29, -31)
+# ---------------------------------------------------------------------------
+
+
+def _endpoint_error(code: str, message: str, **fields: Any) -> HTTPException:
+    """The 17.3 envelope for an endpoint refusal; an addendum code the table lacks keeps its 422 shape."""
+    if code == NOT_IMPLEMENTED:
+        fields.setdefault("phase", "B")
+    if code in HTTP_STATUS:
+        return api_error(code, message, **fields)
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                         detail={"code": code, "message": message, **fields})
+
+
+def _resolve_endpoint_code(exc: EndpointAdmissionError) -> str:
+    """Swap the service's addendum spellings for the table's names when the table carries them."""
+    if exc.code == "auth_profile_required":
+        return AUTH_PROFILE_REQUIRED
+    if exc.field == "evaluation_instance_attestation":
+        return ATTESTATION_REQUIRED
+    return exc.code
+
+
+def _llm_registrar() -> Any | None:
+    """``redsim.services.ml_llm.register_llm_target`` when the llm-api track has landed it, else ``None``."""
+    try:
+        import importlib
+
+        module = importlib.import_module("redsim.services.ml_llm")
+    except ImportError:
+        return None
+    registrar = getattr(module, "register_llm_target", None)
+    return registrar if callable(registrar) else None
+
+
+def _register_endpoint(
+    fields: dict[str, Any],
+    *,
+    actor: str,
+    project_id: str,
+    writer: Any,
+    config: Any,
+) -> dict[str, Any]:
+    """Admit a black-box predict endpoint (spec 9.3 steps 1 to 4 for the endpoint kind).
+
+    Every refusal writes the ``model.register`` ``success=False`` row first
+    (host, ids and the reason only; never the URL's userinfo or query, never a
+    credential) and carries the 17.3 code. The successful path writes the
+    chained ``model.register`` row with the allowlist verdict, then the Target,
+    Run and Job rows and the enqueue in one transaction.
+    """
+    from redsim.db.session import get_session
+    from redsim.safety import AuthorizationError, authorize
+
+    endpoint_kind = str(fields.get("endpoint_kind") or "predict").strip().lower()
+    body = {key: value for key, value in fields.items() if key not in _ENDPOINT_ROUTE_KEYS}
+    raw_url = fields.get("url")
+    raw_profile = fields.get("auth_profile_id")
+    audit_base: dict[str, Any] = {
+        "kind": ENDPOINT_KIND, "source": "endpoint", "endpoint_kind": endpoint_kind,
+        "host": endpoint_host(raw_url) if isinstance(raw_url, str) else None,
+        "auth_profile_id": raw_profile if isinstance(raw_profile, str) else None,
+        "modality": fields.get("modality") if isinstance(fields.get("modality"), str) else None,
+        "dataset_id": fields.get("dataset_id") if isinstance(fields.get("dataset_id"), str) else None,
+    }
+
+    def refused(code: str, message: str, *, field: str, target: str | None = None, **extra: Any) -> HTTPException:
+        # Spec 9.3 step 2 / 5.11: the refusal is on the project chain before it is raised. A host the
+        # allowlist refuses is recorded like every other allowlist refusal: target URL, allowlist_check fail.
+        audit_refused_admission(
+            writer, action="model.register", actor=actor, project_id=project_id,
+            detail={**audit_base, **extra, "reason": code, "field": field},
+            target=target, allowlist_check="fail" if target is not None else "n/a",
+        )
+        return _endpoint_error(code, message, field=field, **extra)
+
+    if endpoint_kind == "llm":
+        # LLM-03: ``services.ml_llm.register_llm_target(session, *, project_id, fields, actor, audit_writer,
+        # config) -> Target`` writes its own model.register rows (success and refusal) and raises ApiError.
+        registrar = _llm_registrar()
+        if registrar is None:
+            raise refused(NOT_IMPLEMENTED, "LLM target registration lands with the llm-api track (LLM-03); "
+                          "only endpoint_kind 'predict' is implemented here", field="endpoint_kind", phase="B")
+        try:
+            with get_session() as sess:
+                result = registrar(sess, project_id=project_id, fields=dict(fields), actor=actor,
+                                   audit_writer=writer, config=config)
+                llm_row: dict[str, Any] = result if isinstance(result, dict) else _project_model(result)
+        except ApiError as exc:
+            raise exc.as_http_exception() from exc
+        llm_row.setdefault("campaign_history", [])
+        return llm_row
+    if endpoint_kind != "predict":
+        raise refused(NOT_IMPLEMENTED, f"endpoint_kind {endpoint_kind!r} is not implemented; use 'predict'",
+                      field="endpoint_kind", phase="B")
+
+    try:
+        with get_session() as sess:
+            admission = admit_endpoint_registration(
+                sess, body, project_id=project_id, allowlist=list(config.target_allowlist),
+            )
+    except EndpointAdmissionError as exc:
+        code = _resolve_endpoint_code(exc)
+        # The static egress rules ran before the allowlist rule, so a not-allowlisted URL is already
+        # free of userinfo, query and fragment and may be recorded as the refused target.
+        refused_url = str(raw_url) if code == ENDPOINT_NOT_ALLOWLISTED and isinstance(raw_url, str) else None
+        raise refused(code, str(exc), field=exc.field, target=refused_url, **exc.extra) from exc
+
+    reg = admission.registration
+    model_id = uuid.uuid4().hex
+    run_id = f"run-{uuid.uuid4().hex[:12]}"
+    job_id = f"job-{uuid.uuid4().hex[:12]}"
+    registered_at = datetime.now(UTC).isoformat()
+    manifest = admission.manifest(status="validating")
+    detail: dict[str, Any] = {
+        **manifest,
+        "source": "endpoint",
+        "endpoint_kind": "predict",
+        "auth_profile_id": reg.auth_profile_id,
+        "auth_kind": admission.auth_kind,
+        "input_format": reg.resolved_input_format,
+        "scheme": admission.scheme,
+        "plaintext": admission.plaintext,
+        "attestation": {"evaluation_instance": True, "by": actor, "at": registered_at,
+                        "statement": "non-operational evaluation instance; no mission system is connected"},
+        "registration": {"descriptor_sha256": admission.descriptor_sha256,
+                         "allowlist_entry": admission.allowlist_entry, "contract": reg.contract_version},
+        "registered_by": actor,
+        "registered_at": registered_at,
+        "manifest": manifest,
+        "validation": {"ingest_job_id": job_id, "ingest_run_id": run_id, "probe": None},
+    }
+    audit_detail = {
+        **admission.audit_detail(), "endpoint_kind": "predict", "target_id": model_id,
+        "ingest_run_id": run_id, "ingest_job_id": job_id,
+    }
+    # Spec 9.3 step 4 / 5.11: the chained event, with the URL as the target so the allowlist verdict
+    # is on the row, precedes the Target / Run / Job rows and the enqueue.
+    try:
+        authorize(
+            "model.register", admission.url, allowlist=list(config.target_allowlist), actor=actor,
+            writer=writer, project_id=project_id, run_id=run_id, detail=audit_detail,
+        )
+    except AuthorizationError as exc:
+        # The failed row is already on the chain (allowlist_check fail); the egress check and
+        # ``is_target_allowed`` disagree only on an allowlist the operator changed mid-request.
+        raise _endpoint_error(ENDPOINT_NOT_ALLOWLISTED, str(exc), field="url", host=admission.host) from exc
+
+    from redsim.db.models import Job, Run, Target
+
+    # Rows first, committed, then the enqueue: a worker that picks the job up before the API commits
+    # would find no row (the platform's admission order, ``tests/test_admission_audit_before_enqueue.py``).
+    with get_session() as sess:
+        target = Target(id=model_id, project_id=project_id, kind=ENDPOINT_KIND, value=admission.url, verified=False)
+        target.detail = detail
+        sess.add(target)
+        sess.flush()
+        sess.add(Run(
+            id=run_id, project_id=project_id, target_id=model_id, mode="api", status="queued",
+            scanner="ml.ingest", created_by=actor,
+            stage_table={"stage": None, "stages_done": [], "jobs": {}},
+        ))
+        sess.flush()
+        sess.add(Job(
+            id=job_id, run_id=run_id, project_id=project_id, type="model.validate", status="queued",
+            created_by=actor,
+            # Spec 5.10 / ENDPOINT-29: the profile id rides on the job; the worker decrypts at pickup.
+            detail={"target_id": model_id, "declared_format": "endpoint", "auth_profile_id": reg.auth_profile_id},
+        ))
+        sess.flush()
+        response = _project_model(target)
+    try:
+        from redsim.workers.tasks.ml_model import ml_model_validate
+
+        queued = ml_model_validate.delay(job_id)
+    except Exception as exc:  # noqa: BLE001 - any broker failure rolls the registration back
+        # Unlike an upload (a durable queued row the reaper picks up), an endpoint registration that
+        # cannot be validated is withdrawn: the three rows nobody references yet are removed, the chain
+        # records the withdrawal and the caller gets 503 queue_unavailable (ENDPOINT-01).
+        logger.warning("enqueue failed for endpoint validation job %s; registration rolled back", job_id,
+                       exc_info=True)
+        with get_session() as sess:
+            for model, key in ((Job, job_id), (Run, run_id), (Target, model_id)):
+                row = sess.get(model, key)
+                if row is not None:
+                    sess.delete(row)
+                sess.flush()
+        audit_refused_admission(
+            writer, action="model.register", actor=actor, project_id=project_id, run_id=run_id,
+            detail={**audit_base, "host": admission.host, "target_id": model_id, "ingest_run_id": run_id,
+                    "ingest_job_id": job_id, "reason": QUEUE_UNAVAILABLE, "rolled_back": True,
+                    "error_class": type(exc).__name__},
+        )
+        raise api_error(QUEUE_UNAVAILABLE, "the validation job could not be enqueued; the registration was "
+                        "rolled back and nothing was registered", target_id=model_id) from exc
+    with get_session() as sess:
+        job = sess.get(Job, job_id)
+        if job is not None:
+            job.celery_task_id = str(queued.id)
+    response["ingest_run_id"] = run_id
+    response["ingest_job_id"] = job_id
+    response["campaign_history"] = []
+    response["enqueued"] = True
+    return response
+
+
 @router.delete("/{model_id}")
 def delete_model(
     model_id: str,
@@ -606,7 +920,9 @@ def delete_model(
     The ``ml.ingest`` Run of every upload and the ``ml_campaigns`` rows
     reference the Target, so the row itself is retained for history (spec 17,
     "Run, Finding, Artifact and audit rows are retained"). The catalog hides it,
-    ``GET /v1/models/{id}`` answers 404 and campaign admission refuses it.
+    ``GET /v1/models/{id}`` answers 404 and campaign admission refuses it. An
+    endpoint target has no blob: the row is marked, the credential stays with
+    its AuthProfile, and the audit row names the host (ENDPOINT-18).
     """
     from redsim.audit.chain import resolve_writer
     from redsim.config import load_config
