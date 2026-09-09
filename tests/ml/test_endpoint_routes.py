@@ -755,14 +755,21 @@ def test_validate_task_probes_through_the_broker_and_marks_available(
 
 
 def _typed(name: str, message: str) -> Exception:
-    from redsim.ml import endpoint_broker, endpoint_egress
-    from redsim.ml.errors import UnsupportedArtifact
+    """The typed failure the sandbox rebuilds from the child's envelope, by its ``redsim.ml.errors`` name.
 
-    if name == "EndpointNotAllowlisted":
-        return endpoint_egress.EndpointNotAllowlisted("not_allowlisted", message, host="127.0.0.1")
-    if name == "UnsupportedArtifact":
-        return UnsupportedArtifact(message)
-    cls = getattr(endpoint_broker, name)
+    Every endpoint class resolves through ``redsim.ml.errors`` (the broker's and the egress module's
+    classes are re-exported there by name, PEP 562), with the constructors the B1 library gave them:
+    ``EndpointSchemaMismatch(message, field=)`` and ``EgressRefused(rule, message, host=)``.
+    """
+    from redsim.ml import errors as ml_errors
+
+    cls = getattr(ml_errors, name)
+    if name == "EndpointSchemaMismatch":
+        return cls(message, field="probabilities")
+    if name in {"EgressRefused", "EndpointNotAllowlisted", "EndpointUrlInvalid"}:
+        rule = {"EgressRefused": "private_address", "EndpointNotAllowlisted": "not_allowlisted",
+                "EndpointUrlInvalid": "url_shape"}[name]
+        return cls(rule, message, host="127.0.0.1")
     return cls(message)
 
 
@@ -882,6 +889,56 @@ def test_validate_task_with_a_deleted_profile_refuses_without_probing(
 
 
 # ---------------------------------------------------------------------------
+# Catalog seams closed with the B1 assemble: text / detection rows, defense phases, the LLM domain row
+# ---------------------------------------------------------------------------
+
+
+def test_catalog_lists_text_and_detection_targets_and_reads_defense_phases_from_the_catalog(
+    api: SimpleNamespace,
+) -> None:
+    """``import redsim.ml.targets`` registers ``sms_tfidf_lr`` and ``assets_frcnn_mnv3`` (MODALITIES-14, -29), so
+    ``GET /v1/models`` lists them as unregistered bundled rows with their honest status (no assets built in this
+    harness: ``not_implemented`` with the build-assets reason); ``GET /v1/defenses`` says ``phase: "B"`` for the
+    training defenses because the phase is the catalog row's, not stamped; the LLM domain row names the route
+    that is live (``endpoint_kind: llm`` + ``/probes``) instead of a Phase B placeholder."""
+    from redsim.ml.defenses import ALL_DEFENSES
+    from redsim.ml.targets import list_targets
+
+    registry = {info.id: info for info in list_targets()}
+    assert {"sms_tfidf_lr", "assets_frcnn_mnv3"} <= set(registry)
+    assert registry["sms_tfidf_lr"].domain == "text" and registry["assets_frcnn_mnv3"].domain == "detection"
+
+    listing = api.client.get("/v1/models", params={"project": PROJECT})
+    assert listing.status_code == 200, listing.text
+    rows = {row["id"]: row for row in listing.json()["models"]}
+    for target_id, modality in (("sms_tfidf_lr", "text"), ("assets_frcnn_mnv3", "detection")):
+        row = rows[target_id]
+        assert row["source"] == "bundled" and row["registered"] is False and row["modality"] == modality
+        assert row["status"] in {"available", "not_implemented"}
+        assert row["status"] == "available" or row["reason"], "an unbuilt bundled model says why"
+    assert "cifar10_smallcnn" not in rows, "fixture-only targets are never listed"
+    llm = rows["endpoint_stub"]
+    assert llm["status"] == "not_implemented" and llm["phase"] == "B" and llm["modality"] == "llm"
+    assert "endpoint_kind: llm" in llm["reason"] and "/probes" in llm["reason"]
+    assert "not implemented" not in llm["reason"].lower(), "LLM registration and probes are live (LLM-03)"
+
+    defenses = api.client.get("/v1/defenses")
+    assert defenses.status_code == 200, defenses.text
+    body = defenses.json()
+    by_id = {row["id"]: row for row in body["defenses"]}
+    assert body["count"] == len(ALL_DEFENSES) == len(by_id) == 5
+    for source in ALL_DEFENSES:
+        row = by_id[source["id"]]
+        assert row["phase"] == source["phase"] and row["kind"] == source["kind"], row["id"]
+        assert row["modalities"] == list(source["domains"]) and "domains" not in row
+        assert row["status"] == "available"
+        assert all(isinstance(p, dict) and "name" in p for p in row["params_schema"])
+    assert {row["phase"] for row in by_id.values() if row["kind"] == "training"} == {"B"}
+    assert {row["phase"] for row in by_id.values() if row["kind"] == "preprocessing"} == {"A"}
+    assert by_id["adversarial_training"]["requires"] == {"torch_module": True, "train_slice": True}
+
+
+# ---------------------------------------------------------------------------
 # Real child, real broker, tiny endpoint server (ml tier)
 # ---------------------------------------------------------------------------
 
@@ -897,17 +954,17 @@ def test_registration_to_available_through_the_real_child(
     import numpy as np
 
     from redsim.ml import endpoint_broker, sandbox
+    from redsim.ml.targets import endpoint_contract
     from tests.ml.fakes import TinyTarget
     from tests.ml.tiny_endpoint_server import TinyEndpointServer
 
-    try:
-        # The B1 broker was written against a pre-B0 request body ({contract, inputs, encoding}); the B0
-        # contract requires ``input_format`` and forbids extras. Until ``build_predict_body`` is reconciled
-        # (endpoint-target's file), no real probe can leave the worker: the refusal path above still holds.
-        endpoint_broker.build_predict_body([[0.0, 1.0]])
-    except Exception as exc:  # noqa: BLE001 - the mismatch is a ValidationError today
-        pytest.xfail(f"redsim.ml.endpoint_broker.build_predict_body does not speak the B0 endpoint-v1 request "
-                     f"body yet ({type(exc).__name__}); reconcile with redsim.ml.targets.endpoint_contract")
+    # The B1 broker speaks the B0 ``endpoint-v1`` request body: it encodes through
+    # ``redsim.ml.targets.endpoint_contract.encode_request`` (``input_format`` from the registered modality,
+    # the registered ``input_shape`` enforced) and validates the reply through ``validate_response_bytes``.
+    body = endpoint_contract.encode_request([[[[0.0] * 8] * 8] * 3], input_format="float32_nchw",
+                                            input_shape=[3, 8, 8])
+    assert body["contract"] == endpoint_broker.CONTRACT_VERSION == "endpoint-v1" and body["input_format"] == "float32_nchw"
+    assert endpoint_broker.encode_request is endpoint_contract.encode_request
 
     # A real evaluation split the child can bind, replacing the placeholder and its digest.
     sample = TinyTarget(seed=0).sample(24, 1)

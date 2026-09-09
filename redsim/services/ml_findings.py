@@ -531,92 +531,6 @@ def create_finding_action_job(
 
 
 # ---------------------------------------------------------------------------
-# Review (dismissal)
-# ---------------------------------------------------------------------------
-
-
-def _refuse_review(audit_writer: AuditWriter, *, actor: str, finding: Any, detail: dict[str, Any],
-                   refusal: str, message: str) -> None:
-    """A refused dismissal is still on the chain, as a ``success=False`` row."""
-    audit_writer.append(
-        action="finding.review", actor=actor, target=None, allowlist_check="n/a",
-        override=False, success=False,
-        detail={**detail, "refusal": refusal, "message": message},
-        run_id=finding.run_id, project_id=finding.project_id,
-    )
-
-
-def review_finding(*, finding_id: str, expected_status: str, reason: str, actor: str,
-                   config: RedsimConfig, audit_writer: AuditWriter,
-                   reviewer_is_system: bool = False) -> dict[str, Any]:
-    """Record the only user-owned ML status transition: dismissal (spec 6.4, 7.7).
-
-    Order: lookup, independence (creator and system principals are refused with
-    ``PermissionError``), stale ``expected_status`` and disallowed source status
-    (``ApiError(run_terminal)``), then the ``finding.review`` audit row, then the
-    write. Refusals after lookup append a ``success=False`` row first.
-    """
-    # ``redsim.api`` imports every router at package import, and the routers import
-    # this module, so the error table is imported here rather than at module level.
-    from redsim.api.errors import RUN_TERMINAL, ApiError
-    from redsim.db.models import Finding, Run
-    from redsim.db.session import get_session
-
-    if not reason.strip():
-        raise ValueError("reason is required")
-    with get_session() as session:
-        finding = session.get(Finding, finding_id)
-        if finding is None:
-            raise LookupError("finding not found")
-        parent = session.get(Run, finding.run_id)
-        creator = parent.created_by if parent is not None else None
-        detail: dict[str, Any] = {
-            "finding_id": finding_id, "from_status": finding.status, "to_status": DISMISSED_STATUS,
-            "expected_status": expected_status, "reason": reason, "reviewer": actor,
-            "campaign_creator": creator,
-        }
-        if reviewer_is_system:
-            message = "system principals cannot dismiss findings; dismissal needs an independent human reviewer"
-            _refuse_review(audit_writer, actor=actor, finding=finding, detail=detail,
-                           refusal="forbidden", message=message)
-            raise PermissionError(message)
-        if creator is not None and creator == actor:
-            message = "campaign creator cannot review their own finding"
-            _refuse_review(audit_writer, actor=actor, finding=finding, detail=detail,
-                           refusal="forbidden", message=message)
-            raise PermissionError(message)
-        if finding.status != expected_status:
-            message = "finding status no longer matches expected_status"
-            _refuse_review(audit_writer, actor=actor, finding=finding, detail=detail,
-                           refusal=RUN_TERMINAL, message=message)
-            raise ApiError(RUN_TERMINAL, message, status=finding.status, expected_status=expected_status)
-        if finding.status not in DISMISSABLE_FROM:
-            message = (f"only {' or '.join(sorted(DISMISSABLE_FROM))} findings can be dismissed; "
-                       f"this finding is {finding.status!r}")
-            _refuse_review(audit_writer, actor=actor, finding=finding, detail=detail,
-                           refusal=RUN_TERMINAL, message=message)
-            raise ApiError(RUN_TERMINAL, message, status=finding.status,
-                           allowed_from=sorted(DISMISSABLE_FROM))
-        # Audit before the row changes (spec 6.7 invariant 4).
-        authorize("finding.review", None, allowlist=config.target_allowlist, actor=actor,
-                  writer=audit_writer, project_id=finding.project_id, run_id=finding.run_id,
-                  detail=detail)
-        now = datetime.now(UTC)
-        review = FindingReview(state="dismissed", reviewer=actor, reason=reason, at=now)
-        blob = dict(finding.schema_blob or {})
-        ml_detail = read_finding_detail(blob)
-        if ml_detail is not None:
-            ml_detail.review = review
-            blob["ml"] = ml_detail.model_dump(mode="json")
-        blob["status"] = DISMISSED_STATUS
-        blob["updated_at"] = now.isoformat()
-        finding.schema_blob, finding.status, finding.updated_at = blob, DISMISSED_STATUS, now
-        session.flush()
-        return {"id": finding_id, "status": DISMISSED_STATUS, "from_status": expected_status,
-                "validation_state": finding.validation_state, "review": review.model_dump(mode="json")}
-
-
-# ---------------------------------------------------------------------------
 # LLM probe findings (register LLM-15; plan 12 wave B2 llm-api)
 # ---------------------------------------------------------------------------
 
@@ -849,4 +763,4 @@ __all__ = ["DISMISSABLE_FROM", "DISMISSED_STATUS", "LLM_FINDING_KIND", "LLM_FIND
            "finding_description", "finding_measurements", "finding_observations",
            "finding_remediation_steps", "finding_title", "llm_finding_description", "llm_finding_title",
            "llm_severity_from_hit_rate", "project_campaign_findings", "project_llm_findings",
-           "read_finding_detail", "read_llm_finding_detail", "review_finding"]
+           "read_finding_detail", "read_llm_finding_detail"]
