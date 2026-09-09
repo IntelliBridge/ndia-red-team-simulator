@@ -23,6 +23,7 @@
             "s3SecretAccessKey",
             "betterAuthSecret",
             "apiSessionPrivateKey",
+            "apiSessionPublicKey",
             "externalSecrets"
           ],
           "properties": {
@@ -46,6 +47,10 @@
             "apiSessionPrivateKey": {
               "type": "string",
               "description": "RS256 PKCS8 PEM whose public half FastAPI verifies redsim_api_session against. Operator-supplied; empty disables minting."
+            },
+            "apiSessionPublicKey": {
+              "type": "string",
+              "description": "SubjectPublicKeyInfo PEM matching apiSessionPrivateKey, read by the api as REDSIM_API_SESSION_PUBLIC_KEY. Empty means the api verifies no browser cookie."
             },
             "externalSecrets": {
               "type": "object",

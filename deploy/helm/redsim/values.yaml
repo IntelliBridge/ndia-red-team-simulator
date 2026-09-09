@@ -77,6 +77,11 @@ config:
     # redsim_api_session cookie against its public half, so the two sides
     # must agree. Empty means the login completes and mints no cookies.
     apiSessionPrivateKey: ""
+    # The matching SubjectPublicKeyInfo PEM, read by the api as
+    # REDSIM_API_SESSION_PUBLIC_KEY. The operator supplies both halves of one
+    # keypair. Empty means the api verifies no cookie the web tier mints and
+    # answers 401 to every browser call.
+    apiSessionPublicKey: ""
     # External Secrets Operator integration. When enabled, the chart renders
     # an ExternalSecret (templates/externalsecret.yaml) that materialises the
     # config Secret from an external store (Vault, AWS/GCP SM, etc.) instead
@@ -110,6 +115,10 @@ config:
           remoteRef:
             key: redsim/api-session
             property: private_key
+        - secretKey: REDSIM_API_SESSION_PUBLIC_KEY
+          remoteRef:
+            key: redsim/api-session
+            property: public_key
 
 # -- Sandbox isolation (gVisor) -----------------------------------------------
 # gVisor (`runsc`) sandboxes the worker pod, which executes untrusted plugin /
