@@ -18,9 +18,16 @@ beforeEach(() => {
   setSpy.mockClear();
 });
 
+const SIGNOUT_URL = "http://localhost:3000/api/auth/signout-redsim";
+
+/** The sign-out post, with whatever fetch metadata the case is about. */
+function post(headers: HeadersInit = {}): Request {
+  return new Request(SIGNOUT_URL, { method: "POST", headers });
+}
+
 describe("POST /api/auth/signout-redsim", () => {
   it("clears both the session and csrf cookies with maxAge 0", () => {
-    POST();
+    POST(post({ "sec-fetch-site": "same-origin" }));
 
     // The attributes now come from the shared builder the after-hook and the
     // refresh route also use, so the three cannot drift apart.
@@ -38,10 +45,45 @@ describe("POST /api/auth/signout-redsim", () => {
   });
 
   it("responds 200 with { ok: true }", async () => {
-    const res = POST();
+    const res = POST(post({ "sec-fetch-site": "same-origin" }));
 
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({ ok: true });
+  });
+
+  it("refuses a cross-site post and clears nothing", () => {
+    // Clearing the credential pair is a state change, and this form had no
+    // gate at all: a cross-site top-level form post forced the victim's
+    // logout while the sibling GET was hop-token protected.
+    const res = POST(post({ "sec-fetch-site": "cross-site" }));
+
+    expect(res.status).toBe(403);
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses a same-site post too, since the cookie jar is not proof of intent", () => {
+    const res = POST(post({ "sec-fetch-site": "same-site" }));
+
+    expect(res.status).toBe(403);
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it("refuses an untrusted Origin when the browser sent no fetch metadata", () => {
+    const res = POST(post({ origin: "https://evil.test" }));
+
+    expect(res.status).toBe(403);
+    expect(setSpy).not.toHaveBeenCalled();
+  });
+
+  it("admits the app's own bare post, which carries no Content-Type at all", () => {
+    // Both callers send fetch(url, { method: "POST" }) with no body. The full
+    // mutation gate requires application/json and would refuse them, which is
+    // why this route takes only the origin legs. No fetch metadata and no
+    // Origin is admitted, the same call the mutation gate makes.
+    const res = POST(post());
+
+    expect(res.status).toBe(200);
+    expect(setSpy).toHaveBeenCalledTimes(2);
   });
 });
 

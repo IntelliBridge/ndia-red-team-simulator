@@ -8,8 +8,12 @@
 // POST is the client path: the QueryClient's global handler calls it when a
 // procedure answers 401. GET is the server path: a server component cannot
 // write cookies, so an awaited prefetch that hits a 401 redirects the browser
-// here instead (KTD7). U7 extends the GET form with the fetch-metadata refusal
-// and the dev-cookie clear.
+// here instead (KTD7). U7 extends the GET form with the dev-cookie clear.
+//
+// Both forms are gated. POST takes the origin legs of the shared mutation
+// gate, so a cross-site form post cannot force a logout; GET takes the
+// credential-bound hop token instead, because a redirect leg recomputes
+// Sec-Fetch-Site against the original initiator.
 
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -18,8 +22,33 @@ import { env } from "@/env";
 import { verifyHopToken } from "@/server/gate";
 import { clearRedsimCookies } from "@/server/redsim-cookies";
 import { cookieReaderFromHeader } from "@/server/trpc/context";
+import { checkRequestOrigin } from "@/server/trpc/mutation-gate";
 
-export function POST() {
+/**
+ * The client sign-out.
+ *
+ * Clearing the credential pair is a state change, so it takes the origin legs
+ * of the shared mutation gate: without them a cross-site top-level form post
+ * logged the victim out, while the sibling GET was hop-token protected.
+ *
+ * Only the origin legs. `checkMutationRequest` also requires an exact
+ * `Content-Type`, and both callers of this route send a bare
+ * `fetch(url, { method: "POST" })` with no body and therefore no type, so the
+ * full gate would refuse the app's own sign-out. A request with neither fetch
+ * metadata nor an `Origin` is admitted, which is the same call the mutation
+ * gate makes.
+ *
+ * @param request - The incoming request, for its fetch metadata and origin.
+ * @returns 200 with `{ ok: true }`, or 403 with nothing cleared.
+ */
+export function POST(request: Request): NextResponse {
+  const verdict = checkRequestOrigin({
+    secFetchSite: request.headers.get("sec-fetch-site"),
+    origin: request.headers.get("origin"),
+    trustedOrigin: env.BETTER_AUTH_URL ?? "",
+  });
+  if (!verdict.ok) return new NextResponse(null, { status: 403 });
+
   const jar = cookies();
   clearRedsimCookies((name, value, options) => jar.set(name, value, options));
   return NextResponse.json({ ok: true });
