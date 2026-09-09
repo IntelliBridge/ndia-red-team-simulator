@@ -27,7 +27,24 @@ export function resolveFixture(method: string, path: string): unknown {
   if (exact !== undefined) return exact;
   if (method === "GET" && path.startsWith("/v1/runs/")) {
     const id = path.slice("/v1/runs/".length);
-    return runFixtures.find((run) => run.id === id);
+    const run = runFixtures.find((entry) => entry.id === id);
+    if (run === undefined) return undefined;
+    // The same projection `_run_to_dict` makes in redsim/api/v1/runs.py: the
+    // detail route drops created_by and adds completed_at and stage_table.
+    // Recorded rows are the list shape, so returning one unchanged would fail
+    // the detail schema and answer 502 where the real API answers 200. The
+    // two added values are empty rather than invented: nothing here is a
+    // measurement, and a fixture stage table would read like one.
+    return {
+      id: run.id,
+      project_id: run.project_id,
+      status: run.status,
+      scanner: run.scanner,
+      mode: run.mode,
+      created_at: run.created_at,
+      completed_at: null,
+      stage_table: {},
+    };
   }
   return undefined;
 }

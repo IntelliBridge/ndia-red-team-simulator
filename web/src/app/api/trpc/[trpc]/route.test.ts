@@ -141,6 +141,40 @@ describe("the tRPC route handler", () => {
     });
   });
 
+  it("accepts the detail shape GET /v1/runs/{id} really returns", async () => {
+    // redsim/api/v1/runs.py serializes the detail route without created_by and
+    // with completed_at and stage_table, while only the list route carries
+    // created_by. Validated against the list shape, every successful detail
+    // call became a 502 on the parse rather than reaching the page.
+    const detail = {
+      id: "run-1",
+      project_id: "default",
+      status: "succeeded",
+      scanner: "ml.campaign",
+      mode: "campaign",
+      created_at: "2026-09-09T09:30:00Z",
+      completed_at: "2026-09-09T09:41:00Z",
+      stage_table: { stages: { load_target: { status: "succeeded" } } },
+    };
+    fetchMock.mockResolvedValue(jsonResponse(200, detail));
+    const response = await route.GET(get(batchUrl(["runs.get"], { 0: { id: "run-1" } })));
+    const body = (await response.json()) as Array<{ result: { data: unknown } }>;
+
+    expect(response.status).toBe(200);
+    expect(body[0]?.result.data).toEqual(detail);
+  });
+
+  it("still refuses a detail body missing a field the route always sends", async () => {
+    // The looseObject keeps unknown keys, so the schema is only worth having
+    // if a genuinely wrong shape is still a 502.
+    fetchMock.mockResolvedValue(jsonResponse(200, { id: "run-1", project_id: "default" }));
+    const response = await route.GET(get(batchUrl(["runs.get"], { 0: { id: "run-1" } })));
+    const body = (await response.json()) as Array<{ error: { data: { upstream: { code: string } } } }>;
+
+    expect(response.status).toBe(502);
+    expect(body[0]?.error.data.upstream).toMatchObject({ code: "upstream_error" });
+  });
+
   it("never forwards an upstream Set-Cookie to the browser", async () => {
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ runs: [], count: 0 }), {

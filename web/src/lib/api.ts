@@ -137,6 +137,21 @@ export type Run = {
   created_by: string | null;
 };
 
+/**
+ * One run as `GET /v1/runs/{id}` returns it.
+ *
+ * Not `Run` with two fields added. `redsim/api/v1/runs.py` builds both bodies
+ * from one serializer with per-route switches: the detail route asks for
+ * `completed_at` and `stage_table` and leaves `created_by` at its `False`
+ * default, and only the list route asks for `created_by`. So the two shapes
+ * overlap without one containing the other, and a single type for both would
+ * either refuse a real detail body or stop describing the list.
+ */
+export type RunDetail = Omit<Run, "created_by"> & {
+  completed_at: string | null;
+  stage_table: Record<string, unknown>;
+};
+
 export type FindingSchemaBlob = {
   title?: string;
   description?: string;

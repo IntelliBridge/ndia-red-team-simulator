@@ -2,7 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 
-import type { Run } from "@/lib/api";
+import type { Run, RunDetail } from "@/lib/api";
 
 import { mutationProcedure, publicProcedure, router } from "../init";
 import { upstreamFetch } from "../upstream";
@@ -22,7 +22,7 @@ export const idSchema = z
   .refine((v) => !v.includes("/"), "an id cannot contain a slash");
 
 /**
- * One run row, as `GET /v1/runs` and `GET /v1/runs/{id}` return it.
+ * One run row, as `GET /v1/runs` returns it.
  *
  * `looseObject` rather than `object`: zod strips unknown keys, and the API
  * adding a field it means a page to read is not a reason to hide that field
@@ -38,6 +38,27 @@ const runSchema: z.ZodType<Run> = z.looseObject({
   mode: z.string(),
   created_at: z.string(),
   created_by: z.string().nullable(),
+});
+
+/**
+ * One run, as `GET /v1/runs/{id}` returns it.
+ *
+ * A schema of its own rather than the list row, because the two bodies are
+ * different projections of the same table and neither contains the other. The
+ * detail route sends `completed_at` and `stage_table` and omits `created_by`
+ * entirely, and zod reads a `.nullable()` field as required, so validating a
+ * detail body against the list row turned every successful `GET /v1/runs/{id}`
+ * into a 502 on the parse.
+ */
+const runDetailSchema: z.ZodType<RunDetail> = z.looseObject({
+  id: z.string(),
+  project_id: z.string(),
+  status: z.string(),
+  scanner: z.string().nullable(),
+  mode: z.string(),
+  created_at: z.string(),
+  completed_at: z.string().nullable(),
+  stage_table: z.record(z.string(), z.unknown()),
 });
 
 const runsListSchema: z.ZodType<{ runs: Run[]; count: number }> = z.looseObject({
@@ -70,7 +91,7 @@ export const runsRouter = router({
   get: publicProcedure
     .input(z.object({ id: idSchema }))
     .query(({ ctx, input }) =>
-      upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs", input.id] }, runSchema),
+      upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs", input.id] }, runDetailSchema),
     ),
 
   cancel: mutationProcedure

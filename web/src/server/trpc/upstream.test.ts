@@ -530,6 +530,37 @@ describe("fixture mode (KTD13)", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("answers the run detail route in the shape that route really returns", async () => {
+    // The recorded rows are the list shape. The detail route drops created_by
+    // and adds completed_at and stage_table, so a row returned unchanged would
+    // fail runDetailSchema and answer 502 where the real API answers 200.
+    const { runFixtures } = await import("@/__fixtures__/typed");
+    const first = runFixtures[0];
+    expect(first).toBeDefined();
+    process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES = "1";
+    try {
+      const detail = await upstreamFetch(
+        { ...ctxWith({}), fixtures: true },
+        { method: "GET", segments: ["v1", "runs", first!.id] },
+        z.looseObject({
+          id: z.string(),
+          project_id: z.string(),
+          status: z.string(),
+          scanner: z.string().nullable(),
+          mode: z.string(),
+          created_at: z.string(),
+          completed_at: z.string().nullable(),
+          stage_table: z.record(z.string(), z.unknown()),
+        }),
+      );
+      expect(detail).toMatchObject({ id: first!.id, completed_at: null, stage_table: {} });
+      expect("created_by" in detail).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES;
+    }
+  });
+
   it("refuses a fixture that does not match the procedure's contract", async () => {
     // Fixtures are recorded evidence in a tool that reports measured
     // robustness, so one that has drifted from the contract is refused rather
