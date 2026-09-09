@@ -528,27 +528,28 @@ def _read_envelope(result_path: Path) -> dict[str, Any]:
 def _typed_error(envelope: dict[str, Any], *, mode: str) -> MLError:
     """Rebuild the child's typed failure from ``error_class``.
 
-    Names that resolve to a ``redsim.ml.errors`` class are raised as that class
-    with the child's operator-safe message. Anything else (torch, onnx, OS
+    Names that resolve to a ``redsim.ml.errors`` class (the endpoint classes
+    re-exported there included) are raised as that class with the child's
+    operator-safe message and the structured ``detail`` the envelope carries
+    (``redsim.ml.errors.rebuild_error``). Anything else (torch, onnx, OS
     errors) means the loader failed on the model bytes in validate mode, which
     is a load refusal; in campaign mode the child only reports ``ok: false``
     when the request itself was unusable, which is a contract failure.
     """
     name = str(envelope["error_class"])
     message = str(envelope["error"])
-    cls = getattr(ml_errors, name, None)
-    if isinstance(cls, type) and issubclass(cls, MLError):
-        return cls(message)
-    endpoint_cls = _endpoint_error_class(name)
-    if endpoint_cls is not None:
-        return endpoint_cls(message)
+    raw_detail = envelope.get("detail")
+    detail = dict(raw_detail) if isinstance(raw_detail, dict) else None
+    rebuilt = ml_errors.rebuild_error(name, message, detail)
+    if rebuilt is not None:
+        return rebuilt
     if mode == "validate":
         return ModelLoadRefused(f"load_failed: {name}: {message}")
     return EnvelopeInvalid(f"ML sandbox child rejected the {mode} request: {name}: {message}")
 
 
 def _endpoint_error_class(name: str) -> type[MLError] | None:
-    """The endpoint transport failure named ``name`` (``redsim.ml.endpoint_broker``), imported lazily."""
+    """The endpoint failure class named ``name`` (``redsim.ml.endpoint_broker.ENDPOINT_ERRORS``), imported lazily."""
     from redsim.ml.endpoint_broker import endpoint_error_class
 
     return endpoint_error_class(name)
@@ -605,9 +606,18 @@ def _start_broker(
         n_classes = raw_n
     elif isinstance(names, list) and names:
         n_classes = len(names)
+    # The registration's modality fixes the endpoint-v1 ``input_format`` and its ``input_shape`` is enforced on
+    # every request the child hands the broker (``redsim.ml.targets.endpoint_contract.encode_request``).
+    raw_modality = manifest.get("modality") or endpoint.get("modality")
+    raw_shape = manifest.get("input_shape")
+    input_shape = ([int(d) for d in raw_shape]
+                   if isinstance(raw_shape, list) and raw_shape and all(isinstance(d, int) for d in raw_shape)
+                   else None)
     broker = PredictBroker(
         str(endpoint.get("url") or ""), auth, work_dir=work_dir, limits=_endpoint_limits(endpoint),
         n_classes=n_classes, allowlist=allowlist, socket_path=socket_path,
+        modality=str(raw_modality) if isinstance(raw_modality, str) and raw_modality else None,
+        input_shape=input_shape,
     )
     broker.start()
     return broker

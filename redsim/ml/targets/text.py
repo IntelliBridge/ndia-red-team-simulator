@@ -26,10 +26,8 @@ What differs from the numeric targets:
   (``<assets>/lexicons/synonyms.json`` or ``<assets>/lexicons/nltk_data``,
   the WordNet copy wave B0 fetches), ``None`` when neither is present.
 
-Registration at import touches no file and happens only when the ``Domain``
-literal knows ``"text"`` (wave B0's schema addition): on a tree without it the
-target's ``info()`` could not be represented and registering it would break the
-catalog, so the instance is exposed as ``SMS_TFIDF_LR`` and left unregistered.
+Registration at import touches no file: ``SMS_TFIDF_LR`` is registered into
+``TARGETS`` when this module is imported (``schema.Domain`` carries ``"text"``).
 Import-light: scikit-learn and joblib are imported inside methods only, so the
 API process may import this module (spec 9.1 rule 2).
 """
@@ -38,7 +36,7 @@ from __future__ import annotations
 
 import platform
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any
 
 import numpy as np
 
@@ -52,7 +50,7 @@ from redsim.ml.datasets.sms_spam import (
     read_eval_jsonl,
 )
 from redsim.ml.errors import AttackNotApplicable, TargetUnavailable, UnsupportedArtifact
-from redsim.ml.schema import Domain, TargetInfo
+from redsim.ml.schema import TargetInfo
 from redsim.ml.targets.artifact import library_versions, model_manifest, verify_sha256
 from redsim.ml.targets.base import Sample
 from redsim.ml.targets.bundled import (
@@ -84,27 +82,46 @@ TEXT_INFO_KEYS: tuple[str, ...] = (
 )
 
 
-def text_domain_supported() -> bool:
-    """Whether this tree's ``schema.Domain`` literal knows ``"text"`` (wave B0 adds it)."""
-    return "text" in get_args(Domain)
+#: ``schema.TextModelSpec`` field names: the subset of a text spec that ``MLModelManifest.text`` validates.
+TEXT_MODEL_SPEC_FIELDS: tuple[str, ...] = ("token_pattern", "lowercase", "ngram_range", "vocabulary_size", "max_words")
 
 
 def default_text_spec() -> dict[str, Any]:
-    """The tokenizer contract of ``redsim.ml.datasets.sms_spam`` when a manifest entry declares none."""
-    return {"tokenizer_regex": TOKEN_PATTERN, "masker_split_regex": MASKER_SPLIT_PATTERN, "lowercase": LOWERCASE,
-            "ngram_range": list(NGRAM_RANGE), "vocabulary_size": None, "max_words": None}
+    """The tokenizer contract of ``redsim.ml.datasets.sms_spam`` when a manifest entry declares none.
+
+    ``token_pattern`` is the ``schema.TextModelSpec`` name of the vectoriser's token regex; ``tokenizer_regex``
+    (the same value) and ``masker_split_regex`` are what the word-substitution attack and the SHAP text masker
+    read, so the three tokenisers provably agree.
+    """
+    return {"token_pattern": TOKEN_PATTERN, "tokenizer_regex": TOKEN_PATTERN, "masker_split_regex": MASKER_SPLIT_PATTERN,
+            "lowercase": LOWERCASE, "ngram_range": list(NGRAM_RANGE), "vocabulary_size": None, "max_words": None}
 
 
 def text_spec_from_entry(entry: dict[str, Any]) -> dict[str, Any]:
-    """``entry["text"]`` (the B0 manifest block), else ``entry["architecture"]["text"]``, else the defaults."""
+    """``entry["text"]`` (the manifest block), else ``entry["architecture"]["text"]``, else the defaults.
+
+    A block naming the token regex under either ``token_pattern`` (``schema.TextModelSpec``) or
+    ``tokenizer_regex`` (the build's block) yields a spec carrying both names with the same value.
+    """
     block = entry.get("text")
     if not isinstance(block, dict):
         arch = entry.get("architecture")
         block = arch.get("text") if isinstance(arch, dict) else None
     spec = default_text_spec()
     if isinstance(block, dict):
-        spec.update({str(k): v for k, v in block.items()})
+        given = {str(k): v for k, v in block.items()}
+        # Either name may carry the regex; a block that names neither (or says None) keeps the sms_spam contract,
+        # which is the tokenizer every bundled text model is built with.
+        regex = given.get("token_pattern") or given.get("tokenizer_regex")
+        spec.update({k: v for k, v in given.items() if k not in ("token_pattern", "tokenizer_regex")})
+        if isinstance(regex, str) and regex:
+            spec["token_pattern"] = spec["tokenizer_regex"] = regex
     return spec
+
+
+def text_model_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """The ``schema.TextModelSpec`` block of a text spec (``MLModelManifest.text``)."""
+    return {k: spec[k] for k in TEXT_MODEL_SPEC_FIELDS if k in spec}
 
 
 class BundledTextTarget:
@@ -240,7 +257,7 @@ class BundledTextTarget:
             clean_accuracy=clean_accuracy_entry(entry.get("clean_accuracy"), entry.get("dataset_split")),
             status="available", gradients=False, bundled=True, license=entry.get("license"),
             source_url=entry.get("source_url"),
-            text=spec,   # MLModelManifest.text (B0); dropped by a schema without the field
+            text=text_model_spec(spec),   # MLModelManifest.text (schema.TextModelSpec)
         )
         self._entry, self._split, self._class_names = entry, split, names
         self._pipeline, self._text_spec = pipeline, spec
@@ -348,11 +365,10 @@ class BundledTextTarget:
 SMS_TFIDF_LR = BundledTextTarget(
     TEXT_MODEL_ID, name="Bundled SMS spam classifier (TF-IDF word 1-2 grams + logistic regression)",
     description="Demo text target (UCI SMS Spam Collection, CC BY 4.0; spec 11 text row, MODALITIES-13/-14).")
-if text_domain_supported():
-    register_once(SMS_TFIDF_LR)
+register_once(SMS_TFIDF_LR)
 
 __all__ = [
     "LEXICONS_DIR", "NO_ART_ESTIMATOR_REASON", "SMS_TFIDF_LR", "TEXT_EXPLAINER_NOTE", "TEXT_FORMATS", "TEXT_INFO_KEYS",
-    "TEXT_MODEL_ID", "TEXT_REALIZABILITY_NOTE", "BundledTextTarget", "default_text_spec", "text_domain_supported",
-    "text_spec_from_entry",
+    "TEXT_MODEL_ID", "TEXT_MODEL_SPEC_FIELDS", "TEXT_REALIZABILITY_NOTE", "BundledTextTarget", "default_text_spec",
+    "text_model_spec", "text_spec_from_entry",
 ]

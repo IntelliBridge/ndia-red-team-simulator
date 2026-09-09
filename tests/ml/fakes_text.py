@@ -7,26 +7,17 @@ explain and runner tests need no corpus, no asset tree and no network. Its
 ``synonym_lexicon()`` returns the committed ``tests/ml/fixtures/synonyms_synthetic_tiny.json``.
 It lives only under ``tests/``: no API path serves it and nothing it produces is
 evidence.
-
-``widened_text_schema()`` is the tolerance the wave B0 rebase removes: on a tree
-whose ``redsim.ml.schema`` literals do not yet know ``text`` (Domain, Modality)
-and ``edit`` (Norm), it widens those literals on the affected pydantic models for
-the duration of a test module and restores them afterwards, so the text tests
-exercise the real code paths here and become a no-op once B0 has landed.
 """
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
-from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Any
 
 import numpy as np
 
-from redsim.ml import schema
 from redsim.ml.datasets.sampling import stratified_indices
 from redsim.ml.datasets.sms_spam import MASKER_SPLIT_PATTERN, NGRAM_RANGE, TOKEN_PATTERN, tokenize
 from redsim.ml.errors import AttackNotApplicable
@@ -159,62 +150,6 @@ class TinyTextTarget:
         }
 
 
-# --- pre-B0 schema tolerance -----------------------------------------------------------------------------------
-
-_WIDE: dict[str, Any] = {
-    "Domain": Literal["image", "tabular", "llm", "text", "detection"],
-    "Modality": Literal["image", "tabular", "text", "detection"],
-    "Norm": Literal["linf", "l2", "edit", "patch_area"],
-}
-
-
-def text_schema_present() -> bool:
-    """True once wave B0's literals (``text`` in Domain / Modality, ``edit`` in Norm) are on this tree."""
-    return ("text" in get_args(schema.Domain) and "text" in get_args(schema.Modality)
-            and "edit" in get_args(schema.Norm))
-
-
-def _widen_targets() -> tuple[list[tuple[type[Any], str, str]], list[type[Any]]]:
-    from redsim.ml.assets import manifest as assets_manifest
-
-    fields: list[tuple[type[Any], str, str]] = [
-        (schema.TargetInfo, "domain", "Domain"), (schema.AttackInfo, "domain", "Domain"),
-        (schema.CampaignConfig, "modality", "Modality"), (schema.CampaignConfig, "norm", "Norm"),
-        (schema.MLModelManifest, "modality", "Modality"), (schema.RobustnessCurve, "norm", "Norm"),
-        (schema.MRIRecord, "norm", "Norm"), (schema.MLFindingDetail, "norm", "Norm"),
-        (assets_manifest.ModelEntry, "modality", "Modality"),
-    ]
-    rebuild_order: list[type[Any]] = [
-        schema.TargetInfo, schema.AttackInfo, schema.CampaignConfig, schema.MLModelManifest, schema.RobustnessCurve,
-        schema.MRIRecord, schema.MLFindingDetail, assets_manifest.ModelEntry, schema.RunRecord, schema.CampaignRecord,
-        assets_manifest.AssetManifest,
-    ]
-    return fields, rebuild_order
-
-
-@contextlib.contextmanager
-def widened_text_schema() -> Iterator[bool]:
-    """Widen the three literals for the block (no-op when B0 is present); yields whether widening happened."""
-    if text_schema_present():
-        yield False
-        return
-    fields, order = _widen_targets()
-    saved: dict[tuple[int, str], Any] = {}
-    for cls, name, alias in fields:
-        info = cls.__pydantic_fields__[name]
-        saved[(id(cls), name)] = info.annotation
-        info.annotation = _WIDE[alias]
-    for cls in order:
-        cls.model_rebuild(force=True)
-    try:
-        yield True
-    finally:
-        for cls, name, _alias in fields:
-            cls.__pydantic_fields__[name].annotation = saved[(id(cls), name)]
-        for cls in order:
-            cls.model_rebuild(force=True)
-
-
 def tiny_tsv(path: Path, *, n_per_class: int = 20, seed: int = 0) -> Path:
     """A small inline ``<label>\\t<message>`` corpus in the UCI layout (ham / spam), for training tests.
 
@@ -241,5 +176,5 @@ def fixture_lexicon_words() -> set[str]:
 
 __all__ = [
     "FILLER", "SYNONYMS_TINY", "TEXT_CLASS_NAMES", "TEXT_DATASET", "TOPIC_WORDS", "TinyTextTarget",
-    "fixture_lexicon_words", "synthetic_corpus", "text_schema_present", "tiny_tsv", "widened_text_schema",
+    "fixture_lexicon_words", "synthetic_corpus", "tiny_tsv",
 ]

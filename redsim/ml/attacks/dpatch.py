@@ -9,11 +9,11 @@ ground-truth boxes), then pasted onto every image at a seeded location. Pixels u
 replaced, not perturbed, so ``linf_norm_mean`` is large by construction and ``notes`` say so.
 
 The control (``patch_noise_control``) pastes a uniform-random patch of the same side at the same seeded
-locations; it reads nothing from the model. Both adapters declare ``domains = {"detection"}`` and are
-registered into ``ATTACKS`` only when the registry vocabulary knows ``modality:detection`` (wave B0 /
-the attacks track add it); until then ``redsim.ml.runners.detection`` resolves them by name from this
-module. ``RobustDPatch`` (rotations, brightness, crops) is not used: the deviation from a physical patch
-is stated in the notes rather than approximated.
+locations; it reads nothing from the model. Both adapters declare ``domains = {"detection"}`` and
+``norms = {"patch_area"}``; ``redsim.ml.attacks`` registers both into ``ATTACKS`` with the bundled
+adapters (``patch_noise_control`` keeps ``family:control`` so it is never mistaken for an attack).
+``RobustDPatch`` (rotations, brightness, crops) is not used: the deviation from a physical patch is
+stated in the notes rather than approximated.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ import math
 import random
 import time
 from collections.abc import Mapping, Sequence
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 import numpy as np
 
@@ -34,10 +34,9 @@ from redsim.ml.attacks import (
     seed_all,
 )
 from redsim.ml.attacks.base import AttackOutput
-from redsim.ml.attacks.registry import ATTACKS, KNOWN_ATTACK_CAPABILITIES, register_attack
 from redsim.ml.errors import AttackNotApplicable
 from redsim.ml.eval import perturbation_norms
-from redsim.ml.schema import AttackInfo, Domain, ParamSpec
+from redsim.ml.schema import AttackInfo, ParamSpec
 from redsim.ml.targets.base import Target
 from redsim.ml.targets.detection import DETECTION_DOMAIN, MODALITY, art_targets
 
@@ -104,7 +103,7 @@ def _check_images(x: np.ndarray) -> tuple[int, int, int, int]:
 
 
 class DPatchAdapter:
-    id = DPATCH_ID
+    id: str = DPATCH_ID
     domains = frozenset({MODALITY})
     norms: ClassVar[frozenset[str]] = frozenset({"patch_area"})    # the budget is an area share, not a pixel norm
     takes_eps = True
@@ -123,7 +122,7 @@ class DPatchAdapter:
 
     def info(self) -> AttackInfo:
         return AttackInfo(
-            id=self.id, name="DPatch (untargeted adversarial patch on an object detector)", domain=cast(Domain, DETECTION_DOMAIN),
+            id=self.id, name="DPatch (untargeted adversarial patch on an object detector)", domain=DETECTION_DOMAIN,
             family="evasion",
             description=("One square patch per slice and eps, optimised by sign-gradient ascent on the detector's "
                          "loss against the ground-truth boxes and pasted at a seeded location per image. The budget "
@@ -196,7 +195,7 @@ class DPatchAdapter:
 class PatchNoiseControlAdapter:
     """Benign control: a uniform-random patch of the same area share at the same seeded locations (spec 12.4)."""
 
-    id = PATCH_CONTROL_ID
+    id: str = PATCH_CONTROL_ID
     domains = frozenset({MODALITY})
     norms: ClassVar[frozenset[str]] = frozenset({"patch_area"})
     takes_eps = True
@@ -209,7 +208,7 @@ class PatchNoiseControlAdapter:
 
     def info(self) -> AttackInfo:
         return AttackInfo(
-            id=self.id, name="Benign random-patch control", domain=cast(Domain, DETECTION_DOMAIN),
+            id=self.id, name="Benign random-patch control", domain=DETECTION_DOMAIN,
             family="control",
             description=("Same slice with a uniform-random patch of the same area share pasted at the same seeded "
                          "locations as the attack; separates patch-optimised suppression from occlusion "
@@ -253,18 +252,9 @@ class PatchNoiseControlAdapter:
 ADAPTER: DPatchAdapter = DPatchAdapter()
 CONTROL: PatchNoiseControlAdapter = PatchNoiseControlAdapter()
 
-# Registered only once the registry vocabulary knows the detection modality (B0 / attacks track); the runner
-# resolves both by name from this module until then, so nothing is silently registered under a wrong tag.
-REGISTERED: bool = f"modality:{MODALITY}" in KNOWN_ATTACK_CAPABILITIES
-if REGISTERED:
-    for _adapter in (ADAPTER, CONTROL):
-        if ATTACKS.maybe_get(_adapter.id) is None:
-            register_attack(_adapter)
-    del _adapter
-
 __all__ = [
     "ADAPTER", "CONTROL", "DEFAULT_PATCH_AREA_GRID", "DEFAULT_REFERENCE_PATCH_AREA", "DIGITAL_PATCH_NOTE",
-    "DPATCH_ID", "PATCH_CONTROL_ID", "PATCH_CONTROL_NOTE", "PATCH_NONDETERMINISM_NOTE", "REGISTERED",
+    "DPATCH_ID", "PATCH_CONTROL_ID", "PATCH_CONTROL_NOTE", "PATCH_NONDETERMINISM_NOTE",
     "REPLACEMENT_NOTE", "UNIVERSAL_PATCH_NOTE", "DPatchAdapter", "PatchNoiseControlAdapter", "paste_patch",
     "patch_locations", "patch_side", "realised_area_share",
 ]

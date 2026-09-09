@@ -28,11 +28,11 @@ parameter always wins and the resolved values land in ``Measurement.params`` as 
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, get_args
 
 from redsim.ml.attacks.base import AttackAdapter
 from redsim.ml.registry import Registry
-from redsim.ml.schema import AttackInfo
+from redsim.ml.schema import AttackInfo, Domain, Norm
 
 ATTACKS: Registry[AttackAdapter] = Registry("attack", AttackAdapter)
 
@@ -40,11 +40,9 @@ ATTACKS: Registry[AttackAdapter] = Registry("attack", AttackAdapter)
 CAPABILITY_ADVERSARIAL_ML = "adversarial_ml"
 CAPABILITY_EXPLAINABILITY = "explainability"
 
-#: Campaign norms an adapter may declare in ``norms``. ``linf`` / ``l2`` are the Phase A
-#: ``schema.Norm`` literals; ``edit`` (text) and ``patch_area`` (detection) are the Phase B
-#: additions of the same literal (plan 12 section 3). Kept as strings so this module never
-#: depends on the frozen schema growing before a sibling adapter registers.
-KNOWN_NORMS: frozenset[str] = frozenset({"linf", "l2", "edit", "patch_area"})
+#: Campaign norms an adapter may declare in ``norms``: exactly the ``schema.Norm`` literals
+#: (``linf`` / ``l2`` from Phase A, ``edit`` for text and ``patch_area`` for detection from Phase B).
+KNOWN_NORMS: frozenset[str] = frozenset(get_args(Norm))
 
 #: The adapter parameter that switches a takes-eps attack to the L2 norm (PGD, the control,
 #: HopSkipJump). Its presence is what derives ``{"linf", "l2"}`` for an adapter without ``norms``.
@@ -69,16 +67,10 @@ KNOWN_ATTACK_CAPABILITIES: frozenset[str] = frozenset({
     "minimal_norm",         # no eps input; the grid is an evaluation grid (spec 12.3)
     "family:evasion",
     "family:control",
-    "modality:image",
-    "modality:tabular",
-    "modality:text",
-    "modality:detection",
-    "modality:llm",
+    # One ``modality:<domain>`` tag per ``schema.Domain`` literal (image, tabular, llm, text, detection).
+    *(f"modality:{domain}" for domain in get_args(Domain)),
     # Norms the adapter may be evaluated under (spec 12.3; derived from ``norms``, see attack_norms()).
-    "norm:linf",
-    "norm:l2",
-    "norm:edit",
-    "norm:patch_area",
+    *(f"norm:{norm}" for norm in KNOWN_NORMS),
 })
 
 

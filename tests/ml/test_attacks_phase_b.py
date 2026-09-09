@@ -29,9 +29,9 @@ from redsim.ml.attacks import (
     KNOWN_NORMS,
     MINIMAL_NORM_NOTE,
     NONDETERMINISM_PREFIX,
-    OPTIONAL_ADAPTER_MODULES,
-    OPTIONAL_ADAPTER_SKIPPED,
     QUERIES_DENOMINATOR_NOTE,
+    REGISTERED_IDS,
+    UNBUILT_ADAPTERS,
     achieved_norm_note,
     apply_domain_defaults,
     attack_capabilities,
@@ -57,9 +57,10 @@ pytestmark = pytest.mark.ml
 N = 12
 TOL = 1e-6
 PHASE_B_IDS = ["cw_l2", "deepfool", "zoo"]
-# The adapters this package registers itself. Sibling tracks (text, detection) may add more through the optional
-# module hook once the schema carries their modality, so registry pins below are filtered to this set.
-BUNDLED_IDS = frozenset({"cw_l2", "deepfool", "fgsm", "hopskipjump", "noise_control", "pgd", "zoo"})
+# The whole catalog: Phase A, the Phase B minimal-norm and score-based adapters, the text attack and the detection
+# pair. Registry pins below name it in full.
+ALL_IDS = ["cw_l2", "deepfool", "dpatch", "fgsm", "hopskipjump", "noise_control", "patch_noise_control", "pgd",
+           "word_substitution", "zoo"]
 # CW parameters that find adversarial examples on the brittle random double (the schema defaults, tuned for the
 # bundled resnet18, keep c too small for TinyNet's logit scale: that run is asserted separately as an honest miss).
 CW_TINY = {"initial_const": 1.0}
@@ -87,8 +88,8 @@ def tab_slice(tab_target: TinyTabularTarget):
     return tab_target.sample(N, seed=0)
 
 
-def _bundled(adapters: list[Any]) -> list[str]:
-    return [a.id for a in adapters if a.id in BUNDLED_IDS]
+def _ids(adapters: list[Any]) -> list[str]:
+    return [a.id for a in adapters]
 
 
 def _flips(target: Any, x: np.ndarray, x_adv: np.ndarray) -> int:
@@ -108,8 +109,7 @@ def _assert_common_output(out: AttackOutput, x: np.ndarray) -> None:
 # --- registry: ids, ATLAS, norms and tags -----------------------------------------------------
 
 def test_registry_lists_phase_a_and_phase_b_adapters():
-    assert [i for i in ATTACKS.ids() if i in BUNDLED_IDS] == sorted(BUNDLED_IDS)
-    assert ATTACKS.ids() == sorted(ATTACKS.ids())
+    assert ATTACKS.ids() == ALL_IDS == list(REGISTERED_IDS) == sorted(ALL_IDS)
     for adapter in ATTACKS:
         assert isinstance(adapter, AttackAdapter)
     infos = {i.id: i for i in (a.info() for a in ATTACKS)}
@@ -124,23 +124,25 @@ def test_registry_lists_phase_a_and_phase_b_adapters():
     assert infos["deepfool"].access == "white-box" and infos["deepfool"].requires_gradients is True
     assert infos["zoo"].access == "black-box" and infos["zoo"].requires_gradients is False
     assert infos["hopskipjump"].phase == "A"   # one adapter, one phase; the image row's Phase B is a docs note
-    # Optional sibling modules (text, detection) are registered only when they import and validate; every module
-    # that did not register has its reason recorded, and a registered one is absent from the skipped table.
-    assert OPTIONAL_ADAPTER_MODULES == ("word_substitution", "dpatch", "adv_patch")
-    registered_optional = set(ATTACKS.ids()) - BUNDLED_IDS
-    for name in OPTIONAL_ADAPTER_MODULES:
-        if name in OPTIONAL_ADAPTER_SKIPPED:
-            assert OPTIONAL_ADAPTER_SKIPPED[name]
-        else:
-            assert registered_optional, name
+    assert infos["word_substitution"].domain == "text" and infos["dpatch"].domain == "detection"
+    assert infos["patch_noise_control"].family == "control" and infos["noise_control"].family == "control"
+    # The one register item without an adapter is stated, with its reason, instead of a module quietly not existing.
+    assert set(UNBUILT_ADAPTERS) == {"adv_patch"} and "MODALITIES-32" in UNBUILT_ADAPTERS["adv_patch"]
+    assert not set(UNBUILT_ADAPTERS) & set(ATTACKS.ids())
 
 
-def test_atlas_mapping_covers_the_new_adapters_and_no_control():
-    assert set(ATLAS_TECHNIQUES) == {"fgsm", "pgd", "cw_l2", "deepfool", "hopskipjump", "zoo"}
-    for aid in ("cw_l2", "deepfool"):
+def test_atlas_mapping_covers_every_evasion_adapter_and_no_control():
+    evasion = {a.id for a in ATTACKS if a.info().family == "evasion"}
+    controls = {a.id for a in ATTACKS if a.info().family == "control"}
+    assert set(ATLAS_TECHNIQUES) == evasion == {"cw_l2", "deepfool", "dpatch", "fgsm", "hopskipjump", "pgd",
+                                                "word_substitution", "zoo"}
+    assert controls == {"noise_control", "patch_noise_control"} and not controls & set(ATLAS_TECHNIQUES)
+    # Gradient-crafted inputs map to AML.T0043, query-access attacks to AML.T0040 (the module's stated convention).
+    for aid in ("cw_l2", "deepfool", "dpatch", "fgsm", "pgd"):
         assert ATLAS_TECHNIQUES[aid].id == "AML.T0043" and ATLAS_TECHNIQUES[aid].name == "Craft Adversarial Data"
-    assert ATLAS_TECHNIQUES["zoo"].id == "AML.T0040" and ATLAS_TECHNIQUES["zoo"].name == "ML Model Inference API Access"
-    assert "noise_control" not in ATLAS_TECHNIQUES
+    for aid in ("hopskipjump", "zoo", "word_substitution"):
+        assert ATLAS_TECHNIQUES[aid].id == "AML.T0040" and ATLAS_TECHNIQUES[aid].name == "ML Model Inference API Access"
+        assert get_attack(aid).info().access == "black-box"
 
 
 def test_norms_declared_or_derived_and_exposed_as_tags():
@@ -155,9 +157,12 @@ def test_norms_declared_or_derived_and_exposed_as_tags():
         "cw_l2": {"l2"},                     # declared: minimal-norm L2 only
         "deepfool": {"l2"},                  # declared: minimal-norm L2 only
         "zoo": {"linf", "l2"},               # declared: minimises L2, thresholded in the campaign norm
+        "word_substitution": {"edit"},       # declared: the text edit budget
+        "dpatch": {"patch_area"},            # declared: the detection patch-area budget
+        "patch_noise_control": {"patch_area"},
     }
     caps = list_attack_capabilities()
-    assert set(expected) <= set(caps)
+    assert set(expected) == set(caps) == set(ALL_IDS)
     for aid, norms in expected.items():
         adapter = get_attack(aid)
         assert attack_norms(adapter) == frozenset(norms), aid
@@ -165,13 +170,14 @@ def test_norms_declared_or_derived_and_exposed_as_tags():
         for n_ in KNOWN_NORMS:
             assert attack_supports_norm(adapter, n_) is (n_ in norms), (aid, n_)
         assert set(caps[aid]) <= KNOWN_ATTACK_CAPABILITIES
-    # The L2-only attacks are exactly the ones that may not run under the L-inf grid.
-    assert _bundled([a for a in ATTACKS if not attack_supports_norm(a, "linf")]) == ["cw_l2", "deepfool"]
-    assert _bundled(attacks_with_capability("norm:l2")) == ["cw_l2", "deepfool", "hopskipjump", "noise_control",
-                                                            "pgd", "zoo"]
-    assert _bundled(attacks_with_capability("norm:linf")) == ["fgsm", "hopskipjump", "noise_control", "pgd", "zoo"]
-    # No bundled adapter is evaluated in the text or detection norms; a sibling adapter that is must serve that modality.
-    assert _bundled(attacks_with_capability("norm:edit")) == [] and _bundled(attacks_with_capability("norm:patch_area")) == []
+    # The adapters that may not run under the L-inf grid: the L2-only minimal-norm pair and the text / detection set.
+    assert _ids([a for a in ATTACKS if not attack_supports_norm(a, "linf")]) == [
+        "cw_l2", "deepfool", "dpatch", "patch_noise_control", "word_substitution"]
+    assert _ids(attacks_with_capability("norm:l2")) == ["cw_l2", "deepfool", "hopskipjump", "noise_control", "pgd", "zoo"]
+    assert _ids(attacks_with_capability("norm:linf")) == ["fgsm", "hopskipjump", "noise_control", "pgd", "zoo"]
+    # The text and detection norms belong to exactly the adapters serving those modalities.
+    assert _ids(attacks_with_capability("norm:edit")) == ["word_substitution"]
+    assert _ids(attacks_with_capability("norm:patch_area")) == ["dpatch", "patch_noise_control"]
     for a in attacks_with_capability("norm:edit"):
         assert "modality:text" in attack_capabilities(a)
     for a in attacks_with_capability("norm:patch_area"):
@@ -220,17 +226,23 @@ def test_capability_tags_of_the_new_adapters():
     assert "modality:image" not in caps["zoo"] and "decision_based" not in caps["zoo"]
     assert {"decision_based", "query_counted", "modality:image", "modality:tabular"} <= set(caps["hopskipjump"])
     assert "score_based" not in caps["hopskipjump"]
-    assert _bundled(attacks_with_capability("black_box")) == ["hopskipjump", "noise_control", "zoo"]
-    assert _bundled(attacks_with_capability("white_box")) == ["cw_l2", "deepfool", "fgsm", "pgd"]
-    assert _bundled(attacks_with_capability("minimal_norm")) == ["cw_l2", "deepfool", "hopskipjump", "zoo"]
-    assert _bundled(attacks_with_capability("modality:image")) == ["cw_l2", "deepfool", "fgsm", "hopskipjump",
-                                                                   "noise_control", "pgd"]
-    assert _bundled(attacks_with_capability("modality:tabular")) == ["hopskipjump", "noise_control", "pgd", "zoo"]
-    assert _bundled(attacks_with_capability("score_based")) == ["zoo"]
-    assert _bundled(attacks_with_capability("decision_based")) == ["hopskipjump"]
-    # Sibling-track vocabulary is present so their adapters can register; no bundled adapter carries it.
-    for tag in ("modality:text", "modality:detection", "norm:edit", "norm:patch_area"):
-        assert tag in KNOWN_ATTACK_CAPABILITIES and _bundled(attacks_with_capability(tag)) == []
+    assert _ids(attacks_with_capability("black_box")) == ["hopskipjump", "noise_control", "patch_noise_control",
+                                                          "word_substitution", "zoo"]
+    assert _ids(attacks_with_capability("white_box")) == ["cw_l2", "deepfool", "dpatch", "fgsm", "pgd"]
+    assert _ids(attacks_with_capability("minimal_norm")) == ["cw_l2", "deepfool", "hopskipjump", "zoo"]
+    assert _ids(attacks_with_capability("modality:image")) == ["cw_l2", "deepfool", "fgsm", "hopskipjump",
+                                                               "noise_control", "pgd"]
+    assert _ids(attacks_with_capability("modality:tabular")) == ["hopskipjump", "noise_control", "pgd", "zoo"]
+    assert _ids(attacks_with_capability("modality:text")) == ["word_substitution"]
+    assert _ids(attacks_with_capability("modality:detection")) == ["dpatch", "patch_noise_control"]
+    assert _ids(attacks_with_capability("score_based")) == ["zoo"]
+    assert _ids(attacks_with_capability("decision_based")) == ["hopskipjump"]
+    assert _ids(attacks_with_capability("query_counted")) == ["hopskipjump", "word_substitution", "zoo"]
+    assert _ids(attacks_with_capability("family:control")) == ["noise_control", "patch_noise_control"]
+    # The modality vocabulary is exactly the schema's Domain literals; llm has no adapter (not_implemented).
+    assert {t for t in KNOWN_ATTACK_CAPABILITIES if t.startswith("modality:")} == {
+        "modality:image", "modality:tabular", "modality:llm", "modality:text", "modality:detection"}
+    assert attacks_with_capability("modality:llm") == []
 
 
 def test_unknown_norm_declaration_is_refused_at_registration():

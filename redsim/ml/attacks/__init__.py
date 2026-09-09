@@ -2,12 +2,14 @@
 
 Importing this package registers the bundled adapters into ``ATTACKS``
 (``redsim.ml.attacks.registry``): the Phase A set ``fgsm``, ``pgd``,
-``hopskipjump`` and the benign ``noise_control``, plus the Phase B minimal-norm
+``hopskipjump`` and the benign ``noise_control``; the Phase B minimal-norm
 set ``cw_l2`` and ``deepfool`` (image, white-box, evaluated on the L2 grid) and
-the score-based black-box ``zoo`` (tabular). Sibling Phase B adapter modules
-that land beside this package (``word_substitution`` for text, ``dpatch`` /
-``adv_patch`` for detection) are registered when present and skipped when the
-module is absent, so this package never has to know their landing order. The
+the score-based black-box ``zoo`` (tabular); the text attack ``word_substitution``
+(edit budget; its control ``text_noise_control`` is run by the text runner directly
+and is not registered); and the detection pair ``dpatch`` / ``patch_noise_control``
+(patch-area budget). ``ATTACKS.ids()`` is therefore exactly ``REGISTERED_IDS``.
+``adv_patch`` (MODALITIES-32) is not built: it is listed in ``UNBUILT_ADAPTERS`` with
+the reason so the catalog says so instead of a module quietly not existing. The
 helpers below are shared by the adapter modules and are defined BEFORE the
 registration imports at the bottom of this file so the submodules can import
 them while the package is still initialising.
@@ -49,6 +51,7 @@ from typing import Any
 
 import numpy as np
 
+from redsim.ml.attacks.base import AttackAdapter
 from redsim.ml.eval import perturbation_norms
 from redsim.ml.schema import AtlasTechnique, ParamSpec
 
@@ -71,16 +74,22 @@ INTEGER_DTYPES: frozenset[str] = frozenset({"int", "integer", "bool", "boolean"}
 # Finding is created and pins the exact ATLAS release it re-verified the names against.
 # The ids and names are the ones written in spec section 27.2; the version string marks
 # the major release those names were read from, not a claim about a specific point
-# release. A control demonstrates no adversarial technique and has no entry.
+# release. Every registered evasion adapter has exactly one entry; the convention is
+# AML.T0043 for an attack that crafts the input with model gradients (white-box) and
+# AML.T0040 for one that works through query access to the model's outputs (black-box).
+# A control demonstrates no adversarial technique and has no entry.
 ATLAS_VERSION = "4.x"
 ATLAS_TECHNIQUES: dict[str, AtlasTechnique] = {
     "fgsm": AtlasTechnique(id="AML.T0043", name="Craft Adversarial Data", atlas_version=ATLAS_VERSION),
     "pgd": AtlasTechnique(id="AML.T0043", name="Craft Adversarial Data", atlas_version=ATLAS_VERSION),
     "cw_l2": AtlasTechnique(id="AML.T0043", name="Craft Adversarial Data", atlas_version=ATLAS_VERSION),
     "deepfool": AtlasTechnique(id="AML.T0043", name="Craft Adversarial Data", atlas_version=ATLAS_VERSION),
+    "dpatch": AtlasTechnique(id="AML.T0043", name="Craft Adversarial Data", atlas_version=ATLAS_VERSION),
     "hopskipjump": AtlasTechnique(id="AML.T0040", name="ML Model Inference API Access",
                                   atlas_version=ATLAS_VERSION),
     "zoo": AtlasTechnique(id="AML.T0040", name="ML Model Inference API Access", atlas_version=ATLAS_VERSION),
+    "word_substitution": AtlasTechnique(id="AML.T0040", name="ML Model Inference API Access",
+                                        atlas_version=ATLAS_VERSION),
 }
 
 # Spec 12.5 ``queries(a)`` denominator, settled once for every query-counted adapter: predict rows
@@ -467,10 +476,12 @@ def surrogate_estimator(target: Any) -> tuple[Any, str | None]:
 from redsim.ml.attacks import (  # noqa: E402  (late import: registration)
     cw_l2,
     deepfool,
+    dpatch,
     fgsm,
     hopskipjump,
     noise_control,
     pgd,
+    word_substitution,
     zoo,
 )
 from redsim.ml.attacks.registry import (  # noqa: E402  (late import: registration)
@@ -489,53 +500,40 @@ from redsim.ml.attacks.registry import (  # noqa: E402  (late import: registrati
     register_attack,
 )
 
-for _adapter in (fgsm.ADAPTER, pgd.ADAPTER, hopskipjump.ADAPTER, noise_control.ADAPTER,
-                 cw_l2.ADAPTER, deepfool.ADAPTER, zoo.ADAPTER):
+#: Every adapter this package registers, sorted: the attack catalog (``ATTACKS.ids()``) is exactly this list.
+REGISTERED_IDS: tuple[str, ...] = (
+    "cw_l2", "deepfool", "dpatch", "fgsm", "hopskipjump", "noise_control", "patch_noise_control", "pgd",
+    "word_substitution", "zoo",
+)
+#: Register items whose adapter is not built, with the reason: listed so the catalog states it (spec 14.7).
+UNBUILT_ADAPTERS: dict[str, str] = {
+    "adv_patch": "MODALITIES-32 (AdversarialPatchPyTorch on detectors) is not built; dpatch is the detection attack",
+}
+
+_BUNDLED_ADAPTERS: tuple[AttackAdapter, ...] = (
+    fgsm.ADAPTER, pgd.ADAPTER, hopskipjump.ADAPTER, noise_control.ADAPTER,
+    cw_l2.ADAPTER, deepfool.ADAPTER, zoo.ADAPTER,
+    word_substitution.ADAPTER, dpatch.ADAPTER, dpatch.CONTROL,
+)
+for _adapter in _BUNDLED_ADAPTERS:
     if ATTACKS.maybe_get(_adapter.id) is None:
         register_attack(_adapter)
 del _adapter
 
-#: Phase B adapter modules owned by sibling tracks (text, detection). Each is registered when its
-#: module exists, imports and exposes an ``ADAPTER`` whose tags validate. Anything else (module absent,
-#: an import error, a schema literal the frozen ``redsim.ml.schema`` does not carry yet) leaves the
-#: adapter unregistered and the reason in ``OPTIONAL_ADAPTER_SKIPPED``: the catalog stays importable and
-#: truthful (the attack is not listed) and the cause is recorded, never hidden.
-OPTIONAL_ADAPTER_MODULES: tuple[str, ...] = ("word_substitution", "dpatch", "adv_patch")
-OPTIONAL_ADAPTER_SKIPPED: dict[str, str] = {}
+
+def _check_catalog() -> None:
+    """The catalog, its declared contents and the ATLAS map can never drift apart (checked once at import)."""
+    if tuple(ATTACKS.ids()) != REGISTERED_IDS:
+        raise RuntimeError(f"attack registry {ATTACKS.ids()} does not match REGISTERED_IDS {list(REGISTERED_IDS)}")
+    families = {adapter.id: adapter.info().family for adapter in ATTACKS}
+    missing = sorted(aid for aid, family in families.items() if family == "evasion" and aid not in ATLAS_TECHNIQUES)
+    mapped_controls = sorted(aid for aid in ATLAS_TECHNIQUES if families.get(aid) != "evasion")
+    if missing or mapped_controls:
+        raise RuntimeError("ATLAS_TECHNIQUES must map every evasion adapter and nothing else "
+                           f"(unmapped evasion: {missing}; mapped non-evasion: {mapped_controls})")
 
 
-def _register_optional(module_name: str) -> bool:
-    qualified = f"{__name__}.{module_name}"
-    try:
-        module = importlib.import_module(qualified)
-    except ModuleNotFoundError as exc:
-        if exc.name == qualified:
-            OPTIONAL_ADAPTER_SKIPPED[module_name] = "module absent"
-            return False
-        OPTIONAL_ADAPTER_SKIPPED[module_name] = f"import failed: {type(exc).__name__}: {exc}"[:300]
-        return False
-    except Exception as exc:  # noqa: BLE001 - a sibling module must never take the attack catalog down
-        OPTIONAL_ADAPTER_SKIPPED[module_name] = f"import failed: {type(exc).__name__}: {exc}"[:300]
-        _LOG.warning("optional attack module %s not registered: %s", qualified, OPTIONAL_ADAPTER_SKIPPED[module_name])
-        return False
-    adapter = getattr(module, "ADAPTER", None)
-    if adapter is None:
-        OPTIONAL_ADAPTER_SKIPPED[module_name] = "module exposes no ADAPTER"
-        return False
-    if ATTACKS.maybe_get(adapter.id) is not None:
-        return True
-    try:
-        register_attack(adapter)
-    except Exception as exc:  # noqa: BLE001 - recorded and skipped, see OPTIONAL_ADAPTER_SKIPPED
-        OPTIONAL_ADAPTER_SKIPPED[module_name] = f"registration refused: {type(exc).__name__}: {exc}"[:300]
-        _LOG.warning("optional attack module %s not registered: %s", qualified, OPTIONAL_ADAPTER_SKIPPED[module_name])
-        return False
-    return True
-
-
-for _name in OPTIONAL_ADAPTER_MODULES:
-    _register_optional(_name)
-del _name
+_check_catalog()
 
 __all__ = [
     "ATLAS_TECHNIQUES",
@@ -547,11 +545,11 @@ __all__ = [
     "KNOWN_NORMS",
     "MINIMAL_NORM_NOTE",
     "NONDETERMINISM_PREFIX",
-    "OPTIONAL_ADAPTER_MODULES",
-    "OPTIONAL_ADAPTER_SKIPPED",
     "QUERIES_DENOMINATOR_NOTE",
+    "REGISTERED_IDS",
     "SURROGATE_NONDETERMINISM_NOTE",
     "SURROGATE_TRANSFER_NOTE_PREFIX",
+    "UNBUILT_ADAPTERS",
     "TabularScaling",
     "achieved_norm_note",
     "apply_domain_defaults",
