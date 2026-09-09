@@ -7,10 +7,8 @@ import { Button, CommandIcon } from "@redsim/design-system";
 
 import { logout } from "@/lib/auth";
 
-import { ThemeToggle } from "./theme-toggle";
-
 /**
- * The bar above the page content: palette trigger, theme, sign out.
+ * The bar above the page content: palette trigger and sign out.
  *
  * The palette is opened by dispatching the chord it already listens for,
  * rather than lifting its open state into a context, so the button and the
@@ -52,7 +50,6 @@ export function TopBar() {
           trigger is hidden at narrow widths. */}
       <div className="sm:hidden" />
       <div className="flex items-center gap-3">
-        <ThemeToggle />
         <Button
           variant="outline"
           size="sm"

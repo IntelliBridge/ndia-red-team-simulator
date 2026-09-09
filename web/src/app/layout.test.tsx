@@ -72,15 +72,6 @@ describe("RootLayout", () => {
     expect(current[0]?.getAttribute("href")).toBe("/dashboard");
   });
 
-  it("mounts the theme toggle button in the shell", () => {
-    const { container } = renderLayout();
-    // The mount-gated ThemeToggle renders an inert placeholder button until
-    // the provider resolves on the client, so assert the element, not its
-    // label.
-    const buttons = container.querySelectorAll("button");
-    expect(buttons.length).toBeGreaterThan(0);
-  });
-
   it("offers a sign-out control", () => {
     renderLayout();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
@@ -97,9 +88,19 @@ describe("RootLayout", () => {
     expect(aside?.className).toContain("border-hairline");
   });
 
-  it("defaults the document to the dark theme the design is drawn for", () => {
+  it("ships one fixed theme, written into the markup", () => {
     const { container } = renderLayout();
     expect(container.querySelector("html")?.className).toContain("dark");
+  });
+
+  it("mounts nothing that could repaint the theme after hydration", () => {
+    renderLayout();
+    // The flash this guards against is a client effect resolving a theme and
+    // rewriting the class the server already sent. There is no provider and
+    // no toggle now, so the assertion is that nothing offers to switch.
+    expect(screen.queryByRole("button", { name: /light mode/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /dark mode/i })).toBeNull();
+    expect(document.documentElement.classList.contains("light")).toBe(false);
   });
 
   it("renders passed children inside the layout", () => {
