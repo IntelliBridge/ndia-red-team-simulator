@@ -26,7 +26,7 @@ IAM roles, the VPC) stays and is what the host uses.
 | `redsim-api` | `uvicorn redsim.api.app:create_app --factory` | 127.0.0.1:8000 |
 | `redsim-scans`, `redsim-default` | `celery worker -Q scans` / `-Q default` | none |
 | `redsim-beat` | `celery beat` | none |
-| `redsim-web` | `pnpm --filter @redsim/web dev` (Next.js dev server on the checkout) | 127.0.0.1:3000 |
+| `redsim-web` | `pnpm --filter @redsim/web dev` (Next.js production build (`next build` at deploy, `next start` in the unit)| 127.0.0.1:3000 |
 | `caddy` | routes `/v1/*`, `/health`, `/ws/*` to the API, `/auth/*` to Keycloak, the rest to the web app | 80, 443 |
 
 Every unit starts through `/usr/local/bin/redsim-run <service> <command>`,

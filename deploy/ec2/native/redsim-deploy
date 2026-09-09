@@ -8,7 +8,7 @@
 # 2. reinstall only what the diff touched: the venv when pyproject.toml
 #    changed (or --build), node modules when the lockfile changed, the realm
 #    file when it changed,
-# 3. restart the systemd units (the web dev server reloads on its own),
+# 3. rebuild the web app when its tree changed, then restart the systemd units,
 # 4. require /health to answer 200 on the public origin.
 set -euo pipefail
 
@@ -48,12 +48,25 @@ fi
 restart_web=0
 if grep -qE '^(pnpm-lock.yaml|web/package.json|packages/design-system/package.json)$' <<<"$changed"; then
   echo "web dependencies changed: pnpm install"
-  sudo -u redsim CI=true pnpm install --frozen-lockfile
+  sudo -u redsim -H env CI=true pnpm install --frozen-lockfile
+  restart_web=1
+fi
+# The web app runs as a production build (`next start`), not the dev server: the
+# dev server compiled every route on its first request (5 s of HTML on a fresh
+# route, several more for the chunks) and served unoptimised bundles, which read
+# as the app re-running auth on every tab. Rebuild when the web tree, the design
+# system or the lockfile changed, or when no build exists yet. redsim-run web
+# supplies the build-time environment (NEXT_PUBLIC_REDSIM_API_URL and the Better
+# Auth values env.js validates) exactly as the running server sees it.
+if grep -qE '^(web/|packages/design-system/|pnpm-lock.yaml)' <<<"$changed" || [ ! -f "$SRC/web/.next/BUILD_ID" ]; then
+  echo "web changed or no build present: next build"
+  sudo -u redsim -H env CI=true /usr/local/bin/redsim-run web pnpm --filter @redsim/web build
   restart_web=1
 fi
 if grep -qE '^deploy/ec2/native/systemd/' <<<"$changed"; then
   install -m 0644 "$SRC"/deploy/ec2/native/systemd/*.service /etc/systemd/system/
   systemctl daemon-reload
+  restart_web=1
 fi
 if grep -qx 'deploy/runtime/identity/realm.json' <<<"$changed"; then
   cp "$SRC/deploy/runtime/identity/realm.json" /opt/keycloak/data/import/redsim-realm.json
