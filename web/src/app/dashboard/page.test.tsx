@@ -37,6 +37,7 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@redsim/design-system", () => ({
   RunStatusBadge: ({ status }: { status: string }) =>
     h("span", { "data-testid": "run-status" }, status),
+  SeverityChip: ({ level }: { level: string }) => h("span", { "data-testid": "sev" }, level),
 }));
 
 import DashboardPage from "./page";
@@ -201,7 +202,7 @@ describe("DashboardPage", () => {
     expect(bars.textContent).toContain("low");
     // The severe list shows the open high finding with its plain-language lead
     // and omits the dismissed critical one.
-    expect(screen.getByText("PGD flips predictions").getAttribute("href")).toBe("/findings/f-1");
+    expect(screen.getByRole("link", { name: "PGD flips predictions" }).getAttribute("href")).toBe("/findings/f-1");
     expect(screen.getByText("redsim took the images this model classified correctly.")).toBeTruthy();
     expect(screen.queryByText("Dismissed")).toBeNull();
   });

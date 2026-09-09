@@ -14,8 +14,7 @@ import useSWR from "swr";
 
 import { SeverityChip } from "@redsim/design-system";
 import { api, type Finding } from "@/lib/api";
-import { findingLead } from "@/lib/finding-description";
-import { rowLink } from "@/lib/row-link";
+import { FindingSummaryCard } from "@/components/finding-summary-card";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 
 const fetcher = (path: string) =>
@@ -73,58 +72,9 @@ export default function FindingsPage() {
       )}
       {findings.length > 0 && (
         <ul className="space-y-3" aria-label="Findings across all accessible runs">
-          {findings.map((f: Finding) => {
-            const lead = findingLead(f.schema_blob.description, 600);
-            return (
-              <li
-                key={f.id}
-                {...rowLink(`/findings/${f.id}`)}
-                className={`rounded-md border border-border bg-card p-4 ${rowLink("").className}`}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <SeverityChip level={f.severity} />
-                  <span className="text-base font-medium">{f.schema_blob.title ?? "—"}</span>
-                  <span className="ml-auto rounded-sm border border-border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
-                    {f.status}
-                  </span>
-                </div>
-                {lead && (
-                  <p className="mt-2 max-w-4xl text-sm leading-relaxed text-foreground/90">{lead}</p>
-                )}
-                {!lead && f.schema_blob.description && (
-                  <p className="mt-2 max-w-4xl text-sm leading-relaxed text-muted-foreground">
-                    {f.schema_blob.description}
-                  </p>
-                )}
-                <dl className="mt-3 flex flex-wrap gap-x-8 gap-y-2 text-xs">
-                  <div>
-                    <dt className="redsim-kicker uppercase tracking-wide text-muted-foreground">Finding</dt>
-                    <dd className="whitespace-nowrap font-mono">
-                      <a className="text-primary underline" href={`/findings/${f.id}`}>
-                        {f.id}
-                      </a>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="redsim-kicker uppercase tracking-wide text-muted-foreground">Run</dt>
-                    <dd className="whitespace-nowrap font-mono">
-                      <a className="text-primary underline" href={`/runs/${f.run_id}`}>
-                        {f.run_id}
-                      </a>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="redsim-kicker uppercase tracking-wide text-muted-foreground">Attack or probe</dt>
-                    <dd>{f.schema_blob.ml?.attack_id ?? f.schema_blob.llm?.probe_id ?? "—"}</dd>
-                  </div>
-                  <div>
-                    <dt className="redsim-kicker uppercase tracking-wide text-muted-foreground">Source</dt>
-                    <dd className="text-muted-foreground">{f.source_tool ?? "—"}</dd>
-                  </div>
-                </dl>
-              </li>
-            );
-          })}
+          {findings.map((f: Finding) => (
+            <FindingSummaryCard key={f.id} finding={f} />
+          ))}
         </ul>
       )}
     </div>

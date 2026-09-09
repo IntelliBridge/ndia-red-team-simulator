@@ -6,8 +6,7 @@ import { RunStatusBadge } from "@redsim/design-system";
 import { api, type Finding, type ModelTarget, type Run } from "@/lib/api";
 import { getEmail, logout } from "@/lib/auth";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
-import { findingLead } from "@/lib/finding-description";
-import { rowLink } from "@/lib/row-link";
+import { FindingSummaryCard } from "@/components/finding-summary-card";
 
 // One fetcher per list. Each is optional on the page: a list that fails or is
 // still loading leaves its tiles at "—" and never blocks the others.
@@ -25,13 +24,6 @@ const SEVERITY_BAR: Record<string, string> = {
   medium: "bg-amber-500 dark:bg-amber-400",
   low: "bg-emerald-600 dark:bg-emerald-500",
   info: "bg-sky-500 dark:bg-sky-400",
-};
-const SEVERITY_CHIP: Record<string, string> = {
-  critical: "border-red-600/40 text-red-700 dark:text-red-400",
-  high: "border-orange-500/40 text-orange-700 dark:text-orange-400",
-  medium: "border-amber-500/40 text-amber-700 dark:text-amber-400",
-  low: "border-emerald-600/40 text-emerald-700 dark:text-emerald-400",
-  info: "border-sky-500/40 text-sky-700 dark:text-sky-300",
 };
 
 /** Count rows by a key, in a fixed display order, unknown values last. */
@@ -156,7 +148,7 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Overview</h1>
+        <h1 className="text-2xl font-semibold">Dashboard</h1>
         <div className="flex items-center gap-3 text-sm">
           <span className="text-muted-foreground">{getEmail() ?? "(session)"}</span>
           <button
@@ -227,22 +219,9 @@ export default function DashboardPage() {
         {severe.length === 0 ? (
           <p className="text-sm text-muted-foreground">No high or critical findings recorded.</p>
         ) : (
-          <ul className="divide-y divide-border">
+          <ul className="space-y-3">
             {severe.map((f) => (
-              <li key={f.id} {...rowLink(`/findings/${f.id}`)} className={`flex flex-col gap-1 rounded-sm px-1 py-2 text-sm ${rowLink("").className}`}>
-                <div className="flex items-center gap-2">
-                  <span className={`rounded-sm border px-1.5 py-0.5 font-mono text-[10px] uppercase ${SEVERITY_CHIP[f.severity] ?? ""}`}>
-                    {f.severity}
-                  </span>
-                  <a className="font-medium text-primary underline" href={`/findings/${f.id}`}>
-                    {f.schema_blob.title ?? f.id}
-                  </a>
-                  <span className="ml-auto text-xs text-muted-foreground">{f.status}</span>
-                </div>
-                {findingLead(f.schema_blob.description) && (
-                  <p className="text-xs text-muted-foreground">{findingLead(f.schema_blob.description)}</p>
-                )}
-              </li>
+              <FindingSummaryCard key={f.id} finding={f} leadMax={280} />
             ))}
           </ul>
         )}
