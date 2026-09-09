@@ -27,9 +27,9 @@ export function EvidenceDiff({
       {lines.map((line, i) => {
         let tone = "text-foreground/70";
         if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
-          tone = "text-inferred";
+          tone = "text-sky-300";
         } else if (line.startsWith("+")) {
-          tone = "text-robust";
+          tone = "text-emerald-300";
         } else if (line.startsWith("-")) {
           // Removed lines are orange, not red: red is the brand accent.
           tone = "text-orange-300";
