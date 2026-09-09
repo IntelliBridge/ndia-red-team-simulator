@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { PanelSection, RoleGated, LabelBadge } from "@redsim/design-system";
 import {
+  formatCleanAccuracy,
   startCampaign,
   type AttackInfo,
   type CampaignRequest,
@@ -166,8 +167,7 @@ export default function ModelPage({ params }: { params: { id: string } }) {
             <div>
               <dt className="redsim-kicker">clean accuracy</dt>
               <dd>
-                {model?.manifest.clean_accuracy ?? "—"}{" "}
-                {model?.manifest.clean_n ? `(n=${model.manifest.clean_n})` : ""}
+                {formatCleanAccuracy(model?.manifest.clean_accuracy, model?.manifest.clean_n)}
               </dd>
             </div>
             <div>

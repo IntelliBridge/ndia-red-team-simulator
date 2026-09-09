@@ -206,11 +206,35 @@ export type Finding = {
   schema_blob: FindingSchemaBlob;
 };
 
+/**
+ * The manifest's clean-accuracy block (`redsim.ml.schema.CleanAccuracy`): the
+ * value with its denominator and split. Older records carried a bare number
+ * with `clean_n` beside it, so both shapes are accepted.
+ */
+export type CleanAccuracy = { value: number; n?: number; split?: string };
+
+/** Render a clean accuracy of either shape as text, never as a React child. */
+export function formatCleanAccuracy(
+  accuracy: number | CleanAccuracy | null | undefined,
+  cleanN?: number | null,
+): string {
+  if (accuracy == null) return "—";
+  if (typeof accuracy === "number") {
+    return cleanN ? `${accuracy} (n=${cleanN})` : String(accuracy);
+  }
+  if (typeof accuracy.value !== "number") return "—";
+  const parts = [accuracy.n != null ? `n=${accuracy.n}` : null, accuracy.split ?? null].filter(
+    (part): part is string => part !== null,
+  );
+  const shown = Number(accuracy.value.toFixed(4));
+  return parts.length ? `${shown} (${parts.join(", ")})` : String(shown);
+}
+
 export type TargetMetadata = {
   dataset_id?: string;
   dataset_revision?: string;
   class_names?: string[];
-  clean_accuracy?: number;
+  clean_accuracy?: number | CleanAccuracy;
   clean_n?: number;
   framework_versions?: Record<string, string>;
   gradients?: boolean;
