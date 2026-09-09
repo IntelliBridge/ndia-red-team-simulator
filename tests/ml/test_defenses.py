@@ -66,8 +66,10 @@ class _TabularDouble:
 
 def test_list_defenses_catalog_shape() -> None:
     rows = defenses.list_defenses()
-    assert [r["id"] for r in rows] == ["feature_squeezing", "spatial_smoothing", "jpeg_compression"]
-    for r in rows:
+    preprocessing = [r for r in rows if r["kind"] == "preprocessing"]
+    assert [r["id"] for r in preprocessing] == ["feature_squeezing", "spatial_smoothing", "jpeg_compression"]
+    assert [r["id"] for r in rows if r["kind"] == "training"] == ["adversarial_training", "defensive_distillation"]
+    for r in preprocessing:
         assert r["name"] and r["art_class"].startswith("art.defences.preprocessor.")
         assert all(isinstance(p, ParamSpec) for p in r["params_schema"]) and r["params_schema"]
         assert any("adaptive attacks" in ref for ref in r["references"])
@@ -123,8 +125,8 @@ def test_resolve_params_defaults_and_bounds() -> None:
                      ("feature_squeezing", {"bit_depth": "4"}), ("feature_squeezing", {"bit_depth": True})]:
         with pytest.raises(ValueError):
             defenses.resolve_defense_params(did, bad)
-    with pytest.raises(ValueError, match="unknown defense"):
-        defenses.resolve_defense_params("adversarial_training", {})
+    # adversarial_training is in the catalog now (kind "training"); its budget defaults resolve.
+    assert defenses.resolve_defense_params("adversarial_training", {})["epochs"] == 2
     with pytest.raises(ValueError, match="unknown defense"):
         defenses.apply_defense(TinyTarget(), "distillation", {})
 
