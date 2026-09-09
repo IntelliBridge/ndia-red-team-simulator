@@ -151,6 +151,10 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.web
+      # Baked into the browser bundle at build time (deploy/Dockerfile.web has
+      # no default). Local stack: the API is published on the host at :8000.
+      args:
+        NEXT_PUBLIC_REDSIM_API_URL: http://localhost:8000
     # The long form is required for the Keycloak condition, and Compose does
     # not allow the short list beside it, so redsim-api is carried across
     # explicitly rather than dropped.

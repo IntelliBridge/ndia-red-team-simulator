@@ -501,12 +501,18 @@ jobs:
           context: .
           file: deploy/Dockerfile.worker
           push: false
+      # deploy/Dockerfile.web requires the browser API origin as a build
+      # argument (no localhost default). This image is never pushed, so a
+      # placeholder https origin proves the build; deploy-aws.yml passes the
+      # real public origin after its guard.
       - name: Build web
         uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile.web
           push: false
+          build-args: |
+            NEXT_PUBLIC_REDSIM_API_URL=https://redsim.ci.invalid
       - name: Build log-ingest
         uses: docker/build-push-action@v7
         with:

@@ -145,6 +145,13 @@ typecheck-web: require-install
 # workflow only builds images and rolls ECS services.
 check: lint typecheck test
 
+# API-level smoke against a live runtime (remaining-work brief E8):
+# health, OIDC discovery, 401 unauthenticated, then the authenticated reads
+# and an optional campaign when a token or a demo user is in the environment.
+# See scripts/smoke_live.sh for the variables.
+smoke-live:
+	scripts/smoke_live.sh
+
 # ---------------------------------------------------------------------
 # Full stack (docker compose)
 # ---------------------------------------------------------------------
@@ -183,7 +190,7 @@ docs-build-strict:
 docs-clean:
 	rm -rf site/
 
-.PHONY: install require-install \
+.PHONY: install require-install smoke-live \
 	dev dev-api dev-web dev-worker \
 	test test-cov \
 	lint lint-py lint-web \
