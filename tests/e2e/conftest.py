@@ -126,9 +126,12 @@ def e2e_app(e2e_env: pytest.MonkeyPatch, e2e_assets: Path, e2e_harness_dir: Path
 
     ``REDSIM_DB_URL`` is set for the process, so the API's admission events and
     the worker's stage events share one ``audit_events`` table (the ORM chain
-    writer works on sqlite). Celery runs ``task_always_eager`` with propagation;
-    the ML sandbox runs as a real child process unless ``REDSIM_E2E_SANDBOX=inprocess``
-    or ``e2e_app.sandbox.use("inprocess")``. See ``E2EApp`` in ``harness.py``.
+    writer works on sqlite). Celery runs ``task_always_eager`` without
+    propagation (a failed campaign is a failed Run, not a ``503``); the ML
+    sandbox runs as a real child process unless ``REDSIM_E2E_SANDBOX=inprocess``
+    or ``e2e_app.sandbox.use("inprocess")``. The pysqlite timestamp shim is
+    installed only when the production chain writer does not verify on plain
+    sqlite (``e2e_app.sqlite_tz_shim`` says which). See ``E2EApp`` in ``harness.py``.
     """
     for module in ("fastapi", "sqlalchemy", "celery"):
         pytest.importorskip(module)
@@ -153,12 +156,15 @@ def e2e_org(e2e_app: E2EApp) -> E2EOrg:
 
 @pytest.fixture(scope="session")
 def e2e_bundled(e2e_app: E2EApp, e2e_org: E2EOrg) -> dict[str, str]:
-    """``{"vehicles_cnn": <model_id>, "url_trees": <model_id>}`` registered into ``e2e_org.project_id``.
+    """``{"vehicles_cnn": <Target.id>, "url_trees": <Target.id>}`` registered into ``e2e_org.project_id``.
 
-    Goes through ``redsim.services.ml_models.register_bundled_model`` when the
-    wave-2 service is on the tree, else ``POST /v1/models`` as the remediator.
-    Session-scoped: a test that deletes one of these models changes what later
-    tests see; re-register with ``harness.register_bundled`` if you must.
+    Goes through ``redsim.services.ml_models.register_bundled_model(session,
+    project_id, bundled_id, actor)``, which returns the per-project ``Target``
+    row: its ``id`` is ``<bundled_id>-<8 hex>``, never the bundled id itself
+    (``value`` is ``bundled:<bundled_id>`` and ``detail.bundled_id`` names the
+    registry entry). Session-scoped: a test that deletes one of these models
+    changes what later tests see; re-register with ``harness.register_bundled``
+    if you must. ``harness.registered_target(e2e_app, model_id)`` reads the row.
     """
     return h.register_all_bundled(e2e_app, e2e_org)
 
@@ -172,12 +178,14 @@ def e2e_bundled(e2e_app: E2EApp, e2e_org: E2EOrg) -> dict[str, str]:
 def pythia(e2e_app: E2EApp) -> Iterator[PythiaToggle]:
     """Mocked Pythia gateway, off by default.
 
-    ``pythia.on()`` (or ``with pythia:``) exports the three settings variables,
-    routes ``redsim.llm.pythia.make_backend`` through an ``httpx.MockTransport``
-    that answers with a narrative built only from the payload's own words, and
-    runs campaigns in-process (the sandbox child strips ``PYTHIA_*``).
-    ``pythia.requests`` records every call; ``pythia.disable_llm(True)`` sets
-    ``REDSIM_DISABLE_LLM=1``. Always switched off at session end.
+    ``pythia.on()`` (or ``with pythia:``) exports the three settings variables
+    and routes ``make_backend`` (in ``redsim.llm.pythia`` and the name bound in
+    ``redsim.ml.recommend.narrative``) through an ``httpx.MockTransport`` that
+    answers with a narrative built only from the payload's own words. The
+    writer runs in the worker parent after the child returns, so the mock is
+    observed in child mode and the sandbox is left alone. ``pythia.requests``
+    records every call; ``pythia.disable_llm(True)`` sets ``REDSIM_DISABLE_LLM=1``.
+    Always switched off at session end.
     """
     toggle = h.PythiaToggle(e2e_app)
     yield toggle
