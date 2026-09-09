@@ -43,8 +43,11 @@ nothing was re-seeded for the move.
 
 Every push to `main` builds the four images (`.github/workflows/deploy-aws.yml`,
 `build-and-push`) and then the `deploy-ec2` job runs one SSM command on the
-host: `redsim-roll <sha>`, which re-tags the compose file, pulls the images
-of that commit and recreates the containers. The job waits for the command
+host: it installs this commit's `deploy/ec2/redsim-render-env.sh` and
+`deploy/ec2/redsim-roll.sh` as `/usr/local/bin/redsim-render-env` and
+`/usr/local/bin/redsim-roll`, then runs `redsim-roll <sha>`, which re-tags
+the compose file, re-renders the environment from Secrets Manager, pulls the
+images of that commit and recreates the containers. The job waits for the command
 result, fails on a non-zero exit, and then requires `/health` to answer 200
 on the public hostname. The deploy role `ndia-red-team-gha-deploy` holds
 `ssm:SendCommand` on this one instance; the repository variable
@@ -67,10 +70,23 @@ api`, `/var/log/redsim-bootstrap.log` for the first boot.
 ## Environment
 
 Non-secret values live in `/opt/redsim/env/{common,web,identity}.env` and
-are written by the bootstrap. Secrets come from Secrets Manager at boot; to
-change one, update the secret and re-run the render loop from the bootstrap
-(or relaunch). `REDSIM_DISABLE_LLM` is `0` when the Pythia secret exists and
-`1` otherwise. `BETTER_AUTH_URL` is the public origin
+are written by the bootstrap. Secrets come from Secrets Manager through
+`/usr/local/bin/redsim-render-env` (canonical copy
+`deploy/ec2/redsim-render-env.sh`), which the bootstrap runs once and every
+`redsim-roll` runs again before recreating the containers, so adding or
+rotating a secret takes effect on the next merge to `main`. It writes the
+per-service `*.secret.env` files, `pythia.env` (the four Pythia variables
+from `ndia-red-team/demo/pythia`, empty when that secret is absent) and
+`llm.env`: `REDSIM_DISABLE_LLM` (`0` when the Pythia secret exists, else `1`)
+and `REDSIM_TARGET_ALLOWLIST` (loopback and docker hosts plus the Pythia
+gateway host, so an LLM target registration passes the egress check; the
+API image ships no `redsim.yaml`). `api`, `scans` and `default` layer
+`llm.env` and `pythia.env`; `beat` layers `llm.env`. The api container needs
+them as much as the workers: the gateway model picker (`GET /v1/llm/models`),
+the LLM capability flags and the default `gateway_url` of an LLM target
+registration read them. Hosts bootstrapped before the evening of 2026-09-09
+gave Pythia to the workers only; `redsim-roll` repairs their compose file in
+place on the next deploy. `BETTER_AUTH_URL` is the public origin
 (`https://redsim.ndia.agiledefense.xyz`), never a callback path or
 localhost: Better Auth derives the callback from it and the tRPC layer
 compares request origins against it.
