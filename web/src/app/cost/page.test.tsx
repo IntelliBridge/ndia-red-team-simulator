@@ -70,7 +70,7 @@ describe("CostPage", () => {
     useRequireAuthMock.mockReturnValue(false);
     useSWRMock.mockReturnValue({ data: undefined, error: undefined, isLoading: false });
     render(h(CostPage));
-    expect(screen.getByText("Redirecting to sign in…")).toBeTruthy();
+    expect(screen.getByText("Signing in…")).toBeTruthy();
     expect(screen.queryByText("Cost")).toBeNull();
   });
 
