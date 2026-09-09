@@ -266,7 +266,8 @@ export type Finding = {
   severity: string;
   status: string;
   source_tool: string | null;
-  validation_state: string;
+  /** Verify outcome of a classifier finding; absent on LLM probe findings. */
+  validation_state?: string | null;
   dedup_key: string | null;
   schema_blob: FindingSchemaBlob;
 };
