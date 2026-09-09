@@ -199,4 +199,17 @@ export type CommandItemProps = ComponentProps<typeof CommandItem>;
 export type CommandSeparatorProps = ComponentProps<typeof CommandSeparator>;
 export type CommandShortcutProps = ComponentProps<typeof CommandShortcut>;
 
+// Form and action primitives ported from the redsim-designs reference
+// export. Button carries the design's five variants and four sizes.
+import { Button, buttonVariants, type ButtonProps } from "./primitives/button";
+import { Select, type SelectProps } from "./primitives/select";
+import { Checkbox, type CheckboxProps } from "./primitives/checkbox";
+import { Spinner, type SpinnerProps } from "./primitives/spinner";
+
+export { Button, buttonVariants, Select, Checkbox, Spinner };
+export type { ButtonProps, SelectProps, CheckboxProps, SpinnerProps };
+
+// The icon set, re-exported so consumers need not depend on lucide-react.
+export * from "./icons";
+
 export { cn } from "./lib/utils";

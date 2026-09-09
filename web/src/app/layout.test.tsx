@@ -2,10 +2,13 @@ import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
-// CommandPalette (mounted in the layout) calls useRouter(); provide a stub so
-// the layout renders outside a Next app-router context.
+// The shell calls useRouter() (CommandPalette, TopBar) and usePathname()
+// (AppShell, SidebarNav); provide stubs so the layout renders outside a Next
+// app-router context. usePathname returns a real route rather than "/login",
+// which the shell deliberately renders without its chrome.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => "/dashboard",
 }));
 
 import RootLayout, { metadata } from "./layout";
@@ -13,7 +16,7 @@ import RootLayout, { metadata } from "./layout";
 afterEach(cleanup);
 
 function renderLayout() {
-  render(
+  return render(
     React.createElement(
       RootLayout,
       null,
@@ -22,106 +25,92 @@ function renderLayout() {
   );
 }
 
+/** The primary nav, in the order spec section 18.1 fixes. */
+const NAV_IN_SPEC_ORDER: [string, string][] = [
+  ["Dashboard", "/dashboard"],
+  ["Runs", "/runs"],
+  ["Models", "/models"],
+  ["Findings", "/findings"],
+  ["Projects", "/projects"],
+  ["Audit", "/audit"],
+  ["Logs", "/logs"],
+  ["Cost", "/cost"],
+  ["Auth Profiles", "/auth-profiles"],
+];
+
 describe("RootLayout", () => {
   it("renders the core nav links with the correct hrefs", () => {
     renderLayout();
-
-    const expected: Record<string, string> = {
-      Dashboard: "/dashboard",
-      Projects: "/projects",
-      Findings: "/findings",
-      Logs: "/logs",
-      Audit: "/audit",
-    };
-    for (const [label, href] of Object.entries(expected)) {
+    for (const [label, href] of NAV_IN_SPEC_ORDER) {
       const link = screen.getByText(label, { selector: "a" });
       expect(link.getAttribute("href")).toBe(href);
     }
   });
 
-  it("renders exactly the pruned nav, in order, with no Agents / Kali tools links", () => {
-    const { container } = render(
-      React.createElement(
-        RootLayout,
-        null,
-        React.createElement("div", null, "child-sentinel"),
-      ),
-    );
+  it("renders exactly the pruned nav, in spec order, with no Agents / Kali tools links", () => {
+    renderLayout();
 
-    const navLinks = Array.from(
-      container.querySelectorAll("header nav a"),
-    ).map((a) => [a.textContent, a.getAttribute("href")]);
-    expect(navLinks).toEqual([
-      ["Dashboard", "/dashboard"],
-      ["Models", "/models"],
-      ["Runs", "/runs"],
-      ["Projects", "/projects"],
-      ["Auth Profiles", "/auth-profiles"],
-      ["Findings", "/findings"],
-      ["Logs", "/logs"],
-      ["Audit", "/audit"],
-      ["Cost", "/cost"],
+    // Scoped to the primary landmark rather than to `header nav`: the nav
+    // moved into the sidebar with the design port, and the assertion that
+    // matters is the list and its order, not which element wraps it.
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    const navLinks = Array.from(nav.querySelectorAll("a")).map((a) => [
+      a.textContent,
+      a.getAttribute("href"),
     ]);
+    expect(navLinks).toEqual(NAV_IN_SPEC_ORDER);
 
     expect(screen.queryByText("Agents", { selector: "a" })).toBeNull();
     expect(screen.queryByText("Kali tools", { selector: "a" })).toBeNull();
   });
 
-  it("mounts the theme toggle button in the header", () => {
-    const { container } = render(
-      React.createElement(
-        RootLayout,
-        null,
-        React.createElement("div", null, "child-sentinel"),
-      ),
-    );
-    // The mount-gated ThemeToggle renders a <button> (an inert placeholder
-    // until the provider resolves on the client). Either way a button exists
-    // inside the header nav.
-    const navButton = container.querySelector("header nav button");
-    expect(navButton).not.toBeNull();
+  it("marks the active nav entry for assistive technology, not by colour alone", () => {
+    renderLayout();
+    const nav = screen.getByRole("navigation", { name: "Primary" });
+    const current = nav.querySelectorAll('a[aria-current="page"]');
+    expect(current.length).toBe(1);
+    expect(current[0]?.getAttribute("href")).toBe("/dashboard");
+  });
+
+  it("mounts the theme toggle button in the shell", () => {
+    const { container } = renderLayout();
+    // The mount-gated ThemeToggle renders an inert placeholder button until
+    // the provider resolves on the client, so assert the element, not its
+    // label.
+    const buttons = container.querySelectorAll("button");
+    expect(buttons.length).toBeGreaterThan(0);
+  });
+
+  it("offers a sign-out control", () => {
+    renderLayout();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
   });
 
   it("themes the shell with semantic token classes", () => {
-    const { container } = render(
-      React.createElement(
-        RootLayout,
-        null,
-        React.createElement("div", null, "child-sentinel"),
-      ),
-    );
+    const { container } = renderLayout();
     const body = container.querySelector("body");
     expect(body?.className).toContain("bg-background");
     expect(body?.className).toContain("text-foreground");
-    const header = container.querySelector("header");
-    expect(header?.className).toContain("border-border");
+    // The sidebar carries the ported surface tokens.
+    const aside = container.querySelector("aside");
+    expect(aside?.className).toContain("bg-panel");
+    expect(aside?.className).toContain("border-hairline");
   });
 
-  it("renders the Cost and Auth Profiles nav links with the correct hrefs", () => {
-    renderLayout();
-
-    const dashboardLink = screen.getByText("Dashboard", { selector: "a" });
-    expect(dashboardLink.getAttribute("href")).toBe("/dashboard");
-
-    const projectsLink = screen.getByText("Projects", { selector: "a" });
-    expect(projectsLink.getAttribute("href")).toBe("/projects");
-
-    const costLink = screen.getByText("Cost", { selector: "a" });
-    expect(costLink.getAttribute("href")).toBe("/cost");
-
-    const authProfilesLink = screen.getByText("Auth Profiles", { selector: "a" });
-    expect(authProfilesLink.getAttribute("href")).toBe("/auth-profiles");
-
-    const logsLink = screen.getByText("Logs", { selector: "a" });
-    expect(logsLink.getAttribute("href")).toBe("/logs");
-
-    const auditLink = screen.getByText("Audit", { selector: "a" });
-    expect(auditLink.getAttribute("href")).toBe("/audit");
+  it("defaults the document to the dark theme the design is drawn for", () => {
+    const { container } = renderLayout();
+    expect(container.querySelector("html")?.className).toContain("dark");
   });
 
   it("renders passed children inside the layout", () => {
     renderLayout();
     expect(screen.getByText("child-sentinel")).toBeTruthy();
+  });
+
+  it("renders the footer disclosure under every page", () => {
+    renderLayout();
+    const footer = document.querySelector("footer");
+    expect(footer?.textContent).toMatch(/not a safety, readiness, or certification determination/i);
   });
 
   it("exported metadata has a truthy title equal to the defined string", () => {

@@ -3,10 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { axe } from "vitest-axe";
 
-// CommandPalette (mounted in the layout) calls useRouter(); stub it so the
-// shell renders outside a Next app-router context.
+// The shell calls useRouter() (CommandPalette, TopBar) and usePathname()
+// (AppShell, SidebarNav); stub both so it renders outside a Next app-router
+// context.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => "/dashboard",
 }));
 
 import RootLayout from "./layout";

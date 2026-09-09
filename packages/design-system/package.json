@@ -11,6 +11,10 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./components/*": {
+      "types": "./src/components/*.tsx",
+      "default": "./src/components/*.tsx"
+    },
     "./primitives/*": {
       "types": "./src/primitives/*.tsx",
       "default": "./src/primitives/*.tsx"
