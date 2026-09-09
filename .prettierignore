@@ -1,0 +1,15 @@
+pnpm-lock.yaml
+**/.next/
+**/storybook-static/
+**/node_modules/
+
+# The Python package is frozen by this PR's scope boundary, and ruff owns its
+# formatting anyway.
+redsim/
+tests/
+docs/
+site/
+
+# R18 freezes these byte for byte against the FastAPI session-cookie contract.
+web/src/server/redsim-session.ts
+web/src/server/redsim-session.test.ts

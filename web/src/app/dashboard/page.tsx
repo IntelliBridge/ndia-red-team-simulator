@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 
@@ -54,7 +55,10 @@ export default function DashboardPage() {
       {!isLoading && !error && (!data || data.runs.length === 0) && (
         <p className="text-muted-foreground">
            No runs yet. Head to{" "}
-           <a className="text-primary underline" href="/models">/models</a> to
+           <Link className="text-primary underline" href="/models">
+             /models
+           </Link>{" "}
+           to
           register a target and start one.
         </p>
       )}

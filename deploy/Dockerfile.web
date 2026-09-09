@@ -26,8 +26,11 @@ ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 # version used in dev so reproducible installs land on the same resolver behaviour.
 RUN npm install -g pnpm@10.33.2
 
-# Workspace manifest + lockfile first, for layer cache efficiency.
-COPY pnpm-workspace.yaml pnpm-lock.yaml ./
+# Workspace manifest + lockfile first, for layer cache efficiency. The root
+# package.json is a lockfile importer of its own (it carries the lint and
+# format toolchain), and --frozen-lockfile validates against every importer it
+# finds, so leaving it out fails the install as an outdated lockfile.
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY web/package.json ./web/
 COPY packages/design-system/package.json ./packages/design-system/
 

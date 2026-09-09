@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 
@@ -146,9 +147,9 @@ export default function TargetsPage() {
       <h1 className="text-2xl font-semibold">Targets</h1>
       <p className="text-sm text-muted-foreground">
         Adversarial ML model targets are registered in the{" "}
-        <a href="/models" className="text-primary underline">
+        <Link href="/models" className="text-primary underline">
           model catalog
-        </a>
+        </Link>
         . This page stays available until the catalog API is mounted.
       </p>
       {err && (

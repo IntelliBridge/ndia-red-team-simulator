@@ -125,17 +125,12 @@ lint: lint-py lint-web
 lint-py: require-install
 	$(VENV)/bin/ruff check redsim tests
 
-# web/ has no ESLint config yet, and `next lint` with no config stops to ask
-# how to set one up, which would hang `make lint` and `make check` in a
-# terminal and fail them in CI. Skip with a visible line until the config
-# lands (eslint, eslint-config-next and web/.eslintrc.json or
-# web/eslint.config.mjs). Once a config exists this guard runs the real lint.
+# The flat config lives at the repo root (eslint.config.mjs), scoped to web/
+# with basePath, because that is where the ESLint binary is installed. Nothing
+# to guard for any more: this runs the real lint. Note that `make lint` runs
+# lint-py first, so run this target directly while the Python tree is red.
 lint-web: require-install
-	@if ls web/.eslintrc* web/eslint.config.* >/dev/null 2>&1; then \
-	  pnpm --filter $(WEB) lint; \
-	else \
-	  echo "skip: lint-web (web/ has no ESLint config yet, so next lint would prompt to create one)"; \
-	fi
+	pnpm run lint
 
 typecheck: typecheck-py typecheck-web
 

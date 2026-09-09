@@ -415,9 +415,10 @@ jobs:
     needs: unit
     steps:
       - uses: actions/checkout@v7
+      # No version input: the root package.json now declares
+      # packageManager: pnpm@10.33.2, and the action aborts with "Multiple
+      # versions of pnpm specified" when both are present and differ.
       - uses: pnpm/action-setup@v6
-        with:
-          version: "10"
       - uses: actions/setup-node@v7
         with:
           node-version: "20"
@@ -427,6 +428,9 @@ jobs:
       # there so both @redsim/web and @redsim/design-system are linked.
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
+      # Flat config at the repo root, scoped to web/ with basePath.
+      - name: Lint
+        run: pnpm run lint
       # Design-system ships the shared component layer; its real source
       # (components + primitives + index) must type-check cleanly. Stories
       # are excluded via tsconfig.build.json (their @storybook/react types
