@@ -9,9 +9,11 @@ unchanged. Without the header it is a pass-through; with it:
   ``sha256(principal_sub | header value)``, so the same header from a different
   principal is a different identity and the raw header value is never stored;
 * the project is resolved from the path the way the route will resolve it
-  (a model's, finding's or run's project; ``project_id`` in a JSON body or
-  ``?project=`` for the collection routes); when it cannot be resolved the
-  request passes through and the route answers its own 404/422;
+  (a model's, finding's, run's or batch's project, the row itself or any route
+  under it; ``project_id`` in a JSON body or ``?project=`` for the collection
+  routes; the run named by ``run_id`` for an analyst draft posted to
+  ``/v1/findings``; see :func:`resolution_strategy`); when it cannot be resolved
+  the request passes through and the route answers its own 404/422;
 * a miss reserves the row (``response_status = 0``) before the route runs; a
   ``2xx`` JSON response is stored on the row and later identical requests are
   answered from it with ``Idempotency-Replayed: true`` and without re-running
@@ -72,14 +74,41 @@ COVERED_PATH = re.compile(r"^/v1/(models|findings|runs|campaigns|datasets)(/|$)"
 IDEMPOTENCY_KEY_REUSED: str = getattr(_errors, "IDEMPOTENCY_KEY_REUSED", "idempotency_key_reused")
 IDEMPOTENCY_CONFLICT: str = getattr(_errors, "IDEMPOTENCY_CONFLICT", "idempotency_conflict")
 
-# Path shapes whose project is a row's project. ``(pattern, model attribute name)``.
+#: Path shapes whose project is a row's project: ``(pattern, ORM model name)``. The trailing
+#: ``(/|$)`` covers the row itself (``DELETE /v1/models/{id}``) and every route under it
+#: (``/attacks``, ``/probes``, ``/explain``, ``/report.render``, ``/snapshots/{ref}/archive``, ...).
+#: The collection paths below are matched first, so ``/v1/models/bulk`` is never read as a model id.
 _PATH_PROJECT: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"^/v1/models/(?P<id>[^/]+)/"), "Target"),
-    (re.compile(r"^/v1/findings/(?P<id>[^/]+)/"), "Finding"),
-    (re.compile(r"^/v1/runs/(?P<id>[^/]+)/"), "Run"),
+    (re.compile(r"^/v1/models/(?P<id>[^/]+)(/|$)"), "Target"),
+    (re.compile(r"^/v1/findings/(?P<id>[^/]+)(/|$)"), "Finding"),
+    (re.compile(r"^/v1/runs/(?P<id>[^/]+)(/|$)"), "Run"),
+    (re.compile(r"^/v1/campaigns/batch/(?P<id>[^/]+)(/|$)"), "MlBatch"),
 )
-#: Paths whose project comes from the body (``project_id``) or ``?project=``.
+#: Collection paths whose project comes from the body (``project_id``) or ``?project=``.
 _BODY_PROJECT_PATHS = frozenset({"/v1/models", "/v1/models/bulk", "/v1/campaigns/batch", "/v1/datasets"})
+#: Collection paths whose JSON body names the run the new resource belongs to (``run_id``): the
+#: analyst draft of ``POST /v1/findings`` (wave B2 review-workflow).
+_BODY_RUN_PATHS = frozenset({"/v1/findings"})
+
+
+def resolution_strategy(path: str) -> tuple[str, str | None] | None:
+    """How the project of a covered request is keyed, from its path alone.
+
+    ``("body", None)`` for a collection path whose body or ``?project=`` names the
+    project; ``("body_run", None)`` for one whose body names a ``run_id``;
+    ``("row", <ORM model name>)`` for a path at or under a model, finding, run or
+    batch row; ``None`` when nothing keys the request, in which case the middleware
+    passes it through and the route answers on its own.
+    """
+    clean = path.rstrip("/") or "/"
+    if clean in _BODY_PROJECT_PATHS:
+        return ("body", None)
+    if clean in _BODY_RUN_PATHS:
+        return ("body_run", None)
+    for pattern, model_name in _PATH_PROJECT:
+        if pattern.match(path) is not None:
+            return ("row", model_name)
+    return None
 
 
 def stored_key(principal: str, raw_key: str) -> str:
@@ -211,21 +240,31 @@ class IdempotencyMiddleware:
 
     def _project_id(self, request: Any, body: bytes) -> str | None:
         path = request.url.path
-        for pattern, model_name in _PATH_PROJECT:
-            match = pattern.match(path)
-            if match is not None:
-                return _row_project(model_name, match.group("id"))
-        if path.rstrip("/") in _BODY_PROJECT_PATHS:
+        strategy = resolution_strategy(path)
+        if strategy is None:
+            return None
+        kind, model_name = strategy
+        if kind == "body":
             project = request.query_params.get("project")
-            if project:
-                return str(project)
-            try:
-                payload = json.loads(body.decode("utf-8")) if body.strip() else None
-            except (UnicodeDecodeError, ValueError):
-                return None
-            value = payload.get("project_id") if isinstance(payload, dict) else None
-            return str(value) if isinstance(value, str) and value else None
+            return str(project) if project else _body_field(body, "project_id")
+        if kind == "body_run":
+            run_id = _body_field(body, "run_id")
+            return _row_project("Run", run_id) if run_id else None
+        for pattern, name in _PATH_PROJECT:
+            match = pattern.match(path)
+            if match is not None and name == model_name:
+                return _row_project(name, match.group("id"))
         return None
+
+
+def _body_field(body: bytes, key: str) -> str | None:
+    """A non-empty string field of a JSON object body, else ``None`` (a non-JSON body keys nothing)."""
+    try:
+        payload = json.loads(body.decode("utf-8")) if body.strip() else None
+    except (UnicodeDecodeError, ValueError):
+        return None
+    value = payload.get(key) if isinstance(payload, dict) else None
+    return str(value) if isinstance(value, str) and value else None
 
 
 async def _read_body(receive: Receive) -> bytes:
@@ -396,5 +435,6 @@ __all__ = [
     "IdempotencyMiddleware",
     "is_covered",
     "request_digest",
+    "resolution_strategy",
     "stored_key",
 ]

@@ -14,7 +14,10 @@ Pinned:
 * a refused admission (4xx) is not stored, so the key can be retried;
 * an unknown run passes through to the route's 404 and stores nothing;
 * a non-covered route and a read are untouched by the header;
-* a key outside 1..255 characters is ``422``; a row older than the TTL is a miss.
+* a key outside 1..255 characters is ``422``; a row older than the TTL is a miss;
+* the middleware is registered exactly once by ``create_app`` and every mutating
+  ML route of the app, the wave B2 routes included, is covered with a project
+  resolution strategy (``test_middleware_is_registered_once_and_covers_every_mutating_ml_route``).
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ pytest.importorskip("sqlalchemy")
 
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
+from starlette.requests import Request
 
 from redsim.api.auth import CurrentUser, get_current_user
 from redsim.api.middleware import idempotency as idem
@@ -48,6 +52,38 @@ SCANNER = CurrentUser(sub="dev:scanner@test", email="scanner@test", project_memb
 OTHER_SCANNER = CurrentUser(sub="dev:other@test", email="other@test", project_memberships={PROJECT: "scanner"})
 VIEWER = CurrentUser(sub="dev:viewer@test", email="viewer@test", project_memberships={PROJECT: "viewer"})
 ADMIN = CurrentUser(sub="dev:admin@test", email="admin@test", project_memberships={PROJECT: "admin"})
+
+#: The wave B2 mutating ML routes (llm-api, reports-compare-weights, review-workflow, endpoint-admission),
+#: as FastAPI templates them. Every one must exist on the app and be covered by the middleware.
+B2_MUTATING_ROUTES: tuple[tuple[str, str], ...] = (
+    ("POST", "/v1/models/{model_id}/probes"),
+    ("POST", "/v1/runs/{run_id}/report.render"),
+    ("POST", "/v1/runs/{run_id}/snapshots/{ref}/archive"),
+    ("POST", "/v1/runs/{run_id}/snapshots/{ref}/restore"),
+    ("POST", "/v1/findings/{finding_id}/review"),
+    ("POST", "/v1/findings/{finding_id}/review/{transition}"),
+    ("POST", "/v1/findings"),
+    ("PATCH", "/v1/findings/{finding_id}/draft"),
+    ("POST", "/v1/models"),
+)
+#: Phase A mutating ML routes and the wave B0 stubs (B3 builds them) that the covered set also holds.
+OTHER_COVERED_ROUTES: tuple[tuple[str, str], ...] = (
+    ("POST", "/v1/models/{model_id}/attacks"),
+    ("DELETE", "/v1/models/{model_id}"),
+    ("POST", "/v1/findings/{finding_id}/explain"),
+    ("POST", "/v1/findings/{finding_id}/harden"),
+    ("POST", "/v1/findings/{finding_id}/verify"),
+    ("PATCH", "/v1/findings/{finding_id}/status"),
+    ("PATCH", "/v1/runs/{run_id}/reviewer-notes"),
+    ("POST", "/v1/runs/{run_id}/cancel"),
+    ("POST", "/v1/runs/{run_id}/dataset"),
+    ("POST", "/v1/runs/{run_id}/integrations/foundry"),
+    ("POST", "/v1/campaigns/batch"),
+    ("POST", "/v1/campaigns/batch/{batch_id}/cancel"),
+    ("POST", "/v1/models/bulk"),
+    ("POST", "/v1/findings/{finding_id}/verify/bulk"),
+    ("POST", "/v1/datasets"),
+)
 
 
 @pytest.fixture
@@ -253,3 +289,69 @@ def test_request_digest_is_canonical() -> None:
     assert idem.request_digest("POST", "/v1/x", b"", b"not json") == hashlib.sha256(
         b"POST\x00/v1/x\x00\x00not json\x00").hexdigest()
     assert idem.stored_key("sub:a", "k") != idem.stored_key("sub:b", "k")
+
+
+
+def _mutating_routes(app: Any) -> set[tuple[str, str]]:
+    """Every ``(METHOD, templated path)`` the app serves with a mutating method, read from its OpenAPI document
+    (included routers are wrapped by this FastAPI version, so ``app.routes`` is not a flat list)."""
+    return {(method.upper(), path) for path, operations in app.openapi()["paths"].items()
+            for method in operations if method.upper() in idem.MUTATING_METHODS}
+
+
+def test_middleware_is_registered_once_and_covers_every_mutating_ml_route() -> None:
+    from redsim.api.app import create_app
+    from redsim.api.settings import APISettings
+
+    app = create_app(APISettings(env="dev", auth_mode="dev", cors_origins=["http://localhost:3000"]))
+    registered = [m for m in app.user_middleware if m.cls is idem.IdempotencyMiddleware]
+    assert len(registered) == 1, "create_app adds the idempotency middleware exactly once"
+
+    mutating = _mutating_routes(app)
+    covered = {(m, p) for m, p in mutating if idem.is_covered(m, p)}
+    assert set(B2_MUTATING_ROUTES) <= mutating, sorted(set(B2_MUTATING_ROUTES) - mutating)
+    assert set(B2_MUTATING_ROUTES) <= covered, sorted(set(B2_MUTATING_ROUTES) - covered)
+    assert set(OTHER_COVERED_ROUTES) <= covered, sorted(set(OTHER_COVERED_ROUTES) - covered)
+    # Every covered route has a way to key the request on its project: a row on the path, a body
+    # project_id / ?project=, or the run an analyst draft names. Nothing under the ML prefixes is left out.
+    for method, path in sorted(covered):
+        assert idem.resolution_strategy(path) is not None, (method, path)
+    ml_prefixed = {(m, p) for m, p in mutating if idem.COVERED_PATH.match(p)}
+    assert ml_prefixed == covered, "every mutating route under the ML prefixes is covered, none skipped"
+    # The retained platform routes are not ML routes and pass through untouched.
+    outside = mutating - covered
+    assert outside and all(p.startswith(("/v1/targets", "/v1/auth-profiles", "/v1/projects")) for _m, p in outside), \
+        sorted(outside)
+    assert idem.resolution_strategy("/v1/models/{model_id}/probes") == ("row", "Target")
+    assert idem.resolution_strategy("/v1/models/bulk") == ("body", None) != idem.resolution_strategy("/v1/models/x")
+    assert idem.resolution_strategy("/v1/findings") == ("body_run", None)
+    assert idem.resolution_strategy("/v1/campaigns/batch/b1/cancel") == ("row", "MlBatch")
+    assert idem.resolution_strategy("/v1/projects/p/ml-scoring") is None
+
+
+def _request(method: str, path: str, query: bytes = b"") -> Request:
+    return Request({"type": "http", "method": method, "path": path, "query_string": query, "headers": []})
+
+
+def test_project_resolution_per_route_shape(api: SimpleNamespace) -> None:
+    """The project key of each covered shape, over the harness rows: run paths, body paths, drafts, DELETE."""
+    middleware = idem.IdempotencyMiddleware(app=None)  # type: ignore[arg-type]
+    resolve = middleware._project_id
+    assert resolve(_request("POST", f"/v1/runs/{RUN}/report.render"), b"{}") == PROJECT
+    assert resolve(_request("POST", f"/v1/runs/{RUN}/snapshots/1/archive"), b"") == PROJECT
+    assert resolve(_request("POST", "/v1/runs/no-such-run/cancel"), b"") is None, "the route answers its own 404"
+    assert resolve(_request("POST", "/v1/findings"), f'{{"run_id": "{RUN}", "title": "t"}}'.encode()) == PROJECT
+    assert resolve(_request("POST", "/v1/findings"), b'{"title": "no run named"}') is None
+    assert resolve(_request("POST", "/v1/models"), b'{"project_id": "p-body", "source": "endpoint"}') == "p-body"
+    assert resolve(_request("POST", "/v1/models", b"project=p-query"), b"{}") == "p-query"
+    assert resolve(_request("POST", "/v1/models/bulk"), b'{"project_id": "p-bulk"}') == "p-bulk"
+    assert resolve(_request("POST", "/v1/models"), b"not json") is None
+    assert resolve(_request("DELETE", "/v1/models/no-such-model"), b"") is None
+    assert resolve(_request("POST", "/v1/campaigns/batch/no-such-batch/cancel"), b"") is None
+    # An analyst draft with a key against the harness run reaches the route (no ML record: 404), stores nothing,
+    # and the key stays usable: a refused admission never occupies the identity.
+    draft = api.call(SCANNER, "POST", "/v1/findings", key="key-draft",
+                     body={"run_id": RUN, "attack_id": "fgsm", "title": "draft", "severity": "low",
+                           "observation": "o", "interpretation": "i", "candidate": "c", "evidence_ids": ["m.clean"]})
+    assert draft.status_code in {403, 404, 409, 422}, draft.text
+    assert api.rows() == []

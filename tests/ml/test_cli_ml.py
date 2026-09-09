@@ -347,9 +347,11 @@ SAMPLE_URLS = Path(__file__).parent / "fixtures" / "malicious_urls_sample.csv"
 def test_parser_has_ml_attack_with_campaign_defaults():
     args = _parse(["ml", "attack", "vehicles_cnn"])
     assert args.ml_action == "attack" and args.target_id == "vehicles_cnn"
-    assert args.attacks == "fgsm,pgd" and args.eps is None and args.reference_eps is None
+    # The attack set, the grid, the reference and the norm are resolved per norm and target modality in the
+    # handler (resolve_attack_defaults), so the parser leaves them unset rather than pinning the image defaults.
+    assert args.attacks is None and args.eps is None and args.reference_eps is None and args.norm is None
     assert args.n_samples == 200 and args.seed == 0 and args.explain_k == 8
-    assert args.no_control is False and args.norm == "linf" and args.out is None and args.assets_dir is None
+    assert args.no_control is False and args.out is None and args.assets_dir is None
     assert args.actor == "cli:anonymous"
     full = _parse(["ml", "attack", "url_trees", "--attacks", "fgsm", "--eps", "0.01,0.03", "--reference-eps", "0.03",
                    "--n-samples", "50", "--seed", "7", "--explain-k", "0", "--no-control", "--norm", "l2",
@@ -357,10 +359,129 @@ def test_parser_has_ml_attack_with_campaign_defaults():
     assert (full.attacks, full.eps, full.reference_eps, full.n_samples, full.seed) == ("fgsm", "0.01,0.03", 0.03, 50, 7)
     assert full.explain_k == 0 and full.no_control is True and full.norm == "l2"
     assert full.out == "/tmp/runs" and full.assets_dir == "/tmp/assets" and full.actor == "cli:me"
+    # Every schema.Norm literal parses (B1 assembler open item: edit and patch_area were missing).
+    assert _parse(["ml", "attack", "sms_tfidf_lr", "--norm", "edit"]).norm == "edit"
+    assert _parse(["ml", "attack", "assets_frcnn_mnv3", "--norm", "patch_area"]).norm == "patch_area"
+    assert cli_ml.NORM_CHOICES == ("linf", "l2", "edit", "patch_area")
     with pytest.raises(SystemExit):
         _parse(["ml", "attack"])                    # target id is required
     with pytest.raises(SystemExit):
         _parse(["ml", "attack", "x", "--norm", "l1"])
+
+
+def test_attack_defaults_follow_the_norm_and_the_target_modality():
+    resolve = cli_ml.resolve_attack_defaults
+    text = resolve(modality="text", norm=None, attacks=None, eps=None, reference_eps=None)
+    assert (text.norm, text.attack_ids, text.eps_grid, text.reference_eps) == ("edit", ("word_substitution",),
+                                                                              (0.1, 0.2, 0.3), 0.2)
+    assert text.filled == ("norm", "attacks", "eps", "reference_eps")
+    detection = resolve(modality="detection", norm=None, attacks=None, eps=None, reference_eps=None)
+    assert (detection.norm, detection.attack_ids, detection.eps_grid, detection.reference_eps) == (
+        "patch_area", ("dpatch",), (0.01, 0.03, 0.05), 0.03)
+    image = resolve(modality="image", norm=None, attacks=None, eps=None, reference_eps=None)
+    assert (image.norm, image.attack_ids, image.eps_grid, image.reference_eps) == ("linf", ("fgsm", "pgd"),
+                                                                                  (0.01, 0.03, 0.1), 0.03)
+    tabular = resolve(modality="tabular", norm=None, attacks=None, eps=None, reference_eps=None)
+    assert tabular.norm == "linf" and tabular.attack_ids == ("fgsm", "pgd")
+    unknown = resolve(modality=None, norm=None, attacks=None, eps=None, reference_eps=None)
+    assert unknown.norm == "linf", "a target the manifest does not name keeps the Phase A default; the adapter refuses"
+    l2 = resolve(modality="image", norm="l2", attacks=None, eps=None, reference_eps=None)
+    assert (l2.eps_grid, l2.reference_eps, l2.filled) == ((0.25, 0.5, 1.0), 0.5, ("attacks", "eps", "reference_eps"))
+    # Explicit values win and pass through untouched; the reference default applies only when it is in the grid.
+    explicit = resolve(modality="text", norm="edit", attacks=["word_substitution"], eps=[0.05, 0.1],
+                       reference_eps=None)
+    assert explicit.eps_grid == (0.05, 0.1) and explicit.reference_eps is None and explicit.filled == ()
+    pinned = resolve(modality="text", norm="edit", attacks=["x"], eps=[0.2, 0.4], reference_eps=0.4)
+    assert (pinned.attack_ids, pinned.eps_grid, pinned.reference_eps, pinned.filled) == (("x",), (0.2, 0.4), 0.4, ())
+    override = resolve(modality="text", norm="linf", attacks=None, eps=None, reference_eps=None)
+    assert override.norm == "linf" and override.attack_ids == ("fgsm", "pgd"), "--norm beats the modality default"
+    with pytest.raises(ValueError):
+        resolve(modality="image", norm="l1", attacks=None, eps=None, reference_eps=None)
+
+
+def test_attack_norm_defaults_match_the_attack_modules():
+    """The CLI literals (kept import-light) equal the spec 12.3 constants the runners and admission use."""
+    pytest.importorskip("numpy")
+    from redsim.ml import scoring
+    from redsim.ml.attacks import dpatch, word_substitution
+
+    assert cli_ml.NORM_DEFAULT_GRIDS["linf"] == scoring.DEFAULT_EPS_GRID_LINF
+    assert cli_ml.NORM_DEFAULT_GRIDS["l2"] == scoring.DEFAULT_EPS_GRID_L2
+    assert cli_ml.NORM_DEFAULT_REFERENCE["linf"] == scoring.DEFAULT_REFERENCE_EPS
+    assert cli_ml.NORM_DEFAULT_REFERENCE["l2"] == scoring.default_reference_eps("l2")
+    assert cli_ml.NORM_DEFAULT_GRIDS["edit"] == word_substitution.DEFAULT_EDIT_GRID
+    assert cli_ml.NORM_DEFAULT_REFERENCE["edit"] == word_substitution.DEFAULT_EDIT_REFERENCE
+    assert cli_ml.NORM_DEFAULT_GRIDS["patch_area"] == dpatch.DEFAULT_PATCH_AREA_GRID
+    assert cli_ml.NORM_DEFAULT_REFERENCE["patch_area"] == dpatch.DEFAULT_REFERENCE_PATCH_AREA
+    assert cli_ml.NORM_DEFAULT_ATTACKS["edit"] == (word_substitution.ADAPTER.id,)
+    assert cli_ml.NORM_DEFAULT_ATTACKS["patch_area"] == (dpatch.DPATCH_ID,)
+    for norm, grid in cli_ml.NORM_DEFAULT_GRIDS.items():
+        assert cli_ml.NORM_DEFAULT_REFERENCE[norm] in grid and list(grid) == sorted(grid)
+
+
+def test_target_modality_comes_from_the_manifest_only(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from redsim.ml.assets import manifest as manifest_mod
+
+    assert cli_ml._target_modality(tmp_path, "sms_tfidf_lr") is None, "no manifest: nothing is guessed"
+    (tmp_path / "MANIFEST.json").write_text("{not json", encoding="utf-8")
+    assert cli_ml._target_modality(tmp_path, "sms_tfidf_lr") is None, "an unreadable manifest names nothing"
+    fake = SimpleNamespace(models={"sms_tfidf_lr": SimpleNamespace(modality="text"),
+                                   "assets_frcnn_mnv3": SimpleNamespace(modality="detection"),
+                                   "url_classifier": SimpleNamespace(modality="tabular")})
+    monkeypatch.setattr(manifest_mod, "load_manifest", lambda _path: fake)
+    assert cli_ml._target_modality(tmp_path, "sms_tfidf_lr") == "text"
+    assert cli_ml._target_modality(tmp_path, "assets_frcnn_mnv3") == "detection"
+    # A manifest written under the legacy id answers for the current id, as manifest.model_entry does elsewhere.
+    assert cli_ml._target_modality(tmp_path, "url_trees") == "tabular"
+    assert cli_ml._target_modality(tmp_path, "endpoint_stub") is None
+
+
+def test_ml_attack_sends_the_text_and_detection_defaults_to_the_adapter(tmp_path, monkeypatch, capsys):
+    """End to end through main(): the request the adapter receives carries the per-norm defaults."""
+    from redsim.ml import campaign_adapter
+
+    seen: list[campaign_adapter.OfflineCampaignRequest] = []
+
+    def fake_run(request, **_kwargs):
+        seen.append(request)
+        raise campaign_adapter.OfflineCampaignRefused("not_found", "stub adapter: nothing runs in this test")
+
+    modalities = {"sms_tfidf_lr": "text", "assets_frcnn_mnv3": "detection", "vehicles_cnn": "image"}
+    monkeypatch.setattr(campaign_adapter, "run_offline_campaign", fake_run)
+    monkeypatch.setattr(cli_ml, "_target_modality", lambda _assets, target_id: modalities.get(target_id))
+    monkeypatch.setenv("REDSIM_ML_ASSETS_DIR", str(tmp_path / "assets"))
+    for key in ("REDSIM_PLUGINS", "REDSIM_DB_URL"):
+        monkeypatch.delenv(key, raising=False)
+    config = RedsimConfig(output_dir=str(tmp_path / "out"))
+
+    def run(argv: list[str]) -> str:
+        with patch("redsim.config.load_config", return_value=config), pytest.raises(SystemExit) as exc:
+            cli_main.main(["ml", "attack", *argv])
+        assert exc.value.code == 1
+        captured = capsys.readouterr()
+        return captured.out + captured.err
+
+    text_out = run(["sms_tfidf_lr"])
+    detection_out = run(["assets_frcnn_mnv3", "--n-samples", "20"])
+    run(["vehicles_cnn", "--norm", "l2"])
+    run(["sms_tfidf_lr", "--norm", "edit", "--eps", "0.05,0.1", "--attacks", "word_substitution"])
+    run(["vehicles_cnn"])
+    text, detection, l2, explicit, image = seen
+    assert (text.norm, text.attack_ids, text.eps_grid, text.reference_eps) == ("edit", ("word_substitution",),
+                                                                              (0.1, 0.2, 0.3), 0.2)
+    assert (detection.norm, detection.attack_ids, detection.eps_grid, detection.reference_eps) == (
+        "patch_area", ("dpatch",), (0.01, 0.03, 0.05), 0.03)
+    assert detection.n_samples == 20 and detection.target_id == "assets_frcnn_mnv3"
+    assert (l2.norm, l2.attack_ids, l2.eps_grid, l2.reference_eps) == ("l2", ("fgsm", "pgd"), (0.25, 0.5, 1.0), 0.5)
+    assert (explicit.norm, explicit.eps_grid, explicit.reference_eps) == ("edit", (0.05, 0.1), None)
+    assert (image.norm, image.attack_ids, image.eps_grid, image.reference_eps) == ("linf", ("fgsm", "pgd"),
+                                                                                  (0.01, 0.03, 0.1), 0.03)
+    assert "modality=text norm=edit attacks=['word_substitution'] eps=[0.1, 0.2, 0.3] reference=0.2" in text_out
+    assert "defaults filled: norm, attacks, eps, reference_eps" in text_out
+    assert "modality=detection norm=patch_area attacks=['dpatch']" in detection_out
+    assert "refused (not_found)" in text_out
 
 
 def test_parser_has_ml_seed():

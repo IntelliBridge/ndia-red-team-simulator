@@ -25,11 +25,17 @@ artifacts:
   recomputation, and the renderer is imported only when the format is asked for
   so the API process never loads reportlab.
 
-Phase B additions (REVIEW_REPORTS-18, -30; ATTACKS_HARDEN-13): section 1 prints
-``schema_version``; the scorecard carries a "non-default weights" line whenever
-the vector differs from ``MRIWeights()``; the ΔMRI block prints the derived-model
-lineage a training defense recorded in provenance; an LLM probe record gets its
-own section through a lazy hook on ``redsim.ml.llm.report_section``.
+Phase B additions (REVIEW_REPORTS-18, -30; ATTACKS_HARDEN-13; MODALITIES-43):
+section 1 prints ``schema_version`` and labels the budget axis from the norm
+literal; the scorecard carries a "non-default weights" line whenever the vector
+differs from ``MRIWeights()``; the ΔMRI block prints the derived-model lineage a
+training defense recorded in provenance; section 2 adds the text edit-budget
+table (``Measurement.edit_fraction_mean``) and the detection scorecard
+(``Measurement.detection``, every rate with its box denominator) when a record
+carries them, and section 3 the per-modality observation evidence
+(``Observation.text`` word positions, ``Observation.detection`` box counts); an
+LLM probe record gets its own sub-block through a lazy hook on
+``redsim.ml.llm.report_section`` (the fragment's headings nested under it).
 
 Nothing is invented: a value that was not measured renders as ``—``, "no
 evidence recorded" or "not computed (denominator 0)"; a rate never appears
@@ -80,6 +86,24 @@ SCORECARD_HEADING = "### MRI scorecard (derived summary)"
 DELTA_HEADING = "### ΔMRI (verify run against its baseline)"
 REVIEWER_NOTES_HEADING = "### Reviewer notes"
 LLM_HEADING = "### LLM probe results"
+LLM_EMBED_NOTE = ("The block below is the LLM track's probe scorecard fragment (`redsim.ml.llm.report_section`), "
+                  "embedded as rendered with its headings nested under this sub-section: k/n per probe row, "
+                  "never an MRI.")
+#: Phase B modality blocks (MODALITIES-43): text and detection rows carry their own budget and counts.
+TEXT_BUDGET_HEADING = "**Text edit budget** (realised share of words substituted per row; the `edit` norm)"
+DETECTION_SCORECARD_HEADING = ("**Detection scorecard** (box-level counts per row, every rate with its denominator; "
+                               "a detection run carries this scorecard, never an MRI)")
+TEXT_EVIDENCE_HEADING = ("**Text evidence** (word positions of the clean input; the message text is an artifact, "
+                         "never printed here)")
+DETECTION_EVIDENCE_HEADING = ("**Detection evidence** (boxes matched per image; the per-box tables are the "
+                              "`ml.detection.boxes` artifact)")
+#: What the budget axis of each ``Norm`` literal measures; the report labels ε from the literal, never guesses.
+BUDGET_LABELS: dict[str, str] = {
+    "linf": "L-inf perturbation (fraction of the [0, 1] input range)",
+    "l2": "L2 perturbation radius",
+    "edit": "edit budget (share of words substituted)",
+    "patch_area": "patch area (share of the image area)",
+}
 #: Spec 15.3: the badge text when the weight vector is not the default one.
 NON_DEFAULT_WEIGHTS_BADGE = "**Non-default weights**"
 DEFAULT_WEIGHTS_NOTE = "Weights: the default vector"
@@ -200,6 +224,27 @@ def _is_verify(record: CampaignRecord) -> bool:
     return record.kind == "verify" or record.baseline_run_id is not None
 
 
+def _budget_label(norm: Any) -> str:
+    return BUDGET_LABELS.get(str(norm), f"budget in norm {_text(norm)}")
+
+
+def _nest_heading(line: str) -> str:
+    """A line of an embedded fragment, its headings nested under an H3 sub-block of this report.
+
+    The fragment's own top and section headings (``#``, ``##``) become ``####`` so the
+    report keeps exactly six ``##`` sections; its deeper headings (``###`` and below,
+    the converters stop at four levels) become bold lines. Everything else is verbatim.
+    """
+    stripped = line.lstrip("#")
+    level = len(line) - len(stripped)
+    if level == 0 or not stripped.startswith(" "):
+        return line
+    text = stripped.strip()
+    if level <= 2:
+        return f"#### {text}"
+    return f"**{text.replace('**', '')}**"
+
+
 # ---------------------------------------------------------------------------
 # 1. Configuration and provenance
 # ---------------------------------------------------------------------------
@@ -256,7 +301,7 @@ def _section_configuration(record: CampaignRecord, generated_at: datetime) -> li
         f"- **Modality:** {config.modality}",
         "- **Attack set:**",
         *attack_lines,
-        f"- **Norm:** {config.norm}",
+        f"- **Norm:** {config.norm}; budget axis: {_budget_label(config.norm)}",
         f"- **ε grid:** {', '.join(f'{e:g}' for e in config.eps_grid)}",
         f"- **Reference ε:** {config.reference_eps:g}",
         f"- **Finding ASR threshold:** {config.finding_asr_threshold:g}",
@@ -421,6 +466,103 @@ def _per_class_block(measurements: Sequence[Measurement]) -> list[str]:
     return lines
 
 
+def _text_budget_block(measurements: Sequence[Measurement], clean: Measurement | None) -> list[str]:
+    """MODALITIES-43: the realised edit share per text row (``Measurement.edit_fraction_mean``), or nothing."""
+    rows = [m for m in measurements if m.edit_fraction_mean is not None]
+    if not rows:
+        return []
+    lines = ["", TEXT_BUDGET_HEADING, ""]
+    lines.extend(_table(
+        ["Measurement", "Attack", "Edit budget ε", "Edit fraction mean (realised)", "Correct / N (accuracy)",
+         "Flipped / clean correct (ASR)"],
+        [[m.id, m.attack_id or m.family, _g(_eps_of(m)), _fmt(m.edit_fraction_mean),
+          _fraction(m.n_correct, m.n, m.accuracy), _asr_text(m, clean)] for m in rows],
+    ))
+    lines += ["", "The edit fraction is the share of words the attack actually replaced, averaged over the "
+                  "messages with a defined fraction; the budget ε is the share it was allowed."]
+    return lines
+
+
+def _detection_scorecard_block(measurements: Sequence[Measurement]) -> list[str]:
+    """MODALITIES-43: the box-level scorecard of a detection record (``Measurement.detection``), or nothing.
+
+    On a detection row ``n`` counts ground-truth boxes and ``n_correct`` the boxes matched
+    at the manifest's IoU threshold; recall is ``n_matched / n_boxes`` and the suppression
+    rate ``n_flipped_from_clean / n_clean_correct`` (clean-matched boxes lost under the
+    patch). No MRI is derived from these counts.
+    """
+    rows = [m for m in measurements if m.detection is not None]
+    if not rows:
+        return []
+    table: list[list[Any]] = []
+    for m in rows:
+        det = m.detection
+        assert det is not None
+        if m.family == "clean":
+            suppression = "n/a (clean row)"
+        elif m.n_flipped_from_clean is None:
+            suppression = NO_EVIDENCE
+        else:
+            suppression = _fraction(m.n_flipped_from_clean, m.n_clean_correct, det.suppression_rate)
+        table.append([
+            m.id, m.attack_id or m.family, _g(_eps_of(m)), _fraction(det.n_matched, det.n_boxes, det.recall),
+            _fmt(det.map50), suppression, f"{m.wall_time_s:g}",
+        ])
+    lines = ["", DETECTION_SCORECARD_HEADING, ""]
+    lines.extend(_table(
+        ["Measurement", "Attack", "Patch area ε", "Matched / boxes (recall)", "mAP@0.5",
+         "Suppressed / clean matched (suppression rate)", "Wall time (s)"],
+        table,
+    ))
+    return lines
+
+
+def _text_evidence_block(observations: Sequence[Any]) -> list[str]:
+    """MODALITIES-43: ``Observation.text`` per explained message, positions only, or nothing."""
+    rows: list[list[Any]] = []
+    for o in observations:
+        block = o.text
+        if block is None:
+            continue
+        changed = ", ".join(str(p) for p in block.changed_positions[:8])
+        if len(block.changed_positions) > 8:
+            changed += f", … ({len(block.changed_positions)} in all)"
+        top = ((", ".join(str(p) for p in block.top_tokens_clean[:5]) or UNAVAILABLE) + " → "
+               + (", ".join(str(p) for p in block.top_tokens_adv[:5]) or UNAVAILABLE))
+        attributions = "; ".join(f"{_text(k)}: {_text(v)}" for k, v in block.attribution_artifacts.items())
+        rows.append([o.id, _fraction(block.n_changed, block.n_tokens, block.edit_fraction), changed or UNAVAILABLE,
+                     top, attributions or UNAVAILABLE])
+    if not rows:
+        return []
+    lines = ["", TEXT_EVIDENCE_HEADING, ""]
+    lines.extend(_table(
+        ["Observation", "Words changed / words (edit fraction)", "Changed positions",
+         "Top tokens by |attribution| clean → adv (positions)", "Attribution artifacts"],
+        rows,
+    ))
+    return lines
+
+
+def _detection_evidence_block(observations: Sequence[Any]) -> list[str]:
+    """MODALITIES-43: ``Observation.detection`` per explained image, counts and the patch box, or nothing."""
+    rows: list[list[Any]] = []
+    for o in observations:
+        block = o.detection
+        if block is None:
+            continue
+        bbox = ("[" + ", ".join(f"{v:g}" for v in block.patch_bbox) + "] (x_min, y_min, x_max, y_max px)"
+                if block.patch_bbox else "none (control row, or no patch recorded)")
+        rows.append([o.id, _fraction(block.n_matched_clean, block.n_gt), _fraction(block.n_matched_adv, block.n_gt),
+                     bbox])
+    if not rows:
+        return []
+    lines = ["", DETECTION_EVIDENCE_HEADING, ""]
+    lines.extend(_table(
+        ["Observation", "Matched clean / ground truth", "Matched adversarial / ground truth", "Patch box"], rows,
+    ))
+    return lines
+
+
 def _curve_block(curves: Sequence[RobustnessCurve]) -> list[str]:
     lines = ["**Robustness curve** (evasion and benign-noise control per attack; every point with its denominator)",
              ""]
@@ -429,8 +571,8 @@ def _curve_block(curves: Sequence[RobustnessCurve]) -> list[str]:
         return lines
     for curve in curves:
         lines.append(
-            f"Attack {_code(curve.attack_id)} ({curve.norm}); clean accuracy {_point(curve.clean)}; "
-            f"reference ε = {curve.reference_eps:g}."
+            f"Attack {_code(curve.attack_id)} (norm {curve.norm}; budget axis: {_budget_label(curve.norm)}); "
+            f"clean accuracy {_point(curve.clean)}; reference ε = {curve.reference_eps:g}."
         )
         lines.append("")
         eps_values: list[float] = []
@@ -583,7 +725,8 @@ def _llm_section(record: CampaignRecord, generated_at: datetime) -> list[str]:
     Imported inside the function (the module is Phase B and worker-side); when it
     is absent the block says so rather than inventing a scorecard. The fragment
     ``render_llm_section`` returns (its own heading, k/n per probe family, never an
-    MRI) is embedded verbatim as Markdown lines.
+    MRI) is embedded line for line under :data:`LLM_HEADING`, its headings nested
+    through :func:`_nest_heading` so the report keeps its six ``##`` sections.
     """
     try:
         from redsim.ml.llm.report_section import render_llm_section
@@ -599,9 +742,8 @@ def _llm_section(record: CampaignRecord, generated_at: datetime) -> list[str]:
                 "`GET /v1/runs/{id}/llm-scorecard` serves it. Probe results never enter an MRI."]
     fragments: Any = render_llm_section(card, generated_at=generated_at)
     markdown: Any = getattr(fragments, "markdown", fragments)
-    if isinstance(markdown, str):
-        return markdown.splitlines()
-    return [str(line) for line in list(markdown)]
+    fragment_lines = markdown.splitlines() if isinstance(markdown, str) else [str(line) for line in list(markdown)]
+    return [LLM_HEADING, "", LLM_EMBED_NOTE, "", *(_nest_heading(line) for line in fragment_lines)]
 
 
 def _licence_of(record: CampaignRecord) -> str | None:
@@ -777,6 +919,8 @@ def _section_measurements(record: CampaignRecord) -> list[str]:
             lines.append(f"No reference-budget aggregates were recorded ({NO_EVIDENCE}).")
         lines.append("")
         lines.extend(_per_class_block(record.measurements))
+        lines.extend(_text_budget_block(record.measurements, clean))
+        lines.extend(_detection_scorecard_block(record.measurements))
     lines += ["", *_scorecard(record)]
     if _is_verify(record):
         lines += ["", *_delta_block(record)]
@@ -822,6 +966,8 @@ def _section_observations(record: CampaignRecord) -> list[str]:
          "Flipped", "Centre-mass ratio clean → adv (heuristic)", "Explanation shift", "Top features clean → adv"],
         rows,
     ))
+    lines.extend(_text_evidence_block(observations))
+    lines.extend(_detection_evidence_block(observations))
     lines += ["", "**Artifacts** (ids and sha256 digests as recorded)", ""]
     artifact_rows: list[list[Any]] = []
     for o in observations:
@@ -1028,11 +1174,15 @@ def render_campaign_reports(
 
 
 __all__ = [
+    "BUDGET_LABELS",
     "DEFAULT_WEIGHTS_NOTE",
     "DELTA_HEADING",
     "DERIVED_MODEL_HEADING",
+    "DETECTION_EVIDENCE_HEADING",
+    "DETECTION_SCORECARD_HEADING",
     "EXPORT_REDACTION_NOTE",
     "LICENCE_UNRECORDED",
+    "LLM_EMBED_NOTE",
     "LLM_HEADING",
     "NON_DEFAULT_WEIGHTS_BADGE",
     "NOT_MEASURED",
@@ -1042,6 +1192,8 @@ __all__ = [
     "REVIEWER_NOTES_HEADING",
     "SCORECARD_HEADING",
     "SECTION_HEADINGS",
+    "TEXT_BUDGET_HEADING",
+    "TEXT_EVIDENCE_HEADING",
     "is_llm_probe_record",
     "render_campaign_reports",
     "render_html",
