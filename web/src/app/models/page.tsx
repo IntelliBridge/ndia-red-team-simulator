@@ -29,6 +29,8 @@ import {
   hasActiveFilters,
   modelDomain,
   parseSort,
+  sortCoverage,
+  sortCoverageNote,
   sortModels,
   sortValue,
   type ModelFilters,
@@ -236,6 +238,8 @@ export default function ModelsPage() {
   const sources = facetValues(models, (m) => m.source);
   const shown = sortModels(filterModels(models, filters), sort);
   const filtering = hasActiveFilters(filters);
+  // A numeric sort over rows that mostly lack the metric cannot visibly reorder; say so.
+  const coverageNote = sortCoverageNote(sortCoverage(shown, sort));
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -457,7 +461,7 @@ export default function ModelsPage() {
               ))}
             </select>
           </label>
-          <div className="flex items-center gap-3 pb-1.5 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-3 pb-1.5 text-xs text-muted-foreground">
             <span aria-live="polite" data-testid="models-count">
               {filtering ? `${shown.length} of ${models.length}` : models.length} model
               {models.length === 1 ? "" : "s"}
@@ -472,6 +476,11 @@ export default function ModelsPage() {
               </button>
             )}
           </div>
+          {coverageNote && (
+            <p className="basis-full text-xs text-muted-foreground" role="status" data-testid="sort-coverage">
+              {coverageNote}
+            </p>
+          )}
         </div>
       )}
       {!isLoading && !error && models.length === 0 && (
