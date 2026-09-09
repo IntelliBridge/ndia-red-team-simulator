@@ -497,6 +497,25 @@ describe("fixture mode (KTD13)", () => {
     }
   });
 
+  it('reads the build flag "0" as off, the way the validated half does', async () => {
+    // The string "0" is truthy. Read for truthiness, this half was on where
+    // env.js's flag() had it off, so the two halves of one flag disagreed.
+    const ctx = ctxWith({});
+    process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES = "0";
+    try {
+      const error = await upstreamFetch(
+        { ...ctx, fixtures: true },
+        { method: "GET", segments: ["v1", "runs"] },
+        anyBody,
+      ).catch((e: unknown) => e);
+
+      expect(upstreamError(error)).toMatchObject({ status: 401, code: "unauthenticated" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES;
+    }
+  });
+
   it("stays off when the runtime says yes and the build flag is absent", async () => {
     // The other half: without the literal read Next cannot inline anything, so
     // the flag has to gate the dynamic import as well as the runtime check.

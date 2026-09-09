@@ -183,12 +183,19 @@ export async function upstreamFetch<T>(
   // request with no cookie answers from fixtures rather than being refused
   // (KTD13). The condition reads NEXT_PUBLIC_REDSIM_DEV_FIXTURES as a literal
   // member expression because that is the only form Next inlines, which is
-  // what lets a build without the flag drop the module from the output. The
-  // image build sets the flag to a falsy literal so the branch folds away;
-  // U14 asserts the absence by grepping the build output for the module's
-  // sentinel. `ctx.fixtures` is the runtime authority beside it: the public
-  // flag alone can never turn fixtures on.
-  if (ctx.fixtures && process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES) {
+  // what lets a build without the flag drop the module from the output.
+  // deploy/Dockerfile.web sets it to "0" so the comparison folds to false and
+  // the branch goes with it; U14 asserts the absence by grepping the build
+  // output for the module's sentinel.
+  //
+  // Compared against "1" rather than read for truthiness: the string "0" is
+  // truthy, so the old form had this half on where env.js's flag() had it off.
+  // A comparison against one literal is also what keeps the branch foldable,
+  // which an includes() over the four spellings flag() accepts would not be,
+  // so the public flag is exactly "1" and any other spelling reads as off.
+  // `ctx.fixtures` is the runtime authority beside it: the public flag alone
+  // can never turn fixtures on.
+  if (ctx.fixtures && process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES === "1") {
     const { resolveFixture } = await import("./fixtures");
     const fixture = resolveFixture(init.method, `/${path}`);
     if (fixture !== undefined) {

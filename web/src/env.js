@@ -4,11 +4,13 @@
  * Every `process.env` read under `web/src` goes through this module, with two
  * deliberate exceptions. `web/src/server/redsim-session.ts` reads the signing
  * key and cookie names directly, because the FastAPI session-cookie contract
- * freezes that file byte for byte. And `web/src/server/trpc/context.ts` reads
+ * freezes that file byte for byte. And `web/src/server/trpc/upstream.ts` reads
  * `process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES` as a literal member expression
  * to gate the dynamic import of the fixture module, because Next only inlines
  * the literal read and a property lookup on the object below is not a constant
- * the bundler can fold away. A build without the flag therefore drops the
+ * the bundler can fold away. That read compares against `"1"`, so a build
+ * enables the fixture module with that spelling alone even though `flag()`
+ * below accepts four. A build without the flag therefore drops the
  * module from the output; this schema still validates the same name for the
  * ribbon and for the refinement at the bottom of the file.
  *
