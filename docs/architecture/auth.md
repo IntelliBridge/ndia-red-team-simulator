@@ -36,7 +36,10 @@ three keys:
 Better Auth runs stateless: no database, so the session lives in its own
 encrypted cookie, and the web tier runs a single replica because past the
 cookie-cache window only the instance that handled the callback resolves
-the session.
+the session. That window is 8 hours, and it is the real session bound
+rather than the 7 day `expiresIn`. It is also the revocation lag, because a
+sign-out or a Keycloak suspension is not observed until the cache is
+consulted again.
 
 ```mermaid
 sequenceDiagram

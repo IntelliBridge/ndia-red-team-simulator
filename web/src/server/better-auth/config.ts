@@ -5,11 +5,15 @@
 // from a client component.
 //
 // Stateless by construction: no database option, which selects the
-// in-memory adapter and carries the session across restarts in the encrypted
-// session_data cookie, and no JWT plugin, which would want a jwks table and
+// in-memory adapter, and no JWT plugin, which would want a jwks table and
 // could not produce the fixed-key, fixed-iss, fixed-aud token FastAPI expects.
 // FastAPI never sees Better Auth's session cookie. The only thing it sees is
 // the RS256 redsim_api_session cookie the after-hook mints.
+//
+// The in-memory adapter does not survive a restart, so what carries a session
+// across one is the signed session_data cookie and nothing else. That holds
+// only inside the cookie-cache window, which is why the window is set to a
+// working day below rather than left at the library default.
 
 import { betterAuth } from "better-auth";
 import { genericOAuth, keycloak } from "better-auth/plugins/generic-oauth";
@@ -67,11 +71,20 @@ export function createAuth() {
       changeEmail: { enabled: false },
     },
     session: {
-      // Both numbers are the library's own defaults on 1.7.3, taken as-is.
-      // With web.replicaCount pinned to 1, they are one constraint: past the
-      // cookie-cache window only the instance that handled the callback
-      // resolves the session, because the memory adapter row lives there.
-      cookieCache: { enabled: true, maxAge: 300 },
+      // The cookie-cache window is the real session bound, not expiresIn.
+      // Inside it the signed cookie is the authority. Past it Better Auth
+      // falls back to the in-memory adapter row, which lives in one process:
+      // a restart empties it and web.strategy Recreate makes restarts routine,
+      // so at the library default of 300 seconds a user is signed out mid
+      // session by any release. The refresh route cannot cover the gap, since
+      // it checks Better Auth before the still-valid redsim cookie.
+      //
+      // Eight hours covers a working day, so a release no longer ends a
+      // session in progress. It is deliberately short of expiresIn: the window
+      // is also the revocation lag, because a sign-out or a Keycloak
+      // suspension is not observed until the cache is consulted again. One
+      // working day is the accepted lag, seven days was not.
+      cookieCache: { enabled: true, maxAge: 60 * 60 * 8 },
       expiresIn: 60 * 60 * 24 * 7,
     },
     advanced: {

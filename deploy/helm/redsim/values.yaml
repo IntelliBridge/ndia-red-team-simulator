@@ -161,7 +161,7 @@ worker:
 
 web:
   # Pinned to 1, and not a capacity choice. Better Auth runs stateless with
-  # the in-memory adapter, so past the 300 second cookie-cache window only
+  # the in-memory adapter, so past the 8 hour cookie-cache window only
   # the instance that handled the OAuth callback resolves the session.
   # A second replica produces intermittent sign-outs with no error in any
   # log. Scaling this up needs a shared session store first.
