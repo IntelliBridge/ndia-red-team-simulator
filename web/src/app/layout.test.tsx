@@ -29,7 +29,6 @@ describe("RootLayout", () => {
 
     const expected: Record<string, string> = {
       Dashboard: "/dashboard",
-      Projects: "/projects",
       Findings: "/findings",
       Logs: "/logs",
       Audit: "/audit",
@@ -56,7 +55,7 @@ describe("RootLayout", () => {
       ["Dashboard", "/dashboard"],
       ["Models", "/models"],
       ["Runs", "/runs"],
-      ["Projects", "/projects"],
+      ["Tests", "/tests"],
       ["Auth Profiles", "/auth-profiles"],
       ["Findings", "/findings"],
       ["Logs", "/logs"],
@@ -64,6 +63,8 @@ describe("RootLayout", () => {
       ["Cost", "/cost"],
     ]);
 
+    // Projects is reachable at /projects but hidden from the nav (owner request, 2026-09-09).
+    expect(screen.queryByText("Projects", { selector: "a" })).toBeNull();
     expect(screen.queryByText("Agents", { selector: "a" })).toBeNull();
     expect(screen.queryByText("Kali tools", { selector: "a" })).toBeNull();
   });
@@ -129,9 +130,6 @@ describe("RootLayout", () => {
 
     const dashboardLink = screen.getByText("Dashboard", { selector: "a" });
     expect(dashboardLink.getAttribute("href")).toBe("/dashboard");
-
-    const projectsLink = screen.getByText("Projects", { selector: "a" });
-    expect(projectsLink.getAttribute("href")).toBe("/projects");
 
     const costLink = screen.getByText("Cost", { selector: "a" });
     expect(costLink.getAttribute("href")).toBe("/cost");
