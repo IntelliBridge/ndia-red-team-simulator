@@ -544,7 +544,12 @@ def test_review_states_independence_and_conflicts(
     assert draft["schema_blob"]["remediation_steps"].startswith("CANDIDATE (not evaluated)")
     assert {m["id"] for m in draft["schema_blob"]["ml"]["measurements"]} <= set(evidence), "only the cited rows"
     assert any("Analyst-authored draft" in lim for lim in draft["schema_blob"]["ml"]["limitations"])
-    assert draft["schema_blob"]["ml"]["atlas_technique"] is None, "never back-filled by guesswork (spec 27.2)"
+    from redsim.ml.atlas import technique_for_attack
+
+    # Wave B4 (INTEROP-18): the draft names an attack id, so its ATLAS technique is the catalog's mapping for
+    # that id (deterministic, never a guess); a draft naming no attack id would carry None (spec 27.2).
+    mapped = technique_for_attack(attack_id)
+    assert mapped is not None and draft["schema_blob"]["ml"]["atlas_technique"]["id"] == mapped.id, "the mapping, not a guess"
 
     # -- every decision is on the run chain, audit-first, refusals as success=False rows (spec 6.7 inv. 4) ----
     tail = e2e_app.read_chain(chain)[events_before:]
@@ -707,12 +712,21 @@ def test_report_pdf_snapshots_and_archive(
     chain = f"run:{run_id}"
     renders_before = len(_events(e2e_app, chain, REPORT_RENDER_ACTION))
 
-    # -- before an on-demand render: no snapshot row; a PDF exists only as a worker artifact (spec 17.4) ------
-    empty = scanner.get(f"/v1/runs/{run_id}/snapshots")
-    assert empty.status_code == 200 and empty.json() == {"run_id": run_id, "snapshots": [], "count": 0}
-    missing = scanner.get(f"/v1/runs/{run_id}/report.pdf")
-    assert missing.status_code == 404, missing.text
-    assert missing.json()["detail"] == "report not yet rendered", "never a filesystem fallback for a PDF"
+    # -- before an on-demand render: the completion render is snapshot version 1 (wave B4, REVIEW_REPORTS-16/-20):
+    #    the worker rendered every format it could at completion (the PDF when reportlab succeeded, else the
+    #    text formats with ``pdf_unavailable`` on the report.render row) and recorded the first snapshot row.
+    initial = scanner.get(f"/v1/runs/{run_id}/snapshots")
+    assert initial.status_code == 200 and initial.json()["run_id"] == run_id and initial.json()["count"] == 1
+    completion = initial.json()["snapshots"][0]
+    assert completion["version"] == 1 and completion["archived"] is False
+    assert {"md", "json", "html"} <= set(completion["formats"]) <= set(REPORT_FORMATS)
+    completion_pdf = scanner.get(f"/v1/runs/{run_id}/report.pdf")
+    if "pdf" in completion["formats"]:
+        assert completion_pdf.status_code == 200 and completion_pdf.content.startswith(PDF_MAGIC)
+        assert completion_pdf.headers["etag"] == f'"{completion["formats"]["pdf"]["sha256"]}"'
+    else:
+        assert completion_pdf.status_code == 404, completion_pdf.text
+        assert completion_pdf.json()["detail"] == "report not yet rendered", "never a filesystem fallback for a PDF"
     assert viewer.post(f"/v1/runs/{run_id}/report.render", json={}).status_code == 403, "report.render is scanner+"
 
     # -- render #1: audit first, the Job, the eager worker, one snapshot over four content-addressed artifacts --
@@ -724,9 +738,10 @@ def test_report_pdf_snapshots_and_archive(
     assert job["status"] == "succeeded" and job["created_by"] == e2e_org.actor("scanner")
     assert h.wait_for_run(scanner, run_id)["status"] == "succeeded", "a render never reopens a terminal run (spec 6.2)"
     listed = scanner.get(f"/v1/runs/{run_id}/snapshots").json()
-    assert listed["count"] == 1
+    assert listed["count"] == 2, "the completion snapshot plus this render"
     snap = listed["snapshots"][0]
-    assert snap["version"] == 1 and snap["archived"] is False and snap["created_by"] == e2e_org.actor("scanner")
+    assert snap["version"] == 2 and snap["archived"] is False and snap["created_by"] == e2e_org.actor("scanner")
+    assert listed["snapshots"][1] == completion, "the completion row did not change"
     assert set(snap["formats"]) == set(REPORT_FORMATS) == {"md", "json", "html", "pdf"}
     record_bytes, record_row = _artifact_bytes(viewer, run_id, "ml.run_record")
     assert snap["record_sha256"] == _sha256(record_bytes) == record_row["sha256"], "projected from the record bytes"
@@ -768,17 +783,17 @@ def test_report_pdf_snapshots_and_archive(
     second = scanner.post(f"/v1/runs/{run_id}/report.render", json={})
     assert second.status_code == 202, second.text
     listed = scanner.get(f"/v1/runs/{run_id}/snapshots").json()
-    assert listed["count"] == 2 and [s["version"] for s in listed["snapshots"]] == [2, 1], "newest first"
-    newest, oldest = listed["snapshots"]
+    assert listed["count"] == 3 and [s["version"] for s in listed["snapshots"]] == [3, 2, 1], "newest first"
+    newest, oldest = listed["snapshots"][:2]
     assert oldest == snap, "the first snapshot row did not change"
     assert newest["id"] != snap["id"] and newest["archived"] is False
     assert newest["record_sha256"] == snap["record_sha256"], "same record bytes, a new projection"
     assert set(newest["formats"]) == set(REPORT_FORMATS)
     assert newest["formats"]["json"]["sha256"] == snap["formats"]["json"]["sha256"], "report.json is the record itself"
     for ext, entry in newest["formats"].items():
-        served = scanner.get(f"/v1/runs/{run_id}/report.{ext}", params={"snapshot": "2"})
+        served = scanner.get(f"/v1/runs/{run_id}/report.{ext}", params={"snapshot": str(newest["version"])})
         assert served.status_code == 200 and _sha256(served.content) == entry["sha256"], ext
-    assert scanner.get(f"/v1/runs/{run_id}/snapshots/1").json() == snap
+    assert scanner.get(f"/v1/runs/{run_id}/snapshots/{snap['version']}").json() == snap
     assert scanner.get(f"/v1/runs/{run_id}/snapshots/{newest['id']}").json() == newest
     unknown = scanner.get(f"/v1/runs/{run_id}/snapshots/99")
     assert unknown.status_code == 404 and _code(unknown) == SNAPSHOT_NOT_FOUND
@@ -786,28 +801,29 @@ def test_report_pdf_snapshots_and_archive(
     assert latest.headers["etag"] == f'"{newest["formats"]["pdf"]["sha256"]}"', "the unqualified route serves the newest"
 
     # -- archive is an admin soft flag, audited; a non-admin fetch of the archived row is 409 ------------------
+    ref = str(snap["version"])
     for who in (scanner, remediator, approver):
-        assert who.post(f"/v1/runs/{run_id}/snapshots/1/archive").status_code == 403
-    assert e2e_org.client(h.OUTSIDER).post(f"/v1/runs/{run_id}/snapshots/1/archive").status_code in (403, 404)
+        assert who.post(f"/v1/runs/{run_id}/snapshots/{ref}/archive").status_code == 403
+    assert e2e_org.client(h.OUTSIDER).post(f"/v1/runs/{run_id}/snapshots/{ref}/archive").status_code in (403, 404)
     missing_ref = admin.post(f"/v1/runs/{run_id}/snapshots/7/archive")
     assert missing_ref.status_code == 404 and _code(missing_ref) == SNAPSHOT_NOT_FOUND
-    archived = admin.post(f"/v1/runs/{run_id}/snapshots/1/archive")
+    archived = admin.post(f"/v1/runs/{run_id}/snapshots/{ref}/archive")
     assert archived.status_code == 200, archived.text
     assert archived.json()["archived"] is True and archived.json()["changed"] is True
     archive_row = _events(e2e_app, chain, SNAPSHOT_ARCHIVE_ACTION)[-1]
     assert archive_row["success"] is True and archive_row["actor"] == e2e_org.actor("admin")
-    assert archive_row["detail"]["snapshot_id"] == snap["id"] and archive_row["detail"]["version"] == 1
+    assert archive_row["detail"]["snapshot_id"] == snap["id"] and archive_row["detail"]["version"] == snap["version"]
     assert archive_row["detail"]["archived_before"] is False and archive_row["detail"]["archived_after"] is True
     assert archive_row["detail"]["record_sha256"] == snap["record_sha256"]
-    refused = scanner.get(f"/v1/runs/{run_id}/snapshots/1")
+    refused = scanner.get(f"/v1/runs/{run_id}/snapshots/{ref}")
     assert refused.status_code == 409 and _code(refused) == SNAPSHOT_ARCHIVED, refused.text
     assert _detail(refused)["snapshot_id"] == snap["id"]
-    refused_pdf = scanner.get(f"/v1/runs/{run_id}/report.pdf", params={"snapshot": "1"})
+    refused_pdf = scanner.get(f"/v1/runs/{run_id}/report.pdf", params={"snapshot": ref})
     assert refused_pdf.status_code == 409 and _code(refused_pdf) == SNAPSHOT_ARCHIVED
-    assert admin.get(f"/v1/runs/{run_id}/snapshots/1").json()["archived"] is True
-    assert admin.get(f"/v1/runs/{run_id}/report.pdf", params={"snapshot": "1"}).status_code == 200
+    assert admin.get(f"/v1/runs/{run_id}/snapshots/{ref}").json()["archived"] is True
+    assert admin.get(f"/v1/runs/{run_id}/report.pdf", params={"snapshot": ref}).status_code == 200
     listed = scanner.get(f"/v1/runs/{run_id}/snapshots").json()
-    assert listed["count"] == 2 and [s["archived"] for s in listed["snapshots"]] == [False, True], "flagged, never deleted"
+    assert listed["count"] == 3 and [s["archived"] for s in listed["snapshots"]] == [False, True, False], "flagged, never deleted"
     assert scanner.get(f"/v1/runs/{run_id}/report.pdf").headers["etag"] == f'"{newest["formats"]["pdf"]["sha256"]}"'
     with e2e_app.session() as sess:
         from redsim.db.models import Artifact, ReportSnapshot
@@ -818,7 +834,7 @@ def test_report_pdf_snapshots_and_archive(
     restored = admin.post(f"/v1/runs/{run_id}/snapshots/{snap['id']}/restore")
     assert restored.status_code == 200 and restored.json()["archived"] is False and restored.json()["changed"] is True
     assert _events(e2e_app, chain, SNAPSHOT_RESTORE_ACTION)[-1]["detail"]["archived_after"] is False
-    assert scanner.get(f"/v1/runs/{run_id}/snapshots/1").json() == snap
+    assert scanner.get(f"/v1/runs/{run_id}/snapshots/{ref}").json() == snap
 
     # -- audit: two admission rows and two worker rows named report.render, four formats each (spec 26.5 item 22)
     renders = _events(e2e_app, chain, REPORT_RENDER_ACTION)[renders_before:]
