@@ -27,7 +27,9 @@ def record(payload) -> S.CampaignRecord:
 
 
 def test_fixture_validates_and_round_trips(payload, record):
-    assert record.model_dump(mode="json") == payload
+    # exclude_unset: Phase B default-valued fields (schema_version, edit_fraction_mean, ...)
+    # never appear in the old-record view; the frozen fixture stays byte-identical.
+    assert record.model_dump(mode="json", exclude_unset=True) == payload
 
 
 def test_fixture_is_labelled_as_a_test_double(record):
