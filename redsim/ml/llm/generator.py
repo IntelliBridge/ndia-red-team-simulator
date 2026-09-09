@@ -43,6 +43,7 @@ API process (``tests/test_api_process_has_no_ml.py``).
 from __future__ import annotations
 
 import logging
+import math
 import os
 import re
 import stat
@@ -50,6 +51,8 @@ import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +95,23 @@ class ProbeKeyUnavailable(MLError):
     """The probe key was not supplied, or the key file is missing or not private (mode not 0600)."""
 
     code = "probe_key_unavailable"
+
+
+def retry_after_seconds(value: str | None, *, now: float | None = None) -> float | None:
+    """Parse a Retry-After delay without allowing malformed/non-finite sleeps."""
+    if not value:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(value)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            seconds = when.timestamp() - (time.time() if now is None else now)
+        except (ValueError, TypeError, OverflowError):
+            return None
+    return max(0.0, seconds) if math.isfinite(seconds) else None
 
 
 def gateway_uri(base_url: str) -> str:
@@ -141,6 +161,7 @@ class UsageLedger:
     http_errors: dict[str, int] = field(default_factory=dict)
     transport_errors: dict[str, int] = field(default_factory=dict)
     retries: int = 0
+    retry_after_honoured: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -192,6 +213,7 @@ class UsageLedger:
             "http_errors": dict(sorted(self.http_errors.items())),
             "transport_errors": dict(sorted(self.transport_errors.items())),
             "retries": self.retries,
+            "retry_after_honoured": self.retry_after_honoured,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
@@ -223,9 +245,9 @@ class PythiaGenerator(OpenAICompatible):
         "stop": None,
         "suppressed_params": set(SUPPRESSED_PARAMS),
         "request_timeout_s": 60.0,
-        "transport_max_tries": 4,
+        "transport_max_tries": 8,
         "transport_backoff_s": 1.0,
-        "transport_max_sleep_s": 20.0,
+        "transport_max_sleep_s": 60.0,
         "retry_json": True,
     }
 
@@ -331,8 +353,19 @@ class PythiaGenerator(OpenAICompatible):
                     raise garak.exception.GarakException(
                         f"gateway transport failed after {tries} tries: {type(exc).__name__}"
                     ) from exc
+                cap = float(self.transport_max_sleep_s)
+                requested = retry_after_seconds(exc.response.headers.get("Retry-After")) if isinstance(
+                    exc, openai.RateLimitError
+                ) else None
+                if requested is not None and requested > cap:
+                    # Never retry earlier than the gateway permits or exceed the operator's bound.
+                    raise garak.exception.GarakException("gateway Retry-After exceeds retry wait budget") from exc
+                sleep_s = requested if requested is not None else min(
+                    float(self.transport_backoff_s) * (2 ** (tries - 1)), cap
+                )
                 self.ledger.retries += 1
-                sleep_s = min(float(self.transport_backoff_s) * (2 ** (tries - 1)), float(self.transport_max_sleep_s))
+                if requested is not None:
+                    self.ledger.retry_after_honoured += 1
                 time.sleep(sleep_s)
 
     def close(self) -> None:
