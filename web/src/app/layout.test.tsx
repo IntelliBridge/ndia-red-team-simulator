@@ -6,6 +6,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 // the layout renders outside a Next app-router context.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => "/findings/abc",
 }));
 
 import RootLayout, { metadata } from "./layout";
@@ -67,7 +68,7 @@ describe("RootLayout", () => {
     expect(screen.queryByText("Kali tools", { selector: "a" })).toBeNull();
   });
 
-  it("mounts the theme toggle button in the header", () => {
+  it("brands the header with the Agile Defense Labs mark linking home", () => {
     const { container } = render(
       React.createElement(
         RootLayout,
@@ -75,11 +76,37 @@ describe("RootLayout", () => {
         React.createElement("div", null, "child-sentinel"),
       ),
     );
-    // The mount-gated ThemeToggle renders a <button> (an inert placeholder
-    // until the provider resolves on the client). Either way a button exists
-    // inside the header nav.
-    const navButton = container.querySelector("header nav button");
-    expect(navButton).not.toBeNull();
+    const brand = container.querySelector('header a[data-testid="brand-link"]');
+    expect(brand?.getAttribute("href")).toBe("/dashboard");
+    const logo = brand?.querySelector("img");
+    expect(logo?.getAttribute("src")).toBe("/brand/agile-labs.svg");
+    expect(logo?.getAttribute("alt")).toBe("Agile Defense Labs");
+  });
+
+  it("is dark only: the html root carries the dark class and the header has no theme toggle", () => {
+    const { container } = render(
+      React.createElement(
+        RootLayout,
+        null,
+        React.createElement("div", null, "child-sentinel"),
+      ),
+    );
+    expect(container.querySelector("html")?.className).toContain("dark");
+    expect(container.querySelector("header nav button")).toBeNull();
+  });
+
+  it("marks the nav link of the current route section with aria-current", () => {
+    const { container } = render(
+      React.createElement(
+        RootLayout,
+        null,
+        React.createElement("div", null, "child-sentinel"),
+      ),
+    );
+    const current = Array.from(container.querySelectorAll("header nav a")).filter(
+      (a) => a.getAttribute("aria-current") === "page",
+    );
+    expect(current.map((a) => a.textContent)).toEqual(["Findings"]);
   });
 
   it("themes the shell with semantic token classes", () => {
