@@ -86,16 +86,10 @@ _SINGLE_ROUTE_CAPACITY_DEFECT = (
     "product defect, not a harness problem: the single-run admission does not consult the capacity service. "
     "With Project.ml_max_concurrent_runs = 1 and one live attack.run job, POST /v1/models/{{id}}/attacks answered "
     "{status} with body keys {keys} and the run ended {run_status!r} at once: no deferred=true, no "
-    "capacity_deferred marker (redsim.api.errors.MARKER_CODES), no Job.detail.deferred. "
-    "redsim/services/ml_campaigns.py:create_attack_campaign (line 684) and :create_verify_campaign (line 1306) "
-    "never call redsim/services/ml_capacity.py:admit_or_defer / mark_deferred although that module's docstring "
-    "says 'The admission boundaries call admit_or_defer before they write rows'; only "
-    "redsim/services/ml_batches.py:_capacity_decision does (so batch members defer and the daily budget refuses "
-    "there, while a single run ignores both caps: BULK-20, -21). The continuation hook "
-    "redsim/workers/tasks/capacity.py:continue_deferred is likewise never called from "
-    "redsim/workers/tasks/ml_campaign.py:ml_campaign_run (the docstring names the assembler's one-line call after "
-    "complete(...)), so a finishing worker frees no slot and only the 60 s beat backstop dispatches. "
-    "CapacityDecision.response_fields() (the capacity_deferred marker) is referenced by no route."
+    "capacity_deferred marker (redsim.api.errors.MARKER_CODES), no Job.detail.deferred. BULK-20/-21 bind the "
+    "single attack and verify routes as well as batch members: redsim/services/ml_campaigns.py "
+    "create_attack_campaign / create_verify_campaign must call redsim/services/ml_capacity.py admit_or_defer "
+    "before the admission row and mark_deferred on an over-cap admission, and the 202 body must carry the marker."
 )
 _BULK_VERIFY_PROJECTION_DEFECT = (
     "product defect, not a harness problem: owner decision BULK-16 is one defended run per (baseline, defense, "
@@ -716,9 +710,18 @@ def test_capacity_deferral_dispatch_and_batch_cancel(
             assert view["status"] == "queued" and view["state"] == "active"
             assert all(m["deferred"] is True and m["score_status"] == "pending" for m in view["members"])
 
-            # the slot frees: the finishing worker's continuation hook dispatches the oldest deferred job
-            _finish_job(e2e_app, seeded_run, seeded_job)
+            # the slot frees: the finishing worker's continuation hook dispatches the oldest deferred job.
+            # The hook is called as the seeded job's worker would call it, after its body and BEFORE its terminal
+            # status is committed (redsim.workers.tasks.capacity.deferred_continuation: "the finishing job is
+            # excluded from the slot count so the hook is correct whether it runs before or after task_context
+            # commits"); the hand-written terminal status lands right after. Test-isolation note: with the eager
+            # harness the dispatched member runs to completion INSIDE this call and its own continuation hook then
+            # looks for a free slot; while the seeded job still reads ``running`` it finds none, so exactly one
+            # member is dispatched here and the second stays deferred for the cancel below. Finishing the seeded
+            # job first would let the eager cascade dispatch both (the product doing its job), leaving nothing
+            # queued to cancel.
             report = continue_deferred(project_id, finishing_job_id=seeded_job)
+            _finish_job(e2e_app, seeded_run, seeded_job)
             assert report["dispatched"] == {project_id: [first["job_ids"][0]]}, report
             assert report["still_deferred"] == {project_id: 1}
             dispatched = _run(viewer, str(first["run_id"]))

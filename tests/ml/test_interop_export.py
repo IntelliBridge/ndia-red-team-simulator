@@ -695,3 +695,133 @@ def test_export_and_manifest_routes_round_trip(harness: Harness) -> None:
     assert client.post("/v1/runs/no-such-run/dataset").status_code == 404
     assert client.get("/v1/datasets/no-such-id").status_code == 404
 
+
+
+# --------------------------------------------------------------------------- INTEROP-04: text and detection slices
+
+
+def _text_slices(record: CampaignRecord, *, seed: int = 1) -> tuple[dict[str, bytes], dict[str, Any]]:
+    """Self-describing text slices the way ``redsim.ml.runners.text`` writes them (messages, no tensor)."""
+    from redsim.ml.runners.base import slice_bytes
+
+    rng = np.random.default_rng(seed)
+    attack, eps = record.config.attack_ids[0], record.config.eps_grid[0]
+    indices = np.arange(N)
+    y = rng.integers(0, 2, size=N)
+    texts = np.asarray([f"message number {i} with some words" for i in range(N)], dtype=str)
+    adv_texts = np.asarray([f"message number {i} with some terms" for i in range(N)], dtype=str)
+    y_pred_adv = np.where(np.arange(N) % 2 == 0, (y + 1) % 2, y)
+    flipped = [bool(int(y[i]) == int(y[i]) and int(y_pred_adv[i]) != int(y[i])) for i in range(N)]
+    flip = {"attack_ids": [attack], "eps_grid": [eps], "n": N, "indices": [int(i) for i in indices],
+            "flipped": {attack: {f"eps{eps:g}": flipped}}}
+    slices = {
+        "clean_slice.npz": slice_bytes(family="clean", attack="", eps=None, text=texts, indices=indices, y=y,
+                                       y_pred_clean=y, conf_clean=rng.random(N)),
+        f"adv_slice/{attack}_eps{eps:g}.npz": slice_bytes(
+            family="adversarial", attack=attack, eps=eps, text=texts, text_adv=adv_texts, indices=indices, y=y,
+            y_pred_clean=y, y_pred_adv=y_pred_adv, conf_clean=rng.random(N), conf_adv=rng.random(N)),
+        f"control_slice/eps{eps:g}.npz": slice_bytes(
+            family="control", attack="noise_control", eps=eps, text=texts, text_adv=texts, indices=indices, y=y,
+            y_pred_clean=y, y_pred_adv=y, conf_clean=rng.random(N), conf_adv=rng.random(N)),
+        # the readable JSON lines the text runner keeps beside the npz: not an export slice, skipped with a caveat
+        f"adv_slice/{attack}_eps{eps:g}.jsonl": b'{"index": 0, "text": "message", "label": "ham"}\n',
+    }
+    return slices, flip
+
+
+def test_shared_slice_writer_labels_every_family_and_never_pickles() -> None:
+    from redsim.ml.interop import parse_npz, slice_descriptor_from_arrays
+    from redsim.ml.runners.base import slice_bytes
+
+    texts = np.asarray(["a b", "c d"], dtype=object)      # the text runner samples object arrays
+    clean = parse_npz(slice_bytes(family="clean", attack="", eps=None, text=texts, indices=np.arange(2),
+                                  y=np.array([0, 1])))
+    assert slice_descriptor_from_arrays(clean) == ("clean", "", None)
+    assert clean["text"].dtype.kind == "U" and clean["text"].tolist() == ["a b", "c d"], "unicode, not pickled objects"
+    det = parse_npz(slice_bytes(family="adversarial", attack="dpatch", eps=0.03,
+                                x_adv=np.zeros((2, 3, 4, 4), dtype="float32"), indices=np.arange(2), y=np.array([1, 2]),
+                                boxes=np.zeros((3, 4)), labels=np.array([1, 1, 2]), offsets=np.array([0, 2, 3])))
+    assert slice_descriptor_from_arrays(det) == ("adversarial", "dpatch", 0.03)
+    assert set(det) >= {"x_adv", "indices", "y", "boxes", "labels", "offsets", "family", "attack", "eps"}
+    ctrl = parse_npz(slice_bytes(family="control", attack="patch_control", eps=0.1,
+                                 x_adv=np.zeros((2, 3, 4, 4), dtype="float32"), indices=np.arange(2), y=np.array([1, 2])))
+    assert slice_descriptor_from_arrays(ctrl) == ("control", "control", 0.1)
+
+
+def test_text_slices_export_all_three_families_with_the_message_in_the_text_column(harness: Harness) -> None:
+    """A text run's self-describing slices export as clean, adversarial and control shards; ``input`` is null
+    (a text model has no numeric input tensor), ``text`` carries the message, ``flipped`` still equals the oracle."""
+    from redsim.ml.interop import COLUMNS, read_table
+
+    record = harness.record.model_copy(update={"run_id": "run-text-export"})
+    slices, flip = _text_slices(record)
+    empty_dir = harness.tmp_path / "text-artifacts"
+    empty_dir.mkdir()
+    run_id = harness.seed_from_sink(record, empty_dir, run_id="run-text-export",
+                                    extra={**slices, "flip_matrix.json": json.dumps(flip).encode()})
+    handle = harness.admit(run_id)
+    manifest = harness.export_manifest(run_id)
+    assert manifest is not None
+    assert {rs["name"] for rs in manifest["recordSet"]} == {"clean", "adversarial", "control"}
+    text_fields = [f for rs in manifest["recordSet"] for f in rs["field"] if f["name"] == "text"]
+    assert len(text_fields) == 3 and all(f["dataType"] == "sc:Text" for f in text_fields)
+
+    families: dict[str, Any] = {}
+    for row in harness.artifacts(run_id, "ml.dataset.parquet"):
+        table = read_table(bytes(harness.store.get(str(row.location))))
+        assert list(table.column_names) == list(COLUMNS) and table.num_rows == N
+        family = table.column("family").to_pylist()[0]
+        families[family] = table
+        assert set(table.column("input").to_pylist()) == {None}, "no numeric input is invented for a message"
+        texts = table.column("text").to_pylist()
+        assert all(isinstance(t, str) and t.startswith("message number") for t in texts)
+    assert set(families) == {"clean", "adversarial", "control"}
+    adv = families["adversarial"]
+    assert all("terms" in t for t in adv.column("text").to_pylist()), "the adversarial shard carries the perturbed message"
+    assert all("words" in t for t in families["clean"].column("text").to_pylist())
+    oracle = dict(zip(flip["indices"], flip["flipped"][record.config.attack_ids[0]][f"eps{record.config.eps_grid[0]:g}"]))
+    for idx, flipped in zip(adv.column("sample_index").to_pylist(), adv.column("flipped").to_pylist()):
+        assert bool(flipped) == bool(oracle[idx])
+    execute = next(r for r in harness.chain(handle.run_id) if r["action"] == "dataset.export.execute")
+    assert execute["success"] and execute["detail"]["n_shards"] == 3
+    assert len(execute["detail"]["caveats"]) == 1 and "not an npz slice" in execute["detail"]["caveats"][0]
+
+
+def test_detection_shaped_slices_export_with_the_oracle_flipped_and_no_predictions(harness: Harness) -> None:
+    """Detection slices carry the image tensor and packed boxes but no per-image predictions: ``input`` is the
+    flattened image, ``y_pred_*`` are null and ``flipped`` comes from the run's flip matrix."""
+    from redsim.ml.interop import read_table
+    from redsim.ml.runners.base import slice_bytes
+
+    record = harness.record.model_copy(update={"run_id": "run-det-export"})
+    attack, eps = record.config.attack_ids[0], record.config.eps_grid[1]
+    indices = np.arange(N)
+    y = np.ones(N, dtype="int64")
+    boxes, labels, offsets = np.zeros((N, 4), dtype="float32"), np.ones(N, dtype="int64"), np.arange(N + 1)
+    flipped = [i % 3 == 0 for i in range(N)]
+    flip = {"indices": [int(i) for i in indices], "flipped": {attack: {f"eps{eps:g}": flipped}}}
+    x = np.random.default_rng(2).random((N, 3, 4, 4)).astype("float32")
+    extra = {
+        "clean_slice.npz": slice_bytes(family="clean", attack="", eps=None, x=x, indices=indices, y=y,
+                                       boxes=boxes, labels=labels, offsets=offsets),
+        f"adv_slice/{attack}_eps{eps:g}.npz": slice_bytes(family="adversarial", attack=attack, eps=eps, x_adv=x,
+                                                          indices=indices, y=y, boxes=boxes, labels=labels,
+                                                          offsets=offsets),
+        f"control_slice/eps{eps:g}.npz": slice_bytes(family="control", attack="patch_control", eps=eps, x_adv=x,
+                                                     indices=indices, y=y, boxes=boxes, labels=labels, offsets=offsets),
+        "flip_matrix.json": json.dumps(flip).encode(),
+    }
+    empty_dir = harness.tmp_path / "det-artifacts"
+    empty_dir.mkdir()
+    run_id = harness.seed_from_sink(record, empty_dir, run_id="run-det-export", extra=extra)
+    harness.admit(run_id)
+    manifest = harness.export_manifest(run_id)
+    assert manifest is not None and {rs["name"] for rs in manifest["recordSet"]} == {"clean", "adversarial", "control"}
+    for row in harness.artifacts(run_id, "ml.dataset.parquet"):
+        table = read_table(bytes(harness.store.get(str(row.location))))
+        assert all(len(v) == 3 * 4 * 4 for v in table.column("input").to_pylist())
+        assert set(table.column("text").to_pylist()) == {None}
+        assert set(table.column("y_pred_adv").to_pylist()) == {None}
+        if table.column("family").to_pylist()[0] == "adversarial":
+            got = dict(zip(table.column("sample_index").to_pylist(), table.column("flipped").to_pylist()))
+            assert got == {int(i): flipped[i] for i in range(N)}

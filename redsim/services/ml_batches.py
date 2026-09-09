@@ -16,9 +16,9 @@ when no member was admitted the batch answers ``422 batch_member_refused`` with
 ``members: [{target_id, code, message}]``.
 
 ``batch_id`` is stamped onto ``ml_campaigns.batch_id``, ``Run.stage_table`` and
-``Job.detail`` right after each member's admission (``create_attack_campaign``
-has no ``batch_id`` keyword on this tree; the stamp is a follow-up update in
-the service's own transaction, noted in the wave report).
+``Job.detail`` inside each member's admission, through the boundary's
+``before_enqueue`` hook: after the member's rows exist and before the broker
+message, in the service's own transaction.
 
 The modality rule (BULK-04, D9): a batch is one modality. Targets spanning
 several are refused ``422 batch_modality_mismatch`` with ``groups:
@@ -32,18 +32,25 @@ that module exists (the ``bulk-upload-capacity-cli`` track); a deferral admits
 the member with ``enqueue=False`` and ``Job.detail.deferred = true`` so the
 capacity dispatcher picks it up, and a refusal (a spent daily budget) is a
 collected member refusal. Without the module every member is admitted and
-enqueued at once. ``max_parallel`` on the request is a client-side bound on top
-of that: members beyond it are admitted deferred.
+enqueued at once. The single-run boundaries run the same check themselves for
+the single routes; the batch passes ``capacity_check=False`` so each member is
+decided exactly once, here. ``max_parallel`` on the request is a client-side
+bound on top of that: members beyond it are admitted deferred.
 
 Bulk verify (BULK-15; owner decision BULK-16): ONE defended verify run per
 (baseline run, defense, params) whose ``Job.detail.finding_ids`` lists every
 selected finding of the baseline run, admitted through ``create_verify_campaign``
 on the first selected finding (which flips to ``fixing`` and owns
 ``Job.detail.finding_id``), with one ``verify.replay`` row per additional finding
-naming the shared run. Projecting the shared record onto each finding is the
-worker's (``_project_verify`` loops ``finding_ids``); until that lands the batch
-view reports per finding whether its ``ml.verify`` block names the shared run
-(``projected``), so nothing is claimed that was not written.
+naming the shared run; both are written through the boundary's ``before_enqueue``
+hook, after the Run / Job rows exist and before the broker message, so the worker
+(eager in tests, from the broker in a deployment) never sees the job without them.
+The worker projects the shared record onto each listed
+finding from that finding's own attack rows
+(``redsim.workers.tasks.ml_campaign._project_verify`` loops ``finding_ids``, one
+``verify.execute`` row per finding); the batch view reports per finding whether
+its ``ml.verify`` block names the shared run (``projected``), so a member that
+is still queued or that failed shows exactly what was written.
 
 Status roll-up (BULK-06): ``queued`` (every member queued), ``running`` (any
 member running, or a mix of queued and terminal), ``succeeded`` (every member
@@ -513,10 +520,20 @@ def create_campaign_batch(
             continue
         if parallel is not None and len(members) >= parallel:
             deferred = True
+        def stamp_member(run_id: str, job_ids: list[str], *, index: int = index, deferred: bool = deferred,
+                         decision: Any | None = decision) -> None:
+            # Runs inside the single boundary after its rows exist and before the broker message, so the
+            # worker never sees a member job without its batch stamp (eager Celery runs it right there).
+            with get_session() as sess:
+                if deferred:
+                    _mark_deferred(sess, run_id=run_id, job_id=job_ids[0], decision=decision)
+                _stamp_batch_on_member(sess, batch_id=batch_id, run_id=run_id, job_ids=job_ids,
+                                       deferred=deferred, extra_job_detail={"batch_member_index": index})
+
         try:
             handle = create_attack_campaign(
                 campaign={**body, "target_id": target_id}, project_id=project_id, actor=actor, config=config,
-                audit_writer=audit_writer, enqueue=not deferred,
+                audit_writer=audit_writer, enqueue=not deferred, capacity_check=False, before_enqueue=stamp_member,
             )
         except ApiError as exc:
             refused.append({"target_id": target_id, "code": exc.code, "message": str(exc), "attempted": True,
@@ -524,11 +541,6 @@ def create_campaign_batch(
             if exc.code == QUEUE_UNAVAILABLE:
                 queue_down = True
             continue
-        with get_session() as sess:
-            if deferred:
-                _mark_deferred(sess, run_id=handle.run_id, job_id=handle.job_ids[0], decision=decision)
-            _stamp_batch_on_member(sess, batch_id=batch_id, run_id=handle.run_id, job_ids=handle.job_ids,
-                                   deferred=deferred, extra_job_detail={"batch_member_index": index})
         members.append(BatchMember(run_id=handle.run_id, job_ids=list(handle.job_ids), target_id=target_id,
                                    deferred=deferred))
 
@@ -748,10 +760,48 @@ def create_verify_batch(
         if parallel is not None and len(members) >= parallel:
             deferred = True
         member_primary = next((fid for fid in selected if fid not in busy_primaries), primary)
+        frozen_defense: dict[str, Any] | None = None
+
+        def bind_findings(run_id: str, job_ids: list[str], *, index: int = index, deferred: bool = deferred,
+                          decision: Any | None = decision, member_primary: str = member_primary,
+                          label: dict[str, Any] = label) -> None:
+            # Runs inside the single boundary after its Run / Job rows exist and BEFORE the broker message:
+            # the shared run's Job.detail.finding_ids and the one verify.replay row per additional finding
+            # (spec 5.11 per finding) are in place whenever the worker runs, eagerly or from the broker, so
+            # the projection (BULK-16) reaches every selected finding.
+            nonlocal frozen_defense
+            from redsim.db.models import Job
+
+            with get_session() as sess:
+                job = sess.get(Job, job_ids[0]) if job_ids else None
+                if job is not None:
+                    frozen_defense = _as_mapping(_as_mapping(job.detail).get("campaign_config")).get("defense")
+            for other in selected:
+                if other == member_primary:
+                    continue
+                authorize(
+                    "verify.replay", None, allowlist=config.target_allowlist, actor=actor, writer=audit_writer,
+                    project_id=project_id, run_id=run_id,
+                    detail={
+                        "actor": actor, "finding_id": other, "baseline_run_id": baseline_id, "batch_id": batch_id,
+                        "shared_run_id": run_id, "primary_finding_id": member_primary,
+                        "defense": frozen_defense or label, "projection": "shared defended run (BULK-16)",
+                    },
+                )
+            with get_session() as sess:
+                if deferred:
+                    _mark_deferred(sess, run_id=run_id, job_id=job_ids[0], decision=decision)
+                _stamp_batch_on_member(
+                    sess, batch_id=batch_id, run_id=run_id, job_ids=job_ids, deferred=deferred,
+                    extra_job_detail={"finding_ids": list(selected), "batch_member_index": index},
+                    extra_stage={"finding_ids": list(selected)},
+                )
+
         try:
             handle = create_verify_campaign(
                 finding_id=member_primary, defense_id=entry["defense"], params=entry["params"], actor=actor,
-                config=config, audit_writer=audit_writer, enqueue=not deferred,
+                config=config, audit_writer=audit_writer, enqueue=not deferred, capacity_check=False,
+                before_enqueue=bind_findings,
             )
         except ApiError as exc:
             refused.append({**label, "code": exc.code, "message": str(exc), "attempted": True,
@@ -760,35 +810,6 @@ def create_verify_batch(
                 queue_down = True
             continue
         busy_primaries.add(member_primary)
-        # One verify.replay row per additional finding bound to the shared run (spec 5.11 per finding),
-        # written before Job.detail.finding_ids binds them.
-        frozen_defense: dict[str, Any] | None = None
-        with get_session() as sess:
-            from redsim.db.models import Job
-
-            job = sess.get(Job, handle.job_ids[0]) if handle.job_ids else None
-            if job is not None:
-                frozen_defense = _as_mapping(_as_mapping(job.detail).get("campaign_config")).get("defense")
-        for other in selected:
-            if other == member_primary:
-                continue
-            authorize(
-                "verify.replay", None, allowlist=config.target_allowlist, actor=actor, writer=audit_writer,
-                project_id=project_id, run_id=handle.run_id,
-                detail={
-                    "actor": actor, "finding_id": other, "baseline_run_id": baseline_id, "batch_id": batch_id,
-                    "shared_run_id": handle.run_id, "primary_finding_id": member_primary,
-                    "defense": frozen_defense or label, "projection": "shared defended run (BULK-16)",
-                },
-            )
-        with get_session() as sess:
-            if deferred:
-                _mark_deferred(sess, run_id=handle.run_id, job_id=handle.job_ids[0], decision=decision)
-            _stamp_batch_on_member(
-                sess, batch_id=batch_id, run_id=handle.run_id, job_ids=handle.job_ids, deferred=deferred,
-                extra_job_detail={"finding_ids": list(selected), "batch_member_index": index},
-                extra_stage={"finding_ids": list(selected)},
-            )
         members.append(BatchMember(run_id=handle.run_id, job_ids=list(handle.job_ids),
                                    defense=frozen_defense or label, deferred=deferred,
                                    primary_finding_id=member_primary))

@@ -910,8 +910,31 @@ def test_integrations_roster_and_foundry_push(
 # ---------------------------------------------------------------------------
 
 
-def test_audit_verify_all_passes(audit_verify_all: Callable[[], tuple[int, str]],
+def test_audit_verify_all_passes(e2e_app: E2EApp, e2e_org: E2EOrg, audit_verify_all: Callable[[], tuple[int, str]],
                                  finding_campaign: h.CampaignRun) -> None:
+    """Every chain this module wrote verifies through the real CLI; a chain a sibling test tampered with on purpose
+    (``test_harness_smoke.py::test_audit_verify_all_is_clean_then_breaks_at_the_tampered_seq`` leaves its own run
+    chain broken in the shared session database) is named by the CLI and nothing else is. Test-isolation fix,
+    mirroring ``test_ml_governance.py::test_audit_verify_all_and_tamper``: the earlier revision required exit 0
+    and no "broken" anywhere, which only holds when this file runs alone.
+    """
+    import re
+
+    from redsim.audit.chain import verify_chain
+
+    def broken_chains(text: str) -> set[str]:
+        return {m.group(1) for line in text.splitlines() if "broken at seq=" in line
+                for m in [re.search(r"chain '([^']+)'", line)] if m}
+
+    def verified_chains(text: str) -> set[str]:
+        return {m.group(1) for line in text.splitlines() if "events verified" in line
+                for m in [re.search(r"chain '([^']+)'", line)] if m}
+
+    ours = f"run:{finding_campaign.run_id}"
+    pre_broken = {cid for cid in e2e_app.chain_ids() if not verify_chain(e2e_app.read_chain(cid)).verified}
+    assert ours not in pre_broken and f"project:{e2e_org.project_id}" not in pre_broken
     exit_code, output = audit_verify_all()
-    assert exit_code == 0, output[-3000:]
-    assert f"run:{finding_campaign.run_id}" in output and "broken" not in output.lower()
+    assert broken_chains(output) == pre_broken, output[-3000:]
+    assert (exit_code == 0) == (not pre_broken), f"exit {exit_code} with pre-broken chains {sorted(pre_broken)}"
+    assert ours in verified_chains(output), output[-3000:]
+    assert verified_chains(output) | pre_broken == set(e2e_app.chain_ids()), "every chain is reported once"
