@@ -67,6 +67,8 @@ ENV NEXT_PUBLIC_REDSIM_DEV_FIXTURES=${NEXT_PUBLIC_REDSIM_DEV_FIXTURES}
 # must succeed: `|| true` used to hide a failure as an image with no .next in
 # it.
 ENV SKIP_ENV_VALIDATION=1
+# The image runs the standalone server (web/next.config.mjs opts in on this flag).
+ENV NEXT_OUTPUT_STANDALONE=1
 RUN pnpm --filter @redsim/web build
 
 # --------------------------------------------------------------------

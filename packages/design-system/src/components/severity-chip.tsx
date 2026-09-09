@@ -15,15 +15,15 @@ export type Severity =
   | "info"
   | "unknown";
 
-// Translucent tints on the navy ground. The ramp runs orange, amber,
-// yellow, green, blue: red is the brand accent in this UI and never a
-// severity, so `critical` is the deepest orange rather than red.
+// Colour-coded by severity (owner request, 2026-09-09): critical red, high
+// orange, medium amber, low green, info blue. Translucent tints on the navy
+// ground; the label always travels with the colour, never colour alone.
 const TONES: Record<Severity, string> = {
-  critical: "border-orange-400/50 bg-orange-500/20 text-orange-200",
-  high: "border-amber-400/50 bg-amber-500/15 text-amber-200",
-  medium: "border-yellow-400/40 bg-yellow-400/10 text-yellow-200",
-  low: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
-  info: "border-sky-400/40 bg-sky-400/10 text-sky-300",
+  critical: "border-red-500/60 bg-red-500/25 text-red-100",
+  high: "border-orange-400/60 bg-orange-500/25 text-orange-100",
+  medium: "border-amber-400/50 bg-amber-400/20 text-amber-100",
+  low: "border-emerald-400/50 bg-emerald-400/15 text-emerald-200",
+  info: "border-sky-400/50 bg-sky-400/15 text-sky-200",
   unknown: "border-border bg-muted text-muted-foreground",
 };
 
