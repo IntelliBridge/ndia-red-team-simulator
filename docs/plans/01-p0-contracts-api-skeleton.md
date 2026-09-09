@@ -475,3 +475,11 @@ made as an additive, default-valued field wherever possible. Branches built
 against the earlier contract (#8 `feat/ml-core`, #9 `feat/ml-assets`) adapt to
 P0's names and semantics, not the reverse. Master plan section 4.1 tracks
 their state.
+
+Later note (2026-09-08, night). #8 and #9 merged adapted to P0, and PR #22
+plus completion waves 1 and 2 (`main` at `bb43bd7`) built the vertical on the
+frozen contract without renaming a frozen field, column, `Action` or response
+key. The six points where the tree diverges from the spec text (one job per
+campaign, the shipped task names, the report artifact kinds, the
+`harden.execute` usage keys, the worker audit actor, the partial verify
+outcome) are recorded under this protocol in master plan section 0 (v2.3).

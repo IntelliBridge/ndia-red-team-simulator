@@ -1,11 +1,97 @@
 # redsim/ml — Master Implementation Plan (reconciled)
 
-Status: v2.2, 2026-09-08 (evening). Supersedes v1, amends v2 and v2.1. This version is
-rebased on the **redsim platform** (the aegis platform kept whole under D1 and
-renamed to the `redsim` namespace in commit `b39d933`) after the `main`
-restructure of 2026-09-08.
+Status: v2.3, 2026-09-08 (night). Supersedes v1, amends v2, v2.1 and v2.2. This
+version is rebased on the **redsim platform** (the aegis platform kept whole
+under D1 and renamed to the `redsim` namespace in commit `b39d933`) after the
+`main` restructure of 2026-09-08, and records the tree at `bb43bd7`.
 
 ## 0. What changed since v1 (read this first)
+
+### v2.3 (2026-09-08, night): change note
+
+The ML vertical is on `main` end to end at `bb43bd7`: routes, admission,
+worker, sandbox child, scoring, explain, recommend, verify, reports and
+compare. What landed since v2.2, in order:
+
+- **PR #22** (`a864da6`, Metz): P4 campaign orchestration, the campaign,
+  compare and report routes, and the web contract alignment
+  (`web/src/lib/api.ts` and the run and finding pages call the routes that
+  exist). Eight codex-pr-review findings were fixed on the branch before the
+  squash merge, per the review.
+- **`cc781ad`**: the spec 10.6 failure classes in `redsim/ml/errors.py`
+  (`ModelLoadRefused`, `ArtifactDigestMismatch`, `SandboxTimeout`,
+  `SandboxKilled`, `EnvelopeInvalid`, `DatasetUnavailable`,
+  `MlExtraUnavailable`, `ExplainerUnavailable`) and
+  `docs/plans/09-gap-register-2026-09-08.md`, the 560-item spec-vs-tree
+  register the completion waves work from.
+- **Completion wave 1** (`f8693c2..a99d9cc`, seven commits): loaders read
+  the build-assets manifest, onnx2torch conversion with the argmax agreement
+  recorded, `build-assets --fixture` committing
+  `tests/ml/fixtures/cifar10_test_500.npz`, the `resnet18` architecture
+  behind `--arch`, the tabular id `url_trees` (alias `url_classifier`),
+  surrogate PGD with per-feature ε and the ART mask, the scoring constants
+  with the `control_preserves_accuracy` binomial predicate, `FamilyDelta` and
+  the typed delta refusal, `not_run` attacks with the curve PNG, the dataset
+  caveats and `TinyTabularTarget`, the six-section report renderer, the
+  `PartitionExplainer` fallback and the explanation cache, the typed sandbox
+  config and envelope, and `redsim/api/errors.py` with the spec 17.3 code
+  table.
+- **Completion wave 2** (`055bdee..bb43bd7`, eight commits): the spec 10.5
+  audit vocabulary and the 6.5 stage table in the worker, the Pythia
+  narrative moved from the sandbox child to the worker parent through
+  `redsim.llm.router.route("ml.harden_narrative")` with `DbBudgetChecker` and
+  `LLMUsage` rows, the typed validate envelope with the parent digest check,
+  spec 5.11 detail and `job.complete`, worker observability (init, the
+  `job.run` span and `stage_span` helper, run roll-up in the reaper,
+  cancel-safe `task_context`), spec 17.3
+  codes on every ML route, per-project bundled Target ids
+  `<bundled_id>-<8 hex>` with `Target.value = "bundled:<id>"` and
+  `register_bundled_model(session, project_id, bundled_id, actor)`, the
+  audited soft delete, upload refusal codes with `success=False`
+  `model.register` rows, the finding projection of spec 5.7 and the
+  dismissal rules, compare with variable-level incompatibility and
+  `verify_delta`, report routes `md` / `json` / `html` with `report.pdf`
+  answering `501`, `GET /v1/audit/verify?all=1`, and build-assets dataset
+  caveats with `subject_centered`.
+- **Completion wave 3** (landing 2026-09-09, described here from the
+  writers' reports, not from this tree): the offline
+  `redsim ml attack <target_id>` campaign, `redsim ml seed`, the
+  `ml-campaign` scanner adapter, opt-in `redsim.ml.attacks` plugin
+  discovery, the `tests/e2e` harness, `redsim doctor` rewritten around
+  Pythia, Pythia-only `redsim.yaml` and `.env.example`, and six defect
+  fixes. Section 4.1 lists them.
+
+Divergences from the spec that the tree keeps, recorded here under the
+`01-p0-contracts-api-skeleton.md` section 8 protocol (announce in this file,
+prefer additive fields):
+
+1. **One job per campaign.** Spec 10.3 describes a Celery chain with one
+   `attack.run` Job per attack followed by `explain.run` and
+   `harden.recommend`. The tree runs the whole campaign in one
+   `redsim.ml_campaign_run` job. `explain.run`, `harden.recommend` and
+   `verify.replay` are separate jobs on the same task, created by the finding
+   routes. `Run.stage_table` still carries the per-stage rows of spec 6.5.
+2. **Task names.** The shipped tasks are `redsim.ml_campaign_run` and
+   `redsim.ml_model_validate` (both on the `scans` queue) plus the ML branch
+   of `redsim.report_render`. The spec names `redsim.attack_run`,
+   `redsim.explain_run`, `redsim.harden_recommend` and
+   `redsim.model_validate` are not registered.
+3. **Report artifact kinds.** The worker's artifact sink writes the reports
+   as `report.md`, `report.json` and `report.html` (the spec 5.8 names). The
+   report route also serves the `ml.report_<ext>` kinds written before wave 2.
+4. **`harden.execute` usage keys.** The audit row carries `usage.prompt` and
+   `usage.completion` rather than `prompt_tokens` / `completion_tokens`,
+   because `redact_audit_detail` blanks any key containing `token`.
+5. **Worker audit actor.** Worker rows carry `actor = worker:<job.type>` with
+   the requesting principal in `detail.requested_by`. Spec 10.3 said
+   `actor = Job.created_by`.
+6. **Partial verify score.** A verify run whose score is partial is
+   `inconclusive` and leaves the finding `open`. The spec 6.4 outcome table
+   did not name the case.
+
+Nothing in D1 to D13 changes. Sections 4.1, 5 (the jobs and errors bullets),
+7, 8 and 9 are updated below. Local asset numbers quoted in section 8 are
+illustrative and are not results.
 
 ### v2.2 (2026-09-08, evening): change note
 
@@ -194,10 +280,12 @@ F001 (auth) and F008 (audit) are largely **reused platform foundation**
 on the existing chain and wiring Keycloak on Fargate. These are the two features
 v1 missed entirely.
 
-### 4.1 Workstream status (2026-09-08, late evening)
+### 4.1 Workstream status (2026-09-08, night, `main` at `bb43bd7`)
 
-Pull requests on `IntelliBridge/ndia-red-team-simulator` as of this revision.
-No names are invented for unassigned work (D007 stays open).
+Pull requests and direct commits on `IntelliBridge/ndia-red-team-simulator` as
+of this revision. No names are invented for unassigned work (D007 stays open).
+The rows are in merge order. The wave rows at the end are the completion
+passes that followed PR #22.
 
 | WS | Branch / PR | State | Notes |
 |---|---|---|---|
@@ -207,13 +295,17 @@ No names are invented for unassigned work (D007 stays open).
 | Cross-cutting: Pythia transport | #11 `feat/pythia-access` | **merged** into `main` as `5fa2d79` (2026-09-08) | Gateway URL, key provisioning, trust-store TLS, `.env` loading, `python -m redsim.llm.pythia_check`, `docs/ops/pythia.md` and `docs/workstreams/pythia-access.md`. Reads `REDSIM_ML_LLM_MODEL` as frozen by P0. Two follow-up commits (`6f4d06d`, `6a0b8b9`) isolate the `.env` discovery tests. See the Pythia note in section 5. |
 | F008 audit foundation contract | #12 `feat/audit-log-foundation` (William) | **merged** | Contract doc for the audit chain the ML events append to. |
 | Earlier contributions | #2 (schema and registry contract tests), #4 (CIFAR-10 target and asset pipeline), both by Metz | closed by their author | Superseded by the platform substrate. CIFAR-10 stays a CI fixture. |
-| WS5 Web UI | #16 `feat/replit-redsim-migration` (Metz) | **merged** into `main` as `1a9204e` (2026-09-08) | Reworked by its author into a P5-only change that keeps the platform auth and adds `/models`, `/models/[id]`, the MRI panels on `/runs/[id]` and the three-pane `/findings/[id]` with the design-system evidence components (`MriScorecard`, `DimensionBars`, `RobustnessCurve`, `MeasurementTable`, `ObservationCard`, `LabelBadge`, `PanelSection`, `CompatibilityList`). The earlier Replit-port shape that D1 rejected is gone. codex-pr-review verdict blocking with 10 confirmed findings, one fix commit per finding landed before the squash merge, and `7240220` (product owner) tightened the `not_implemented` wording on the model pages afterwards. The WS4 routes the pages call are not mounted, so they render `not_implemented` on 404 or 501. The web CI lanes have not run on `main` since `ea39f97` (see the CI row). |
+| WS5 Web UI | #16 `feat/replit-redsim-migration` (Metz) | **merged** into `main` as `1a9204e` (2026-09-08) | Reworked by its author into a P5-only change that keeps the platform auth and adds `/models`, `/models/[id]`, the MRI panels on `/runs/[id]` and the three-pane `/findings/[id]` with the design-system evidence components (`MriScorecard`, `DimensionBars`, `RobustnessCurve`, `MeasurementTable`, `ObservationCard`, `LabelBadge`, `PanelSection`, `CompatibilityList`). The earlier Replit-port shape that D1 rejected is gone. codex-pr-review verdict blocking with 10 confirmed findings, one fix commit per finding landed before the squash merge, and `7240220` (product owner) tightened the `not_implemented` wording on the model pages afterwards. PR #22 (`a864da6`) then aligned `web/src/lib/api.ts` and the run and finding pages with the mounted WS4 routes. Wiring beyond that contract alignment and a Playwright browser e2e are open (section 8). |
 | WS7 Fargate foundation | #19 `feat/p7-fargate-foundation` (William) | **merged** into `main` as `b40f7e1` (2026-09-08) | 26 new files under `deploy/terraform/`: existing-VPC selection with checks, private endpoints, an ALB with target groups but no listeners, RDS PostgreSQL 16, Redis, two S3 buckets (the audit bucket Object-Lock capable with no default retention), per-service IAM roles, mocked-plan tests behind `validate.sh`. No task definitions, no services, nothing applied. codex-pr-review verdict needs-changes with 2 confirmed findings (RDS storage autoscaling headroom validation, empty `plugin_args` expansion under Bash 3.2), both fixed on the branch before merge. |
 | Docs | #20 `docs/refresh` | **merged** into `main` as `72eecc2` (2026-09-08) | README, CLAUDE.md, architecture and plan pages refreshed to the redsim / P0 truth, plus the Archify architecture diagrams under `docs/architecture/diagrams/`. |
 | Web toolchain, CI, `viewer` role | #21 `ci/web-fixes` | **merged** into `main` as `ea39f97` (2026-09-08) | Reverts the #15 web bump (Next 14, React 18 and TypeScript 5 stay) and restores `pnpm-lock.yaml` to match, installs pnpm with `npm install -g pnpm@10.33.2` on `node:26` in `deploy/Dockerfile.web`, adds the `viewer` role to the Keycloak realm export and to the design-system `ROLES` with 0-based ranks matching `redsim/api/policy.py`. Redsim CI was fully green at this commit. |
 | Dependabot | #13 (docker), #14 (actions), #15 (npm, `web/`) | **merged** (`ff24944`, `eb99386`, `4c928c5`) | Routine, with two regressions: #13 moved the web image to `node:26`, where corepack is gone, and #15 bumped `web/package.json` past the root lockfile. Both fixed by #21. |
-| Cross-cutting: CI on `main` | Redsim CI | red on every run from `1725728` through `7240220` | Both unit lanes fail at the mypy step with `no-any-return` in `redsim/ml/datasets/image_hub.py:55` (`truststore` is in no pyproject extra, so CI types it as `Any`) and, on 3.13 only, `redsim/ml/assets/train_cnn.py:172` (no `ml` extra, so `torch` is `Any`). Local mypy is clean because the venv has both. `API integration`, `Next.js build` and `Build images` are skipped downstream, so nothing after `ea39f97` (#16's pages included) has been built by CI on `main`. One typed return per function, or `truststore` in the extras, fixes it. Not on any branch yet. |
-| WS4, WS6 | none yet | not started | Start behind Gate 0 per section 7. WS5's pages (#16) and WS7's Terraform foundation (#19) are on `main`, the WS4 routes the pages need and the Fargate services are not. |
+| WS4 API & campaign service, WS6 reports & comparison | #22 (Metz) | **merged** into `main` as `a864da6` (2026-09-08) | Routers `redsim/api/v1/{ml_capabilities,attacks,datasets,defenses,models,artifacts,compare,ml_findings,reports}.py` mounted on `redsim/api/app.py`, `redsim/services/{ml_campaigns,ml_models,ml_findings}.py`, the tasks `redsim.ml_campaign_run` and `redsim.ml_model_validate` (`redsim/workers/tasks/{ml_campaign,ml_model}.py`), the sandbox child `redsim/ml/sandbox.py` and `sandbox_worker.py`, `GET /v1/runs/{id}/compare`, the report routes and the web contract alignment. Eight codex-pr-review findings were fixed on the branch before the squash merge. The per-attack chain of spec 10.3 was not built, and section 0 (v2.3) records the divergence. |
+| Gap register and failure classes | `cc781ad` (direct) | on `main` | `redsim/ml/errors.py` gains the spec 10.6 classes. `docs/plans/09-gap-register-2026-09-08.md` is the 560-item spec-vs-tree register, audited against `a864da6`, with the four-wave execution order. |
+| Completion wave 1 (libraries and contracts) | `f8693c2..a99d9cc`, seven commits (direct) | on `main` | WS1: manifest-shaped loaders, onnx2torch agreement, `--fixture` and the committed CIFAR-10 slice, `resnet18` behind `--arch`, `url_trees`. WS2: surrogate PGD with per-feature ε and the ART mask, capability tags, scoring constants, the binomial control predicate, `FamilyDelta`, typed delta refusal, `not_run` attacks, curve PNG, caveats, `TinyTabularTarget`. WS3: PartitionExplainer fallback, explanation cache, spec artifact names. WS6: the six-section report renderer. WS4: typed sandbox config and envelope, `redsim/api/errors.py`. |
+| Completion wave 2 (worker, audit, admission) | `055bdee..bb43bd7`, eight commits (direct) | on `main` | Spec 10.5 audit vocabulary and 6.5 stage table, parent-side Pythia narrative with router, budget and `LLMUsage`, typed validate envelope with parent digest check and `job.complete`, worker observability init with the `job.run` span and cancel-safe `task_context`, spec 17.3 codes on every ML route, per-project bundled ids and `register_bundled_model`, audited soft delete, refusal audit rows, spec 5.7 finding projection and dismissal rules, compare incompatibility and `verify_delta`, report routes with `report.pdf` as `501`, `GET /v1/audit/verify?all=1`, dataset caveats and `subject_centered` in the manifest. `bb43bd7` is the integration commit. |
+| Completion wave 3 (CLI, config, seeding, e2e harness) | branch `wave3-early` plus the doctor and config track | landing 2026-09-09 (not in this tree, described from the writers' reports) | `redsim ml attack <target_id>`: an offline campaign for a bundled target writing `<out>/<run_id>/{run_record.json, report.md, report.json, report.html, robustness curve, audit.jsonl}` with the `attack.run` row first on a `JsonlAuditWriter` chain, `narrative_source = "rules"` (no LLM offline), `endpoint_stub` and fixture-only targets refused before anything is written. `redsim ml seed [--project] [--only]` registers the non-fixture manifest models through `register_bundled_model`. `CampaignScannerAdapter` (`ml-campaign`, capabilities `adversarial_ml` and `explainability`) on the scanner registry. Opt-in `redsim.ml.attacks` entry-point discovery (`REDSIM_PLUGINS=1`, `REDSIM_PLUGINS_ALLOW`). `tests/e2e/{conftest,harness}.py` gated by `REDSIM_E2E`, with `REDSIM_E2E_POSTGRES_URL` for the RLS lane. `redsim doctor` rewritten around Pythia: informational Pythia block with the key redacted, ml extra, sandbox child and assets manifest checks required in worker mode, the `ml-campaign` roster check, no provider key. `redsim.yaml` and `.env.example` Pythia-only with every spec 20.3 ML variable. Six defect fixes: admission no longer freezes `eps` into `attack_params`, `pgd` admitted on tabular targets by capability tag, the audit chain `ts` persisted canonically so a sqlite chain verifies, the sandbox child pins `REDSIM_ENV_FILE` and `REDSIM_DISABLE_LLM`, `redsim audit verify --run` gains a `--run-dir` fallback, `GET /v1/attacks` loads attack plugins. |
+| Cross-cutting: CI on `main` | Redsim CI | red at the time of writing, under investigation | Red on every run from `1725728` through `7240220` at the mypy step (`no-any-return` in `redsim/ml/datasets/image_hub.py:55` with `truststore` typed `Any`, and on 3.13 `redsim/ml/assets/train_cnn.py:172` without the `ml` extra). The `image_hub.py` return is typed now. At `bb43bd7` CI on `main` is still red and the cause is being investigated. This plan does not claim a green run. Local checks at `bb43bd7` with the venv interpreter and the `ml` extra: `pytest -q tests --ignore=tests/e2e` 1594 passed and 30 skipped, `ruff check --select E4,E7,E9,F,I redsim tests` clean, `mypy redsim` clean (189 files). |
 
 ## 5. Corrected shared contracts
 
@@ -295,7 +387,14 @@ No names are invented for unassigned work (D007 stays open).
   `Artifact` rows to this protocol. Pure modules never import the platform.
 - **Errors** (`redsim/ml/errors.py`): `MLError` and its subclasses
   `TargetUnavailable`, `UnsupportedArtifact`, `AttackNotApplicable`,
-  `ExplainUnavailable`.
+  `ExplainUnavailable`, plus the spec 10.6 failure classes added in
+  `cc781ad`: `ModelLoadRefused` and `ArtifactDigestMismatch` (both under
+  `UnsupportedArtifact`), `SandboxTimeout`, `SandboxKilled`,
+  `EnvelopeInvalid`, `DatasetUnavailable`, `MlExtraUnavailable` and
+  `ExplainerUnavailable` (under `ExplainUnavailable`). These are run and
+  infrastructure states, never model outcomes. The HTTP side is
+  `redsim/api/errors.py`: the spec 17.3 code table, `ApiError`, and the
+  `{"detail": {"code", "message", ...}}` envelope every ML route returns.
 - **Migration**: exactly one — `0010_ml_vertical` — adding `targets.detail`
   (JSONB) and `ml_campaigns` (1:1 with `runs`, full RLS parity). Additive and
   reversible. Owned by WS0.
@@ -303,15 +402,29 @@ No names are invented for unassigned work (D007 stays open).
   starts with `POST /v1/models/{id}/attacks`, **not** a generic `POST /v1/runs`.
   Read the campaign at `GET /v1/runs/{id}/campaign`; stream a blob at
   `GET /v1/artifacts/{id}`; act on findings via `POST /v1/findings/{id}/{explain,harden,verify}`;
-  compare with `GET /v1/runs/{id}/compare?with=`. `POST /v1/scans` was unmounted
-  by P0 (`4350d38`). Phase B2 routes (`POST /v1/runs/{id}/dataset`, `GET /v1/datasets/{id}`,
-  `POST /v1/datasets`) return `501 not_implemented` until B2 (section 6).
-- **Jobs**: Celery tasks `redsim.model_validate`, `redsim.attack_run`,
-  `redsim.explain_run`, `redsim.harden_recommend`, `redsim.verify_replay`,
-  `redsim.report_render` (the `redsim.` prefix is what `main` already uses:
-  `redsim.scan_start`, `redsim.verify_replay`, `redsim.report_render`). Attacks
-  run as a chain, one Job per attack. Admission is audit-first: the audit event
-  is appended before any Run/Job row.
+  compare with `GET /v1/runs/{id}/compare?with=`. Read a report at
+  `GET /v1/runs/{id}/report.{md,json,html}` (`report.pdf` answers `501`) and
+  verify the chain at `GET /v1/audit/verify?run=` or `?all=1` (the
+  `{"chains": [...]}` shape the audit page renders). All of these are mounted
+  on `main` since PR #22 and wave 2. `POST /v1/scans` was unmounted by P0
+  (`4350d38`) and `POST /v1/targets` refuses ML kinds with `400
+  use_models_route`. Phase B2 routes (`POST /v1/runs/{id}/dataset`,
+  `GET /v1/datasets/{id}`, `POST /v1/datasets`) return `501 not_implemented`
+  until B2 (section 6).
+- **Jobs** (as shipped, section 0 v2.3 divergences 1 and 2): two ML Celery
+  tasks, `redsim.ml_campaign_run` and `redsim.ml_model_validate`, both on
+  the `scans` queue (`redsim/workers/celery_app.py`), plus the ML branch of
+  `redsim.report_render` on `default`. One `ml_campaign_run` job runs a whole
+  attack campaign (`Job.type = attack.run`). The follow-on jobs
+  `explain.run` and `harden.recommend` (from `POST /v1/findings/{id}/explain`
+  and `/harden`) and `verify.replay` (from `POST /v1/findings/{id}/verify`)
+  are separate jobs on the same task. There is no per-attack chain. Admission
+  is audit-first: the audit event is appended before any Run/Job row and
+  before `task.delay`, and a failed enqueue removes the rows and answers
+  `503 queue_unavailable`. The worker emits the spec 10.5 vocabulary
+  (`model.load`, `attack.execute.<id>`, `explain.execute`, `campaign.score`,
+  `harden.execute`, `verify.execute`, `report.render`, `job.complete`) as
+  `worker:<job.type>` with `requested_by` in the detail.
 - **MRI** (unchanged formula): `round(0.35·S_acc + 0.25·S_asr + 0.20·S_eps +
   0.10·S_conf + 0.10·S_expl)`, computed **only when all five subscores exist**,
   **weights never renormalized** over the available dimensions (spec 15.4: the
@@ -414,44 +527,121 @@ Slice 3: F006 findings · F007 reports/compare     ── the tools (WS3, WS6)
 Gate 0 cleared on 2026-09-08 with PR #18 (`4350d38`), so Slices 1 to 3 build
 against the frozen section 5 contracts.
 
+Where the slices stand at `bb43bd7` (2026-09-08, night):
+
+- Slice 1 is on `main`: F001 auth and F008 audit were inherited, F002 catalog
+  landed through #8, #9, #22 and waves 1 and 2 (bundled and uploaded targets,
+  `redsim ml build-assets`, `POST /v1/models`, `redsim.ml_model_validate`,
+  `register_bundled_model`).
+- Slice 2 is on `main`: F003 profiles and F004 runs through #22 and wave 2
+  (admission, `redsim.ml_campaign_run`, the sandbox child, the stage table,
+  the audit vocabulary), F005 evidence through #8 and wave 1 (SHAP,
+  explanation cache, artifact kinds). The web pages of #16 were aligned to
+  these routes in #22.
+- Slice 3 is on `main`: F006 findings (projection, dismissal, explain and
+  harden follow-ons, the verify loop with `MeasuredDelta`) and F007 reports
+  and compare (the six-section renderer, the report routes, `verify_delta`
+  and `side_by_side` compare).
+- The completion passes then ran as the four waves of
+  `docs/plans/09-gap-register-2026-09-08.md`: waves 1 and 2 are on `main`,
+  wave 3 lands 2026-09-09, wave 4 (end-to-end completion criteria and this
+  documentation refresh) is in progress.
+
 Demo-critical path (D8, spec 3.4): image path end to end → MRI scorecard →
 verify-after-harden → tabular path → ONNX upload → Fargate deploy. **M5a (the
 image UI slice) is the cut line for a demo.** Everything in Phase B waits behind
-Fargate, and B2 waits behind B1+.
+Fargate, and B2 waits behind B1+. Against that path at `bb43bd7`: the image
+and tabular paths, the scorecard, the verify loop and the ONNX upload exist in
+code and are covered by the unit suite. No campaign has been run on a deployed
+stack, and the Fargate services are not applied. The wave 3 `tests/e2e`
+harness and the wave 4 demo-path tests are how the path is exercised end to
+end before any live claim is made.
 
-## 8. Definition of done (canonical section 26)
+## 8. Definition of done (canonical section 26) and where it stands
 
-The demo runs live on ECS Fargate: a campaign started from `/models` against the
-bundled vehicle-imagery CNN and the bundled URL maliciousness classifier (Kaggle
-malicious-URLs dataset; UNSW-NB15 only if the fallback had to be used, and then
-the campaign says so) runs FGSM and PGD with the noise control and ε sweep;
-`/runs/[id]` shows the MRI scorecard with its subscores, per-family table, and
-robustness curve; `/findings/[id]` shows the three panes and a measured ΔMRI
-after Verify; every action is on the audit chain and `redsim audit verify`
-passes; access is gated by Keycloak with RLS; `pytest` and `vitest` pass.
+The target, unchanged: the demo runs live on ECS Fargate. A campaign started
+from `/models` against the bundled vehicle-imagery CNN and the bundled URL
+maliciousness classifier (Kaggle malicious-URLs dataset, UNSW-NB15 only if the
+fallback had to be used, and then the campaign says so) runs FGSM and PGD with
+the noise control and ε sweep. `/runs/[id]` shows the MRI scorecard with its
+subscores, per-family table and robustness curve. `/findings/[id]` shows the
+three panes and a measured ΔMRI after Verify. Every action is on the audit
+chain and `redsim audit verify` passes. Access is gated by Keycloak with RLS.
+`pytest` and `vitest` pass.
+
+Where it stands at `bb43bd7` (2026-09-08, night). This is a description of
+the tree, not a completion claim:
+
+- In code and covered by the unit suite: the bundled image and tabular targets
+  and the upload path, FGSM, PGD (surrogate transfer on tabular), HopSkipJump
+  and the noise control over the ε grid, the MRI with its five subscores and
+  the no-renormalize rule, the per-family table and curve, SHAP evidence, the
+  rules and the Pythia narrative under router and budget, the verify loop
+  with `MeasuredDelta`, the six-section reports, compare, the spec 10.5 audit
+  trail, RBAC on every mutating route, and RLS on `ml_campaigns`.
+- Local assets, built with `redsim ml build-assets` on 2026-09-09 and
+  gitignored, so a fresh clone has none until it runs the build. The numbers
+  below are illustrative local manifest values from one build, not results:
+  `url_trees` (scikit-learn HistGradientBoosting on the Kaggle malicious-URLs
+  set) clean accuracy 0.9087 on n=128224 with surrogate agreement 0.7891,
+  `vehicles_cnn` now `resnet18` (ImageNet init from the local torch hub
+  cache, fine-tune lr 3e-4 with cosine annealing, flip and crop augmentation,
+  best epoch chosen on a 10 percent validation slice held out of the training
+  split) clean accuracy 0.7687 on n=1621 `test_coarse` (the earlier
+  `small_cnn` build read 0.5151), and `cifar10_smallcnn` 0.6872, fixture only.
+  Quote such numbers from the manifest of the build in hand.
+- Checks at `bb43bd7`, run locally with the venv interpreter and the `ml`
+  extra: `pytest -q tests --ignore=tests/e2e` 1594 passed and 30 skipped,
+  ruff (the CI selection) and mypy clean. CI on `main` is red at the time of
+  writing and under investigation (section 4.1). No green CI run is claimed.
+- No campaign has been run on a deployed stack. The Fargate foundation (#19)
+  has no task definitions or services and nothing is applied.
+
+Excluded from this completion pass and listed as open, in the README as well:
+
+- Web UI wiring beyond the PR #22 contract alignment, and a Playwright browser
+  e2e.
+- Fargate, Terraform, Helm apply and compose operations.
+- Phase B: garak through Pythia, the endpoint connector, and interoperability
+  (B2).
+- The fallback datasets (UNSW-NB15, spambase) have not been built.
+- Every spec 26 criterion that needs a named human reviewer: 26.18 (the
+  upload sign-off by a security or data reviewer, so the upload dialog stays
+  disabled and says why), 26.25 to 26.27 (readiness checklists, approval
+  records and the separate "done" record). D006 and D007 stay open and no
+  owner is invented for them.
 
 ## 9. Status of the P0–P7 phase files
 
 The eight phase files `01`–`08` in this directory were written for v1 against
 the deleted standalone `redsim/` substrate and then rebased. Their state as of
-v2.1:
+v2.3:
 
-- `01`–`06` and `08` carry v2 bodies rebased onto the platform, and commit
-  `836b0e1` flipped every path and identifier in them to the `redsim` names
-  (`redsim/ml/`, `redsim ml …`, `REDSIM_*`, `redsim-*`, `redsim.*` tasks,
-  `@redsim/web`). Their bodies use the spec 5.3 names `CampaignConfig` and
-  `MRIRecord`, which P0 (PR #18, `4350d38`) froze on `main`, so those names
-  are current again. `01` closes with a dated Landed note (PR #18,
-  `4350d38`) and its body still reads as the pre-merge plan. Where a body disagrees with this plan, the canonical spec or
-  `specs/F00#`, those win.
+- `01` closes with a dated Landed note (PR #18, `4350d38`). Its section 8 is
+  the change protocol for everything P0 froze, and the divergences the tree
+  keeps are recorded under it in section 0 (v2.3) of this file.
+- `02`–`05` carry v2 bodies rebased onto the platform (commit `836b0e1`
+  flipped every path and identifier in them to the `redsim` names) and, since
+  v2.3, open with a dated "Landed status" block that lists what is on `main`
+  at `bb43bd7`, what lands with wave 3, and what is still open. The bodies
+  below those blocks still read as the pre-merge plans and were not
+  rewritten. Where a body names a file or task that the tree spelled
+  differently (`targets/image_vehicles.py`, `workers/tasks/attack.py`, the
+  six task names of `05` section 4), the Landed block and the tree win.
+- `06` and `08` carry v2 bodies. `06` (web UI) has the #16 pages and the #22
+  contract alignment on `main` and the rest open. `08` (infra) has the #19
+  Terraform foundation on `main` and nothing applied. Neither was refreshed
+  in this pass.
 - `07` keeps its v1 body under a reconciliation banner. It maps to spec
   section 27 / milestone B2 (section 6 above). Use it for the
   parallel-execution shape only, not for the literal paths, signatures or
   mechanisms.
-- `EXECUTION-CONTEXT.md` is current as of `836b0e1` (redsim names, B2, the
-  malicious-URLs dataset). Its Zscaler certificate path is one operator's
-  machine-local path. The portable options are in section 5 (Pythia access).
+- `09-gap-register-2026-09-08.md` is the spec-vs-tree register audited at
+  `a864da6`. Its rows are kept as found at audit time and a header paragraph
+  records the status after waves 1 to 3.
+- `EXECUTION-CONTEXT.md` was refreshed in v2.3: modules on `main`, the CLI
+  surface, the spec 20.3 environment variables, the local assets and the
+  portable TLS options replace the one-operator certificate path.
 
 Use the phase files for the parallel-execution shape, not for the literal
-contracts. Ask if you want any one of them fully rewritten onto the frozen
-section 5 contracts.
+contracts. The canonical spec, `specs/F00#` and the tree win over any body.

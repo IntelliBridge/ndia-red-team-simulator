@@ -19,6 +19,71 @@ Owner: Dev A (WS1). Wave: Slice 1 (foundation). Depends on: WS0 (M0 scaffold and
 migration `0010_ml_vertical`). Feeds: WS2 (attacks), WS3 (explain), WS4 (API and
 campaign service).
 
+## Landed status (2026-09-08, `main` at `bb43bd7`)
+
+The body below is the pre-merge plan and is kept as written. This block
+records what is on `main`, what lands with wave 3, and what is still open.
+Where the body and the tree disagree, the tree wins.
+
+On `main` (#8, #9, #22, completion waves 1 and 2):
+
+- Targets under `redsim/ml/targets/`: `bundled.py` (the manifest-backed image
+  targets `vehicles_cnn` and the fixture-only `cifar10_smallcnn`),
+  `tabular.py` (`url_trees`, legacy alias `url_classifier`, format
+  `sklearn_joblib` by default and `xgboost_json` behind `build-assets
+  --xgboost`, the build-time surrogate exposed for PGD), `artifact.py`
+  (uploaded ONNX and `state_dict` files, onnx2torch conversion with the
+  argmax agreement recorded as `onnx_torch_argmax_agreement`),
+  `unavailable.py` (`endpoint_stub`, `not_implemented`), `architectures.py`
+  (`small_cnn`, alias `smallcnn`, and `resnet18`) and `registry.py`
+  (`TARGETS`). The file names this body planned (`image_vehicles.py`,
+  `tabular_url.py`, `image_cifar10.py`, `endpoint.py`, `loaders.py`) were
+  not used.
+- Loaders read the build-assets manifest shape (weights from `file.path`,
+  kwargs from `architecture`, the evaluation slice from
+  `datasets[].splits[].file`, `surrogate.file`). `verify_manifest` runs at
+  load, and a missing, unbound or tampered slice raises `DatasetUnavailable`.
+- `redsim ml build-assets` (`redsim/cli/ml.py` over `redsim/ml/assets/`):
+  `--dataset`, `--only`, `--epochs`, `--out`, `--cache-dir`, `--seed`,
+  `--arch {small_cnn,resnet18}`, `--image-size`, `--max-train`,
+  `--max-eval`, `--xgboost` / `--no-xgboost`, and `--fixture`, which writes
+  `tests/ml/fixtures/cifar10_test_500.npz` and its sidecar entry from local
+  files only. Dataset caveats and `subject_centered` are written into the
+  manifest.
+- The ML sandbox (`redsim/ml/sandbox.py`, `redsim/ml/sandbox_worker.py`):
+  `MlSandboxConfig` from
+  `REDSIM_ML_SANDBOX_{TIMEOUT_S,CPU_SECONDS,MEMORY_MB,FILESIZE_MB,THREADS}`,
+  a per-job work directory under `REDSIM_ML_WORK_DIR`, `REDSIM_ML_ASSETS_DIR`
+  forwarded to the child, a typed validate envelope, and `SandboxTimeout` /
+  `SandboxKilled` distinct from `ModelLoadRefused`.
+- `redsim/services/ml_models.py`: `register_bundled_model(session,
+  project_id, bundled_id, actor)`, audit-first, with the per-project Target
+  id `<bundled_id>-<8 hex>`, `Target.value = "bundled:<id>"`, `409
+  already_registered` on a live duplicate and fixture-only ids refused.
+  Dataset binding, `audit_refused_admission` (the `success=False`
+  `model.register` row) and the audited soft delete live here too.
+- `redsim/api/v1/models.py`: `GET /v1/models` (bundled rows, uploads, the
+  LLM domain as a `not_implemented` row, `last_run_id`), `GET
+  /v1/models/{id}` with `campaign_history`, `POST /v1/models` for bundled
+  registration and upload (`411` without `Content-Length`, `413
+  model_too_large`, `415 pickle_refused` / `unsupported_model_format`, `422
+  architecture_required` / `architecture_not_allowlisted`, `501
+  not_implemented` for `source: "endpoint"`), and `DELETE /v1/models/{id}`. `POST /v1/targets`
+  refuses ML kinds with `400 use_models_route`.
+- `redsim.ml_model_validate` (`redsim/workers/tasks/ml_model.py`): the
+  parent recomputes the blob sha256 against the recorded digest, a refusal is
+  structured (blob deleted, `refused` status), the spec 5.11 detail is
+  written, and `model.validate` and `job.complete` audit rows are emitted.
+
+Wave 3, landing 2026-09-09: `redsim ml seed [--project] [--only]` registers
+every non-fixture manifest model through `register_bundled_model` and reports
+registered versus already present.
+
+Still open: the web `/models` list and launcher beyond the PR #22 contract
+alignment (P5), black-box endpoint execution (Phase B), dataset upload and
+export (B2), and the spec 26.18 upload sign-off, which needs a named security
+or data reviewer.
+
 ---
 
 ## 1. Objective

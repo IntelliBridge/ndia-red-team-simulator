@@ -4,6 +4,10 @@ Produced by a ten-area audit of `docs/superpowers/specs/2026-09-08-adversarial-m
 
 Execution order is four waves (libraries and contracts; worker, audit and API admission; CLI, config, seeding and e2e harness; end-to-end completion criteria and documentation). Each wave is one parallel-writer workflow with disjoint file ownership followed by a single assemble-and-push.
 
+## Status after waves 1 to 3 (2026-09-08, night)
+
+The rows below are kept as found at audit time against `a864da6` and are not edited. Wave 1 (`f8693c2..a99d9cc`, seven commits) and wave 2 (`055bdee..bb43bd7`, eight commits) are on `main`. They worked the WS1, WS2, WS3, WS4 and WS6 rows and the G-REDACT and G-OBS rows, and the master plan (`00-master-plan.md`, section 0 v2.3) records the six divergences the tree keeps (single job per campaign, the task names `redsim.ml_campaign_run` / `redsim.ml_model_validate`, the `report.<ext>` artifact kinds beside the legacy `ml.report_<ext>`, `harden.execute` `usage.{prompt,completion}`, the `worker:<job.type>` actor, a partial verify score as `inconclusive`). Wave 3 (landing 2026-09-09) covers G-CLI-ATTACK, G-ADAPTER, G-PLUGINS, G-DOCTOR, G-CONFIG, the `redsim ml seed` half of G-ASSET4 and the harness half of G-TESTS, and fixes six defects found while doing so (admission freezing `eps` into `attack_params`, `pgd` refused on tabular by domain, the audit chain `ts` on sqlite, the sandbox child reading a checkout's `.env`, `redsim audit verify --run` and the offline chain, `GET /v1/attacks` not loading plugins). Wave 4 is the end-to-end completion criteria and this documentation pass (G-DOCS). Per-row closure is not re-marked in the tables here: read the Landed status blocks at the top of `02`–`05` and master plan section 4.1 for what is on `main`, and treat an unrefreshed `status` cell as the audit-time reading. Local checks at `bb43bd7`: 1594 passed and 30 skipped, ruff (CI selection) and mypy clean. CI on `main` is red at the time of writing and under investigation.
+
 ## WS1 — catalog, ingest, upload, sandbox-loader
 
 | id | requirement | status | evidence | work | e2e test |
