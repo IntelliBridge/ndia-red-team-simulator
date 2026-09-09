@@ -12,7 +12,7 @@ _CYAN = "\033[36m"
 _YELLOW = "\033[33m"
 _RESET = "\033[0m"
 
-#: Env fallback for worker mode until the parser grows ``--worker-mode``
+#: Env fallback for worker mode beside the ``--worker-mode`` flag
 #: (``redsim/cli/main.py`` owns the ``doctor`` subparser). The worker image can
 #: set it once so ``redsim doctor`` there treats the ML checks as required.
 WORKER_MODE_ENV = "REDSIM_DOCTOR_WORKER_MODE"
