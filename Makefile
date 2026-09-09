@@ -83,6 +83,12 @@ require-install:
 # redis from it) and the variables above exported in the shell. Copy
 # .env.example to .env and `set -a; source .env; set +a` for a quick start.
 #
+# dev-web reads its own file: web/src/env.js validates at config load and
+# BETTER_AUTH_SECRET (32 characters or more) and BETTER_AUTH_URL are required,
+# so copy web/.env.example to web/.env before the first `make dev-web`. Without
+# it Next exits at startup naming the missing variable, which reads like a
+# broken machine and is not one.
+#
 # dev-worker is deliberately NOT on the default `dev` line: it needs Redis
 # (REDSIM_BROKER_URL, REDSIM_RESULT_BACKEND) and Postgres (REDSIM_DB_URL) up
 # front and the ml extra installed. Run it in a second terminal, or use
@@ -119,17 +125,12 @@ lint: lint-py lint-web
 lint-py: require-install
 	$(VENV)/bin/ruff check redsim tests
 
-# web/ has no ESLint config yet, and `next lint` with no config stops to ask
-# how to set one up, which would hang `make lint` and `make check` in a
-# terminal and fail them in CI. Skip with a visible line until the config
-# lands (eslint, eslint-config-next and web/.eslintrc.json or
-# web/eslint.config.mjs). Once a config exists this guard runs the real lint.
+# The flat config lives at the repo root (eslint.config.mjs), scoped to web/
+# with basePath, because that is where the ESLint binary is installed. Nothing
+# to guard for any more: this runs the real lint. Note that `make lint` runs
+# lint-py first, so run this target directly while the Python tree is red.
 lint-web: require-install
-	@if ls web/.eslintrc* web/eslint.config.* >/dev/null 2>&1; then \
-	  pnpm --filter $(WEB) lint; \
-	else \
-	  echo "skip: lint-web (web/ has no ESLint config yet, so next lint would prompt to create one)"; \
-	fi
+	pnpm run lint
 
 typecheck: typecheck-py typecheck-web
 

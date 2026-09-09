@@ -7,6 +7,7 @@
 // with the design-system Table + RunStatusBadge so styling matches the
 // dashboard. Semantic tokens only; table carries a caption + scope.
 
+import Link from "next/link";
 import useSWR from "swr";
 
 import {
@@ -46,9 +47,9 @@ export default function RunsPage() {
       {!isLoading && !error && runs.length === 0 && (
         <p className="text-muted-foreground">
            No runs yet. Head to{" "}
-           <a className="text-primary underline" href="/models">
+           <Link className="text-primary underline" href="/models">
              /models
-          </a>{" "}
+          </Link>{" "}
           to register a target and start one.
         </p>
       )}

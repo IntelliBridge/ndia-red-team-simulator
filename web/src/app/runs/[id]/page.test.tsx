@@ -209,7 +209,12 @@ describe("/runs/[id] campaign review", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Verify" }));
     await waitFor(() =>
-      expect(mocks.verifyFinding).toHaveBeenCalledWith("finding-1", "jpeg", {}, "r.1"),
+      expect(mocks.verifyFinding).toHaveBeenCalledWith(
+        "finding-1",
+        "jpeg",
+        {},
+        "r.1",
+      ),
     );
     expect(mocks.mutate).toHaveBeenCalled();
   });

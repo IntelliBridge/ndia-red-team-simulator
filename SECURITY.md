@@ -25,7 +25,7 @@ days. Coordinated disclosure is preferred.
 
 ### Auth and authorization
 
-- Browser sessions: NextAuth + Keycloak code flow. The redsim-signed
+- Browser sessions: Better Auth + Keycloak code flow. The redsim-signed
   `redsim_api_session` cookie (RS256) is the only token FastAPI trusts on the
   cookie path.
 - CLI / CI: bearer tokens only. Bearer wins when both are present.
@@ -231,8 +231,8 @@ module already runs its top-level code. Only run vetted, signed plugins with
   `REDSIM_WORKER_SIGNING_KEY` (shared HMAC, rotation overlap),
   `REDSIM_AUTH_PROFILES_KEY` (Fernet, encrypts auth-profile secrets at rest,
   kept for the Phase B endpoint connector), `PYTHIA_API_KEY`, the database
-  role passwords, `NEXTAUTH_SECRET` (NextAuth's own), and the S3 credentials
-  when an IAM role is not used.
+  role passwords, `BETTER_AUTH_SECRET` (Better Auth's own), and the S3
+  credentials when an IAM role is not used.
 - Auth-profile secrets are encrypted before any row or audit event is written,
   are never returned by any endpoint, and a missing key fails closed.
 - `KAGGLE_USERNAME` / `KAGGLE_KEY` are used by the one-off

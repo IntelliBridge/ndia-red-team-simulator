@@ -46,7 +46,12 @@ config:
   disableLlm: "1"
   # Web (Next.js) public config.
   webApiUrl: http://localhost:8000
-  nextAuthUrl: http://localhost:3300
+  # Browser-facing origin for Better Auth.
+  betterAuthUrl: http://localhost:3300
+  # The redsim-web realm client is public and uses PKCE, so there is no
+  # client secret to carry. If a confidential client is ever adopted, its
+  # secret belongs in config.secret, never here.
+  keycloakClientId: redsim-web
 
   # Secret-bearing values. Templated into a Secret, NEVER hardcoded into a
   # ConfigMap. Override these in production. existingSecret short-circuits
@@ -65,7 +70,18 @@ config:
     existingSecret: ""
     s3AccessKeyId: redsim
     s3SecretAccessKey: redsim-secret
-    nextAuthSecret: dev-secret-change-me
+    # At least 32 characters, which the previous 20-character placeholder
+    # was not. Rotating it invalidates every live browser session.
+    betterAuthSecret: dev-better-auth-secret-change-me-32chars
+    # Operator-supplied RS256 PKCS8 PEM. FastAPI verifies the
+    # redsim_api_session cookie against its public half, so the two sides
+    # must agree. Empty means the login completes and mints no cookies.
+    apiSessionPrivateKey: ""
+    # The matching SubjectPublicKeyInfo PEM, read by the api as
+    # REDSIM_API_SESSION_PUBLIC_KEY. The operator supplies both halves of one
+    # keypair. Empty means the api verifies no cookie the web tier mints and
+    # answers 401 to every browser call.
+    apiSessionPublicKey: ""
     # External Secrets Operator integration. When enabled, the chart renders
     # an ExternalSecret (templates/externalsecret.yaml) that materialises the
     # config Secret from an external store (Vault, AWS/GCP SM, etc.) instead
@@ -91,10 +107,18 @@ config:
           remoteRef:
             key: redsim/s3
             property: secret_access_key
-        - secretKey: NEXTAUTH_SECRET
+        - secretKey: BETTER_AUTH_SECRET
           remoteRef:
-            key: redsim/nextauth
+            key: redsim/better-auth
             property: secret
+        - secretKey: REDSIM_API_SESSION_PRIVATE_KEY
+          remoteRef:
+            key: redsim/api-session
+            property: private_key
+        - secretKey: REDSIM_API_SESSION_PUBLIC_KEY
+          remoteRef:
+            key: redsim/api-session
+            property: public_key
 
 # -- Sandbox isolation (gVisor) -----------------------------------------------
 # gVisor (`runsc`) sandboxes the worker pod, which executes untrusted plugin /
@@ -136,10 +160,37 @@ worker:
   readOnlyRootFilesystem: false
 
 web:
-  replicaCount: 2
+  # Pinned to 1, and not a capacity choice. Better Auth runs stateless with
+  # the in-memory adapter, so past the 8 hour cookie-cache window only
+  # the instance that handled the OAuth callback resolves the session.
+  # A second replica produces intermittent sign-outs with no error in any
+  # log. Scaling this up needs a shared session store first.
+  replicaCount: 1
+  # Recreate for the same reason: the default RollingUpdate surges a
+  # second pod on every release, which the replica pin exists to prevent.
+  strategy:
+    type: Recreate
   image:
     repository: redsim-web
     tag: dev
+  # Keycloak readiness gate. OIDC discovery runs once, in the generic-oauth
+  # plugin's init at module import, and a failed fetch is logged and the
+  # provider dropped rather than retried. A pod that starts before Keycloak
+  # answers therefore serves a login page with no working provider until
+  # something restarts it, while its own probes stay green. This init container
+  # is the chart's counterpart to the compose healthcheck and depends_on
+  # ordering. It polls the exact URL discovery will fetch and is skipped when
+  # config.oidcIssuer is empty, which is the supported no-realm dev mode.
+  keycloakGate:
+    enabled: true
+    # Any image carrying a POSIX shell and wget. busybox is the smallest.
+    image: busybox:1.37
+    # retries times intervalSeconds is the bound, 5 minutes by default.
+    retries: 60
+    intervalSeconds: 5
+    resources:
+      requests: { cpu: 10m, memory: 16Mi }
+      limits: { cpu: 100m, memory: 64Mi }
   service:
     type: ClusterIP
     port: 3000

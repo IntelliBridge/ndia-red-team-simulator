@@ -1,5 +1,5 @@
 import { createElement as h } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // NOTE: this workspace's vitest v4 transforms via oxc, and web/tsconfig.json
@@ -26,7 +26,7 @@ vi.mock("@/hooks/useRequireAuth", () => ({
 }));
 
 // auth helpers the page imports: getEmail (display) + logout (sign-out wiring).
-const logoutMock = vi.hoisted(() => vi.fn());
+const logoutMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const getEmailMock = vi.hoisted(() => vi.fn(() => "dev@redsim.local"));
 vi.mock("@/lib/auth", () => ({
   getEmail: getEmailMock,
@@ -59,6 +59,7 @@ beforeEach(() => {
   pushMock.mockReset();
   replaceMock.mockReset();
   logoutMock.mockReset();
+  logoutMock.mockResolvedValue(undefined);
   getEmailMock.mockReset();
   getEmailMock.mockReturnValue("dev@redsim.local");
   useRequireAuthMock.mockReturnValue(true);
@@ -172,13 +173,15 @@ describe("DashboardPage", () => {
     expect(screen.getByText("alice@redsim.local")).toBeTruthy();
   });
 
-  it("signs out: calls logout() then routes to /login", () => {
+  it("signs out: calls logout() then routes to /login", async () => {
     useSWRMock.mockReturnValue({ data: { runs: [], count: 0 }, error: undefined, isLoading: false });
 
     render(h(DashboardPage));
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     expect(logoutMock).toHaveBeenCalledTimes(1);
-    expect(pushMock).toHaveBeenCalledWith("/login");
+    // logout() ends the Better Auth and Keycloak sessions before it resolves,
+    // so the redirect lands a microtask later rather than on the click.
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/login"));
   });
 });

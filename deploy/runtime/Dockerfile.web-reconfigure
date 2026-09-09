@@ -6,4 +6,8 @@ ARG NEXT_PUBLIC_REDSIM_API_URL
 ENV NEXT_PUBLIC_REDSIM_API_URL=${NEXT_PUBLIC_REDSIM_API_URL}
 WORKDIR /app/web
 COPY web/src/ ./src/
-RUN ./node_modules/.bin/next build
+# next.config.mjs imports web/src/env.js, which requires the Better Auth
+# server names outside a build. They do not exist here, so the build takes the
+# documented escape hatch. It is set on the command rather than as an ENV so
+# the schema stays live when this image runs next start.
+RUN SKIP_ENV_VALIDATION=1 ./node_modules/.bin/next build

@@ -1,5 +1,14 @@
 import { beforeEach, vi } from "vitest";
 
+// src/env.js validates on first import, and src/lib/api.ts reaches nearly
+// every page test, so the two required server names need real-shaped values
+// here. SKIP_ENV_VALIDATION would work too and is the wrong tool: it returns
+// the raw environment, stripping every schema default out from under the
+// assertions these suites already make.
+process.env.BETTER_AUTH_SECRET ??=
+  "test-not-a-real-secret-change-me-0123456789";
+process.env.BETTER_AUTH_URL ??= "http://localhost:3000";
+
 // Node 25 ships an experimental global `localStorage` that shadows jsdom's and
 // throws without `--localstorage-file`. Replace it with a deterministic
 // in-memory Storage before every test so the browser-side auth client
