@@ -12,6 +12,9 @@ exec > >(tee -a /var/log/redsim-native-bootstrap.log) 2>&1
 
 HOST_DIR=/opt/redsim
 SRC=$HOST_DIR/src
+# Helpers and unit files come from this script's own directory, so a deploy that
+# moves the checkout while the bootstrap runs cannot break it.
+NATIVE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV=$HOST_DIR/venv
 KC_VERSION=26.7.3
 REGION=us-east-1
@@ -104,8 +107,8 @@ REDSIM_PUBLIC_ORIGIN=${ORIGIN}
 KC_CACHE=local
 EOF
 set -x
-install -m 0755 $SRC/deploy/ec2/native/redsim-run /usr/local/bin/redsim-run
-install -m 0755 $SRC/deploy/ec2/native/redsim-deploy /usr/local/bin/redsim-deploy
+install -m 0755 "$NATIVE_DIR/redsim-run" /usr/local/bin/redsim-run
+install -m 0755 "$NATIVE_DIR/redsim-deploy" /usr/local/bin/redsim-deploy
 
 echo "== python venv"
 [ -x $VENV/bin/python ] || python3.12 -m venv $VENV
@@ -130,7 +133,7 @@ mkdir -p /var/tmp/redsim-ml /var/tmp/redsim-cache && chown redsim:redsim /var/tm
 chown -R redsim:redsim $SRC $HOST_DIR/assets
 
 echo "== systemd units"
-for unit in $SRC/deploy/ec2/native/systemd/*.service; do
+for unit in "$NATIVE_DIR"/systemd/*.service; do
   install -m 0644 "$unit" /etc/systemd/system/
 done
 cat > /etc/caddy/Caddyfile <<EOF
