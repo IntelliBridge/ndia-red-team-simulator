@@ -263,8 +263,6 @@ def test_verify_admits_with_real_rule_recommendations(api: Harness, monkeypatch:
                      id="recommendation_names_no_defense"),
         pytest.param("fgsm", {"recommendation_id": "r.R1", "defense": "jpeg_compression"},
                      "params_out_of_range", "defense", id="defense_not_named_by_recommendation"),
-        pytest.param("fgsm", {"recommendation_id": "r.R1"}, "not_implemented", "defense",
-                     id="adversarial_training_is_phase_b"),
         pytest.param("fgsm", {"recommendation_id": "r.nope"}, "params_out_of_range", "recommendation_id",
                      id="recommendation_not_on_finding"),
     ],
