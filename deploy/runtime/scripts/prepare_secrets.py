@@ -32,6 +32,13 @@ def save_secret(name, value):
         'Tags': [{'Key': 'Application', 'Value': 'redsim'}]})['ARN']
 
 
+# Keys a previous run wrote under a name this one no longer uses. Dropped from
+# the merged secret so a rerun does not leave a task definition referencing
+# both a retired name and its replacement. Add a name here whenever one of the
+# service dicts below renames a key.
+RETIRED_SECRET_KEYS = ('NEXTAUTH_SECRET',)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--environment', default='demo')
@@ -77,6 +84,13 @@ def main():
         # Preserve derived connection URLs on reruns.
         current = aws('secretsmanager', 'get-secret-value', {'SecretId': f'{prefix}/{service}'})
         merged = json.loads(current['SecretString']) if current else {}
+        # A merge keeps every key a previous run wrote, including ones this one
+        # has renamed, and configure_connections.py derives the task
+        # definition's secret references from these keys. Without the drop, a
+        # rerun after the NextAuth to Better Auth rename left NEXTAUTH_SECRET
+        # on the web task definition next to its replacement.
+        for retired in RETIRED_SECRET_KEYS:
+            merged.pop(retired, None)
         merged.update(value)
         references[service] = save_secret(f'{prefix}/{service}', merged)
     group_id = f'ndia-red-team-{args.environment}'
