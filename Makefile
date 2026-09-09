@@ -161,6 +161,14 @@ up:
 down:
 	$(COMPOSE) down
 
+# Scripted spec-24 demo against a running `make up` stack (no UI): seed the
+# bundled models, run the image campaign, verify one finding, download the
+# report and verify every audit chain. Reads REDSIM_DEMO_API (default
+# http://localhost:8000) and REDSIM_DEMO_TOKEN (default the dev bearer token
+# for admin@example.com, so the stack must run with REDSIM_AUTH_MODE=dev).
+demo:
+	bash scripts/demo.sh
+
 # ---------------------------------------------------------------------
 # Docs (MkDocs Material)
 # ---------------------------------------------------------------------
@@ -188,5 +196,5 @@ docs-clean:
 	test test-cov \
 	lint lint-py lint-web \
 	typecheck typecheck-py typecheck-web \
-	check up down \
+	check up down demo \
 	docs-serve docs-build docs-build-strict docs-clean
