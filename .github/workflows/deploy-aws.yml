@@ -113,9 +113,12 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.name }},mode=max
 
   # Single-host EC2 runtime (2026-09-09): one SSM command on the instance
-  # named by the repository variable EC2_INSTANCE_ID runs
-  # /usr/local/bin/redsim-roll <sha>, which re-tags the compose file, pulls
-  # the four images of this commit from ECR and recreates the containers.
+  # named by the repository variable EC2_INSTANCE_ID installs this commit's
+  # deploy/ec2/redsim-render-env.sh and redsim-roll.sh as the host scripts,
+  # then runs redsim-roll <sha>: re-render the environment from Secrets
+  # Manager (so a new or rotated secret, Pythia included, lands on the next
+  # deploy), repair the compose env_file lists of an older bootstrap, pull
+  # the four images of this commit from ECR and recreate the containers.
   # Fast (about two minutes after the images exist) and reliable: the job
   # waits for the command's exit code, fails on non-zero, then requires
   # /health to answer 200 on the public hostname. No SSH keys in CI: the
@@ -126,6 +129,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - uses: actions/checkout@v7
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -137,10 +141,19 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # Ship the host scripts of this commit inline (base64, no quoting hazards),
+          # then roll. Both files are a few KB, far under the SSM parameter limit.
+          render_b64="$(base64 -w0 deploy/ec2/redsim-render-env.sh)"
+          roll_b64="$(base64 -w0 deploy/ec2/redsim-roll.sh)"
+          params="$(jq -cn --arg r "$render_b64" --arg l "$roll_b64" --arg sha "$SHA" '{commands: [
+            "echo \($r) | base64 -d | sudo tee /usr/local/bin/redsim-render-env >/dev/null && sudo chmod 0755 /usr/local/bin/redsim-render-env",
+            "echo \($l) | base64 -d | sudo tee /usr/local/bin/redsim-roll >/dev/null && sudo chmod 0755 /usr/local/bin/redsim-roll",
+            "sudo /usr/local/bin/redsim-roll \($sha)"
+          ]}')"
           cmd_id="$(aws ssm send-command --instance-ids "$INSTANCE_ID" \
             --document-name AWS-RunShellScript --timeout-seconds 900 \
             --comment "redsim roll $SHA" \
-            --parameters "commands=[\"sudo /usr/local/bin/redsim-roll $SHA\"]" \
+            --parameters "$params" \
             --query Command.CommandId --output text)"
           echo "SSM command $cmd_id"
           for _ in $(seq 1 90); do

@@ -31,25 +31,59 @@ unzip -q -o /tmp/awscliv2.zip -d /tmp && /tmp/aws/install --update
 mkdir -p /opt/redsim/env /opt/redsim/assets /opt/redsim/caddy
 cd /opt/redsim
 
-# --- secrets: fetched by the instance role, written as env files (mode 0600), never logged
-set +x
+# --- host scripts. The canonical copies are deploy/ec2/redsim-render-env.sh and
+# deploy/ec2/redsim-roll.sh; the deploy-ec2 job re-installs both from the commit it
+# deploys before calling redsim-roll, so the copies embedded here only have to carry
+# the first boot. Keep them identical to the repository files when editing.
+cat > /usr/local/bin/redsim-render-env <<'RENDER_ENV'
+#!/usr/bin/env bash
+# Render the redsim host environment from Secrets Manager (see deploy/ec2/redsim-render-env.sh).
+set -euo pipefail
+REGION="${AWS_REGION:-${REGION:-us-east-1}}"
+ENV_DIR="${REDSIM_ENV_DIR:-/opt/redsim/env}"
+mkdir -p "$ENV_DIR"
+umask 077
+render_secret() {  # <secret name> <target file>; JSON-quoted values so PEM blocks survive
+  aws secretsmanager get-secret-value --region "$REGION" --secret-id "$1" --query SecretString --output text \
+    | jq -r 'to_entries[] | "\(.key)=\(.value|@json)"' > "$2"
+  chmod 0600 "$2"
+}
 for svc in api scans default beat web identity; do
-  aws secretsmanager get-secret-value --region "$REGION" --secret-id "ndia-red-team/demo/${svc}" --query SecretString --output text \
-    | jq -r 'to_entries[] | "\(.key)=\(.value|@json)"' > "/opt/redsim/env/${svc}.secret.env"   # JSON-quoted: PEM values span lines
-  chmod 0600 "/opt/redsim/env/${svc}.secret.env"
+  render_secret "ndia-red-team/demo/${svc}" "${ENV_DIR}/${svc}.secret.env"
 done
 # Better Auth reads BETTER_AUTH_SECRET; the web secret carries it as NEXTAUTH_SECRET.
-grep '^NEXTAUTH_SECRET=' /opt/redsim/env/web.secret.env | sed 's/^NEXTAUTH_SECRET=/BETTER_AUTH_SECRET=/' >> /opt/redsim/env/web.secret.env
-# Pythia (optional): PYTHIA_API_KEY, PYTHIA_BASE_URL, PYTHIA_PERSONA, REDSIM_ML_LLM_MODEL in one
-# secret. Present: the workers get it and the narrative is on. Absent: rules only.
-DISABLE_LLM=1
-if aws secretsmanager get-secret-value --region "$REGION" --secret-id "ndia-red-team/demo/pythia" --query SecretString --output text 2>/dev/null \
-    | jq -r 'to_entries[] | "\(.key)=\(.value|@json)"' > /opt/redsim/env/pythia.env && [ -s /opt/redsim/env/pythia.env ]; then
-  DISABLE_LLM=0
-else
-  : > /opt/redsim/env/pythia.env
+if ! grep -q '^BETTER_AUTH_SECRET=' "${ENV_DIR}/web.secret.env"; then
+  grep '^NEXTAUTH_SECRET=' "${ENV_DIR}/web.secret.env" | sed 's/^NEXTAUTH_SECRET=/BETTER_AUTH_SECRET=/' >> "${ENV_DIR}/web.secret.env"
 fi
-chmod 0600 /opt/redsim/env/pythia.env
+# Pythia (optional). Present: api and workers get it, LLM probes are on, the gateway
+# host joins the allowlist. Absent: REDSIM_DISABLE_LLM=1 and rules-only narratives.
+DISABLE_LLM=1
+PYTHIA_HOST=""
+if render_secret "ndia-red-team/demo/pythia" "${ENV_DIR}/pythia.env" 2>/dev/null && [ -s "${ENV_DIR}/pythia.env" ]; then
+  DISABLE_LLM=0
+  PYTHIA_HOST="$(grep '^PYTHIA_BASE_URL=' "${ENV_DIR}/pythia.env" | cut -d= -f2- | tr -d '"' \
+    | sed -E 's#^[A-Za-z]+://##; s#[/:].*$##')"
+else
+  : > "${ENV_DIR}/pythia.env"
+  chmod 0600 "${ENV_DIR}/pythia.env"
+fi
+ALLOWLIST="127.0.0.1,localhost,host.docker.internal"
+if [ -n "$PYTHIA_HOST" ]; then
+  ALLOWLIST="${ALLOWLIST},${PYTHIA_HOST}"
+fi
+cat > "${ENV_DIR}/llm.env" <<EOT
+REDSIM_DISABLE_LLM=${DISABLE_LLM}
+REDSIM_TARGET_ALLOWLIST=${ALLOWLIST}
+EOT
+chmod 0600 "${ENV_DIR}/llm.env"
+echo "redsim-render-env: llm_disabled=${DISABLE_LLM} pythia_host=${PYTHIA_HOST:-none} allowlist=${ALLOWLIST}"
+RENDER_ENV
+chmod 0755 /usr/local/bin/redsim-render-env
+
+# --- secrets: fetched by the instance role, written as env files (mode 0600), never logged.
+# Also writes env/pythia.env and env/llm.env (REDSIM_DISABLE_LLM, REDSIM_TARGET_ALLOWLIST).
+set +x
+REGION="$REGION" /usr/local/bin/redsim-render-env
 set -x
 
 cat > /opt/redsim/env/common.env <<EOF
@@ -60,7 +94,6 @@ REDSIM_S3_BUCKET=${BUCKET}
 REDSIM_S3_REGION=${REGION}
 AWS_DEFAULT_REGION=${REGION}
 AWS_REGION=${REGION}
-REDSIM_DISABLE_LLM=${DISABLE_LLM}
 REDSIM_WORM_EXPORT=0
 REDSIM_WEB_ORIGIN=${ORIGIN}
 REDSIM_CORS_ORIGINS=${ORIGIN}
@@ -151,7 +184,7 @@ services:
     image: ${REGISTRY}/api:${IMAGE_TAG}
     restart: unless-stopped
     command: ["uvicorn", "redsim.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
-    env_file: [env/common.env, env/api.secret.env]
+    env_file: [env/common.env, env/llm.env, env/pythia.env, env/api.secret.env]
     volumes: ["./assets:/app/assets:ro"]
     depends_on:
       identity: { condition: service_healthy }
@@ -166,19 +199,19 @@ services:
     image: ${REGISTRY}/worker:${IMAGE_TAG}
     restart: unless-stopped
     command: ["celery", "-A", "redsim.workers.celery_app", "worker", "-Q", "scans", "--concurrency=1", "--loglevel=info"]
-    env_file: [env/common.env, env/pythia.env, env/scans.secret.env]
+    env_file: [env/common.env, env/llm.env, env/pythia.env, env/scans.secret.env]
     volumes: ["./assets:/app/assets:ro"]
   default:
     image: ${REGISTRY}/worker:${IMAGE_TAG}
     restart: unless-stopped
     command: ["celery", "-A", "redsim.workers.celery_app", "worker", "-Q", "default", "--concurrency=1", "--loglevel=info"]
-    env_file: [env/common.env, env/pythia.env, env/default.secret.env]
+    env_file: [env/common.env, env/llm.env, env/pythia.env, env/default.secret.env]
     volumes: ["./assets:/app/assets:ro"]
   beat:
     image: ${REGISTRY}/worker:${IMAGE_TAG}
     restart: unless-stopped
     command: ["celery", "-A", "redsim.workers.celery_app", "beat", "--schedule=/tmp/celerybeat-schedule", "--loglevel=info"]
-    env_file: [env/common.env, env/beat.secret.env]
+    env_file: [env/common.env, env/llm.env, env/beat.secret.env]
 volumes:
   caddy-data: {}
   caddy-config: {}
@@ -211,19 +244,28 @@ EOF
 systemctl daemon-reload && systemctl enable --now redsim-ecr-login.timer
 
 # A release roll on this host: /usr/local/bin/redsim-roll <image-tag>
-cat > /usr/local/bin/redsim-roll <<'EOF'
+# (canonical copy: deploy/ec2/redsim-roll.sh, re-installed by every deploy-ec2 run)
+cat > /usr/local/bin/redsim-roll <<'ROLL'
 #!/usr/bin/env bash
 # Roll every redsim container to the ECR images of one tag (a main commit sha or "latest").
 set -euo pipefail
 TAG="${1:?image tag}"
 cd /opt/redsim
 sed -i -E "s#(ndia-red-team/(api|web|worker|identity)):[A-Za-z0-9._-]+#\1:${TAG}#g" docker-compose.yml
+/usr/local/bin/redsim-render-env
+# Idempotent env_file repairs for compose files written by an older bootstrap.
+if ! grep -q 'env/llm.env' docker-compose.yml; then
+  sed -i -E 's#env_file: \[env/common\.env, env/api\.secret\.env\]#env_file: [env/common.env, env/llm.env, env/pythia.env, env/api.secret.env]#' docker-compose.yml
+  sed -i -E 's#env_file: \[env/common\.env, env/pythia\.env, env/(scans|default)\.secret\.env\]#env_file: [env/common.env, env/llm.env, env/pythia.env, env/\1.secret.env]#' docker-compose.yml
+  sed -i -E 's#env_file: \[env/common\.env, env/beat\.secret\.env\]#env_file: [env/common.env, env/llm.env, env/beat.secret.env]#' docker-compose.yml
+fi
+sed -i '/^REDSIM_DISABLE_LLM=/d' env/common.env
 /usr/local/bin/redsim-ecr-login
 docker compose pull
 docker compose up -d --remove-orphans
 docker compose ps
-EOF
-chmod +x /usr/local/bin/redsim-roll
+ROLL
+chmod 0755 /usr/local/bin/redsim-roll
 
 docker compose pull
 docker compose up -d
