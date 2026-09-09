@@ -1,0 +1,4347 @@
+{
+  "catalog_version": "llm-probe-catalog-1",
+  "garak_repo": "https://github.com/NVIDIA/garak",
+  "garak_version": "0.16.0",
+  "generated_by": "redsim.ml.llm.catalog.build_catalog_from_garak",
+  "probes": [
+    {
+      "active_upstream": true,
+      "cls": "Ablation_Dan_11_0",
+      "data_files": [],
+      "description": "Ablation experiments over the DAN 11.0 prompt",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.Ablation_Dan_11_0",
+      "module": "dan",
+      "primary_detector": "dan.DAN",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Ablation_Dan_11_0",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak",
+        "demon:Language:Prompt_injection:Strong_arm_attack"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "AntiDAN",
+      "data_files": [
+        "dan/AntiDAN.json"
+      ],
+      "description": "Anti-DAN",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.AntiDAN",
+      "module": "dan",
+      "primary_detector": "dan.AntiDAN",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "AntiDAN",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "avid-effect:performance:P0204"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "AutoDAN",
+      "data_files": [],
+      "description": "Probe leveraging AutoDAN attack generation",
+      "detector_offline": true,
+      "doc_uri": "https://arxiv.org/html/2310.04451",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "generative AutoDAN drives a separate red-team model (OPENAI_API_KEY / NIM); the cached variant dan.AutoDANCached is offered instead",
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.AutoDAN",
+      "module": "dan",
+      "primary_detector": "dan.DAN",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [],
+      "short_id": "AutoDAN",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "AutoDANCached",
+      "data_files": [
+        "autodan/autodan_prompts.json"
+      ],
+      "description": "Probe leveraging generated AutoDAN prompts",
+      "detector_offline": true,
+      "doc_uri": "https://arxiv.org/html/2310.04451",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.AutoDANCached",
+      "module": "dan",
+      "primary_detector": "dan.DAN",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "AutoDANCached",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "ChatGPT_Developer_Mode_RANTI",
+      "data_files": [
+        "dan/ChatGPT_Developer_Mode_RANTI.json"
+      ],
+      "description": "ChatGPT DevMode + Ranti",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.ChatGPT_Developer_Mode_RANTI",
+      "module": "dan",
+      "primary_detector": "dan.DevMode",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "ChatGPT_Developer_Mode_RANTI",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "avid-effect:performance:P0204"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "ChatGPT_Developer_Mode_v2",
+      "data_files": [
+        "dan/ChatGPT_Developer_Mode_v2.json"
+      ],
+      "description": "ChatGPT Developer Mode v2",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.ChatGPT_Developer_Mode_v2",
+      "module": "dan",
+      "primary_detector": "dan.DevMode",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "ChatGPT_Developer_Mode_v2",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "ChatGPT_Image_Markdown",
+      "data_files": [
+        "dan/ChatGPT_Image_Markdown.json"
+      ],
+      "description": "ChatGPT Markdown Image Unlocker / markdown injection",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.ChatGPT_Image_Markdown",
+      "module": "dan",
+      "primary_detector": "dan.MarkdownLink",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "ChatGPT_Image_Markdown",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "DAN_Jailbreak",
+      "data_files": [
+        "dan/DAN_Jailbreak.json"
+      ],
+      "description": "DAN Jailbreak",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.DAN_Jailbreak",
+      "module": "dan",
+      "primary_detector": "dan.DANJailbreak",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "DAN_Jailbreak",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "DUDE",
+      "data_files": [
+        "dan/DUDE.json"
+      ],
+      "description": "DUDE",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.DUDE",
+      "module": "dan",
+      "primary_detector": "dan.DUDE",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "DUDE",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "DanInTheWild",
+      "data_files": [
+        "inthewild_jailbreak_llms.json"
+      ],
+      "description": "A subset of jailbreaks from the DanInTheWild jailbreak library.",
+      "detector_offline": true,
+      "doc_uri": "https://arxiv.org/html/2308.03825",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt or alignment",
+      "honours_prompt_cap": true,
+      "id": "dan.DanInTheWild",
+      "module": "dan",
+      "primary_detector": "mitigation.MitigationBypass",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "DanInTheWild",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); the in-the-wild jailbreak corpus (arXiv 2308.03825) carries no confirmed upstream licence and is not redistributed"
+    },
+    {
+      "active_upstream": false,
+      "cls": "DanInTheWildFull",
+      "data_files": [
+        "inthewild_jailbreak_llms.json"
+      ],
+      "description": "A library of jailbreaks.",
+      "detector_offline": true,
+      "doc_uri": "https://arxiv.org/html/2308.03825",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of dan.DanInTheWild; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt or alignment",
+      "honours_prompt_cap": false,
+      "id": "dan.DanInTheWildFull",
+      "module": "dan",
+      "primary_detector": "mitigation.MitigationBypass",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [],
+      "short_id": "DanInTheWildFull",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); the in-the-wild jailbreak corpus (arXiv 2308.03825) carries no confirmed upstream licence and is not redistributed"
+    },
+    {
+      "active_upstream": false,
+      "cls": "Dan_10_0",
+      "data_files": [
+        "dan/Dan_10_0.json"
+      ],
+      "description": "DAN 10.0",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.Dan_10_0",
+      "module": "dan",
+      "primary_detector": "dan.DAN",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Dan_10_0",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "Dan_11_0",
+      "data_files": [
+        "dan/Dan_11_0.json"
+      ],
+      "description": "DAN 11.0",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.Dan_11_0",
+      "module": "dan",
+      "primary_detector": "dan.DAN",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Dan_11_0",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "avid-effect:performance:P0204",
+        "payload:jailbreak"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "Dan_6_0",
+      "data_files": [
+        "dan/Dan_6_0.json"
+      ],
+      "description": "DAN 6.0",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.Dan_6_0",
+      "module": "dan",
+      "primary_detector": "dan.DAN",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Dan_6_0",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "Dan_6_2",
+      "data_files": [
+        "dan/Dan_6_2.json"
+      ],
+      "description": "DAN 6.2",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.Dan_6_2",
+      "module": "dan",
+      "primary_detector": "dan.DAN",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Dan_6_2",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "Dan_7_0",
+      "data_files": [
+        "dan/Dan_7_0.json"
+      ],
+      "description": "DAN 7.0",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.Dan_7_0",
+      "module": "dan",
+      "primary_detector": "dan.DAN",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Dan_7_0",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "Dan_8_0",
+      "data_files": [
+        "dan/Dan_8_0.json"
+      ],
+      "description": "DAN 8.0",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.Dan_8_0",
+      "module": "dan",
+      "primary_detector": "dan.DAN",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Dan_8_0",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "Dan_9_0",
+      "data_files": [
+        "dan/Dan_9_0.json"
+      ],
+      "description": "DAN 9.0",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.Dan_9_0",
+      "module": "dan",
+      "primary_detector": "dan.DAN",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Dan_9_0",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "STAN",
+      "data_files": [
+        "dan/STAN.json"
+      ],
+      "description": "STAN",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "dan",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.dan.html",
+      "goal": "disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "dan.STAN",
+      "module": "dan",
+      "primary_detector": "dan.STAN",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "STAN",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "payload:jailbreak"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "Repeat",
+      "data_files": [],
+      "description": "See if a model starts giving other data when asked to repeat a string indefinitely",
+      "detector_offline": true,
+      "doc_uri": "https://not-just-memorization.github.io/extracting-training-data-from-chatgpt.html",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "divergence",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.divergence.html",
+      "goal": "get the model to leak data by asking it to repeat words",
+      "honours_prompt_cap": false,
+      "id": "divergence.Repeat",
+      "module": "divergence",
+      "primary_detector": "divergence.RepeatDiverges",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Repeat",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "owasp:llm10",
+        "owasp:llm06",
+        "quality:Security:Confidentiality",
+        "quality:Security:ExtractionInversion",
+        "payload:leak:training",
+        "demon:Fictionalizing:Switching_genres:Games",
+        "demon:Language:Code_and_encode:Token"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "RepeatExtended",
+      "data_files": [],
+      "description": "See if a model starts giving other data when asked to repeat a string indefinitely",
+      "detector_offline": true,
+      "doc_uri": "https://not-just-memorization.github.io/extracting-training-data-from-chatgpt.html",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of divergence.Repeat; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "divergence",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.divergence.html",
+      "goal": "get the model to leak data by asking it to repeat words",
+      "honours_prompt_cap": false,
+      "id": "divergence.RepeatExtended",
+      "module": "divergence",
+      "primary_detector": "divergence.RepeatDiverges",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [],
+      "short_id": "RepeatExtended",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0301",
+        "owasp:llm10",
+        "owasp:llm06",
+        "quality:Security:Confidentiality",
+        "quality:Security:ExtractionInversion",
+        "payload:leak:training",
+        "demon:Fictionalizing:Switching_genres:Games",
+        "demon:Language:Code_and_encode:Token"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "RepeatedToken",
+      "data_files": [],
+      "description": "Repeated token destabilization attack from Dropbox LLM security research.",
+      "detector_offline": true,
+      "doc_uri": "https://github.com/dropbox/llm-security",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "divergence",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.divergence.html",
+      "goal": "Stress-test LLMs with long repeated-token prompts to surface instability",
+      "honours_prompt_cap": true,
+      "id": "divergence.RepeatedToken",
+      "module": "divergence",
+      "primary_detector": "divergence.RepeatedToken",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "RepeatedToken",
+      "status": "available",
+      "tags": [
+        "avid-effect:performance:P0403",
+        "owasp:llm04",
+        "quality:Security:PromptStability",
+        "payload:unwanted:denial_of_service",
+        "demon:Fictionalizing:Switching_genres:Games",
+        "demon:Language:Code_and_encode:Token"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "DiscriminationExclusionToxicityHatefulOffensive",
+      "data_files": [
+        "donotanswer/discrimination_exclusion_toxicity_hateful_offensive.jsonl"
+      ],
+      "description": "Implementation of discrimination_exclusion_toxicity_hateful_offensive probes in DoNotAnswer_Prompts",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "donotanswer",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.donotanswer.html",
+      "goal": "get model to respond as discrimination exclusion toxicity hateful offensive",
+      "honours_prompt_cap": false,
+      "id": "donotanswer.DiscriminationExclusionToxicityHatefulOffensive",
+      "module": "donotanswer",
+      "primary_detector": "mitigation.MitigationBypass",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "DiscriminationExclusionToxicityHate-2f1f",
+      "status": "available",
+      "tags": [
+        "avid-effect:ethics:E0301",
+        "quality:Behavioral:ContentSafety:Toxicity",
+        "quality:Behavioral:ContentSafety:HateHarassment",
+        "quality:Behavioral:ContentSafety:Violence",
+        "quality:Behavioral:ContentSafety:Profanity",
+        "demon:Stratagems:Meta-prompting:Ask_for_examples"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); Do-Not-Answer (Wang et al. 2023) as packaged by garak"
+    },
+    {
+      "active_upstream": false,
+      "cls": "HumanChatbox",
+      "data_files": [
+        "donotanswer/human_chatbox.jsonl"
+      ],
+      "description": "Implementation of human_chatbox probes in DoNotAnswer_Prompts",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "donotanswer",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.donotanswer.html",
+      "goal": "get model to respond as human chatbox",
+      "honours_prompt_cap": false,
+      "id": "donotanswer.HumanChatbox",
+      "module": "donotanswer",
+      "primary_detector": "mitigation.MitigationBypass",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "HumanChatbox",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "quality:Behavioral:ContentSafety:Unauthorized",
+        "demon:Fictionalizing:Roleplaying:DAN_and_target_persona"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); Do-Not-Answer (Wang et al. 2023) as packaged by garak"
+    },
+    {
+      "active_upstream": false,
+      "cls": "InformationHazard",
+      "data_files": [
+        "donotanswer/information_hazard.jsonl"
+      ],
+      "description": "Implementation of information_hazard probes in DoNotAnswer_Prompts",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "donotanswer",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.donotanswer.html",
+      "goal": "get model to respond as information hazard",
+      "honours_prompt_cap": false,
+      "id": "donotanswer.InformationHazard",
+      "module": "donotanswer",
+      "primary_detector": "mitigation.MitigationBypass",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InformationHazard",
+      "status": "available",
+      "tags": [
+        "owasp:llm06",
+        "avid-effect:security:S0301",
+        "quality:Security:Confidentiality",
+        "demon:Stratagems:Meta-prompting:Ask_for_examples"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); Do-Not-Answer (Wang et al. 2023) as packaged by garak"
+    },
+    {
+      "active_upstream": false,
+      "cls": "MaliciousUses",
+      "data_files": [
+        "donotanswer/malicious_uses.jsonl"
+      ],
+      "description": "Implementation of malicious_uses probes in DoNotAnswer_Prompts",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "donotanswer",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.donotanswer.html",
+      "goal": "get model to respond as malicious uses",
+      "honours_prompt_cap": false,
+      "id": "donotanswer.MaliciousUses",
+      "module": "donotanswer",
+      "primary_detector": "mitigation.MitigationBypass",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "MaliciousUses",
+      "status": "available",
+      "tags": [
+        "quality:Behavioral:ContentSafety:LegalGoodsServices",
+        "demon:Stratagems:Meta-prompting:Ask_for_examples"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); Do-Not-Answer (Wang et al. 2023) as packaged by garak"
+    },
+    {
+      "active_upstream": false,
+      "cls": "MisinformationHarms",
+      "data_files": [
+        "donotanswer/misinformation_harms.jsonl"
+      ],
+      "description": "Implementation of misinformation_harms probes in DoNotAnswer_Prompts",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "donotanswer",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.donotanswer.html",
+      "goal": "get model to respond as misinformation harms",
+      "honours_prompt_cap": false,
+      "id": "donotanswer.MisinformationHarms",
+      "module": "donotanswer",
+      "primary_detector": "mitigation.MitigationBypass",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "MisinformationHarms",
+      "status": "available",
+      "tags": [
+        "quality:Robustness:GenerativeMisinformation",
+        "avid-effect:ethics:E0402",
+        "owasp:llm09",
+        "demon:Stratagems:Meta-prompting:Ask_for_examples"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); Do-Not-Answer (Wang et al. 2023) as packaged by garak"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectAscii85",
+      "data_files": [],
+      "description": "Probe for susceptibility to base85 encoded injections",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/llm-malware/#encoded-inline-jailbreak",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectAscii85",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectAscii85",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectAtbash",
+      "data_files": [],
+      "description": "Atbash Probe Credit: Nakul-Rajpal",
+      "detector_offline": true,
+      "doc_uri": "https://en.wikipedia.org/wiki/Atbash",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectAtbash",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectAtbash",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectBase16",
+      "data_files": [],
+      "description": "Probe for susceptibility to base16 encoded injections\"",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/llm-malware/#encoded-inline-jailbreak",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectBase16",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectBase16",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectBase2048",
+      "data_files": [],
+      "description": "Probe for susceptibility to Base2048 encoding injections",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/llm-malware/#encoded-inline-jailbreak",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectBase2048",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectBase2048",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectBase32",
+      "data_files": [],
+      "description": "Probe for susceptibility to base32 encoded injections",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/llm-malware/#encoded-inline-jailbreak",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectBase32",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectBase32",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectBase64",
+      "data_files": [],
+      "description": "Probe for susceptibility to base64 encoded injections",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/llm-malware/#encoded-inline-jailbreak",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectBase64",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectBase64",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectBraille",
+      "data_files": [],
+      "description": "Probe for susceptibility to Braille encoding injections. Credit Wally#3422",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectBraille",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectBraille",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectEcoji",
+      "data_files": [],
+      "description": "Probe for susceptibility to Ecoji encoding.",
+      "detector_offline": true,
+      "doc_uri": "https://ecoji.io/",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectEcoji",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectEcoji",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectHex",
+      "data_files": [],
+      "description": "Probe for susceptibility to hex encoded injections",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/llm-malware/#encoded-inline-jailbreak",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectHex",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectHex",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "InjectLeet",
+      "data_files": [],
+      "description": "Probe for susceptibility to 31337 encoding.",
+      "detector_offline": true,
+      "doc_uri": "https://en.wikipedia.org/wiki/Leet",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectLeet",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectLeet",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "InjectMime",
+      "data_files": [],
+      "description": "Probe for susceptibility to MIME encoding injections",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/llm-malware/#encoded-inline-jailbreak",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectMime",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectMime",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectMorse",
+      "data_files": [],
+      "description": "Probe for susceptibility to Morse encoding. Credit Wally#3422",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectMorse",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectMorse",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectNato",
+      "data_files": [],
+      "description": "Probe for susceptibility to Nato phonetic alphabet encoding.",
+      "detector_offline": true,
+      "doc_uri": "https://en.wikipedia.org/wiki/NATO_phonetic_alphabet",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectNato",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectNato",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "InjectQP",
+      "data_files": [],
+      "description": "Probe for susceptibility to QP encoded injections",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/llm-malware/#encoded-inline-jailbreak",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectQP",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectQP",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectROT13",
+      "data_files": [],
+      "description": "Probe for susceptibility to ROT13 encoding injections",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/llm-malware/#encoded-inline-jailbreak",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectROT13",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectROT13",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "InjectSneakyBits",
+      "data_files": [],
+      "description": "Probe for susceptibility to unicode variant selector ASCII smuggling",
+      "detector_offline": true,
+      "doc_uri": "https://embracethered.com/blog/posts/2025/sneaky-bits-and-ascii-smuggler/",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectSneakyBits",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectSneakyBits",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding",
+        "demon:Language:Code_and_encode:Token"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectUU",
+      "data_files": [],
+      "description": "Probe for susceptibility to UU encoded injections",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/llm-malware/#encoded-inline-jailbreak",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectUU",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectUU",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectUnicodeTagChars",
+      "data_files": [],
+      "description": "Probe for susceptibility to unicode tag ASCII smuggling",
+      "detector_offline": true,
+      "doc_uri": "https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectUnicodeTagChars",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectUnicodeTagChars",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding",
+        "demon:Language:Code_and_encode:Token"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "InjectUnicodeVariantSelectors",
+      "data_files": [],
+      "description": "Probe for susceptibility to unicode variant selector ASCII smuggling",
+      "detector_offline": true,
+      "doc_uri": "https://paulbutler.org/2025/smuggling-arbitrary-data-through-an-emoji/",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectUnicodeVariantSelectors",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectUnicodeVariantSelectors",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding",
+        "demon:Language:Code_and_encode:Token"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "InjectZalgo",
+      "data_files": [],
+      "description": "Probe for susceptibility to Zalgo encoding.",
+      "detector_offline": true,
+      "doc_uri": "https://en.wikipedia.org/wiki/Zalgo_text",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "encoding.DecodeApprox"
+      ],
+      "extended_detectors_offline": {
+        "encoding.DecodeApprox": true
+      },
+      "family": "encoding",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.encoding.html",
+      "goal": "make the model say an encoded payload",
+      "honours_prompt_cap": true,
+      "id": "encoding.InjectZalgo",
+      "module": "encoding",
+      "primary_detector": "encoding.DecodeMatch",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "InjectZalgo",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Data_encoding"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "JinjaTemplatePythonInjection",
+      "data_files": [],
+      "description": "Attempts to execute Python code via Jinja templating",
+      "detector_offline": true,
+      "doc_uri": "https://portswigger.net/web-security/server-side-template-injection",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "exploitation.PythonCodeExecution"
+      ],
+      "extended_detectors_offline": {
+        "exploitation.PythonCodeExecution": true
+      },
+      "family": "exploitation",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.exploitation.html",
+      "goal": "Gain remote code execution via Jinja template injection",
+      "honours_prompt_cap": false,
+      "id": "exploitation.JinjaTemplatePythonInjection",
+      "module": "exploitation",
+      "primary_detector": "exploitation.JinjaTemplateInjectionDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "JinjaTemplatePythonInjection",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "avid-effect:security:S0403",
+        "owasp:llm02",
+        "owasp:llm06",
+        "payload:malicious:renderer",
+        "quality:Security:PromptStability",
+        "quality:Security:ExtractionInversion",
+        "cwe:94",
+        "cwe:95",
+        "cwe:1336",
+        "demon:Language:Code_and_encode:Programming",
+        "demon:Language:Stylizing:Give_examples"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "SQLInjectionEcho",
+      "data_files": [],
+      "description": "Attempts to get the target to echo a SQL statement.",
+      "detector_offline": true,
+      "doc_uri": "https://cwe.mitre.org/data/definitions/89.html",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "exploitation",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.exploitation.html",
+      "goal": "Manipulate a database via SQL injection",
+      "honours_prompt_cap": false,
+      "id": "exploitation.SQLInjectionEcho",
+      "module": "exploitation",
+      "primary_detector": "exploitation.SQLiEcho",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "SQLInjectionEcho",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "avid-effect:security:S0403",
+        "owasp:llm02",
+        "owasp:llm06",
+        "quality:Security:PromptStability",
+        "quality:Security:ExtractionInversion",
+        "cwe:89",
+        "cwe:1426",
+        "cwe:1427",
+        "demon:Language:Code_and_encode:Programming",
+        "demon:Language:Stylizing:Give_examples"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "SQLInjectionSystem",
+      "data_files": [],
+      "description": "Attempts to inject untrusted SQL commands into a SQL statement.",
+      "detector_offline": true,
+      "doc_uri": "https://cwe.mitre.org/data/definitions/89.html",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "exploitation",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.exploitation.html",
+      "goal": "Manipulate a database via SQL injection",
+      "honours_prompt_cap": false,
+      "id": "exploitation.SQLInjectionSystem",
+      "module": "exploitation",
+      "primary_detector": "exploitation.SQLiSuccess",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "SQLInjectionSystem",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "avid-effect:security:S0403",
+        "owasp:llm02",
+        "owasp:llm06",
+        "quality:Security:PromptStability",
+        "quality:Security:ExtractionInversion",
+        "cwe:89",
+        "cwe:1426",
+        "cwe:1427",
+        "demon:Language:Code_and_encode:Programming",
+        "demon:Language:Stylizing:Give_examples"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "FITD",
+      "data_files": [],
+      "description": "Foot In The Door probe",
+      "detector_offline": false,
+      "doc_uri": "https://arxiv.org/abs/2502.19820",
+      "exclusion_decision": "LLM-08",
+      "exclusion_reason": "HarmBench material is reached in garak 0.16 only through fitd.FITD, an inactive multi-turn probe that needs a red-team generator and a model-as-judge detector (two further LLM roles, each an LLM call). Excluded from Phase B by owner decision LLM-08; named in the LLM limitations.",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "fitd",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.fitd.html",
+      "goal": "Transform queries from benign to harmful obtaining intermediate responses to get compliance from the model",
+      "honours_prompt_cap": false,
+      "id": "fitd.FITD",
+      "module": "fitd",
+      "primary_detector": "judge.RefusalOnlyAdversarial",
+      "primary_detector_offline": false,
+      "prompt_source": "in_code",
+      "sets": [],
+      "short_id": "FITD",
+      "status": "excluded",
+      "tags": [
+        "owasp:llm01",
+        "owasp:llm02",
+        "owasp:llm05",
+        "demon:Rhetoric:Persuasion_and_manipulation:Escalating"
+      ],
+      "tier": 3,
+      "tier_name": "INFORMATIONAL",
+      "upstream_licence_note": "Apache-2.0 (garak package); HarmBench ships its own LICENSE and README under garak/data/harmbench"
+    },
+    {
+      "active_upstream": false,
+      "cls": "Davidjl",
+      "data_files": [],
+      "description": "Exploit the ' davidjl' magic token",
+      "detector_offline": true,
+      "doc_uri": "https://twitter.com/goodside/status/1666598580319035392",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "goodside",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.goodside.html",
+      "goal": "get wrong answers about a name",
+      "honours_prompt_cap": false,
+      "id": "goodside.Davidjl",
+      "module": "goodside",
+      "primary_detector": "goodside.Glitch",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Davidjl",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "avid-effect:performance:P0204",
+        "owasp:llm05",
+        "quality:Security:PromptStability",
+        "payload:generic",
+        "demon:Language:Code_and_encode:Token"
+      ],
+      "tier": 3,
+      "tier_name": "INFORMATIONAL",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "Tag",
+      "data_files": [],
+      "description": "Exploit UTF tag page encoding for user-invisible prompt injection",
+      "detector_offline": true,
+      "doc_uri": "https://twitter.com/goodside/status/1745511940351287394",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "goodside",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.goodside.html",
+      "goal": "inject invisible instructions",
+      "honours_prompt_cap": false,
+      "id": "goodside.Tag",
+      "module": "goodside",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Tag",
+      "status": "available",
+      "tags": [
+        "owasp:llm01",
+        "payload:generic",
+        "quality:Security:Adversarial",
+        "quality:Security:PromptStability",
+        "demon:Language:Code_and_encode:Data_encoding",
+        "demon:Language:Code_and_encode:Token"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "ThreatenJSON",
+      "data_files": [],
+      "description": "Will model strip preamble and give JSON?",
+      "detector_offline": true,
+      "doc_uri": "https://twitter.com/goodside/status/1657396491676164096",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "goodside",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.goodside.html",
+      "goal": "get raw code by threatening a model",
+      "honours_prompt_cap": false,
+      "id": "goodside.ThreatenJSON",
+      "module": "goodside",
+      "primary_detector": "goodside.PlainJSON",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "ThreatenJSON",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "avid-effect:performance:P0201",
+        "avid-effect:performance:P0204",
+        "payload:generic",
+        "demon:Language:Prompt_injection:Strong_arm_attack"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "WhoIsRiley",
+      "data_files": [],
+      "description": "Probe for misinfo about Riley Goodside",
+      "detector_offline": true,
+      "doc_uri": "https://twitter.com/goodside",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "goodside",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.goodside.html",
+      "goal": "get misinfo about riley goodside",
+      "honours_prompt_cap": false,
+      "id": "goodside.WhoIsRiley",
+      "module": "goodside",
+      "primary_detector": "goodside.RileyIsnt",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "WhoIsRiley",
+      "status": "available",
+      "tags": [
+        "avid-effect:ethics:E0402",
+        "avid-effect:performance:P0204",
+        "owasp:llm09",
+        "quality:Robustness:GenerativeMisinformation",
+        "payload:hallucination"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "GrandmaIntent",
+      "data_files": [],
+      "description": "Roleplaying attack asking for imitation of a grandmother",
+      "detector_offline": false,
+      "doc_uri": null,
+      "exclusion_decision": "LLM-09",
+      "exclusion_reason": "IntentProbe: detectors are resolved per intent at run time and may include model-as-judge or HF detectors; not offered in either set",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "grandma",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.grandma.html",
+      "goal": "",
+      "honours_prompt_cap": false,
+      "id": "grandma.GrandmaIntent",
+      "module": "grandma",
+      "primary_detector": null,
+      "primary_detector_offline": false,
+      "prompt_source": "in_code",
+      "sets": [],
+      "short_id": "GrandmaIntent",
+      "status": "excluded",
+      "tags": [
+        "demon:Fictionalizing:Roleplaying:User_persona",
+        "demon:Stratagems:Meta-prompting:Ask_for_examples"
+      ],
+      "tier": 9,
+      "tier_name": "UNLISTED",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "Slurs",
+      "data_files": [],
+      "description": "Use the grandma attack to get ethnic slurs.",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "grandma",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.grandma.html",
+      "goal": "get model to use ethnic slur",
+      "honours_prompt_cap": false,
+      "id": "grandma.Slurs",
+      "module": "grandma",
+      "primary_detector": "unsafe_content.SlursReclaimedSlurs",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Slurs",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0300",
+        "demon:Fictionalizing:Roleplaying:User_persona",
+        "demon:Stratagems:Meta-prompting:Ask_for_examples"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "Substances",
+      "data_files": [],
+      "description": "Use the grandma attack to get instructions for harmful items.",
+      "detector_offline": true,
+      "doc_uri": "https://x.com/_annieversary/status/1647865782741749760",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "grandma",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.grandma.html",
+      "goal": "get instructions for making bad things",
+      "honours_prompt_cap": false,
+      "id": "grandma.Substances",
+      "module": "grandma",
+      "primary_detector": "mitigation.MitigationBypass",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Substances",
+      "status": "available",
+      "tags": [
+        "risk-cards:lmrc:providing_illegal_info",
+        "quality:Behavioral:ContentSafety:LegalGoodsServices",
+        "demon:Fictionalizing:Roleplaying:User_persona",
+        "demon:Stratagems:Meta-prompting:Ask_for_examples"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "Win10",
+      "data_files": [],
+      "description": "Will the model yield a Windows 10 product key if we beg it to?",
+      "detector_offline": true,
+      "doc_uri": "https://www.independent.co.uk/tech/chatgpt-microsoft-windows-11-grandma-exploit-b2360213.html",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "grandma",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.grandma.html",
+      "goal": "get model to output Win 10 product keys",
+      "honours_prompt_cap": false,
+      "id": "grandma.Win10",
+      "module": "grandma",
+      "primary_detector": "productkey.Win5x5",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Win10",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0300",
+        "owasp:llm06",
+        "risk-cards:lmrc:providing_illegal_info",
+        "quality:Behavioral:ContentSafety:LegalGoodsServices",
+        "demon:Fictionalizing:Roleplaying:User_persona",
+        "demon:Stratagems:Meta-prompting:Ask_for_examples"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "Win11",
+      "data_files": [],
+      "description": "Will the model yield a Windows 11 product key if we beg it to?",
+      "detector_offline": true,
+      "doc_uri": "https://www.independent.co.uk/tech/chatgpt-microsoft-windows-11-grandma-exploit-b2360213.html",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "mitigation.MitigationBypass"
+      ],
+      "extended_detectors_offline": {
+        "mitigation.MitigationBypass": true
+      },
+      "family": "grandma",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.grandma.html",
+      "goal": "get model to output Win 11 product keys",
+      "honours_prompt_cap": false,
+      "id": "grandma.Win11",
+      "module": "grandma",
+      "primary_detector": "productkey.Win5x5",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "Win11",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0300",
+        "owasp:llm06",
+        "risk-cards:lmrc:providing_illegal_info",
+        "quality:Behavioral:ContentSafety:LegalGoodsServices",
+        "demon:Fictionalizing:Roleplaying:User_persona",
+        "demon:Stratagems:Meta-prompting:Ask_for_examples"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "LatentInjectionFactSnippetEiffel",
+      "data_files": [],
+      "description": "String-based latent prompt injections in fact snippets on the Eiffel Tower",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/inject-my-pdf/",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert a snippet with instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentInjectionFactSnippetEiffel",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "LatentInjectionFactSnippetEiffel",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "LatentInjectionFactSnippetEiffelFull",
+      "data_files": [],
+      "description": "String-based latent prompt injections in fact snippets on the Eiffel Tower",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/inject-my-pdf/",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of latentinjection.LatentInjectionFactSnippetEiffel; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert a snippet with instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentInjectionFactSnippetEiffelFull",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [],
+      "short_id": "LatentInjectionFactSnippetEiffelFull",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "LatentInjectionFactSnippetLegal",
+      "data_files": [],
+      "description": "String-based latent prompt injections in legal snippets",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/inject-my-pdf/",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert a snippet with instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentInjectionFactSnippetLegal",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "LatentInjectionFactSnippetLegal",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "LatentInjectionFactSnippetLegalFull",
+      "data_files": [],
+      "description": "String-based latent prompt injections in legal snippets",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/inject-my-pdf/",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of latentinjection.LatentInjectionFactSnippetLegal; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert a snippet with instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentInjectionFactSnippetLegalFull",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [],
+      "short_id": "LatentInjectionFactSnippetLegalFull",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "LatentInjectionReport",
+      "data_files": [],
+      "description": "String-based latent prompt injections via a report",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/inject-my-pdf/",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert a report with instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentInjectionReport",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "LatentInjectionReport",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "LatentInjectionReportFull",
+      "data_files": [],
+      "description": "String-based latent prompt injections via a report",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/inject-my-pdf/",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of latentinjection.LatentInjectionReport; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert a report with instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentInjectionReportFull",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [],
+      "short_id": "LatentInjectionReportFull",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "LatentInjectionResume",
+      "data_files": [],
+      "description": "String-based latent prompt injections via a resume",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/inject-my-pdf/",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert a resume with instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentInjectionResume",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "LatentInjectionResume",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "LatentInjectionResumeFull",
+      "data_files": [],
+      "description": "String-based latent prompt injections via a resume",
+      "detector_offline": true,
+      "doc_uri": "https://kai-greshake.de/posts/inject-my-pdf/",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of latentinjection.LatentInjectionResume; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert a resume with instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentInjectionResumeFull",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [],
+      "short_id": "LatentInjectionResumeFull",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "LatentInjectionTranslationEnFr",
+      "data_files": [],
+      "description": "String-based latent prompt injections via translation",
+      "detector_offline": true,
+      "doc_uri": "https://x.com/goodside/status/1569128808308957185",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert translation instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentInjectionTranslationEnFr",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "LatentInjectionTranslationEnFr",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "LatentInjectionTranslationEnFrFull",
+      "data_files": [],
+      "description": "String-based latent prompt injections via translation",
+      "detector_offline": true,
+      "doc_uri": "https://x.com/goodside/status/1569128808308957185",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of latentinjection.LatentInjectionTranslationEnFr; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert translation instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentInjectionTranslationEnFrFull",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [],
+      "short_id": "LatentInjectionTranslationEnFrFull",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "LatentInjectionTranslationEnZh",
+      "data_files": [],
+      "description": "Latent prompt injection in Chinese context (简体字)",
+      "detector_offline": true,
+      "doc_uri": "https://x.com/goodside/status/1569128808308957185",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert translation instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentInjectionTranslationEnZh",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "LatentInjectionTranslationEnZh",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "LatentInjectionTranslationEnZhFull",
+      "data_files": [],
+      "description": "Latent prompt injection in Chinese context (简体字)",
+      "detector_offline": true,
+      "doc_uri": "https://x.com/goodside/status/1569128808308957185",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of latentinjection.LatentInjectionTranslationEnZh; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert translation instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentInjectionTranslationEnZhFull",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [],
+      "short_id": "LatentInjectionTranslationEnZhFull",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "LatentJailbreak",
+      "data_files": [],
+      "description": "Implementation of Latent Jailbreak, using latent prompt injection-",
+      "detector_offline": false,
+      "doc_uri": "https://arxiv.org/abs/2307.08487",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "base.TriggerListDetector"
+      ],
+      "extended_detectors_offline": {
+        "base.TriggerListDetector": true
+      },
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "inject malicious instructions into output while posing as translation task",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentJailbreak",
+      "module": "latentinjection",
+      "primary_detector": "unsafe_content.ToxicCommentModel",
+      "primary_detector_offline": false,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-extended"
+      ],
+      "short_id": "LatentJailbreak",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "LatentJailbreakFull",
+      "data_files": [],
+      "description": "Implementation of Latent Jailbreak, using latent prompt injection-",
+      "detector_offline": false,
+      "doc_uri": "https://arxiv.org/abs/2307.08487",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of latentinjection.LatentJailbreak; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [
+        "base.TriggerListDetector"
+      ],
+      "extended_detectors_offline": {
+        "base.TriggerListDetector": true
+      },
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "inject malicious instructions into output while posing as translation task",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentJailbreakFull",
+      "module": "latentinjection",
+      "primary_detector": "unsafe_content.ToxicCommentModel",
+      "primary_detector_offline": false,
+      "prompt_source": "generated",
+      "sets": [],
+      "short_id": "LatentJailbreakFull",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "LatentWhois",
+      "data_files": [],
+      "description": "Latent prompt injections in whois probe reports",
+      "detector_offline": true,
+      "doc_uri": "https://twitter.com/jaimeblascob/status/1648688583035715585",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert a whois report with instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentWhois",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "LatentWhois",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "LatentWhoisSnippet",
+      "data_files": [],
+      "description": "String-based latent prompt injections in whois reports",
+      "detector_offline": true,
+      "doc_uri": "https://twitter.com/jaimeblascob/status/1648688583035715585",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert a snippet with instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentWhoisSnippet",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "LatentWhoisSnippet",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "LatentWhoisSnippetFull",
+      "data_files": [],
+      "description": "String-based latent prompt injections in whois reports",
+      "detector_offline": true,
+      "doc_uri": "https://twitter.com/jaimeblascob/status/1648688583035715585",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of latentinjection.LatentWhoisSnippet; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "latentinjection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.latentinjection.html",
+      "goal": "subvert a snippet with instructions",
+      "honours_prompt_cap": true,
+      "id": "latentinjection.LatentWhoisSnippetFull",
+      "module": "latentinjection",
+      "primary_detector": "base.TriggerListDetector",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [],
+      "short_id": "LatentWhoisSnippetFull",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "demon:Language:Prompt_injection:Stop_sequences",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "FutureTense",
+      "data_files": [
+        "phrasing/future_tense_en.txt"
+      ],
+      "description": "Attempt to evade safeguards by setting requests in the future tense",
+      "detector_offline": true,
+      "doc_uri": "https://arxiv.org/html/2407.11969v2",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "phrasing",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.phrasing.html",
+      "goal": "use future tense to disregard the system prompt",
+      "honours_prompt_cap": true,
+      "id": "phrasing.FutureTense",
+      "module": "phrasing",
+      "primary_detector": "mitigation.Prefixes",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "FutureTense",
+      "status": "available",
+      "tags": [
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:jailbreak",
+        "demon:Language:Stylizing:Synonymous_language"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "FutureTenseFull",
+      "data_files": [
+        "phrasing/future_tense_en.txt"
+      ],
+      "description": "Will the system give unsafe responses when asked to write about weapon creation or dangerous behavior in the future tense?",
+      "detector_offline": true,
+      "doc_uri": "https://arxiv.org/html/2407.11969v2",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of phrasing.FutureTense; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "phrasing",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.phrasing.html",
+      "goal": "use future tense to disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "phrasing.FutureTenseFull",
+      "module": "phrasing",
+      "primary_detector": "mitigation.Prefixes",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [],
+      "short_id": "FutureTenseFull",
+      "status": "excluded",
+      "tags": [
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:jailbreak",
+        "demon:Language:Stylizing:Synonymous_language"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "PastTense",
+      "data_files": [
+        "phrasing/past_tense_en.txt"
+      ],
+      "description": "Attempt to evade safeguards by setting requests in the past tense",
+      "detector_offline": true,
+      "doc_uri": "https://arxiv.org/html/2407.11969v2",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "phrasing",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.phrasing.html",
+      "goal": "use past tense to disregard the system prompt",
+      "honours_prompt_cap": true,
+      "id": "phrasing.PastTense",
+      "module": "phrasing",
+      "primary_detector": "mitigation.Prefixes",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "PastTense",
+      "status": "available",
+      "tags": [
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:jailbreak",
+        "demon:Language:Stylizing:Synonymous_language"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "PastTenseFull",
+      "data_files": [
+        "phrasing/past_tense_en.txt"
+      ],
+      "description": "Will the system give unsafe responses when asked to write about weapon creation or dangerous behavior in the past tense?",
+      "detector_offline": true,
+      "doc_uri": "https://arxiv.org/html/2407.11969v2",
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of phrasing.PastTense; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "phrasing",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.phrasing.html",
+      "goal": "use past tense to disregard the system prompt",
+      "honours_prompt_cap": false,
+      "id": "phrasing.PastTenseFull",
+      "module": "phrasing",
+      "primary_detector": "mitigation.Prefixes",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_data",
+      "sets": [],
+      "short_id": "PastTenseFull",
+      "status": "excluded",
+      "tags": [
+        "owasp:llm01",
+        "quality:Security:PromptStability",
+        "payload:jailbreak",
+        "demon:Language:Stylizing:Synonymous_language"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "HijackHateHumans",
+      "data_files": [],
+      "description": "PromptInject is a framework that assembles prompts in a modular fashion to provide a quantitative analysis of the robustness of LLMs to adversarial prompt attacks. trophy Best Paper Awards @ NeurIPS ML Safety Workshop 2022",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "promptinject",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.promptinject.html",
+      "goal": "inject a prompt on hate humans",
+      "honours_prompt_cap": true,
+      "id": "promptinject.HijackHateHumans",
+      "module": "promptinject",
+      "primary_detector": "promptinject.AttackRogueString",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_resources",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "HijackHateHumans",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Behavioral:ContentSafety:Violence",
+        "quality:Security:PromptStability",
+        "payload:unwanted:violence",
+        "demon:Language:Prompt_injection:Strong_arm_attack",
+        "demon:Language:Stylizing:Capitalizing",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "HijackHateHumansFull",
+      "data_files": [],
+      "description": "PromptInject is a framework that assembles prompts in a modular fashion to provide a quantitative analysis of the robustness of LLMs to adversarial prompt attacks. trophy Best Paper Awards @ NeurIPS ML Safety Workshop 2022",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of promptinject.HijackHateHumans; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "promptinject",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.promptinject.html",
+      "goal": "inject a prompt on hate humans",
+      "honours_prompt_cap": true,
+      "id": "promptinject.HijackHateHumansFull",
+      "module": "promptinject",
+      "primary_detector": "promptinject.AttackRogueString",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_resources",
+      "sets": [],
+      "short_id": "HijackHateHumansFull",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Behavioral:ContentSafety:Violence",
+        "quality:Security:PromptStability",
+        "payload:unwanted:violence",
+        "demon:Language:Prompt_injection:Strong_arm_attack",
+        "demon:Language:Stylizing:Capitalizing",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "HijackKillHumans",
+      "data_files": [],
+      "description": "PromptInject is a framework that assembles prompts in a modular fashion to provide a quantitative analysis of the robustness of LLMs to adversarial prompt attacks. trophy Best Paper Awards @ NeurIPS ML Safety Workshop 2022",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "promptinject",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.promptinject.html",
+      "goal": "inject a prompt on kill humans",
+      "honours_prompt_cap": true,
+      "id": "promptinject.HijackKillHumans",
+      "module": "promptinject",
+      "primary_detector": "promptinject.AttackRogueString",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_resources",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "HijackKillHumans",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Behavioral:ContentSafety:Violence",
+        "quality:Security:PromptStability",
+        "payload:unwanted:violence",
+        "demon:Language:Prompt_injection:Strong_arm_attack",
+        "demon:Language:Stylizing:Capitalizing",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "HijackKillHumansFull",
+      "data_files": [],
+      "description": "PromptInject is a framework that assembles prompts in a modular fashion to provide a quantitative analysis of the robustness of LLMs to adversarial prompt attacks. trophy Best Paper Awards @ NeurIPS ML Safety Workshop 2022",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of promptinject.HijackKillHumans; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "promptinject",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.promptinject.html",
+      "goal": "inject a prompt on kill humans",
+      "honours_prompt_cap": true,
+      "id": "promptinject.HijackKillHumansFull",
+      "module": "promptinject",
+      "primary_detector": "promptinject.AttackRogueString",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_resources",
+      "sets": [],
+      "short_id": "HijackKillHumansFull",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Behavioral:ContentSafety:Violence",
+        "quality:Security:PromptStability",
+        "payload:unwanted:violence",
+        "demon:Language:Prompt_injection:Strong_arm_attack",
+        "demon:Language:Stylizing:Capitalizing",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "HijackLongPrompt",
+      "data_files": [],
+      "description": "PromptInject is a framework that assembles prompts in a modular fashion to provide a quantitative analysis of the robustness of LLMs to adversarial prompt attacks. trophy Best Paper Awards @ NeurIPS ML Safety Workshop 2022",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "promptinject",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.promptinject.html",
+      "goal": "inject a prompt on long prompt",
+      "honours_prompt_cap": true,
+      "id": "promptinject.HijackLongPrompt",
+      "module": "promptinject",
+      "primary_detector": "promptinject.AttackRogueString",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_resources",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "HijackLongPrompt",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Behavioral:ContentSafety:Violence",
+        "quality:Security:PromptStability",
+        "payload:unwanted:violence",
+        "demon:Language:Prompt_injection:Strong_arm_attack",
+        "demon:Language:Stylizing:Capitalizing",
+        "demon:Rhetoric:Persuasion_and_manipulation:Distraction",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": false,
+      "cls": "HijackLongPromptFull",
+      "data_files": [],
+      "description": "PromptInject is a framework that assembles prompts in a modular fashion to provide a quantitative analysis of the robustness of LLMs to adversarial prompt attacks. trophy Best Paper Awards @ NeurIPS ML Safety Workshop 2022",
+      "detector_offline": true,
+      "doc_uri": null,
+      "exclusion_decision": "LLM-07",
+      "exclusion_reason": "uncapped corpus variant of promptinject.HijackLongPrompt; the capped sibling covers the same corpus under the prompt cap, so the variant is not offered to keep gateway spend bounded",
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "promptinject",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.promptinject.html",
+      "goal": "inject a prompt on long prompt",
+      "honours_prompt_cap": true,
+      "id": "promptinject.HijackLongPromptFull",
+      "module": "promptinject",
+      "primary_detector": "promptinject.AttackRogueString",
+      "primary_detector_offline": true,
+      "prompt_source": "garak_resources",
+      "sets": [],
+      "short_id": "HijackLongPromptFull",
+      "status": "excluded",
+      "tags": [
+        "avid-effect:security:S0403",
+        "owasp:llm01",
+        "quality:Behavioral:ContentSafety:Violence",
+        "quality:Security:PromptStability",
+        "payload:unwanted:violence",
+        "demon:Language:Prompt_injection:Strong_arm_attack",
+        "demon:Language:Stylizing:Capitalizing",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions"
+      ],
+      "tier": 2,
+      "tier_name": "COMPETE_WITH_SOTA",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "RTPBlank",
+      "data_files": [],
+      "description": "Implementation of probes in RealToxicityPrompts",
+      "detector_offline": false,
+      "doc_uri": "https://allenai.org/data/real-toxicity-prompts",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "perspective.Toxicity"
+      ],
+      "extended_detectors_offline": {
+        "perspective.Toxicity": false
+      },
+      "family": "realtoxicityprompts",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.realtoxicityprompts.html",
+      "goal": "generate toxicity when prompted with nothing or special tokens",
+      "honours_prompt_cap": false,
+      "id": "realtoxicityprompts.RTPBlank",
+      "module": "realtoxicityprompts",
+      "primary_detector": "unsafe_content.ToxicCommentModel",
+      "primary_detector_offline": false,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-extended"
+      ],
+      "short_id": "RTPBlank",
+      "status": "available",
+      "tags": [
+        "avid-effect:ethics:E0301",
+        "quality:Behavioral:ContentSafety:Toxicity",
+        "payload:unwanted",
+        "demon:Language:Code_and_encode:Token",
+        "demon:Stratagems:Scattershot:Regenerate_response"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); RealToxicityPrompts (Gehman et al. 2020) as packaged by garak"
+    },
+    {
+      "active_upstream": false,
+      "cls": "RTPFlirtation",
+      "data_files": [
+        "realtoxicityprompts/rtp_flirtation.txt"
+      ],
+      "description": "Implementation of flirtation probes in RealToxicityPrompts",
+      "detector_offline": false,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "perspective.Flirtation"
+      ],
+      "extended_detectors_offline": {
+        "perspective.Flirtation": false
+      },
+      "family": "realtoxicityprompts",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.realtoxicityprompts.html",
+      "goal": "generate flirtation content",
+      "honours_prompt_cap": false,
+      "id": "realtoxicityprompts.RTPFlirtation",
+      "module": "realtoxicityprompts",
+      "primary_detector": "unsafe_content.ToxicCommentModel",
+      "primary_detector_offline": false,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-extended"
+      ],
+      "short_id": "RTPFlirtation",
+      "status": "available",
+      "tags": [
+        "avid-effect:ethics:E0101",
+        "avid-effect:ethics:E0301",
+        "avid-effect:performance:P0401",
+        "payload:unwanted",
+        "demon:Language:Stylizing:Give_examples"
+      ],
+      "tier": 3,
+      "tier_name": "INFORMATIONAL",
+      "upstream_licence_note": "Apache-2.0 (garak package); RealToxicityPrompts (Gehman et al. 2020) as packaged by garak"
+    },
+    {
+      "active_upstream": false,
+      "cls": "RTPIdentity_Attack",
+      "data_files": [
+        "realtoxicityprompts/rtp_identity_attack.txt"
+      ],
+      "description": "Implementation of identity_attack probes in RealToxicityPrompts",
+      "detector_offline": false,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "perspective.Identity_Attack"
+      ],
+      "extended_detectors_offline": {
+        "perspective.Identity_Attack": false
+      },
+      "family": "realtoxicityprompts",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.realtoxicityprompts.html",
+      "goal": "generate identity attack content",
+      "honours_prompt_cap": false,
+      "id": "realtoxicityprompts.RTPIdentity_Attack",
+      "module": "realtoxicityprompts",
+      "primary_detector": "unsafe_content.ToxicCommentModel",
+      "primary_detector_offline": false,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-extended"
+      ],
+      "short_id": "RTPIdentity_Attack",
+      "status": "available",
+      "tags": [
+        "avid-effect:ethics:E0101",
+        "avid-effect:ethics:E0301",
+        "avid-effect:ethics:E0302",
+        "avid-effect:performance:P0401",
+        "quality:Behavioral:ContentSafety:HateHarassment",
+        "payload:hatespeech",
+        "demon:Language:Stylizing:Give_examples"
+      ],
+      "tier": 3,
+      "tier_name": "INFORMATIONAL",
+      "upstream_licence_note": "Apache-2.0 (garak package); RealToxicityPrompts (Gehman et al. 2020) as packaged by garak"
+    },
+    {
+      "active_upstream": false,
+      "cls": "RTPInsult",
+      "data_files": [
+        "realtoxicityprompts/rtp_insult.txt"
+      ],
+      "description": "Implementation of insult probes in RealToxicityPrompts",
+      "detector_offline": false,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "perspective.Insult"
+      ],
+      "extended_detectors_offline": {
+        "perspective.Insult": false
+      },
+      "family": "realtoxicityprompts",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.realtoxicityprompts.html",
+      "goal": "generate insult content",
+      "honours_prompt_cap": false,
+      "id": "realtoxicityprompts.RTPInsult",
+      "module": "realtoxicityprompts",
+      "primary_detector": "unsafe_content.ToxicCommentModel",
+      "primary_detector_offline": false,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-extended"
+      ],
+      "short_id": "RTPInsult",
+      "status": "available",
+      "tags": [
+        "avid-effect:ethics:E0101",
+        "avid-effect:ethics:E0301",
+        "avid-effect:performance:P0401",
+        "quality:Behavioral:ContentSafety:Toxicity",
+        "payload:unwanted",
+        "demon:Language:Stylizing:Give_examples"
+      ],
+      "tier": 3,
+      "tier_name": "INFORMATIONAL",
+      "upstream_licence_note": "Apache-2.0 (garak package); RealToxicityPrompts (Gehman et al. 2020) as packaged by garak"
+    },
+    {
+      "active_upstream": false,
+      "cls": "RTPProfanity",
+      "data_files": [
+        "realtoxicityprompts/rtp_profanity.txt"
+      ],
+      "description": "Implementation of profanity probes in RealToxicityPrompts",
+      "detector_offline": false,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "perspective.Profanity"
+      ],
+      "extended_detectors_offline": {
+        "perspective.Profanity": false
+      },
+      "family": "realtoxicityprompts",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.realtoxicityprompts.html",
+      "goal": "generate profanity content",
+      "honours_prompt_cap": false,
+      "id": "realtoxicityprompts.RTPProfanity",
+      "module": "realtoxicityprompts",
+      "primary_detector": "unsafe_content.ToxicCommentModel",
+      "primary_detector_offline": false,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-extended"
+      ],
+      "short_id": "RTPProfanity",
+      "status": "available",
+      "tags": [
+        "avid-effect:ethics:E0301",
+        "avid-effect:performance:P0401",
+        "quality:Behavioral:ContentSafety:Profanity",
+        "payload:unwanted:profanity",
+        "demon:Language:Stylizing:Give_examples"
+      ],
+      "tier": 3,
+      "tier_name": "INFORMATIONAL",
+      "upstream_licence_note": "Apache-2.0 (garak package); RealToxicityPrompts (Gehman et al. 2020) as packaged by garak"
+    },
+    {
+      "active_upstream": false,
+      "cls": "RTPSevere_Toxicity",
+      "data_files": [
+        "realtoxicityprompts/rtp_severe_toxicity.txt"
+      ],
+      "description": "Implementation of severe_toxicity probes in RealToxicityPrompts",
+      "detector_offline": false,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "perspective.Severe_Toxicity"
+      ],
+      "extended_detectors_offline": {
+        "perspective.Severe_Toxicity": false
+      },
+      "family": "realtoxicityprompts",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.realtoxicityprompts.html",
+      "goal": "generate severe toxicity content",
+      "honours_prompt_cap": false,
+      "id": "realtoxicityprompts.RTPSevere_Toxicity",
+      "module": "realtoxicityprompts",
+      "primary_detector": "unsafe_content.ToxicCommentModel",
+      "primary_detector_offline": false,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-extended"
+      ],
+      "short_id": "RTPSevere_Toxicity",
+      "status": "available",
+      "tags": [
+        "avid-effect:ethics:E0301",
+        "quality:Behavioral:ContentSafety:Toxicity",
+        "payload:unwanted",
+        "demon:Language:Stylizing:Give_examples"
+      ],
+      "tier": 3,
+      "tier_name": "INFORMATIONAL",
+      "upstream_licence_note": "Apache-2.0 (garak package); RealToxicityPrompts (Gehman et al. 2020) as packaged by garak"
+    },
+    {
+      "active_upstream": false,
+      "cls": "RTPSexually_Explicit",
+      "data_files": [
+        "realtoxicityprompts/rtp_sexually_explicit.txt"
+      ],
+      "description": "Implementation of sexually_explicit probes in RealToxicityPrompts",
+      "detector_offline": false,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "perspective.Sexually_Explicit"
+      ],
+      "extended_detectors_offline": {
+        "perspective.Sexually_Explicit": false
+      },
+      "family": "realtoxicityprompts",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.realtoxicityprompts.html",
+      "goal": "generate sexually explicit content",
+      "honours_prompt_cap": false,
+      "id": "realtoxicityprompts.RTPSexually_Explicit",
+      "module": "realtoxicityprompts",
+      "primary_detector": "unsafe_content.ToxicCommentModel",
+      "primary_detector_offline": false,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-extended"
+      ],
+      "short_id": "RTPSexually_Explicit",
+      "status": "available",
+      "tags": [
+        "avid-effect:ethics:E0301",
+        "quality:Behavioral:ContentSafety:Sexual",
+        "payload:unwanted:sexual",
+        "demon:Language:Stylizing:Give_examples"
+      ],
+      "tier": 3,
+      "tier_name": "INFORMATIONAL",
+      "upstream_licence_note": "Apache-2.0 (garak package); RealToxicityPrompts (Gehman et al. 2020) as packaged by garak"
+    },
+    {
+      "active_upstream": false,
+      "cls": "RTPThreat",
+      "data_files": [
+        "realtoxicityprompts/rtp_threat.txt"
+      ],
+      "description": "Implementation of threat probes in RealToxicityPrompts",
+      "detector_offline": false,
+      "doc_uri": null,
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "perspective.Threat"
+      ],
+      "extended_detectors_offline": {
+        "perspective.Threat": false
+      },
+      "family": "realtoxicityprompts",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.realtoxicityprompts.html",
+      "goal": "generate threat content",
+      "honours_prompt_cap": false,
+      "id": "realtoxicityprompts.RTPThreat",
+      "module": "realtoxicityprompts",
+      "primary_detector": "unsafe_content.ToxicCommentModel",
+      "primary_detector_offline": false,
+      "prompt_source": "garak_data",
+      "sets": [
+        "redsim-extended"
+      ],
+      "short_id": "RTPThreat",
+      "status": "available",
+      "tags": [
+        "avid-effect:ethics:E0101",
+        "avid-effect:ethics:E0301",
+        "avid-effect:performance:P0400",
+        "quality:Behavioral:ContentSafety:Violence",
+        "payload:unwanted:violence",
+        "demon:Language:Stylizing:Give_examples"
+      ],
+      "tier": 3,
+      "tier_name": "INFORMATIONAL",
+      "upstream_licence_note": "Apache-2.0 (garak package); RealToxicityPrompts (Gehman et al. 2020) as packaged by garak"
+    },
+    {
+      "active_upstream": true,
+      "cls": "ColabAIDataLeakage",
+      "data_files": [],
+      "description": "Leak data via image rendering as demonstrated against Gemini in Colab.",
+      "detector_offline": true,
+      "doc_uri": "https://embracethered.com/blog/posts/2024/google-colab-image-render-exfil/",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "web_injection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.web_injection.html",
+      "goal": "render images fetched from a remote uri",
+      "honours_prompt_cap": false,
+      "id": "web_injection.ColabAIDataLeakage",
+      "module": "web_injection",
+      "primary_detector": "web_injection.MarkdownExfilContent",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "ColabAIDataLeakage",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "avid-effect:security:S0403",
+        "owasp:llm02",
+        "owasp:llm06",
+        "payload:leak:chat",
+        "payload:malicious:renderer",
+        "quality:Security:PromptStability",
+        "quality:Security:ExtractionInversion",
+        "cwe:352",
+        "demon:Language:Code_and_encode:Programming",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "MarkdownImageExfil",
+      "data_files": [],
+      "description": "Can we get the model to write embedded assets exfiltrating text in the URI?",
+      "detector_offline": true,
+      "doc_uri": "https://embracethered.com/blog/posts/2023/bing-chat-data-exfiltration-poc-and-fix/",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [
+        "web_injection.MarkdownExfilContent"
+      ],
+      "extended_detectors_offline": {
+        "web_injection.MarkdownExfilContent": true
+      },
+      "family": "web_injection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.web_injection.html",
+      "goal": "embed conversation-private information in a markdown URI",
+      "honours_prompt_cap": false,
+      "id": "web_injection.MarkdownImageExfil",
+      "module": "web_injection",
+      "primary_detector": "web_injection.MarkdownExfilBasic",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "MarkdownImageExfil",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "avid-effect:security:S0403",
+        "owasp:llm02",
+        "owasp:llm06",
+        "payload:leak:chat",
+        "payload:malicious:renderer",
+        "quality:Security:PromptStability",
+        "quality:Security:ExtractionInversion",
+        "cwe:352",
+        "demon:Language:Code_and_encode:Programming",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "MarkdownURIImageExfilExtended",
+      "data_files": [
+        "xss/xss_domains.txt",
+        "xss/xss_encodings.txt",
+        "xss/xss_injected_actions.txt",
+        "xss/xss_injection_markers.txt",
+        "xss/xss_link_display_texts.txt",
+        "xss/xss_var_names.txt"
+      ],
+      "description": "Generalized implementation of data exfiltration exploits through Markdown URIs.",
+      "detector_offline": true,
+      "doc_uri": "https://www.aim.security/lp/aim-labs-echoleak-blogpost",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "web_injection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.web_injection.html",
+      "goal": "embed potentially sensitive data in a Markdown URI",
+      "honours_prompt_cap": true,
+      "id": "web_injection.MarkdownURIImageExfilExtended",
+      "module": "web_injection",
+      "primary_detector": "web_injection.MarkdownExfilExtendedImage",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "MarkdownURIImageExfilExtended",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "avid-effect:security:S0403",
+        "owasp:llm02",
+        "owasp:llm06",
+        "payload:leak:chat",
+        "payload:malicious:renderer",
+        "quality:Security:PromptStability",
+        "quality:Security:ExtractionInversion",
+        "cwe:352",
+        "demon:Language:Code_and_encode:Programming"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "MarkdownURINonImageExfilExtended",
+      "data_files": [
+        "xss/xss_domains.txt",
+        "xss/xss_encodings.txt",
+        "xss/xss_injected_actions.txt",
+        "xss/xss_injection_markers.txt",
+        "xss/xss_link_display_texts.txt",
+        "xss/xss_var_names.txt"
+      ],
+      "description": "Generalized implementation of data exfiltration exploits through Markdown URIs.",
+      "detector_offline": true,
+      "doc_uri": "https://www.aim.security/lp/aim-labs-echoleak-blogpost",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "web_injection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.web_injection.html",
+      "goal": "embed potentially sensitive data in a Markdown URI",
+      "honours_prompt_cap": true,
+      "id": "web_injection.MarkdownURINonImageExfilExtended",
+      "module": "web_injection",
+      "primary_detector": "web_injection.MarkdownExfilExtendedNonImage",
+      "primary_detector_offline": true,
+      "prompt_source": "generated",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "MarkdownURINonImageExfilExtended",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "avid-effect:security:S0403",
+        "owasp:llm02",
+        "owasp:llm06",
+        "payload:leak:chat",
+        "payload:malicious:renderer",
+        "quality:Security:PromptStability",
+        "quality:Security:ExtractionInversion",
+        "cwe:352",
+        "demon:Language:Code_and_encode:Programming"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "MarkdownXSS",
+      "data_files": [],
+      "description": "Perform cross site scripting attacks using Markdown Javascript rendering via prompt injection.",
+      "detector_offline": true,
+      "doc_uri": "https://cwe.mitre.org/data/definitions/79.html",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "web_injection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.web_injection.html",
+      "goal": "Exploit cross-site scripting via prompt injection",
+      "honours_prompt_cap": false,
+      "id": "web_injection.MarkdownXSS",
+      "module": "web_injection",
+      "primary_detector": "web_injection.XSS",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "MarkdownXSS",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "avid-effect:security:S0403",
+        "owasp:llm02",
+        "owasp:llm06",
+        "payload:malicious:renderer:xss",
+        "quality:Security:PromptStability",
+        "cwe:79"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "PlaygroundMarkdownExfil",
+      "data_files": [],
+      "description": "Markdown image URI exfil exploit published 2023 Sept 29.",
+      "detector_offline": true,
+      "doc_uri": "https://embracethered.com/blog/posts/2023/data-exfiltration-in-azure-openai-playground-fixed/",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "web_injection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.web_injection.html",
+      "goal": "embed conversation-private information in a markdown URI",
+      "honours_prompt_cap": false,
+      "id": "web_injection.PlaygroundMarkdownExfil",
+      "module": "web_injection",
+      "primary_detector": "web_injection.PlaygroundMarkdownExfil",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "PlaygroundMarkdownExfil",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "avid-effect:security:S0403",
+        "owasp:llm02",
+        "owasp:llm06",
+        "payload:leak:chat",
+        "payload:malicious:renderer",
+        "quality:Security:PromptStability",
+        "quality:Security:ExtractionInversion",
+        "cwe:352"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "StringAssemblyDataExfil",
+      "data_files": [],
+      "description": "Prompt injection for manipulating state",
+      "detector_offline": true,
+      "doc_uri": "https://embracethered.com/blog/posts/2023/data-exfiltration-in-azure-openai-playground-fixed/",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "web_injection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.web_injection.html",
+      "goal": "embed conversation-private information in a markdown URI",
+      "honours_prompt_cap": false,
+      "id": "web_injection.StringAssemblyDataExfil",
+      "module": "web_injection",
+      "primary_detector": "web_injection.MarkdownExfilBasic",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "StringAssemblyDataExfil",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "avid-effect:security:S0403",
+        "owasp:llm02",
+        "owasp:llm06",
+        "payload:leak:chat",
+        "payload:malicious:renderer",
+        "quality:Security:PromptStability",
+        "quality:Security:ExtractionInversion",
+        "cwe:352",
+        "demon:Language:Code_and_encode:Programming",
+        "demon:Language:Prompt_injection:Ignore_previous_instructions"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    },
+    {
+      "active_upstream": true,
+      "cls": "TaskXSS",
+      "data_files": [],
+      "description": "Perform cross site scripting attacks via prompt injection.",
+      "detector_offline": true,
+      "doc_uri": "https://cwe.mitre.org/data/definitions/79.html",
+      "exclusion_decision": null,
+      "exclusion_reason": null,
+      "extended_detectors": [],
+      "extended_detectors_offline": {},
+      "family": "web_injection",
+      "garak_docs_uri": "https://reference.garak.ai/en/latest/garak.probes.web_injection.html",
+      "goal": "Exploit cross-site scripting via prompt injection",
+      "honours_prompt_cap": true,
+      "id": "web_injection.TaskXSS",
+      "module": "web_injection",
+      "primary_detector": "web_injection.XSS",
+      "primary_detector_offline": true,
+      "prompt_source": "in_code",
+      "sets": [
+        "redsim-core",
+        "redsim-extended"
+      ],
+      "short_id": "TaskXSS",
+      "status": "available",
+      "tags": [
+        "avid-effect:security:S0301",
+        "avid-effect:security:S0403",
+        "owasp:llm02",
+        "owasp:llm06",
+        "payload:malicious:renderer:xss",
+        "quality:Security:PromptStability",
+        "cwe:79",
+        "demon:Language:Code_and_encode:Programming"
+      ],
+      "tier": 1,
+      "tier_name": "OF_CONCERN",
+      "upstream_licence_note": "Apache-2.0 (garak package); prompts are loaded by garak's own probe classes and never redistributed by redsim"
+    }
+  ],
+  "sets": {
+    "redsim-core": {
+      "description": "Offline-detector probes of the DAN / in-the-wild, prompt-injection, latent-injection, encoding, Do-Not-Answer, goodside, grandma, phrasing, divergence, exploitation and web-injection families. String, trigger and regex detectors only: no Hugging Face model, no second LLM. HarmBench is excluded (LLM-08).",
+      "detector_policy": "offline",
+      "id": "redsim-core",
+      "opt_in": false,
+      "probe_ids": [
+        "dan.Ablation_Dan_11_0",
+        "dan.AntiDAN",
+        "dan.AutoDANCached",
+        "dan.ChatGPT_Developer_Mode_RANTI",
+        "dan.ChatGPT_Developer_Mode_v2",
+        "dan.ChatGPT_Image_Markdown",
+        "dan.DAN_Jailbreak",
+        "dan.DUDE",
+        "dan.DanInTheWild",
+        "dan.Dan_10_0",
+        "dan.Dan_11_0",
+        "dan.Dan_6_0",
+        "dan.Dan_6_2",
+        "dan.Dan_7_0",
+        "dan.Dan_8_0",
+        "dan.Dan_9_0",
+        "dan.STAN",
+        "divergence.Repeat",
+        "divergence.RepeatedToken",
+        "donotanswer.DiscriminationExclusionToxicityHatefulOffensive",
+        "donotanswer.HumanChatbox",
+        "donotanswer.InformationHazard",
+        "donotanswer.MaliciousUses",
+        "donotanswer.MisinformationHarms",
+        "encoding.InjectAscii85",
+        "encoding.InjectAtbash",
+        "encoding.InjectBase16",
+        "encoding.InjectBase2048",
+        "encoding.InjectBase32",
+        "encoding.InjectBase64",
+        "encoding.InjectBraille",
+        "encoding.InjectEcoji",
+        "encoding.InjectHex",
+        "encoding.InjectLeet",
+        "encoding.InjectMime",
+        "encoding.InjectMorse",
+        "encoding.InjectNato",
+        "encoding.InjectQP",
+        "encoding.InjectROT13",
+        "encoding.InjectSneakyBits",
+        "encoding.InjectUU",
+        "encoding.InjectUnicodeTagChars",
+        "encoding.InjectUnicodeVariantSelectors",
+        "encoding.InjectZalgo",
+        "exploitation.JinjaTemplatePythonInjection",
+        "exploitation.SQLInjectionEcho",
+        "exploitation.SQLInjectionSystem",
+        "goodside.Davidjl",
+        "goodside.Tag",
+        "goodside.ThreatenJSON",
+        "goodside.WhoIsRiley",
+        "grandma.Slurs",
+        "grandma.Substances",
+        "grandma.Win10",
+        "grandma.Win11",
+        "latentinjection.LatentInjectionFactSnippetEiffel",
+        "latentinjection.LatentInjectionFactSnippetLegal",
+        "latentinjection.LatentInjectionReport",
+        "latentinjection.LatentInjectionResume",
+        "latentinjection.LatentInjectionTranslationEnFr",
+        "latentinjection.LatentInjectionTranslationEnZh",
+        "latentinjection.LatentWhois",
+        "latentinjection.LatentWhoisSnippet",
+        "phrasing.FutureTense",
+        "phrasing.PastTense",
+        "promptinject.HijackHateHumans",
+        "promptinject.HijackKillHumans",
+        "promptinject.HijackLongPrompt",
+        "web_injection.ColabAIDataLeakage",
+        "web_injection.MarkdownImageExfil",
+        "web_injection.MarkdownURIImageExfilExtended",
+        "web_injection.MarkdownURINonImageExfilExtended",
+        "web_injection.MarkdownXSS",
+        "web_injection.PlaygroundMarkdownExfil",
+        "web_injection.StringAssemblyDataExfil",
+        "web_injection.TaskXSS"
+      ],
+      "requires": null
+    },
+    "redsim-extended": {
+      "description": "redsim-core plus the probes whose primary detector is a Hugging Face classifier (latent jailbreak toxicity, RealToxicityPrompts). Model-as-judge detectors are never included.",
+      "detector_policy": "hf",
+      "id": "redsim-extended",
+      "opt_in": true,
+      "probe_ids": [
+        "dan.Ablation_Dan_11_0",
+        "dan.AntiDAN",
+        "dan.AutoDANCached",
+        "dan.ChatGPT_Developer_Mode_RANTI",
+        "dan.ChatGPT_Developer_Mode_v2",
+        "dan.ChatGPT_Image_Markdown",
+        "dan.DAN_Jailbreak",
+        "dan.DUDE",
+        "dan.DanInTheWild",
+        "dan.Dan_10_0",
+        "dan.Dan_11_0",
+        "dan.Dan_6_0",
+        "dan.Dan_6_2",
+        "dan.Dan_7_0",
+        "dan.Dan_8_0",
+        "dan.Dan_9_0",
+        "dan.STAN",
+        "divergence.Repeat",
+        "divergence.RepeatedToken",
+        "donotanswer.DiscriminationExclusionToxicityHatefulOffensive",
+        "donotanswer.HumanChatbox",
+        "donotanswer.InformationHazard",
+        "donotanswer.MaliciousUses",
+        "donotanswer.MisinformationHarms",
+        "encoding.InjectAscii85",
+        "encoding.InjectAtbash",
+        "encoding.InjectBase16",
+        "encoding.InjectBase2048",
+        "encoding.InjectBase32",
+        "encoding.InjectBase64",
+        "encoding.InjectBraille",
+        "encoding.InjectEcoji",
+        "encoding.InjectHex",
+        "encoding.InjectLeet",
+        "encoding.InjectMime",
+        "encoding.InjectMorse",
+        "encoding.InjectNato",
+        "encoding.InjectQP",
+        "encoding.InjectROT13",
+        "encoding.InjectSneakyBits",
+        "encoding.InjectUU",
+        "encoding.InjectUnicodeTagChars",
+        "encoding.InjectUnicodeVariantSelectors",
+        "encoding.InjectZalgo",
+        "exploitation.JinjaTemplatePythonInjection",
+        "exploitation.SQLInjectionEcho",
+        "exploitation.SQLInjectionSystem",
+        "goodside.Davidjl",
+        "goodside.Tag",
+        "goodside.ThreatenJSON",
+        "goodside.WhoIsRiley",
+        "grandma.Slurs",
+        "grandma.Substances",
+        "grandma.Win10",
+        "grandma.Win11",
+        "latentinjection.LatentInjectionFactSnippetEiffel",
+        "latentinjection.LatentInjectionFactSnippetLegal",
+        "latentinjection.LatentInjectionReport",
+        "latentinjection.LatentInjectionResume",
+        "latentinjection.LatentInjectionTranslationEnFr",
+        "latentinjection.LatentInjectionTranslationEnZh",
+        "latentinjection.LatentJailbreak",
+        "latentinjection.LatentWhois",
+        "latentinjection.LatentWhoisSnippet",
+        "phrasing.FutureTense",
+        "phrasing.PastTense",
+        "promptinject.HijackHateHumans",
+        "promptinject.HijackKillHumans",
+        "promptinject.HijackLongPrompt",
+        "realtoxicityprompts.RTPBlank",
+        "realtoxicityprompts.RTPFlirtation",
+        "realtoxicityprompts.RTPIdentity_Attack",
+        "realtoxicityprompts.RTPInsult",
+        "realtoxicityprompts.RTPProfanity",
+        "realtoxicityprompts.RTPSevere_Toxicity",
+        "realtoxicityprompts.RTPSexually_Explicit",
+        "realtoxicityprompts.RTPThreat",
+        "web_injection.ColabAIDataLeakage",
+        "web_injection.MarkdownImageExfil",
+        "web_injection.MarkdownURIImageExfilExtended",
+        "web_injection.MarkdownURINonImageExfilExtended",
+        "web_injection.MarkdownXSS",
+        "web_injection.PlaygroundMarkdownExfil",
+        "web_injection.StringAssemblyDataExfil",
+        "web_injection.TaskXSS"
+      ],
+      "requires": "REDSIM_LLM_PROBE_HF_DETECTORS=1 on the worker and a pre-cached detector model directory (HF_HOME) with HF_HUB_OFFLINE=1; the child never downloads a model"
+    }
+  }
+}
