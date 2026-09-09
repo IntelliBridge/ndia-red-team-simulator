@@ -22,6 +22,7 @@ markers) see [Testing](testing.md), and for running the stack and the e2e tier s
 |---|---|---|---|
 | Unit tests (py3.12) | ruff, mypy, then `pytest -q -m "not integration and not docker and not e2e and not slow and not auth_required and not garak"` | 3.12 | `api,worker,test,dev` plus `ml` (CPU torch first) |
 | Unit tests (py3.13) | same, with `and not ml` appended to the marker expression | 3.13 | `api,worker,test,dev` |
+| ML tier (py3.12, ml extra) | `pytest -q -p no:cacheprovider -m ml tests --durations=15`, offline (`HF_HUB_OFFLINE`, `HF_DATASETS_OFFLINE`, `REDSIM_DISABLE_LLM` set, no gateway variable). The CPU torch and torchvision wheels are restored from `actions/cache` keyed by the version `pip index versions` reads from the CPU index, downloaded only on a miss, and installed with `--no-index` from the cache directory. See "The ML tier job" | 3.12 | `api,worker,test,dev` plus `ml` (cached CPU torch) |
 | Coverage gate | the full default suite (the `addopts` marker expression) against Postgres 16 and Redis 7 after `alembic upgrade head`, then `--cov-fail-under=$COV_FAIL_UNDER` | 3.12 | `api,worker,test,dev,ml` |
 | API integration (Postgres + Redis) | `tests/` with `-m "not e2e and not docker and not slow and not auth_required and not ml and not garak"` after `alembic upgrade head` | 3.12 | `api,worker,test` |
 | E2E tier (python, eager Celery) | `REDSIM_E2E=1 pytest -q -p no:cacheprovider -m e2e tests/e2e --durations=15` with `REDSIM_E2E_POSTGRES_URL` set after `alembic upgrade head`, so the Postgres RLS lane runs rather than skips. 20 minute timeout, the pytest `--basetemp` (the harness directory) uploaded as an artifact on failure. See "The Python e2e job" | 3.12 | `api,worker,test,dev,ml` |
@@ -45,7 +46,7 @@ excluded from this completion pass (it is never run automatically).
 
 | Tier | Selected by | Runs in |
 |---|---|---|
-| unit and ML unit | default (`-m` from `addopts`), and `ml`-marked tests need the extra | both unit lanes (3.13 without `ml`), Coverage gate |
+| unit and ML unit | default (`-m` from `addopts`), and `ml`-marked tests need the extra | both unit lanes (3.13 without `ml`), Coverage gate, and the `ml`-marked tests alone in the ML tier job |
 | integration (sqlite harness locally, real Postgres and Redis in CI) | `integration` marker, stamped automatically on DB-touching tests | Coverage gate, API integration |
 | e2e (Python) | `tests/e2e/`, marked `e2e` by its `conftest.py`, skipped unless `REDSIM_E2E` is set. The Postgres RLS lane needs `REDSIM_E2E_POSTGRES_URL` | E2E tier (python, eager Celery), on every PR and push, with the Postgres lane on. Locally as described in [Local stack](local-stack.md#tests-including-the-e2e-tier) |
 | garak (Phase B) | `garak` marker: needs the `garak` extra, skipped when absent. Deselected by `addopts` and by every other lane's marker expression. 11 tests since wave B2 (`tests/ml/test_llm_core.py`, `tests/ml/test_llm_routes.py`), real garak against an in-process fake gateway | garak offline |
@@ -131,6 +132,39 @@ REDSIM_E2E=1 REDSIM_E2E_POSTGRES_URL=postgresql+psycopg://redsim:redsim@localhos
   .venv/bin/python -m pytest -q -p no:cacheprovider -m e2e tests/e2e
 ```
 
+### The ML tier job
+
+`ML tier (py3.12, ml extra)` (job id `ml-tier`, remaining-work brief B2) runs
+the `ml`-marked tests alone: `pytest -q -p no:cacheprovider -m ml tests
+--durations=15`. The unit py3.12 lane and the Coverage gate still run those
+tests inside the default tier, so this job does not add coverage; it adds a
+check whose name fails only on the ml stack, and it is the lane the Phase B
+attack and modality tracks point their tests at. It has no dependency on the
+unit job, so it starts with it and its result is visible even while a lint
+finding skips the downstream jobs.
+
+The CPU torch wheels are cached. `pip index versions torch --index-url
+https://download.pytorch.org/whl/cpu` reads the current version from the
+index page without downloading a wheel, the cache key is
+`ml-tier-<os>-py3.12-torch-<version>`, `pip download` fills the directory
+only on a miss, and `pip install --no-index --find-links` installs torch and
+torchvision from it before `.[ml]` resolves the rest against them. A second
+run at the same torch version restores the directory and skips the download
+step. When the index read fails the key falls back to a hash of
+`pyproject.toml` so the job still runs, with a fresh download.
+
+The job is offline by construction: `HF_HUB_OFFLINE=1`,
+`HF_DATASETS_OFFLINE=1` and `REDSIM_DISABLE_LLM=1` are set and no
+`PYTHIA_*` variable exists in the environment, so a test that reaches for a
+hub, a dataset or a gateway fails loudly. Making the job a required status
+check is a repository setting: `main` carries no branch protection and no
+ruleset at the time of writing, so that step is open for the repository
+owner (`gh api -X PUT repos/<owner>/<repo>/branches/main/protection` with
+`ML tier (py3.12, ml extra)` in `required_status_checks.contexts`).
+
+Reproduce locally with `.venv/bin/python -m pytest -q -p no:cacheprovider -m
+ml tests`.
+
 ### The garak offline job
 
 `garak offline` (job id `garak-offline`, plan 12 wave B0, TESTS_DOCS-02) is
@@ -165,7 +199,10 @@ Two things about this lane are deliberate:
   `XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` point under the
   runner temp so garak's run reports and plugin cache never land in the
   checkout; the probe child pins the same variables under its work directory
-  itself.
+  itself. They are set on the two garak steps, not on the job: the `runner`
+  context is not available in a job-level `env`, and the wave B0 version
+  that put `${{ runner.temp }}` there made the whole workflow fail at parse
+  (see the state section below).
 
 The `garak` marker means "needs the garak extra; skipped when absent".
 `tests/conftest.py` enforces the second half: when `garak` is not importable,
@@ -256,6 +293,35 @@ else needs its own reason or a pin bump.
 Docker base-image bump as a runtime change, not a routine one: it moves the
 interpreter the `ml` extra is validated on, and the 2026-09-08 bump to
 `node:26` broke the web image until #21 installed pnpm explicitly.
+
+## State of `main` at `703f8f6` and the CI parity PR (2026-09-09)
+
+Read from the GitHub Actions run list after the wave B3 push, with
+`gh run list --branch main --workflow redsim-ci.yml`:
+
+- Every Redsim CI run for the four Phase B pushes (`fix: integrate Phase B
+  wave B0` 34322048885, `B1` 34330476452, `B2` 34339629573, `B3`
+  34347495640) is recorded as `failure` with a duration of 0 s and no jobs.
+  GitHub reports "This run likely failed because of a workflow file issue".
+  The last run that executed at all is `6cbb661` (#25, run 34319267267,
+  success, 10 min). So none of the wave B0 to B3 test counts on this page
+  or in `CLAUDE.md` has been confirmed by CI; they come from local runs.
+- Root cause: the `garak-offline` job added by wave B0 set
+  `XDG_DATA_HOME: ${{ runner.temp }}/...` in its job-level `env`. The
+  `runner` context is not available there (only `github`, `needs`,
+  `strategy`, `matrix`, `vars`, `secrets` and `inputs` are), so the
+  workflow failed validation before any job started. The file is valid
+  YAML, which is why a local `yaml.safe_load` pass did not catch it.
+- Fix (remaining-work brief package B, this PR): the three XDG variables
+  moved to the `env` of the two garak steps. The same PR adds the `ML tier
+  (py3.12, ml extra)` job (B2), points `make lint-py` at the CI rule
+  selection so `make check` mirrors the workflow (B3), and records here
+  (B4) that the vitest failure the brief lists as B5 is already fixed on
+  `main` by `b93d9a9` (#24): `pnpm vitest run` in `web/` reports 43 files
+  and 313 tests passed on this tree.
+- Whether every lane is green after the fix is proven only by the run for
+  this PR and for its merge to `main`. Nothing on this page claims green
+  CI until that run has been read.
 
 ## State of `main` at `1439f92` and the wave B3 push (2026-09-09)
 
@@ -469,8 +535,16 @@ REDSIM_E2E=1 $V -m pytest -q -p no:cacheprovider -m e2e tests/e2e
 $V -m pytest -q -p no:cacheprovider -m garak tests   # the 12 garak-marked tests since wave B2 (needs the garak extra)
 $V -m pytest -q -p no:cacheprovider tests/ml/test_schema_compat.py   # the P0 schema tripwire
 $V -m mkdocs build --strict
+$V -m pytest -q -p no:cacheprovider -m ml tests   # the ML tier job
 $V -c 'import yaml,sys; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' .github/workflows/*.yml
 ```
+
+`make check` runs the same gates in one command: ruff with the CI selection,
+`mypy redsim`, the Python default tier, then the web typecheck and vitest.
+It needs `pnpm install --frozen-lockfile` first. The YAML load above proves
+only that the workflow parses as YAML; a GitHub expression error such as an
+unavailable context is caught only by GitHub or by `actionlint`
+(`docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:latest`).
 
 To reproduce the Coverage gate or API integration job exactly, point
 `REDSIM_DB_URL` at a migrated Postgres (the compose one from `make up` works,

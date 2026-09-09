@@ -122,8 +122,11 @@ test-cov: require-install
 
 lint: lint-py lint-web
 
+# The same rule selection as the ``Lint (ruff)`` step of redsim-ci.yml. A
+# bare ``ruff check`` applies ruff's much wider default set and is not the
+# contract (docs/dev/ci.md, "Lint and type gates").
 lint-py: require-install
-	$(VENV)/bin/ruff check redsim tests
+	$(VENV)/bin/ruff check --select E4,E7,E9,F,I redsim tests
 
 # The flat config lives at the repo root (eslint.config.mjs), scoped to web/
 # with basePath, because that is where the ESLint binary is installed. Nothing
@@ -141,8 +144,11 @@ typecheck-web: require-install
 	pnpm --filter $(WEB) typecheck
 
 # Full local gate, mirroring the lint/typecheck/test jobs in
-# .github/workflows/redsim-ci.yml. deploy-aws.yml does not run it: that
-# workflow only builds images and rolls ECS services.
+# .github/workflows/redsim-ci.yml: ruff with the CI selection, mypy, the
+# Python default tier, then the web typecheck and vitest (``typecheck-web``
+# and the second line of ``test``). A failing vitest test fails this target.
+# deploy-aws.yml does not run it: that workflow only builds images and rolls
+# ECS services.
 check: lint typecheck test
 
 # API-level smoke against a live runtime (remaining-work brief E8):
