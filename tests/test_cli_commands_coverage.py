@@ -209,6 +209,21 @@ class TestBuildParser(unittest.TestCase):
         args = parser.parse_args(["doctor"])
         self.assertEqual(args.command, "doctor")
 
+    def test_parser_doctor_worker_mode_flag(self):
+        # ``redsim doctor --worker-mode`` makes the adversarial-ML checks required.
+        # ``redsim.cli.doctor.worker_mode_requested`` reads ``args.worker_mode``.
+        parser = build_parser()
+        self.assertFalse(parser.parse_args(["doctor"]).worker_mode)
+        args = parser.parse_args(["doctor", "--worker-mode"])
+        self.assertTrue(args.worker_mode)
+        self.assertFalse(args.api_mode)
+        both = parser.parse_args(["doctor", "--api-mode", "--worker-mode"])
+        self.assertTrue(both.api_mode)
+        self.assertTrue(both.worker_mode)
+        doctor_help = parser._subparsers._group_actions[0].choices["doctor"].format_help()
+        self.assertIn("--worker-mode", doctor_help)
+        self.assertIn("REDSIM_DOCTOR_WORKER_MODE", doctor_help)
+
     def test_parser_global_dry_run(self):
         parser = build_parser()
         args = parser.parse_args(["--dry-run", "report"])
@@ -237,6 +252,36 @@ class TestBuildParser(unittest.TestCase):
         args = parser.parse_args(["migrate", "--source", "/tmp/out",
                                   "--project", "my-project"])
         self.assertEqual(args.command, "migrate")
+
+    def test_parser_ml_attack(self):
+        parser = build_parser()
+        args = parser.parse_args(["ml", "attack", "vehicles_cnn", "--attacks", "fgsm,pgd",
+                                  "--eps", "0.01,0.03", "--n-samples", "50", "--seed", "3",
+                                  "--explain-k", "0", "--no-control", "--out", "/tmp/runs"])
+        self.assertEqual(args.command, "ml")
+        self.assertEqual(args.ml_action, "attack")
+        self.assertEqual(args.target_id, "vehicles_cnn")
+        self.assertEqual(args.attacks, "fgsm,pgd")
+        self.assertEqual(args.eps, "0.01,0.03")
+        self.assertEqual((args.n_samples, args.seed, args.explain_k), (50, 3, 0))
+        self.assertTrue(args.no_control)
+        self.assertEqual(args.out, "/tmp/runs")
+        # Defaults follow CampaignConfig / spec 12.3.
+        defaults = parser.parse_args(["ml", "attack", "url_trees"])
+        self.assertEqual(defaults.attacks, "fgsm,pgd")
+        self.assertIsNone(defaults.eps)
+        self.assertEqual((defaults.n_samples, defaults.seed, defaults.explain_k), (200, 0, 8))
+        self.assertFalse(defaults.no_control)
+        self.assertIsNone(defaults.out)
+
+    def test_parser_ml_seed(self):
+        parser = build_parser()
+        args = parser.parse_args(["ml", "seed", "--project", "p1", "--only", "vehicles_cnn,url_trees"])
+        self.assertEqual(args.command, "ml")
+        self.assertEqual(args.ml_action, "seed")
+        self.assertEqual(args.project, "p1")
+        self.assertEqual(args.only, "vehicles_cnn,url_trees")
+        self.assertIsNone(parser.parse_args(["ml", "seed"]).project)
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +312,34 @@ class TestMainDoctor(unittest.TestCase):
             with self.assertRaises(SystemExit) as ctx:
                 main(["doctor"])
             self.assertEqual(ctx.exception.code, 1)
+
+    def _run_doctor_modes(self, argv, env):
+        """``main(argv)`` with ``run_doctor`` mocked, returning the (api_mode, worker_mode) it received."""
+        with patch("redsim.doctor.run_doctor", return_value=True) as mock_dr, \
+             patch("redsim.config.load_config", return_value=RedsimConfig()), \
+             patch.dict("os.environ", env, clear=False):
+            os.environ.pop("REDSIM_DOCTOR_WORKER_MODE", None)
+            os.environ.update(env)
+            with self.assertRaises(SystemExit) as ctx:
+                main(argv)
+        self.assertEqual(ctx.exception.code, 0)
+        mock_dr.assert_called_once()
+        kwargs = mock_dr.call_args.kwargs
+        return kwargs["api_mode"], kwargs["worker_mode"]
+
+    def test_doctor_worker_mode_flag_reaches_run_doctor(self):
+        self.assertEqual(self._run_doctor_modes(["doctor", "--worker-mode"], {}), (False, True))
+        self.assertEqual(self._run_doctor_modes(["doctor", "--api-mode", "--worker-mode"], {}), (True, True))
+        self.assertEqual(self._run_doctor_modes(["doctor"], {}), (False, False))
+
+    def test_doctor_worker_mode_env_fallback_still_honoured(self):
+        # The worker image sets REDSIM_DOCTOR_WORKER_MODE=1 once, so no flag is needed there.
+        self.assertEqual(self._run_doctor_modes(["doctor"], {"REDSIM_DOCTOR_WORKER_MODE": "1"}), (False, True))
+        self.assertEqual(self._run_doctor_modes(["doctor"], {"REDSIM_DOCTOR_WORKER_MODE": "0"}), (False, False))
+        # The flag wins even when the env says off.
+        self.assertEqual(
+            self._run_doctor_modes(["doctor", "--worker-mode"], {"REDSIM_DOCTOR_WORKER_MODE": "0"}), (False, True),
+        )
 
 
 class TestMainInit(unittest.TestCase):

@@ -71,6 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor = sub.add_parser("doctor", help="Validate the Redsim environment")
     p_doctor.add_argument("--api-mode", dest="api_mode", action="store_true",
                           help="Also probe DB, blob backend, OIDC issuer (Phase 3)")
+    p_doctor.add_argument("--worker-mode", dest="worker_mode", action="store_true",
+                          help="Require the adversarial-ML checks (ml extra, sandbox child, "
+                               "asset manifest) instead of reporting them; the worker image "
+                               "runs this. REDSIM_DOCTOR_WORKER_MODE=1 is the env equivalent.")
 
     # init
     sub.add_parser("init", help="Create a default redsim.yaml in the current directory")
@@ -121,6 +125,10 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="Verify a specific project's chain")
     p_audit_verify.add_argument("--all", action="store_true",
                                 help="Verify every chain known to the writer")
+    p_audit_verify.add_argument("--run-dir", dest="run_dir", default=None, metavar="PATH",
+                                help="Verify the offline single-file chain at PATH/audit.jsonl "
+                                     "(the layout `redsim ml attack` writes under <out>/<run_id>/). "
+                                     "PATH may also be the .jsonl file itself")
     p_audit_export = audit_sub.add_parser(
         "export", help="Export audit chains to the WORM (Object-Lock) bucket")
     p_audit_export.add_argument("--all", action="store_true",
@@ -165,7 +173,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_plugins_sign.add_argument("--out", default=None,
                                 help="Output directory for the .sig (default: cwd)")
 
-    # ml (adversarial-ML vertical): `redsim ml build-assets` skeleton at M0
+    # ml (adversarial-ML vertical): `redsim ml build-assets | attack | seed`
     from redsim.cli.ml import add_ml_subparser
     add_ml_subparser(sub)
 

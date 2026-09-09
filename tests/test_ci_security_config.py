@@ -13,6 +13,7 @@ that the baseline ignore files parse — not that the scanners themselves pass
 from __future__ import annotations
 
 import configparser
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -163,3 +164,145 @@ class TestBaselineConfigsParse:
         assert TRIVYIGNORE.exists(), f"{TRIVYIGNORE} must exist"
         active = self._active_lines(TRIVYIGNORE)
         assert all(a.startswith(("CVE-", "GHSA-")) for a in active), active
+
+
+# ---------------------------------------------------------------------------
+# Configuration hygiene (gap register G-CONFIG, spec 20.3 / 10.8, D5)
+# ---------------------------------------------------------------------------
+
+ENV_EXAMPLE = REPO_ROOT / ".env.example"
+REDSIM_YAML = REPO_ROOT / "redsim.yaml"
+
+#: The only ``*_API_KEY`` allowed anywhere in the configuration surface.
+PYTHIA_KEY = "PYTHIA_API_KEY"
+
+#: Provider-key names the pre-D5 scaffold documented; none may come back.
+PROVIDER_KEYS = ("GOOGLE_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+                 "AZURE_API_KEY", "AZURE_OPENAI_API_KEY")
+
+#: Pythia support variables (spec 20.3 table, docs/ops/pythia.md).
+PYTHIA_VARS = ("PYTHIA_BASE_URL", "PYTHIA_API_KEY", "PYTHIA_PERSONA", "PYTHIA_TIMEOUT_S", "REDSIM_ENV_FILE")
+
+#: Adversarial-ML variables of spec 20.3, plus the build-time Kaggle token.
+ML_VARS = (
+    "REDSIM_ML_LLM_MODEL",
+    "REDSIM_DISABLE_LLM",
+    "REDSIM_ML_ASSETS_DIR",
+    "REDSIM_ML_WORK_DIR",
+    "REDSIM_ML_KEEP_WORK_DIR",
+    "REDSIM_ML_SANDBOX_TIMEOUT_S",
+    "REDSIM_ML_SANDBOX_CPU_SECONDS",
+    "REDSIM_ML_SANDBOX_MEMORY_MB",
+    "REDSIM_ML_SANDBOX_FILESIZE_MB",
+    "REDSIM_ML_SANDBOX_THREADS",
+    "REDSIM_ML_DATASET_CACHE",
+    "REDSIM_ML_UPLOAD_MAX_MB",
+    "REDSIM_ML_MAX_ADV_ARTIFACT_MB",
+    "KAGGLE_API_TOKEN",
+)
+
+#: Spec 9.4 / 20.3 defaults every sandbox ceiling comment must state.
+SANDBOX_DEFAULTS = {
+    "REDSIM_ML_SANDBOX_TIMEOUT_S": "1200",
+    "REDSIM_ML_SANDBOX_CPU_SECONDS": "900",
+    "REDSIM_ML_SANDBOX_MEMORY_MB": "4096",
+    "REDSIM_ML_SANDBOX_FILESIZE_MB": "1024",
+    "REDSIM_ML_SANDBOX_THREADS": "2",
+}
+
+
+def _env_example_lines() -> list[str]:
+    return ENV_EXAMPLE.read_text().splitlines()
+
+
+def _env_example_assignments() -> dict[str, str]:
+    """``KEY -> value`` for every non-comment ``KEY=VALUE`` line (last assignment wins)."""
+    out: dict[str, str] = {}
+    for raw in _env_example_lines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        out[key.strip()] = value.strip()
+    return out
+
+
+def _comment_above(var: str) -> str:
+    """The comment line immediately above ``var``'s assignment ('' when there is none)."""
+    lines = _env_example_lines()
+    for idx, raw in enumerate(lines):
+        if raw.startswith(f"{var}="):
+            previous = lines[idx - 1].strip() if idx else ""
+            return previous if previous.startswith("#") else ""
+    return ""
+
+
+def test_env_example_no_provider_keys_and_lists_ml_vars() -> None:
+    text = ENV_EXAMPLE.read_text()
+    assigned = _env_example_assignments()
+
+    # The only LLM credential is the Pythia key (D5).
+    api_keys = {k for k in assigned if k.endswith("_API_KEY")}
+    assert api_keys == {PYTHIA_KEY}, api_keys
+    for name in PROVIDER_KEYS:
+        assert name not in text, f"{name} must not be documented"
+    assert "litellm" not in text.lower()
+
+    # Every spec 20.3 ML variable and every Pythia support variable is listed,
+    # with an EMPTY value and a one-line comment directly above it.
+    for var in PYTHIA_VARS + ML_VARS:
+        assert var in assigned, f"{var} missing from .env.example"
+        assert assigned[var] == "", f"{var} must be documented with an empty value, got {assigned[var]!r}"
+        assert _comment_above(var), f"{var} needs a one-line comment directly above it"
+    # The sandbox ceilings state their defaults.
+    for var, default in SANDBOX_DEFAULTS.items():
+        assert default in _comment_above(var), f"{var} comment must state its default {default}"
+    # Each variable is assigned exactly once.
+    keys = [ln.split("=", 1)[0] for ln in _env_example_lines() if ln and not ln.startswith("#") and "=" in ln]
+    dupes = {k for k in keys if keys.count(k) > 1}
+    assert not dupes, dupes
+
+
+def test_redsim_yaml_has_no_provider_model() -> None:
+    from redsim.config import load_config
+
+    text = REDSIM_YAML.read_text()
+    data = _load_yaml(REDSIM_YAML)
+    assert "model" not in data, "redsim.yaml must not carry the litellm / provider-style default model"
+    lowered = text.lower()
+    for token in ("gemini", "openai", "anthropic", "litellm"):
+        assert token not in lowered, token
+    # The comments may point at the Pythia key; no other *_API_KEY may appear.
+    assert set(re.findall(r"\b[A-Z0-9_]*_API_KEY\b", text)) <= {PYTHIA_KEY}
+    for name in PROVIDER_KEYS:
+        assert name not in text
+    cfg = load_config(path=str(REDSIM_YAML))
+    assert cfg.output_dir == "./redsim_output"
+    assert "127.0.0.1" in cfg.target_allowlist
+    assert isinstance(cfg.task_models, dict)
+
+
+def test_init_template_has_no_provider_model_or_secrets(tmp_path: Path) -> None:
+    from redsim.cli.init import TEMPLATE_FIELDS, render_template
+    from redsim.config import RedsimConfig, load_config
+
+    # A secret exported in the shell must never be written into the template.
+    cfg = RedsimConfig(auth_profiles_key="SECRET-FERNET-VALUE", auth_profiles_key_previous="OLD-SECRET")
+    text = render_template(cfg)
+    parsed = yaml.safe_load(text)
+    assert set(parsed) == set(TEMPLATE_FIELDS) | {"task_models"}
+    assert "model" not in parsed
+    for token in ("SECRET-FERNET-VALUE", "OLD-SECRET", "auth_profiles_key", "gemini", "litellm", "None"):
+        assert token not in text, token
+    for name in PROVIDER_KEYS:
+        assert name not in text
+    assert parsed["output_dir"] == "./redsim_output"
+    assert parsed["target_allowlist"] == RedsimConfig().target_allowlist
+    assert parsed["task_models"] == {}
+
+    # The template round-trips through the loader.
+    target = tmp_path / "redsim.yaml"
+    target.write_text(text)
+    loaded = load_config(path=str(target))
+    assert loaded.output_dir == "./redsim_output"
+    assert loaded.job_max_runtime_seconds == RedsimConfig().job_max_runtime_seconds

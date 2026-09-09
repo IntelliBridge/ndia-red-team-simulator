@@ -238,7 +238,7 @@ def test_child_env_has_no_secrets_and_forwards_assets_dir(
     assert captured["request"]["assets_dir"] == expected
     assert child_env[sandbox.ASSETS_DIR_ENV] == expected
     assert sorted(k for k in child_env if k.startswith("REDSIM_")) == [
-        "REDSIM_ML_ASSETS_DIR", "REDSIM_PLUGINS",
+        "REDSIM_DISABLE_LLM", "REDSIM_ENV_FILE", "REDSIM_ML_ASSETS_DIR", "REDSIM_PLUGINS",
     ]
     assert child_env["REDSIM_PLUGINS"] == "0"
     # Spec 9.4 additions.

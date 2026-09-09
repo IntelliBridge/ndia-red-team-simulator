@@ -8,11 +8,9 @@ ALB shell, target groups, data services, storage, logs, and per-service IAM
 roles. The runtime owner must not infer that an application is deployed from
 these resources or outputs.
 
-Open PR 16 removes the prior AWS workflow and core. Runtime owners must
-coordinate with that work before coupling task definitions, services, or
-deployment automation to this branch. The canonical target remains Fargate.
-Stale CLAUDE descriptions and namespace-specific plans are not authoritative.
-Confirm behavior against the actual redsim code and updated approved plans.
+PR #16 and PR #19 are merged. The runtime now lives in `../runtime`; read
+its README for current deployment instructions. This document describes the
+original foundation contracts, not current service health.
 
 ## Stable service-role contract
 

@@ -45,6 +45,12 @@ variable "network" {
   }
 }
 
+variable "allow_public_https" {
+  description = "Explicit opt-in for a publicly reachable HTTPS demo. Authentication remains required in the runtime."
+  type        = bool
+  default     = false
+}
+
 variable "reviewer_ipv4_cidrs" {
   description = "Approved team ingress ranges for future TLS access. No public listener is created by this foundation."
   type        = set(string)
@@ -52,10 +58,10 @@ variable "reviewer_ipv4_cidrs" {
     condition = (
       length(var.reviewer_ipv4_cidrs) > 0 &&
       alltrue([for cidr in var.reviewer_ipv4_cidrs :
-        can(cidrnetmask(cidr)) && try(tonumber(split("/", cidr)[1]) >= 16, false)
+        can(cidrnetmask(cidr)) && (try(tonumber(split("/", cidr)[1]) >= 16, false) || (var.allow_public_https && cidr == "0.0.0.0/0"))
       ])
     )
-    error_message = "Provide explicit IPv4 reviewer ranges of /16 or narrower, never world-open ingress."
+    error_message = "Use IPv4 reviewer ranges of /16 or narrower, or explicitly opt into public HTTPS before supplying 0.0.0.0/0."
   }
 }
 

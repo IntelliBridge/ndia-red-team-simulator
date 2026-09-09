@@ -4,26 +4,23 @@ A target is a model plus the public dataset slice it is evaluated on. The
 bundled image and tabular targets are live when their assets are present; the
 LLM endpoint target is a registered stub whose ``info().status`` is
 ``not_implemented`` so the UI can show it honestly.
+
+``Sample`` is defined in ``redsim.ml.datasets.sampling`` (the module that
+builds it) and re-exported here unchanged, so ``from redsim.ml.targets.base
+import Sample`` keeps working while the datasets package stays free of any
+import of the targets package (see ``tests/ml/test_import_order.py``).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
+from redsim.ml.datasets.sampling import Sample
 from redsim.ml.schema import TargetInfo
 
-
-@dataclass
-class Sample:
-    """Evaluation slice. ``x`` is float32 in [0, 1], NCHW for images."""
-
-    x: np.ndarray
-    y: np.ndarray            # int labels, shape (n,)
-    indices: np.ndarray      # index into the source split, for reproducibility
-    class_names: list[str]
+__all__ = ["Sample", "Target"]
 
 
 @runtime_checkable

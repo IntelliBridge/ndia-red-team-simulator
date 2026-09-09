@@ -34,6 +34,11 @@ security = [
 ]
 api = [
     "fastapi>=0.110",
+    # Starlette's multipart/form-data parser. POST /v1/models with
+    # source="upload" (redsim/api/v1/models.py) reads the upload as a form;
+    # without this the route fails with "The `python-multipart` library must
+    # be installed to use form parsing" (Coverage gate on main at bb43bd7).
+    "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.27",
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.1",

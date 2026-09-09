@@ -19,9 +19,16 @@ operator setting the child legitimately needs is the bundled asset tree
 split of uploaded models all resolve ``MANIFEST.json`` from it. The parent
 therefore resolves that directory once, to an absolute path, and hands it to the
 child explicitly, both as the ``assets_dir`` field of the request JSON (which
-``sandbox_worker`` applies before any ML import) and as the single non-secret
-``REDSIM_*`` variable in the child env. No other ``REDSIM_*`` value, proxy
-setting or API token crosses the boundary, and the ML child never gets network
+``sandbox_worker`` applies before any ML import) and as a ``REDSIM_*`` variable
+in the child env. The only other ``REDSIM_*`` values the child sees are pins, not
+settings: ``REDSIM_PLUGINS=0`` (no plugin discovery in the child),
+``REDSIM_ENV_FILE=<work_dir>/no-env`` (``redsim.llm.pythia`` otherwise falls back
+to ``./.env`` and the repo-root ``.env``, so a checkout holding a real gateway key
+would reach the child through the file even with every ``PYTHIA_*`` variable
+stripped, and naming an absent file inside the just-cleared work directory
+switches that fallback off) and ``REDSIM_DISABLE_LLM=1`` (the narrative is the
+worker parent's job, spec 10.8 / 16.1). No other ``REDSIM_*`` value, proxy setting or
+API token crosses the boundary, and the ML child never gets network
 configuration regardless of ``REDSIM_PLUGIN_SANDBOX_NETWORK``.
 """
 
@@ -100,9 +107,20 @@ ENVELOPE_MAX_BYTES = 16 * 1024 * 1024
 #: Exit status ``sandbox_worker`` uses for an unreadable request (parent-side contract bug).
 _EXIT_BAD_REQUEST = 2
 
+# Mirrors ``redsim.llm.pythia.ENV_FILE_VAR``: the explicit ``.env`` override. Declared
+# here as a literal so the parent never imports the gateway client (httpx) just to
+# build the child env. ``tests/test_ml_sandbox.py`` pins the two names together.
+ENV_FILE_VAR = "REDSIM_ENV_FILE"
+#: The switch ``redsim.workers.tasks.ml_campaign`` honours for the LLM narrative.
+DISABLE_LLM_ENV = "REDSIM_DISABLE_LLM"
+#: Name of the guaranteed-absent ``.env`` the child is pointed at, inside its work dir.
+NO_ENV_FILE_NAME = "no-env"
+
 # Environment prefixes that must never appear in the child, whatever the allowlist grows into.
 _FORBIDDEN_ENV_PREFIXES = ("REDSIM_", "PYTHIA_", "KAGGLE_", "AWS_", "HF_TOKEN", "HUGGING_FACE")
-_ALLOWED_REDSIM_KEYS = frozenset({ASSETS_DIR_ENV, "REDSIM_PLUGINS"})
+# The only REDSIM_* keys the child may carry: one resolved directory and three pins
+# (plugins off, .env lookup pointed at an absent file, LLM narrative off). Never a secret.
+_ALLOWED_REDSIM_KEYS = frozenset({ASSETS_DIR_ENV, "REDSIM_PLUGINS", ENV_FILE_VAR, DISABLE_LLM_ENV})
 
 _JOB_DIR_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
@@ -215,13 +233,33 @@ def _clear_dir(path: Path) -> None:
             child.unlink(missing_ok=True)
 
 
-def _ml_child_env(cfg: MlSandboxConfig, *, assets: str, hash_seed: int) -> dict[str, str]:
+def no_env_file(work_dir: Path | None = None) -> Path:
+    """The absent ``.env`` path the child's ``REDSIM_ENV_FILE`` is pinned to.
+
+    Inside the per-job work directory when there is one: ``_run_child`` clears
+    that directory right before spawning, so the path is guaranteed not to exist
+    when the child starts, and nothing but the child itself could create it.
+    Callers without a work directory (the doctor / adapter ``--help`` probes) get
+    the same name under the work-dir root, which the parent never populates.
+    ``redsim.llm.pythia.env_file_path`` treats an explicit value that is not a
+    file as "no .env at all" and does not fall through to ``./.env``.
+    """
+    root = Path(work_dir) if work_dir is not None else work_dir_root()
+    return root / NO_ENV_FILE_NAME
+
+
+def _ml_child_env(
+    cfg: MlSandboxConfig, *, assets: str, hash_seed: int, work_dir: Path | None = None,
+) -> dict[str, str]:
     """The child's environment: interpreter allowlist + spec 9.4 additions, nothing else.
 
     ``_child_env`` starts from an empty dict and copies only ``_SAFE_ENV_KEYS``;
     ``allow_network`` is hard-wired off so proxy variables are never restored.
-    A final sweep drops anything under a secret-bearing prefix so a future
-    widening of the shared allowlist cannot leak through this boundary.
+    ``REDSIM_ENV_FILE`` is pinned to :func:`no_env_file` so the gateway client's
+    ``./.env`` / repo-root fallback cannot hand the child a key the environment
+    sweep already removed, and ``REDSIM_DISABLE_LLM=1`` says the child never
+    narrates. A final sweep drops anything under a secret-bearing prefix so a
+    future widening of the shared allowlist cannot leak through this boundary.
     """
     env = _child_env(cfg.rlimits())
     env.update({
@@ -233,9 +271,12 @@ def _ml_child_env(cfg: MlSandboxConfig, *, assets: str, hash_seed: int) -> dict[
         "MPLBACKEND": "Agg",
         "HF_HUB_OFFLINE": "1",
         "HF_DATASETS_OFFLINE": "1",
-        # The only REDSIM_* value the child receives: a resolved directory,
+        # The only REDSIM_* setting the child receives: a resolved directory,
         # never a credential.
         ASSETS_DIR_ENV: assets,
+        # Pins: no .env fallback, no LLM narrative in the child.
+        ENV_FILE_VAR: str(no_env_file(work_dir)),
+        DISABLE_LLM_ENV: "1",
     })
     for key in list(env):
         if key in _NETWORK_ENV_KEYS:
@@ -361,7 +402,9 @@ def _persist_child_artifacts(
     persisted: dict[str, str] = {}
     for item in entries:
         name = str(item.get("name") or "")
-        path = _artifact_path(work_dir, name)
+        # ``path`` is where the child left the bytes (an earlier version of a re-written name sits at a
+        # digest-qualified path); it is never the artifact's name.
+        path = _artifact_path(work_dir, str(item.get("path") or name))
         try:
             data = path.read_bytes()
         except OSError as exc:
@@ -400,7 +443,7 @@ def _persist_partial_files(work_dir: Path, sink: ArtifactSink | None) -> dict[st
     for item in entries:
         name = str(item.get("name") or "")
         try:
-            path = _artifact_path(work_dir, name)
+            path = _artifact_path(work_dir, str(item.get("path") or name))
             data = path.read_bytes()
         except (EnvelopeInvalid, OSError) as exc:
             logger.info("ML sandbox partial evidence skipped %r: %s", name, exc)
@@ -533,7 +576,7 @@ def _run_child(
         else:
             _clear_dir(work_dir)
             request_path.write_text(request_json, encoding="utf-8")
-            env = _ml_child_env(cfg, assets=assets, hash_seed=hash_seed)
+            env = _ml_child_env(cfg, assets=assets, hash_seed=hash_seed, work_dir=work_dir)
             argv = [
                 sys.executable,
                 "-m",
@@ -769,17 +812,21 @@ __all__ = [
     "ASSETS_DIR_ENV",
     "CELERY_SOFT_LIMIT_S",
     "DEFAULT_ASSETS_DIR",
+    "DISABLE_LLM_ENV",
     "ENV_CPU_SECONDS",
     "ENV_FILESIZE_MB",
+    "ENV_FILE_VAR",
     "ENV_MEMORY_MB",
     "ENV_THREADS",
     "ENV_TIMEOUT_S",
     "KEEP_WORK_DIR_ENV",
+    "NO_ENV_FILE_NAME",
     "PARTIAL_PREFIX",
     "WORK_DIR_ENV",
     "MlSandboxConfig",
     "job_work_dir",
     "keep_work_dir",
+    "no_env_file",
     "partial_campaign_record",
     "run_campaign_sandboxed",
     "validate_model_sandboxed",

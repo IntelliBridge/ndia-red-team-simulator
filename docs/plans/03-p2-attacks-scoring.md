@@ -18,6 +18,53 @@ This phase builds the attack and scoring half of a campaign on the redsim
 platform. It supersedes the deleted `redsim/` plan. Every path below is a real
 redsim path.
 
+## Landed status (2026-09-08, `main` at `bb43bd7`)
+
+The body below is the pre-merge plan and is kept as written. This block
+records what is on `main`, what lands with wave 3, and what is still open.
+Where the body and the tree disagree, the tree wins.
+
+On `main` (#8, #22, completion waves 1 and 2):
+
+- `redsim/ml/attacks/{fgsm,pgd,hopskipjump,noise_control}.py` registered in
+  `ATTACKS` (`attacks/registry.py`), with `attack_capabilities(adapter)`
+  deriving `family:<family>` and `modality:<domain>` tags. `pgd` on a tabular
+  target runs against the declared build-time surrogate and is scored on the
+  real model (surrogate kind, sha256 and clean agreement in `notes`), with
+  per-feature ε scaling over the manifest ranges, frozen features held
+  through the ART `mask` on every step, integer features rounded after the
+  attack, and norms reported in scaled units. Tabular L2 is recorded
+  `not_run`. HopSkipJump's `queries_mean` denominator is the number of
+  samples the attack flipped (`None` when none flipped).
+- `redsim/ml/eval.py` and `redsim/ml/scoring.py`: the MRI formula unchanged,
+  `DEFAULT_EPS_GRID_LINF` (0.01, 0.03, 0.1), `DEFAULT_EPS_GRID_L2` (0.25,
+  0.5, 1.0) and `DEFAULT_REFERENCE_EPS` 0.03, the `control_preserves_accuracy`
+  binomial predicate, `FamilyDelta` with both denominators for a cell present
+  on one side only, `delta()` refusing a modality mix with
+  `IncompatibleCampaigns`, and the `ml.curve` robustness curve with its PNG.
+- `redsim/ml/campaign.py`: an attack that cannot run is recorded `not_run`
+  and removed from the scored set, the D3 bounds statement and the manifest
+  dataset caveats are printed with every campaign's limitations, and
+  `TinyTabularTarget` in `tests/ml/fakes.py` carries the tabular end-to-end
+  test.
+- Default ε grids and the reference budget are filled at admission
+  (`redsim/services/ml_campaigns.py`, `422 reference_eps_not_in_grid` when a
+  given reference is outside the grid).
+- The task body is `redsim.ml_campaign_run` in
+  `redsim/workers/tasks/ml_campaign.py`, one job for the whole campaign. The
+  `redsim.attack_run` chain in `workers/tasks/attack.py` this body planned
+  was not built (master plan section 0, v2.3, divergences 1 and 2). Finding
+  creation by ASR threshold and derived severity is in
+  `redsim/services/ml_findings.py`.
+
+Wave 3, landing 2026-09-09: admission no longer freezes `eps` (and PGD's
+`norm_l2`) from `resolve_params` into `attack_params`, which made the child
+refuse every API-launched campaign, and `pgd` is admitted on tabular targets
+by capability tag rather than by `AttackInfo.domain`.
+
+Still open: nothing in this phase's scope is known open beyond the two wave 3
+fixes. Phase B attacks and modalities answer `not_implemented`.
+
 ---
 
 ## 1. Objective

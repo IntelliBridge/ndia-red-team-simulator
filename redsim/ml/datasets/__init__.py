@@ -7,7 +7,8 @@ module here imports torch, ART or SHAP at import time.
 
 Submodules (import them explicitly, this package stays light):
 
-* ``sampling``   seeded, stratified evaluation slices -> ``Sample``
+* ``sampling``   seeded, stratified evaluation slices -> ``Sample`` (the dataclass lives here;
+                 ``redsim.ml.targets.base`` re-exports it, this package never imports targets)
 * ``image_hub``  HuggingFace hub helpers (revision lookup, file download, imagefolder decode)
 * ``cifar10``    the ``uoft-cs/cifar10`` parquet loader (CI fixture dataset, never a demo target)
 * ``url_features`` lexical URL features for the malicious-URLs tabular task (spec section 11.3.3)

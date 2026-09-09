@@ -238,19 +238,15 @@ def seed_model(
 def parent_config(**overrides: Any) -> dict[str, Any]:
     """A frozen attack-campaign configuration in the ``ml_campaigns.config`` shape.
 
-    ``attack_params`` are resolved through the adapters the way admission freezes
-    them (every parameter present with its default), so a copy made by a rerun is
-    exactly equal to the parent's.
+    ``attack_params`` carry caller overrides only (``eps`` / ``norm_l2`` are the
+    runner's, supplied from the grid), the way admission freezes them, so a copy
+    made by a rerun is exactly equal to the parent's.
     """
-    from redsim.ml.attacks import get_attack
     from redsim.ml.schema import CampaignConfig
 
     base: dict[str, Any] = {
         "target_id": MODEL, "modality": "image", "attack_ids": ["fgsm", "pgd"],
-        "attack_params": {
-            "fgsm": get_attack("fgsm").resolve_params({}),
-            "pgd": get_attack("pgd").resolve_params({"max_iter": 5, "eps_step_ratio": 0.5}),
-        },
+        "attack_params": {"fgsm": {}, "pgd": {"max_iter": 5, "eps_step_ratio": 0.5}},
         "norm": "linf", "eps_grid": list(DEFAULT_EPS_GRID_LINF), "reference_eps": DEFAULT_REFERENCE_EPS,
         "n_samples": 50, "seed": 7, "explain_k": 4, "dataset_id": DATASET, "dataset_revision": DATASET_REVISION,
         "target_snapshot": {"id": MODEL, "kind": "ml_model_artifact"},
@@ -329,7 +325,7 @@ def test_start_campaign_fills_spec_defaults_and_audits_before_rows(api: Harness)
     assert config["reference_eps"] == DEFAULT_REFERENCE_EPS
     assert config["dataset_id"] == DATASET and config["dataset_revision"] == DATASET_REVISION
     assert config["n_samples"] == 200 and config["finding_asr_threshold"] == 0.2
-    assert set(config["attack_params"]["fgsm"]) == {"eps", "batch_size"}, "resolved adapter defaults"
+    assert config["attack_params"] == {"fgsm": {}}, "caller overrides only; eps comes from the grid"
     assert [attack["id"] for attack in config["attacks"]] == ["fgsm"]
     assert config["target_snapshot"]["id"] == MODEL
     row = api.campaign_row(run_id)
@@ -348,8 +344,12 @@ def test_start_campaign_fills_spec_defaults_and_audits_before_rows(api: Harness)
 
 
 def test_start_campaign_l2_norm_uses_the_l2_default_grid(api: Harness) -> None:
+    # PGD declares ``norm_l2``. This test used to launch ``fgsm`` under ``norm: l2`` and expect 202, which
+    # the runner then refused in the sandbox child (FGSM is L-inf only); admission now refuses that pairing
+    # with ``params_out_of_range`` (tests/ml/test_admission_followups.py), so the L2 default grid is
+    # exercised here with an attack that can run under L2.
     seed_model(api)
-    response = launch(api, {"attack_ids": ["fgsm"], "norm": "l2"})
+    response = launch(api, {"attack_ids": ["pgd"], "norm": "l2"})
     assert response.status_code == 202, response.text
     with api.Session() as session:
         job = session.get(Job, response.json()["job_ids"][0])
@@ -381,7 +381,6 @@ _TOO_MANY = [round(0.01 * (i + 1), 2) for i in range(DEFAULT_MAX_EPS_GRID_MEMBER
         pytest.param({}, "params_out_of_range", id="attack_ids_missing"),
         pytest.param({"attack_ids": []}, "params_out_of_range", id="attack_ids_empty"),
         pytest.param({"attack_ids": ["nope"]}, "unknown_attack", id="unknown_attack"),
-        pytest.param({"attack_ids": ["hopskipjump"]}, "attack_modality_mismatch", id="tabular_attack_on_image"),
         pytest.param({"attack_ids": ["fgsm"], "modality": "tabular"}, "attack_modality_mismatch",
                      id="modality_contradicts_model"),
         pytest.param({"attack_ids": ["fgsm"], "eps_grid": [0.1, 0.03]}, "eps_grid_invalid", id="grid_unsorted"),

@@ -23,6 +23,26 @@ Reruns (register G-API-RERUN, spec 10.6): ``parent_run_id`` names a terminal
 ``failed`` / ``cancelled`` attack campaign on the same model; its configuration
 is copied, every admission check runs again, the lineage is stored in
 ``ml_campaigns.parent_run_id`` and the original rows are never touched.
+
+``attack_params`` in the frozen config holds the caller's overrides only, each
+validated through the adapter's ``resolve_params``. The grid-owned keys
+(:data:`_GRID_OWNED_PARAMS`) are stripped before validation: the runner
+(``redsim.ml.campaign._attack_params``) derives ``eps`` from ``eps_grid`` and
+``norm_l2`` from ``norm`` and refuses a config that sets either, so freezing a
+resolved default there made every API-launched campaign fail in the sandbox
+child. Attack applicability is read from the registry capability tags
+(``modality:<domain>``), the same declaration the runner honours, so an attack
+that lists several modalities (PGD by surrogate transfer on tabular targets,
+spec 12.9) is admitted while a true mismatch stays ``attack_modality_mismatch``.
+
+Two more checks the runner (``redsim.ml.campaign._resolve_attacks``) performs
+are mirrored here so a campaign the sandbox child would refuse is never
+admitted, never enqueued and never becomes a failed ``Run``: ``attack_ids`` may
+name evasion adapters only (the benign ``noise_control`` runs automatically at
+every grid member when ``include_control`` is true, spec 12.4, and is not an
+attack), and a campaign with ``norm="l2"`` may name only adapters that declare a
+``norm_l2`` parameter (FGSM is L-inf only, spec 12.2). Both are
+``422 params_out_of_range`` with the field that has to change.
 """
 
 from __future__ import annotations
@@ -79,9 +99,20 @@ _RERUN_PARENT_STATUSES = frozenset({"failed", "cancelled"})
 _TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 #: Config keys the server owns; a request or a copied parent config never sets them.
 _SERVER_OWNED_CONFIG_KEYS = frozenset({"target_snapshot", "attacks", "defense", "scoring"})
+#: Attack parameters the campaign runner derives from the grid and the norm, never from
+#: ``attack_params`` (``redsim.ml.campaign._attack_params`` refuses them). The same set as
+#: ``redsim.ml.campaign_adapter._GRID_OWNED_PARAMS`` on the offline path; kept as a literal here
+#: because that name is module-private.
+_GRID_OWNED_PARAMS = frozenset({"eps", "norm_l2"})
 #: Spec 16.5 default for ``POST /v1/findings/{id}/verify`` when the body names no defense: feature
 #: squeezing is the one Phase A preprocessor that applies to both image and tabular targets.
 DEFAULT_VERIFY_DEFENSE_ID = "feature_squeezing"
+#: The one attack family ``attack_ids`` may name (spec 12.2 catalog). ``control`` adapters run
+#: automatically (``redsim.ml.campaign.CONTROL_ATTACK_ID``) and the runner refuses them in the set.
+_ATTACK_FAMILY = "evasion"
+#: The adapter parameter that switches an attack to the L2 norm; an adapter without it is L-inf only
+#: and the runner refuses it under ``norm="l2"`` (``redsim.ml.campaign._resolve_attacks``).
+_L2_PARAM = "norm_l2"
 
 
 @dataclass(frozen=True)
@@ -326,9 +357,17 @@ def create_attack_campaign(
     attacks), ``model_load_refused`` (status not ``available``, with ``status``
     and ``refusal_reason``), ``unknown_attack``, ``attack_modality_mismatch``,
     ``attack_requires_gradients``, ``eps_grid_invalid``,
-    ``reference_eps_not_in_grid``, ``params_out_of_range``,
-    ``dataset_incompatible``, ``campaign_not_terminal`` (rerun of a live parent)
-    and ``queue_unavailable`` (enqueue failed; rows rolled back).
+    ``reference_eps_not_in_grid``, ``params_out_of_range`` (also for a
+    non-evasion adapter such as ``noise_control`` in ``attack_ids``, and for an
+    L-inf-only attack under ``norm="l2"``), ``dataset_incompatible``,
+    ``campaign_not_terminal`` (rerun of a live parent) and ``queue_unavailable``
+    (enqueue failed; rows rolled back).
+
+    ``attack_params`` is frozen as the caller's overrides per attack (values as
+    the adapter resolves them), never the adapter defaults, and never the
+    grid-owned ``eps`` / ``norm_l2`` the runner supplies itself. A rerun copies
+    the parent's ``attack_params`` through the same rule, so a parent frozen
+    with those keys by an earlier build reruns cleanly.
     """
     from redsim.db.models import Job, Run, Target
     from redsim.db.session import get_session
@@ -434,10 +473,10 @@ def create_attack_campaign(
                            f"attack_params names attacks outside attack_ids: {unknown_param_owners}",
                            field="attack_params")
 
-        from redsim.ml.attacks import get_attack
+        from redsim.ml.attacks import ATTACKS, attack_capabilities, get_attack
 
         attack_infos = []
-        resolved_params: dict[str, dict[str, float | int | bool]] = {}
+        frozen_params: dict[str, dict[str, float | int | bool]] = {}
         for attack_id in attack_ids:
             try:
                 adapter = get_attack(attack_id)
@@ -448,21 +487,75 @@ def create_attack_campaign(
                 raise ApiError(NOT_IMPLEMENTED, f"attack {attack_id!r} is not implemented"
                                + (f": {info.reason}" if info.reason else ""),
                                phase="B", field="attack_ids")
-            if info.domain != modality:
+            # The runner refuses a non-evasion adapter in the attack set (``_resolve_attacks``); the benign
+            # control is not an attack and runs automatically at every eps when ``include_control`` is true.
+            if info.family != _ATTACK_FAMILY:
+                raise ApiError(
+                    PARAMS_OUT_OF_RANGE,
+                    f"attack_ids names {attack_id!r}, a {info.family} adapter, not an attack: the benign "
+                    f"noise control runs automatically at every eps of the grid (include_control, spec 12.4) "
+                    f"and is never part of the attack set",
+                    field="attack_ids", reasons=[f"{attack_id} is family {info.family}, not {_ATTACK_FAMILY}"],
+                )
+            # The runner refuses an L-inf-only adapter under the L2 norm; the norm is a campaign-wide choice, so
+            # the field that has to change is ``norm`` (or the attack set). The alternatives are listed.
+            if norm == "l2" and not any(spec.name == _L2_PARAM for spec in info.params_schema):
+                l2_capable = sorted(
+                    a.id for a in ATTACKS
+                    if a.info().family == _ATTACK_FAMILY
+                    and any(spec.name == _L2_PARAM for spec in a.info().params_schema)
+                )
+                raise ApiError(
+                    PARAMS_OUT_OF_RANGE,
+                    f"attack {attack_id!r} supports the L-inf norm only and the campaign norm is 'l2'; "
+                    f"attacks that take norm_l2: {l2_capable}",
+                    field="norm", reasons=[f"{attack_id} declares no {_L2_PARAM} parameter"],
+                )
+            # Applicability comes from the registry capability tags (``modality:<domain>`` for every
+            # domain the adapter declares), the same declaration ``redsim.ml.campaign._resolve_attacks``
+            # honours; ``AttackInfo.domain`` is the primary domain only and would refuse PGD by surrogate
+            # transfer on a tabular model (spec 12.9).
+            try:
+                capabilities = attack_capabilities(adapter)
+            except ValueError as exc:
+                raise ApiError(UNKNOWN_ATTACK,
+                               f"attack {attack_id!r} is registered with an invalid capability declaration: "
+                               f"{exc}", field="attack_ids") from exc
+            if f"modality:{modality}" not in capabilities:
+                supported = sorted(tag.removeprefix("modality:") for tag in capabilities
+                                   if tag.startswith("modality:"))
                 raise ApiError(ATTACK_MODALITY_MISMATCH,
-                               f"attack {attack_id!r} applies to {info.domain!r} targets, not {modality!r}",
+                               f"attack {attack_id!r} applies to {supported} targets, not {modality!r}",
                                field="attack_ids")
-            if info.requires_gradients and gradients is False:
+            # A white-box attack on a model without loss gradients is admitted when the adapter declares
+            # ``surrogate_transfer`` and the target declares a surrogate: the runner
+            # (``redsim.ml.campaign._surrogate_for_white_box``) then runs it on the surrogate and notes the
+            # transfer on every row (spec 12.9).
+            surrogate_declared = bool(detail.get("surrogate") or manifest.get("surrogate"))
+            by_surrogate = "surrogate_transfer" in capabilities and surrogate_declared
+            if info.requires_gradients and gradients is False and not by_surrogate:
                 raise ApiError(ATTACK_REQUIRES_GRADIENTS,
                                f"attack {attack_id!r} needs loss gradients the model does not expose "
                                "(manifest gradients: false)", field="attack_ids")
+            # The runner supplies ``eps`` (from the grid) and ``norm_l2`` (from ``norm``) at run time and
+            # refuses a config that sets them, so they are stripped before validation rather than refused:
+            # a copied parent config frozen by an earlier build still carries them. The remaining caller
+            # keys are validated (defaults filled, bounds checked) and only those keys are frozen, with
+            # the adapter's coerced values. Consequence for ``settings_hash`` (spec 5.6): adapter defaults
+            # are no longer part of the hashed config, so spelling a default out (``batch_size: 64``)
+            # hashes differently from omitting it, and a later change to an adapter default is not pinned
+            # by the hash; the effective values are recorded by the run's provenance instead.
+            given = {k: v for k, v in _as_mapping(attack_params.get(attack_id)).items()
+                     if k not in _GRID_OWNED_PARAMS}
             try:
-                resolved_params[attack_id] = adapter.resolve_params(_as_mapping(attack_params.get(attack_id)))
+                resolved = adapter.resolve_params(given)
             except ValueError as exc:
                 raise ApiError(PARAMS_OUT_OF_RANGE, f"invalid parameters for {attack_id!r}: {exc}",
                                field=f"attack_params.{attack_id}") from exc
+            declared = {spec.name for spec in info.params_schema}
+            frozen_params[attack_id] = {k: resolved[k] for k in given if k in declared and k in resolved}
             attack_infos.append(info)
-        snapshot["attack_params"] = resolved_params
+        snapshot["attack_params"] = frozen_params
         snapshot["attacks"] = [info.model_dump(mode="json") for info in attack_infos]
         snapshot["target_snapshot"] = target_snapshot
         snapshot.pop("defense", None)

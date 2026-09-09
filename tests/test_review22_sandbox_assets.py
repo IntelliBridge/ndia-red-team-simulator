@@ -109,9 +109,10 @@ def test_child_carries_assets_dir_but_no_parent_secrets(
     assert child_env[sandbox.ASSETS_DIR_ENV] == expected
     for key in _PARENT_SECRETS:
         assert key not in child_env, f"{key} leaked into the sandbox child env"
-    # The assets directory is the ONLY REDSIM_* value beside the plugin pin.
+    # The assets directory is the ONLY REDSIM_* value beside the plugin pin and the two
+    # LLM pins (REDSIM_ENV_FILE -> absent file, REDSIM_DISABLE_LLM=1).
     redsim_keys = sorted(k for k in child_env if k.startswith("REDSIM_"))
-    assert redsim_keys == ["REDSIM_ML_ASSETS_DIR", "REDSIM_PLUGINS"]
+    assert redsim_keys == ["REDSIM_DISABLE_LLM", "REDSIM_ENV_FILE", "REDSIM_ML_ASSETS_DIR", "REDSIM_PLUGINS"]
 
 
 def test_child_assets_dir_is_resolved_not_echoed(

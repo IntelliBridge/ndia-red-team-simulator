@@ -1151,7 +1151,8 @@ def _emit_record_audit(
                 for m in record.measurements
                 if m.family == "evasion" and m.expl_shift_mean is not None and m.attack_id
             },
-        })
+        }, success=bool(record.observations) or not any(
+            lim.startswith("Explain stage unavailable for") for lim in record.limitations))
     if record.score is not None:
         emitter.emit("campaign.score", {
             "mri": record.score.mri,

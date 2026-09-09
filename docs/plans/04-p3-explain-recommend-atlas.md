@@ -18,6 +18,58 @@ is **Phase B2** (canonical section 27.2, tag at `Finding.schema_blob.ml.atlas_te
 so this Phase A phase does not build it. The filename keeps the word "atlas" for
 continuity only.
 
+## Landed status (2026-09-08, `main` at `bb43bd7`)
+
+The body below is the pre-merge plan and is kept as written. This block
+records what is on `main`, what lands with wave 3, and what is still open.
+Where the body and the tree disagree, the tree wins.
+
+On `main` (#8, #22, completion waves 1 and 2):
+
+- `redsim/ml/explain/`: `base.py` (`ExplainOutput` and the digest-keyed
+  `ExplanationCache`, resolved from an explicit directory,
+  `REDSIM_ML_EXPLAIN_CACHE`, or the sandbox work directory), `shap_image.py`
+  (`GradientExplainer` with the `PartitionExplainer` fallback for
+  predict-only targets), `shap_tabular.py`, `stability.py` and `summary.py`.
+  `shap_summary.txt` is written as `ml.shap.summary_text` whenever explain
+  ran. A manifest `subject_centered: false` adds the weak-subject caveat to
+  the metric note and the limitations.
+- `redsim/ml/recommend/rules.py` holds both `interpret()` and `recommend()`.
+  The separate `recommend/interpret.py` this body planned was not created.
+  `recommend/narrative.py` is the Pythia rewrite.
+- The narrative runs in the worker parent after the sandbox child returns
+  (`redsim/workers/tasks/ml_campaign.py`): the model through
+  `redsim.llm.router.route("ml.harden_narrative")` with `DbBudgetChecker`,
+  the transport `redsim.llm.pythia.chat_text` inside the guardrails, prompt
+  and completion stored as `ml.harden.prompt` / `ml.harden.completion`
+  artifacts with their digests on the `harden.execute` row, one
+  `LLMUsage(task="ml.harden_narrative")` row per call, and every failure or
+  `REDSIM_DISABLE_LLM` leaving `narrative_source = "rules"`. The child
+  environment carries no Pythia key.
+- `redsim/services/ml_findings.py`: the spec 5.7 projection (`finding_type
+  = "adversarial_ml"`, measurement ids as evidence, clean and control rows in
+  the detail), dismissal restricted to `open | failed -> false_positive`, the
+  campaign creator and system principals refused with `403`, `409
+  run_terminal` on a stale finding, and the `finding.review` audit row
+  written before the change. `POST /v1/findings/{id}/explain` and `/harden`
+  create `explain.run` and `harden.recommend` jobs whose child records are
+  merged back into the parent finding's `schema_blob.ml`.
+- The verify loop: `POST /v1/findings/{id}/verify` with `recommendation_id`
+  optional and the spec 16.5 default defense, the defense matched through
+  the `defense:<id>` references, `MeasuredDelta` attached to the named
+  recommendation with `validation = "measured"`, a `RemediationAttempt` row
+  and the `verify.execute` audit row, and a failed or partial verify leaving
+  the finding `inconclusive` / `open`.
+- The three Celery tasks this body planned are job types on one task,
+  `redsim.ml_campaign_run` (master plan section 0, v2.3, divergences 1 and 2).
+
+Wave 3, landing 2026-09-09: the sandbox child pins `REDSIM_ENV_FILE` to an
+absent path and sets `REDSIM_DISABLE_LLM`, so a child never reads a
+checkout's `.env` and never reaches the gateway.
+
+Still open: MITRE ATLAS tagging (Phase B2, by design) and the web three-pane
+finding page beyond the PR #22 contract alignment (P5).
+
 ---
 
 ## 1. Objective

@@ -12,6 +12,16 @@ Two backends:
   this (different filename) so existing tests stay valid.
 - ``PostgresAuditWriter`` — locks ``audit_chain_heads`` and writes via the
   ORM. Unique constraints enforce monotonic sequence + no duplicate hashes.
+
+Timestamps. ``ts`` is part of the hashed record, so the verifier must see
+the byte-identical string the writer hashed. Every writer renders it with
+:func:`canonical_ts` (UTC, ``datetime.isoformat()``, ``+00:00`` suffix)
+and ``PostgresAuditWriter.read_chain`` re-derives it from ``created_at``
+through the same function, so a naive sqlite ``DateTime`` (offset dropped
+in storage) or a Postgres ``timestamptz`` rendered in a non-UTC session
+zone both come back as the hashed ``+00:00`` string. Rows written before
+this normalisation were hashed over ``datetime.now(UTC).isoformat()``,
+which is the same string, so they stay verifiable.
 """
 
 from __future__ import annotations
@@ -84,6 +94,24 @@ def compute_hash(prev_hash_hex: str | None, record: dict[str, Any]) -> str:
     prev_bytes = bytes.fromhex(prev_hash_hex) if prev_hash_hex else b""
     digest = hashlib.sha256(prev_bytes + canonical_json(record)).hexdigest()
     return digest
+
+
+def canonical_ts(value: datetime) -> str:
+    """Render an event timestamp exactly as it is hashed.
+
+    UTC, ``datetime.isoformat()`` (microseconds present unless zero, as
+    ``isoformat`` renders them), ``+00:00`` suffix. A naive datetime is
+    taken as UTC (the writers only ever store UTC instants, and sqlite's
+    ``DateTime`` storage hands them back without the offset) and an aware
+    one is converted, which is what a Postgres ``timestamptz`` needs when the
+    session ``TimeZone`` is not UTC. Same instant in, same string out on both
+    the write and the read side, so the recomputed hash matches.
+    """
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        value = value.replace(tzinfo=UTC)
+    else:
+        value = value.astimezone(UTC)
+    return value.isoformat()
 
 
 def _chain_id(project_id: str | None, run_id: str | None) -> str:
@@ -184,7 +212,7 @@ class JsonlAuditWriter:
             record = {
                 "chain_id": chain_id,
                 "seq": seq,
-                "ts": datetime.now(UTC).isoformat(),
+                "ts": canonical_ts(datetime.now(UTC)),
                 "actor": actor,
                 "action": action,
                 "target": target,
@@ -221,6 +249,24 @@ class JsonlAuditWriter:
         return _iter()
 
     def iter_chain_ids(self) -> Iterator[str]:
+        if self._single_file is not None:
+            # One file holds every chain: the ids live inside the records,
+            # not in the filename. Yield each distinct id once, in order of
+            # first appearance, so ``--all`` over an offline run directory
+            # verifies exactly the chains the file carries.
+            path = self.directory / self._single_file
+            if not path.exists():
+                return
+            seen: set[str] = set()
+            for line in path.read_text().splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                chain_id = json.loads(line).get("chain_id")
+                if chain_id and chain_id not in seen:
+                    seen.add(chain_id)
+                    yield chain_id
+            return
         for path in self.directory.glob("*.jsonl"):
             yield path.stem.replace("__", ":")
 
@@ -264,11 +310,12 @@ class PostgresAuditWriter:
                 sess.flush()
             seq = head.head_seq + 1
             prev_hash_hex = head.head_hash.hex() if head.head_hash else None
-            # ``ts`` is the canonicalized event time. We must pin
-            # ``created_at`` to exactly this value so the verifier
-            # recomputes the same hash from the DB read.
+            # ``ts`` is the hashed rendering of the event time and
+            # ``created_at`` is the same instant. ``read_chain`` re-derives
+            # ``ts`` from ``created_at`` through ``canonical_ts`` so the
+            # verifier recomputes the identical hash on any backend / zone.
             now = datetime.now(UTC)
-            ts = now.isoformat()
+            ts = canonical_ts(now)
             record = {
                 "chain_id": chain_id, "seq": seq,
                 "ts": ts,
@@ -312,7 +359,10 @@ class PostgresAuditWriter:
             for row in rows:
                 yield {
                     "chain_id": row.chain_id, "seq": row.seq,
-                    "ts": row.created_at.isoformat() if row.created_at else None,
+                    # Not ``created_at.isoformat()``: sqlite returns the
+                    # instant naive and Postgres renders it in the session
+                    # zone, and only the canonical UTC string was hashed.
+                    "ts": canonical_ts(row.created_at) if row.created_at else None,
                     "actor": row.actor, "action": row.action,
                     "target": row.target,
                     "allowlist_check": row.allowlist_check,
@@ -405,7 +455,7 @@ class InMemoryAuditWriter:
         seq = len(self._chains.get(chain_id, [])) + 1
         event = AuditEvent(
             chain_id=chain_id, seq=seq,
-            ts=datetime.now(UTC).isoformat(),
+            ts=canonical_ts(datetime.now(UTC)),
             actor=actor, action=action, target=target,
             allowlist_check=allowlist_check, override=override,
             success=success, detail=dict(detail or {}),

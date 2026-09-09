@@ -34,8 +34,8 @@ def _finding(fid: str = "f1") -> RedsimFinding:
 
 class TestScannerRegistry(unittest.TestCase):
     def test_registry_starts_without_builtin_adapters(self):
-        # The pentest scanner adapters were removed; the registry has no
-        # built-ins until an ML attack adapter (redsim.ml.attacks) registers.
+        # The pentest scanner adapters were removed; the only built-in is the
+        # ``ml-campaign`` facade (see test_ml_campaign_adapter_registered).
         for removed in ("strix", "trivy", "semgrep", "nuclei"):
             self.assertNotIn(removed, set(list_scanners()))
 
@@ -320,3 +320,44 @@ class TestScanResultFromRunner(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_ml_campaign_adapter_registered():
+    """The ``ml-campaign`` facade is the one built-in: roster, capabilities, health probe, GET /v1/scanners."""
+    import redsim
+    import redsim.scanners as scanners
+    from redsim.ml.campaign_adapter import (
+        ADAPTER_NAME,
+        CampaignScannerAdapter,
+        register_campaign_adapter,
+    )
+    from redsim.scanners.registry import KNOWN_CAPABILITIES, ScannerAdapter, get
+
+    assert ADAPTER_NAME == "ml-campaign" and ADAPTER_NAME in scanners.list_scanners()
+    adapter = get(ADAPTER_NAME)
+    assert isinstance(adapter, CampaignScannerAdapter) and isinstance(adapter, ScannerAdapter)
+    assert adapter.capabilities == {"adversarial_ml", "explainability"}
+    assert adapter.capabilities <= KNOWN_CAPABILITIES, "the ML tags are in the open vocabulary, not warned about"
+    assert adapter.adapter_version() == redsim.__version__
+    assert register_campaign_adapter() is adapter, "registration is idempotent"
+
+    # The health probe reports the ml extra and a real sandbox-child launch (--help), never a model load.
+    detail = adapter.health_detail()
+    assert set(detail) >= {"ml_extra", "ml_extra_detail", "sandbox_child", "sandbox_child_detail", "assets_dir"}
+    assert detail["sandbox_child"] is True, detail["sandbox_child_detail"]
+    assert "sandbox_worker --help" in detail["sandbox_child_detail"]
+    assert isinstance(adapter.health_check(), bool)
+
+    # GET /v1/scanners lists it with sorted capabilities.
+    import pytest
+
+    pytest.importorskip("fastapi")
+    from redsim.api.v1.scanners import list_registered_scanners
+
+    payload = list_registered_scanners(user=None)
+    assert {"name": "ml-campaign", "capabilities": ["adversarial_ml", "explainability"]} in payload["scanners"]
+
+    # dispatch() by capability reaches the facade; without a run_state it answers with an explicit error.
+    result = dispatch("adversarial_ml", run_state=None, options=ScanOptions(target="vehicles_cnn"))
+    assert result.adapter_name == "ml-campaign" and result.exit_code == -1 and result.findings == []
+    assert "run_path" in (result.error or "")
