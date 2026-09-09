@@ -61,7 +61,6 @@ describe("status to tRPC code map (KTD8)", () => {
     expect(trpcCodeForStatus(403)).toBe("FORBIDDEN");
     expect(trpcCodeForStatus(404)).toBe("NOT_FOUND");
     expect(trpcCodeForStatus(409)).toBe("CONFLICT");
-    expect(trpcCodeForStatus(411)).toBe("PAYLOAD_TOO_LARGE");
     expect(trpcCodeForStatus(413)).toBe("PAYLOAD_TOO_LARGE");
     expect(trpcCodeForStatus(415)).toBe("UNSUPPORTED_MEDIA_TYPE");
     expect(trpcCodeForStatus(422)).toBe("UNPROCESSABLE_CONTENT");
@@ -75,6 +74,13 @@ describe("status to tRPC code map (KTD8)", () => {
     // ENDPOINT_UNREACHABLE at 502 in the spec 17.3 addendum (wave B0), a
     // status the plan's map did not carry.
     expect(trpcCodeForStatus(502)).toBe("BAD_GATEWAY");
+  });
+
+  it("maps 411 as a bad request, the status models.py raises for a missing Content-Length", () => {
+    // The one row with no code in redsim/api/errors.py: a raw
+    // HTTPException(411) from redsim/api/v1/models.py. 411 is Length
+    // Required, not Payload Too Large, and 413 is the row for too large.
+    expect(trpcCodeForStatus(411)).toBe("BAD_REQUEST");
   });
 
   it("falls back to INTERNAL_SERVER_ERROR for a status the table does not name", () => {

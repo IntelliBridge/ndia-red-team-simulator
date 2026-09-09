@@ -19,6 +19,13 @@ const DEFAULT_TIMEOUT_MS = 30_000;
  * the plan's table did not carry, so 502 gets its row here. `capacity_deferred`
  * is a 202 marker that rides in an accepted response body and is never raised
  * as a refusal, so it needs none.
+ *
+ * 411 is the one row that answers to no code in that table at all. It comes
+ * from a raw `HTTPException(411)` in `redsim/api/v1/models.py`, which refuses
+ * an upload with no `Content-Length` and bypasses `redsim/api/errors.py`
+ * entirely. It is Length Required, so it maps to BAD_REQUEST: the request is
+ * malformed, and the payload it lacks a length for is not necessarily too
+ * large. 413 is the row for too large.
  */
 const TRPC_CODE_BY_STATUS: Readonly<Record<number, TRPC_ERROR_CODE_KEY>> = {
   400: "BAD_REQUEST",
@@ -26,7 +33,7 @@ const TRPC_CODE_BY_STATUS: Readonly<Record<number, TRPC_ERROR_CODE_KEY>> = {
   403: "FORBIDDEN",
   404: "NOT_FOUND",
   409: "CONFLICT",
-  411: "PAYLOAD_TOO_LARGE",
+  411: "BAD_REQUEST",
   413: "PAYLOAD_TOO_LARGE",
   415: "UNSUPPORTED_MEDIA_TYPE",
   422: "UNPROCESSABLE_CONTENT",
