@@ -195,10 +195,10 @@ def _section_findings(findings: Sequence[Any] | None) -> list[str]:
         rows.append([
             _field(item, "id", "finding_id"), _field(item, "title"), _field(item, "severity"),
             _field(item, "probe_id") or _field(detail, "probe_id"), _field(item, "detector") or _field(detail, "detector"),
-            fraction, _field(item, "status"), _field(item, "validation_state"),
+            fraction, _field(item, "status"),
         ])
     lines += _table(["finding", "title", "severity (derived from hit rate)", "probe", "detector", "hits k/n",
-                     "status", "validation"], rows)
+                     "status"], rows)
     return lines
 
 

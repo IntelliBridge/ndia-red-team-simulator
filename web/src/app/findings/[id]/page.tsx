@@ -224,7 +224,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
         severity={data.severity}
         status={data.status}
         target={data.schema_blob.target}
-        validationState={data.validation_state}
+        validationState={data.validation_state ?? null}
         actions={
           <RoleGated minRole="approver" callerRole={role}>
             <button

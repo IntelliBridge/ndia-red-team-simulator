@@ -179,11 +179,18 @@ def finding_states(session: Session, run_id: str) -> dict[str, dict[str, Any]]:
     from redsim.db.models import Finding
 
     rows = session.execute(select(Finding).where(Finding.run_id == run_id)).scalars().all()
+
+    def _is_llm(row: Finding) -> bool:
+        blob = row.schema_blob if isinstance(row.schema_blob, dict) else {}
+        return str(blob.get("finding_kind") or blob.get("finding_type") or "") == "adversarial_llm"
+
+    # Validation is the verify-after-harden outcome; an LLM probe finding has no
+    # verify loop, so it carries no validation state (owner decision 2026-09-09).
     return {
         str(row.scanner_finding_id): {
             "status": row.status,
-            "validation_state": row.validation_state,
-            "validated_at": row.validated_at.isoformat() if row.validated_at else None,
+            "validation_state": None if _is_llm(row) else row.validation_state,
+            "validated_at": None if _is_llm(row) else (row.validated_at.isoformat() if row.validated_at else None),
         }
         for row in rows
     }
@@ -382,7 +389,7 @@ def render_campaign_report_artifacts(
         "record_sha256": record_sha256,
         "reviewer_notes_sha256": hashlib.sha256(notes_bytes).hexdigest() if notes_bytes else None,
         "reviewer_notes_length": len(notes) if isinstance(notes, str) else 0,
-        "finding_states": {k: v["validation_state"] for k, v in sorted(states.items())},
+        "finding_states": {k: v["validation_state"] for k, v in sorted(states.items()) if v["validation_state"] is not None},
         "finding_status": {k: v["status"] for k, v in sorted(states.items())},
         "rendered_at": rendered_at.isoformat(),
     }
