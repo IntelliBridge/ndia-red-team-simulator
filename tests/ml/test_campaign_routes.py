@@ -81,6 +81,7 @@ def campaign_table(engine: Engine) -> Table:
         Column("limitations", JSON, nullable=False),
         Column("baseline_run_id", String),
         Column("parent_run_id", String),
+        Column("batch_id", String),
         Column("reviewer_notes", Text),
         Column("created_at", DateTime),
         Column("completed_at", DateTime),

@@ -484,6 +484,111 @@ def comparison_table(
     return table
 
 
+# ---------------------------------------------------------------------------
+# Batch grouping (BULK-07; plan 12 wave B3, bulk-service-routes)
+# ---------------------------------------------------------------------------
+
+
+def comparability_groups(
+    runs: Sequence[tuple[str, Mapping[str, Any], Mapping[str, Any] | None]],
+) -> dict[str, Any]:
+    """Partition ``(run_id, record, overlay)`` triples into comparability groups (batch compare).
+
+    A batch is N campaigns under one configuration on N models of one modality;
+    its compare table is the side-by-side case generalised to N. Two members
+    belong to the same group when :func:`pair_reasons` names no mismatched
+    variable between them (the same rule the pairwise route and the N-run table
+    apply: every compared config field, ``sample_indices_sha256``, and the
+    same-model settings-hash consistency check). Grouping is greedy in request
+    order against each group's first member, so a member joins the first group
+    it is compatible with and otherwise opens a new one.
+
+    A member whose score is absent or partial (``mri`` is ``None``) is listed
+    under ``unavailable`` with the reasons and takes part in no group; a member
+    whose record could not be read is passed in with ``record`` ``None`` (the
+    overlay may carry ``unavailable_reason``) and is listed the same way.
+
+    Each group carries the full scorecards of its members
+    (:func:`scorecard_projection`: MRIRecord, measurements, curve, limitations)
+    in request order, the ``unchanged_variables`` every pair of the group
+    shares and the ``key`` it was formed on (the compared config plus the
+    sample digest of its first member). Nothing is computed across members or
+    across groups: no delta, no mean, no rank, no aggregate (spec 15.8 i; D9),
+    and :func:`assert_no_aggregate_keys` guards the payload. A verify member
+    carries the delta the worker persisted on its own score record (inside the
+    scorecard's ``delta`` key when present); none is computed here.
+    """
+    ids = [run_id for run_id, _record, _overlay in runs]
+    if len(set(ids)) != len(ids):
+        raise ValueError("a run may appear only once in a batch comparison")
+
+    unavailable: list[dict[str, Any]] = []
+    scored: list[tuple[str, Mapping[str, Any], Mapping[str, Any] | None, dict[str, Any]]] = []
+    for run_id, record, overlay in runs:
+        if record is None:
+            reason = (overlay or {}).get("unavailable_reason") if isinstance(overlay, Mapping) else None
+            unavailable.append({"run_id": run_id, "reasons": [str(reason or f"{run_id}: no campaign record")]})
+            continue
+        score_value, why = require_complete_score(run_id, record)
+        if why:
+            unavailable.append({"run_id": run_id, "reasons": list(why)})
+            continue
+        scored.append((run_id, record, overlay, score_value))
+
+    groups: list[dict[str, Any]] = []
+    # Per group: the members (with their score) and the running intersection of unchanged variables.
+    members_by_group: list[list[tuple[str, Mapping[str, Any], Mapping[str, Any] | None, dict[str, Any]]]] = []
+    unchanged_by_group: list[set[str] | None] = []
+    incompatible_pairs: list[dict[str, Any]] = []
+    for run_id, record, overlay, score_value in scored:
+        placed = False
+        for index, members in enumerate(members_by_group):
+            first_id, first, first_overlay, _first_score = members[0]
+            mismatched, unchanged = pair_reasons(first_id, first, first_overlay, run_id, record, overlay)
+            if mismatched:
+                incompatible_pairs.append({"runs": [first_id, run_id], "reasons": list(mismatched)})
+                continue
+            members.append((run_id, record, overlay, score_value))
+            current = unchanged_by_group[index]
+            shared: set[str] = set(unchanged)
+            unchanged_by_group[index] = shared if current is None else current & shared
+            placed = True
+            break
+        if not placed:
+            members_by_group.append([(run_id, record, overlay, score_value)])
+            unchanged_by_group.append(None)
+
+    for members, group_unchanged in zip(members_by_group, unchanged_by_group, strict=True):
+        first_id, first, _first_overlay, _first_score = members[0]
+        groups.append({
+            "key": {**compared_config(first), SAMPLE_VARIABLE: sample_hash(first)},
+            "run_ids": [run_id for run_id, _r, _o, _s in members],
+            "scorecards": [scorecard_projection(record, score_value) for _id, record, _o, score_value in members],
+            "changed_variables": (["model"] if len({model_hash(r) for _i, r, _o, _s in members}) > 1 else []),
+            "unchanged_variables": sorted(group_unchanged) if group_unchanged is not None else sorted(
+                {*compared_config(first), SAMPLE_VARIABLE}),
+        })
+
+    caveats = sorted({str(lim) for _id, record, _o, _s in scored for lim in record.get("limitations", [])})
+    table = {
+        "mode": "batch_side_by_side",
+        "run_ids": list(ids),
+        "groups": groups,
+        "n_groups": len(groups),
+        "compatible": len(groups) <= 1,
+        "incompatible_pairs": incompatible_pairs,
+        "unavailable": unavailable,
+        "ignored_variables": list(IGNORED_VARIABLES),
+        "caveats": caveats,
+        "statement": ("Scorecards are grouped by comparability (same frozen settings and sampled inputs) and "
+                      "listed in request order within a group; each MRI is shown with its subscores, "
+                      "denominators and curve. Nothing is computed across members or groups: no delta, "
+                      "mean, rank or cross-model aggregate (spec 15.8; D9)."),
+    }
+    assert_no_aggregate_keys(table)
+    return table
+
+
 def assert_no_aggregate_keys(payload: Any, path: str = "") -> None:
     """Refuse a comparison payload that carries a mean, rank or average key (spec 15.8 i)."""
     if isinstance(payload, Mapping):
@@ -510,6 +615,7 @@ __all__ = [
     "assert_no_aggregate_keys",
     "baseline_of",
     "changed_variables",
+    "comparability_groups",
     "compared_config",
     "comparison_families",
     "comparison_table",
