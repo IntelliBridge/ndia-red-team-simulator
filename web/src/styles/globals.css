@@ -2,33 +2,270 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * redsim visual language, after labs.agiledefense.com.
+ *
+ * One dark theme. Deep navy ground, one red accent, white text at three
+ * strengths, Helvetica Neue for prose and JetBrains Mono for labels, nav,
+ * kickers and buttons. The semantic tokens keep the shadcn names so every
+ * `bg-card`, `text-muted-foreground` and `border-border` in the pages and
+ * the design system resolves without edits.
+ *
+ * Red is the brand. It never means danger here: `destructive`, the severity
+ * chips and the run-status badges sit on an amber and orange scale so a red
+ * element is always an action or an accent, never a warning.
+ */
+
+/* JetBrains Mono, SIL OFL 1.1, self-hosted from public/fonts so a build
+   needs no network. Licence beside the files. */
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-Medium.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/JetBrainsMono-SemiBold.woff2") format("woff2");
+}
+
 :root {
-  --background: 42 35% 96%; --foreground: 205 32% 16%;
-  --card: 42 32% 99%; --card-foreground: 205 32% 16%;
-  --popover: 42 32% 99%; --popover-foreground: 205 32% 16%;
-  --primary: 190 72% 30%; --primary-foreground: 42 35% 96%;
-  --secondary: 38 25% 89%; --secondary-foreground: 205 32% 16%;
-  --muted: 38 25% 91%; --muted-foreground: 205 14% 43%;
-  --accent: 32 78% 57%; --accent-foreground: 205 32% 16%;
-  --destructive: 5 69% 42%; --destructive-foreground: 42 35% 96%;
-  --border: 36 22% 80%; --input: 36 22% 80%; --ring: 190 72% 30%;
+  color-scheme: dark;
+
+  /* Labs palette, verbatim. */
+  --navy-deepest: #04060f;
+  --navy-deep: #060c1a;
+  --navy-mid: #0a1628;
+  --navy-surface: #0f1f36;
+  --navy-elevated: #142640;
+  --red-bright: #ff5a58;
+  --red-muted: #d23c3a;
+  --red-dim: rgba(255, 90, 88, 0.12);
+  --ink-1: rgba(255, 255, 255, 1);
+  --ink-2: rgba(255, 255, 255, 0.72);
+  --ink-3: rgba(255, 255, 255, 0.48);
+  --ink-4: rgba(255, 255, 255, 0.2);
+  --glass-bg: rgba(4, 6, 15, 0.55);
+  --glass-bg-mid: rgba(10, 22, 40, 0.5);
+  --glass-border: rgba(255, 90, 88, 0.14);
+  --glass-border-bright: rgba(255, 90, 88, 0.35);
+  --glass-shadow: 0 0 40px rgba(255, 90, 88, 0.04) inset, 0 8px 48px rgba(0, 0, 0, 0.5);
+  --mono: "JetBrains Mono", "Courier New", monospace;
+  --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+
+  /* Semantic tokens (HSL triplets for the Tailwind theme). */
+  --background: 229 58% 4%;            /* navy-deepest */
+  --foreground: 0 0% 100%;             /* ink-1 */
+  --card: 216 60% 10%;                 /* navy-mid */
+  --card-foreground: 0 0% 100%;
+  --popover: 215 57% 14%;              /* navy-surface */
+  --popover-foreground: 0 0% 100%;
+  --primary: 1 100% 67%;               /* red-bright */
+  --primary-foreground: 229 58% 4%;
+  --secondary: 215 57% 14%;            /* navy-surface */
+  --secondary-foreground: 0 0% 100%;
+  --muted: 216 52% 16%;                /* navy-elevated */
+  --muted-foreground: 222 5% 55%;      /* ink-3 over navy, solid */
+  --accent: 216 52% 16%;               /* hover surface */
+  --accent-foreground: 0 0% 100%;
+  --destructive: 30 95% 56%;           /* amber-orange, never red */
+  --destructive-foreground: 229 58% 4%;
+  --warning: 38 92% 55%;
+  --warning-foreground: 229 58% 4%;
+  --success: 152 60% 45%;
+  --success-foreground: 229 58% 4%;
+  --info: 199 80% 62%;
+  --info-foreground: 229 58% 4%;
+  --border: 358 30% 18%;               /* glass-border flattened onto navy */
+  --input: 358 26% 24%;
+  --ring: 1 100% 67%;
 }
-.dark {
-  --background: 205 32% 11%; --foreground: 42 35% 95%;
-  --card: 205 29% 15%; --card-foreground: 42 35% 95%;
-  --popover: 205 29% 15%; --popover-foreground: 42 35% 95%;
-  --primary: 174 54% 57%; --primary-foreground: 205 32% 11%;
-  --secondary: 205 23% 21%; --secondary-foreground: 42 35% 95%;
-  --muted: 205 23% 20%; --muted-foreground: 36 17% 69%;
-  --accent: 32 78% 57%; --accent-foreground: 205 32% 11%;
-  --destructive: 5 65% 56%; --destructive-foreground: 205 32% 11%;
-  --border: 205 19% 29%; --input: 205 19% 29%; --ring: 174 54% 57%;
-}
+
 @layer base {
-  * { border-color: hsl(var(--border)); box-sizing: border-box; }
-  body { background: hsl(var(--background)); color: hsl(var(--foreground)); font-family: "IBM Plex Sans", "Segoe UI", sans-serif; margin: 0; }
+  * {
+    border-color: hsl(var(--border));
+    box-sizing: border-box;
+  }
+  html {
+    background: var(--navy-deepest);
+  }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--ink-2);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+    background-color: var(--navy-deepest);
+    /* The faint red glow and navy lift the Labs pages carry behind their
+       glass. Fixed so it does not scroll with the content. */
+    background-image:
+      radial-gradient(ellipse 60% 40% at 15% 0%, rgba(255, 90, 88, 0.07), transparent 70%),
+      radial-gradient(ellipse 50% 40% at 100% 100%, rgba(15, 31, 54, 0.9), transparent 70%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3, h4 {
+    color: var(--ink-1);
+    font-family: var(--sans);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+  }
+  a {
+    color: inherit;
+  }
+  code, kbd, pre, samp {
+    font-family: var(--mono);
+  }
+  ::selection {
+    background: rgba(255, 90, 88, 0.35);
+    color: #fff;
+  }
+  :focus-visible {
+    outline: 2px solid var(--red-bright);
+    outline-offset: 2px;
+  }
 }
-.font-mono { font-family: "IBM Plex Mono", monospace; }
-.redsim-panel { border: 1px solid hsl(var(--border)); background: hsl(var(--card)); box-shadow: 0 1px 2px hsl(var(--foreground) / .05); }
-.redsim-kicker { color: hsl(var(--muted-foreground)); font-size: .68rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-.redsim-footer { border-top: 1px solid hsl(var(--border)); color: hsl(var(--muted-foreground)); font-size: .72rem; line-height: 1.5; padding-top: 1.25rem; }
+
+/* Type helpers. Tailwind's `font-mono` / `font-sans` resolve to the same
+   stacks through tailwind.config.ts; these stay for the CSS-only callers. */
+.font-mono {
+  font-family: var(--mono);
+}
+.font-sans {
+  font-family: var(--sans);
+}
+
+/* Glass panel, the Labs card. `redsim-panel` is the name the pages and the
+   design system already use. */
+.redsim-panel {
+  background: var(--glass-bg-mid);
+  border: 1px solid var(--glass-border);
+  border-radius: 0.5rem;
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+}
+.redsim-panel:hover {
+  border-color: rgba(255, 90, 88, 0.22);
+}
+
+/* Kicker: the small red mono label above a heading ("THE INVERSION"). */
+.redsim-kicker {
+  color: var(--red-bright);
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+.redsim-kicker:empty {
+  display: none;
+}
+
+/* Nav link: 11px mono, uppercase, ink-3 resting, white on hover, red when
+   current. */
+.redsim-nav-link {
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.redsim-nav-link:hover {
+  color: var(--ink-1);
+}
+.redsim-nav-link[aria-current="page"] {
+  color: var(--red-bright);
+}
+
+/* Buttons. `redsim-cta` is the filled Labs button (red-muted fill, bright
+   border, white mono caps); `redsim-ghost` the outlined one. Both keep the
+   4px radius of the site. */
+.redsim-cta,
+.redsim-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  line-height: 1.5;
+  text-transform: uppercase;
+  text-decoration: none;
+  padding: 0.75rem 1.5rem;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.redsim-cta {
+  background: var(--red-muted);
+  border: 1px solid var(--red-bright);
+  color: #fff;
+}
+.redsim-cta:hover {
+  background: var(--red-bright);
+}
+.redsim-ghost {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border-bright);
+  color: #fff;
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+}
+.redsim-ghost:hover {
+  border-color: var(--red-bright);
+  background: var(--red-dim);
+}
+.redsim-cta:disabled,
+.redsim-ghost:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Tiny status line in the header and footer ("UNCLASSIFIED // OPEN DATA"). */
+.redsim-meta {
+  color: rgba(255, 180, 178, 0.85);
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  line-height: 1.6;
+}
+
+/* Footer: a glass band with the standing caveat. */
+.redsim-footer {
+  margin-top: 3rem;
+  border-top: 1px solid var(--glass-border);
+  color: var(--ink-3);
+  font-size: 0.72rem;
+  line-height: 1.6;
+  padding-top: 1.25rem;
+}
+
+/* Tables inherit the Labs hairline. */
+table {
+  border-color: hsl(var(--border));
+}
+thead {
+  font-family: var(--mono);
+  letter-spacing: 0.08em;
+}

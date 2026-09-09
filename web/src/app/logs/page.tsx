@@ -34,9 +34,10 @@ const SEV_TONE: Record<string, string> = {
   trace: "text-muted-foreground",
   debug: "text-muted-foreground",
   info: "text-foreground",
-  warn: "text-amber-600 dark:text-amber-400",
-  error: "text-red-600 dark:text-red-400",
-  fatal: "text-red-700 dark:text-red-300",
+  // Amber and orange, never red: red is the brand accent in this UI.
+  warn: "text-amber-300",
+  error: "text-orange-400",
+  fatal: "font-semibold text-orange-300",
 };
 
 function LogTableRow({ row }: { row: LogRow }) {

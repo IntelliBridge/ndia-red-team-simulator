@@ -34,22 +34,22 @@ describe("storybook preview config", () => {
     expect(a11y.config).toEqual({ rules: [] });
   });
 
-  it("parameters.backgrounds.default is 'redsim-light'", () => {
+  it("parameters.backgrounds.default is 'redsim-navy'", () => {
     const { backgrounds } = preview.parameters as Record<string, Record<string, unknown>>;
-    expect(backgrounds.default).toBe("redsim-light");
+    expect(backgrounds.default).toBe("redsim-navy");
   });
 
-  it("parameters.backgrounds.values contains the redsim-light entry", () => {
+  it("parameters.backgrounds.values contains the redsim-navy page ground", () => {
     const { backgrounds } = preview.parameters as Record<string, Record<string, unknown>>;
     expect(backgrounds.values).toEqual(
-      expect.arrayContaining([{ name: "redsim-light", value: "#f8fafc" }]),
+      expect.arrayContaining([{ name: "redsim-navy", value: "#04060f" }]),
     );
   });
 
-  it("parameters.backgrounds.values contains the redsim-dark entry", () => {
+  it("parameters.backgrounds.values contains the redsim-surface card ground", () => {
     const { backgrounds } = preview.parameters as Record<string, Record<string, unknown>>;
     expect(backgrounds.values).toEqual(
-      expect.arrayContaining([{ name: "redsim-dark", value: "#0b1220" }]),
+      expect.arrayContaining([{ name: "redsim-surface", value: "#0f1f36" }]),
     );
   });
 
