@@ -24,14 +24,14 @@ const SEVERITY_BAR: Record<string, string> = {
   high: "bg-orange-500 dark:bg-orange-400",
   medium: "bg-amber-500 dark:bg-amber-400",
   low: "bg-emerald-600 dark:bg-emerald-500",
-  info: "bg-slate-400 dark:bg-slate-500",
+  info: "bg-sky-500 dark:bg-sky-400",
 };
 const SEVERITY_CHIP: Record<string, string> = {
   critical: "border-red-600/40 text-red-700 dark:text-red-400",
   high: "border-orange-500/40 text-orange-700 dark:text-orange-400",
   medium: "border-amber-500/40 text-amber-700 dark:text-amber-400",
   low: "border-emerald-600/40 text-emerald-700 dark:text-emerald-400",
-  info: "border-slate-400/40 text-slate-600 dark:text-slate-300",
+  info: "border-sky-500/40 text-sky-700 dark:text-sky-300",
 };
 
 /** Count rows by a key, in a fixed display order, unknown values last. */
