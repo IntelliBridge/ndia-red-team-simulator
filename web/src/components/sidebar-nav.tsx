@@ -3,7 +3,7 @@
 // SidebarNav: the left column of the app shell from the md breakpoint up.
 // The Agile Defense Labs mark in its head links home, and one link per NAV
 // entry follows, the current section marked with aria-current="page".
-// Below md the column is not rendered at all; the top bar carries the
+// Below md the column is not rendered at all. The top bar carries the
 // compact nav row there.
 
 import { usePathname } from "next/navigation";

@@ -5,7 +5,7 @@
 // The six entries and their order mirror the header nav the app shipped
 // before the sidebar shell. Projects, Auth Profiles, Logs and Cost stay off
 // the list by owner request (2026-09-09): their pages remain reachable by
-// URL. A route whose page does not exist yet gets no entry; the change that
+// URL. A route whose page does not exist yet gets no entry. The change that
 // ships the page adds its entry, so the sidebar never shows a dead link.
 
 import {

@@ -7,6 +7,8 @@
 
 import { usePathname } from "next/navigation";
 
+import { isCurrentRoute } from "@/lib/nav";
+
 export interface NavLink {
   href: string;
   label: string;
@@ -18,8 +20,7 @@ export function NavLinks({ links }: { links: NavLink[] }) {
   return (
     <>
       {links.map((link) => {
-        const current =
-          pathname === link.href || pathname.startsWith(`${link.href}/`);
+        const current = isCurrentRoute(pathname, link.href);
         return (
           <a
             key={link.href}

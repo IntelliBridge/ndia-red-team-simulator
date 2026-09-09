@@ -1,6 +1,6 @@
 // AppShell: the chrome around every page. Skip link first, then the sidebar
 // beside a column of top bar, main and footer, and the command palette
-// mounted once at the end. Server-rendered; the sidebar and top bar are the
+// mounted once at the end. Server-rendered. The sidebar and top bar are the
 // client islands that read the pathname.
 
 import type { ReactNode } from "react";
