@@ -9,11 +9,14 @@ Group=redsim
 Environment=HOME=/var/lib/redsim
 Environment=COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 WorkingDirectory=/opt/redsim/src
-ExecStart=/usr/local/bin/redsim-run api uvicorn redsim.api.app:create_app --factory --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1
+# Uvicorn closes the port on SIGTERM and then waits for open connections (the
+# run-events WebSocket) until killed; with the default that was a 60 s hole on
+# every deploy. Three seconds of grace, and systemd kills at fifteen.
+ExecStart=/usr/local/bin/redsim-run api uvicorn redsim.api.app:create_app --factory --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1 --timeout-graceful-shutdown 3
 Restart=always
 RestartSec=3
 KillMode=mixed
-TimeoutStopSec=60
+TimeoutStopSec=15
 LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target

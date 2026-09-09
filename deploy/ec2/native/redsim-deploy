@@ -84,7 +84,13 @@ fi
 # runs on every deploy; a database hiccup is a warning, not a failed deploy.
 /usr/local/bin/redsim-run api "$VENV/bin/python" "$SRC/deploy/runtime/scripts/seed_project.py" org-default default Default \
   || echo "WARNING: seed_project.py (org-default/default) failed; audited writes will 500 until the rows exist" >&2
-systemctl restart redsim-api redsim-scans redsim-default redsim-beat
+# Restart the Python units only when something they load changed: a web-only
+# push must not take the API down. --build and a first deploy restart them.
+if [ "$BUILD" = 1 ] || [ -z "$changed" ] || grep -qE '^(redsim/|pyproject.toml|alembic.ini|deploy/ec2/native/(redsim-run|systemd/redsim-(api|scans|default|beat)))' <<<"$changed"; then
+  systemctl restart redsim-api redsim-scans redsim-default redsim-beat
+else
+  echo "no Python change: api and workers keep running"
+fi
 [ "$restart_web" = 1 ] && systemctl restart redsim-web
 systemctl --no-pager --plain list-units 'redsim-*' caddy | awk 'NR>1 && $1 ~ /service/ {print $1, $3, $4}'
 
