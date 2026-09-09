@@ -2,7 +2,7 @@
 #
 # Deploy redsim from source on the EC2 host (native processes, no containers).
 #
-#   redsim-deploy [ref] [--build]
+#   redsim-deploy [ref] [--build]      (--build: rebuild the venv and the web app)
 #
 # 1. fast-forward /opt/redsim/src to origin/<ref> (default main),
 # 2. reinstall only what the diff touched: the venv when pyproject.toml
@@ -58,7 +58,7 @@ fi
 # system or the lockfile changed, or when no build exists yet. redsim-run web
 # supplies the build-time environment (NEXT_PUBLIC_REDSIM_API_URL and the Better
 # Auth values env.js validates) exactly as the running server sees it.
-if grep -qE '^(web/|packages/design-system/|pnpm-lock.yaml)' <<<"$changed" || [ ! -f "$SRC/web/.next/BUILD_ID" ]; then
+if [ "$BUILD" = 1 ] || grep -qE '^(web/|packages/design-system/|pnpm-lock.yaml)' <<<"$changed" || [ ! -f "$SRC/web/.next/BUILD_ID" ]; then
   echo "web changed or no build present: next build"
   sudo -u redsim env HOME=/var/lib/redsim COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true /usr/local/bin/redsim-run web pnpm --filter @redsim/web build
   restart_web=1
