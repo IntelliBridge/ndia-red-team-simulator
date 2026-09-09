@@ -6,10 +6,36 @@ reference-row ``Measurement`` fields (``expl_shift_mean`` and its denominators,
 the benign-noise floor and its denominator). ``stability.expl_shift`` is the
 cosine-based explanation-shift metric that feeds ``S_expl``.
 ``summary.text_summary`` renders the deterministic text the LLM writer is
-allowed to see. Heavy imports (torch, shap, matplotlib) happen inside the
-functions so importing this package stays cheap.
+allowed to see. ``ExplanationCache`` is the digest-keyed on-disk cache of spec
+13.10 and ``artifact_path`` reads the tabular per-sample artifacts by their spec
+5.8 names or their pre-rename names. Heavy imports (torch, shap, matplotlib)
+happen inside the functions so importing this package stays cheap.
 """
 
-from redsim.ml.explain.base import MEASUREMENT_FIELDS, SHAP_LIMITATION, ExplainOutput
+from redsim.ml.explain.base import (
+    CACHE_DIR_ENV,
+    CACHE_KEY_FIELDS,
+    FEATURE_DIFF_NAME,
+    LEGACY_ARTIFACT_NAMES,
+    MEASUREMENT_FIELDS,
+    SHAP_LIMITATION,
+    ExplainOutput,
+    ExplanationCache,
+    artifact_path,
+    force_plot_name,
+    resolve_cache_dir,
+)
 
-__all__ = ["MEASUREMENT_FIELDS", "SHAP_LIMITATION", "ExplainOutput"]
+__all__ = [
+    "CACHE_DIR_ENV",
+    "CACHE_KEY_FIELDS",
+    "FEATURE_DIFF_NAME",
+    "LEGACY_ARTIFACT_NAMES",
+    "MEASUREMENT_FIELDS",
+    "SHAP_LIMITATION",
+    "ExplainOutput",
+    "ExplanationCache",
+    "artifact_path",
+    "force_plot_name",
+    "resolve_cache_dir",
+]
