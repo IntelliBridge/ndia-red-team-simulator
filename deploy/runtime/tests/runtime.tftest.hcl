@@ -55,3 +55,37 @@ run "singleton_scheduler" {
     error_message = "Task images must be immutable."
   }
 }
+run "assets_task_mounts_and_validates_the_bundle" {
+  command = plan
+  variables {
+    enable_services = true
+    asset_bundle    = { key = "assets/bundles/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tar.gz", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  }
+  assert {
+    condition     = alltrue([for name in ["api", "scans", "default", "assets"] : length(jsondecode(aws_ecs_task_definition.runtime[name].container_definitions)) == 2 && jsondecode(aws_ecs_task_definition.runtime[name].container_definitions)[1].name == "load-assets"])
+    error_message = "Every bundle consumer, the one-off assets task included, must extract the pinned bundle in an init container."
+  }
+  assert {
+    condition     = jsondecode(aws_ecs_task_definition.runtime["assets"].container_definitions)[0].mountPoints[0].readOnly && jsondecode(aws_ecs_task_definition.runtime["assets"].container_definitions)[0].command[0] == "redsim"
+    error_message = "The assets task validates the mounted tree read-only and never extracts into it."
+  }
+  assert {
+    condition     = length(jsondecode(aws_ecs_task_definition.runtime["web"].container_definitions)) == 1 && length(jsondecode(aws_ecs_task_definition.runtime["beat"].container_definitions)) == 1
+    error_message = "Web and beat do not consume the bundle."
+  }
+}
+run "no_project_prefix_without_approval" {
+  command = plan
+  assert {
+    condition     = length(aws_iam_role_policy.project_artifacts) == 0
+    error_message = "No project artifact prefix may be granted unless an operator names the project."
+  }
+}
+run "approved_project_prefixes" {
+  command = plan
+  variables { project_artifact_prefixes = ["demo"] }
+  assert {
+    condition     = length(aws_iam_role_policy.project_artifacts) == 4 && alltrue([for p in aws_iam_role_policy.project_artifacts : strcontains(p.policy, "test-artifacts/demo/*") && !strcontains(p.policy, "test-artifacts/*\"")])
+    error_message = "The four artifact-using roles receive the named project prefix and nothing wider."
+  }
+}

@@ -64,13 +64,21 @@ locals {
     command = ["celery", "-A", "redsim.workers.celery_app", "beat", "--schedule=/tmp/celerybeat-schedule", "--loglevel=info"] }
     migration = { image = "api", cpu = 512, memory = 1024, port = 0,
     command = ["python", "-c", file("${path.module}/scripts/migrate.py")] }
+    # The one-off assets task: the load-assets init container below extracts the
+    # pinned bundle into the shared volume, then the main container validates
+    # the mounted tree the way a worker would (manifest digests, the ml extra,
+    # a sandbox child launch) and exits. Operators run seed_project.py and
+    # "redsim ml seed" through this task definition with a command override
+    # (scripts/run_task.py --command), so the seed sees the same read-only tree.
     assets = { image = "worker", cpu = 2048, memory = 8192, port = 0,
-    command = ["python", "-c", file("${path.module}/scripts/load_assets.py")] }
+    command = ["redsim", "doctor", "--worker-mode"] }
     identity = { image = "identity", cpu = 512, memory = 2048, port = 8080,
     command = ["start", "--import-realm"] }
   }
   service_names = toset(["api", "web", "scans", "default", "beat", "identity"])
-  target_groups = merge(local.network.target_group_arns, { identity = aws_lb_target_group.identity.arn })
+  # Tasks that receive the extracted asset bundle at /app/assets (read-only).
+  bundle_consumers = ["api", "scans", "default", "assets"]
+  target_groups    = merge(local.network.target_group_arns, { identity = aws_lb_target_group.identity.arn })
 }
 
 resource "aws_ecs_task_definition" "runtime" {
@@ -94,8 +102,8 @@ resource "aws_ecs_task_definition" "runtime" {
     environment     = [for name, value in local.service_environment[each.key] : { name = name, value = value }]
     secrets         = [for name, ref in lookup(var.service_secrets, each.key, {}) : { name = name, valueFrom = ref }]
     portMappings    = each.value.port == 0 ? [] : [{ containerPort = each.value.port, protocol = "tcp" }]
-    mountPoints     = contains(["api", "scans", "default"], each.key) && var.asset_bundle != null ? [{ sourceVolume = "assets", containerPath = "/app/assets", readOnly = true }] : []
-    dependsOn       = contains(["api", "scans", "default"], each.key) && var.asset_bundle != null ? [{ containerName = "load-assets", condition = "SUCCESS" }] : []
+    mountPoints     = contains(local.bundle_consumers, each.key) && var.asset_bundle != null ? [{ sourceVolume = "assets", containerPath = "/app/assets", readOnly = true }] : []
+    dependsOn       = contains(local.bundle_consumers, each.key) && var.asset_bundle != null ? [{ containerName = "load-assets", condition = "SUCCESS" }] : []
     stopTimeout     = 120
     linuxParameters = { initProcessEnabled = true }
     logConfiguration = {
@@ -107,7 +115,7 @@ resource "aws_ecs_task_definition" "runtime" {
       }
     }
     }, each.value.command == null ? {} : { command = each.value.command })],
-    contains(["api", "scans", "default"], each.key) && var.asset_bundle != null ? [{
+    contains(local.bundle_consumers, each.key) && var.asset_bundle != null ? [{
       name        = "load-assets"
       image       = var.images[each.value.image]
       essential   = false
