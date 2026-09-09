@@ -5,7 +5,8 @@
 #   redsim-deploy [ref] [--build]
 #
 # 1. fast-forward the checkout in /opt/redsim/src to origin/<ref> (default main),
-# 2. restart the Python containers, which bind-mount the checkout, so the new
+# 2. re-render the environment from Secrets Manager (redsim-render-env), then
+#    restart the Python containers, which bind-mount the checkout, so the new
 #    code is live in seconds; the web dev server reloads on its own,
 # 3. when pyproject.toml, a Dockerfile or the lockfile changed (or --build was
 #    given), rebuild what depends on it first,
@@ -35,6 +36,13 @@ git checkout --quiet --detach "$target"
 echo "checkout: ${before:0:7} -> ${target:0:7} ($REF)"
 # The next run uses the script version that was just checked out.
 install -m 0755 "$REDSIM_SRC_DIR/deploy/ec2/redsim-deploy" /usr/local/bin/redsim-deploy
+# Re-render the environment from Secrets Manager (service secrets, pythia.env and
+# llm.env with REDSIM_DISABLE_LLM / REDSIM_TARGET_ALLOWLIST) so a new or rotated
+# secret lands on this deploy. The script is the checkout's; install it too.
+install -m 0755 "$REDSIM_SRC_DIR/deploy/ec2/redsim-render-env.sh" /usr/local/bin/redsim-render-env
+REDSIM_ENV_DIR="$REDSIM_HOST_DIR/env" /usr/local/bin/redsim-render-env
+# The flag now comes from llm.env; drop the copy an older bootstrap left in common.env.
+sed -i '/^REDSIM_DISABLE_LLM=/d' "$REDSIM_HOST_DIR/env/common.env"
 
 changed="$(git diff --name-only "$before" "$target" || true)"
 if [ "$BUILD" = 1 ] || grep -qE '^(pyproject.toml|deploy/Dockerfile\.(api|worker|identity)|deploy/runtime/identity/realm.json)$' <<<"$changed"; then

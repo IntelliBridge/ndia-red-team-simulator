@@ -45,6 +45,13 @@ services:
     command: ["uvicorn", "redsim.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
     env_file:
       - ${REDSIM_HOST_DIR}/env/common.env
+      # The LLM flags (REDSIM_DISABLE_LLM, REDSIM_TARGET_ALLOWLIST) and the Pythia
+      # variables are rendered by redsim-render-env; the api needs them for the
+      # gateway model picker, the LLM capability flags and LLM target registration.
+      - path: ${REDSIM_HOST_DIR}/env/llm.env
+        required: false
+      - path: ${REDSIM_HOST_DIR}/env/pythia.env
+        required: false
       - ${REDSIM_HOST_DIR}/env/api.secret.env
     volumes:
       - ${REDSIM_SRC_DIR}/redsim:/app/redsim:ro
@@ -76,6 +83,8 @@ services:
     command: ["celery", "-A", "redsim.workers.celery_app", "worker", "-Q", "scans", "--concurrency=1", "--loglevel=info"]
     env_file:
       - ${REDSIM_HOST_DIR}/env/common.env
+      - path: ${REDSIM_HOST_DIR}/env/llm.env
+        required: false
       - ${REDSIM_HOST_DIR}/env/pythia.env
       - ${REDSIM_HOST_DIR}/env/scans.secret.env
     volumes:
@@ -87,6 +96,8 @@ services:
     command: ["celery", "-A", "redsim.workers.celery_app", "worker", "-Q", "default", "--concurrency=1", "--loglevel=info"]
     env_file:
       - ${REDSIM_HOST_DIR}/env/common.env
+      - path: ${REDSIM_HOST_DIR}/env/llm.env
+        required: false
       - ${REDSIM_HOST_DIR}/env/pythia.env
       - ${REDSIM_HOST_DIR}/env/default.secret.env
     volumes:
@@ -98,6 +109,8 @@ services:
     command: ["celery", "-A", "redsim.workers.celery_app", "beat", "--schedule=/tmp/celerybeat-schedule", "--loglevel=info"]
     env_file:
       - ${REDSIM_HOST_DIR}/env/common.env
+      - path: ${REDSIM_HOST_DIR}/env/llm.env
+        required: false
       - ${REDSIM_HOST_DIR}/env/beat.secret.env
     volumes:
       - ${REDSIM_SRC_DIR}/redsim:/app/redsim:ro
