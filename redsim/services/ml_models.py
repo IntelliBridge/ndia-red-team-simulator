@@ -112,6 +112,11 @@ DELETED_STATUS = "deleted"
 
 #: ``Run.scanner`` values that make up a model's campaign history (spec 5.2).
 CAMPAIGN_SCANNERS = ("ml.campaign", "ml.verify")
+#: Run scanners that count as a model's history for ``last_run_id`` (spec 17.2 list row): the campaign
+#: scanners plus the LLM probe scanner (``services.ml_llm.LLM_SCANNER``). Probe runs never join
+#: ``campaign_history`` (D9: no campaign row, no MRI); ``services.ml_llm.probe_history`` lists them.
+LLM_PROBE_SCANNER = "ml.llm_probe"
+HISTORY_SCANNERS = (*CAMPAIGN_SCANNERS, LLM_PROBE_SCANNER)
 
 #: Blob key prefix the bundled weights are copied under (gap register G-ASSET4).
 BUNDLED_BLOB_PREFIX = "ml/assets/bundled"
@@ -1259,7 +1264,7 @@ def campaign_history(session: Session, target_id: str) -> list[dict[str, Any]]:
 
 
 def last_run_ids(session: Session, target_ids: Iterable[str]) -> dict[str, str]:
-    """``{target_id: newest campaign or verify run id}`` for the given targets (spec 17.2 list row)."""
+    """``{target_id: newest campaign, verify or probe run id}`` for the given targets (spec 17.2 list row)."""
     from sqlalchemy import select
 
     from redsim.db.models import Run
@@ -1269,7 +1274,7 @@ def last_run_ids(session: Session, target_ids: Iterable[str]) -> dict[str, str]:
         return {}
     rows = session.execute(
         select(Run.target_id, Run.id).where(
-            Run.target_id.in_(ids), Run.scanner.in_(list(CAMPAIGN_SCANNERS)),
+            Run.target_id.in_(ids), Run.scanner.in_(list(HISTORY_SCANNERS)),
         ).order_by(Run.created_at.desc(), Run.id.desc())
     ).all()
     out: dict[str, str] = {}
@@ -1452,6 +1457,8 @@ def delete_model_target(
 __all__ = [
     "BUNDLED_BLOB_PREFIX",
     "CAMPAIGN_SCANNERS",
+    "HISTORY_SCANNERS",
+    "LLM_PROBE_SCANNER",
     "DELETED_STATUS",
     "ENDPOINT_KIND",
     "ML_KINDS",

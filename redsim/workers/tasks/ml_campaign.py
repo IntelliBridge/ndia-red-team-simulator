@@ -1154,62 +1154,71 @@ def _is_endpoint_target(target: Any) -> bool:
     return str(getattr(target, "kind", "") or "") == "ml_model_endpoint"
 
 
+_ENDPOINT_URL_SCHEMES = ("http://", "https://")
+
+
+def _stored_endpoint_url(target: Any, detail: dict[str, Any]) -> str | None:
+    """The request URL as endpoint-admission stores it: ``Target.value`` (normalised URL), detail host-only.
+
+    ``services.ml_models.admit_endpoint_registration`` / ``api/v1/models`` write the normalised URL as
+    ``Target.value`` and keep every projection, manifest and audit detail at ``url_host`` (D3), so the
+    value is the primary location. Rows written before that convention (``detail.endpoint_url``,
+    ``detail.url``, ``detail.endpoint.url``, ``detail.manifest.endpoint.url``) are still read.
+    """
+    value = getattr(target, "value", None)
+    if isinstance(value, str) and value.startswith(_ENDPOINT_URL_SCHEMES):
+        return value
+    manifest = detail.get("manifest")
+    manifest = dict(manifest) if isinstance(manifest, dict) else {}
+    candidates: list[Any] = [detail.get("endpoint_url"), detail.get("url")]
+    for block in (detail.get("endpoint"), manifest.get("endpoint")):
+        if isinstance(block, dict):
+            candidates.append(block.get("url"))
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.startswith(_ENDPOINT_URL_SCHEMES):
+            return candidate
+    return None
+
+
 def _endpoint_request_block(target: Any, config: CampaignConfig) -> dict[str, Any]:
     """The ``target_endpoint`` block ``run_campaign_sandboxed`` hands the worker-parent ``PredictBroker``.
 
-    The full request URL is an internal field of the ``Target`` row, never the manifest / report / export
-    (D3: those carry ``url_host`` only). The endpoint-admission track (``services.ml_models`` /
-    ``api/v1/models`` endpoint branch) stores it as ``Target.value``; this reader also accepts it under
-    ``detail['endpoint_url']``, ``detail['url']`` or ``detail['endpoint']['url']`` for older rows. No credential is read here: only the ``auth_profile_id`` travels, and
-    the secret is resolved separately at run time (:func:`_resolve_endpoint_auth`).
+    The URL is read the way endpoint-admission stores it (:func:`_stored_endpoint_url`); the binding
+    (``manifest``: modality, dataset, classes, shape, features) and the request caps (``batch_rows``,
+    ``timeout_s``) come from ``services.ml_models.endpoint_request_block``, the same helper the
+    validate task uses, so the two workers cannot drift. The campaign's frozen config then fixes the
+    modality and the dataset binding: admission validated them against the registration and they are
+    what the child binds and the broker encodes under (``endpoint-v1`` ``input_format`` /
+    ``input_shape``). No credential is read here: only the ``auth_profile_id`` travels, and the secret is
+    resolved separately at run time (:func:`_resolve_endpoint_auth`).
     """
+    from redsim.services.ml_models import endpoint_request_block
+
     detail = getattr(target, "detail", None)
     detail = dict(detail) if isinstance(detail, dict) else {}
-    manifest = detail.get("manifest")
-    manifest = dict(manifest) if isinstance(manifest, dict) else detail
-    endpoint = manifest.get("endpoint")
-    endpoint = dict(endpoint) if isinstance(endpoint, dict) else {}
-    detail_endpoint = detail.get("endpoint")
-    detail_endpoint = dict(detail_endpoint) if isinstance(detail_endpoint, dict) else {}
-    url = (detail.get("endpoint_url") or detail.get("url")
-           or detail_endpoint.get("url") or endpoint.get("url"))
-    if not url:
-        # endpoint-admission (services.ml_models / api/v1/models) stores the normalised request URL
-        # as ``Target.value`` and keeps ``detail`` host-only (D3); accept that as the primary location.
-        value = getattr(target, "value", None)
-        if isinstance(value, str) and value.startswith(("http://", "https://")):
-            url = value
+    url = _stored_endpoint_url(target, detail)
     if not url:
         raise RuntimeError(
-            "endpoint target carries no stored request URL (detail.endpoint_url / detail.url); "
+            "endpoint target carries no stored request URL (Target.value / detail.endpoint.url); "
             "the worker cannot reach the endpoint without faking a result")
-    auth_profile_id = (endpoint.get("auth_profile_id") or detail_endpoint.get("auth_profile_id")
-                       or manifest.get("auth_profile_id") or detail.get("auth_profile_id"))
-    block: dict[str, Any] = {
-        "url": str(url),
-        "auth_profile_id": auth_profile_id,
-        "manifest": {
-            "modality": config.modality,
-            "dataset_id": config.dataset_id,
-            "dataset_split": config.dataset_split,
-            "dataset_revision": config.dataset_revision or manifest.get("dataset_revision"),
-            "input_shape": manifest.get("input_shape") or endpoint.get("input_shape"),
-            "n_classes": manifest.get("n_classes"),
-            "class_names": manifest.get("class_names"),
-            "features": manifest.get("features"),
-            "name": manifest.get("name") or detail.get("name"),
-            "license": manifest.get("license"),
-        },
-    }
-    batch_rows = endpoint.get("batch_rows") or detail_endpoint.get("batch_rows") or manifest.get("batch_rows")
-    timeout_s = endpoint.get("timeout_s") or detail_endpoint.get("timeout_s") or manifest.get("timeout_s")
-    if isinstance(batch_rows, int) and batch_rows > 0:
-        block["batch_rows"] = batch_rows
-    if isinstance(timeout_s, (int, float)) and timeout_s > 0:
-        block["timeout_s"] = float(timeout_s)
-    limits = detail.get("endpoint_limits") or detail_endpoint.get("limits") or manifest.get("endpoint_limits")
-    if isinstance(limits, dict):
-        block["limits"] = dict(limits)
+    block = endpoint_request_block(url, detail)
+    manifest = dict(block.get("manifest") or {})
+    manifest["modality"] = config.modality
+    manifest["dataset_id"] = config.dataset_id
+    manifest["dataset_split"] = config.dataset_split
+    if config.dataset_revision:
+        manifest["dataset_revision"] = config.dataset_revision
+    block["manifest"] = {k: v for k, v in manifest.items() if v is not None}
+    block["auth_profile_id"] = block.get("auth_profile_id") or None
+    if "limits" not in block:
+        # Per-registration caps recorded beside the endpoint spec on older rows.
+        raw_endpoint = detail.get("endpoint")
+        raw_manifest = detail.get("manifest")
+        detail_endpoint: dict[str, Any] = raw_endpoint if isinstance(raw_endpoint, dict) else {}
+        registered: dict[str, Any] = raw_manifest if isinstance(raw_manifest, dict) else {}
+        limits = detail_endpoint.get("limits") or registered.get("endpoint_limits")
+        if isinstance(limits, dict) and limits:
+            block["limits"] = dict(limits)
     return block
 
 

@@ -296,6 +296,93 @@ def _endpoint_config() -> dict[str, Any]:
     }
 
 
+TINY_CLASS_NAMES = ["circle", "square", "triangle"]      # tests.ml.fakes.CLASS_NAMES without importing torch
+
+
+def test_endpoint_request_block_reads_the_url_the_way_endpoint_admission_stores_it() -> None:
+    """ENDPOINT-05 seam with endpoint-admission: ``services.ml_models.admit_endpoint_registration`` writes the
+    normalised request URL as ``Target.value`` and keeps ``detail`` host-only (D3). The worker reads the URL
+    from there, builds the binding with the same helper the validate task uses, and lets the frozen config fix
+    the modality and the dataset the child binds; a row that stores no URL anywhere is a typed failure."""
+    from types import SimpleNamespace
+
+    from redsim.ml.schema import CampaignConfig
+    from redsim.services.ml_models import endpoint_request_block
+    from redsim.workers.tasks.ml_campaign import _endpoint_request_block, _is_endpoint_target
+
+    config = CampaignConfig.model_validate(_endpoint_config())
+    detail = {
+        "source": "endpoint", "status": "available", "endpoint_kind": "predict", "auth_profile_id": "ap-1",
+        "manifest": {"modality": "image", "format": "endpoint", "n_classes": 3, "class_names": TINY_CLASS_NAMES,
+                     "input_shape": [3, 8, 8], "dataset_id": "synthetic/tiny", "dataset_split": "test",
+                     "endpoint": {"url_host": "127.0.0.1:9443", "auth_profile_id": "ap-1",
+                                  "contract_version": "endpoint-v1", "batch_rows": 16, "timeout_s": 5.0}},
+    }
+    target = SimpleNamespace(kind="ml_model_endpoint", value="https://127.0.0.1:9443/predict", detail=detail)
+    assert _is_endpoint_target(target)
+
+    block = _endpoint_request_block(target, config)
+    assert block["url"] == "https://127.0.0.1:9443/predict" and block["auth_profile_id"] == "ap-1"
+    assert block["batch_rows"] == 16 and block["timeout_s"] == 5.0
+    manifest = block["manifest"]
+    # The frozen config owns the binding the child evaluates under (admission checked it at launch).
+    assert manifest["modality"] == config.modality == "image"
+    assert manifest["dataset_id"] == config.dataset_id and manifest["dataset_split"] == config.dataset_split == "eval"
+    assert manifest["dataset_revision"] == config.dataset_revision == "deadbeef"
+    # The registration's contract fields the broker encodes and validates against (endpoint-v1).
+    assert manifest["input_shape"] == [3, 8, 8] and manifest["n_classes"] == 3
+    assert manifest["class_names"] == TINY_CLASS_NAMES
+    assert not ({"secret", "auth", "token", "url_host", "socket"} & set(block))
+    # One helper for both workers: the validate task's block differs only in the config-owned binding keys.
+    shared = endpoint_request_block(target.value, detail)
+    assert block["manifest"] == {**shared["manifest"], "modality": "image", "dataset_id": config.dataset_id,
+                                 "dataset_split": "eval", "dataset_revision": "deadbeef"}
+    assert (block["batch_rows"], block["timeout_s"]) == (shared["batch_rows"], shared["timeout_s"])
+
+    # A row that stores the URL neither as its value nor in detail: refused, never an invented endpoint.
+    with pytest.raises(RuntimeError, match="no stored request URL"):
+        _endpoint_request_block(SimpleNamespace(kind="ml_model_endpoint", value="endpoint:tiny", detail=detail),
+                                config)
+    # A row written before the convention (URL under detail.endpoint.url) still reads.
+    older = {**detail, "endpoint": {"url": "https://127.0.0.1:9443/predict", "auth_profile_id": "ap-1"}}
+    legacy = _endpoint_request_block(SimpleNamespace(kind="ml_model_endpoint", value="endpoint:tiny", detail=older),
+                                     config)
+    assert legacy["url"] == "https://127.0.0.1:9443/predict" and legacy["auth_profile_id"] == "ap-1"
+
+
+def test_expected_stages_and_kind_tables_are_merged_without_duplicates() -> None:
+    """The B1 assemble's ``expected_stages`` (``defense_apply`` for a training defense) and the B2 kind rows
+    (derived model, training report, export slices) coexist in one table each, every row exactly once."""
+    from redsim.ml.schema import CampaignConfig
+    from redsim.workers.tasks.ml_campaign import _BASENAME_KINDS, _EXACT_KINDS, _PREFIX_KINDS, expected_stages
+
+    base = _endpoint_config()
+    plain = expected_stages(CampaignConfig.model_validate(base))
+    assert plain == ["load_target", "sample", "clean_eval", "attack:hopskipjump", "control", "score",
+                     "interpret", "recommend", "report"]
+    preprocessing = expected_stages(CampaignConfig.model_validate({**base, "defense": DEFENSE}))
+    assert preprocessing == plain, "a preprocessing defense wraps the target and has no stage of its own"
+    training = expected_stages(CampaignConfig.model_validate({**base, "defense": {
+        "id": "adversarial_training", "art_class": "art.defences.trainer.AdversarialTrainer",
+        "params": {"epochs": 1}}}))
+    assert training == ["load_target", "defense_apply", *plain[1:]]
+    for stages in (plain, preprocessing, training):
+        assert len(stages) == len(set(stages))
+
+    prefixes = [prefix for prefix, _kind in _PREFIX_KINDS]
+    assert len(prefixes) == len(set(prefixes))
+    exact_values = list(_EXACT_KINDS.values())
+    for kind in ("ml.derived_model", "ml.training_report", "ml.clean_slice", "ml.detection.scorecard"):
+        assert exact_values.count(kind) == 1, kind
+    assert [kind for _prefix, kind in _PREFIX_KINDS].count("ml.control_slice") == 1
+    assert [kind for _prefix, kind in _PREFIX_KINDS].count("ml.clean_slice") == 1
+    for kind in ("ml.text.diff", "ml.shap.text", "ml.detection.boxes"):
+        assert list(_BASENAME_KINDS.values()).count(kind) == 1, kind
+    # The three tables never claim the same name.
+    assert not (set(_EXACT_KINDS) & set(_BASENAME_KINDS))
+    assert not any(name.startswith(prefix) for name in _EXACT_KINDS for prefix in prefixes)
+
+
 @pytest.mark.ml
 def test_endpoint_campaign_resolves_the_vault_credential_and_records_broker_budget(
     harness: Harness, monkeypatch: pytest.MonkeyPatch,

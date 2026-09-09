@@ -283,8 +283,18 @@ def _bundled_row(info: Any, project_id: str) -> dict[str, Any]:
     }
 
 
+#: Why the LLM *domain* row is not a launchable target now that LLM registration is live (LLM-03): real LLM
+#: targets are per-project ``Target`` rows; the registry entry only names the domain and how to reach it.
+LLM_DOMAIN_REASON = (
+    "the LLM domain row is not a launchable target: register an LLM target per project with "
+    "POST /v1/models {source: endpoint, endpoint_kind: llm, model_id, persona, guardrail_mode, auth_profile_id} "
+    "and run garak probes against it with POST /v1/models/{id}/probes (spec 11, 17.4); attack campaigns and the "
+    "MRI never apply to LLM targets (D9)"
+)
+
+
 def _llm_row(info: Any, project_id: str) -> dict[str, Any]:
-    """The LLM domain as a registry entry (spec 6.6, 17.2): ``not_implemented`` with its reason."""
+    """The LLM domain as a registry entry (spec 6.6, 17.2): ``not_implemented`` with the route that is live."""
     metadata = dict(info.metadata)
     raw_connection = metadata.get("connection")
     connection: dict[str, Any] = dict(raw_connection) if isinstance(raw_connection, dict) else {}
@@ -297,7 +307,8 @@ def _llm_row(info: Any, project_id: str) -> dict[str, Any]:
                      "gateway": connection.get("gateway", "pythia"),
                      "configured": bool(connection.get("configured", False))},
         "status": "not_implemented", "phase": metadata.get("phase", "B"),
-        "refusal_reason": None, "reason": info.reason, "validation": None, "last_run_id": None,
+        "refusal_reason": None, "reason": LLM_DOMAIN_REASON if _llm_registrar() is not None else info.reason,
+        "validation": None, "last_run_id": None,
     }
 
 
@@ -377,8 +388,15 @@ def get_model(
         ensure_project_access(user, target.project_id)
         model = _project_model(target)
         with get_session() as sess:
-            model["campaign_history"] = campaign_history(sess, target.id)
-        model["last_run_id"] = model["campaign_history"][0]["run_id"] if model["campaign_history"] else None
+            if _is_llm_target(target):
+                # D9: a probe run is never a campaign; its history is the probe list with scorecard links.
+                model["campaign_history"] = []
+                model["probe_history"] = _probe_history(sess, target.id)
+                history: list[dict[str, Any]] = model["probe_history"]
+            else:
+                model["campaign_history"] = campaign_history(sess, target.id)
+                history = model["campaign_history"]
+        model["last_run_id"] = history[0]["run_id"] if history else None
         return model
     ensure_project_access(user, project)
     for model in _catalog_rows(project):
@@ -725,6 +743,21 @@ def _resolve_endpoint_code(exc: EndpointAdmissionError) -> str:
     if exc.field == "evaluation_instance_attestation":
         return ATTESTATION_REQUIRED
     return exc.code
+
+
+def _is_llm_target(target: Any) -> bool:
+    """True for a registered LLM target (``detail.endpoint_kind == "llm"``; ``services.ml_llm.is_llm_target``)."""
+    try:
+        from redsim.services.ml_llm import is_llm_target
+    except ImportError:
+        return False
+    return bool(is_llm_target(target))
+
+
+def _probe_history(sess: Any, target_id: str) -> list[dict[str, Any]]:
+    from redsim.services.ml_llm import probe_history
+
+    return probe_history(sess, target_id)
 
 
 def _llm_registrar() -> Any | None:

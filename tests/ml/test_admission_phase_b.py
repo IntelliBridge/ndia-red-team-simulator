@@ -162,6 +162,45 @@ def assert_no_secret_or_url(blob: Any) -> None:
 
 # --------------------------------------------------------------------------- the table (MODALITIES-06, -08)
 
+def test_supported_modalities_cover_the_final_attack_registry() -> None:
+    """The admission tables against the registry wave B1 left (ten adapters; ATTACKS_HARDEN-03, MODALITIES-06).
+
+    Admission decides norms with the registry's own predicate (``attack_supports_norm``), so the table and
+    the adapters' declarations must agree: every norm an adapter declares belongs to a modality it applies
+    to, every modality's default norm has at least one evasion adapter that takes it, and the text and
+    detection adapters are evaluated under their own budget only.
+    """
+    from redsim.ml.attacks import (
+        ATTACKS,
+        REGISTERED_IDS,
+        attack_capabilities,
+        attack_norms,
+        attack_supports_norm,
+        get_attack,
+    )
+
+    assert tuple(ATTACKS.ids()) == REGISTERED_IDS and len(REGISTERED_IDS) == 10
+    for adapter in ATTACKS:
+        tags = attack_capabilities(adapter)
+        modalities = {tag.removeprefix("modality:") for tag in tags if tag.startswith("modality:")}
+        assert modalities and modalities <= set(SUPPORTED_MODALITIES), (adapter.id, sorted(modalities))
+        allowed = {norm for m in modalities for norm in SUPPORTED_MODALITIES[m].norms}
+        norms = attack_norms(adapter)
+        assert norms and norms <= allowed, (adapter.id, sorted(norms), sorted(allowed))
+        for norm in KNOWN_NORMS:
+            assert attack_supports_norm(adapter, norm) is (norm in norms), (adapter.id, norm)
+    for modality, spec in SUPPORTED_MODALITIES.items():
+        capable = sorted(
+            a.id for a in ATTACKS
+            if a.info().family == "evasion" and f"modality:{modality}" in attack_capabilities(a)
+            and attack_supports_norm(a, spec.default_norm)
+        )
+        assert capable, f"no evasion adapter takes the default norm {spec.default_norm!r} on {modality}"
+    assert attack_norms(get_attack("word_substitution")) == {"edit"}
+    assert attack_norms(get_attack("dpatch")) == {"patch_area"}
+    assert {"linf", "l2"} <= attack_norms(get_attack("hopskipjump")), "the endpoint adapter takes both budgets"
+
+
 def test_supported_modalities_table_matches_the_library_constants() -> None:
     assert set(SUPPORTED_MODALITIES) == {"image", "tabular", "text", "detection"}
     assert set(NOT_IMPLEMENTED_MODALITIES) == {"llm"}
