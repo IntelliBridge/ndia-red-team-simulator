@@ -39,6 +39,22 @@ run "start_core_only" {
     error_message = "Core activation must leave unseeded workers stopped."
   }
 }
+run "identity_rollout_window_is_bounded" {
+  command = plan
+  variables { enable_services = true }
+  assert {
+    condition     = aws_ecs_service.runtime["identity"].deployment_maximum_percent == 100 && aws_ecs_service.runtime["identity"].deployment_minimum_healthy_percent == 0
+    error_message = "Identity runs one Keycloak with a local cache and must not overlap itself during a rollout."
+  }
+  assert {
+    condition     = aws_lb_target_group.identity.deregistration_delay == "15"
+    error_message = "Identity drain must stay in seconds, or every rollout is a minutes-long login outage."
+  }
+  assert {
+    condition     = aws_lb_target_group.identity.health_check[0].interval == 10 && aws_lb_target_group.identity.health_check[0].healthy_threshold == 2
+    error_message = "A booted Keycloak must register within seconds, not the ALB default of 150s."
+  }
+}
 run "singleton_scheduler" {
   command = plan
   variables {

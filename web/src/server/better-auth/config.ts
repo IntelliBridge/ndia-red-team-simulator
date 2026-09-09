@@ -22,25 +22,48 @@ import { env } from "@/env";
 
 import { mintFromAccount } from "../redsim-cookies";
 
+/** Keycloak's endpoint paths are fixed under a realm's issuer URL. */
+function keycloakEndpoints(issuer: string) {
+  const base = `${issuer.replace(/\/$/, "")}/protocol/openid-connect`;
+  return { auth: `${base}/auth`, token: `${base}/token`, userinfo: `${base}/userinfo` };
+}
+
 /**
  * The Keycloak provider, or nothing when the realm is not configured.
  *
- * Discovery runs at construction and a failure drops the provider with a
- * logged line rather than throwing, so a developer with no realm still gets a
- * booting app and the dev-token login path. On a deployed stack that silence
- * is the failure mode to design against, which is why compose orders the web
- * service after a healthy Keycloak.
+ * The generic OAuth plugin runs issuer discovery once, at construction, and
+ * a failed discovery drops the provider for the life of the process. On a
+ * deployed stack Keycloak restarts with no overlap on every release, so a web
+ * task that booted during that window had no sign-in button until it was
+ * restarted by hand. Keycloak's endpoints are deterministic under the realm
+ * issuer, so they are set explicitly here: discovery still runs and, when it
+ * succeeds, adds the issuer and JWKS used to verify ID tokens, but its failure
+ * no longer removes the provider.
+ *
+ * Two issuers, because the browser and the server reach Keycloak by different
+ * names: the authorization endpoint is what the browser is redirected to, so
+ * it is built from KEYCLOAK_PUBLIC_ISSUER (the public origin); the token and
+ * userinfo endpoints are server-to-server and stay on KEYCLOAK_ISSUER (the
+ * in-VPC name on Fargate, the compose service name locally). When the public
+ * issuer is unset both are the same URL, the single-host developer case.
  */
 function keycloakProviders() {
   if (!env.KEYCLOAK_ISSUER || !env.KEYCLOAK_CLIENT_ID) return [];
+  const internal = keycloakEndpoints(env.KEYCLOAK_ISSUER);
+  const browser = keycloakEndpoints(env.KEYCLOAK_PUBLIC_ISSUER ?? env.KEYCLOAK_ISSUER);
   return [
-    keycloak({
-      clientId: env.KEYCLOAK_CLIENT_ID,
-      // The realm's redsim-web is a public client using PKCE, so the empty
-      // string is the correct value rather than a missing one.
-      clientSecret: env.KEYCLOAK_CLIENT_SECRET ?? "",
-      issuer: env.KEYCLOAK_ISSUER,
-    }),
+    {
+      ...keycloak({
+        clientId: env.KEYCLOAK_CLIENT_ID,
+        // The realm's redsim-web is a public client using PKCE, so the empty
+        // string is the correct value rather than a missing one.
+        clientSecret: env.KEYCLOAK_CLIENT_SECRET ?? "",
+        issuer: env.KEYCLOAK_ISSUER,
+      }),
+      authorizationUrl: browser.auth,
+      tokenUrl: internal.token,
+      userInfoUrl: internal.userinfo,
+    },
   ];
 }
 
