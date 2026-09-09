@@ -231,3 +231,16 @@ commit ids, the test counts by tier (garak, default, e2e) after the rebase,
 and for A1 and A2 the run id, the scorecard's `k/n` per probe, the artifact
 kinds with their digests, and the `audit verify` result. Counts and ids only.
 No key material, no prompt text, no completion text, no readiness wording.
+
+## Implementation progress
+
+- **L5 implemented (2026-09-09):** `tests/ml/fake_openai_server.py` now
+  supports structured failure bodies, selected one-based completion indices,
+  `Retry-After` on 429 responses, and the served model on successful request
+  records. Catalog requests do not consume completion failure indices.
+  `tests/ml/test_fake_openai_server.py` has six passing cases covering the
+  observed status/code shapes, selection, legacy failure modes and auth
+  precedence. Existing garak regression validation is pending the local
+  dependency installation; L5 acceptance remains open until it passes.
+- L1–L4, L6 and packages R/A/D remain open. No live gateway traffic or runtime
+  changes were made for this test-helper increment.

@@ -17,9 +17,13 @@ What it checks and records, without ever writing a prompt anywhere:
 Reply modes: ``fixed`` (``reply`` verbatim), ``echo`` (the last user message),
 ``empty`` (an empty string), or a ``reply_for(messages)`` callable. ``usage`` is
 attached to every completion so the usage ledger has something to sum.
-``fail_status`` answers every completion with that status; ``fail_first``
-answers the first N with 503; ``latency_s`` sleeps before answering (timeout
-tests). The token is a low-entropy fake by construction.
+``fail_status`` answers every completion with that status unless ``fail_first``
+or ``fail_indices`` selects particular completion requests (one-based, excluding
+catalog requests). An explicit ``fail_indices`` takes precedence over
+``fail_first``. Selected failures use ``fail_status`` or 503, with
+``fail_body`` when supplied. ``retry_after`` adds a header to 429 responses;
+``served_model`` records the model returned by each successful completion.
+``latency_s`` sleeps before answering (timeout tests). The token is a low-entropy fake by construction.
 """
 
 from __future__ import annotations
@@ -51,6 +55,9 @@ class FakeOpenAIServer:
         usage: tuple[int, int] = (21, 7),
         fail_status: int | None = None,
         fail_first: int = 0,
+        fail_body: dict[str, Any] | None = None,
+        fail_indices: set[int] | None = None,
+        retry_after: str | int | None = None,
         latency_s: float = 0.0,
         answered_model: str | None = None,
     ) -> None:
@@ -62,6 +69,10 @@ class FakeOpenAIServer:
         self.usage = usage
         self.fail_status = fail_status
         self.fail_first = fail_first
+        self.fail_body = fail_body
+        self.fail_indices = None if fail_indices is None else set(fail_indices)
+        self.retry_after = retry_after
+        self._chat_count = 0
         self.latency_s = latency_s
         self.answered_model = answered_model
         self.requests: list[dict[str, Any]] = []
@@ -113,6 +124,8 @@ class FakeOpenAIServer:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
+                if status == 429 and outer.retry_after is not None:
+                    self.send_header("Retry-After", str(outer.retry_after))
                 self.end_headers()
                 if data:
                     self.wfile.write(data)
@@ -126,6 +139,9 @@ class FakeOpenAIServer:
                 entry["auth_ok"] = self._authorized()
                 with outer._lock:
                     outer.requests.append(entry)
+                    if entry["path"] == "/v1/chat/completions":
+                        outer._chat_count += 1
+                        entry["chat_index"] = outer._chat_count
                     return len(outer.requests)
 
             def do_GET(self) -> None:  # noqa: N802 - http.server API
@@ -169,18 +185,26 @@ class FakeOpenAIServer:
                     return
                 if outer.latency_s > 0:
                     time.sleep(outer.latency_s)
-                if outer.fail_status is not None:
-                    entry["status"] = outer.fail_status
-                    self._send(outer.fail_status, {"error": {"message": "forced failure"}})
-                    return
-                if index <= outer.fail_first:
-                    entry["status"] = 503
-                    self._send(503, {"error": {"message": "warming up"}})
+                chat_index = entry["chat_index"]
+                if outer.fail_indices is not None:
+                    selected = chat_index in outer.fail_indices
+                elif outer.fail_first > 0:
+                    selected = chat_index <= outer.fail_first
+                else:
+                    selected = outer.fail_status is not None
+                if selected:
+                    status = outer.fail_status if outer.fail_status is not None else 503
+                    entry["status"] = status
+                    failure = outer.fail_body if outer.fail_body is not None else {
+                        "error": {"message": "forced failure" if outer.fail_status is not None else "warming up"}
+                    }
+                    self._send(status, failure)
                     return
                 text = outer._reply_text(messages)
                 prompt_tokens, completion_tokens = outer.usage
                 model = outer.answered_model or entry["model"] or outer.models[0]
                 entry["status"] = 200
+                entry["served_model"] = model
                 self._send(200, {
                     "id": f"chatcmpl-fake-{index}",
                     "object": "chat.completion",
