@@ -41,8 +41,12 @@ honesty of the record, never a number it did not observe.
    refused admission row and no ``Run``.
 5. ``test_endpoint_delete_is_audited_and_chains_verify``: ``redsim audit
    verify --all`` is clean over the connector's chains, a remediator cannot
-   delete, the admin's delete is a ``target.manage`` row naming the host, the
-   credential stays with its profile, and the chains still verify.
+   delete, the profile cannot be deleted while the target is live (``409
+   auth_profile_in_use`` naming the target, a ``success=False``
+   ``auth_profile.delete`` row, ENDPOINT-18), the admin's delete is a
+   ``target.manage`` row naming the host, the credential stays with its
+   profile until the admin deletes it (``204``, its own row), and the chains
+   still verify.
 
 Run::
 
@@ -862,6 +866,27 @@ def test_endpoint_delete_is_audited_and_chains_verify(
     assert remediator.delete(f"/v1/models/{endpoint_model.model_id}").status_code == 403
     assert h.model_record(admin, endpoint_model.model_id)["status"] == status_before
 
+    # -- ENDPOINT-18: while the endpoint target is live its credential profile cannot be deleted, so a queued
+    #    campaign can never resolve a dangling credential: 409 auth_profile_in_use naming the target, a
+    #    success=False auth_profile.delete row on the project chain, the profile still listed -------------------
+    profile_deletes_before = len(_events(e2e_app, project_chain, "auth_profile.delete"))
+    in_use = admin.delete(f"/v1/auth-profiles/{auth_profile_id}")
+    assert in_use.status_code == 409, in_use.text
+    in_use_detail = in_use.json()["detail"]
+    assert in_use_detail["code"] == "auth_profile_in_use" and in_use_detail["message"]
+    assert endpoint_model.model_id in in_use_detail["target_ids"], in_use_detail
+    assert_secret_free(in_use_detail, where="auth_profile_in_use envelope", forbid_url_path=False)
+    profile_deletes = _events(e2e_app, project_chain, "auth_profile.delete")
+    assert len(profile_deletes) == profile_deletes_before + 1 and profile_deletes[-1]["success"] is False
+    assert profile_deletes[-1]["detail"]["refusal"] == "auth_profile_in_use"
+    assert endpoint_model.model_id in profile_deletes[-1]["detail"]["target_ids"]
+    assert profile_deletes[-1]["actor"] == e2e_org.actor("admin") and TOKEN not in json.dumps(profile_deletes[-1])
+    still_listed = admin.get("/v1/auth-profiles", params={"project": h.PROJECT_ID}).json()["auth_profiles"]
+    assert auth_profile_id in {row["id"] for row in still_listed}, "a refused delete keeps the row"
+    # The viewer is refused by the policy layer before the in-use check and writes nothing.
+    assert e2e_org.client("viewer").delete(f"/v1/auth-profiles/{auth_profile_id}").status_code == 403
+    assert len(_events(e2e_app, project_chain, "auth_profile.delete")) == profile_deletes_before + 1
+
     # -- ENDPOINT-18: the admin's delete is audited with the host; the credential stays with its profile -------
     requests_before = lab.server.n_requests
     manage_before = len(_events(e2e_app, project_chain, "target.manage"))
@@ -889,7 +914,17 @@ def test_endpoint_delete_is_audited_and_chains_verify(
     assert auth_profile_id in {row["id"] for row in profiles}, "the AuthProfile outlives the target (ENDPOINT-18)"
     assert TOKEN not in json.dumps(profiles)
 
-    # -- and the chains, including the new row, still verify ----------------------------------------------------
+    # -- with no live target referencing it, the admin deletes the profile: 204 and its own success row --------
+    released = admin.delete(f"/v1/auth-profiles/{auth_profile_id}")
+    assert released.status_code == 204, released.text
+    profile_deletes = _events(e2e_app, project_chain, "auth_profile.delete")
+    assert len(profile_deletes) == profile_deletes_before + 2 and profile_deletes[-1]["success"] is True
+    assert profile_deletes[-1]["detail"]["profile_id"] == auth_profile_id and TOKEN not in json.dumps(profile_deletes[-1])
+    remaining = admin.get("/v1/auth-profiles", params={"project": h.PROJECT_ID}).json()["auth_profiles"]
+    assert auth_profile_id not in {row["id"] for row in remaining}
+    assert admin.delete(f"/v1/auth-profiles/{auth_profile_id}").status_code == 404
+
+    # -- and the chains, including the new rows, still verify ---------------------------------------------------
     code, output = audit_verify_all()
     verified, broken = _verified_and_broken(output)
     assert set(broken) == pre_broken and (code == 0) == (not pre_broken), output

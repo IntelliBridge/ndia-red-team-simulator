@@ -69,6 +69,22 @@ PHASE_B2_CODES = {
 }
 _B2_MARKER = "17.3 addendum, second table (Phase B wave B2, `codes-b2` track, 2026-09-09)"
 
+#: The addendum's third table (wave B4, ``fix-api-services`` track, 2026-09-09): the codes the B2 routes
+#: resolved with ``getattr`` fallbacks (ENDPOINT-31, REVIEW_REPORTS-28, LLM-09/-12/-21, ENDPOINT-28 note).
+PHASE_B4_CODES = {
+    "attestation_required": 422,
+    "scoring_weights_invalid": 422,
+    "model_id_invalid": 422,
+    "model_not_chat": 422,
+    "gateway_url_required": 422,
+    "unknown_probe": 422,
+    "probe_excluded": 422,
+    "probe_detector_unavailable": 422,
+    "llm_probe_quota_exceeded": 429,
+    "endpoint_auth_failed": 502,
+}
+_B4_MARKER = "17.3 addendum, third table (Phase B wave B4, `fix-api-services` track, 2026-09-09)"
+
 
 def _section_173() -> str:
     text = _SPEC.read_text(encoding="utf-8")
@@ -87,7 +103,7 @@ def _spec_table() -> dict[str, int]:
         for code in re.findall(r"`([a-z_]+)`", match.group("codes")):
             assert code not in table, f"{code} has two rows in spec 17.3"
             table[code] = int(match.group("http"))
-    expected = _PHASE_A_COUNT + len(PHASE_B_CODES) + len(PHASE_B2_CODES)
+    expected = _PHASE_A_COUNT + len(PHASE_B_CODES) + len(PHASE_B2_CODES) + len(PHASE_B4_CODES)
     assert len(table) >= expected, f"parsed only {len(table)} codes from the spec table"
     return table
 
@@ -114,8 +130,8 @@ def test_phase_b_addendum_is_dated_and_parsed() -> None:
     table = _spec_table()
     for code, http in PHASE_B_CODES.items():
         assert table.get(code) == http, f"{code}: addendum says {table.get(code)}, expected {http}"
-    # The Phase A rows are untouched: what is not in either addendum set is the original 29.
-    assert len(set(table) - set(PHASE_B_CODES) - set(PHASE_B2_CODES)) == _PHASE_A_COUNT
+    # The Phase A rows are untouched: what is not in any addendum set is the original 29.
+    assert len(set(table) - set(PHASE_B_CODES) - set(PHASE_B2_CODES) - set(PHASE_B4_CODES)) == _PHASE_A_COUNT
     # Every Phase B code sits after the original table and before 17.4.
     addendum_at = section.index("17.3 addendum (Phase B, 2026-09-09)")
     for code in PHASE_B_CODES:
@@ -133,8 +149,9 @@ def test_b2_addendum_table_is_dated_and_parsed() -> None:
     for code, http in PHASE_B2_CODES.items():
         assert table.get(code) == http, f"{code}: spec says {table.get(code)}, expected {http}"
         assert section.index(f"| `{code}`") > second_at, code
-    # The two addendum sets are disjoint and neither overlaps Phase A.
+    # The addendum sets are disjoint and none overlaps Phase A.
     assert set(PHASE_B2_CODES).isdisjoint(PHASE_B_CODES)
+    assert set(PHASE_B4_CODES).isdisjoint(PHASE_B_CODES) and set(PHASE_B4_CODES).isdisjoint(PHASE_B2_CODES)
     # The B0 rows stay where they were: every B0 code appears before the second table.
     for code in PHASE_B_CODES:
         assert section.index(f"| `{code}`") < second_at, code
@@ -145,6 +162,61 @@ def test_b2_addendum_table_is_dated_and_parsed() -> None:
     for phrase in ("`query_budget_exceeded` is `429`", "`idempotency_key_reused` is `409`",
                    "`fixture_not_exportable` is `422`", "`idempotency_in_flight` is `idempotency_conflict`"):
         assert phrase in section, phrase
+
+
+def test_b4_addendum_table_is_dated_and_parsed() -> None:
+    """The third table sits after the second, inside 17.3, lists exactly the B4 codes, in status order."""
+    section = _section_173()
+    assert _B4_MARKER in section
+    second_at = section.index(_B2_MARKER)
+    third_at = section.index(_B4_MARKER)
+    assert third_at > second_at
+    table = _spec_table()
+    for code, http in PHASE_B4_CODES.items():
+        assert table.get(code) == http, f"{code}: spec says {table.get(code)}, expected {http}"
+        assert section.index(f"| `{code}`") > third_at, code
+    for code in PHASE_B2_CODES:
+        assert section.index(f"| `{code}`") < third_at, code
+    statuses = [http for _, http in PHASE_B4_CODES.items()]
+    assert statuses == sorted(statuses)
+    # The row that named the register's working contract now names the built one.
+    row = next(line for line in section.splitlines() if line.startswith("| `endpoint_schema_mismatch`"))
+    assert "`endpoint-v1`" in row and "outside the `redsim-predict-proba/1` contract" not in row
+
+
+def test_b4_codes_in_table_and_the_routes_no_longer_fall_back() -> None:
+    """ENDPOINT-31, REVIEW_REPORTS-28, LLM-12: constants, statuses, envelopes; the getattr fallbacks resolve."""
+    for code, http in PHASE_B4_CODES.items():
+        constant = code.upper()
+        assert getattr(errors, constant) == code
+        assert constant in errors.__all__, constant
+        assert errors.HTTP_STATUS[code] == http
+        assert errors.http_status(code) == http
+        assert 400 <= http < 600 and code not in errors.MARKER_CODES, f"{code} is a refusal, never a marker"
+        detail = errors.error_detail(code)
+        assert detail == {"code": code, "message": detail["message"]} and detail["message"]
+        exc = errors.ApiError(code, "why", field="x")
+        assert exc.status == http and exc.detail == {"code": code, "message": "why", "field": "x"}
+    assert errors.STRING_DETAIL_CODES.isdisjoint(PHASE_B4_CODES)
+    assert errors.PHASE_REQUIRED_CODES.isdisjoint(PHASE_B4_CODES)
+    assert errors.HTTP_STATUS[errors.ENDPOINT_AUTH_FAILED] == errors.HTTP_STATUS[errors.ENDPOINT_UNREACHABLE] == 502
+    # The modules that resolved these by name now carry the table spelling, not the stand-in.
+    try:
+        from redsim.api.v1 import models as models_route
+        from redsim.api.v1 import projects as projects_route
+        from redsim.services import ml_llm
+    except Exception:  # noqa: BLE001 - the web stack is optional for the table itself
+        pytest.skip("the API routes are not importable here")
+    assert models_route.ATTESTATION_REQUIRED == errors.ATTESTATION_REQUIRED
+    assert projects_route.SCORING_WEIGHTS_INVALID == errors.SCORING_WEIGHTS_INVALID
+    for name in ("MODEL_ID_INVALID", "MODEL_NOT_CHAT", "GATEWAY_URL_REQUIRED", "UNKNOWN_PROBE", "PROBE_EXCLUDED",
+                 "PROBE_DETECTOR_UNAVAILABLE", "LLM_PROBE_QUOTA_EXCEEDED"):
+        assert getattr(ml_llm, name) == getattr(errors, name), name
+    try:
+        from redsim.ml import errors as ml_errors
+    except Exception:  # noqa: BLE001 - the ml extra is optional for the table itself
+        return
+    assert ml_errors.EndpointAuthFailed.code == errors.ENDPOINT_AUTH_FAILED
 
 
 def test_b2_codes_in_table() -> None:

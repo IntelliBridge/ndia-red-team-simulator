@@ -23,6 +23,13 @@ codes the register named and wave B0 left out: endpoint credentials and query
 budgets, the LLM probe key, batch and bulk admission, idempotency keys, dataset
 export of fixture runs, and the review and snapshot conflicts. Every one is a
 refusal (4xx) with the structured envelope; none joins the string-detail set.
+The addendum's third table (wave B4, ``fix-api-services`` track, same date) adds
+the codes the wave B2 routes had resolved with ``getattr`` fallbacks onto a
+documented neighbour: the D3 attestation, the scoring weight vector, the LLM-12
+registration and probe-run set, and the endpoint credential refusal on a
+synchronous call. Every one is a refusal; ``endpoint_auth_failed`` is a ``502``
+like ``endpoint_unreachable`` because the upstream endpoint, not the caller,
+produced the answer.
 
 Nothing here imports FastAPI at module import time: services raise
 :class:`ApiError` and the route converts it, so the worker and CLI can share the
@@ -129,6 +136,30 @@ FIXTURE_NOT_EXPORTABLE: Final = "fixture_not_exportable"
 # broker enforcing the cap at run time is a job failure, never this HTTP code.
 QUERY_BUDGET_EXCEEDED: Final = "query_budget_exceeded"
 
+# --- Codes (spec 17.3 addendum, third table: wave B4 ``fix-api-services``, 2026-09-09) --
+# In table order (by HTTP status). Until this table the routes resolved these by
+# ``getattr`` and fell back to ``license_required`` / ``params_out_of_range`` /
+# ``probe_set_unknown`` / ``rate_limited`` with the planned name in ``reason``.
+
+# The D3 attestation of an endpoint registration (ENDPOINT-31): absent or false.
+ATTESTATION_REQUIRED: Final = "attestation_required"
+# A partial or non-unit MRI weight vector on the project scoring override (REVIEW_REPORTS-28).
+SCORING_WEIGHTS_INVALID: Final = "scoring_weights_invalid"
+# LLM target registration (LLM-12): a non-canonical Pythia id, an embedding model, no gateway URL.
+MODEL_ID_INVALID: Final = "model_id_invalid"
+MODEL_NOT_CHAT: Final = "model_not_chat"
+GATEWAY_URL_REQUIRED: Final = "gateway_url_required"
+# Probe-run admission (LLM-09, LLM-12): an id outside the catalog, an excluded probe, a detector
+# whose model is not permitted or not cached in this deployment.
+UNKNOWN_PROBE: Final = "unknown_probe"
+PROBE_EXCLUDED: Final = "probe_excluded"
+PROBE_DETECTOR_UNAVAILABLE: Final = "probe_detector_unavailable"
+# The per-project daily probe-run quota (LLM-21); a budget refusal like ``daily_budget_exceeded``.
+LLM_PROBE_QUOTA_EXCEEDED: Final = "llm_probe_quota_exceeded"
+# The endpoint answered 401 or 403 to the AuthProfile credential on a synchronous call made on
+# the caller's behalf; inside validate or a campaign it stays ``refusal_reason: load_failed``.
+ENDPOINT_AUTH_FAILED: Final = "endpoint_auth_failed"
+
 # --- HTTP status per code -----------------------------------------------------
 
 HTTP_STATUS: Final = MappingProxyType({
@@ -199,6 +230,17 @@ HTTP_STATUS: Final = MappingProxyType({
     BULK_TOO_MANY_FILES: 422,
     FIXTURE_NOT_EXPORTABLE: 422,
     QUERY_BUDGET_EXCEEDED: 429,
+    # Phase B addendum, third table (wave B4 fix-api-services, 2026-09-09).
+    ATTESTATION_REQUIRED: 422,
+    SCORING_WEIGHTS_INVALID: 422,
+    MODEL_ID_INVALID: 422,
+    MODEL_NOT_CHAT: 422,
+    GATEWAY_URL_REQUIRED: 422,
+    UNKNOWN_PROBE: 422,
+    PROBE_EXCLUDED: 422,
+    PROBE_DETECTOR_UNAVAILABLE: 422,
+    LLM_PROBE_QUOTA_EXCEEDED: 429,
+    ENDPOINT_AUTH_FAILED: 502,
 })
 
 #: Every code of the section 17.3 table, in table order.
@@ -285,6 +327,18 @@ _DEFAULT_MESSAGE: Final = MappingProxyType({
     BULK_TOO_MANY_FILES: "bulk upload exceeds the file-count cap",
     FIXTURE_NOT_EXPORTABLE: "runs on a CI fixture target are never exported",
     QUERY_BUDGET_EXCEEDED: "estimated endpoint query volume exceeds the per-job budget",
+    # Phase B addendum, third table (wave B4 fix-api-services, 2026-09-09).
+    ATTESTATION_REQUIRED: "evaluation_instance_attestation must be true: only non-operational evaluation "
+                          "instances are registered (D3)",
+    SCORING_WEIGHTS_INVALID: "ml_scoring.weights must name all five weights and sum to 1; nothing is renormalised",
+    MODEL_ID_INVALID: "model_id must be a canonical Pythia id (<vendor>/<model> or pythia/auto)",
+    MODEL_NOT_CHAT: "model_id names an embedding model; probes need a chat completion endpoint",
+    GATEWAY_URL_REQUIRED: "gateway_url is required when PYTHIA_BASE_URL is not set on the API",
+    UNKNOWN_PROBE: "probe id is not in the committed probe catalog",
+    PROBE_EXCLUDED: "probe is excluded from this deployment's catalog",
+    PROBE_DETECTOR_UNAVAILABLE: "the probe's detector model is not permitted or not cached in this deployment",
+    LLM_PROBE_QUOTA_EXCEEDED: "the project's daily LLM probe-run quota is spent",
+    ENDPOINT_AUTH_FAILED: "the endpoint refused the AuthProfile credential",
 })
 
 
@@ -369,6 +423,7 @@ __all__ = [
     "ARCHITECTURE_REQUIRED",
     "ATTACK_MODALITY_MISMATCH",
     "ATTACK_REQUIRES_GRADIENTS",
+    "ATTESTATION_REQUIRED",
     "AUTH_PROFILE_IN_USE",
     "AUTH_PROFILE_KIND_UNSUPPORTED",
     "AUTH_PROFILE_REQUIRED",
@@ -387,6 +442,7 @@ __all__ = [
     "DEFAULT_PHASE",
     "DEFENSE_MODALITY_MISMATCH",
     "EGRESS_REFUSED",
+    "ENDPOINT_AUTH_FAILED",
     "ENDPOINT_NOT_ALLOWLISTED",
     "ENDPOINT_SCHEMA_MISMATCH",
     "ENDPOINT_UNREACHABLE",
@@ -396,6 +452,7 @@ __all__ = [
     "EXPORT_UNAVAILABLE",
     "FIXTURE_NOT_EXPORTABLE",
     "FORBIDDEN",
+    "GATEWAY_URL_REQUIRED",
     "HTTP_STATUS",
     "IDEMPOTENCY_CONFLICT",
     "IDEMPOTENCY_KEY_REUSED",
@@ -403,15 +460,20 @@ __all__ = [
     "INTEGRATION_DISABLED",
     "JOB_IN_FLIGHT",
     "LICENSE_REQUIRED",
+    "LLM_PROBE_QUOTA_EXCEEDED",
     "LLM_TARGET_REQUIRED",
     "MARKER_CODES",
+    "MODEL_ID_INVALID",
     "MODEL_LOAD_REFUSED",
+    "MODEL_NOT_CHAT",
     "MODEL_TOO_LARGE",
     "NOT_FOUND",
     "NOT_IMPLEMENTED",
     "PARAMS_OUT_OF_RANGE",
     "PHASE_REQUIRED_CODES",
     "PICKLE_REFUSED",
+    "PROBE_DETECTOR_UNAVAILABLE",
+    "PROBE_EXCLUDED",
     "PROBE_KEY_REQUIRED",
     "PROBE_SET_UNKNOWN",
     "QUERY_BUDGET_EXCEEDED",
@@ -426,11 +488,13 @@ __all__ = [
     "RUN_TERMINAL",
     "SCHEMA_UNDECLARED",
     "SCORE_UNAVAILABLE",
+    "SCORING_WEIGHTS_INVALID",
     "SNAPSHOT_ARCHIVED",
     "SNAPSHOT_NOT_FOUND",
     "STRING_DETAIL_CODES",
     "UNKNOWN_ATTACK",
     "UNKNOWN_DEFENSE",
+    "UNKNOWN_PROBE",
     "UNSUPPORTED_DATASET_FORMAT",
     "UNSUPPORTED_MODEL_FORMAT",
     "USE_MODELS_ROUTE",

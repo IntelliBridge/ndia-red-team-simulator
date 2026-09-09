@@ -761,8 +761,9 @@ def create_draft_finding(*, run_id: str, attack_id: str, title: str, severity: s
     The draft cites evidence ids that must exist in the run's digest-checked
     ``ml.run_record``; it carries ``finding_type`` :func:`manual_finding_type`,
     ``source_tool="manual"``, ``status="open"``, ``review.state="draft"`` and
-    ``review.revisions[0]`` authored by ``actor``. The ``finding.author`` audit row
-    (``op=create``, ids and digests only) is written before the row.
+    ``review.revisions[0]`` authored by ``actor``, and ``atlas_technique`` from the
+    registry stamp (INTEROP-18). The ``finding.author`` audit row (``op=create``, ids
+    and digests only) is written before the row.
     """
     from redsim.db.models import Finding, Run, Target
     from redsim.db.session import get_session
@@ -805,8 +806,13 @@ def create_draft_finding(*, run_id: str, attack_id: str, title: str, severity: s
         attack_name = evidence.attack_name(attack_id)
         measurements = evidence.measurements(ids)
         observations = evidence.observations(ids)
+        # INTEROP-18: the draft is stamped like a worker-projected finding, from the registry mapping
+        # (one top-level technique per attack id; a control or an unmapped id stamps nothing).
+        from redsim.ml.atlas import technique_for_attack
+
         detail = MLFindingDetail(
             attack_id=attack_id, attack_name=attack_name, norm=campaign_config.norm,
+            atlas_technique=technique_for_attack(attack_id),
             eps_grid=list(campaign_config.eps_grid), reference_eps=campaign_config.reference_eps,
             threshold=float(campaign_config.finding_asr_threshold),
             measurements=measurements, observations=observations,
