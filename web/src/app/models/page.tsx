@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import useSWR from "swr";
 import { RoleGated, PanelSection } from "@redsim/design-system";
 import {
   ApiError,
@@ -11,6 +12,7 @@ import {
   modelDisplayName,
   modelGateway,
   type ModelTarget,
+  type ScoreSummary,
 } from "@/lib/api";
 import { useModels } from "@/hooks/useModels";
 import { rowLink } from "@/lib/row-link";
@@ -176,6 +178,14 @@ export default function ModelsPage() {
     isLoading,
     mutate,
   } = useModels(authed ? projectId : null);
+  // The average-score blocks arrive separately so the catalog renders at once;
+  // GET /v1/models/score-summaries reads scorecards and can take a moment.
+  const summaries = useSWR(
+    authed && projectId ? `/v1/models/score-summaries?project=${encodeURIComponent(projectId)}` : null,
+    (path: string) => api<{ summaries: Record<string, ScoreSummary | null> }>(path),
+    { refreshInterval: 60000 },
+  );
+  const summaryFor = (m: ModelTarget) => summaries.data?.summaries[m.id] ?? m.score_summary ?? null;
   const { data: capabilities } = useCapabilities(authed);
   const { data: datasets = [] } = useDatasets(authed);
   const catalogError =
@@ -612,7 +622,7 @@ export default function ModelsPage() {
                 </p>
               )}
             </button>
-            <ScoreSummaryBlock summary={m.score_summary} />
+            <ScoreSummaryBlock summary={summaryFor(m)} />
             <RoleGated minRole="admin" callerRole={roles[m.project_id]}>
               <button
                 className="mt-3 border border-destructive/30 px-3 py-1 text-xs text-destructive"

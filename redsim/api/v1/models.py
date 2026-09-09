@@ -112,7 +112,7 @@ from redsim.services.ml_models import (
 
 # Light service module: manifest JSON reads and the ORM only, no ML imports
 # (tests/test_api_process_has_no_ml.py).
-from redsim.services.ml_scores import score_summary
+from redsim.services.ml_scores import cached_score_summary
 
 router = APIRouter(prefix="/models", tags=["ml-models"])
 logger = logging.getLogger(__name__)
@@ -366,11 +366,6 @@ def list_models(
         live = [row for row in targets if not _is_deleted(row)]
         models = [_project_model(row) for row in live]
         latest = last_run_ids(sess, [row.id for row in live])
-        # The card's "average score by category" block (owner request): a
-        # reading aid over the model's own scorecards, None when nothing scored.
-        summaries = {row.id: score_summary(sess, row) for row in live}
-    for model in models:
-        model["score_summary"] = summaries.get(str(model["id"]))
     for model in models:
         model["last_run_id"] = latest.get(str(model["id"]))
     registered_bundled = {model["bundled_id"] for model in models if model["bundled_id"]}
@@ -379,6 +374,32 @@ def list_models(
         if not (row["source"] == "bundled" and row["bundled_id"] in registered_bundled)
     )
     return {"models": models, "count": len(models)}
+
+
+@router.get("/score-summaries")
+def list_score_summaries(
+    project: str = "default",
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """``{summaries: {target_id: score_summary}}`` for the project's live targets.
+
+    Served apart from ``GET /v1/models`` so the catalog renders at once: the
+    LLM summaries read one scorecard artifact per probe run, which took
+    seconds on a project with many LLM targets. Cached per process for 120 s.
+    """
+    from sqlalchemy import select
+
+    from redsim.db.models import Target
+    from redsim.db.session import get_session
+
+    ensure_project_access(user, project)
+    with get_session() as sess:
+        targets = sess.execute(
+            select(Target).where(Target.project_id == project, Target.kind.in_(_ML_KINDS))
+        ).scalars().all()
+        live = [row for row in targets if not _is_deleted(row)]
+        summaries = {str(row.id): cached_score_summary(sess, row) for row in live}
+    return {"summaries": summaries, "count": len(summaries)}
 
 
 @router.get("/{model_id}")
