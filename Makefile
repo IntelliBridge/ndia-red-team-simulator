@@ -145,6 +145,20 @@ typecheck-web: require-install
 # workflow only builds images and rolls ECS services.
 check: lint typecheck test
 
+# Phase B completion gate (docs/plans/12-phase-b-plan.md section 6, register
+# TESTS_DOCS-36): scripts/phase_b_gate.sh runs, in order and stopping at the
+# first failure, ruff (CI selection), mypy, the default tier, the ml tier, the
+# garak tier, the e2e tier (Postgres RLS lane when REDSIM_E2E_POSTGRES_URL is
+# set), mkdocs --strict, tests/test_docs_phase_b_consistency.py and, when
+# REDSIM_API_URL and REDSIM_API_TOKEN name a running stack (`make up`), the
+# HTTP probes plus `redsim audit verify --all` (needs REDSIM_DB_URL). Each
+# failure names the spec 26 criterion it fails. `make check` keeps its
+# meaning above; this target is the Phase B definition of done. Needs the
+# ml, docs and garak extras for a full run (`scripts/phase_b_gate.sh --list`).
+check-phase-b:
+	@test -x $(PY) || { echo "error: $(VENV) is missing. Run 'make install' first." >&2; exit 1; }
+	PY=$(PY) scripts/phase_b_gate.sh
+
 # ---------------------------------------------------------------------
 # Full stack (docker compose)
 # ---------------------------------------------------------------------
@@ -188,5 +202,5 @@ docs-clean:
 	test test-cov \
 	lint lint-py lint-web \
 	typecheck typecheck-py typecheck-web \
-	check up down \
+	check check-phase-b up down \
 	docs-serve docs-build docs-build-strict docs-clean
