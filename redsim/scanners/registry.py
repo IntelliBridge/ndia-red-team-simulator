@@ -24,8 +24,11 @@ logger = logging.getLogger(__name__)
 # Open capability vocabulary. Adding a capability is a one-line append here;
 # a declared capability outside this set logs a warning but still registers,
 # so third-party plugins can introduce their own without patching core.
+# ``adversarial_ml`` and ``explainability`` are the ML vertical's tags (spec 8,
+# S1 section 4), carried by the built-in ``ml-campaign`` facade.
 KNOWN_CAPABILITIES: set[str] = {
     "dast", "sast", "dependency", "iac", "secret", "sbom", "supply_chain", "code_audit",
+    "adversarial_ml", "explainability",
 }
 Capability = str  # back-compat alias; validated against KNOWN_CAPABILITIES at register()
 

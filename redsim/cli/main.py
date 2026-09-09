@@ -165,7 +165,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_plugins_sign.add_argument("--out", default=None,
                                 help="Output directory for the .sig (default: cwd)")
 
-    # ml (adversarial-ML vertical): `redsim ml build-assets` skeleton at M0
+    # ml (adversarial-ML vertical): `redsim ml build-assets | attack | seed`
     from redsim.cli.ml import add_ml_subparser
     add_ml_subparser(sub)
 

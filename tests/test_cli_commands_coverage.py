@@ -238,6 +238,36 @@ class TestBuildParser(unittest.TestCase):
                                   "--project", "my-project"])
         self.assertEqual(args.command, "migrate")
 
+    def test_parser_ml_attack(self):
+        parser = build_parser()
+        args = parser.parse_args(["ml", "attack", "vehicles_cnn", "--attacks", "fgsm,pgd",
+                                  "--eps", "0.01,0.03", "--n-samples", "50", "--seed", "3",
+                                  "--explain-k", "0", "--no-control", "--out", "/tmp/runs"])
+        self.assertEqual(args.command, "ml")
+        self.assertEqual(args.ml_action, "attack")
+        self.assertEqual(args.target_id, "vehicles_cnn")
+        self.assertEqual(args.attacks, "fgsm,pgd")
+        self.assertEqual(args.eps, "0.01,0.03")
+        self.assertEqual((args.n_samples, args.seed, args.explain_k), (50, 3, 0))
+        self.assertTrue(args.no_control)
+        self.assertEqual(args.out, "/tmp/runs")
+        # Defaults follow CampaignConfig / spec 12.3.
+        defaults = parser.parse_args(["ml", "attack", "url_trees"])
+        self.assertEqual(defaults.attacks, "fgsm,pgd")
+        self.assertIsNone(defaults.eps)
+        self.assertEqual((defaults.n_samples, defaults.seed, defaults.explain_k), (200, 0, 8))
+        self.assertFalse(defaults.no_control)
+        self.assertIsNone(defaults.out)
+
+    def test_parser_ml_seed(self):
+        parser = build_parser()
+        args = parser.parse_args(["ml", "seed", "--project", "p1", "--only", "vehicles_cnn,url_trees"])
+        self.assertEqual(args.command, "ml")
+        self.assertEqual(args.ml_action, "seed")
+        self.assertEqual(args.project, "p1")
+        self.assertEqual(args.only, "vehicles_cnn,url_trees")
+        self.assertIsNone(parser.parse_args(["ml", "seed"]).project)
+
 
 # ---------------------------------------------------------------------------
 # main() dispatch
