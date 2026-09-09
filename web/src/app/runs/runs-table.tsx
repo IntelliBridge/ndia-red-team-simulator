@@ -20,6 +20,7 @@ import {
   TableRow,
 } from "@redsim/design-system";
 import { upstreamError } from "@/lib/api";
+import { rowLink } from "@/lib/row-link";
 import { useTRPC } from "@/lib/trpc/client";
 
 /** R10's poll fallback for a list page, in milliseconds. */
@@ -138,7 +139,7 @@ export function RunsTable({ project, limit }: RunsTableProps) {
           </TableHeader>
           <TableBody>
             {runs.map((run) => (
-              <TableRow key={run.id}>
+              <TableRow key={run.id} {...rowLink(`/runs/${run.id}`)}>
                 <TableCell className="font-mono text-xs">
                   <Link className="text-primary underline" href={`/runs/${run.id}`}>
                     {run.id}
