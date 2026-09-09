@@ -17,7 +17,7 @@ and ``run_detection`` from their own modules, and a modality whose runner module
 absent is refused as ``ModalityRunnerUnavailable`` before any stage runs.
 
 Stage order follows ``redsim.ml.schema.STAGES`` (read at run time, never copied):
-load_target -> [defense_apply, when a defense was applied and the stage exists] ->
+load_target -> [defense_apply, when a training defense was applied] ->
 sample -> clean_eval -> attack (written per attack as ``attack:<attack_id>``, every eps
 in the grid) -> control (benign noise at every eps, the reference eps included) ->
 explain (at the reference budget; optional and tolerant of a missing or failing
@@ -526,9 +526,13 @@ def _run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool,
     nondeterminism = frame.nondeterminism
     versions = frame.versions
     stage_done("load_target")
-    if config.defense is not None and defense_unavailable is None:
-        # Spec 6.5: a verify campaign records ``defense_apply`` directly after ``load_target`` (STAGES order);
-        # a defense that could not be applied writes no such stage, since nothing was applied.
+    if (config.defense is not None and defense_unavailable is None
+            and _defense_kind(config.defense) == TRAINING_DEFENSE_KIND):
+        # Spec 6.5 / ATTACKS_HARDEN-15: a verify campaign whose defense trains or distils a derived model records
+        # ``defense_apply`` directly after ``load_target`` (STAGES order). A preprocessing defense wraps the loaded
+        # target inside ``load_target`` and has no stage of its own; a defense that could not be applied writes no
+        # such stage either, since nothing was applied. ``redsim.workers.tasks.ml_campaign.expected_stages``
+        # mirrors this rule.
         stage_done("defense_apply")
     if defense_unavailable is not None:
         limitations.append(

@@ -5,7 +5,7 @@ The explain, recommend, summary, narrative, defenses and hardening modules are i
 Phase B frame (``redsim.ml.runners``): runners are dispatched by modality from ``MODALITY_RUNNERS`` and a
 missing runner refuses before any stage; a ``kind: training`` defense goes through
 ``redsim.ml.harden.apply.apply_training_defense`` and a missing module records the defense unavailable
-with the score withheld; ``defense_apply`` is emitted only when ``schema.STAGES`` carries it; the run
+with the score withheld; ``defense_apply`` is emitted only for an applied training defense; the run
 pins ``NLTK_DATA`` and ``TORCH_HOME`` offline for its duration.
 
 Pins: ``CampaignConfig`` in, ``CampaignRecord`` (a ``RunRecord``) out with the ``score`` stage;
@@ -1349,12 +1349,16 @@ def test_training_defense_refused_by_the_hook_is_recorded_unavailable_and_unscor
                      FilesystemSink(Path(sink.root).parent / "crash"), explain=False)
 
 
-def test_defense_apply_stage_follows_load_target_on_a_verify_run_only(no_optional_modules, monkeypatch, sink, tmp_path):
-    """Spec 6.5: the verify campaign records ``defense_apply`` directly after ``load_target`` (the ``schema.STAGES``
-    order, read at run time); an attack run never writes it and is otherwise stage-for-stage identical."""
+def test_defense_apply_stage_follows_load_target_on_a_training_verify_run_only(no_optional_modules, monkeypatch,
+                                                                              sink, tmp_path):
+    """Spec 6.5 / ATTACKS_HARDEN-15: a verify campaign whose defense trains records ``defense_apply`` directly after
+    ``load_target`` (the ``schema.STAGES`` order, read at run time); a preprocessing defense wraps the target inside
+    ``load_target`` and writes no such stage (the worker's ``expected_stages`` mirrors this); an attack run never
+    writes it and is otherwise stage-for-stage identical."""
     assert STAGES.index("defense_apply") == STAGES.index("load_target") + 1 and STAGES[-1] == "report"
-    monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses())
-    verify = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="feature_squeezing")),
+    monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses_catalog())
+    monkeypatch.setitem(sys.modules, HARDEN_MOD, make_fake_harden())
+    verify = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="adv_train")),
                           sink, explain=False)
     assert verify.stages_done[:3] == ["load_target", "defense_apply", "sample"]
     assert all(s.split(":")[0] in STAGES for s in verify.stages_done)
@@ -1362,6 +1366,11 @@ def test_defense_apply_stage_follows_load_target_on_a_verify_run_only(no_optiona
                           explain=False)
     assert "defense_apply" not in attack.stages_done
     assert verify.stages_done[2:] == attack.stages_done[1:]
+    monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses())
+    squeezed = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="feature_squeezing")),
+                            FilesystemSink(tmp_path / "squeezed"), explain=False)
+    assert squeezed.kind == "verify" and "defense_apply" not in squeezed.stages_done
+    assert squeezed.stages_done == attack.stages_done
 
 
 # --- Phase B frame: offline pins for the child (MODALITIES-10) ----------------------------------------------
