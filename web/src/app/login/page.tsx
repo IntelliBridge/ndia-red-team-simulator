@@ -1,10 +1,10 @@
 "use client";
 
-import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { env } from "@/env";
+import { signIn } from "@/lib/auth-client";
 
 // In prod the dev-token path is disabled server-side (the API rejects
 // `dev:*` bearers when REDSIM_ENV=prod), so we also hide it in the UI and
@@ -30,11 +30,18 @@ export default function LoginPage() {
 
   const oidcLogin = () => {
     setBusy(true);
-    // NextAuth runs the Keycloak code flow, and the session callback in
-    // @/server/auth-options mints the redsim_api_session + redsim_csrf cookies
-    // that the api() helper relies on. After the round-trip NextAuth returns
-    // here, so send the now-authenticated user on to the dashboard.
-    void signIn("keycloak", { callbackUrl: "/dashboard" });
+    // Better Auth runs the Keycloak code flow, and the after-hook on the
+    // callback mints the redsim_api_session + redsim_csrf cookies that the
+    // api() helper relies on. After the round-trip Better Auth returns here,
+    // so send the now-authenticated user on to the dashboard.
+    void signIn
+      .social({ provider: "keycloak", callbackURL: "/dashboard" })
+      .then((result) => {
+        // Clear the busy state on a rejected sign-in, or the button stays
+        // disabled with no explanation and no navigation.
+        if (result?.error) setBusy(false);
+      })
+      .catch(() => setBusy(false));
   };
 
   return (

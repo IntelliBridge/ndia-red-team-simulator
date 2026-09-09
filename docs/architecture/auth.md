@@ -19,24 +19,30 @@ silently downgrading a bearer call.
 
 ---
 
-## Browser auth (NextAuth + Redsim-signed cookie)
+## Browser auth (Better Auth + Redsim-signed cookie)
 
-The Keycloak code flow is owned by NextAuth; FastAPI never sees the
-upstream access token. NextAuth's callback mints a separate
-`redsim_api_session` cookie that FastAPI verifies against a
-Redsim-managed RSA key. Three concerns, three keys:
+The Keycloak code flow is owned by Better Auth; FastAPI never sees the
+upstream access token, nor Better Auth's own session cookie. An
+after-hook on the callback mints a separate `redsim_api_session` cookie
+that FastAPI verifies against a Redsim-managed RSA key. Three concerns,
+three keys:
 
 | Concern         | Holder            | Key                                                  |
 |-----------------|-------------------|------------------------------------------------------|
 | Identity        | Keycloak          | Keycloak signing keys (rotated by Keycloak)          |
-| Browser session | NextAuth          | `NEXTAUTH_SECRET` (HMAC-ish, opaque to Redsim)        |
+| Browser session | Better Auth       | `BETTER_AUTH_SECRET` (opaque to Redsim)               |
 | API session    | Redsim             | `REDSIM_API_SESSION_PRIVATE_KEY` (RS256)              |
+
+Better Auth runs stateless: no database, so the session lives in its own
+encrypted cookie, and the web tier runs a single replica because past the
+cookie-cache window only the instance that handled the callback resolves
+the session.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant U as User browser
-    participant N as Next.js NextAuth
+    participant N as Next.js Better Auth
     participant K as Keycloak
     participant API as redsim-api
 
@@ -46,8 +52,8 @@ sequenceDiagram
     K-->>N: callback with auth code
     N->>K: POST token (exchange code)
     K-->>N: access_token + id_token
-    Note over N: jwt callback stores sub, email,<br/>redsim_project_roles
-    Note over N: session callback mints<br/>redsim_api_session + redsim_csrf
+    Note over N: after-hook reads sub from the linked<br/>account's accountId, roles from its id_token
+    Note over N: after-hook mints<br/>redsim_api_session + redsim_csrf
     N-->>U: Set-Cookie redsim_api_session (httpOnly)<br/>+ redsim_csrf (readable by SPA)
 
     U->>API: GET /v1/runs with redsim_api_session cookie

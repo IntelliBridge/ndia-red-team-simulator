@@ -136,8 +136,7 @@ export function clearRedsimCookies(
  *
  * A mint failure (typically REDSIM_API_SESSION_PRIVATE_KEY unset in local dev)
  * is logged and swallowed, so the Better Auth login still completes and API
- * calls surface 401 (R27). That matches what the NextAuth session callback did
- * before this migration.
+ * calls surface 401 (R27), which is the behaviour this migration replaced.
  */
 export const mintFromAccount = createAuthMiddleware(async (ctx) => {
   const newSession = ctx.context.newSession;

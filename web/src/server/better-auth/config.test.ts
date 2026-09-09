@@ -268,7 +268,7 @@ describe("Better Auth Keycloak login mints the FastAPI cookie", () => {
     expect(cookies.has("redsim_api_session")).toBe(false);
     expect(cookies.has("redsim_csrf")).toBe(false);
     // The Better Auth session still exists, so the user sees the UI shell and
-    // API calls surface 401, which is what the NextAuth callback did.
+    // API calls surface 401, matching the behaviour this migration replaced.
     expect(cookies.has("better-auth.session_token")).toBe(true);
     expect(warn).toHaveBeenCalled();
   });

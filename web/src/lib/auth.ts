@@ -20,7 +20,7 @@ export function logout(): void {
   if (typeof window === "undefined") return;
   localStorage.removeItem("redsim_token");
   localStorage.removeItem("redsim_email");
-  // Also tell the NextAuth callback to clear the Redsim cookies.
+  // Also ask the server to clear the Redsim cookies.
   // Fire-and-forget; the redirect to /login happens regardless.
   void fetch("/api/auth/signout-redsim", { method: "POST" }).catch(() => {});
 }
@@ -32,7 +32,7 @@ export function logout(): void {
  * F18: cookie-authed users have no localStorage token but do have an
  * httpOnly redsim_api_session cookie. We can't read that from JS, so we
  * additionally check for the non-httpOnly redsim_csrf cookie that the
- * NextAuth callback (F13) sets alongside it.
+ * login after-hook (F13) sets alongside it.
  */
 export function requireAuth(router: { push: (path: string) => void }): string | undefined {
   const token = getToken();

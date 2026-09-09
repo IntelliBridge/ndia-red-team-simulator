@@ -13,8 +13,8 @@ export const auth = createAuth();
 /**
  * The caller's Better Auth session, or null.
  *
- * Replaces next-auth's getServerSession. Reads the request headers rather than
- * taking them as an argument, so route handlers call it with no plumbing.
+ * Reads the request headers rather than taking them as an argument, so route
+ * handlers call it with no plumbing.
  */
 export async function getSession() {
   return auth.api.getSession({ headers: headers() });
