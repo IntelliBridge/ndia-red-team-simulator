@@ -10,7 +10,7 @@ import { AttacksCatalog } from "./attacks-catalog";
 type Tab = "probes" | "attacks";
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "probes", label: "LLM probes (garak via Pythia)" },
+  { id: "probes", label: "LLM probes" },
   { id: "attacks", label: "Adversarial ML attacks" },
 ];
 
