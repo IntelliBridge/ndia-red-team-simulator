@@ -12,6 +12,7 @@ import {
   RoleGated,
   RobustnessCurve,
   RunStatusBadge,
+  SeverityChip,
   StageTimeline,
   type StageEntry,
 } from "@redsim/design-system";
@@ -340,7 +341,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                 <tbody>
                   {findings.map((finding) => (
                     <tr key={finding.id} {...rowLink(`/findings/${finding.id}`)} className={`border-border border-t ${rowLink("").className}`}>
-                      <td>{finding.severity}</td>
+                      <td><SeverityChip level={finding.severity} /></td>
                       <td>{finding.status}</td>
                       <td>
                         <a
@@ -855,7 +856,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             <tbody>
               {campaign.findings?.map((finding) => (
                 <tr key={finding.id} {...rowLink(`/findings/${finding.id}`)} className={`border-border border-t ${rowLink("").className}`}>
-                  <td>{finding.severity}</td>
+                  <td><SeverityChip level={finding.severity} /></td>
                   <td>{finding.schema_blob.ml?.attack_id ?? "—"}</td>
                   <td>{finding.schema_blob.ml?.first_success_eps ?? "—"}</td>
                   <td>

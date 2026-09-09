@@ -23,15 +23,33 @@ const MARKERS: { key: string; heading: string; plain: boolean; starts: RegExp }[
   { key: "evidence", heading: "Evidence", plain: false, starts: /^Prompts and responses\s/ },
 ];
 
-// Sentence boundary before a known marker. Markers always follow ". " in the
-// generated text, so splitting there keeps every sentence whole.
-const SPLIT = new RegExp(
-  `(?<=\\.)\\s+(?=(?:${MARKERS.map((m) => m.starts.source.replace(/^\^/, "").replace(/\\s\*$/, "")).join("|")}))`,
-);
+/**
+ * Split at each sentence boundary that is followed by a known marker. Written
+ * as a scan rather than a lookbehind regex so it runs in every browser the
+ * demo audience may use (lookbehind is missing in older Safari and throws at
+ * module load, which blanks the whole page).
+ */
+function splitAtMarkers(text: string): string[] {
+  const chunks: string[] = [];
+  let start = 0;
+  for (let i = 1; i < text.length; i += 1) {
+    if (text[i - 1] !== "." || !/\s/.test(text[i] ?? "")) continue;
+    let j = i;
+    while (j < text.length && /\s/.test(text[j] ?? "")) j += 1;
+    const rest = text.slice(j);
+    if (MARKERS.some((m) => m.starts.test(rest))) {
+      chunks.push(text.slice(start, i));
+      start = j;
+      i = j;
+    }
+  }
+  chunks.push(text.slice(start));
+  return chunks;
+}
 
 export function describeFinding(description: string | null | undefined): DescriptionSection[] {
   if (!description || !description.trim()) return [];
-  const chunks = description.trim().split(SPLIT).map((c) => c.trim()).filter(Boolean);
+  const chunks = splitAtMarkers(description.trim()).map((c) => c.trim()).filter(Boolean);
   const sections: DescriptionSection[] = [];
   for (const chunk of chunks) {
     const marker = MARKERS.find((m) => m.starts.test(chunk));
