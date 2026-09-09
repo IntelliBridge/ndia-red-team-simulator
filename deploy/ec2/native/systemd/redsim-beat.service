@@ -6,6 +6,8 @@ Wants=network-online.target
 Type=simple
 User=redsim
 Group=redsim
+Environment=HOME=/var/lib/redsim
+Environment=COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 WorkingDirectory=/opt/redsim/src
 ExecStart=/usr/local/bin/redsim-run beat celery -A redsim.workers.celery_app beat --schedule=/var/tmp/redsim-ml/celerybeat-schedule --loglevel=info
 Restart=always

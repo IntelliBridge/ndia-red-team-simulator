@@ -127,7 +127,8 @@ if [ ! -x /opt/keycloak/bin/kc.sh ]; then
 fi
 mkdir -p /opt/keycloak/data/import
 cp $SRC/deploy/runtime/identity/realm.json /opt/keycloak/data/import/redsim-realm.json
-id -u redsim >/dev/null 2>&1 || useradd --system --home $HOST_DIR --shell /usr/sbin/nologin redsim
+id -u redsim >/dev/null 2>&1 || useradd --system --home /var/lib/redsim --shell /usr/sbin/nologin redsim
+mkdir -p /var/lib/redsim && chown redsim:redsim /var/lib/redsim   # HOME: corepack and pnpm caches
 chown -R redsim:redsim /opt/keycloak $HOST_DIR/env
 mkdir -p /var/tmp/redsim-ml /var/tmp/redsim-cache && chown redsim:redsim /var/tmp/redsim-ml /var/tmp/redsim-cache
 chown -R redsim:redsim $SRC $HOST_DIR/assets

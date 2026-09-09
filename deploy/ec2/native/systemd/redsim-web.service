@@ -6,6 +6,8 @@ Wants=network-online.target
 Type=simple
 User=redsim
 Group=redsim
+Environment=HOME=/var/lib/redsim
+Environment=COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 WorkingDirectory=/opt/redsim/src
 ExecStart=/usr/local/bin/redsim-run web pnpm --filter @redsim/web dev -p 3000 -H 127.0.0.1
 Restart=always
