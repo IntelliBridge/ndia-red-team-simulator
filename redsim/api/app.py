@@ -14,11 +14,14 @@ from redsim.api.v1 import (
     attacks,
     audit,
     auth_profiles,
+    batches,
     compare,
     datasets,
     defenses,
     findings,
     health,
+    integrations,
+    llm,
     logs,
     ml_capabilities,
     ml_findings,
@@ -118,6 +121,10 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(projects.router, prefix="/v1")
     app.include_router(logs.router, prefix="/v1")
     app.include_router(org_cost.router, prefix="/v1")
+    # Phase B routes, mounted as truthful 501 stubs since wave B0 (docs/plans/12-phase-b-plan.md).
+    app.include_router(batches.router, prefix="/v1")
+    app.include_router(integrations.router, prefix="/v1")
+    app.include_router(llm.router, prefix="/v1")
 
     # WebSocket stream for live UI updates.
     from redsim.api.ws import router as ws_router
