@@ -14,6 +14,9 @@ _SENSITIVE_KEYS = {
     "password", "passwd", "secret", "token", "api_key", "apikey",
     "private_key", "session", "session_token", "authorization",
     "auth", "cookie", "set-cookie", "proxy-authorization",
+    # Legacy Kaggle basic-auth pair (``KAGGLE_USERNAME`` / ``KAGGLE_KEY``);
+    # ``KAGGLE_API_TOKEN`` and ``PYTHIA_API_KEY`` already match on substring.
+    "kaggle_key",
 }
 
 _SENSITIVE_HEADER_NAMES = {
@@ -32,6 +35,12 @@ _TOKEN_PATTERNS = [
     re.compile(r"\bghr_[A-Za-z0-9]{76}\b"),              # GitHub refresh
     re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"),     # Slack
     re.compile(r"\bsk-[A-Za-z0-9]{32,}\b"),              # OpenAI-style
+    # Pythia gateway key (``Authorization: Bearer pk_…``; spec 10.8 / GOV-41).
+    re.compile(r"\bpk_[A-Za-z0-9_\-]{8,}\b"),
+    # Kaggle API token (what the current kaggle client reads as KAGGLE_API_TOKEN).
+    re.compile(r"\bKGAT_[A-Za-z0-9_\-]{8,}\b"),
+    # Legacy Kaggle key written inline (``KAGGLE_KEY=<hex>`` / kaggle.json shape).
+    re.compile(r"(?i)\bkaggle_key\b[\"']?\s*[=:]\s*[\"']?[A-Za-z0-9]{16,}[\"']?"),
 ]
 
 
