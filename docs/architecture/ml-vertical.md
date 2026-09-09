@@ -1359,3 +1359,13 @@ claimed green ([ci.md](../dev/ci.md)).
 | Testing | 22 |
 | Milestones | 23 |
 | Completion criteria | 26 |
+
+### Gateway-blocked probe outputs
+
+A gateway content-filter refusal is an unevaluated output, counted in the
+probe row's `n_outputs_blocked` and the usage ledger's `gateway_blocked`.
+It is excluded from detector denominators. Ordinary authentication and
+permission failures still abort the probe. When the target is not declared
+`content_filtered`, the scorecard adds: "The gateway blocked N prompts before
+the model saw them, so hit rates are over the prompts that reached the model."
+These counts do not enter the MRI.
