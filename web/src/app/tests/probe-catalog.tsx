@@ -255,7 +255,7 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
   return (
     <div className="space-y-4">
       {/* ── Summary strip ─────────────────────────────────────────── */}
-      <PanelSection title="LLM probe catalog" eyebrow="garak via Pythia">
+      <section className="redsim-panel rounded-sm p-4" aria-label="LLM probe summary">
         <div className="grid gap-4 md:grid-cols-[1fr_1fr_1fr_1fr_2fr]">
           <div>
             <div className="redsim-kicker">offline · runnable</div>
@@ -450,7 +450,7 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
             Probe catalog unavailable: {describeError(catalogError)}
           </p>
         )}
-      </PanelSection>
+      </section>
 
       {/* ── Filter bar ───────────────────────────────────────────── */}
       <div className="flex flex-wrap items-end gap-3 text-sm">
