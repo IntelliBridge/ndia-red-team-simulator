@@ -382,7 +382,8 @@ def test_expected_stages_follow_schema_stages_order() -> None:
                       "explain", "score", "interpret", "recommend", "report"]
     assert stages == list(record.stages_done)
     bases = [s.split(":", 1)[0] for s in stages]
-    assert [b for i, b in enumerate(bases) if b not in bases[:i]] == list(STAGES)
+    # defense_apply (Phase B) is expected only when the campaign applies a training defense.
+    assert [b for i, b in enumerate(bases) if b not in bases[:i]] == [s for s in STAGES if s != "defense_apply"]
 
 
 # --------------------------------------------------------------------------- attack.run

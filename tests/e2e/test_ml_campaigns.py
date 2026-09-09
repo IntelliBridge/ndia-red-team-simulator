@@ -414,6 +414,8 @@ def test_image_campaign_completes_with_scorecard(
     assert table["error"] is None and table["stage"] == "report"
     from_stages: list[str] = []
     for stage in STAGES:
+        if stage == "defense_apply":
+            continue  # Phase B: expected only when the campaign applies a training defense
         if stage == "attack":
             from_stages.extend(f"attack:{a}" for a in config["attack_ids"])
         else:
