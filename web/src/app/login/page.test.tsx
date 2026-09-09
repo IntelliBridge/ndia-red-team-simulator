@@ -7,6 +7,8 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import { cookieReaderFromHeader } from "@/server/trpc/context";
+
 import LoginPage from "./page";
 
 const pushMock = vi.fn();
@@ -26,9 +28,18 @@ beforeEach(() => {
   socialMock.mockReset();
   socialMock.mockResolvedValue({ data: {}, error: null });
   localStorage.clear();
+  clearDevTokenCookie();
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  clearDevTokenCookie();
+});
+
+/** jsdom keeps one cookie jar per file, so a case has to clear its own. */
+function clearDevTokenCookie() {
+  document.cookie = "redsim_dev_token=; path=/; max-age=0";
+}
 
 describe("LoginPage", () => {
   it("renders the Sign in heading and email input with default value", () => {
@@ -98,6 +109,33 @@ describe("LoginPage", () => {
     expect(pushMock).toHaveBeenCalledTimes(1);
     // The dev path does NOT trigger the OIDC flow.
     expect(socialMock).not.toHaveBeenCalled();
+  });
+
+  it("writes the dev-token cookie the tRPC context reads", () => {
+    // localStorage reaches the old fetch client only. The tRPC layer runs on
+    // the server and sees cookies, so the dev bearer has to travel as one or
+    // every procedure call answers 401 and the gate bounces back to /login.
+    // Read back through the server's own parser, so an encoding that parser
+    // cannot decode fails here rather than in a browser.
+    render(React.createElement(LoginPage));
+    fireEvent.click(screen.getByRole("button", { name: "Continue as dev admin" }));
+
+    const cookie = cookieReaderFromHeader(document.cookie);
+    expect(cookie("redsim_dev_token")).toBe("dev:admin@redsim.local");
+  });
+
+  it("percent-encodes the cookie so the colon and the at sign survive the round trip", () => {
+    render(React.createElement(LoginPage));
+    const input = screen.getByDisplayValue("admin@redsim.local");
+    fireEvent.change(input, { target: { value: "tester@redsim.local" } });
+    fireEvent.click(screen.getByRole("button", { name: "Continue as dev admin" }));
+
+    // The raw jar holds the encoded form, and the reader decodes it. Both
+    // halves matter: an unencoded value would split on the colon.
+    expect(document.cookie).toContain("redsim_dev_token=dev%3Atester%40redsim.local");
+    expect(cookieReaderFromHeader(document.cookie)("redsim_dev_token")).toBe(
+      "dev:tester@redsim.local",
+    );
   });
 
   it("clicking Continue uses the updated email when the input was edited", () => {

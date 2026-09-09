@@ -85,6 +85,14 @@ spec:
                 configMapKeyRef:
                   name: {{ include "redsim.configMapName" . }}
                   key: NEXT_PUBLIC_REDSIM_API_URL
+            # The upstream base of the tRPC layer. Server-only, so it never
+            # reaches a browser, and read at runtime rather than baked into
+            # the image: moving the API no longer rebuilds redsim-web.
+            - name: REDSIM_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "redsim.configMapName" . }}
+                  key: REDSIM_API_URL
             - name: BETTER_AUTH_URL
               valueFrom:
                 configMapKeyRef:

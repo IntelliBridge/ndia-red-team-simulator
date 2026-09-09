@@ -1,5 +1,9 @@
 locals {
   identity_internal = "http://identity.${aws_service_discovery_private_dns_namespace.runtime.name}:8080/auth/realms/redsim"
+  # In-VPC base for the web tier's tRPC layer. Plain HTTP inside the VPC, the
+  # posture KEYCLOAK_ISSUER already takes; the session cookie rides every
+  # upstream call on it.
+  api_internal = "http://api.${aws_service_discovery_private_dns_namespace.runtime.name}:8000"
   common_environment = merge({
     REDSIM_ENV                  = "prod"
     REDSIM_AUTH_MODE            = "oidc"
@@ -34,11 +38,18 @@ locals {
     }
     web = {
       REDSIM_ENV = "prod"
-      # Better Auth (web/src/env.js) needs its origin at boot; BETTER_AUTH_SECRET
-      # arrives as a secret (service_secrets.web, the same field as NEXTAUTH_SECRET).
-      # The NextAuth names stay for images built before PR #24.
+      # The T3 refactor replaced NextAuth with Better Auth, and web/src/env.js
+      # refuses to boot without this name. It is also the origin the tRPC
+      # mutation gate compares against when a request carries no fetch
+      # metadata, so it has to be the browser-facing value. BETTER_AUTH_SECRET
+      # arrives beside it as a secret (service_secrets.web).
+      #
+      # NEXTAUTH_URL is gone rather than carried alongside. PR #24 is merged,
+      # so every image this runtime pulls is a Better Auth image, and
+      # prepare_secrets.py already retires NEXTAUTH_SECRET, which would leave
+      # the URL without its secret.
       BETTER_AUTH_URL    = local.origin
-      NEXTAUTH_URL       = local.origin
+      REDSIM_API_URL     = local.api_internal
       KEYCLOAK_CLIENT_ID = "redsim-web"
       KEYCLOAK_ISSUER    = local.identity_internal
     }
@@ -83,6 +94,11 @@ locals {
   # Tasks that receive the extracted asset bundle at /app/assets (read-only).
   bundle_consumers = ["api", "scans", "default", "assets"]
   target_groups    = merge(local.network.target_group_arns, { identity = aws_lb_target_group.identity.arn })
+  # Services registered into the private DNS namespace, keyed by service name.
+  discovery_services = {
+    identity = aws_service_discovery_service.identity.arn
+    api      = aws_service_discovery_service.api.arn
+  }
 }
 
 resource "aws_ecs_task_definition" "runtime" {
@@ -174,9 +190,22 @@ resource "aws_ecs_service" "runtime" {
       container_port   = local.task_specs[each.key].port
     }
   }
+  # A discovery service with no registered task resolves to nothing, so the
+  # api tasks are registered alongside identity rather than left out.
+  #
+  # KNOWN HAZARD, unverified against this account: service_registries is
+  # ForceNew on aws_ecs_service, so adding this block to a service that was
+  # applied without it REPLACES that service rather than updating it. The api
+  # service was created before this block existed, so the next apply is
+  # expected to destroy and recreate it, taking its running tasks with it. Read
+  # the plan before applying and expect a replace line for
+  # aws_ecs_service.runtime["api"]. runtime.tftest.hcl runs against a mocked
+  # provider and cannot assert replacement, so nothing here catches it.
+  # TODO(#23): confirm against a real plan, and drain the service deliberately
+  # rather than discovering the replacement mid-apply.
   dynamic "service_registries" {
-    for_each = each.key == "identity" ? [1] : []
-    content { registry_arn = aws_service_discovery_service.identity.arn }
+    for_each = contains(keys(local.discovery_services), each.key) ? [each.key] : []
+    content { registry_arn = local.discovery_services[each.key] }
   }
   depends_on = [aws_lb_listener_rule.api, aws_lb_listener_rule.identity]
 }

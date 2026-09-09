@@ -1,5 +1,16 @@
 // Unified API client.
 //
+// Being replaced by the tRPC layer under web/src/server/trpc/. The response
+// types below are the procedure output types and stay (R5); the fetch client
+// and the SWR-era helpers go in U14 once every page reads its data through a
+// procedure.
+//
+// A helper gains a marker naming its replacement as that procedure lands, so
+// U14 can tell what is still in use from what is only still exported. Only
+// upstreamError's counterpart mlErrorDetail carries one today, because runs is
+// the only router U1 shipped; U8 adds the rest and marks the helpers it
+// retires as it goes.
+//
 // Auth modes:
 //   - Cookie (browser): credentials: "include" so redsim_api_session
 //     rides along; X-Redsim-CSRF auto-attached from the redsim_csrf
@@ -12,13 +23,13 @@
 // worker + scanner logs correlate.
 
 import { env } from "@/env";
+import type { UpstreamErrorBlock } from "@/lib/trpc/types";
 
 const BASE = env.NEXT_PUBLIC_REDSIM_API_URL;
 
 export const apiBase = BASE;
 export const apiWsBase = BASE.replace(/^http/, "ws");
 
-const SESSION_COOKIE = env.NEXT_PUBLIC_REDSIM_API_SESSION_COOKIE;
 const CSRF_COOKIE = env.NEXT_PUBLIC_REDSIM_CSRF_COOKIE;
 const CSRF_HEADER = env.NEXT_PUBLIC_REDSIM_CSRF_HEADER;
 
@@ -88,7 +99,12 @@ export async function api<T>(
   }
 
   // CSRF: cookie-authed mutations must echo the cookie via the header.
-  if (!bearer && MUTATING.has(method) && hasCookie(SESSION_COOKIE)) {
+  //
+  // The presence of the csrf cookie is the only signal available here (R35).
+  // Gating on the session cookie, as this did, could never fire: that cookie
+  // is httpOnly, so document.cookie never carries it and every cookie-authed
+  // mutation went out without the header for the API to compare.
+  if (!bearer && MUTATING.has(method)) {
     const csrf = readCookie(CSRF_COOKIE);
     if (csrf) headers[CSRF_HEADER] = csrf;
   }
@@ -119,6 +135,21 @@ export type Run = {
   mode: string;
   created_at: string;
   created_by: string | null;
+};
+
+/**
+ * One run as `GET /v1/runs/{id}` returns it.
+ *
+ * Not `Run` with two fields added. `redsim/api/v1/runs.py` builds both bodies
+ * from one serializer with per-route switches: the detail route asks for
+ * `completed_at` and `stage_table` and leaves `created_by` at its `False`
+ * default, and only the list route asks for `created_by`. So the two shapes
+ * overlap without one containing the other, and a single type for both would
+ * either refuse a real detail body or stop describing the list.
+ */
+export type RunDetail = Omit<Run, "created_by"> & {
+  completed_at: string | null;
+  stage_table: Record<string, unknown>;
 };
 
 export type FindingSchemaBlob = {
@@ -587,6 +618,28 @@ export type JobHandle = {
   status_url: string;
 };
 
+/**
+ * The spec 17.3 envelope carried by a tRPC error, or undefined when there is
+ * none (KTD8, R4).
+ *
+ * Deliberately structural rather than `instanceof`: the same block has to be
+ * readable from a live client error, whose data sits under `shape.data`, and
+ * from a query the server prefetched and dehydrated, which crosses the RSC
+ * boundary as a plain object with no prototype and no stack (KTD4). Every
+ * honest state branches on `upstream.code`; nothing branches on message text.
+ */
+export function upstreamError(error: unknown): UpstreamErrorBlock | undefined {
+  const candidate = error as
+    | {
+        data?: { upstream?: UpstreamErrorBlock };
+        shape?: { data?: { upstream?: UpstreamErrorBlock } };
+      }
+    | null
+    | undefined;
+  return candidate?.data?.upstream ?? candidate?.shape?.data?.upstream;
+}
+
+/** Replaced by {@link upstreamError}; removed with the fetch client in U14. */
 export function mlErrorDetail(error: unknown): MlErrorDetail {
   if (error instanceof ApiError) {
     try {
