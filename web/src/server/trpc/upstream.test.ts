@@ -200,6 +200,49 @@ describe("the API envelope becomes typed error data", () => {
     expect(Object.keys(error)).toContain("data");
   });
 
+  it("keeps the envelope's own status as detail_status, so the HTTP status cannot eat it", async () => {
+    // The live shape of a 409 from redsim/api/v1/runs_cancel.py, which sends
+    // the run's status under the same name refuse() stamps the HTTP status
+    // onto. Spreading the envelope and then stamping the number replaced
+    // "succeeded" with 409 and lost the domain value entirely.
+    fetchMock.mockResolvedValue(
+      jsonResponse(409, {
+        detail: {
+          code: "run_terminal",
+          message: "the run is already terminal",
+          run_id: "run-1",
+          status: "succeeded",
+        },
+      }),
+    );
+    const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });
+    const error = await upstreamFetch(ctx, {
+      method: "POST",
+      segments: ["v1", "runs", "run-1", "cancel"],
+    }).catch((e: unknown) => e);
+
+    expect(upstreamError(error)).toMatchObject({
+      status: 409,
+      code: "run_terminal",
+      run_id: "run-1",
+      detail_status: "succeeded",
+    });
+  });
+
+  it("adds no detail_status when the envelope carries no status of its own", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(422, { detail: { code: "eps_grid_invalid", message: "bad grid" } }),
+    );
+    const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });
+    const error = await upstreamFetch(ctx, { method: "POST", segments: ["v1", "runs"] }).catch(
+      (e: unknown) => e,
+    );
+
+    const upstream = upstreamError(error);
+    expect(upstream).toMatchObject({ status: 422, code: "eps_grid_invalid" });
+    expect(upstream && "detail_status" in upstream).toBe(false);
+  });
+
   it("synthesizes a code from the status for a plain string detail", async () => {
     fetchMock.mockResolvedValue(jsonResponse(404, { detail: "run not found" }));
     const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });

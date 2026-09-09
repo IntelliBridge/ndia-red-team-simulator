@@ -16,10 +16,14 @@ export type RouterOutputs = inferRouterOutputs<AppRouter>;
  * The spec 17.3 envelope as it reaches a component.
  *
  * An object `detail` is carried whole, so every extra field the envelope
- * names (`phase`, `field`, `reasons`, `allowed`, `status`, `refusal_reason`,
- * `run_id`, `target_id`) survives. A plain-string `detail` from a retained
- * route arrives as `message` with a code synthesized from the HTTP status
- * (KTD8, R4).
+ * names (`phase`, `field`, `reasons`, `allowed`, `refusal_reason`, `run_id`,
+ * `target_id`) survives. A plain-string `detail` from a retained route arrives
+ * as `message` with a code synthesized from the HTTP status (KTD8, R4).
+ *
+ * `status` here is always the HTTP status. The API's own envelope uses that
+ * name for a domain value too, so an envelope that carries one arrives as
+ * `detail_status`: a 409 `run_terminal` from `POST /v1/runs/{id}/cancel` has
+ * `status: 409` and `detail_status: "succeeded"`.
  */
 export type UpstreamErrorBlock = {
   status: number;

@@ -114,9 +114,17 @@ function blockFromBody(text: string, status: number): EnvelopeBlock {
     return { code: synthesizedCodeForStatus(status), message: detail };
   }
   if (detail && typeof detail === "object") {
-    const envelope = detail as Record<string, unknown>;
+    // `status` is moved aside before refuse() stamps the HTTP status onto the
+    // block, because the two names collide. The API's own envelope uses
+    // `status` for a domain value: redsim/api/v1/runs_cancel.py sends the run's
+    // status with a 409 run_terminal, and runs.cancel is a procedure this layer
+    // ships. Spreading the envelope and then stamping the number would have
+    // replaced "succeeded" with 409 and left a component no way to read what
+    // the run's status actually was.
+    const { status: detailStatus, ...envelope } = detail as Record<string, unknown>;
     return {
       ...envelope,
+      ...(detailStatus === undefined ? {} : { detail_status: detailStatus }),
       code: typeof envelope.code === "string" ? envelope.code : synthesizedCodeForStatus(status),
       message:
         typeof envelope.message === "string" ? envelope.message : `API responded ${status}`,
