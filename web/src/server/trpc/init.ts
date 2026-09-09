@@ -6,39 +6,33 @@ import { env } from "@/env";
 import type { UpstreamErrorData } from "@/lib/trpc/types";
 
 import { beginCall, type TrpcContext } from "./context";
+import { badRequestEnvelope } from "./errors";
 import { checkMutationRequest } from "./mutation-gate";
 import { UpstreamTRPCError } from "./upstream";
-
-/** `{ fieldErrors, formErrors }` for a schema failure, or undefined. */
-function inputIssues(cause: unknown): { fieldErrors: Record<string, string[]>; formErrors: string[] } | undefined {
-  const issues = (cause as { issues?: unknown } | null | undefined)?.issues;
-  if (!Array.isArray(issues)) return undefined;
-  const fieldErrors: Record<string, string[]> = {};
-  const formErrors: string[] = [];
-  for (const raw of issues) {
-    const issue = raw as { path?: unknown; message?: unknown };
-    const message = typeof issue.message === "string" ? issue.message : "invalid value";
-    const field = Array.isArray(issue.path) ? issue.path.map(String).join(".") : "";
-    if (field) (fieldErrors[field] ??= []).push(message);
-    else formErrors.push(message);
-  }
-  return { fieldErrors, formErrors };
-}
 
 const t = initTRPC.context<TrpcContext>().create({
   /**
    * Copy the envelope the wrapper already attached rather than rebuilding it,
    * so the HTTP path and the server prefetch path carry the identical shape
-   * (KTD4, KTD8). A schema failure never reaches the upstream, so it arrives
-   * with `data.input` and no `data.upstream`.
+   * (KTD4, KTD8).
+   *
+   * A schema failure never reaches the upstream, so nothing is attached to it.
+   * `badRequestEnvelope` supplies the 400 block and the grouped field issues,
+   * and the server prefetch path calls the same helper: a validation refusal
+   * therefore reads the same on both paths rather than arriving as a generic
+   * 500 on one of them. An upstream 400 already carries its own envelope and
+   * keeps it.
    */
   errorFormatter({ shape, error }) {
     const attached = (error as { data?: UpstreamErrorData }).data;
-    const issues = error.code === "BAD_REQUEST" ? inputIssues(error.cause) : undefined;
+    const validation =
+      error.code === "BAD_REQUEST" && attached?.upstream === undefined
+        ? badRequestEnvelope(error)
+        : undefined;
     const data = {
       ...shape.data,
       ...(attached ?? {}),
-      ...(issues ? { input: issues } : {}),
+      ...(validation ?? {}),
     };
     if (process.env.NODE_ENV === "production" && "stack" in data) delete data.stack;
     return { ...shape, data };

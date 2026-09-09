@@ -82,16 +82,27 @@ describe("the tRPC route handler", () => {
     expect(body[1]?.error?.data.requestId).toBe(ids[1]);
   });
 
-  it("gives a schema failure its own id and named field, with no upstream block", async () => {
+  it("gives a schema failure its own id, its named field and the 400 block", async () => {
     const response = await route.GET(get(batchUrl(["runs.get"], { 0: { id: "" } })));
     const body = (await response.json()) as Array<{
-      error: { data: { requestId: string; upstream?: unknown; input?: { fieldErrors: Record<string, string[]> } } };
+      error: {
+        data: {
+          requestId: string;
+          upstream?: { status: number; code: string; message: string };
+          input?: { fieldErrors: Record<string, string[]> };
+        };
+      };
     }>;
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(body[0]?.error.data.upstream).toBeUndefined();
     expect(body[0]?.error.data.requestId).toMatch(/^[0-9a-f]{32}$/);
     expect(body[0]?.error.data.input?.fieldErrors.id).toBeTruthy();
+    // The block a component branches on, from the same helper the server
+    // prefetch path calls, so a refused input reads the same on both paths
+    // rather than arriving as a generic 500 on one of them.
+    expect(body[0]?.error.data.upstream).toMatchObject({ status: 400, code: "bad_request" });
+    // Not the stringified zod issue array, which is what tRPC's own message is.
+    expect(body[0]?.error.data.upstream?.message).not.toContain("[");
   });
 
   it("refuses a batch above the cap before any upstream call, and admits one at it", async () => {

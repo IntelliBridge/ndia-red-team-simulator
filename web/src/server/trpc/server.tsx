@@ -19,6 +19,7 @@ import { makeQueryClient } from "@/lib/trpc/query-client";
 import { mintHopToken } from "@/server/gate";
 
 import { createContext, requestPartsFromNextHeaders } from "./context";
+import { badRequestEnvelope } from "./errors";
 import { appRouter } from "./root";
 
 /**
@@ -61,17 +62,31 @@ export const trpcServer = createTRPCOptionsProxy({
  * own enumerable properties. A TRPCError would carry a name and, on a network
  * failure, a cause naming the API host. This returns a plain object literal:
  * no prototype beyond Object, no cause, no stack (KTD4).
+ *
+ * A schema failure is the one error that reaches here with no envelope: the
+ * `.input()` parser runs after `withRequestId`, so the error carries the
+ * request id and nothing else. It goes through `badRequestEnvelope`, the same
+ * helper the HTTP error formatter uses, rather than falling through to the
+ * generic 500: a user whose input was refused sees the 400 and the field
+ * issues, not `upstream_error`.
  */
 export function toBrowserSafeError(error: unknown): { data: UpstreamErrorData } {
   const upstream = upstreamError(error);
   const requestId = (error as { data?: { requestId?: unknown } } | null)?.data?.requestId;
+  const validation =
+    upstream === undefined && (error as { code?: unknown } | null)?.code === "BAD_REQUEST"
+      ? badRequestEnvelope(error as { message?: unknown; cause?: unknown })
+      : undefined;
   return {
     data: {
-      upstream: upstream ?? {
-        status: 500,
-        code: "upstream_error",
-        message: "the request could not be completed",
-      },
+      ...(validation?.input ? { input: validation.input } : {}),
+      upstream:
+        upstream ??
+        validation?.upstream ?? {
+          status: 500,
+          code: "upstream_error",
+          message: "the request could not be completed",
+        },
       requestId: typeof requestId === "string" ? requestId : "",
     },
   };

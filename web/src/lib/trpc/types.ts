@@ -28,8 +28,27 @@ export type UpstreamErrorBlock = {
   [extra: string]: unknown;
 };
 
+/**
+ * A schema failure, grouped the way a form renders it.
+ *
+ * `fieldErrors` is keyed by the dotted input path, so a leaf can put a message
+ * next to the control that caused it. `formErrors` holds the issues with no
+ * path of their own.
+ */
+export type InputIssues = {
+  fieldErrors: Record<string, string[]>;
+  formErrors: string[];
+};
+
 /** What a procedure attaches to every error it throws (R3, R4). */
 export type UpstreamErrorData = {
   upstream: UpstreamErrorBlock;
   requestId: string;
+  /**
+   * Present only when the input schema refused the call.
+   *
+   * A sibling of `upstream` rather than a field inside it, because the block
+   * mirrors the API's own envelope and the API never saw this request.
+   */
+  input?: InputIssues;
 };

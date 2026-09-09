@@ -184,6 +184,28 @@ describe("RunsPage server component", () => {
     });
   });
 
+  it("dehydrates a refused input as a 400 with its field issues, not a generic 500", async () => {
+    // The .input() parser runs after withRequestId, so a schema failure reaches
+    // toBrowserSafeError carrying only the request id. Without the shared
+    // badRequestEnvelope it fell through to the 500 fallback and the user saw
+    // upstream_error instead of the 400 the formatter had already computed.
+    // limit is capped at 500 by the procedure's schema.
+    const { html, dehydrated } = await renderPage({ limit: "99999" });
+
+    expect(upstream.calls).toHaveLength(0);
+    expect(html).toContain("bad_request");
+    expect(html).not.toContain("upstream_error");
+
+    const query = dehydratedQuery(dehydrated);
+    expect(query.state.status).toBe("error");
+    expect(query.state.error).toMatchObject({
+      data: {
+        upstream: { status: 400, code: "bad_request" },
+        input: { fieldErrors: { limit: expect.arrayContaining([expect.any(String)]) } },
+      },
+    });
+  });
+
   it("redirects a 401 through the sign-out hop and dehydrates nothing", async () => {
     upstream.json(401, detailBody("not authenticated"));
 
