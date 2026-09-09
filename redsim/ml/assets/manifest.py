@@ -9,6 +9,15 @@ epochs, the training recipe, measured metrics, library versions). Runs copy
 the entry into ``Provenance.model_manifest``; the catalog reads it for
 ``TargetInfo``. Reads are lenient (unknown keys are ignored) and validation
 happens at write time, matching the platform's convention for stored payloads.
+
+Dataset caveats (spec 11.3, 14.5) and the ``subject_centered`` flag (spec 13.4)
+are recorded on the dataset entry and copied onto every model entry bound to
+that dataset (``dataset_caveats`` / ``subject_centered``), because the loaders
+hand the raw model entry to the campaign as ``Target.manifest()`` and the
+campaign appends ``caveats`` / ``dataset_caveats`` it finds there to the run's
+limitations. Both are build-record fields outside the frozen projection, so
+``manifest_sha256`` does not change when they are added and manifests written
+before they existed still verify (they read back as ``[]`` / ``None``).
 """
 
 from __future__ import annotations
@@ -83,6 +92,12 @@ class DatasetEntry(_Lenient):
     sampled_from: dict[str, Any] | None = None   # committed sample: the source digest, row indices and sampling rule
     fixture_only: bool = False               # never a demo target, never evidence (spec 11.1)
     notes: list[str] = Field(default_factory=list)
+    # Spec 11.3 caveats: appended to the limitations of every campaign on this dataset (spec 14.5). Build-time
+    # record; ``[]`` on manifests written before the field existed.
+    caveats: list[str] = Field(default_factory=list)
+    # Spec 13.4: whether subjects are reliably centred / tightly framed, so the centre-mass heuristic is meaningful.
+    # ``False`` adds the weak-subject caveat to every image observation; ``None`` means the dataset does not say.
+    subject_centered: bool | None = None
 
 
 class SurrogateEntry(SurrogateInfo):
@@ -131,6 +146,10 @@ class ModelEntry(MLModelManifest):
     library_versions: dict[str, str] = Field(default_factory=dict)
     fixture_only: bool = False
     notes: list[str] = Field(default_factory=list)
+    # The bound dataset's ``caveats`` / ``subject_centered``, copied here so ``Target.manifest()`` (the raw entry)
+    # carries them into the campaign (spec 11.3, 13.4, 14.5). Outside the frozen projection: no digest change.
+    dataset_caveats: list[str] = Field(default_factory=list)
+    subject_centered: bool | None = None
     status: ModelStatus = "available"
     bundled: bool = True
 
@@ -202,6 +221,19 @@ def manifest_digest(entry: MLModelManifest) -> str:
 def stamp_manifest_sha256(entry: ModelEntry) -> ModelEntry:
     """Return ``entry`` with ``manifest_sha256`` set from its projection."""
     return entry.model_copy(update={"manifest_sha256": manifest_digest(entry)})
+
+
+def with_dataset_caveats(entry: ModelEntry, dataset: DatasetEntry) -> ModelEntry:
+    """Return ``entry`` carrying ``dataset``'s caveats and ``subject_centered`` flag (spec 11.3, 13.4).
+
+    The copy is what reaches the campaign: the loaders return the raw model entry as ``Target.manifest()``
+    and ``redsim.ml.campaign`` reads ``dataset_caveats`` / ``subject_centered`` from it. Both fields sit
+    outside the frozen ``MLModelManifest`` projection, so ``manifest_sha256`` is unchanged.
+    """
+    if entry.dataset_id != dataset.id:
+        raise ValueError(f"model {entry.id!r} is bound to dataset {entry.dataset_id!r}, not {dataset.id!r}")
+    return entry.model_copy(update={"dataset_caveats": list(dataset.caveats),
+                                    "subject_centered": dataset.subject_centered})
 
 
 # ---------------------------------------------------------------------------

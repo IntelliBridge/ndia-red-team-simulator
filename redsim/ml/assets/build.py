@@ -60,6 +60,7 @@ from redsim.ml.assets.manifest import (
     load_or_new,
     sha256_file,
     stamp_manifest_sha256,
+    with_dataset_caveats,
     write_manifest,
 )
 from redsim.ml.assets.train_cnn import save_state_dict, train_cnn
@@ -73,9 +74,11 @@ from redsim.ml.targets.architectures import canonical_architecture_id
 Log = Callable[[str], None]
 
 __all__ = [
-    "ASSET_IDS", "DATASET_CHOICES", "DEFAULT_FIXTURE_PATH", "MODEL_IDS", "MODEL_NAMES", "BuildOptions",
-    "FixtureBuild", "build_assets", "build_cifar10_fixture", "build_cnn_asset", "build_url_asset",
-    "inject_truststore", "summarize", "write_url_eval_slice",
+    "ASSET_IDS", "CIFAR10_CAVEATS", "DATASET_CAVEATS", "DATASET_CHOICES", "DEFAULT_FIXTURE_PATH",
+    "FIXTURE_ONLY_CAVEAT", "KAGGLE_URL_CAVEATS", "MODEL_IDS", "MODEL_NAMES", "SUBJECT_CENTERED",
+    "URL_PIPELINE_CAVEATS", "VEHICLES_CAVEATS", "VEHICLES_DATASET_ID", "BuildOptions", "FixtureBuild", "build_assets",
+    "build_cifar10_fixture", "build_cnn_asset", "build_url_asset", "dataset_caveats", "inject_truststore",
+    "subject_centered_for", "summarize", "write_url_eval_slice",
 ]
 
 VEHICLES_LICENSE_NOTE = ("MIT on the dataset card covers the authors' compilation and labels, not the photographers' "
@@ -87,6 +90,121 @@ VEHICLES_NOTES = (
     "Card has no split protocol or de-duplication statement; near-duplicates across splits are possible.",
     "Images may incidentally contain people; no person or face labels exist or are derived.",
 )
+
+# ---------------------------------------------------------------------------
+# Dataset caveats (spec 11.3) and the subject_centered flag (spec 13.4)
+#
+# Written into ``DatasetEntry.caveats`` / ``DatasetEntry.subject_centered`` and copied onto every model entry bound
+# to the dataset. ``redsim.ml.campaign`` appends each caveat to the limitations of every campaign on that dataset
+# as "Dataset caveat (<dataset id>): <text>" (spec 14.5) and reads ``subject_centered`` for the centre-mass caveat.
+# Wording here is the spec's; it never grades, never speaks of readiness or certification.
+# ---------------------------------------------------------------------------
+
+VEHICLES_DATASET_ID = f"hf:{ds.VEHICLES_REPO}"
+KAGGLE_URL_DATASET_ID = f"kaggle:{ds.MALICIOUS_URLS_SLUG}"
+
+# The D3 bounds statement with its open / unclassified / public framing (spec 11.1), then the 11.3.1 caveats 1-5.
+VEHICLES_CAVEATS: tuple[str, ...] = (
+    (f"{ds.VEHICLES_REPO} is an open, unclassified, publicly available dataset whose license (MIT) is stated on its "
+     "distribution page (D3, spec 11.1). D3's choice of military-vehicle imagery knowingly diverges from the "
+     "non-operational wording of the brief; its bounds are these: the tool evaluates and hardens the robustness of a "
+     "classifier on this public benchmark, it never trains, optimises or deploys a targeting or weapons model, and it "
+     "connects to no operational, sensitive or mission data source. The team decision is recorded in decision D001 "
+     "pending named approval."),
+    ("Ground-level photographs, not aerial or overhead imagery: D3's 'aerial-target / military-vehicle' phrase is "
+     "satisfied on the vehicle side only (spec 11.3.1 caveat 1)."),
+    ("Photo copyright is not cleared by the dataset's MIT tag, which covers the authors' compilation and labels; the "
+     "images were collected from Roboflow, armyrecognition.com and other web sources. Internal, non-commercial demo; "
+     "images are not redistributed in public releases or reports without further review (spec 11.3.1 caveat 2, 11.5)."),
+    ("The dataset card states no split protocol and no de-duplication step; train/test are taken as given and "
+     "near-duplicates across splits are possible (spec 11.3.1 caveat 3)."),
+    ("Images may incidentally contain people. No person or face recognition is performed, no such labels exist in the "
+     "data and none are derived (spec 11.3.1 caveat 4)."),
+    ("Subjects are not reliably centred or tightly framed (web-thumbnail framing), so the centre-mass heuristic of "
+     "spec 13.4 is weaker evidence on this dataset than on a centred fixture; it stays labelled heuristic "
+     "(spec 11.3.1 caveat 5)."),
+)
+
+# CIFAR-10 is a CI / fixture dataset only (spec 11.1, 11.3.5).
+CIFAR10_CAVEATS: tuple[str, ...] = (
+    (f"{cifar10.REPO_ID} is a CI / fixture image dataset only (spec 11.1, 11.3.5): it is never a demo target, never "
+     "populates a Finding and is never presented as evidence; results on it are test outputs, not results about any "
+     "operational domain."),
+    ("CIFAR-10 carries no formal license statement ('unknown' on the dataset card); it is used as a test fixture that "
+     "is never presented as results (spec 11.5)."),
+)
+
+# Properties of the lexical-feature URL pipeline (spec 11.3.3 caveats 1-2, 12.9): true for every table the URL builder
+# processes, the Kaggle file and the committed CI sample alike.
+URL_PIPELINE_CAVEATS: tuple[str, ...] = (
+    ("URL strings are inert data (spec 11.3.3 caveat 1): the pipeline never fetches, resolves (DNS) or renders any URL "
+     "from the dataset, in the worker, the sandbox child, the UI or the reports; only lexical features are computed, "
+     "and a displayed URL is escaped, non-clickable text labelled as dataset content."),
+    ("Realizability gap (spec 11.3.3 caveat 2, 12.9): feature-space perturbations of the lexical URL features (PGD "
+     "with rounding, HopSkipJump) are evidence about the classifier's decision surface. They count as a realizable "
+     "attack only if the perturbed feature vector maps back to a constructible URL that yields exactly those features; "
+     "Phase A constructs no URLs and does not check this, so no tabular row is presented as demonstrated URL evasion."),
+)
+
+# The Kaggle file itself (spec 11.3.3 caveats 3-6).
+KAGGLE_URL_CAVEATS: tuple[str, ...] = (
+    ("Label noise (spec 11.3.3 caveat 3): labels come from several blacklists and feeds merged by the uploader without a "
+     "documented adjudication step; disagreement between sources cannot be recovered from the file."),
+    ("Dataset age (spec 11.3.3 caveat 4): compiled in 2021; phishing and malware-distribution URL patterns drift, so "
+     "results describe this snapshot, not current traffic."),
+    ("Class imbalance (spec 11.3.3 caveat 5): benign is about two thirds of the rows, so minority-class per-class counts "
+     "are small at the default n_samples; per-class n is always shown."),
+    ("Access (spec 11.3.3 caveat 6): the download needs a personal Kaggle token, used once by the asset build and never "
+     "present on the API, web or steady-state worker containers."),
+)
+
+# Every fixture_only dataset (spec 11.1): the committed URL sample, CIFAR-10, synthetic doubles.
+FIXTURE_ONLY_CAVEAT = ("CI / fixture dataset (spec 11.1): never a demo target, never populates a Finding and never "
+                       "appears as evidence; campaign output on it is a test result, not a result about any dataset.")
+
+DATASET_CAVEATS: dict[str, tuple[str, ...]] = {
+    VEHICLES_DATASET_ID: VEHICLES_CAVEATS,
+    cifar10.DATASET_ID: CIFAR10_CAVEATS,
+    KAGGLE_URL_DATASET_ID: KAGGLE_URL_CAVEATS,
+}
+
+# Spec 13.4 / 11.3.1 caveat 5: the vehicle photographs are not reliably centred; CIFAR-10 thumbnails are object-centred
+# (the spec's own comparison point). Any dataset not listed stays ``None``: the flag is recorded, never assumed.
+SUBJECT_CENTERED: dict[str, bool] = {
+    VEHICLES_DATASET_ID: False,
+    cifar10.DATASET_ID: True,
+}
+
+
+def _uniq(items: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        text = item.strip()
+        if text and text not in seen:
+            seen.add(text)
+            out.append(text)
+    return out
+
+
+def dataset_caveats(entry: DatasetEntry, *, pipeline: Sequence[str] = (), extra: Sequence[str] = ()) -> list[str]:
+    """The spec 11.3 caveats for ``entry``, deduplicated, in this order: what it already carries, the ``pipeline``
+    caveats of the build that processes it, the table row for its id, ``FIXTURE_ONLY_CAVEAT`` when it is
+    fixture-only, then ``extra``."""
+    out: list[str] = list(entry.caveats)
+    out.extend(pipeline)
+    out.extend(DATASET_CAVEATS.get(entry.id, ()))
+    if entry.fixture_only:
+        out.append(FIXTURE_ONLY_CAVEAT)
+    out.extend(extra)
+    return _uniq(out)
+
+
+def subject_centered_for(entry: DatasetEntry) -> bool | None:
+    """``entry.subject_centered`` when declared, else the table value for its id, else ``None`` (unknown)."""
+    if entry.subject_centered is not None:
+        return entry.subject_centered
+    return SUBJECT_CENTERED.get(entry.id)
 
 # ``--fixture`` destination: the committed CI slice and its sidecar (spec 11.3.5, 22.2).
 FIXTURES_DIR = Path(__file__).resolve().parents[3] / "tests" / "ml" / "fixtures"
@@ -185,8 +303,14 @@ def _clean_accuracy(metrics: dict[str, object], split: str) -> CleanAccuracy:
 
 def build_cnn_asset(data: ds.ImageDataset, *, model_id: str, root: Path, epochs: int, seed: int,
                     arch: str = "small_cnn", fixture_only: bool = False, notes: Sequence[str] = (),
+                    caveats: Sequence[str] = (), subject_centered: bool | None = None,
                     name: str | None = None, log: Log = print) -> tuple[DatasetEntry, ModelEntry]:
-    """Train the catalog architecture ``arch`` on ``data``; write weights, eval slice and manifest entries."""
+    """Train the catalog architecture ``arch`` on ``data``; write weights, eval slice and manifest entries.
+
+    The dataset entry gets its spec 11.3 caveats (``dataset_caveats``: the table row for its id, the fixture-only
+    statement, then ``caveats``) and its ``subject_centered`` flag (``subject_centered`` when given, else the table
+    value, else ``None``); both are copied onto the model entry (spec 13.4, 14.5).
+    """
     root = Path(root).resolve()
     arch = canonical_architecture_id(arch)
     class_names = list(data.train.class_names)
@@ -199,6 +323,8 @@ def build_cnn_asset(data: ds.ImageDataset, *, model_id: str, root: Path, epochs:
     entry = data.dataset.model_copy(deep=True)
     entry.fixture_only = entry.fixture_only or fixture_only
     entry.notes = list(entry.notes) + list(notes)
+    entry.caveats = dataset_caveats(entry, extra=caveats)
+    entry.subject_centered = subject_centered if subject_centered is not None else subject_centered_for(entry)
     eval_file = write_image_eval_slice(data.eval, root, entry)
     entry.splits[data.train.name] = ds.split_entry(data.train)
     entry.splits[data.eval.name] = ds.split_entry(data.eval, file=eval_file)
@@ -219,9 +345,10 @@ def build_cnn_asset(data: ds.ImageDataset, *, model_id: str, root: Path, epochs:
                "Clean accuracy is measured on the full bundled evaluation split at build time.",
                f"Initialisation: {init_note}."],
     )
-    model = stamp_manifest_sha256(model)
+    model = stamp_manifest_sha256(with_dataset_caveats(model, entry))
     log(f"{model_id}: clean accuracy {model.clean_accuracy.value:.4f} on n={model.clean_accuracy.n}, "  # type: ignore[union-attr]
-        f"weights sha256 {model.sha256[:12]}...")
+        f"weights sha256 {model.sha256[:12]}..., {len(entry.caveats)} dataset caveat(s), "
+        f"subject_centered={entry.subject_centered}")
     return entry, model
 
 
@@ -260,9 +387,15 @@ def write_url_eval_slice(urls: Sequence[str], labels: np.ndarray, eval_idx: np.n
 
 
 def build_url_asset(table: ds.UrlTable, *, model_id: str, root: Path, seed: int, holdout: float = 0.2,
-                    prefer_xgboost: bool = False, name: str | None = None,
+                    prefer_xgboost: bool = False, caveats: Sequence[str] = (), name: str | None = None,
                     log: Log = print) -> tuple[DatasetEntry, ModelEntry]:
-    """Train the URL classifier and its surrogate on ``table``; write both plus the eval slice under ``root``."""
+    """Train the URL classifier and its surrogate on ``table``; write both plus the eval slice under ``root``.
+
+    The dataset entry gets the lexical-feature pipeline caveats (``URL_PIPELINE_CAVEATS``: URL strings are inert
+    data; realizability gap), the table row for its id (the Kaggle file's caveats), the fixture-only statement when
+    it is fixture-only, then ``caveats``; the model entry carries a copy (spec 11.3.3, 12.9, 14.5).
+    ``subject_centered`` has no tabular meaning and stays ``None``.
+    """
     root = Path(root).resolve()
     class_names = list(table.dataset.class_names)
     result = train_url_classifier(table.urls, table.labels, seed=seed, holdout=holdout,
@@ -271,6 +404,8 @@ def build_url_asset(table: ds.UrlTable, *, model_id: str, root: Path, seed: int,
 
     entry = table.dataset.model_copy(deep=True)
     entry.n_duplicates_removed = result.n_duplicates_removed
+    entry.caveats = dataset_caveats(entry, pipeline=URL_PIPELINE_CAVEATS, extra=caveats)
+    entry.subject_centered = None
     eval_npz, eval_csv = write_url_eval_slice(result.urls, result.labels, result.eval_idx, class_names, root, entry,
                                               x_eval=result.x_eval)
     entry.splits["train"] = SplitEntry(name="train", n=len(result.train_idx),
@@ -308,9 +443,10 @@ def build_url_asset(table: ds.UrlTable, *, model_id: str, root: Path, seed: int,
                 "(realizability gap, spec 12.9)."),
                "PGD runs on the surrogate and is scored on the ensemble; HopSkipJump runs on the ensemble."],
     )
-    model = stamp_manifest_sha256(model)
+    model = stamp_manifest_sha256(with_dataset_caveats(model, entry))
     log(f"{model_id}: clean accuracy {model.clean_accuracy.value:.4f} on n={model.clean_accuracy.n}, "  # type: ignore[union-attr]
-        f"model sha256 {model.sha256[:12]}..., surrogate agreement {result.surrogate_agreement:.4f}")
+        f"model sha256 {model.sha256[:12]}..., surrogate agreement {result.surrogate_agreement:.4f}, "
+        f"{len(entry.caveats)} dataset caveat(s)")
     return entry, model
 
 
@@ -589,6 +725,7 @@ def summarize(manifest: AssetManifest) -> str:
         acc = model.clean_accuracy
         acc_s = f"{acc.value:.4f} (n={acc.n}, {acc.split})" if acc is not None else "n/a"
         flag = "  [fixture only]" if model.fixture_only else ""
+        caveats = f", {len(model.dataset_caveats)} dataset caveat(s)" if model.dataset_caveats else ""
         lines.append(f"  {model.id}: {model.format} ({model.architecture_id}) on {model.dataset_id}@{rev}, "
-                     f"clean accuracy {acc_s}, sha256 {model.sha256[:12]}...{flag}")
+                     f"clean accuracy {acc_s}, sha256 {model.sha256[:12]}...{caveats}{flag}")
     return "\n".join(lines)
