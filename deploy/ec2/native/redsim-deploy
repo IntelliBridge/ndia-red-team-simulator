@@ -39,9 +39,11 @@ install -m 0755 "$SRC/deploy/ec2/native/redsim-deploy" /usr/local/bin/redsim-dep
 install -m 0755 "$SRC/deploy/ec2/native/redsim-run" /usr/local/bin/redsim-run
 changed="$(g diff --name-only "$before" "$target" || true)"
 
-if [ "$BUILD" = 1 ] || grep -qx 'pyproject.toml' <<<"$changed"; then
-  echo "python dependencies changed: reinstalling the venv"
-  "$VENV/bin/pip" install --quiet -e ".[api,worker,ml]"
+if [ "$BUILD" = 1 ] || grep -qx 'pyproject.toml' <<<"$changed" || ! "$VENV/bin/python" -c 'import garak' 2>/dev/null; then
+  # garak is the LLM probe engine (extra `garak`); a venv without it fails every
+  # probe run with probe_child_failed: No module named 'garak' (run-3bf693af50f9).
+  echo "python dependencies changed or garak missing: reinstalling the venv"
+  "$VENV/bin/pip" install --quiet -e ".[api,worker,ml,garak]"
 fi
 restart_web=0
 if grep -qE '^(pnpm-lock.yaml|web/package.json|packages/design-system/package.json)$' <<<"$changed"; then

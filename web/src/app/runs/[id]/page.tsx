@@ -161,7 +161,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
     </div>
   );
 
-  if (!authed) return <p>Redirecting to sign in…</p>;
+  if (!authed) return <p>Signing in…</p>;
 
   if (isLlmRun) {
     // An LLM probe run: k/n scorecard, never an MRI (spec 15.9, D9). The

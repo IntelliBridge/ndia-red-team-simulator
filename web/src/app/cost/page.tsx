@@ -148,7 +148,7 @@ export default function CostPage() {
   );
 
   if (!authed)
-    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
+    return <p className="text-muted-foreground">Signing in…</p>;
 
   const error = projectsError ?? costError;
   if (error)

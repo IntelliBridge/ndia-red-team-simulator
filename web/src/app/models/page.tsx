@@ -52,7 +52,7 @@ export default function ModelsPage() {
   const [llm, setLlm] = useState(EMPTY_LLM_FORM);
   const endpointAvailable =
     capabilities?.endpoint_connector?.status === "available";
-  if (!authed) return <p>Redirecting to sign in…</p>;
+  if (!authed) return <p>Signing in…</p>;
   const add = async () => {
     setBusy(true);
     setErr("");

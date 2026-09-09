@@ -17,7 +17,7 @@ const TABS: { id: Tab; label: string }[] = [
 export default function TestsPage() {
   const authed = useRequireAuth();
   const [tab, setTab] = useState<Tab>("probes");
-  if (!authed) return <p>Redirecting to sign in…</p>;
+  if (!authed) return <p>Signing in…</p>;
   return (
     <div className="space-y-6">
       <header>

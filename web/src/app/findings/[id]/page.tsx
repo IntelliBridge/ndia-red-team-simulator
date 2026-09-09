@@ -109,7 +109,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
   const [defenseId, setDefenseId] = useState("");
   const [defenseParams, setDefenseParams] = useState("{}");
 
-  if (!authed) return <p>Redirecting to sign in…</p>;
+  if (!authed) return <p>Signing in…</p>;
   if (error) {
     const message =
       error instanceof ApiError
