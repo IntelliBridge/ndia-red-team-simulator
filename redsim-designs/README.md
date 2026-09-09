@@ -1,9 +1,10 @@
-# redsim-designs (reference only)
+# Design reference for redsim web
 
-This directory is a [v0.dev](https://v0.dev) export of an alternative
-`@redsim/web` UI, kept here as a design reference. It is **not** the shipped
-web app, which stays at `web/` (`@redsim/web`) and `packages/design-system`
-(`@redsim/design-system`) per `pnpm-workspace.yaml`.
+This directory is a [v0.dev](https://v0.dev) export of an alternative UI for
+`@redsim/web`, kept here as a design reference for the web redesign
+discussion. It is **not** the shipped web app, which stays at `web/`
+(`@redsim/web`) and `packages/design-system` (`@redsim/design-system`) per
+`pnpm-workspace.yaml`.
 
 - Not a pnpm workspace member. It carries its own `pnpm-workspace.yaml` and
   `pnpm-lock.yaml` so it can be installed and run in isolation
@@ -17,6 +18,6 @@ web app, which stays at `web/` (`@redsim/web`) and `packages/design-system`
 - Excluded from the CI dependency-CVE scan (`--skip-dirs redsim-designs` in
   `.github/workflows/redsim-ci.yml`) since its pinned `next@14.2.15` is not
   shipped and is not baselined in `.trivyignore`.
-- Temporary. This directory is a reference for an in-progress web redesign
-  discussion and is expected to be removed once that work either lands in
-  `web/` or is abandoned.
+- Temporary. This directory is a reference for the in-progress web redesign
+  discussion, not a candidate implementation, and is expected to be removed
+  once that discussion either lands as changes in `web/` or is abandoned.
