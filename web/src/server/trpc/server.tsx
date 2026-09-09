@@ -102,8 +102,6 @@ export async function unauthorizedRedirectTarget(): Promise<string> {
   return `/api/auth/signout-redsim?hop=${encodeURIComponent(token)}`;
 }
 
-type AnyPrefetchOptions = FetchQueryOptions<unknown, Error, unknown, QueryKey>;
-
 /**
  * Prefetch one query into the request's QueryClient and await it.
  *
@@ -112,8 +110,15 @@ type AnyPrefetchOptions = FetchQueryOptions<unknown, Error, unknown, QueryKey>;
  * keep a loading branch for a key that hydrated (R9). A failure is not a
  * throw: the error is dehydrated with the data so the leaf mounts with its
  * honest state already rendered.
+ *
+ * Generic over the options the tRPC options proxy hands it, rather than taking
+ * one widened shape: the proxy's `staleTime` callback is typed against the
+ * procedure's own output and error, and a widened parameter is not assignable
+ * to it.
  */
-export async function prefetch(options: AnyPrefetchOptions): Promise<void> {
+export async function prefetch<TQueryFnData, TError, TData, TQueryKey extends QueryKey>(
+  options: FetchQueryOptions<TQueryFnData, TError, TData, TQueryKey>,
+): Promise<void> {
   const queryClient = getQueryClient();
   const queryFn = options.queryFn;
 
