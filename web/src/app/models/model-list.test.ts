@@ -9,6 +9,8 @@ import {
   modelDomain,
   modelScore,
   parseSort,
+  sortCoverage,
+  sortCoverageNote,
   sortModels,
   sortValue,
 } from "./model-list";
@@ -115,6 +117,24 @@ describe("model-list", () => {
     expect(byDomain.map((m) => m.id)).toEqual(["up-1", "vehicles_cnn-1", "llm-1", "url_trees-1"]);
     const bySource = sortModels(all, { key: "source", direction: "desc" });
     expect(bySource.map((m) => m.id)).toEqual(["up-1", "llm-1", "url_trees-1", "vehicles_cnn-1"]);
+  });
+
+  it("reports how many rows carry the metric of a numeric sort", () => {
+    expect(sortCoverage(all, { key: "name", direction: "asc" })).toBeNull();
+    const score = sortCoverage(all, { key: "score", direction: "desc" });
+    expect(score).toMatchObject({ withValue: 2, total: 4 });
+    expect(sortCoverageNote(score)).toBe(
+      "The robustness index is known for 2 of 4 models. Rows without one follow in name order. A scored campaign records it.",
+    );
+    const none = sortCoverage([upload, chat], { key: "clean_accuracy", direction: "asc" });
+    expect(sortCoverageNote(none)).toBe(
+      "Clean accuracy is known for 0 of 2 models. Nothing to order yet, so the rows stay in name order. The asset manifest records it.",
+    );
+    const one = sortCoverage([upload, chat, vehicles], { key: "clean_accuracy", direction: "desc" });
+    expect(sortCoverageNote(one)).toMatch(/^Clean accuracy is known for 1 of 3 models\. Nothing to order yet/);
+    expect(sortCoverageNote(sortCoverage([vehicles, urls], { key: "score", direction: "desc" }))).toBe("");
+    expect(sortCoverageNote(sortCoverage([], { key: "score", direction: "desc" }))).toBe("");
+    expect(sortCoverageNote(null)).toBe("");
   });
 
   it("round-trips the sort value and falls back to the default", () => {
