@@ -2,10 +2,10 @@
 
 Plan 12 wave B3, ``atlas-foundry`` track (register INTEROP-21, -24, -27, -29).
 Wave B0 mounted every route here as a truthful ``501`` stub; this module
-replaces three of them with their handlers and keeps the fourth
-(``POST /v1/runs/{run_id}/dataset``, the Croissant export) as the B0 stub
-until the interop-contribute and interop-consume tracks wire it (the datasets
-router, mounted before this one, wins when it carries the same path).
+replaces three of them with their handlers. The fourth (``POST
+/v1/runs/{run_id}/dataset``, the Croissant export) is served by the datasets
+router (``redsim.api.v1.datasets``, interop-consume) over the interop-contribute
+export service, so its B0 stub is gone from here.
 
 * ``GET /v1/runs/{run_id}/atlas-coverage`` (membership): the techniques the
   declared attack set exercised, the declared attacks recorded ``not_run`` and
@@ -71,19 +71,6 @@ def not_built(message: str, *, wave: str, track: str, **fields: Any) -> HTTPExce
         reason=f"built in wave {wave} ({track} track) of docs/plans/12-phase-b-plan.md",
         **fields,
     )
-
-
-@router.post("/runs/{run_id}/dataset", status_code=status.HTTP_202_ACCEPTED)
-def export_run_dataset(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    """Croissant export of a campaign run (spec 27.1): membership, ``dataset.export``, then 501.
-
-    The interop-contribute track builds the export and the interop-consume track
-    wires the route in the datasets router; this stub stays until then.
-    """
-    project_id = ensure_run_access(user, run_id)
-    check(user, DATASET_EXPORT, project_id)
-    raise not_built("Croissant dataset export of a campaign run is not implemented",
-                    wave="B3", track="interop-contribute")
 
 
 # --------------------------------------------------------------------------- ATLAS coverage (INTEROP-21)
@@ -201,7 +188,6 @@ __all__ = [
     "DATASET_EXPORT",
     "INTEGRATION_PUSH",
     "atlas_coverage",
-    "export_run_dataset",
     "list_integrations",
     "not_built",
     "phase_b_action",

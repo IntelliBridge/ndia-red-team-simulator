@@ -26,6 +26,11 @@ app = Celery(
         "redsim.workers.tasks.ml_llm",
         # Phase B wave B3 (bulk-upload-capacity-cli): the deferred-run dispatcher backstop.
         "redsim.workers.tasks.capacity",
+        # Phase B wave B3 interop: the Croissant export and the consumed-slice validation run on
+        # ``scans`` (queue set at enqueue / on the decorator), the Foundry push on ``default``.
+        "redsim.workers.tasks.dataset_export",
+        "redsim.workers.tasks.dataset_validate",
+        "redsim.workers.tasks.integration_push",
     ],
 )
 
