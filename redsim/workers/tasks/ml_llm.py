@@ -239,6 +239,7 @@ class ProbeCounts:
     probe_id: str
     detectors: list[DetectorCounts] = field(default_factory=list)
     n_prompts_sent: int | None = None
+    n_outputs_blocked: int = 0
     wall_time_s: float | None = None
     status: str = "run"
     reason: str | None = None
@@ -338,6 +339,7 @@ def _probe_counts(probe_id: str, row: Any) -> ProbeCounts:
     return ProbeCounts(
         probe_id=probe_id, detectors=detectors,
         n_prompts_sent=_int(sent) if sent is not None else None,
+        n_outputs_blocked=_int(_first(row, "n_outputs_blocked", default=0)),
         wall_time_s=_float_or_none(_first(row, "wall_time_s", "seconds")),
         status=status if status in {"run", "not_run", "failed"} else ("run" if status == "succeeded" else "not_run"),
         reason=_first(row, "reason"),
@@ -408,6 +410,8 @@ def normalise_child_result(raw: Any, work_dir: Path | None = None) -> ChildOutco
             "completion_tokens": _int(_first(usage_raw, "completion_tokens", default=0)),
             "n_requests": _int(_first(usage_raw, "n_requests", "requests", default=0)),
             "n_responses_ok": _int(_first(usage_raw, "responses_ok", default=0)),
+            **{key: _int(_first(usage_raw, key, default=0)) for key in
+               ("retries", "retry_after_honoured", "gateway_blocked")},
         }
     seen_raw = _first(result, "models_seen", "models", default=None)
     if seen_raw is None and usage_raw is not None:
@@ -698,6 +702,7 @@ def build_scorecard(
             "status": probe.status,
             "reason": probe.reason,
             "n_prompts_sent": probe.n_prompts_sent,
+            "n_outputs_blocked": probe.n_outputs_blocked,
             "wall_time_s": probe.wall_time_s,
             "detectors": detectors,
             "row_ids": [f"llm.{probe.probe_id}.{d.detector}" for d in probe.detectors],
@@ -791,6 +796,7 @@ def usage_block(usage: Mapping[str, Any], model_id: str) -> dict[str, Any]:
         "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
         "n_requests": _int(usage.get("n_requests")), "n_responses_ok": _int(usage.get("n_responses_ok")),
         "cost_cents": cost, "unpriced_model": not priced and cost == 0,
+        **{key: _int(usage.get(key)) for key in ("retries", "retry_after_honoured", "gateway_blocked")},
         "note": "Pythia model ids carry no price table; the prompt cap and the per-project quota bound spend.",
     }
 
@@ -1158,6 +1164,11 @@ def ml_llm_probe_run(self: Task, job_id: str) -> dict[str, Any]:
                 "detectors": [{"detector": d.detector, "status": d.status, "n_evaluated": d.n_evaluated,
                                "n_hits": d.n_hits, "n_none": d.n_none} for d in probe.detectors],
             }, success=probe.status == "run")
+
+        blocked = sum(probe.n_outputs_blocked for probe in probes)
+        if blocked and detail.get("guardrail_mode") != "content_filtered":
+            from redsim.ml.llm.scorecard import blocked_prompt_limitation
+            limitations.append(blocked_prompt_limitation(blocked))
 
         # 5. garak's files as artifacts (never parsed), then the scorecard.
         partial = outcome.status != "succeeded"

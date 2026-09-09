@@ -246,5 +246,9 @@ No key material, no prompt text, no completion text, no readiness wording.
   validated worker overrides, seconds/date `Retry-After` handling and a
   `retry_after_honoured` ledger counter. A header above the wait budget aborts
   rather than retrying early. Regression validation is recorded in its PR.
-- L2–L4, L6 and packages R/A/D remain open. No live gateway traffic or runtime
+- **L3 implemented:** gateway content-filter refusals become unevaluated
+  outputs with per-probe blocked counts and a scorecard limitation. Plain
+  authentication/permission refusals remain terminal. Offline tests verify
+  five completed attempts, two blocked outputs and a denominator of three.
+- L2, L4, L6 and packages R/A/D remain open. No live gateway traffic or runtime
   changes were made for this test-helper increment.
