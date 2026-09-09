@@ -25,9 +25,24 @@ Design notes
   ``python -m redsim.ml.sandbox_worker`` exactly as production does. An
   in-process mode (``REDSIM_E2E_SANDBOX=inprocess`` or
   ``e2e_app.sandbox.use("inprocess")``) calls ``redsim.ml.campaign.run_campaign``
-  directly in the worker thread; it exists because the child's environment
-  strips every ``PYTHIA_*`` variable, so a mocked Pythia gateway can only be
-  observed in-process. ``PythiaToggle.on()`` switches to it automatically.
+  directly in the worker thread; it is a debugging aid only (a traceback instead
+  of a child envelope) and the child-process boundary is then not exercised.
+* **Pythia is a worker-parent concern.** The LLM writer runs in
+  ``redsim.workers.tasks.ml_campaign._parent_narrative`` after the child's
+  envelope returns; the child strips ``PYTHIA_*`` and never narrates (spec 10.8,
+  16.1). ``PythiaToggle`` therefore mocks the gateway in this process and is
+  observable in child mode, with no sandbox switch.
+* **Bundled models are per-project rows.** ``register_bundled_model`` creates a
+  ``Target`` whose ``id`` is ``<bundled_id>-<8 hex>``, whose ``value`` is
+  ``bundled:<bundled_id>`` and whose ``detail.bundled_id`` names the registry
+  entry; the campaign child resolves the registry id from the frozen
+  ``target_snapshot``. Tests use the returned id and never assume
+  ``Target.id == bundled_id``.
+* **A failed campaign is a failed Run, not a broker outage.** Celery runs eager
+  with ``task_eager_propagate`` off: with propagation on, a task body that raises
+  (the worker's contract for a failed campaign) would surface inside ``.delay()``,
+  which ``create_attack_campaign`` reads as an enqueue failure and answers with
+  ``503 queue_unavailable`` after deleting the admission rows.
 * **Roles are real dev tokens.** ``redsim.api.auth._dev_user`` is replaced by a
   lookup over the users ``seed_org`` created, so ``Authorization: Bearer
   dev:<email>`` resolves through the production header -> token -> user path
@@ -37,6 +52,11 @@ Design notes
   on this harness prove the application-layer gates (``ensure_project_access``,
   list scoping), not the database policy. ``postgres_url`` names a migrated
   Postgres for the RLS lane and skips when ``REDSIM_E2E_POSTGRES_URL`` is unset.
+* **The sqlite timestamp shim is conditional.** ``install_sqlite_tz_datetime_if_needed``
+  first writes and verifies a two-event chain on a throwaway in-memory database
+  with the production ``PostgresAuditWriter``; the pysqlite ``DateTime`` shim is
+  installed only when that round trip fails to verify, so once the audit module
+  itself round-trips ``created_at`` with its offset the shim is a no-op.
 """
 
 from __future__ import annotations
@@ -110,6 +130,8 @@ IMAGE_CLASS_NAMES: tuple[str, ...] = ("class_0", "class_1", "class_2")
 IMAGE_SIZE = 8
 N_IMAGES = 48                      # 24 land in the evaluation split (8 per class)
 URL_SAMPLE_CSV = REPO_ROOT / "tests" / "ml" / "fixtures" / "malicious_urls_sample.csv"
+#: The harness-owned dataset id the committed URL rows are built under (see :func:`harness_url_table`).
+URL_DATASET_ID = "local:e2e-url-sample"
 
 TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 
@@ -206,20 +228,6 @@ def sanitize_environment(monkeypatch: pytest.MonkeyPatch, harness_dir: Path) -> 
     monkeypatch.setattr(pythia, "_REPO_ROOT", harness_dir)
 
 
-def developer_env_file_in_reach() -> Path | None:
-    """The ``.env`` a *sandbox child* would read, or ``None``.
-
-    The child's environment strips ``REDSIM_ENV_FILE`` (every ``REDSIM_*`` key),
-    so ``redsim.llm.pythia`` inside the child falls back to ``./.env`` and the
-    repo-root ``.env``. When one exists, a child-mode campaign that requests an
-    LLM narrative would contact a real gateway; the harness refuses that.
-    """
-    for candidate in (Path.cwd() / ".env", REPO_ROOT / ".env"):
-        if candidate.is_file():
-            return candidate
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Tiny real assets
 # ---------------------------------------------------------------------------
@@ -230,7 +238,15 @@ def _quiet(_: str) -> None:
 
 
 def synthetic_images(n: int = N_IMAGES, image_size: int = IMAGE_SIZE, seed: int = 0) -> ImageDataset:
-    """A seeded random RGB image set with balanced labels, shaped like the real loader's output."""
+    """A seeded random RGB image set with balanced labels, shaped like the real loader's output.
+
+    The dataset entry is deliberately **not** ``fixture_only``: the builder
+    copies that flag onto the model entry and ``register_bundled_model``
+    refuses fixture-only entries (``404 unknown_bundled_model``, spec 5.5), so
+    a fixture-only tree could never be registered through the admission
+    boundary this tier exists to exercise. The ``notes`` say what the pixels
+    are; nothing measured on them is a demo result.
+    """
     import numpy as np
 
     from redsim.ml.assets import datasets as ds
@@ -242,7 +258,7 @@ def synthetic_images(n: int = N_IMAGES, image_size: int = IMAGE_SIZE, seed: int 
     y = (np.arange(n) % len(classes)).astype(np.int64)
     entry = DatasetEntry(
         id=IMAGE_DATASET_ID, source="local", revision=IMAGE_DATASET_REVISION, license="n/a",
-        class_names=classes, fixture_only=True,
+        class_names=classes, fixture_only=False,
         notes=["e2e harness double: seeded random pixels, never a demo dataset"],
     )
     train = ds.ImageSplit(name="train", x=x, y=y, indices=np.arange(n, dtype=np.int64), class_names=classes)
@@ -252,22 +268,49 @@ def synthetic_images(n: int = N_IMAGES, image_size: int = IMAGE_SIZE, seed: int 
     return ds.ImageDataset(dataset=entry, train=train, eval=evaluation)
 
 
+def harness_url_table() -> Any:
+    """The committed ``malicious_urls_sample.csv`` rows under a harness-owned dataset entry.
+
+    ``redsim.ml.assets.datasets.sample_url_table`` reads the same rows but marks
+    its entry ``fixture_only`` (the CI sample is never a demo target, spec 11.1),
+    and ``register_bundled_model`` refuses fixture-only entries, so a model built
+    straight from it could never enter a project. The rows, the featurization
+    and the source digest are unchanged; only the entry is the harness's own
+    (:data:`URL_DATASET_ID`, ``fixture_only=False``) with notes saying what it
+    is. Nothing measured on it is a demo result.
+    """
+    from redsim.ml.assets import datasets as ds
+
+    if not URL_SAMPLE_CSV.is_file():
+        raise E2EHarnessError(f"URL sample fixture missing: {URL_SAMPLE_CSV}")
+    table = ds.sample_url_table(URL_SAMPLE_CSV)
+    entry = table.dataset.model_copy(update={
+        "id": URL_DATASET_ID,
+        "fixture_only": False,
+        "license_note": "e2e harness double: the committed CI sample rows under a harness-owned entry.",
+        "notes": [
+            "e2e harness double: the committed malicious_urls_sample.csv rows, never a demo dataset.",
+            "URL strings are data: never fetched, resolved or rendered.",
+        ],
+    })
+    return ds.UrlTable(urls=list(table.urls), labels=list(table.labels), dataset=entry,
+                       source_path=table.source_path, row_indices=list(table.row_indices))
+
+
 def build_tiny_assets(root: Path, *, n_images: int = N_IMAGES, image_size: int = IMAGE_SIZE,
                       seed: int = 0, epochs: int = 1) -> Path:
     """Write a complete asset tree with the real builder: one image CNN, one URL tree ensemble.
 
     ``build_cnn_asset`` trains ``small_cnn`` for ``epochs`` on :func:`synthetic_images`;
     ``build_url_asset`` fits the sklearn ensemble plus its declared surrogate on the
-    committed ``malicious_urls_sample.csv``. No network, no Kaggle, no download. The
-    manifest is what ``redsim ml build-assets`` writes, so the registered
-    ``vehicles_cnn`` / ``url_trees`` targets load it unchanged.
+    committed ``malicious_urls_sample.csv`` rows (:func:`harness_url_table`). No
+    network, no Kaggle, no download. The manifest is what ``redsim ml build-assets``
+    writes, so the registered ``vehicles_cnn`` / ``url_trees`` targets load it
+    unchanged, and neither entry is ``fixture_only`` so both can be registered.
     """
-    from redsim.ml.assets import datasets as ds
     from redsim.ml.assets.build import build_cnn_asset, build_url_asset
     from redsim.ml.assets.manifest import MANIFEST_NAME, AssetManifest, write_manifest
 
-    if not URL_SAMPLE_CSV.is_file():
-        raise E2EHarnessError(f"URL sample fixture missing: {URL_SAMPLE_CSV}")
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     img_ds, img_model = build_cnn_asset(
@@ -275,7 +318,7 @@ def build_tiny_assets(root: Path, *, n_images: int = N_IMAGES, image_size: int =
         epochs=epochs, seed=seed, log=_quiet,
     )
     url_ds, url_model = build_url_asset(
-        ds.sample_url_table(URL_SAMPLE_CSV), model_id=TABULAR_MODEL_ID, root=root, seed=seed, log=_quiet,
+        harness_url_table(), model_id=TABULAR_MODEL_ID, root=root, seed=seed, log=_quiet,
     )
     manifest = AssetManifest.new()
     manifest.datasets[img_ds.id] = img_ds
@@ -470,10 +513,75 @@ def install_sqlite_tz_datetime() -> Callable[[], None]:
     return restore
 
 
-#: ``python -c`` bootstrap for the CLI subprocess on a sqlite harness database: install the same
-#: timezone shim, then hand ``sys.argv[1:]`` to the real ``redsim.cli.main.main``.
+PROBE_CHAIN_ID = "project:e2e-sqlite-probe"
+
+
+def sqlite_audit_roundtrip_verifies() -> bool:
+    """Does the production ORM chain writer round-trip on plain sqlite without any shim?
+
+    Writes a two-event chain with ``PostgresAuditWriter`` on a throwaway
+    in-memory sqlite database carrying the ORM schema, reads it back through
+    ``read_chain`` and runs ``verify_chain``. ``True`` means the audit module
+    itself reproduces the hashed ``ts`` from ``created_at`` on sqlite (the
+    audit track's fix is on the tree); ``False`` means the harness still has to
+    install :func:`install_sqlite_tz_datetime`. Uses the dialect as it is at
+    call time, so call it before installing the shim.
+    """
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from redsim.audit.chain import PostgresAuditWriter, verify_chain
+    from redsim.db.models import Base
+    from tests.conftest import patch_jsonb_for_sqlite
+
+    patch_jsonb_for_sqlite()
+    engine = create_engine("sqlite://", future=True, connect_args={"check_same_thread": False},
+                           poolclass=StaticPool)
+    try:
+        Base.metadata.create_all(engine)
+        factory = sessionmaker(engine, expire_on_commit=False, future=True)
+
+        @contextlib.contextmanager
+        def session_cm() -> Iterator[Session]:
+            sess = factory()
+            try:
+                yield sess
+                sess.commit()
+            except Exception:
+                sess.rollback()
+                raise
+            finally:
+                sess.close()
+
+        writer = PostgresAuditWriter(session_factory=session_cm)
+        for seq in (1, 2):
+            writer.append(action="e2e.probe", actor="e2e:probe", target=None, allowlist_check="n/a",
+                          override=False, success=True, detail={"probe": seq},
+                          project_id=PROBE_CHAIN_ID.split(":", 1)[1])
+        return bool(verify_chain(writer.read_chain(PROBE_CHAIN_ID)).verified)
+    finally:
+        engine.dispose()
+
+
+def install_sqlite_tz_datetime_if_needed() -> Callable[[], None] | None:
+    """Install the pysqlite ``DateTime`` shim only when the audit chain does not verify without it.
+
+    Returns the undo callable when the shim was installed, ``None`` when the
+    probe (:func:`sqlite_audit_roundtrip_verifies`) already verified and the
+    production writer and verifier are used untouched.
+    """
+    if sqlite_audit_roundtrip_verifies():
+        return None
+    return install_sqlite_tz_datetime()
+
+
+#: ``python -c`` bootstrap for the CLI subprocess on a sqlite harness database: run the same probe,
+#: install the timezone shim only when it is needed, then hand ``sys.argv[1:]`` to the real
+#: ``redsim.cli.main.main``.
 _CLI_SQLITE_BOOTSTRAP = (
-    "import sys; from tests.e2e.harness import install_sqlite_tz_datetime; install_sqlite_tz_datetime(); "
+    "import sys; from tests.e2e.harness import install_sqlite_tz_datetime_if_needed; "
+    "install_sqlite_tz_datetime_if_needed(); "
     "from redsim.cli.main import main; main(sys.argv[1:])"
 )
 
@@ -527,6 +635,9 @@ class E2EApp:
     sandbox: SandboxController
     #: ``email -> CurrentUser``; the dev-token resolver consults it per request.
     users: dict[str, CurrentUser] = field(default_factory=dict)
+    #: ``True`` when :func:`install_sqlite_tz_datetime` had to be installed (the audit
+    #: chain did not verify on plain sqlite at setup); ``False`` when the shim is a no-op.
+    sqlite_tz_shim: bool = False
     _celery_saved: dict[str, Any] = field(default_factory=dict)
     _clients: list[TestClient] = field(default_factory=list)
     _restore_sqlite_tz: Callable[[], None] | None = None
@@ -581,8 +692,9 @@ class E2EApp:
 
         ``python -m redsim.cli`` for a Postgres database; on sqlite the same
         ``redsim.cli.main.main`` is entered through a one-line bootstrap that
-        first installs :func:`install_sqlite_tz_datetime`, without which the
-        chain verifier cannot reproduce the hashed timestamps (see that function).
+        first runs :func:`install_sqlite_tz_datetime_if_needed`, so the
+        subprocess makes the same shim decision this process made (see
+        :func:`sqlite_audit_roundtrip_verifies`).
         """
         if self.is_sqlite:
             return [sys.executable, "-c", _CLI_SQLITE_BOOTSTRAP, *args]
@@ -632,6 +744,73 @@ class E2EApp:
             self._restore_sqlite_tz = None
 
 
+def install_shared_sqlite_engine(monkeypatch: pytest.MonkeyPatch, db_url: str) -> Any:
+    """Build the harness engine over one autocommit sqlite connection and create the schema.
+
+    Two sqlite-only problems have to be solved together, and both come from the
+    worker running the Postgres-designed chain writer on sqlite:
+
+    * **The audit self-lock.** The worker holds its ``task_context`` session
+      open across steps that write their own audit rows through
+      ``PostgresAuditWriter``, which opens a *separate* ``get_session()``. On
+      Postgres those are two connections writing different tables concurrently;
+      on a normal-pool file sqlite the second connection blocks on the first's
+      still-open write transaction (``persist_campaign_record`` leaves one open
+      right before ``_emit_record_audit``) and raises ``sqlite3.OperationalError:
+      database is locked`` — sqlite has one database-level write lock.
+    * **The reflection rollback.** ``ml_campaigns`` is migration-owned, so the
+      admission service and the worker read it with ``Table("ml_campaigns",
+      MetaData(), autoload_with=session.get_bind())``. On a single shared
+      connection, reflection opens its own ``Connection`` over that DBAPI
+      connection and closing it would roll the shared transaction back, silently
+      discarding the ``Run`` / ``Job`` rows the same session had just written.
+
+    ``isolation_level="AUTOCOMMIT"`` on a ``StaticPool`` (one connection) settles
+    both: every statement commits as it runs, so no write lock is held across the
+    next one (no self-lock, even across the audit writer's separate session on the
+    same connection) and there is no open transaction for reflection's connection
+    close to roll back, so the ORM chain writer and the admission rows both
+    persist and are durable to the file the CLI subprocess reads. The harness is
+    single-threaded per request (eager Celery), so autocommit's loss of
+    all-or-nothing rollback only means a failed campaign keeps the partial rows it
+    wrote — which is what the tier records as evidence anyway. ``init_engine`` is
+    patched idempotently so the worker's per-task ``init_engine(REDSIM_DB_URL)``
+    and ``resolve_writer``'s do not swap a normal transactional pool back in.
+    """
+    from sqlalchemy import MetaData, create_engine
+    from sqlalchemy.engine import Engine, make_url
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from redsim.db import session as db_session
+    from redsim.db.models import Base
+
+    target_url = make_url(db_url)
+    original_init = db_session.init_engine
+    engine = create_engine(
+        target_url, future=True,
+        connect_args={"check_same_thread": False, "timeout": 30},
+        poolclass=StaticPool, isolation_level="AUTOCOMMIT",
+    )
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
+        conn.exec_driver_sql("PRAGMA busy_timeout=30000")
+    Base.metadata.create_all(engine)
+    campaign_table(MetaData()).create(engine, checkfirst=True)
+
+    db_session._ENGINE = engine
+    db_session.Session = sessionmaker(engine, expire_on_commit=False, future=True)
+
+    def _init(url: str | None = None, *, echo: bool = False) -> Engine:
+        want = make_url(url) if url else target_url
+        if db_session._ENGINE is not None and db_session._ENGINE.url == want:
+            return db_session._ENGINE
+        return original_init(url, echo=echo)
+
+    monkeypatch.setattr(db_session, "init_engine", _init)
+    return engine
+
+
 def build_harness(monkeypatch: pytest.MonkeyPatch, harness_dir: Path, *, assets_dir: Path,
                   sandbox_mode: SandboxMode = "child") -> E2EApp:
     """Assemble the app over a file-backed sqlite database with eager Celery.
@@ -644,15 +823,11 @@ def build_harness(monkeypatch: pytest.MonkeyPatch, harness_dir: Path, *, assets_
     rate limiter effectively off; install the identity-table dev-token resolver;
     install the sandbox controller.
     """
-    from sqlalchemy import MetaData
-
     import redsim.api.auth as auth_module
     import redsim.api.middleware.rate_limit as rate_limit
     import redsim.workers.events as events_module
     from redsim.api.app import create_app
     from redsim.api.settings import APISettings
-    from redsim.db import session as db_session
-    from redsim.db.models import Base
     from redsim.workers.celery_app import app as celery_app
     from tests.conftest import patch_jsonb_for_sqlite
 
@@ -677,19 +852,26 @@ def build_harness(monkeypatch: pytest.MonkeyPatch, harness_dir: Path, *, assets_
     monkeypatch.delenv("REDSIM_TEST_AUDIT", raising=False)
 
     patch_jsonb_for_sqlite()
-    restore_sqlite_tz = install_sqlite_tz_datetime()
-    engine = db_session.init_engine(db_url)
-    with engine.begin() as conn:
-        conn.exec_driver_sql("PRAGMA journal_mode=WAL")
-    Base.metadata.create_all(engine)
-    campaign_table(MetaData()).create(engine, checkfirst=True)
+    # Probe first, on a throwaway in-memory database: the shim is installed only
+    # when the production chain writer does not verify on plain sqlite.
+    restore_sqlite_tz = install_sqlite_tz_datetime_if_needed()
+    # One autocommit sqlite connection (WAL) with the schema created, so the
+    # worker's task session and the audit writer's separate session never lock
+    # each other out and ml_campaigns reflection never rolls a session back.
+    install_shared_sqlite_engine(monkeypatch, db_url)
 
     celery_saved = {
         key: celery_app.conf.get(key)
         for key in ("task_always_eager", "task_eager_propagate", "task_store_eager_result")
     }
     celery_app.conf.task_always_eager = True
-    celery_app.conf.task_eager_propagate = True
+    # Propagation stays off on purpose: the worker task raises for a failed
+    # campaign (spec 10.6), and with propagation on that exception would come
+    # out of ``.delay()`` inside ``create_attack_campaign``, which treats any
+    # enqueue exception as a broker failure, deletes the admission rows and
+    # answers ``503 queue_unavailable``. Without propagation the eager result
+    # carries the exception, the rows stay and ``Run.status`` reads ``failed``.
+    celery_app.conf.task_eager_propagate = False
     celery_app.conf.task_store_eager_result = False
 
     # The WebSocket event stream is a live-UI convenience over Redis; the harness
@@ -718,8 +900,9 @@ def build_harness(monkeypatch: pytest.MonkeyPatch, harness_dir: Path, *, assets_
         app=app, settings=settings, harness_dir=harness_dir, config_path=config_path,
         db_path=db_path, db_url=db_url, output_dir=output_dir, blob_root=blob_root,
         work_dir=work_dir, assets_dir=Path(assets_dir), celery_app=celery_app,
-        sandbox=SandboxController(sandbox_mode), users=users, _celery_saved=celery_saved,
-        _restore_sqlite_tz=restore_sqlite_tz,
+        sandbox=SandboxController(sandbox_mode), users=users,
+        sqlite_tz_shim=restore_sqlite_tz is not None,
+        _celery_saved=celery_saved, _restore_sqlite_tz=restore_sqlite_tz,
     )
 
 
@@ -812,39 +995,30 @@ def seed_org(harness: E2EApp) -> E2EOrg:
 # ---------------------------------------------------------------------------
 
 
-def _extract_model_id(result: Any, fallback: str) -> str:
-    if isinstance(result, str):
-        return result
-    if isinstance(result, Mapping):
-        for key in ("id", "model_id", "target_id"):
-            if result.get(key):
-                return str(result[key])
-        return fallback
-    for attr in ("id", "model_id", "target_id"):
-        value = getattr(result, attr, None)
-        if isinstance(value, str) and value:
-            return value
-    return fallback
-
-
 def register_bundled(harness: E2EApp, client: TestClient, *, project_id: str, bundled_id: str,
                      actor: str, prefer_route: bool = False) -> str:
-    """Register one bundled target into ``project_id`` and return its model id.
+    """Register one bundled target into ``project_id`` and return the per-project ``Target.id``.
 
-    Uses ``redsim.services.ml_models.register_bundled_model(session, project_id,
-    bundled_id, actor)`` when that wave-2 service is present on the tree (it puts
-    the weights blob and writes the ``model.register`` audit row before the
-    Target), otherwise ``POST /v1/models`` with ``source=bundled`` through
-    ``client``, whose identity must hold ``model.register`` (remediator or above).
-    ``prefer_route=True`` always takes the route.
+    By default calls ``redsim.services.ml_models.register_bundled_model(session,
+    project_id, bundled_id, actor)`` directly, the admission boundary behind
+    ``POST /v1/models`` ``source=bundled`` and ``redsim ml seed``: it verifies the
+    weights and the bound evaluation split against the manifest digests, writes
+    the ``model.register`` audit row, copies the weights into the blob store and
+    returns the new ``Target`` row (``id`` is ``<bundled_id>-<8 hex>``, ``value``
+    is ``bundled:<bundled_id>``, ``detail.bundled_id`` the registry id).
+    ``prefer_route=True`` goes through ``POST /v1/models`` with ``client``
+    instead, whose identity must hold ``model.register`` (remediator or above);
+    the route answers ``201`` with the projected model row whose ``id`` is the
+    same per-project id. Either way the returned id is the one campaigns name;
+    never assume it equals ``bundled_id``.
     """
-    from redsim.services import ml_models
+    if not prefer_route:
+        from redsim.services.ml_models import register_bundled_model
 
-    service = getattr(ml_models, "register_bundled_model", None)
-    if service is not None and not prefer_route:
         with harness.session() as sess:
-            result = service(sess, project_id, bundled_id, actor)
-        return _extract_model_id(result, bundled_id)
+            target = register_bundled_model(sess, project_id, bundled_id, actor)
+            model_id = str(target.id)
+        return model_id
 
     response = client.post("/v1/models", json={
         "source": "bundled", "bundled_id": bundled_id, "project_id": project_id,
@@ -854,7 +1028,25 @@ def register_bundled(harness: E2EApp, client: TestClient, *, project_id: str, bu
             f"POST /v1/models for bundled {bundled_id!r} answered {response.status_code}: {response.text}"
         )
     body = response.json()
-    return _extract_model_id(body, bundled_id)
+    model_id = body.get("id") if isinstance(body, Mapping) else None
+    if not isinstance(model_id, str) or not model_id:
+        raise E2EHarnessError(f"POST /v1/models for bundled {bundled_id!r} returned no id: {body!r}")
+    return model_id
+
+
+def registered_target(harness: E2EApp, model_id: str) -> dict[str, Any]:
+    """The stored ``Target`` row of a registered model: ``id``, ``project_id``, ``kind``, ``value``, ``detail``."""
+    from redsim.db.models import Target
+
+    with harness.session() as sess:
+        row = sess.get(Target, model_id)
+        if row is None:
+            raise E2EHarnessError(f"no Target row with id {model_id!r}")
+        return {
+            "id": str(row.id), "project_id": str(row.project_id), "kind": str(row.kind),
+            "value": str(row.value), "verified": bool(row.verified),
+            "detail": dict(row.detail) if isinstance(row.detail, dict) else {},
+        }
 
 
 def register_all_bundled(harness: E2EApp, org: E2EOrg, *, identity: str = "remediator") -> dict[str, str]:
@@ -981,8 +1173,7 @@ def wait_for_run(client: TestClient, run_id: str, *, timeout_s: float = 10.0,
 
 
 def run_campaign_via_api(client: TestClient, model_id: str, config: Mapping[str, Any], *,
-                         project_id: str | None = None, timeout_s: float = 10.0,
-                         sandbox_mode: SandboxMode | None = None) -> CampaignRun:
+                         project_id: str | None = None, timeout_s: float = 10.0) -> CampaignRun:
     """POST the campaign, wait for the eager run, return ``GET /v1/runs/{id}/campaign``.
 
     ``config`` is the ``POST /v1/models/{id}/attacks`` body (see
@@ -994,10 +1185,9 @@ def run_campaign_via_api(client: TestClient, model_id: str, config: Mapping[str,
     row and the campaign record (``None`` with the error detail when the record
     route refuses, for example after a failed campaign).
 
-    ``sandbox_mode`` documents the mode the caller expects; when it is ``child``
-    and the body requests an LLM narrative while a developer ``.env`` is in the
-    child's reach, the launch is refused here rather than letting the child
-    contact a real gateway from a test.
+    ``llm_narrative=True`` is safe in every sandbox mode: the writer runs in the
+    worker parent, whose ``REDSIM_ENV_FILE`` the session pointed at an absent
+    file, and the child never holds a gateway key.
     """
     body = dict(config)
     if "dataset_id" not in body or "dataset_revision" not in body:
@@ -1006,15 +1196,6 @@ def run_campaign_via_api(client: TestClient, model_id: str, config: Mapping[str,
             body.setdefault("dataset_id", manifest.get("dataset_id"))
             if manifest.get("dataset_revision"):
                 body.setdefault("dataset_revision", manifest.get("dataset_revision"))
-    if body.get("llm_narrative") and (sandbox_mode or "child") == "child":
-        env_file = developer_env_file_in_reach()
-        if env_file is not None:
-            raise E2EHarnessError(
-                f"llm_narrative=True in child-sandbox mode while {env_file} exists: the sandbox child strips "
-                "PYTHIA_* from its environment and would read that file, contacting a real gateway from a "
-                "test. Use the pythia fixture (pythia.on() runs the campaign in-process against a mock "
-                "transport) or e2e_app.sandbox.use('inprocess')."
-            )
 
     response = client.post(f"/v1/models/{model_id}/attacks", json=body)
     if response.status_code != 202:
@@ -1085,15 +1266,24 @@ def _paragraph(rec: tuple[str, str], triggered_by: str | None) -> str:
             "evaluated on this model; the direction is as the rule layer states it.")
 
 
+#: Modules that bind ``make_backend`` by name at import time; the mock replaces every binding.
+_MAKE_BACKEND_MODULES = ("redsim.llm.pythia", "redsim.ml.recommend.narrative")
+
+
 class PythiaToggle:
     """Switch a mocked Pythia gateway on and off for the whole harness.
 
-    ``on()`` exports the three variables ``PythiaSettings.from_env`` requires
-    (pointing at an ``.invalid`` host with a placeholder key), replaces
-    ``redsim.llm.pythia.make_backend`` with the in-repo httpx client over an
-    ``httpx.MockTransport``, and forces the in-process sandbox because the child
-    process strips ``PYTHIA_*``. Every request the writer makes is recorded in
-    ``requests`` (method, URL, headers, JSON body). ``off()`` restores all of it.
+    The writer runs in the worker parent
+    (``redsim.workers.tasks.ml_campaign._parent_narrative``), which reads
+    ``PythiaSettings.from_env()`` and builds its transport through
+    ``redsim.ml.recommend.narrative.make_backend`` (a name bound from
+    ``redsim.llm.pythia`` at import). ``on()`` therefore exports the three
+    variables ``PythiaSettings.from_env`` requires (an ``.invalid`` host and a
+    placeholder key) and replaces ``make_backend`` in both modules with the
+    in-repo httpx client over an ``httpx.MockTransport``. The sandbox mode is
+    untouched: the child never narrates, so the mock is observed in child mode.
+    Every request the writer makes is recorded in ``requests`` (method, URL,
+    headers, JSON body). ``off()`` restores all of it.
 
     ``disable_llm(True)`` sets ``REDSIM_DISABLE_LLM=1`` independently of the
     gateway state, so a test can prove the compose-worker default leaves the
@@ -1107,15 +1297,15 @@ class PythiaToggle:
         self._narrative: NarrativeSource = None
         self._status_code = 200
         self._saved_env: dict[str, str | None] = {}
-        self._saved_make_backend: Callable[..., Any] | None = None
-        self._saved_sandbox_mode: SandboxMode | None = None
+        self._saved_make_backend: dict[str, Callable[..., Any]] = {}
 
     # -- switches ---------------------------------------------------------
 
-    def on(self, *, narrative: NarrativeSource = None, status_code: int = 200,
-           force_inprocess: bool = True) -> PythiaToggle:
+    def on(self, *, narrative: NarrativeSource = None, status_code: int = 200) -> PythiaToggle:
         """Enable the mock. ``narrative`` overrides the canned text (a string or ``payload -> str``);
         ``status_code`` other than 200 makes the gateway fail so the writer degrades to rules."""
+        import importlib
+
         from redsim.llm import pythia
 
         if self.enabled:
@@ -1134,23 +1324,22 @@ class PythiaToggle:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
-        self._saved_make_backend = pythia.make_backend
         transport = self.transport()
 
         def make_backend(settings: pythia.PythiaSettings, transport_override: Any = None) -> Any:
             return pythia._HttpxBackend(settings, transport=transport_override or transport)
 
-        pythia.make_backend = make_backend  # type: ignore[assignment]
-        if force_inprocess and self.harness.sandbox.mode != "inprocess":
-            self._saved_sandbox_mode = self.harness.sandbox.mode
-            self.harness.sandbox.set("inprocess")
+        for name in _MAKE_BACKEND_MODULES:
+            module = importlib.import_module(name)
+            self._saved_make_backend[name] = module.make_backend
+            module.make_backend = make_backend
         self.enabled = True
         return self
 
     def off(self) -> None:
         if not self.enabled:
             return
-        from redsim.llm import pythia
+        import importlib
 
         for key, value in self._saved_env.items():
             if value is None:
@@ -1158,12 +1347,9 @@ class PythiaToggle:
             else:
                 os.environ[key] = value
         self._saved_env.clear()
-        if self._saved_make_backend is not None:
-            pythia.make_backend = self._saved_make_backend
-            self._saved_make_backend = None
-        if self._saved_sandbox_mode is not None:
-            self.harness.sandbox.set(self._saved_sandbox_mode)
-            self._saved_sandbox_mode = None
+        for name, original in self._saved_make_backend.items():
+            importlib.import_module(name).make_backend = original
+        self._saved_make_backend.clear()
         self.enabled = False
 
     def disable_llm(self, disabled: bool = True) -> None:
@@ -1358,6 +1544,7 @@ __all__ = [
     "OTHER_PROJECT_ID",
     "OUTSIDER",
     "POSTGRES_URL_ENV",
+    "PROBE_CHAIN_ID",
     "PROJECT_ID",
     "REPO_ROOT",
     "ROLES",
@@ -1365,6 +1552,7 @@ __all__ = [
     "STRANGER",
     "TABULAR_MODEL_ID",
     "TERMINAL_RUN_STATUSES",
+    "URL_DATASET_ID",
     "CampaignLaunchRefused",
     "CampaignRun",
     "E2EApp",
@@ -1381,21 +1569,25 @@ __all__ = [
     "campaign_table",
     "canned_narrative",
     "check_postgres_migrated",
-    "developer_env_file_in_reach",
     "e2e_enabled",
+    "harness_url_table",
     "identity_email",
     "image_campaign",
+    "install_shared_sqlite_engine",
     "install_sqlite_tz_datetime",
+    "install_sqlite_tz_datetime_if_needed",
     "model_record",
     "postgres_url_from_env",
     "register_all_bundled",
     "register_bundled",
+    "registered_target",
     "require_e2e",
     "run_campaign_inprocess",
     "run_campaign_via_api",
     "sandbox_mode_from_env",
     "sanitize_environment",
     "seed_org",
+    "sqlite_audit_roundtrip_verifies",
     "strip_ansi",
     "synthetic_images",
     "tabular_campaign",

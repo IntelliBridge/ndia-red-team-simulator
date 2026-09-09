@@ -11,20 +11,26 @@ off unless a test switches it on). Register row: G-TESTS. Spec: sections 22.5
 (end-to-end and CI), 24 (demo script) and 26 (completion criteria).
 
 The fixtures live in `conftest.py`; the builders and plain helpers live in
-`harness.py`. Wave 4 adds the `test_*.py` files here and should not need to
-edit either.
+`harness.py`. `test_harness_smoke.py` is the harness's own smoke test against
+the tree (asset build, bundled registration, one role gate, an image campaign
+through the real child, tabular campaigns, `audit verify --all` clean then
+broken, the mocked narrative flipping `narrative_source`). Wave 4 adds the
+demo-path `test_*.py` files here and should not need to edit the fixtures.
 
 ## Running
 
 ```sh
-# the tier (about a minute on a laptop CPU; the two asset builds dominate)
+# the harness smoke test (about 30 s on a laptop CPU; the two asset builds dominate)
+REDSIM_E2E=1 pytest -q -p no:cacheprovider -m e2e tests/e2e/test_harness_smoke.py
+
+# the whole tier
 REDSIM_E2E=1 pytest -q -m e2e tests/e2e
 
 # one file, verbose, keep the sandbox work directories for inspection
 REDSIM_E2E=1 REDSIM_ML_KEEP_WORK_DIR=1 pytest -q -m e2e tests/e2e/test_demo_path.py -vv
 
-# run the campaign sandbox in-process instead of as a child (faster to debug,
-# but the child-process boundary is then not exercised)
+# run the campaign sandbox in-process instead of as a child (a traceback instead of
+# a child envelope when debugging; the child-process boundary is then not exercised)
 REDSIM_E2E=1 REDSIM_E2E_SANDBOX=inprocess pytest -q -m e2e tests/e2e
 ```
 
@@ -39,7 +45,9 @@ by `conftest.py`, so:
   message rather than failing;
 * `REDSIM_E2E=1 pytest -m e2e tests/e2e` runs the tier.
 
-`-m e2e` on the command line overrides the `-m` in `addopts`.
+`-m e2e` on the command line overrides the `-m` in `addopts`. Collection needs
+neither the `api` nor the `ml` extra: `conftest.py` and `harness.py` import
+only the standard library and pytest at module level.
 
 ## What the fixtures give you
 
@@ -49,12 +57,12 @@ All session-scoped unless noted; the graph is
 | Fixture | Type | Provides |
 |---|---|---|
 | `e2e_env` | `pytest.MonkeyPatch` | Session patch with `KAGGLE_*`, `PYTHIA_*`, LLM-model, `REDSIM_TEST_AUDIT`, `REDSIM_DB_URL` and the storage/config selectors scrubbed; `REDSIM_ENV_FILE` points at an absent file and the Pythia repo-root `.env` fallback at the harness directory. |
-| `e2e_assets` | `Path` | A complete asset tree written by `build_cnn_asset` (small_cnn, 1 epoch, 48 seeded 8x8 RGB images, 3 classes, 24 in the eval split) and `build_url_asset` (sklearn ensemble + declared surrogate on the committed `malicious_urls_sample.csv`, 12 eval rows). `REDSIM_ML_ASSETS_DIR` points at it. `harness.asset_dataset_ids(root)` gives the dataset ids the builder recorded. |
-| `e2e_app` | `harness.E2EApp` | The FastAPI app (dev auth, rate limiter effectively off) over `sqlite:///<harness>/e2e.db` in WAL mode with the ORM schema plus a mirror of the migration-owned `ml_campaigns` table; `FilesystemBlobStore` under `<harness>/blobs` via `REDSIM_BLOB_BACKEND=fs`; Celery `task_always_eager` + `task_eager_propagate`; `redsim.yaml` with `output_dir` under the harness directory (`REDSIM_CONFIG`). Exposes `session()`, `audit_writer()`, `chain_ids()`, `read_chain()`, `client_for(user)`, `cli_env()`, and `sandbox` (see below). |
+| `e2e_assets` | `Path` | A complete asset tree written by `build_cnn_asset` (small_cnn, 1 epoch, 48 seeded 8x8 RGB images, 3 classes, 24 in the eval split, dataset `local:synthetic-images`) and `build_url_asset` (sklearn ensemble + declared surrogate on the committed `malicious_urls_sample.csv` rows under the harness-owned dataset `local:e2e-url-sample`, see `harness.harness_url_table`). Neither entry is `fixture_only`, otherwise `register_bundled_model` would refuse them. `REDSIM_ML_ASSETS_DIR` points at the tree. `harness.asset_dataset_ids(root)` gives the dataset ids the builder recorded. |
+| `e2e_app` | `harness.E2EApp` | The FastAPI app (dev auth, rate limiter effectively off) over `sqlite:///<harness>/e2e.db`: one autocommit `StaticPool` connection in WAL mode carrying the ORM schema plus a mirror of the migration-owned `ml_campaigns` table (see the notes for why); `FilesystemBlobStore` under `<harness>/blobs` via `REDSIM_BLOB_BACKEND=fs`; Celery `task_always_eager` with `task_eager_propagate` **off** (a failed campaign is a failed `Run`, not a `503 queue_unavailable`); `redsim.yaml` with `output_dir` under the harness directory (`REDSIM_CONFIG`). Exposes `session()`, `audit_writer()`, `chain_ids()`, `read_chain()`, `client_for(user)`, `cli_argv()`, `cli_env()`, `sandbox` (see below) and `sqlite_tz_shim` (`True` only if the pysqlite timestamp shim had to be installed; `False` on the current tree). |
 | `e2e_org` | `harness.E2EOrg` | Organisation `org-e2e` / project `proj-e2e` with one identity per role, plus organisation `org-e2e-other` / project `proj-e2e-other`. `e2e_org.client("viewer" \| "scanner" \| "remediator" \| "approver" \| "admin")` are members of `proj-e2e` with that role; `client("outsider")` is admin of the *other* project; `client("stranger")` has no memberships. `e2e_org.actor(role)` is the `user:<sub>` string the audit rows carry. Users and `project_memberships` rows exist in the database too, so `/v1/projects` agrees with the token. |
-| `e2e_bundled` | `dict[str, str]` | `{"vehicles_cnn": <model_id>, "url_trees": <model_id>}` registered into `proj-e2e` by the remediator. Uses `redsim.services.ml_models.register_bundled_model(session, project_id, bundled_id, actor)` when that wave-2 service exists on the tree, else `POST /v1/models` with `source=bundled`. |
-| `pythia` | `harness.PythiaToggle` | Mocked gateway, **off by default**. See "Pythia" below. |
-| `audit_verify_all` | callable (function-scoped) | `() -> (exit_code, output)`: runs `python -m redsim.cli audit verify --all` as a subprocess with `REDSIM_DB_URL` pointing at the harness database and the worktree first on `PYTHONPATH`; ANSI colours stripped. Exit `0` = every chain verified; `1` and `broken at seq=N` otherwise. |
+| `e2e_bundled` | `dict[str, str]` | `{"vehicles_cnn": <Target.id>, "url_trees": <Target.id>}` registered into `proj-e2e` by the remediator through `redsim.services.ml_models.register_bundled_model(session, project_id, bundled_id, actor)`. The returned `Target` is a **per-project row**: `id` is `<bundled_id>-<8 hex>` (never the bundled id), `value` is `bundled:<bundled_id>`, `detail.bundled_id` names the registry entry, `detail.status == "available"`, `detail.modality` and `detail.manifest.dataset_id` are the manifest's. Campaigns name the returned id; the child resolves the registry id from the frozen `target_snapshot` (`redsim.ml.campaign._bundled_registry_id`). `harness.registered_target(e2e_app, model_id)` reads the row back. |
+| `pythia` | `harness.PythiaToggle` | Mocked gateway, **off by default**; observed in child mode because the writer runs in the worker parent. See "Pythia" below. |
+| `audit_verify_all` | callable (function-scoped) | `() -> (exit_code, output)`: runs `redsim audit verify --all` as a subprocess (`E2EApp.cli_argv`) with `REDSIM_DB_URL` pointing at the harness database and the worktree first on `PYTHONPATH`; ANSI colours stripped. Exit `0` = every chain verified (`chain '<id>': N events verified` per chain); `1` and `broken at seq=N` otherwise. |
 | `tamper_audit_event` | callable (function-scoped) | `(chain_id=None, seq=None, mutation="detail" \| "actor" \| "action" \| "success") -> (chain_id, seq)`: mutates one stored `audit_events` row. Defaults to a `run:` chain and its middle event so both the event hash and the next `prev_hash` break. |
 | `postgres_url` | `str` | `REDSIM_E2E_POSTGRES_URL`; skips when unset, **fails** when set but the database is not migrated. See "Postgres lane". |
 
@@ -79,17 +87,26 @@ result.stage_table     # the run's stage table
 
 * `image_campaign(**overrides)` / `tabular_campaign(**overrides)` are the POST
   bodies sized for the tiny assets (12 samples; PGD `max_iter=3`; HopSkipJump
-  with the small query budget the ml tier uses; `explain_k=2`). `dataset_id`
-  and `dataset_revision` are copied from the model's manifest when absent, so
-  the builder's ids are never guessed.
+  with the small query budget the ml tier uses; `explain_k=2`;
+  `include_control=True`). `dataset_id` and `dataset_revision` are copied from
+  the model's manifest when absent, so the builder's ids are never guessed.
+  `attack_params` carry caller overrides only; `eps` is grid-owned and
+  admission strips it before freezing.
 * `run_campaign_via_api` raises `CampaignLaunchRefused(status_code, detail)`
   on a non-202 launch; tests asserting refusal codes should call the route
   directly. It waits for the eager run to reach a terminal status and raises a
   clear `E2EHarnessError` if it never does.
 * `register_bundled(harness, client, project_id=..., bundled_id=..., actor=...,
-  prefer_route=False)` registers one bundled model (service when present, else
-  route). `model_record`, `wait_for_run`, `strip_ansi`, `asset_manifest`,
-  `asset_dataset_ids`, `unload_bundled_targets` are also public.
+  prefer_route=False)` registers one bundled model through the service (or
+  `POST /v1/models` with `source=bundled` when `prefer_route=True`) and returns
+  the per-project `Target.id`. `registered_target(harness, model_id)` returns
+  the stored row (`id`, `project_id`, `kind`, `value`, `verified`, `detail`).
+* `harness_url_table()` is the committed URL sample under the harness-owned,
+  non-fixture-only dataset entry `URL_DATASET_ID`; `synthetic_images()` the
+  seeded image set. `model_record`, `wait_for_run`, `strip_ansi`,
+  `asset_manifest`, `asset_dataset_ids`, `unload_bundled_targets`,
+  `sqlite_audit_roundtrip_verifies` and `install_sqlite_tz_datetime_if_needed`
+  are also public.
 
 ### The sandbox
 
@@ -99,7 +116,8 @@ result.stage_table     # the run's stage table
   `python -m redsim.ml.sandbox_worker` with the allowlisted environment, exactly
   as the worker does in production) or `"inprocess"` (calls
   `redsim.ml.campaign.run_campaign` in the worker thread, mirroring
-  `sandbox_worker._campaign` including the failed-partial-record path).
+  `sandbox_worker._campaign` including the failed-partial-record path; a
+  debugging aid only).
 * `e2e_app.sandbox.use("inprocess")` is a context manager; `set(mode)` is
   permanent; `calls` records the mode every campaign actually ran in.
 * `validate_model_sandboxed` (uploads) is never replaced: uploads validate in
@@ -107,21 +125,28 @@ result.stage_table     # the run's stage table
 
 `REDSIM_E2E_SANDBOX=child|inprocess` sets the session default.
 
+The child's environment is the sandbox allowlist: it carries the resolved
+`REDSIM_ML_ASSETS_DIR`, `REDSIM_DISABLE_LLM=1` and a `REDSIM_ENV_FILE` naming
+an absent file, and no `PYTHIA_*`, `KAGGLE_*`, `AWS_*`, `REDSIM_DB_URL`,
+`REDSIM_BLOB_FS_PATH` or `REDSIM_CONFIG`; the smoke test records and asserts it.
+
 ### Pythia
 
-The LLM writer runs inside `run_campaign`, which the worker executes in the
-sandbox child. The child's environment strips every `PYTHIA_*` variable, so a
-mock in the test process can only observe the writer when the campaign runs
-in-process. `pythia.on()` therefore:
+The LLM writer runs in the **worker parent**
+(`redsim.workers.tasks.ml_campaign._parent_narrative`) after the child's
+envelope comes back; the child strips every `PYTHIA_*` variable, runs with
+`REDSIM_DISABLE_LLM=1` and never narrates (spec 10.8, 16.1). The mock therefore
+lives in the test process and is observed in child mode; the sandbox mode is
+not touched. `pythia.on()`:
 
 1. exports `PYTHIA_BASE_URL=https://pythia.e2e.invalid`, a placeholder
    `PYTHIA_API_KEY` and `REDSIM_ML_LLM_MODEL=e2e/mock-writer`;
-2. routes `redsim.llm.pythia.make_backend` through the in-repo httpx client over
-   an `httpx.MockTransport` whose canned answer is one `[r.X]` paragraph per
+2. replaces `make_backend` in `redsim.llm.pythia` **and** the name bound in
+   `redsim.ml.recommend.narrative` with the in-repo httpx client over an
+   `httpx.MockTransport` whose canned answer is one `[r.X]` paragraph per
    candidate built **only from words already in the payload** (so the writer's
    numeric-consistency and banned-word post-checks pass and
-   `narrative_source == "llm"`);
-3. switches the sandbox to `inprocess` for as long as it is on.
+   `narrative_source == "llm"`).
 
 `pythia.requests` records every call (method, URL, headers, JSON body);
 `pythia.last_payload()` is the writer's text-only user message.
@@ -131,11 +156,15 @@ it); `pythia.on(status_code=503)` makes the gateway fail so the writer degrades
 to rules. `pythia.disable_llm(True)` sets `REDSIM_DISABLE_LLM=1` independently.
 `with pythia:` is `on()` / `off()`.
 
-With the mock **off** and `llm_narrative=True`, the record carries the "Pythia
-is not configured" limitation and `narrative_source == "rules"` (spec 10.8).
-`run_campaign_via_api` refuses `llm_narrative=True` in child mode when a
-developer `.env` exists at the cwd or the repo root, because the child would
-read it and contact a real gateway from a test.
+What the record and the chain say, as the smoke test asserts them
+(`llm_narrative=True` in the POST body):
+
+| Gateway state | `narrative_source` | `harden.execute` detail | Limitation |
+|---|---|---|---|
+| mock on | `llm`; `provenance.llm.model == e2e/mock-writer`, no key | `llm_used=True`, `prompt_sha256`/`completion_sha256` set; artifacts `ml.harden.prompt/completion/narrative`; one `LLMUsage` row | "LLM narrative generated via Pythia ..." |
+| mock off (unconfigured) | `rules`; `provenance.llm is None`; no call | `llm_used=False`, `skipped_reason` names "not configured" | "... not configured ..." |
+| mock on + `REDSIM_DISABLE_LLM=1` | `rules`; no call reaches the transport | `llm_used=False` | names `REDSIM_DISABLE_LLM` |
+| mock on, narrative invents a number | `rules`; one call, answer refused | `llm_used=False`, `skipped_reason` "rejected by post-check", `completion_sha256` still set | "... rejected by post-check ..." |
 
 ### Postgres lane
 
@@ -174,33 +203,68 @@ that refusal is the property to assert there.
 
 ## Notes and caveats
 
+* **Known product defect the smoke test fails on (by design, not patched
+  around).** `test_tabular_campaign_runs_pgd_hopskipjump_and_control` posts the
+  spec's PGD + HopSkipJump set against `url_trees` and is refused
+  `422 attack_requires_gradients` ("attack 'pgd' needs loss gradients the model
+  does not expose (manifest gradients: false)") by
+  `redsim/services/ml_campaigns.py:489-492`. That check reads only
+  `manifest.gradients`; it ignores the declared surrogate the registered row
+  carries (`Target.detail.surrogate`, `detail.manifest.surrogate`, the frozen
+  `MLModelManifest.surrogate`) and the PGD adapter's `surrogate_transfer` +
+  `modality:tabular` capabilities (`redsim/ml/attacks/pgd.py:59-61`), although
+  the runner would run PGD by surrogate transfer and record it as such
+  (`redsim/ml/campaign.py:727-757`, spec 12.9, demo step 6) and the service's
+  own module docstring (lines 27-36) says the attack is admitted. The test fails
+  with that attribution (`pytest.fail`, no traceback) until admission exempts
+  surrogate-capable adapters when a surrogate is declared.
+  `test_tabular_hopskipjump_and_control_run_in_the_real_sandbox_child` proves
+  the rest of the tabular path (load, sample, HopSkipJump, control at every
+  eps, score, report, audit rows) through the real child meanwhile.
+* **Two earlier cross-track defects are fixed on this tree**: admission now
+  strips the grid-owned `eps` / `norm_l2` before freezing `attack_params`
+  (`_GRID_OWNED_PARAMS`), and applicability is decided from the adapter's
+  `modality:<domain>` capability tags rather than `AttackInfo.domain`. The
+  smoke test asserts both (`"eps" not in config.attack_params.pgd`; the
+  tabular launch is no longer `attack_modality_mismatch`).
 * **sqlite timestamps.** SQLAlchemy's sqlite `DateTime` storage format has no
-  offset, so `AuditEvent.created_at` comes back naive and the production
-  `PostgresAuditWriter.read_chain` re-derives `ts` without `+00:00`; every
-  chain would then fail `verify_chain` at `seq=1` untouched. `e2e_app` installs
-  `harness.install_sqlite_tz_datetime()` (a pysqlite `DateTime` implementation
-  that stores and parses `isoformat()` with the offset) before creating its
-  engine, and `audit_verify_all` enters `redsim.cli.main.main` through a
-  one-line bootstrap that installs the same shim in the subprocess
-  (`E2EApp.cli_argv`). On a Postgres URL the plain `python -m redsim.cli` is
-  used. The writer and verifier themselves are never patched.
-* **Cross-track defects the first run of this harness surfaced** (reported in
-  the track report; if `run_campaign_via_api` fails on them, the fixes have not
-  landed yet): (1) `create_attack_campaign` freezes `resolve_params()` output,
-  which fills the `eps` default, into `attack_params`, and
-  `run_campaign._attack_params` refuses `eps` there, so every API-launched
-  campaign fails at the child's configuration check; (2) admission compares
-  `AttackInfo.domain` with the modality, refusing PGD-by-surrogate on the
-  tabular model although the adapter declares `modality:tabular` in its
-  capabilities (spec 12.2, demo step 6). `tabular_campaign()` keeps the spec's
-  PGD + HopSkipJump set on purpose.
+  offset, so `AuditEvent.created_at` comes back naive. The audit module now
+  renders and re-derives `ts` through `redsim.audit.chain.canonical_ts`, so
+  the production `PostgresAuditWriter` round-trips and verifies on plain
+  sqlite. The harness still guards against a regression:
+  `harness.install_sqlite_tz_datetime_if_needed()` first writes and verifies a
+  two-event probe chain on a throwaway in-memory database with the production
+  writer and installs the pysqlite `DateTime` shim **only** when that probe
+  fails (`e2e_app.sqlite_tz_shim` says which happened; it is `False` on this
+  tree). The CLI subprocess (`E2EApp.cli_argv`) enters `redsim.cli.main.main`
+  through a one-line bootstrap that makes the same decision. On a Postgres URL
+  the plain `python -m redsim.cli` is used. The writer and verifier themselves
+  are never patched.
+* **One autocommit sqlite connection.** The worker keeps its `task_context`
+  session open across steps that write audit rows through a *separate*
+  `get_session()`; on a normal-pool file sqlite that second connection blocks on
+  the first's open write transaction (`database is locked`). And the
+  migration-owned `ml_campaigns` is read by reflection
+  (`Table(..., autoload_with=session.get_bind())`), whose own `Connection`
+  close would roll a shared transaction back. `harness.install_shared_sqlite_engine`
+  therefore builds the engine as a `StaticPool` with `isolation_level="AUTOCOMMIT"`
+  (WAL, `busy_timeout`), and patches `init_engine` idempotently so the worker's
+  per-task `init_engine(REDSIM_DB_URL)` keeps it. A failed campaign keeps the
+  partial rows it wrote, which is what the tier records as evidence anyway.
+* **The harness datasets are not `fixture_only`.** `register_bundled_model`
+  refuses fixture-only entries (`404 unknown_bundled_model`, spec 5.5), and the
+  builder copies the dataset flag onto the model entry, so the synthetic image
+  set and the URL rows are declared as harness-owned, non-fixture-only entries
+  with notes saying what they are. Nothing measured on them is a demo result.
 * The harness process imports torch/ART/sklearn (to build the assets and, in
   in-process mode, to run the campaign). The "API process never imports an ML
   library" rule is enforced by `tests/test_api_process_has_no_ml.py` in a fresh
   subprocess and is unaffected; do not assert on `sys.modules` from an e2e test.
 * Session-scoped state is shared across the tier: `e2e_bundled` registers the
   two models once; a test that deletes one changes what later tests see.
-  Re-register with `harness.register_bundled(...)` if needed.
+  Re-register with `harness.register_bundled(...)` if needed. A second
+  registration of the same bundled model in the same project is a typed
+  `409 already_registered` naming the existing `target_id`.
 * sqlite foreign keys are not enforced (the worker re-creates the engine per
   task, so a per-connection pragma would not hold). `ml_campaigns` is created
   from a column mirror of migration 0010 without FK constraints.
