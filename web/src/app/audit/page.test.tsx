@@ -53,11 +53,11 @@ describe("AuditPage", () => {
     expect(el.className).toContain("border-destructive");
   });
 
-  it("renders 'Signing in…' when not authed", () => {
+  it("renders 'Redirecting to sign in…' when not authed", () => {
     useRequireAuthMock.mockReturnValue(false);
     useSWRMock.mockReturnValue({ data: undefined, error: undefined, isLoading: false });
     render(React.createElement(AuditPage));
-    const el = screen.getByText("Signing in…");
+    const el = screen.getByText("Redirecting to sign in…");
     expect(el.tagName.toLowerCase()).toBe("p");
   });
 

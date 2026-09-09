@@ -54,16 +54,16 @@ function HashNode({
   broken?: boolean;
 }) {
   const tone = broken
-    ? "border-destructive text-destructive"
-    : "border-line-strong text-ink-2";
+    ? "border-destructive bg-destructive/10 text-destructive"
+    : "border-border bg-muted text-muted-foreground";
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <span
-          className={`inline-flex flex-col rounded-[3px] border bg-ground px-2 py-1 font-mono text-[11px] ${tone}`}
+          className={`inline-flex flex-col rounded-md border px-2 py-1 font-mono text-[11px] ${tone}`}
           data-testid={`hash-${label}`}
         >
-          <span className="text-[10px] text-ink-3">
+          <span className="text-[9px] uppercase tracking-wide opacity-60">
             {label}
           </span>
           <span>{truncHash(hash)}</span>
@@ -81,7 +81,7 @@ function ChainLink({ broken }: { broken?: boolean }) {
   return (
     <span
       aria-hidden="true"
-      className={broken ? "px-1 text-destructive" : "px-1 text-ink-4"}
+      className={broken ? "px-1 text-destructive" : "px-1 text-muted-foreground"}
     >
       {broken ? "⤬" : "→"}
     </span>
@@ -90,27 +90,28 @@ function ChainLink({ broken }: { broken?: boolean }) {
 
 function ChainCard({ chain }: { chain: ChainStatus }) {
   const events = chain.events ?? [];
-  const statusTone = chain.verified ? "text-emerald-300" : "text-destructive";
-  const dotTone = chain.verified ? "bg-emerald-400" : "bg-destructive";
+  const statusTone = chain.verified
+    ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+    : "border-destructive/40 bg-destructive/10 text-destructive";
 
   return (
-    <section className="redsim-sheet">
-      <header className="redsim-sheet-label">
-        <h2 className="m-0 break-all font-mono text-sm font-semibold">{chain.chain_id}</h2>
-        <small className="redsim-sheet-note">
-          length <span className="tabular-nums">{chain.event_count}</span>, head{" "}
-          <span className="font-mono">{truncHash(chain.head_hash)}</span>
-        </small>
+    <div className="space-y-3 rounded-md border border-border bg-card p-4 text-card-foreground">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="space-y-0.5">
+          <h2 className="font-mono text-sm font-semibold">{chain.chain_id}</h2>
+          <p className="text-xs text-muted-foreground">
+            length {chain.event_count} · head{" "}
+            <span className="font-mono">{truncHash(chain.head_hash)}</span>
+          </p>
+        </div>
         <span
-          className={`mt-2 inline-flex items-center gap-1.5 text-xs font-medium ${statusTone}`}
+          className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium ${statusTone}`}
           data-testid={`status-${chain.chain_id}`}
         >
-          <i className={`redsim-dot ${dotTone}`} aria-hidden="true" />
           <span aria-hidden="true">{chain.verified ? "✓" : "✗"}</span>
           {chain.verified ? "verified" : "broken"}
         </span>
-      </header>
-      <div className="redsim-sheet-body space-y-3">
+      </div>
 
       {events.length > 0 ? (
         <div className="flex flex-wrap items-stretch gap-1 overflow-x-auto pb-1">
@@ -126,7 +127,7 @@ function ChainCard({ chain }: { chain: ChainStatus }) {
               <div key={ev.seq} className="flex items-center">
                 {idx > 0 && <ChainLink broken={linkBroken} />}
                 <div className="flex flex-col items-center gap-1">
-                  <span className="text-[10px] tabular-nums text-ink-3">
+                  <span className="text-[9px] text-muted-foreground">
                     seq {ev.seq}
                   </span>
                   <HashNode
@@ -155,8 +156,7 @@ function ChainCard({ chain }: { chain: ChainStatus }) {
           )}
         </div>
       )}
-      </div>
-    </section>
+    </div>
   );
 }
 
@@ -171,12 +171,12 @@ export default function AuditPage() {
   );
 
   if (!authed)
-    return <p className="text-ink-3">Signing in…</p>;
+    return <p className="text-muted-foreground">Signing in…</p>;
   if (isLoading)
-    return <p className="text-ink-3">Verifying chains…</p>;
+    return <p className="text-muted-foreground">Verifying chains…</p>;
   if (error)
     return (
-      <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+      <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
         Failed to verify: {String(error)}
       </p>
     );
@@ -190,8 +190,8 @@ export default function AuditPage() {
       <div className="space-y-6">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1>Audit chains</h1>
-            <p className="mt-1 max-w-[60ch] text-sm text-ink-3">
+            <h1 className="text-2xl font-semibold">Audit chains</h1>
+            <p className="text-sm text-muted-foreground">
               Every project + run carries an append-only hash-chained audit.
               Each block below is one event linked to its predecessor.
             </p>
@@ -199,14 +199,12 @@ export default function AuditPage() {
           {chains.length > 0 && (
             <span
               data-testid="overall-status"
-              className={`inline-flex items-center gap-2 text-sm font-medium ${
-                allVerified ? "text-emerald-300" : "text-destructive"
+              className={`inline-flex items-center gap-1 rounded-md border px-3 py-1 text-sm font-medium ${
+                allVerified
+                  ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
+                  : "border-destructive/40 bg-destructive/10 text-destructive"
               }`}
             >
-              <i
-                className={`redsim-dot ${allVerified ? "bg-emerald-400" : "bg-destructive"}`}
-                aria-hidden="true"
-              />
               <span aria-hidden="true">{allVerified ? "✓" : "✗"}</span>
               {allVerified
                 ? "All chains verified"
@@ -216,9 +214,9 @@ export default function AuditPage() {
         </header>
 
         {chains.length === 0 ? (
-          <p className="text-ink-3">No audit chains found.</p>
+          <p className="text-muted-foreground">No audit chains found.</p>
         ) : (
-          <div>
+          <div className="space-y-4">
             {chains.map((c) => (
               <ChainCard key={c.chain_id} chain={c} />
             ))}

@@ -83,8 +83,8 @@ export default function TargetsPage() {
   const profiles: AuthProfile[] = Array.isArray(profilesData) ? profilesData : [];
 
   if (!authed)
-    return <p className="text-ink-3">Signing in…</p>;
-  if (error) return <p className="text-ink-3">Failed to load.</p>;
+    return <p className="text-muted-foreground">Signing in…</p>;
+  if (error) return <p className="text-muted-foreground">Failed to load.</p>;
 
   const create = async () => {
     if (!value) return;
@@ -144,23 +144,23 @@ export default function TargetsPage() {
 
   return (
     <div className="space-y-6">
-      <h1>Targets</h1>
-      <p className="max-w-[60ch] text-sm text-ink-3">
+      <h1 className="text-2xl font-semibold">Targets</h1>
+      <p className="text-sm text-muted-foreground">
         Adversarial ML model targets are registered in the{" "}
-        <Link href="/models" className="redsim-link">
+        <Link href="/models" className="text-primary underline">
           model catalog
         </Link>
         . This page stays available until the catalog API is mounted.
       </p>
       {err && (
-        <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {err}
         </p>
       )}
       {noAdapters && (
         <p
           role="status"
-          className="rounded-[4px] border border-line bg-surface-2 p-3 text-sm text-ink-3"
+          className="rounded-md border border-border bg-muted p-3 text-sm text-muted-foreground"
         >
           {scannersError
             ? "Could not load the attack adapter roster (GET /v1/scanners). Start scan is disabled."
@@ -169,14 +169,14 @@ export default function TargetsPage() {
               : NO_ADAPTER_NOTICE}
         </p>
       )}
-      <div className="redsim-panel flex flex-wrap items-start gap-4 p-5">
-        <label className="block text-sm">
-          <span className="redsim-kicker mb-1 block">Scanner</span>
+      <div className="flex flex-wrap items-start gap-3">
+        <label className="flex flex-col text-sm">
+          <span className="mb-1">Scanner</span>
           <select
             value={scanner}
             disabled={noAdapters}
             onChange={(e) => { setScannerChoice(e.target.value); setAuthProfileId(""); }}
-            className="redsim-input w-72"
+            className="rounded-md border border-border bg-background px-2 py-1.5 disabled:opacity-50"
           >
             {noAdapters && <option value="">No attack adapter registered</option>}
             {scanners.map((s) => (
@@ -185,13 +185,13 @@ export default function TargetsPage() {
           </select>
         </label>
         {isDast && (
-          <div className="block text-sm">
-            <label className="block">
-              <span className="redsim-kicker mb-1 block">Authentication profile (optional)</span>
+          <div className="flex flex-col text-sm">
+            <label className="flex flex-col">
+              <span className="mb-1">Authentication profile (optional)</span>
               <select
                 value={authProfileId}
                 onChange={(e) => setAuthProfileId(e.target.value)}
-                className="redsim-input w-72"
+                className="w-72 rounded-md border border-border bg-background px-2 py-1.5"
               >
                 <option value="">None</option>
                 {profiles.map((p) => (
@@ -199,17 +199,17 @@ export default function TargetsPage() {
                 ))}
               </select>
             </label>
-            <span className="mt-1 block text-xs text-ink-3">
+            <span className="mt-1 text-xs text-muted-foreground">
               Lets adapters with the dast capability test behind a login. Manage profiles under Auth Profiles.
             </span>
           </div>
         )}
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-hidden rounded-md border border-border bg-card">
         <table className="w-full text-sm">
           <caption className="sr-only">Registered targets</caption>
-          <thead className="text-left">
-            <tr className="border-b border-line-strong">
+          <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
+            <tr>
               <th scope="col" className="px-3 py-2">ID</th>
               <th scope="col" className="px-3 py-2">Kind</th>
               <th scope="col" className="px-3 py-2">Value</th>
@@ -219,15 +219,15 @@ export default function TargetsPage() {
           </thead>
           <tbody>
             {(data?.targets ?? []).map((t) => (
-              <tr key={t.id} className="border-b border-line last:border-0">
-                <td className="px-3 py-2.5 font-mono text-xs">{t.id}</td>
-                <td className="px-3 py-2.5"><span className="redsim-chip">{t.kind}</span></td>
-                <td className="px-3 py-2.5 text-ink-1">{t.value}</td>
-                <td className="px-3 py-2.5">{t.verified ? "yes" : "no"}</td>
-                <td className="px-3 py-2.5">
+              <tr key={t.id} className="border-t border-border">
+                <td className="px-3 py-2">{t.id}</td>
+                <td className="px-3 py-2">{t.kind}</td>
+                <td className="px-3 py-2">{t.value}</td>
+                <td className="px-3 py-2">{t.verified ? "yes" : "no"}</td>
+                <td className="px-3 py-2">
                   <div className="flex items-center gap-2">
                     <button
-                      className="redsim-cta redsim-btn-sm"
+                      className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                       disabled={busy || noAdapters}
                       title={noAdapters ? NO_ADAPTER_NOTICE : undefined}
                       onClick={() => launchScan(t)}
@@ -238,7 +238,7 @@ export default function TargetsPage() {
                       <AlertDialog>
                         <AlertDialogTrigger asChild>
                           <button
-                            className="redsim-ghost redsim-btn-sm border-destructive/50 text-destructive"
+                            className="rounded-md border border-border px-3 py-1.5 text-sm text-destructive hover:bg-muted disabled:opacity-50"
                             disabled={busy}
                           >
                             Delete
@@ -272,29 +272,22 @@ export default function TargetsPage() {
           </tbody>
         </table>
       </div>
-      <section className="redsim-sheet">
-        <h2 className="redsim-sheet-label">Register target</h2>
-        <div className="redsim-sheet-body">
-          <div className="redsim-panel flex flex-wrap items-end gap-3 p-5">
-            <label className="block text-sm">
-              <span className="redsim-kicker mb-1 block">URL</span>
-              <input
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                placeholder="https://target.example"
-                className="redsim-input w-80"
-              />
-            </label>
-            <button
-              className="redsim-cta"
-              onClick={create}
-              disabled={busy}
-            >
-              Add
-            </button>
-          </div>
-        </div>
-      </section>
+      <h2 className="text-lg font-semibold">Register target</h2>
+      <div className="flex items-center gap-3">
+        <input
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="https://target.example"
+          className="w-80 rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+        />
+        <button
+          className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+          onClick={create}
+          disabled={busy}
+        >
+          Add
+        </button>
+      </div>
     </div>
   );
 }

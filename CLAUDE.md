@@ -669,37 +669,22 @@ browser against a running stack and is listed as open in the README.
 `web/src/lib/api.ts` defaults to `http://localhost:8000`, overridable with
 `NEXT_PUBLIC_REDSIM_API_URL`.
 
-Visual language ("the instrument", branch `ui-instrument`, 2026-09-09,
-superseding the Labs-mirror pass of the `ui` branch earlier that day): one
-dark theme, built as the instrument that measures how a small perturbation
-moves a decision. A deep navy ground (`#070a12`) under a static
-perturbation grain (an SVG fractal-noise field, heavier top-left, drawn by
-`body::before`, never animated), three neutral ink surfaces above it, warm
-white text at four strengths (`--ink-1` to `--ink-4`), neutral hairlines
-(`--line`, `--line-strong`). Two typefaces encode the product's own rule:
-Public Sans (measurements, labels, controls, tabular figures) and Source
-Serif 4 (`.redsim-prose`, the written interpretation: observations,
-readings, recommendations, finding accounts); JetBrains Mono for identifiers
-and digests. All three are SIL OFL and self-hosted under `web/public/fonts/`
-with their licences, so a build needs no network. Red (`#ff5a58`) is the
-Agile Defense Labs brand and is spent on the mark, primary actions
-(`.redsim-cta`) and the current nav item only; it never means danger.
-Severity and run state sit on the amber and orange scale, shown as a dot
-beside the word. Data marks are fixed across every chart: bone
-(`--data-adv`) for adversarial series, slate (`--data-control`) for the
-benign-noise control, dashed ink for the clean baseline; the robustness
-curve draws its x axis as an epsilon ruler. Layout is a ruled sheet, not a
-card kit: read-only content sits in `.redsim-sheet` sections (a rule above,
-the title in a left label column, the content beside it; `PanelSection`
-renders this), and only forms and controls sit in a `.redsim-panel`. No
-uppercase labels, no tracked-out kickers (`.redsim-kicker` is now a
-sentence-case sans label), no glass, no glow. Tokens and idioms live in
-`web/src/styles/globals.css` and `tailwind.config.ts` (`ink-*`, `surface-*`,
-`line`, `data-*`, `font-serif`); the shadcn semantic names still resolve.
-There is no light theme and no toggle: `<html class="dark">` is fixed in
-`app/layout.tsx`. The header carries the Agile Defense Labs mark
-(`web/public/brand/agile-labs.svg`) and the UNCLASSIFIED marking as a
-bordered chip; the favicon is `web/src/app/icon.svg`.
+Visual language (branch `ui`, 2026-09-09): one dark theme after
+labs.agiledefense.com. The Labs palette (navy `#04060f` ground, red
+`#ff5a58` accent, white text at 100 / 72 / 48 percent) and the semantic
+tokens live in `web/src/styles/globals.css`; `tailwind.config.ts` adds the
+`warning`, `success`, `info`, `navy-*` and `brand` colours and the
+Helvetica Neue / JetBrains Mono font stacks. There is no light theme and no
+theme toggle: `<html class="dark">` is fixed in `app/layout.tsx`. The header
+carries the Agile Defense Labs mark (`web/public/brand/agile-labs.svg`,
+vendored from the Labs site) and the favicon is `web/src/app/icon.svg`.
+JetBrains Mono is self-hosted under `web/public/fonts/` (SIL OFL 1.1, licence
+beside the files) so a build needs no network. Red is the brand and never
+means danger: `destructive`, the severity chips, the run-status badges, the
+audit-chain badge and the log levels sit on an amber and orange scale. The
+`.redsim-panel` (glass card), `.redsim-kicker`, `.redsim-nav-link`,
+`.redsim-cta`, `.redsim-ghost` and `.redsim-meta` classes are the shared
+Labs idioms.
 
 ### Deploy
 

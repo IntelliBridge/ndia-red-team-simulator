@@ -71,7 +71,7 @@ export function RunsTable({ project, limit }: RunsTableProps) {
     return (
       <div
         role="alert"
-        className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+        className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
       >
         <p>
           Runs are unavailable: <code>{upstream?.code ?? "unknown_error"}</code>
@@ -96,7 +96,7 @@ export function RunsTable({ project, limit }: RunsTableProps) {
   const stale = query.error ? (
     <div
       role="status"
-      className="rounded-[4px] border border-line bg-surface-2 p-3 text-sm text-ink-3"
+      className="rounded-md border border-border bg-muted/50 p-3 text-sm text-muted-foreground"
     >
       <p>
         These rows may be out of date: <code>{upstream?.code ?? "unknown_error"}</code>
@@ -111,9 +111,9 @@ export function RunsTable({ project, limit }: RunsTableProps) {
     return (
       <div className="space-y-3">
         {stale}
-        <p className="text-ink-3">
+        <p className="text-muted-foreground">
           No runs yet. Head to{" "}
-          <Link className="redsim-link" href="/models">
+          <Link className="text-primary underline" href="/models">
             /models
           </Link>{" "}
           to register a target and start one.
@@ -125,7 +125,7 @@ export function RunsTable({ project, limit }: RunsTableProps) {
   return (
     <div className="space-y-3">
       {stale}
-      <div className="overflow-x-auto">
+      <div className="overflow-hidden rounded-md border border-border bg-card">
         <Table>
           <TableCaption className="sr-only">All runs</TableCaption>
           <TableHeader>
@@ -141,21 +141,21 @@ export function RunsTable({ project, limit }: RunsTableProps) {
             {runs.map((run) => (
               <TableRow key={run.id} {...rowLink(`/runs/${run.id}`)}>
                 <TableCell className="font-mono text-xs">
-                  <Link className="redsim-link" href={`/runs/${run.id}`}>
+                  <Link className="text-primary underline" href={`/runs/${run.id}`}>
                     {run.id}
                   </Link>
                 </TableCell>
                 {/* The run row carries a scanner, not a model or an attack list.
                     Until the API grows a per-run campaign summary these read
                     "not recorded" rather than inventing a value (KTD12). */}
-                <TableCell className="text-ink-3">
+                <TableCell className="text-muted-foreground">
                   {run.scanner ?? "not recorded"}
                 </TableCell>
-                <TableCell className="text-ink-3">not recorded</TableCell>
+                <TableCell className="text-muted-foreground">not recorded</TableCell>
                 <TableCell>
                   <RunStatusBadge status={run.status} />
                 </TableCell>
-                <TableCell className="text-ink-3">
+                <TableCell className="text-muted-foreground">
                   {formatDateTime(run.created_at)}
                 </TableCell>
               </TableRow>

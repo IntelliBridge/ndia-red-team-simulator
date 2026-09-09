@@ -190,26 +190,21 @@ export default function RunPage({ params }: { params: { id: string } }) {
     );
     const findings = data?.findings ?? llmFindings?.findings ?? [];
     return (
-      <div className="space-y-6">
-        <header className="flex flex-wrap items-end justify-between gap-4 pb-2">
-          <div className="min-w-0">
+      <div className="space-y-4">
+        <header className="gap-4 flex flex-wrap items-end justify-between">
+          <div>
             <div className="redsim-kicker">LLM probe review</div>
-            <div className="mt-1 flex flex-wrap items-center gap-4">
-              <h1 className="m-0 font-mono text-[1.375rem] font-medium tracking-normal">{params.id}</h1>
+            <h1 className="font-mono text-2xl">{params.id}</h1>
+            <div className="mt-2">
               <RunStatusBadge status={runStatus ?? "queued"} />
-              <AuditChainBadge
-                state={data?.audit?.state ?? "pending"}
-                events={data?.audit?.events}
-                chainId={`run:${params.id}`}
-              />
             </div>
           </div>
-          <div className="flex items-center gap-3 text-xs font-medium">
+          <div className="gap-3 text-sm flex items-center">
             {hasReport &&
               (["html", "json", "md"] as const).map((ext) => (
                 <RoleGated key={ext} minRole="scanner" callerRole={llmRole}>
                   <a
-                    className="redsim-link"
+                    className="text-primary underline"
                     href={reportUrl(params.id, ext)}
                     target="_blank"
                     rel="noreferrer"
@@ -222,7 +217,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
               <RoleGated minRole="remediator" callerRole={llmRole}>
                 <button
                   onClick={cancel}
-                  className="redsim-ghost redsim-btn-sm border-destructive/40 text-destructive"
+                  className="border-destructive/30 px-3 py-1 text-destructive border"
                 >
                   Cancel run
                 </button>
@@ -232,16 +227,16 @@ export default function RunPage({ params }: { params: { id: string } }) {
         </header>
         <StageTimeline stages={stages} />
         {cancelError && (
-          <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+          <p className="border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive border">
             {cancelError}
           </p>
         )}
-        <div>
+        <div className="space-y-4">
           {panel(
             1,
             "Run status",
             <div>
-              <p className="redsim-prose m-0 text-base">
+              <p>
                 {runStatus === "queued"
                   ? "Probe run is queued; the worker has not started it yet."
                   : runStatus === "running"
@@ -256,17 +251,17 @@ export default function RunPage({ params }: { params: { id: string } }) {
                             ? "Run status unavailable."
                             : "Resolving run status…"}
               </p>
-              <p className="mt-2 text-xs text-ink-3">
+              <p className="mt-2 text-xs text-muted-foreground">
                 {stagesDone.join(" · ") || "No completed stages recorded"}
                 {stageError ? ` — ${stageError}` : ""}
               </p>
               {probeIds.length > 0 && (
-                <p className="mt-2 text-xs text-ink-3">
+                <p className="mt-2 text-xs text-muted-foreground">
                   {probeIds.length} probes requested: {probeIds.join(", ")}
                 </p>
               )}
               {runDetail?.completed_at && (
-                <p className="mt-1 text-xs text-ink-3">
+                <p className="mt-1 text-xs text-muted-foreground">
                   completed {runDetail.completed_at}
                 </p>
               )}
@@ -287,33 +282,33 @@ export default function RunPage({ params }: { params: { id: string } }) {
             3,
             "Artifacts",
             artifacts.length ? (
-              <table className="w-full text-left text-sm">
+              <table className="text-xs w-full text-left">
                 <thead>
-                  <tr className="border-b border-line-strong">
-                    <th className="px-3 py-2.5 font-medium">Kind</th>
-                    <th className="px-3 py-2.5 font-medium">Size</th>
-                    <th className="px-3 py-2.5 font-medium">sha256</th>
-                    <th className="px-3 py-2.5 font-medium">Artifact</th>
+                  <tr>
+                    <th>Kind</th>
+                    <th>Size</th>
+                    <th>sha256</th>
+                    <th>Artifact</th>
                   </tr>
                 </thead>
                 <tbody>
                   {artifacts.map((row) => (
-                    <tr key={row.id} className="border-b border-line last:border-0">
-                      <td className="px-3 py-2.5 font-mono text-xs">{row.kind ?? "—"}</td>
-                      <td className="px-3 py-2.5 tabular-nums">
+                    <tr key={row.id} className="border-border border-t">
+                      <td className="font-mono">{row.kind ?? "—"}</td>
+                      <td>
                         {typeof row.size_bytes === "number"
                           ? `${row.size_bytes} B`
                           : "—"}
                       </td>
-                      <td className="break-all px-3 py-2.5 font-mono text-xs text-ink-3">
+                      <td className="font-mono text-muted-foreground break-all">
                         {row.sha256 ? row.sha256.slice(0, 16) : "—"}
                       </td>
-                      <td className="px-3 py-2.5 font-mono text-xs">
+                      <td>
                         <a
                           href={artifactUrl(row.id)}
                           target="_blank"
                           rel="noreferrer"
-                          className="redsim-link"
+                          className="text-primary underline"
                         >
                           {row.id}
                         </a>
@@ -323,7 +318,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                 </tbody>
               </table>
             ) : (
-              <p className="text-sm text-ink-3">
+              <p className="text-sm text-muted-foreground">
                 {llmActive
                   ? "No artifacts yet; they are written as the probe run progresses."
                   : "No artifacts were recorded for this run."}
@@ -334,29 +329,29 @@ export default function RunPage({ params }: { params: { id: string } }) {
             4,
             "Findings",
             findings.length ? (
-              <table className="w-full text-left text-sm">
+              <table className="text-xs w-full text-left">
                 <thead>
-                  <tr className="border-b border-line-strong">
-                    <th className="px-3 py-2.5 font-medium">Severity</th>
-                    <th className="px-3 py-2.5 font-medium">Status</th>
-                    <th className="px-3 py-2.5 font-medium">Finding</th>
-                    <th className="px-3 py-2.5 font-medium">Review</th>
+                  <tr>
+                    <th>Severity</th>
+                    <th>Status</th>
+                    <th>Finding</th>
+                    <th>Review</th>
                   </tr>
                 </thead>
                 <tbody>
                   {findings.map((finding) => (
-                    <tr key={finding.id} {...rowLink(`/findings/${finding.id}`)} className={`border-b border-line last:border-0 ${rowLink("").className}`}>
-                      <td className="px-3 py-2.5"><SeverityChip level={finding.severity} /></td>
-                      <td className="px-3 py-2.5"><span className="redsim-chip">{finding.status}</span></td>
-                      <td className="px-3 py-2.5">
+                    <tr key={finding.id} {...rowLink(`/findings/${finding.id}`)} className={`border-border border-t ${rowLink("").className}`}>
+                      <td><SeverityChip level={finding.severity} /></td>
+                      <td>{finding.status}</td>
+                      <td>
                         <a
                           href={`/findings/${finding.id}`}
-                          className="redsim-link"
+                          className="text-primary underline"
                         >
                           {finding.schema_blob.title ?? finding.id}
                         </a>
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td>
                         <RoleGated minRole="approver" callerRole={llmRole}>
                           <button
                             onClick={async () => {
@@ -376,7 +371,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                                 setActionError(String(cause));
                               }
                             }}
-                            className="redsim-ghost redsim-btn-sm"
+                            className="border-border px-2 py-1 border"
                           >
                             Dismiss
                           </button>
@@ -387,7 +382,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                 </tbody>
               </table>
             ) : (
-              <p className="text-sm text-ink-3">
+              <p className="text-sm text-muted-foreground">
                 {llmActive
                   ? "Findings are raised when the probe run completes."
                   : "No findings were raised for this run."}
@@ -416,13 +411,13 @@ export default function RunPage({ params }: { params: { id: string } }) {
     // whether this is a probe run before reporting the campaign as absent.
     return (
       <div className="space-y-3">
-        <div className="h-8 w-64 animate-pulse rounded-[4px] bg-surface-2" />
-        <div className="h-40 animate-pulse rounded-[4px] bg-surface-2" />
+        <div className="h-8 w-64 animate-pulse bg-muted" />
+        <div className="h-40 animate-pulse bg-muted" />
       </div>
     );
   if (error)
     return (
-      <div className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+      <div className="border-destructive/40 bg-destructive/10 p-4 text-sm border">
         {error instanceof ApiError
           ? ({
               403: "Access denied for this campaign.",
@@ -437,8 +432,8 @@ export default function RunPage({ params }: { params: { id: string } }) {
   if (!data)
     return (
       <div className="space-y-3">
-        <div className="h-8 w-64 animate-pulse rounded-[4px] bg-surface-2" />
-        <div className="h-40 animate-pulse rounded-[4px] bg-surface-2" />
+        <div className="h-8 w-64 animate-pulse bg-muted" />
+        <div className="h-40 animate-pulse bg-muted" />
       </div>
     );
 
@@ -468,25 +463,20 @@ export default function RunPage({ params }: { params: { id: string } }) {
     }
   };
   return (
-    <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-4 pb-2">
-        <div className="min-w-0">
-          <div className="redsim-kicker">Campaign review</div>
-          <div className="mt-1 flex flex-wrap items-center gap-4">
-            <h1 className="m-0 font-mono text-[1.375rem] font-medium tracking-normal">{params.id}</h1>
+    <div className="space-y-4">
+      <header className="gap-4 flex flex-wrap items-end justify-between">
+        <div>
+          <div className="redsim-kicker">campaign review</div>
+          <h1 className="font-mono text-2xl">{params.id}</h1>
+          <div className="mt-2">
             <RunStatusBadge status={campaign.status} />
-            <AuditChainBadge
-              state={campaign.audit?.state ?? "pending"}
-              events={campaign.audit?.events}
-              chainId={`run:${params.id}`}
-            />
           </div>
         </div>
-        <div className="flex items-center gap-3 text-xs font-medium">
+        <div className="gap-3 text-sm flex items-center">
           {(["html", "json", "md"] as const).map((ext) => (
             <RoleGated key={ext} minRole="scanner" callerRole={role}>
               <a
-                className="redsim-link"
+                className="text-primary underline"
                 href={reportUrl(params.id, ext)}
                 target="_blank"
                 rel="noreferrer"
@@ -499,7 +489,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             <RoleGated minRole="remediator" callerRole={role}>
               <button
                 onClick={cancel}
-                className="redsim-ghost redsim-btn-sm border-destructive/40 text-destructive"
+                className="border-destructive/30 px-3 py-1 text-destructive border"
               >
                 Cancel run
               </button>
@@ -509,16 +499,16 @@ export default function RunPage({ params }: { params: { id: string } }) {
       </header>
       <StageTimeline stages={stages} />
       {cancelError && (
-        <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <p className="border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive border">
           {cancelError}
         </p>
       )}
-      <div>
+      <div className="space-y-4">
         {panel(
           1,
           "Completeness",
           <div>
-            <p className="redsim-prose m-0 text-base">
+            <p>
               {campaign.status === "queued" || campaign.status === "running"
                 ? "Evidence is still arriving; this page refreshes while active."
                 : campaign.status === "succeeded" &&
@@ -530,7 +520,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                       ? "Campaign failed. Recorded partial evidence is preserved."
                       : "Campaign was cancelled. Recorded partial evidence is preserved."}
             </p>
-            <p className="mt-2 text-xs text-ink-3">
+            <p className="mt-2 text-xs text-muted-foreground">
               {campaign.stages_done.join(" · ") ||
                 "No completed stages recorded"}
               {campaign.error ? ` — ${campaign.error}` : ""}
@@ -540,7 +530,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
         {panel(
           2,
           "Campaign settings",
-          <dl className="m-0 grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4 [&_dd]:m-0 [&_dd]:text-ink-1">
+          <dl className="gap-4 text-sm md:grid-cols-3 grid grid-cols-2">
             <div>
               <dt className="redsim-kicker">attacks</dt>
               <dd>{campaign.config.attack_ids.join(", ")}</dd>
@@ -571,7 +561,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             </div>
             <div>
               <dt className="redsim-kicker">dataset revision</dt>
-              <dd className="break-all font-mono text-xs">
+              <dd className="break-all">
                 {campaign.config.dataset_revision ?? "not recorded"}
               </dd>
             </div>
@@ -600,7 +590,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             </div>
             <div>
               <dt className="redsim-kicker">settings hash</dt>
-              <dd className="break-all font-mono text-xs">
+              <dd className="break-all">
                 {campaign.settings_hash ?? "not recorded"}
               </dd>
             </div>
@@ -637,7 +627,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
         {panel(
           4,
           "Measurements & robustness",
-          <div className="grid gap-8 lg:grid-cols-[1.2fr_1fr]">
+          <div className="gap-5 lg:grid-cols-[1.2fr_1fr] grid">
             <MeasurementTable measurements={campaign.measurements} />
             <RobustnessCurve points={campaign.curve} />
           </div>,
@@ -662,17 +652,17 @@ export default function RunPage({ params }: { params: { id: string } }) {
             {campaign.interpretation.map((item) => (
               <div
                 key={item.id}
-                className="border-l-2 border-line-strong pl-4"
+                className="border-accent pl-3 text-sm border-l-2"
               >
                 <LabelBadge variant="inferred" />{" "}
-                <span className="redsim-prose mt-1 block text-base">{item.statement}</span>
-                <div className="mt-1 text-xs text-ink-3">
+                <span className="ml-2">{item.statement}</span>
+                <div className="mt-1 text-xs text-muted-foreground">
                   basis:{" "}
                   {item.basis.map((basis) => (
                     <a
                       key={basis}
                       href={`#${basis}`}
-                      className="redsim-link ml-1"
+                      className="ml-1 text-primary underline"
                     >
                       {basis}
                     </a>
@@ -687,7 +677,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
           "Candidate actions",
           <div className="space-y-3">
             {campaign.recommendations.map((item) => (
-              <div key={item.id} className="border-b border-line pb-4 text-sm last:border-0 last:pb-0">
+              <div key={item.id} className="border-border p-3 text-sm border">
                 <LabelBadge
                   variant={item.measured ? "measured" : "candidate"}
                   measuredDelta={
@@ -696,15 +686,15 @@ export default function RunPage({ params }: { params: { id: string } }) {
                       : undefined
                   }
                 />
-                <div className="mt-2 text-base font-semibold text-ink-1">{item.title}</div>
-                <p className="redsim-prose mt-1 text-base">{item.rationale}</p>
-                <div className="mt-1 text-xs text-ink-3">
+                <div className="mt-2 font-semibold">{item.title}</div>
+                <p className="mt-1">{item.rationale}</p>
+                <div className="text-xs text-muted-foreground">
                   triggered by{" "}
                   {item.triggered_by.map((basis) => (
                     <a
                       key={basis}
                       href={`#${basis}`}
-                      className="redsim-link ml-1"
+                      className="ml-1 text-primary underline"
                     >
                       {basis}
                     </a>
@@ -712,7 +702,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                   · {item.narrative_source} narrative · {item.validation}
                 </div>
                 {item.measured && (
-                  <p className="mt-1 text-xs tabular-nums text-ink-1">
+                  <p className="mt-1 text-xs">
                     Measured verification ΔMRI {item.measured.delta_mri ?? "—"}{" "}
                     · ΔASR {item.measured.delta_asr ?? "—"}
                   </p>
@@ -729,7 +719,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                         }),
                       )
                     }
-                    className="redsim-input mt-3 inline-block w-auto py-1.5"
+                    className="mt-2 border-input bg-background p-1 border"
                   >
                     <option value="">Select defense</option>
                     {availableDefenses.map((defense: DefenseInfo) => (
@@ -755,12 +745,12 @@ export default function RunPage({ params }: { params: { id: string } }) {
                       }
                     }}
                     disabled={!item.finding_id || !defenseSelections[item.id]}
-                    className="redsim-ghost redsim-btn-sm ml-2"
+                    className="ml-2 border-border px-2 py-1 border"
                   >
                     Verify
                   </button>
                   {!item.finding_id && (
-                    <p className="mt-2 text-xs text-ink-3">
+                    <p className="mt-2 text-xs text-muted-foreground">
                       Verification unavailable: no finding is linked to this
                       recommendation.
                     </p>
@@ -773,7 +763,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
         {panel(
           8,
           "Limitations",
-          <ul className="redsim-prose m-0 list-disc space-y-1 pl-5 text-base">
+          <ul className="space-y-1 pl-5 text-sm list-disc">
             {(campaign.limitations.length
               ? campaign.limitations
               : ["Limitations were not recorded; evidence is incomplete."]
@@ -786,7 +776,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
           9,
           "Provenance",
           <div>
-            <dl className="m-0 grid grid-cols-2 gap-x-6 gap-y-3 text-sm md:grid-cols-4 [&_dd]:m-0 [&_dd]:break-all [&_dd]:text-ink-1">
+            <dl className="gap-3 text-sm grid grid-cols-2">
               {Object.entries(campaign.provenance ?? {}).map(([key, value]) => (
                 <div key={key}>
                   <dt className="redsim-kicker">{key}</dt>
@@ -813,7 +803,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                   );
                   window.location.assign(`/runs/${result.run_id}`);
                 }}
-                className="redsim-ghost redsim-btn-sm mt-4"
+                className="mt-3 border-border px-3 py-2 text-sm border"
               >
                 Rerun same config
               </button>
@@ -823,19 +813,19 @@ export default function RunPage({ params }: { params: { id: string } }) {
         {panel(
           10,
           "Reviewer notes",
-          <div className="redsim-panel p-4">
+          <div>
             <textarea
               aria-label="Reviewer notes"
               value={notes ?? campaign.reviewer_notes ?? ""}
               onChange={(event) => setNotes(event.target.value)}
               readOnly={!canAnnotate}
               aria-readonly={!canAnnotate}
-              className="redsim-input min-h-24 font-serif text-base leading-relaxed"
+              className="min-h-24 rounded-sm border-input bg-background p-3 text-sm w-full border"
             />
             <RoleGated minRole="remediator" callerRole={role}>
               <button
                 onClick={saveNotes}
-                className="redsim-cta redsim-btn-sm mt-3"
+                className="mt-2 bg-primary px-3 py-2 text-sm text-primary-foreground"
               >
                 Save notes
               </button>
@@ -844,7 +834,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
               <p className="mt-2 text-sm text-destructive">{noteError}</p>
             )}
             {!canAnnotate && (
-              <p className="mt-2 text-xs text-ink-3">
+              <p className="mt-2 text-xs text-muted-foreground">
                 Reviewer notes are read-only for this role.
               </p>
             )}
@@ -853,31 +843,31 @@ export default function RunPage({ params }: { params: { id: string } }) {
         {panel(
           11,
           "Findings",
-          <table className="w-full text-left text-sm">
+          <table className="text-xs w-full text-left">
             <thead>
-              <tr className="border-b border-line-strong">
-                <th className="px-3 py-2.5 font-medium">Severity</th>
-                <th className="px-3 py-2.5 font-medium">Attack</th>
-                <th className="px-3 py-2.5 font-medium">First ε</th>
-                <th className="px-3 py-2.5 font-medium">Finding</th>
-                <th className="px-3 py-2.5 font-medium">Review</th>
+              <tr>
+                <th>Severity</th>
+                <th>Attack</th>
+                <th>First ε</th>
+                <th>Finding</th>
+                <th>Review</th>
               </tr>
             </thead>
             <tbody>
               {campaign.findings?.map((finding) => (
-                <tr key={finding.id} {...rowLink(`/findings/${finding.id}`)} className={`border-b border-line last:border-0 ${rowLink("").className}`}>
-                  <td className="px-3 py-2.5"><SeverityChip level={finding.severity} /></td>
-                  <td className="px-3 py-2.5 font-mono text-xs">{finding.schema_blob.ml?.attack_id ?? "—"}</td>
-                  <td className="px-3 py-2.5 tabular-nums">{finding.schema_blob.ml?.first_success_eps ?? "—"}</td>
-                  <td className="px-3 py-2.5">
+                <tr key={finding.id} {...rowLink(`/findings/${finding.id}`)} className={`border-border border-t ${rowLink("").className}`}>
+                  <td><SeverityChip level={finding.severity} /></td>
+                  <td>{finding.schema_blob.ml?.attack_id ?? "—"}</td>
+                  <td>{finding.schema_blob.ml?.first_success_eps ?? "—"}</td>
+                  <td>
                     <a
                       href={`/findings/${finding.id}`}
-                      className="redsim-link"
+                      className="text-primary underline"
                     >
                       {finding.schema_blob.title ?? finding.id}
                     </a>
                   </td>
-                  <td className="px-3 py-2.5">
+                  <td>
                     <RoleGated minRole="approver" callerRole={role}>
                       <button
                         onClick={async () => {
@@ -895,7 +885,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                             setActionError(String(cause));
                           }
                         }}
-                        className="redsim-ghost redsim-btn-sm"
+                        className="border-border px-2 py-1 border"
                       >
                         Dismiss
                       </button>
@@ -909,13 +899,13 @@ export default function RunPage({ params }: { params: { id: string } }) {
         {panel(
           12,
           "Compare",
-          <div className="redsim-panel p-4">
-            <label className="inline-flex items-center gap-2 text-sm">
+          <div>
+            <label className="text-sm">
               Compare with run
               <input
                 value={compareId}
                 onChange={(event) => setCompareId(event.target.value)}
-                className="redsim-input inline-block w-64 font-mono text-xs"
+                className="ml-2 border-input bg-background p-2 border"
               />
             </label>
             <button
@@ -930,13 +920,13 @@ export default function RunPage({ params }: { params: { id: string } }) {
                   setCompareError(String(e));
                 }
               }}
-              className="redsim-ghost redsim-btn-sm ml-2"
+              className="ml-2 border-border px-3 py-2 text-sm border"
             >
               Compare
             </button>
             {compareResult?.mode === "verify_delta" && (
-              <div className="mt-4 border-t border-line pt-4 text-sm tabular-nums">
-                <strong className="text-ink-1">Measured verify comparison</strong>
+              <div className="mt-3 border-border p-3 text-sm border">
+                <strong>Measured verify comparison</strong>
                 <p>ΔMRI {compareResult.delta_mri ?? "not recorded"}</p>
                 {Object.entries(compareResult.delta_dimensions ?? {}).map(
                   ([name, value]) => (
@@ -956,25 +946,25 @@ export default function RunPage({ params }: { params: { id: string } }) {
                   {compareResult.delta_acc_clean?.delta ?? "not recorded"}
                 </p>
                 {!!compareResult.delta_families?.length && (
-                  <table className="mt-3 w-full text-left text-xs">
+                  <table className="mt-2 text-xs w-full text-left">
                     <thead>
-                      <tr className="border-b border-line-strong">
-                        <th className="px-2 py-2 font-medium">Family</th>
-                        <th className="px-2 py-2 text-right font-medium">Before</th>
-                        <th className="px-2 py-2 text-right font-medium">After</th>
+                      <tr>
+                        <th>Family</th>
+                        <th>Before</th>
+                        <th>After</th>
                       </tr>
                     </thead>
                     <tbody>
                       {compareResult.delta_families.map((family) => (
                         <tr
                           key={family.family}
-                          className="border-b border-line last:border-0"
+                          className="border-border border-t"
                         >
-                          <td className="px-2 py-2 text-ink-1">{family.family}</td>
-                          <td className="px-2 py-2 text-right tabular-nums">
+                          <td>{family.family}</td>
+                          <td>
                             {family.before} (n={family.n_before})
                           </td>
-                          <td className="px-2 py-2 text-right tabular-nums">
+                          <td>
                             {family.after} (n={family.n_after})
                           </td>
                         </tr>
@@ -985,10 +975,10 @@ export default function RunPage({ params }: { params: { id: string } }) {
               </div>
             )}
             {compareResult?.mode === "side_by_side" && (
-              <div className="mt-4 grid gap-6 border-t border-line pt-4 md:grid-cols-2">
+              <div className="mt-3 gap-3 md:grid-cols-2 grid">
                 {(compareResult.scorecards ?? []).map((scorecard, index) => (
-                  <div key={index} className="space-y-4 text-sm">
-                    <strong className="block text-ink-1">
+                  <div key={index} className="border-border p-3 text-sm border">
+                    <strong>
                       Scorecard {index + 1}
                       {scorecard.run_id ? ` · ${scorecard.run_id}` : ""}
                     </strong>
@@ -1005,7 +995,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                     {scorecard.measurements?.length ? (
                       <MeasurementTable measurements={scorecard.measurements} />
                     ) : (
-                      <p className="mt-2 text-xs text-ink-3">
+                      <p className="mt-2 text-xs text-muted-foreground">
                         Measurement table unavailable.
                       </p>
                     )}
@@ -1014,7 +1004,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
               </div>
             )}
             {compareResult && (
-              <div className="mt-3 text-xs text-ink-2">
+              <div className="mt-3 text-xs">
                 <p>
                   Changed variables:{" "}
                   {compareResult.changed_variables.join(", ") || "none"}
@@ -1024,7 +1014,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                   {compareResult.unchanged_variables.join(", ") || "none"}
                 </p>
                 {compareResult.caveats.map((caveat) => (
-                  <p key={caveat} className="text-ink-3">
+                  <p key={caveat} className="text-muted-foreground">
                     {caveat}
                   </p>
                 ))}
