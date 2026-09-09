@@ -52,10 +52,19 @@ export function redsimCookieOptions(
   };
 }
 
-/** The two cookie names, so callers do not re-derive them. */
+/**
+ * The three cookie names, so callers do not re-derive them.
+ *
+ * The dev token is not part of the minted pair. It joins the list because
+ * sign-out has to clear every credential the tRPC context would accept, and
+ * `server/trpc/context.ts` accepts this one as a bearer in a dev or test
+ * deployment. Its name comes from `env` rather than from `redsim-session.ts`,
+ * which the FastAPI session-cookie contract freezes.
+ */
 export const redsimCookieNames = {
   session: sessionCookieName,
   csrf: csrfCookieName,
+  devToken: env.REDSIM_DEV_TOKEN_COOKIE,
 };
 
 /**
@@ -123,12 +132,20 @@ export async function setRedsimCookies(
   return maxAge;
 }
 
-/** Clear both cookies. Shared by the sign-out route. */
+/**
+ * Clear every cookie that authenticates a caller. Shared by the sign-out route.
+ *
+ * The dev token is cleared with the `csrf` attribute shape, which is the
+ * non-httpOnly one the login page writes it with. A sign-out that left it
+ * behind would leave the middleware gate satisfied and the tRPC context still
+ * forwarding a bearer, so the user would stay signed in.
+ */
 export function clearRedsimCookies(
   set: (name: string, value: string, options: ReturnType<typeof redsimCookieOptions>) => void,
 ): void {
   set(redsimCookieNames.session, "", redsimCookieOptions("session", 0));
   set(redsimCookieNames.csrf, "", redsimCookieOptions("csrf", 0));
+  set(redsimCookieNames.devToken, "", redsimCookieOptions("csrf", 0));
 }
 
 /**

@@ -26,7 +26,7 @@ function post(headers: HeadersInit = {}): Request {
 }
 
 describe("POST /api/auth/signout-redsim", () => {
-  it("clears both the session and csrf cookies with maxAge 0", () => {
+  it("clears the session, csrf and dev-token cookies with maxAge 0", () => {
     POST(post({ "sec-fetch-site": "same-origin" }));
 
     // The attributes now come from the shared builder the after-hook and the
@@ -41,7 +41,13 @@ describe("POST /api/auth/signout-redsim", () => {
       "",
       expect.objectContaining({ path: "/", maxAge: 0, httpOnly: false }),
     );
-    expect(setSpy).toHaveBeenCalledTimes(2);
+    // The dev-token cookie is the third credential the tRPC context accepts.
+    expect(setSpy).toHaveBeenCalledWith(
+      "redsim_dev_token",
+      "",
+      expect.objectContaining({ path: "/", maxAge: 0, httpOnly: false }),
+    );
+    expect(setSpy).toHaveBeenCalledTimes(3);
   });
 
   it("responds 200 with { ok: true }", async () => {
@@ -83,7 +89,7 @@ describe("POST /api/auth/signout-redsim", () => {
     const res = POST(post());
 
     expect(res.status).toBe(200);
-    expect(setSpy).toHaveBeenCalledTimes(2);
+    expect(setSpy).toHaveBeenCalledTimes(3);
   });
 });
 
