@@ -1,0 +1,19 @@
+[Unit]
+Description=redsim web (Next.js dev server on the checkout)
+After=network-online.target redsim-identity.service redsim-api.service
+Wants=network-online.target
+[Service]
+Type=simple
+User=redsim
+Group=redsim
+Environment=HOME=/var/lib/redsim
+Environment=COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+WorkingDirectory=/opt/redsim/src
+ExecStart=/usr/local/bin/redsim-run web pnpm --filter @redsim/web dev -p 3000 -H 127.0.0.1
+Restart=always
+RestartSec=3
+KillMode=mixed
+TimeoutStopSec=60
+LimitNOFILE=65536
+[Install]
+WantedBy=multi-user.target
