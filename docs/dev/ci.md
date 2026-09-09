@@ -20,10 +20,12 @@ markers) see [Testing](testing.md), and for running the stack and the e2e tier s
 
 | Job | What it checks | Python | Extras installed |
 |---|---|---|---|
-| Unit tests (py3.12) | ruff, mypy, then `pytest -q -m "not integration and not docker and not e2e and not slow and not auth_required"` | 3.12 | `api,worker,test,dev` plus `ml` (CPU torch first) |
+| Unit tests (py3.12) | ruff, mypy, then `pytest -q -m "not integration and not docker and not e2e and not slow and not auth_required and not garak"` | 3.12 | `api,worker,test,dev` plus `ml` (CPU torch first) |
 | Unit tests (py3.13) | same, with `and not ml` appended to the marker expression | 3.13 | `api,worker,test,dev` |
 | Coverage gate | the full default suite (the `addopts` marker expression) against Postgres 16 and Redis 7 after `alembic upgrade head`, then `--cov-fail-under=$COV_FAIL_UNDER` | 3.12 | `api,worker,test,dev,ml` |
-| API integration (Postgres + Redis) | `tests/` with `-m "not e2e and not docker and not slow and not auth_required and not ml"` after `alembic upgrade head` | 3.12 | `api,worker,test` |
+| API integration (Postgres + Redis) | `tests/` with `-m "not e2e and not docker and not slow and not auth_required and not ml and not garak"` after `alembic upgrade head` | 3.12 | `api,worker,test` |
+| E2E tier (python, eager Celery) | `REDSIM_E2E=1 pytest -q -p no:cacheprovider -m e2e tests/e2e --durations=15` with `REDSIM_E2E_POSTGRES_URL` set after `alembic upgrade head`, so the Postgres RLS lane runs rather than skips. 20 minute timeout, the pytest `--basetemp` (the harness directory) uploaded as an artifact on failure. See "The Python e2e job" | 3.12 | `api,worker,test,dev,ml` |
+| garak offline | `python -c "import garak"`, then `pytest -q -p no:cacheprovider -m garak tests`. Exit code 5 (nothing selected) counts as success while the LLM tracks land their tests. No gateway variable in the environment, garak's XDG directories under the runner temp. See "The garak offline job" | 3.12 | `api,worker,test,dev,garak` (CPU torch first) |
 | SAST (semgrep + bandit) | `p/python` + `p/security-audit` at ERROR plus `.semgrep.yml`, bandit `-ll -ii` with `.bandit` | 3.12 | `security` |
 | Dependency CVEs (pip-audit + trivy) | pip-audit over the resolved `api,worker,security` env, trivy `fs` at HIGH,CRITICAL | 3.12 | `api,worker,security` |
 | Helm chart lints + templates | `helm lint` and the `helm template` renders including the prod-secret guard | n/a | n/a |
@@ -34,10 +36,10 @@ markers) see [Testing](testing.md), and for running the stack and the e2e tier s
 | Build images (no push) | the four `deploy/Dockerfile.*` build | n/a | n/a |
 | Stack E2E (Playwright, fixture-assisted) | only via `workflow_dispatch` with `run_e2e=true`: compose up, Playwright against the web app with `REDSIM_E2E_STACK=1` and `REDSIM_DISABLE_LLM=1`, compose down | 3.12, Node 20 | `api,worker,test` |
 
-API integration, the Next.js build and the image builds depend on the unit
-job, so a lint or type failure skips them. The Playwright stack job depends on
-API integration and the web build and is excluded from this completion pass
-(it is never run automatically).
+API integration, the Python e2e tier, the garak lane, the Next.js build and
+the image builds depend on the unit job, so a lint or type failure skips them.
+The Playwright stack job depends on API integration and the web build and is
+excluded from this completion pass (it is never run automatically).
 
 ### Test tiers and where they run
 
@@ -45,7 +47,8 @@ API integration and the web build and is excluded from this completion pass
 |---|---|---|
 | unit and ML unit | default (`-m` from `addopts`), and `ml`-marked tests need the extra | both unit lanes (3.13 without `ml`), Coverage gate |
 | integration (sqlite harness locally, real Postgres and Redis in CI) | `integration` marker, stamped automatically on DB-touching tests | Coverage gate, API integration |
-| e2e (wave 3, landing 2026-09-09) | `tests/e2e/`, marked `e2e` by its `conftest.py`, skipped unless `REDSIM_E2E` is set. The Postgres RLS lane needs `REDSIM_E2E_POSTGRES_URL` | not in any CI job yet. Run it locally as described in [Local stack](local-stack.md#tests-including-the-e2e-tier) |
+| e2e (Python) | `tests/e2e/`, marked `e2e` by its `conftest.py`, skipped unless `REDSIM_E2E` is set. The Postgres RLS lane needs `REDSIM_E2E_POSTGRES_URL` | E2E tier (python, eager Celery), on every PR and push, with the Postgres lane on. Locally as described in [Local stack](local-stack.md#tests-including-the-e2e-tier) |
+| garak (Phase B) | `garak` marker: needs the `garak` extra, skipped when absent. Deselected by `addopts` and by every other lane's marker expression | garak offline |
 | browser e2e (Playwright) | `workflow_dispatch` with `run_e2e=true` | Stack E2E job, on demand only, excluded from this pass |
 
 ### The `ml` extra and the Python matrix
@@ -87,6 +90,83 @@ imports nothing from the targets package, and
 interpreter with torch, ART, SHAP and scikit-learn blocked in three orders
 (datasets first as on 3.13, `sampling` first, targets first) and fails on the
 first cycle. Run that file after touching either package's imports.
+
+### The Python e2e job
+
+`E2E tier (python, eager Celery)` (job id `e2e-python`, plan 12 wave B0,
+TESTS_DOCS-04) runs `tests/e2e` on every PR and push. It is the completion
+gate for every Phase A criterion and every Phase B path that the tier proves:
+a real FastAPI app, real admission, Celery in eager mode, the real
+credential-free sandbox child, the CLI, all over a file-backed sqlite of the
+harness's own. It installs `api,worker,test,dev` plus `ml` with CPU torch
+first, exactly as the Coverage gate does, and sets nothing else that the
+harness does not set itself. No network, no Kaggle, no Docker: the harness
+mocks the Pythia gateway in the worker parent and builds a tiny asset tree.
+
+Postgres 16 and Redis 7 are attached as services, copied from the Coverage
+gate. The harness scrubs `REDSIM_DB_URL` from the process, so Postgres serves
+one purpose: the RLS lane. The job runs `alembic upgrade head` against the
+service database and passes its URL as `REDSIM_E2E_POSTGRES_URL`, so the
+`postgres_url` fixture returns it and the `-k postgres` items run instead of
+skipping. That fixture fails, rather than skips, when the URL points at an
+unmigrated database, which is why the migrate step comes first. The RLS test
+provisions its own non-superuser role from the container's `redsim` superuser
+(`tests/e2e/test_ml_governance.py`), matching this service.
+
+`--basetemp="$RUNNER_TEMP/redsim-e2e"` pins the pytest temp root, and with it
+the harness directory (assets, sqlite file, blobs, sandbox work dirs, CLI
+output), to a known path. On failure the job uploads that directory as the
+`e2e-python-harness` artifact (7 days). `--durations=15` prints the slowest
+items so a tier creeping towards the 20 minute job timeout is visible in the
+log. `REDSIM_ML_KEEP_WORK_DIR` is not set: the harness scrubs it and keeps its
+work directories under the harness root itself.
+
+Reproduce locally with the venv interpreter:
+
+```bash
+REDSIM_E2E=1 .venv/bin/python -m pytest -q -p no:cacheprovider -m e2e tests/e2e --durations=15
+# with the Postgres lane (a migrated database, see tests/e2e/README.md "Postgres lane")
+REDSIM_DB_URL=postgresql+psycopg://redsim:redsim@localhost:5432/redsim_e2e .venv/bin/alembic upgrade head
+REDSIM_E2E=1 REDSIM_E2E_POSTGRES_URL=postgresql+psycopg://redsim:redsim@localhost:5432/redsim_e2e \
+  .venv/bin/python -m pytest -q -p no:cacheprovider -m e2e tests/e2e
+```
+
+### The garak offline job
+
+`garak offline` (job id `garak-offline`, plan 12 wave B0, TESTS_DOCS-02) is
+the lane for the Phase B LLM domain. It installs `api,worker,test,dev` plus
+the `garak` extra, pinned to `garak>=0.16,<0.17` in `pyproject.toml`, with
+CPU-only torch first because garak pulls torch and transformers. It then
+imports garak and runs `pytest -q -p no:cacheprovider -m garak tests`.
+
+Two things about this lane are deliberate:
+
+- **Nothing is claimed that is not there.** While the LLM tracks (plan 12
+  waves B2 and B4) have not landed their `garak`-marked tests, pytest exits 5
+  (no tests collected) and the step maps that single exit code to success with
+  a `::notice::` line saying so. Any other non-zero exit fails the job. The
+  lane therefore proves today that the pinned extra resolves next to the
+  platform extras and imports; it starts proving probe behaviour the moment a
+  `garak`-marked test exists.
+- **Offline by construction.** The job exports no `PYTHIA_*` variable and no
+  provider key (garak installs the openai and litellm clients, redsim
+  configures neither, `tests/test_api_process_has_no_ml.py` blocks both in the
+  API process). A probe that reaches for a real gateway therefore fails
+  loudly. `XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` point under
+  the runner temp so garak's run reports and plugin cache never land in the
+  checkout.
+
+The `garak` marker means "needs the garak extra; skipped when absent".
+`tests/conftest.py` enforces the second half: when `garak` is not importable,
+every `garak`-marked item is skipped at collection, so `pytest -m garak` on an
+interpreter without the extra reports skips, not errors. The default tier
+deselects the marker through `addopts`, and every other lane's `-m`
+expression restates `not garak`, so garak tests run only here. Reproduce
+locally, on a venv that has the extra, with:
+
+```bash
+XDG_DATA_HOME=$(mktemp -d) .venv/bin/python -m pytest -q -p no:cacheprovider -m garak tests
+```
 
 ### Lint and type gates
 
@@ -257,6 +337,9 @@ V=.venv/bin/python
 $V -m ruff check --select E4,E7,E9,F,I redsim tests
 $V -m mypy redsim
 $V -m pytest -q --cov=redsim --cov-report=term | tail -5
+REDSIM_E2E=1 $V -m pytest -q -p no:cacheprovider -m e2e tests/e2e
+$V -m pytest -q -p no:cacheprovider -m garak tests   # exit 5 while no garak test exists
+$V -m pytest -q -p no:cacheprovider tests/ml/test_schema_compat.py   # the P0 schema tripwire
 $V -m mkdocs build --strict
 $V -c 'import yaml,sys; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' .github/workflows/*.yml
 ```
