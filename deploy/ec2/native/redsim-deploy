@@ -33,7 +33,9 @@ cd "$SRC"
 before="$(g rev-parse HEAD)"
 g fetch --quiet origin
 target="$(g rev-parse "origin/$REF" 2>/dev/null || g rev-parse "$REF")"
-g checkout --quiet --detach "$target"
+# --force: the host checkout is a deployment target, never a place to keep
+# edits; a stray local change must not block a release.
+g checkout --quiet --force --detach "$target"
 echo "checkout: ${before:0:7} -> ${target:0:7} ($REF)"
 install -m 0755 "$SRC/deploy/ec2/native/redsim-deploy" /usr/local/bin/redsim-deploy
 install -m 0755 "$SRC/deploy/ec2/native/redsim-run" /usr/local/bin/redsim-run

@@ -176,6 +176,8 @@ export type FindingSchemaBlob = {
   attack_id?: string;
   first_success_eps?: number;
   ml?: MLFindingDetail | null;
+  /** LLM probe detail (redsim.services.ml_findings.project_llm_findings); ids and counts only. */
+  llm?: { probe_id?: string; detector?: string; n_hits?: number; n_evaluated?: number; goal?: string | null } | null;
 };
 export type FindingReview = {
   state: "unreviewed" | "dismissed";

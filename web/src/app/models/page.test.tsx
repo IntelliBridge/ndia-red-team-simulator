@@ -1,11 +1,5 @@
 import { createElement } from "react";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  within,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/lib/api";
 
@@ -62,6 +56,7 @@ import ModelsPage from "./page";
 
 describe("/models", () => {
   beforeEach(() => {
+    localStorage.clear();
     useModels.mockReturnValue({
       data: [
         {
@@ -116,6 +111,19 @@ describe("/models", () => {
     expect(screen.getByText("0.599 (n=1621, test_coarse)")).toBeTruthy();
     expect(screen.getByText("0.82 (n=50)")).toBeTruthy();
   });
+  it("switches to a list view and remembers the choice", () => {
+    render(createElement(ModelsPage));
+    expect(screen.queryByRole("table")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "List" }));
+    const table = screen.getByRole("table");
+    expect(table.textContent).toContain("Model");
+    expect(screen.getByRole("link", { name: "Model" }).getAttribute("href")).toBe("/models/m1");
+    expect(localStorage.getItem("redsim_models_view")).toBe("list");
+    fireEvent.click(screen.getByRole("button", { name: "Cards" }));
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(localStorage.getItem("redsim_models_view")).toBe("cards");
+  });
+
   it("states that the catalog API is not implemented when /v1/models answers 404", () => {
     useModels.mockReturnValue({
       data: undefined,

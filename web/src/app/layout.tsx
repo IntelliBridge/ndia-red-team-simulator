@@ -28,11 +28,8 @@ const NAV_LINKS: { href: string; label: string }[] = [
   { href: "/models", label: "Models" },
   { href: "/runs", label: "Runs" },
   { href: "/tests", label: "Tests" },
-  { href: "/auth-profiles", label: "Auth Profiles" },
   { href: "/findings", label: "Findings" },
-  { href: "/logs", label: "Logs" },
   { href: "/audit", label: "Audit" },
-  { href: "/cost", label: "Cost" },
 ];
 
 export default function RootLayout({
