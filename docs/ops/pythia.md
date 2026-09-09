@@ -8,7 +8,7 @@ Every LLM call in redsim goes through `redsim/llm/pythia.py` (decision D5 in
 the product spec). There is no litellm and there are no provider keys anywhere
 in the stack.
 
-Status at `main` `1439f92` plus Phase B wave B2 (2026-09-09): two consumers.
+Status at `main` `703f8f6` plus Phase B wave B4 (2026-09-09): two consumers.
 The first is the optional hardening narrative, one plain, non-streaming chat
 completion per campaign with candidate recommendations, fed the rule outputs,
 the measurements and a SHAP text summary. Since wave 2 it runs in the
@@ -311,14 +311,27 @@ the traffic reaches Pythia, verified from `redsim/ml/llm/generator.py`,
   `REDSIM_LLM_PROBE_TIMEOUT_S`, `REDSIM_DISABLE_LLM`.
 
 No probe run against the live gateway has been recorded. The tests
-(`tests/ml/test_llm_core.py`, `tests/ml/test_llm_routes.py`, 11 of them
-`garak`-marked) drive real garak probes through `PythiaGenerator` against
-`tests/ml/fake_openai_server.py`, a stdlib OpenAI-compatible server on the
-loopback interface with a low-entropy fake token, and assert the persona on
-every request, the minimal body, the token sums, that the DAN prompt text
-appears only in garak's own `report.jsonl` and nowhere else, and that the
-child environment, the work directory and every stored file are free of the
-key.
+(`tests/ml/test_llm_core.py` and `tests/ml/test_llm_routes.py`, 12 of them
+`garak`-marked, and since wave B4 the e2e file `tests/e2e/test_ml_llm.py`,
+four `garak`-marked cases that register an LLM target through
+`POST /v1/models`, run `POST /v1/models/{id}/probes` as each role and drive
+one real garak 0.16.0 run through the eager worker) drive real garak probes
+through `PythiaGenerator` against `tests/ml/fake_openai_server.py`, a stdlib
+OpenAI-compatible server on the loopback interface with a low-entropy fake
+token, and assert the persona on every request, the minimal body, the token
+sums, that the DAN prompt text appears only in garak's own `report.jsonl` and
+nowhere else, that the child environment, the work directory and every stored
+file are free of the key, that the k/n scorecard carries no MRI, grade or
+subscore key, and that `/campaign` and `/compare` refuse the probe run. The
+`garak offline` CI lane runs the `tests/ml` cases and the `e2e-python` lane
+(which installs the `garak` extra since wave B4) the e2e file; since wave B4
+the gate's garak step fails on an empty collection rather than passing. No
+deploy image installs the `garak` extra: the transitive `openai` and `litellm`
+clients garak pulls in exist only where the extra is installed, no
+configuration path reaches them (no provider key variable exists,
+`assert_no_litellm` checks the generator's MRO, the API tripwire blocks both
+modules), and the only LLM credentials anywhere are the gateway key and the
+probe key in an `AuthProfile` (D5; `docs/security/supply-chain.md`).
 
 ## Personas and guardrails
 
