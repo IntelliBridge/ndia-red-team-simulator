@@ -35,6 +35,13 @@ This is what makes the CI ``unit`` job's ``-m 'not integration'`` filter
 meaningful — the heavier ORM-backed tests run in the Postgres-equipped
 ``coverage`` / ``api-integration`` jobs instead.
 
+The ``garak`` marker (Phase B, TESTS_DOCS-01) is "needs the garak extra;
+skipped when absent": the same hook adds a ``skip`` to every ``garak``-marked
+item when ``garak`` is not importable, so ``pytest -m garak`` on an interpreter
+without the extra reports skips, never collection errors. The default tier
+deselects the marker through ``addopts``; the ``garak offline`` CI job selects
+it (docs/dev/ci.md).
+
 Everything here is sqlite-based and offline; Postgres/Redis-backed tests are
 validated separately. ``sqlalchemy`` is an optional extra, so the helpers
 ``importorskip`` it and ``skip`` cleanly when the in-memory schema cannot be
@@ -44,10 +51,14 @@ built (e.g. a stripped-down minimal-deps environment).
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
+
+#: Reason stamped on ``garak``-marked items when the extra is not installed.
+GARAK_SKIP_REASON = "garak extra not installed (pip install -e '.[garak]'); see docs/dev/ci.md"
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -166,6 +177,11 @@ def pytest_collection_modifyitems(
     every function test having to remember the decorator.
     """
     db_fixtures = {"db_session", "sqlite_session_factory"}
+    # ``find_spec`` never imports garak (hundreds of MB of transitive imports);
+    # it only answers whether the extra is installed.
+    garak_missing = importlib.util.find_spec("garak") is None
     for item in items:
         if db_fixtures & set(getattr(item, "fixturenames", ())):
             item.add_marker(pytest.mark.integration)
+        if garak_missing and item.get_closest_marker("garak") is not None:
+            item.add_marker(pytest.mark.skip(reason=GARAK_SKIP_REASON))

@@ -95,7 +95,15 @@ llm = [
     # falls back to an in-repo httpx client speaking the same OpenAI-compatible contract.
     "pythia-sdk @ git+https://github.com/IntelliBridge/pythia.git#subdirectory=packages/pythia-sdk-python",
 ]
-garak = ["garak>=0.9"]
+garak = [
+    # Phase B LLM probing (spec 11.6, plan 12). Worker default pool only, never the
+    # API image. Pinned to the 0.16 line: the runner drives garak through --config
+    # YAML (the --model_type/--probes flags are deprecated in 0.16) and points its
+    # OpenAI-compatible generator at Pythia. garak installs litellm, openai and
+    # other provider clients; none is configured or imported by redsim
+    # (tests/test_api_process_has_no_ml.py). CI lane: "garak offline" (docs/dev/ci.md).
+    "garak>=0.16,<0.17",
+]
 
 [project.scripts]
 redsim = "redsim.cli:main"
@@ -106,8 +114,10 @@ include = ["redsim*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-# Phase 4 v0.3.1 markers. The default invocation (no -m flag) runs the
-# unit + integration tests; docker/e2e/slow/auth_required are opt-in.
+# Phase 4 v0.3.1 markers plus the Phase B ``garak`` marker. The default
+# invocation (no -m flag) runs the unit + integration tests;
+# docker/e2e/slow/auth_required/garak are opt-in (a CLI -m overrides addopts,
+# so the CI lanes restate these exclusions in their own marker expressions).
 markers = [
     "ml: needs the ml extra (torch/ART/SHAP); skipped when absent",
     "unit: pure-Python unit test (default)",
@@ -116,8 +126,9 @@ markers = [
     "e2e: end-to-end against a live stack; gated by REDSIM_E2E env",
     "slow: long-running test; excluded by default",
     "auth_required: needs Keycloak/cookie flow; lands in v0.4.0",
+    "garak: needs the garak extra; skipped when absent",
 ]
-addopts = "-m 'not docker and not e2e and not slow and not auth_required'"
+addopts = "-m 'not docker and not e2e and not slow and not auth_required and not garak'"
 
 [tool.ruff]
 line-length = 110

@@ -1,0 +1,1248 @@
+{
+  "run_id": "run-fixture-phase-b-0001",
+  "schema_version": "campaign-record-1",
+  "status": "succeeded",
+  "stage": "report",
+  "stages_done": [
+    "load_target",
+    "sample",
+    "clean_eval",
+    "attack:fgsm",
+    "attack:pgd",
+    "control",
+    "explain",
+    "score",
+    "interpret",
+    "recommend",
+    "report"
+  ],
+  "error": null,
+  "created_at": "2026-09-08T12:00:00Z",
+  "config": {
+    "target_id": "tgt-tiny-fixture",
+    "modality": "image",
+    "attack_ids": [
+      "fgsm",
+      "pgd"
+    ],
+    "attack_params": {
+      "pgd": {
+        "max_iter": 10,
+        "eps_step": 0.005
+      }
+    },
+    "norm": "linf",
+    "eps_grid": [
+      0.01,
+      0.03,
+      0.1
+    ],
+    "reference_eps": 0.03,
+    "finding_asr_threshold": 0.2,
+    "n_samples": 200,
+    "seed": 0,
+    "include_control": true,
+    "explain_k": 8,
+    "dataset_id": "fixture/synthetic-shapes",
+    "dataset_revision": "fixture",
+    "dataset_split": "test",
+    "scoring": {
+      "version": "mri-1",
+      "weights": {
+        "acc": 0.35,
+        "asr": 0.25,
+        "eps": 0.2,
+        "conf": 0.1,
+        "expl": 0.1
+      },
+      "severity": {
+        "asr_high": 0.5,
+        "asr_mid": 0.2
+      },
+      "confidence": {
+        "n_high": 100,
+        "n_medium": 30
+      },
+      "interpretation": {
+        "evasion_drop": 0.2,
+        "control_tolerance": 0.05,
+        "control_drop": 0.1,
+        "iterative_margin": 0.1,
+        "center_mass_drop": 0.15,
+        "expl_shift_high": 0.5,
+        "conf_gap_high": 0.5
+      }
+    },
+    "defense": null,
+    "llm_narrative": false,
+    "auto_recommend": true,
+    "target_snapshot": {
+      "kind": "ml_model_artifact",
+      "value": "bundled:tiny",
+      "fixture": true
+    },
+    "attacks": []
+  },
+  "target": {
+    "id": "tiny",
+    "name": "Tiny random CNN (test double)",
+    "domain": "image",
+    "status": "available",
+    "reason": null,
+    "metadata": {
+      "dataset": "synthetic",
+      "n_classes": 3,
+      "fixture": true
+    }
+  },
+  "attacks": [
+    {
+      "id": "fgsm",
+      "name": "FGSM",
+      "domain": "image",
+      "family": "evasion",
+      "description": "Fast Gradient Sign Method (single step, L-inf).",
+      "params_schema": [
+        {
+          "name": "eps",
+          "type": "float",
+          "default": 0.03,
+          "min": 0.0,
+          "max": 1.0,
+          "description": ""
+        }
+      ],
+      "references": [
+        "Goodfellow et al. 2015, arXiv:1412.6572"
+      ],
+      "phase": "A",
+      "access": "white-box",
+      "requires_gradients": true,
+      "status": "available",
+      "reason": null
+    },
+    {
+      "id": "pgd",
+      "name": "PGD",
+      "domain": "image",
+      "family": "evasion",
+      "description": "Projected Gradient Descent (iterative, L-inf).",
+      "params_schema": [
+        {
+          "name": "eps",
+          "type": "float",
+          "default": 0.03,
+          "min": 0.0,
+          "max": 1.0,
+          "description": ""
+        },
+        {
+          "name": "max_iter",
+          "type": "int",
+          "default": 10,
+          "min": 1.0,
+          "max": 50.0,
+          "description": ""
+        },
+        {
+          "name": "eps_step",
+          "type": "float",
+          "default": 0.005,
+          "min": 0.0,
+          "max": 1.0,
+          "description": ""
+        }
+      ],
+      "references": [
+        "Madry et al. 2018, arXiv:1706.06083"
+      ],
+      "phase": "A",
+      "access": "white-box",
+      "requires_gradients": true,
+      "status": "available",
+      "reason": null
+    }
+  ],
+  "provenance": {
+    "redsim_version": "0.13.0",
+    "python": "3.12.12",
+    "torch": "2.3.0",
+    "art": "1.18.0",
+    "shap": "0.46.0",
+    "numpy": "1.26.4",
+    "onnxruntime": null,
+    "sklearn": null,
+    "xgboost": null,
+    "model_sha256": "d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
+    "dataset": "fixture/synthetic-shapes",
+    "dataset_revision": "fixture",
+    "dataset_split": "test",
+    "sample_indices_sha256": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "settings_hash": "f1x7ure000000000000000000000000000000000000000000000000000000000",
+    "baseline_run_id": null,
+    "parent_run_id": null,
+    "defense": null,
+    "llm": null,
+    "thread_env": {
+      "OMP_NUM_THREADS": "2",
+      "torch_threads": "2"
+    },
+    "model_manifest": {
+      "model": "TinyNet",
+      "fixture": true
+    },
+    "started_at": "2026-09-08T12:00:00Z",
+    "finished_at": "2026-09-08T12:04:30Z",
+    "hostname": "fixture",
+    "device": "cpu",
+    "nondeterminism": [
+      "CPU float32 reductions; results may differ across BLAS builds and thread counts",
+      "Uniform noise control drawn with numpy default_rng(seed)",
+      "SHAP GradientExplainer background sampling (background_size=50, nsamples=200)"
+    ]
+  },
+  "measurements": [
+    {
+      "id": "m.clean",
+      "family": "clean",
+      "attack_id": null,
+      "params": {},
+      "n": 200,
+      "n_correct": 172,
+      "accuracy": 0.86,
+      "n_flipped_from_clean": null,
+      "n_clean_correct": null,
+      "attack_success_rate": null,
+      "linf_norm_mean": null,
+      "l2_norm_mean": null,
+      "pert_first_success_mean": null,
+      "pert_first_success_n": null,
+      "conf_gap_mean": null,
+      "conf_gap_n": null,
+      "expl_shift_mean": null,
+      "expl_shift_n": null,
+      "expl_shift_n_excluded": null,
+      "expl_shift_noise_floor": null,
+      "expl_shift_noise_floor_n": null,
+      "queries_mean": null,
+      "per_class": {
+        "circle": {
+          "n": 67,
+          "n_correct": 58
+        },
+        "square": {
+          "n": 67,
+          "n_correct": 58
+        },
+        "triangle": {
+          "n": 66,
+          "n_correct": 56
+        }
+      },
+      "wall_time_s": 0.4,
+      "notes": [
+        "fixture: illustrative values, not measured"
+      ],
+      "edit_fraction_mean": null,
+      "detection": null
+    },
+    {
+      "id": "m.evasion.fgsm.eps0.01",
+      "family": "evasion",
+      "attack_id": "fgsm",
+      "params": {
+        "eps": 0.01,
+        "norm": "linf"
+      },
+      "n": 200,
+      "n_correct": 148,
+      "accuracy": 0.74,
+      "n_flipped_from_clean": 26,
+      "n_clean_correct": 172,
+      "attack_success_rate": 0.1512,
+      "linf_norm_mean": 0.01,
+      "l2_norm_mean": 0.13,
+      "pert_first_success_mean": null,
+      "pert_first_success_n": null,
+      "conf_gap_mean": null,
+      "conf_gap_n": null,
+      "expl_shift_mean": null,
+      "expl_shift_n": null,
+      "expl_shift_n_excluded": null,
+      "expl_shift_noise_floor": null,
+      "expl_shift_noise_floor_n": null,
+      "queries_mean": null,
+      "per_class": {
+        "circle": {
+          "n": 67,
+          "n_correct": 50
+        },
+        "square": {
+          "n": 67,
+          "n_correct": 50
+        },
+        "triangle": {
+          "n": 66,
+          "n_correct": 48
+        }
+      },
+      "wall_time_s": 1.2,
+      "notes": [
+        "fixture: illustrative values for a random-weight test double, not measured"
+      ],
+      "edit_fraction_mean": null,
+      "detection": null
+    },
+    {
+      "id": "m.evasion.fgsm.eps0.03",
+      "family": "evasion",
+      "attack_id": "fgsm",
+      "params": {
+        "eps": 0.03,
+        "norm": "linf"
+      },
+      "n": 200,
+      "n_correct": 112,
+      "accuracy": 0.56,
+      "n_flipped_from_clean": 64,
+      "n_clean_correct": 172,
+      "attack_success_rate": 0.3721,
+      "linf_norm_mean": 0.03,
+      "l2_norm_mean": 0.39,
+      "pert_first_success_mean": 0.021,
+      "pert_first_success_n": 64,
+      "conf_gap_mean": 0.31,
+      "conf_gap_n": 200,
+      "expl_shift_mean": 0.42,
+      "expl_shift_n": 16,
+      "expl_shift_n_excluded": 0,
+      "expl_shift_noise_floor": 0.08,
+      "expl_shift_noise_floor_n": 16,
+      "queries_mean": null,
+      "per_class": {
+        "circle": {
+          "n": 67,
+          "n_correct": 38
+        },
+        "square": {
+          "n": 67,
+          "n_correct": 38
+        },
+        "triangle": {
+          "n": 66,
+          "n_correct": 36
+        }
+      },
+      "wall_time_s": 1.2,
+      "notes": [
+        "fixture: illustrative values for a random-weight test double, not measured"
+      ],
+      "edit_fraction_mean": null,
+      "detection": null
+    },
+    {
+      "id": "m.evasion.fgsm.eps0.1",
+      "family": "evasion",
+      "attack_id": "fgsm",
+      "params": {
+        "eps": 0.1,
+        "norm": "linf"
+      },
+      "n": 200,
+      "n_correct": 61,
+      "accuracy": 0.305,
+      "n_flipped_from_clean": 118,
+      "n_clean_correct": 172,
+      "attack_success_rate": 0.686,
+      "linf_norm_mean": 0.1,
+      "l2_norm_mean": 1.21,
+      "pert_first_success_mean": null,
+      "pert_first_success_n": null,
+      "conf_gap_mean": null,
+      "conf_gap_n": null,
+      "expl_shift_mean": null,
+      "expl_shift_n": null,
+      "expl_shift_n_excluded": null,
+      "expl_shift_noise_floor": null,
+      "expl_shift_noise_floor_n": null,
+      "queries_mean": null,
+      "per_class": {
+        "circle": {
+          "n": 67,
+          "n_correct": 20
+        },
+        "square": {
+          "n": 67,
+          "n_correct": 20
+        },
+        "triangle": {
+          "n": 66,
+          "n_correct": 21
+        }
+      },
+      "wall_time_s": 1.2,
+      "notes": [
+        "fixture: illustrative values for a random-weight test double, not measured"
+      ],
+      "edit_fraction_mean": null,
+      "detection": null
+    },
+    {
+      "id": "m.evasion.pgd.eps0.01",
+      "family": "evasion",
+      "attack_id": "pgd",
+      "params": {
+        "eps": 0.01,
+        "norm": "linf",
+        "max_iter": 10,
+        "eps_step": 0.005
+      },
+      "n": 200,
+      "n_correct": 139,
+      "accuracy": 0.695,
+      "n_flipped_from_clean": 36,
+      "n_clean_correct": 172,
+      "attack_success_rate": 0.2093,
+      "linf_norm_mean": 0.01,
+      "l2_norm_mean": 0.12,
+      "pert_first_success_mean": null,
+      "pert_first_success_n": null,
+      "conf_gap_mean": null,
+      "conf_gap_n": null,
+      "expl_shift_mean": null,
+      "expl_shift_n": null,
+      "expl_shift_n_excluded": null,
+      "expl_shift_noise_floor": null,
+      "expl_shift_noise_floor_n": null,
+      "queries_mean": null,
+      "per_class": {
+        "circle": {
+          "n": 67,
+          "n_correct": 47
+        },
+        "square": {
+          "n": 67,
+          "n_correct": 47
+        },
+        "triangle": {
+          "n": 66,
+          "n_correct": 45
+        }
+      },
+      "wall_time_s": 1.2,
+      "notes": [
+        "fixture: illustrative values for a random-weight test double, not measured"
+      ],
+      "edit_fraction_mean": null,
+      "detection": null
+    },
+    {
+      "id": "m.evasion.pgd.eps0.03",
+      "family": "evasion",
+      "attack_id": "pgd",
+      "params": {
+        "eps": 0.03,
+        "norm": "linf",
+        "max_iter": 10,
+        "eps_step": 0.005
+      },
+      "n": 200,
+      "n_correct": 84,
+      "accuracy": 0.42,
+      "n_flipped_from_clean": 93,
+      "n_clean_correct": 172,
+      "attack_success_rate": 0.5407,
+      "linf_norm_mean": 0.03,
+      "l2_norm_mean": 0.37,
+      "pert_first_success_mean": 0.017,
+      "pert_first_success_n": 93,
+      "conf_gap_mean": 0.47,
+      "conf_gap_n": 200,
+      "expl_shift_mean": 0.55,
+      "expl_shift_n": 16,
+      "expl_shift_n_excluded": 0,
+      "expl_shift_noise_floor": 0.08,
+      "expl_shift_noise_floor_n": 16,
+      "queries_mean": null,
+      "per_class": {
+        "circle": {
+          "n": 67,
+          "n_correct": 28
+        },
+        "square": {
+          "n": 67,
+          "n_correct": 28
+        },
+        "triangle": {
+          "n": 66,
+          "n_correct": 28
+        }
+      },
+      "wall_time_s": 1.2,
+      "notes": [
+        "fixture: illustrative values for a random-weight test double, not measured"
+      ],
+      "edit_fraction_mean": null,
+      "detection": null
+    },
+    {
+      "id": "m.evasion.pgd.eps0.1",
+      "family": "evasion",
+      "attack_id": "pgd",
+      "params": {
+        "eps": 0.1,
+        "norm": "linf",
+        "max_iter": 10,
+        "eps_step": 0.005
+      },
+      "n": 200,
+      "n_correct": 22,
+      "accuracy": 0.11,
+      "n_flipped_from_clean": 155,
+      "n_clean_correct": 172,
+      "attack_success_rate": 0.9012,
+      "linf_norm_mean": 0.1,
+      "l2_norm_mean": 1.15,
+      "pert_first_success_mean": null,
+      "pert_first_success_n": null,
+      "conf_gap_mean": null,
+      "conf_gap_n": null,
+      "expl_shift_mean": null,
+      "expl_shift_n": null,
+      "expl_shift_n_excluded": null,
+      "expl_shift_noise_floor": null,
+      "expl_shift_noise_floor_n": null,
+      "queries_mean": null,
+      "per_class": {
+        "circle": {
+          "n": 67,
+          "n_correct": 7
+        },
+        "square": {
+          "n": 67,
+          "n_correct": 7
+        },
+        "triangle": {
+          "n": 66,
+          "n_correct": 8
+        }
+      },
+      "wall_time_s": 1.2,
+      "notes": [
+        "fixture: illustrative values for a random-weight test double, not measured"
+      ],
+      "edit_fraction_mean": null,
+      "detection": null
+    },
+    {
+      "id": "m.control.noise.eps0.01",
+      "family": "control",
+      "attack_id": "noise_control",
+      "params": {
+        "eps": 0.01,
+        "norm": "linf"
+      },
+      "n": 200,
+      "n_correct": 171,
+      "accuracy": 0.855,
+      "n_flipped_from_clean": 1,
+      "n_clean_correct": 172,
+      "attack_success_rate": 0.0058,
+      "linf_norm_mean": 0.01,
+      "l2_norm_mean": 0.08,
+      "pert_first_success_mean": null,
+      "pert_first_success_n": null,
+      "conf_gap_mean": null,
+      "conf_gap_n": null,
+      "expl_shift_mean": null,
+      "expl_shift_n": null,
+      "expl_shift_n_excluded": null,
+      "expl_shift_noise_floor": null,
+      "expl_shift_noise_floor_n": null,
+      "queries_mean": null,
+      "per_class": {
+        "circle": {
+          "n": 67,
+          "n_correct": 57
+        },
+        "square": {
+          "n": 67,
+          "n_correct": 57
+        },
+        "triangle": {
+          "n": 66,
+          "n_correct": 57
+        }
+      },
+      "wall_time_s": 0.2,
+      "notes": [
+        "fixture: illustrative values, not measured"
+      ],
+      "edit_fraction_mean": null,
+      "detection": null
+    },
+    {
+      "id": "m.control.noise.eps0.03",
+      "family": "control",
+      "attack_id": "noise_control",
+      "params": {
+        "eps": 0.03,
+        "norm": "linf"
+      },
+      "n": 200,
+      "n_correct": 168,
+      "accuracy": 0.84,
+      "n_flipped_from_clean": 4,
+      "n_clean_correct": 172,
+      "attack_success_rate": 0.0233,
+      "linf_norm_mean": 0.03,
+      "l2_norm_mean": 0.24,
+      "pert_first_success_mean": null,
+      "pert_first_success_n": null,
+      "conf_gap_mean": null,
+      "conf_gap_n": null,
+      "expl_shift_mean": null,
+      "expl_shift_n": null,
+      "expl_shift_n_excluded": null,
+      "expl_shift_noise_floor": null,
+      "expl_shift_noise_floor_n": null,
+      "queries_mean": null,
+      "per_class": {
+        "circle": {
+          "n": 67,
+          "n_correct": 56
+        },
+        "square": {
+          "n": 67,
+          "n_correct": 56
+        },
+        "triangle": {
+          "n": 66,
+          "n_correct": 56
+        }
+      },
+      "wall_time_s": 0.2,
+      "notes": [
+        "fixture: illustrative values, not measured"
+      ],
+      "edit_fraction_mean": null,
+      "detection": null
+    },
+    {
+      "id": "m.control.noise.eps0.1",
+      "family": "control",
+      "attack_id": "noise_control",
+      "params": {
+        "eps": 0.1,
+        "norm": "linf"
+      },
+      "n": 200,
+      "n_correct": 154,
+      "accuracy": 0.77,
+      "n_flipped_from_clean": 18,
+      "n_clean_correct": 172,
+      "attack_success_rate": 0.1047,
+      "linf_norm_mean": 0.1,
+      "l2_norm_mean": 0.8,
+      "pert_first_success_mean": null,
+      "pert_first_success_n": null,
+      "conf_gap_mean": null,
+      "conf_gap_n": null,
+      "expl_shift_mean": null,
+      "expl_shift_n": null,
+      "expl_shift_n_excluded": null,
+      "expl_shift_noise_floor": null,
+      "expl_shift_noise_floor_n": null,
+      "queries_mean": null,
+      "per_class": {
+        "circle": {
+          "n": 67,
+          "n_correct": 52
+        },
+        "square": {
+          "n": 67,
+          "n_correct": 52
+        },
+        "triangle": {
+          "n": 66,
+          "n_correct": 50
+        }
+      },
+      "wall_time_s": 0.2,
+      "notes": [
+        "fixture: illustrative values, not measured"
+      ],
+      "edit_fraction_mean": null,
+      "detection": null
+    }
+  ],
+  "observations": [
+    {
+      "id": "o.000",
+      "sample_index": 3,
+      "true_label": "circle",
+      "pred_clean": "circle",
+      "pred_adv": "square",
+      "flipped": true,
+      "confidence_clean": 0.91,
+      "confidence_adv": 0.62,
+      "artifacts": {
+        "input_clean": "art-o.000-clean",
+        "input_adv": "art-o.000-adv",
+        "perturbation": "art-o.000-pert",
+        "shap_clean": "art-o.000-shap-clean",
+        "shap_adv": "art-o.000-shap-adv"
+      },
+      "artifact_sha256": {
+        "input_clean": "0000000000000000000000000000000000000000000000000000000000000000",
+        "input_adv": "1010101010101010101010101010101010101010101010101010101010101010"
+      },
+      "center_mass_ratio_clean": 0.71,
+      "center_mass_ratio_adv": 0.44,
+      "expl_shift": 0.61,
+      "top_features_clean": [],
+      "top_features_adv": [],
+      "metric_kind": "heuristic",
+      "metric_note": "center_mass_ratio = share of |SHAP| inside the central 50% of the image; a proxy for attention on the subject, not a segmentation.",
+      "text": null,
+      "detection": null
+    },
+    {
+      "id": "o.001",
+      "sample_index": 17,
+      "true_label": "square",
+      "pred_clean": "square",
+      "pred_adv": "triangle",
+      "flipped": true,
+      "confidence_clean": 0.83,
+      "confidence_adv": 0.58,
+      "artifacts": {
+        "input_clean": "art-o.001-clean",
+        "input_adv": "art-o.001-adv",
+        "perturbation": "art-o.001-pert",
+        "shap_clean": "art-o.001-shap-clean",
+        "shap_adv": "art-o.001-shap-adv"
+      },
+      "artifact_sha256": {
+        "input_clean": "0101010101010101010101010101010101010101010101010101010101010101",
+        "input_adv": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "center_mass_ratio_clean": 0.66,
+      "center_mass_ratio_adv": 0.39,
+      "expl_shift": 0.58,
+      "top_features_clean": [],
+      "top_features_adv": [],
+      "metric_kind": "heuristic",
+      "metric_note": "center_mass_ratio = share of |SHAP| inside the central 50% of the image; a proxy for attention on the subject, not a segmentation.",
+      "text": null,
+      "detection": null
+    },
+    {
+      "id": "o.002",
+      "sample_index": 42,
+      "true_label": "triangle",
+      "pred_clean": "triangle",
+      "pred_adv": "triangle",
+      "flipped": false,
+      "confidence_clean": 0.88,
+      "confidence_adv": 0.79,
+      "artifacts": {
+        "input_clean": "art-o.002-clean",
+        "input_adv": "art-o.002-adv",
+        "perturbation": "art-o.002-pert",
+        "shap_clean": "art-o.002-shap-clean",
+        "shap_adv": "art-o.002-shap-adv"
+      },
+      "artifact_sha256": {
+        "input_clean": "0202020202020202020202020202020202020202020202020202020202020202",
+        "input_adv": "1212121212121212121212121212121212121212121212121212121212121212"
+      },
+      "center_mass_ratio_clean": 0.69,
+      "center_mass_ratio_adv": 0.63,
+      "expl_shift": 0.19,
+      "top_features_clean": [],
+      "top_features_adv": [],
+      "metric_kind": "heuristic",
+      "metric_note": "center_mass_ratio = share of |SHAP| inside the central 50% of the image; a proxy for attention on the subject, not a segmentation.",
+      "text": null,
+      "detection": null
+    },
+    {
+      "id": "o.003",
+      "sample_index": 58,
+      "true_label": "circle",
+      "pred_clean": "circle",
+      "pred_adv": "circle",
+      "flipped": false,
+      "confidence_clean": 0.94,
+      "confidence_adv": 0.9,
+      "artifacts": {
+        "input_clean": "art-o.003-clean",
+        "input_adv": "art-o.003-adv",
+        "perturbation": "art-o.003-pert",
+        "shap_clean": "art-o.003-shap-clean",
+        "shap_adv": "art-o.003-shap-adv"
+      },
+      "artifact_sha256": {
+        "input_clean": "0303030303030303030303030303030303030303030303030303030303030303",
+        "input_adv": "1313131313131313131313131313131313131313131313131313131313131313"
+      },
+      "center_mass_ratio_clean": 0.73,
+      "center_mass_ratio_adv": 0.7,
+      "expl_shift": 0.11,
+      "top_features_clean": [],
+      "top_features_adv": [],
+      "metric_kind": "heuristic",
+      "metric_note": "center_mass_ratio = share of |SHAP| inside the central 50% of the image; a proxy for attention on the subject, not a segmentation.",
+      "text": null,
+      "detection": null
+    }
+  ],
+  "interpretation": [
+    {
+      "id": "i.1",
+      "statement": "Random noise at ε=0.03 did not reduce accuracy while pgd did; the degradation is aligned with the loss gradient rather than with general noise sensitivity. (threshold 0.20 / 0.05)",
+      "basis": [
+        "m.clean",
+        "m.evasion.pgd.eps0.03",
+        "m.control.noise.eps0.03"
+      ],
+      "kind": "inferred"
+    },
+    {
+      "id": "i.3",
+      "statement": "The iterative attack degraded the model more than the single-step attack at ε=0.1; single-step results understate the exposure. (threshold 0.10)",
+      "basis": [
+        "m.evasion.pgd.eps0.1",
+        "m.evasion.fgsm.eps0.1"
+      ],
+      "kind": "inferred"
+    },
+    {
+      "id": "i.4",
+      "statement": "On the flipped samples, attribution moved away from the central region of the image under attack (heuristic centre-mass proxy). (threshold 0.15)",
+      "basis": [
+        "o.000",
+        "o.001"
+      ],
+      "kind": "inferred"
+    },
+    {
+      "id": "i.5",
+      "statement": "Attributions changed substantially between clean and adversarial inputs (mean explanation shift 0.55); the model's stated reasons are not stable under this perturbation. (threshold 0.5)",
+      "basis": [
+        "m.evasion.pgd.eps0.03"
+      ],
+      "kind": "inferred"
+    }
+  ],
+  "recommendations": [
+    {
+      "id": "r.R1",
+      "title": "Adversarial training against L-inf PGD at ε ≤ 0.03",
+      "rationale": "Gradient-aligned failure: the control preserved accuracy at ε=0.03 while PGD flipped 93/172 clean-correct samples. Intended to reduce ASR at small ε. Phase B apply step, not runnable by the verify loop.",
+      "triggered_by": [
+        "m.evasion.pgd.eps0.03",
+        "m.control.noise.eps0.03",
+        "i.1"
+      ],
+      "status": "candidate",
+      "validation": "not evaluated",
+      "measured": null,
+      "references": [
+        "art.defences.trainer.AdversarialTrainerMadryPGD",
+        "Madry et al. 2018"
+      ],
+      "narrative": null,
+      "narrative_source": "rules"
+    },
+    {
+      "id": "r.R2",
+      "title": "Evaluate input preprocessing (feature squeezing, spatial smoothing) with Verify",
+      "rationale": "Both attacks succeed at the reference budget. A preprocessing defense can be measured on an evaluation copy through the verify loop. Known bypass: gradient-masking defenses fall to adaptive attacks (Athalye, Carlini, Wagner 2018).",
+      "triggered_by": [
+        "m.evasion.fgsm.eps0.03",
+        "m.evasion.pgd.eps0.03"
+      ],
+      "status": "candidate",
+      "validation": "not evaluated",
+      "measured": null,
+      "references": [
+        "art.defences.preprocessor.FeatureSqueezing",
+        "art.defences.preprocessor.SpatialSmoothing"
+      ],
+      "narrative": null,
+      "narrative_source": "rules"
+    },
+    {
+      "id": "r.R3",
+      "title": "Investigate reliance on peripheral pixels (heuristic)",
+      "rationale": "Centre-mass ratio fell by 0.27 on flipped samples, a heuristic proxy for attention moving off the subject. Review the flagged observations.",
+      "triggered_by": [
+        "o.000",
+        "o.001",
+        "i.4"
+      ],
+      "status": "candidate",
+      "validation": "not evaluated",
+      "measured": null,
+      "references": [],
+      "narrative": null,
+      "narrative_source": "rules"
+    }
+  ],
+  "score": {
+    "scoring_version": "mri-1",
+    "weights": {
+      "acc": 0.35,
+      "asr": 0.25,
+      "eps": 0.2,
+      "conf": 0.1,
+      "expl": 0.1
+    },
+    "eps_grid": [
+      0.01,
+      0.03,
+      0.1
+    ],
+    "reference_eps": 0.03,
+    "norm": "linf",
+    "attack_ids": [
+      "fgsm",
+      "pgd"
+    ],
+    "finding_asr_threshold": 0.2,
+    "settings_hash": "f1x7ure000000000000000000000000000000000000000000000000000000000",
+    "inputs": [
+      {
+        "attack_id": "fgsm",
+        "eps": 0.01,
+        "acc_clean": 0.86,
+        "acc_adv": 0.74,
+        "asr": 0.1512,
+        "pert": null,
+        "conf_gap": null,
+        "expl_shift": null,
+        "queries": null,
+        "n": 200,
+        "n_correct_clean": 172,
+        "n_attacked": 200,
+        "n_explained": null
+      },
+      {
+        "attack_id": "fgsm",
+        "eps": 0.03,
+        "acc_clean": 0.86,
+        "acc_adv": 0.56,
+        "asr": 0.3721,
+        "pert": 0.021,
+        "conf_gap": 0.31,
+        "expl_shift": 0.42,
+        "queries": null,
+        "n": 200,
+        "n_correct_clean": 172,
+        "n_attacked": 200,
+        "n_explained": 16
+      },
+      {
+        "attack_id": "fgsm",
+        "eps": 0.1,
+        "acc_clean": 0.86,
+        "acc_adv": 0.305,
+        "asr": 0.686,
+        "pert": null,
+        "conf_gap": null,
+        "expl_shift": null,
+        "queries": null,
+        "n": 200,
+        "n_correct_clean": 172,
+        "n_attacked": 200,
+        "n_explained": null
+      },
+      {
+        "attack_id": "pgd",
+        "eps": 0.01,
+        "acc_clean": 0.86,
+        "acc_adv": 0.695,
+        "asr": 0.2093,
+        "pert": null,
+        "conf_gap": null,
+        "expl_shift": null,
+        "queries": null,
+        "n": 200,
+        "n_correct_clean": 172,
+        "n_attacked": 200,
+        "n_explained": null
+      },
+      {
+        "attack_id": "pgd",
+        "eps": 0.03,
+        "acc_clean": 0.86,
+        "acc_adv": 0.42,
+        "asr": 0.5407,
+        "pert": 0.017,
+        "conf_gap": 0.47,
+        "expl_shift": 0.55,
+        "queries": null,
+        "n": 200,
+        "n_correct_clean": 172,
+        "n_attacked": 200,
+        "n_explained": 16
+      },
+      {
+        "attack_id": "pgd",
+        "eps": 0.1,
+        "acc_clean": 0.86,
+        "acc_adv": 0.11,
+        "asr": 0.9012,
+        "pert": null,
+        "conf_gap": null,
+        "expl_shift": null,
+        "queries": null,
+        "n": 200,
+        "n_correct_clean": 172,
+        "n_attacked": 200,
+        "n_explained": null
+      }
+    ],
+    "per_attack": {
+      "fgsm": {
+        "S_acc": {
+          "value": 35.5,
+          "n": 200,
+          "reason": null
+        },
+        "S_asr": {
+          "value": 62.8,
+          "n": 172,
+          "reason": null
+        },
+        "S_eps": {
+          "value": 51.0,
+          "n": 200,
+          "reason": null
+        },
+        "S_conf": {
+          "value": 69.0,
+          "n": 200,
+          "reason": null
+        },
+        "S_expl": {
+          "value": 58.0,
+          "n": 16,
+          "reason": null
+        }
+      },
+      "pgd": {
+        "S_acc": {
+          "value": 12.8,
+          "n": 200,
+          "reason": null
+        },
+        "S_asr": {
+          "value": 45.9,
+          "n": 172,
+          "reason": null
+        },
+        "S_eps": {
+          "value": 37.6,
+          "n": 200,
+          "reason": null
+        },
+        "S_conf": {
+          "value": 53.0,
+          "n": 200,
+          "reason": null
+        },
+        "S_expl": {
+          "value": 45.0,
+          "n": 16,
+          "reason": null
+        }
+      }
+    },
+    "subscores": {
+      "S_acc": 24.2,
+      "S_asr": 54.4,
+      "S_eps": 44.3,
+      "S_conf": 61.0,
+      "S_expl": 51.5
+    },
+    "mri": 42,
+    "grade": "D",
+    "completeness": "complete",
+    "missing": [],
+    "reading": "The cheapest in-scope attack succeeded at the reference budget on a large share of the slice. Illustrative fixture value for a random-weight test double.",
+    "delta": null,
+    "computed_at": "2026-09-08T12:04:30Z"
+  },
+  "limitations": [
+    "fixture/synthetic-shapes is an open, unclassified public benchmark; it is not a proxy for any operational domain, sensor, or deployment condition.",
+    "Results come from a single seed; the ε grid was [0.01, 0.03, 0.1].",
+    "SHAP attributions describe the model's sensitivity, not the cause of a failure; they are not causal proof.",
+    "The evaluation slice is small; per-class numbers in particular have wide uncertainty.",
+    "White-box gradient attacks assume full model access; black-box and physical-world attacks were not evaluated.",
+    "Recommendations are candidates. None has been validated against this model; that requires a separate evaluation.",
+    "Passing or failing this suite does not establish safety, robustness in general, or deployment readiness.",
+    "FIXTURE: every number in this record is illustrative and belongs to a random-weight test double. It is not a measurement of any model.",
+    "8 flipped and 8 unflipped samples explained out of 200; explanations computed at ε=0.03 only.",
+    "FIXTURE (Phase B): the frozen P0 record plus the additive Phase B fields of plan 12 section 3; the modality-specific fields are null because this is an image classification campaign."
+  ],
+  "reviewer_notes": null,
+  "kind": "attack",
+  "completed_at": "2026-09-08T12:04:30Z",
+  "settings_hash": "f1x7ure000000000000000000000000000000000000000000000000000000000",
+  "baseline_run_id": null,
+  "parent_run_id": null,
+  "curve": [
+    {
+      "attack_id": "fgsm",
+      "norm": "linf",
+      "eps_grid": [
+        0.01,
+        0.03,
+        0.1
+      ],
+      "reference_eps": 0.03,
+      "clean": {
+        "n": 200,
+        "n_correct": 172,
+        "accuracy": 0.86
+      },
+      "points": [
+        {
+          "eps": 0.01,
+          "n": 200,
+          "n_correct": 148,
+          "accuracy": 0.74,
+          "n_clean_correct": 172,
+          "n_flipped_from_clean": 26,
+          "asr": 0.1512
+        },
+        {
+          "eps": 0.03,
+          "n": 200,
+          "n_correct": 112,
+          "accuracy": 0.56,
+          "n_clean_correct": 172,
+          "n_flipped_from_clean": 64,
+          "asr": 0.3721
+        },
+        {
+          "eps": 0.1,
+          "n": 200,
+          "n_correct": 61,
+          "accuracy": 0.305,
+          "n_clean_correct": 172,
+          "n_flipped_from_clean": 118,
+          "asr": 0.686
+        }
+      ],
+      "control": [
+        {
+          "eps": 0.01,
+          "n": 200,
+          "n_correct": 171,
+          "accuracy": 0.855,
+          "n_clean_correct": null,
+          "n_flipped_from_clean": null,
+          "asr": null
+        },
+        {
+          "eps": 0.03,
+          "n": 200,
+          "n_correct": 168,
+          "accuracy": 0.84,
+          "n_clean_correct": null,
+          "n_flipped_from_clean": null,
+          "asr": null
+        },
+        {
+          "eps": 0.1,
+          "n": 200,
+          "n_correct": 154,
+          "accuracy": 0.77,
+          "n_clean_correct": null,
+          "n_flipped_from_clean": null,
+          "asr": null
+        }
+      ]
+    },
+    {
+      "attack_id": "pgd",
+      "norm": "linf",
+      "eps_grid": [
+        0.01,
+        0.03,
+        0.1
+      ],
+      "reference_eps": 0.03,
+      "clean": {
+        "n": 200,
+        "n_correct": 172,
+        "accuracy": 0.86
+      },
+      "points": [
+        {
+          "eps": 0.01,
+          "n": 200,
+          "n_correct": 139,
+          "accuracy": 0.695,
+          "n_clean_correct": 172,
+          "n_flipped_from_clean": 36,
+          "asr": 0.2093
+        },
+        {
+          "eps": 0.03,
+          "n": 200,
+          "n_correct": 84,
+          "accuracy": 0.42,
+          "n_clean_correct": 172,
+          "n_flipped_from_clean": 93,
+          "asr": 0.5407
+        },
+        {
+          "eps": 0.1,
+          "n": 200,
+          "n_correct": 22,
+          "accuracy": 0.11,
+          "n_clean_correct": 172,
+          "n_flipped_from_clean": 155,
+          "asr": 0.9012
+        }
+      ],
+      "control": [
+        {
+          "eps": 0.01,
+          "n": 200,
+          "n_correct": 171,
+          "accuracy": 0.855,
+          "n_clean_correct": null,
+          "n_flipped_from_clean": null,
+          "asr": null
+        },
+        {
+          "eps": 0.03,
+          "n": 200,
+          "n_correct": 168,
+          "accuracy": 0.84,
+          "n_clean_correct": null,
+          "n_flipped_from_clean": null,
+          "asr": null
+        },
+        {
+          "eps": 0.1,
+          "n": 200,
+          "n_correct": 154,
+          "accuracy": 0.77,
+          "n_clean_correct": null,
+          "n_flipped_from_clean": null,
+          "asr": null
+        }
+      ]
+    }
+  ],
+  "completeness": "complete",
+  "missing": [],
+  "score_status": null
+}
