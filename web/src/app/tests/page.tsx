@@ -17,18 +17,18 @@ const TABS: { id: Tab; label: string }[] = [
 export default function TestsPage() {
   const authed = useRequireAuth();
   const [tab, setTab] = useState<Tab>("probes");
-  if (!authed) return <p>Signing in…</p>;
+  if (!authed) return <p className="text-ink-3">Signing in…</p>;
   return (
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-semibold">Tests</h1>
       </header>
-      <div className="flex gap-2" role="group" aria-label="Test kind">
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Test kind">
         {TABS.map((t) => (
           <button
             key={t.id}
             aria-pressed={tab === t.id}
-            className={`border px-3 py-2 text-sm ${tab === t.id ? "border-primary bg-primary/10" : "border-border"}`}
+            className={`redsim-ghost redsim-btn-sm ${tab === t.id ? "border-ink-1 bg-surface-3 text-ink-1" : "text-ink-3"}`}
             onClick={() => setTab(t.id)}
           >
             {t.label}

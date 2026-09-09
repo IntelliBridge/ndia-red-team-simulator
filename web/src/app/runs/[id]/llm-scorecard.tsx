@@ -60,7 +60,7 @@ function DetectorCells({ detector }: { detector: LlmDetectorRow }) {
     return (
       <>
         <td className="font-mono">—</td>
-        <td className="text-muted-foreground">
+        <td className="text-ink-3">
           not run{detector.reason ? ` — ${detector.reason}` : ""}
         </td>
       </>
@@ -69,18 +69,18 @@ function DetectorCells({ detector }: { detector: LlmDetectorRow }) {
   return (
     <>
       <td className="font-mono">
-        <span className="font-semibold">{fraction(detector)}</span>
-        <span className="ml-1 text-muted-foreground">
+        <span className="font-semibold text-ink-1">{fraction(detector)}</span>
+        <span className="ml-1 text-ink-3">
           ({percent(detector)})
         </span>
         {detector.ci_lower != null && detector.ci_upper != null && (
-          <span className="ml-1 text-muted-foreground">
+          <span className="ml-1 text-ink-3">
             CI {((detector.ci_lower ?? 0) * 100).toFixed(0)}–
             {((detector.ci_upper ?? 0) * 100).toFixed(0)}%
           </span>
         )}
       </td>
-      <td className="text-muted-foreground">
+      <td className="text-ink-3">
         {detector.n_passed} passed
         {detector.n_none ? ` · ${detector.n_none} unscored` : ""}
       </td>
@@ -104,11 +104,11 @@ function ProbeRows({ probe }: { probe: LlmScorecardRow }) {
   }${probe.n_outputs_blocked ? ` · ${probe.n_outputs_blocked} blocked` : ""}`;
   return (
     <>
-      <tr className="border-border border-t align-top">
+      <tr className="border-b border-line align-top last:border-0 [&>td]:px-2 [&>td]:py-2">
         <td className="font-mono">
           <div>{probe.short_id || probe.probe_id}</div>
           {probe.short_id && probe.short_id !== probe.probe_id && (
-            <div className="text-muted-foreground">{probe.probe_id}</div>
+            <div className="text-ink-3">{probe.probe_id}</div>
           )}
         </td>
         <td>{probe.goal || "—"}</td>
@@ -118,10 +118,10 @@ function ProbeRows({ probe }: { probe: LlmScorecardRow }) {
         ) : (
           <>
             <td className="font-mono">—</td>
-            <td className="text-muted-foreground">no detector row</td>
+            <td className="text-ink-3">no detector row</td>
           </>
         )}
-        <td className={probe.status === "run" ? "" : "text-muted-foreground"}>
+        <td className={probe.status === "run" ? "" : "text-ink-3"}>
           {probeStatus}
         </td>
         <td className="font-mono">{primary?.detector ?? "—"}</td>
@@ -129,7 +129,7 @@ function ProbeRows({ probe }: { probe: LlmScorecardRow }) {
       {extended.map((detector) => (
         <tr
           key={detector.row_id}
-          className="border-border/40 text-muted-foreground border-t align-top"
+          className="border-b border-line/60 align-top text-ink-3 last:border-0 [&>td]:px-2 [&>td]:py-1.5"
         >
           <td />
           <td className="italic">extended detector</td>
@@ -155,7 +155,7 @@ export function LlmScorecardPanel({
     const notProbe =
       error instanceof ApiError && detail.code === "llm_target_required";
     return (
-      <div className="border-destructive/40 bg-destructive/10 p-4 text-sm border">
+      <div className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
         {notProbe
           ? "This run is not an LLM probe run; the k/n scorecard route does not apply to it."
           : error instanceof ApiError
@@ -175,11 +175,11 @@ export function LlmScorecardPanel({
               Probe run in progress — the scorecard appears when the worker
               finishes.
             </p>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-ink-3">
               run status: {statusLabel(runStatus)} · this page polls the
               scorecard route while the run is active
             </p>
-            <div className="h-24 animate-pulse bg-muted" />
+            <div className="h-24 animate-pulse rounded-[4px] bg-surface-2" />
           </>
         ) : (
           <>
@@ -188,7 +188,7 @@ export function LlmScorecardPanel({
               partial artifacts are preserved.
             </p>
             {runError && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-xs text-ink-3">
                 reason: {runError}
               </p>
             )}
@@ -224,11 +224,11 @@ export function LlmScorecardPanel({
 
   return (
     <div className="space-y-4 text-sm" data-testid="llm-scorecard">
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-ink-3">
         k hits / n evaluated outputs per probe and detector. No MRI or grade is
         derived from LLM probe results (D9).
       </p>
-      <dl className="gap-4 md:grid-cols-4 grid grid-cols-2">
+      <dl className="m-0 grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-4 [&_dd]:m-0 [&_dd]:text-ink-1">
         <div>
           <dt className="redsim-kicker">target model</dt>
           <dd className="font-mono break-all">{scorecard.model_id}</dd>
@@ -304,16 +304,16 @@ export function LlmScorecardPanel({
       </dl>
 
       <div className="overflow-x-auto">
-        <table className="text-xs w-full text-left">
+        <table className="w-full text-left text-xs">
           <thead>
-            <tr>
-              <th>Probe</th>
-              <th>Goal</th>
-              <th>Attempts</th>
-              <th>Hits k / n</th>
-              <th>Passed</th>
-              <th>Status</th>
-              <th>Detector</th>
+            <tr className="border-b border-line-strong">
+              <th className="px-2 py-2 font-medium">Probe</th>
+              <th className="px-2 py-2 font-medium">Goal</th>
+              <th className="px-2 py-2 font-medium">Attempts</th>
+              <th className="px-2 py-2 font-medium">Hits k / n</th>
+              <th className="px-2 py-2 font-medium">Passed</th>
+              <th className="px-2 py-2 font-medium">Status</th>
+              <th className="px-2 py-2 font-medium">Detector</th>
             </tr>
           </thead>
           <tbody>
@@ -322,8 +322,8 @@ export function LlmScorecardPanel({
                 <ProbeRows key={probe.probe_id} probe={probe} />
               ))
             ) : (
-              <tr className="border-border border-t">
-                <td colSpan={7} className="py-2 text-muted-foreground">
+              <tr className="border-b border-line">
+                <td colSpan={7} className="px-2 py-2 text-ink-3">
                   The scorecard carries no probe rows.
                 </td>
               </tr>
@@ -333,15 +333,15 @@ export function LlmScorecardPanel({
       </div>
 
       {excludedProbes.length > 0 && (
-        <p className="text-xs text-muted-foreground">
+        <p className="text-xs text-ink-3">
           Not offered in this run: {excludedProbes.join(", ")}
         </p>
       )}
 
       {usage && (
         <div>
-          <div className="redsim-kicker">usage</div>
-          <p className="text-xs">
+          <div className="redsim-kicker mb-1">usage</div>
+          <p className="m-0 text-xs tabular-nums text-ink-2">
             {usage.n_requests ?? usage.requests ?? 0} requests ·{" "}
             {usage.n_responses_ok ?? usage.responses_ok ?? 0} ok ·{" "}
             {usage.total_tokens ??
@@ -360,14 +360,14 @@ export function LlmScorecardPanel({
             {usage.tls_mode ? ` · tls ${usage.tls_mode}` : ""}
           </p>
           {modelsSeen.length > 0 && (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-ink-3">
               models seen:{" "}
               {modelsSeen.map(([id, n]) => `${id} (${n})`).join(", ")}
             </p>
           )}
           {(Object.keys(usage.http_errors ?? {}).length > 0 ||
             Object.keys(usage.transport_errors ?? {}).length > 0) && (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-ink-3">
               errors:{" "}
               {[
                 ...Object.entries(usage.http_errors ?? {}).map(
@@ -383,8 +383,8 @@ export function LlmScorecardPanel({
       )}
 
       <div>
-        <div className="redsim-kicker">limitations</div>
-        <ul className="space-y-1 pl-5 text-xs list-disc">
+        <div className="redsim-kicker mb-1">limitations</div>
+        <ul className="redsim-prose m-0 list-disc space-y-1 pl-5 text-base">
           {(limitations.length
             ? limitations
             : ["Limitations were not recorded; evidence is incomplete."]
@@ -394,10 +394,10 @@ export function LlmScorecardPanel({
         </ul>
       </div>
 
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-ink-3">
         scorecard artifact{" "}
         <a
-          className="text-primary underline"
+          className="redsim-link"
           href={artifactUrl(artifact.artifact_id)}
           target="_blank"
           rel="noreferrer"

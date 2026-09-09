@@ -1,6 +1,6 @@
 "use client";
 
-// NavLinks — the header navigation, one mono uppercase link per top-level
+// NavLinks — the header navigation, one sentence-case link per top-level
 // route in the Labs style. Marks the link whose route prefix matches the
 // current pathname with aria-current="page", which the stylesheet paints red.
 

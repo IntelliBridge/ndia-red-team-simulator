@@ -59,15 +59,15 @@ export default function LoginPage() {
       <div className="space-y-3">
         <div className="redsim-kicker">Adversarial ML Red-Team Simulator</div>
         <h1 className="text-4xl">Sign in</h1>
-        <p className="text-muted-foreground">
+        <p className="redsim-prose">
           Evaluate and harden ML classifiers under adversarial evasion. Open,
           unclassified public data only.
         </p>
       </div>
 
       <div className="redsim-panel space-y-4 p-6">
-        <div className="redsim-kicker">Organization account</div>
-        <p className="text-sm text-muted-foreground">
+        <h2 className="m-0 text-base font-semibold">Organization account</h2>
+        <p className="m-0 text-sm text-ink-3">
           Sign in with your organization account via Keycloak / OIDC.
         </p>
         <button
@@ -81,18 +81,18 @@ export default function LoginPage() {
 
       {!isProd && (
         <div className="redsim-panel space-y-4 p-6">
-          <div className="redsim-kicker">Dev auth mode</div>
-          <p className="text-sm text-muted-foreground">
+          <h2 className="m-0 text-base font-semibold">Dev auth mode</h2>
+          <p className="m-0 text-sm text-ink-3">
             The stack is also running in dev auth mode. Pick the admin email to
             continue as; the API rejects this token whenever{" "}
-            <code className="text-foreground/80">REDSIM_ENV=prod</code>.
+            <code className="text-ink-2">REDSIM_ENV=prod</code>.
           </p>
           <label className="block text-sm">
-            <span className="redsim-meta mb-1 block">Email</span>
+            <span className="redsim-kicker mb-1 block">Email</span>
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full max-w-sm rounded border border-input bg-navy-deepest/60 px-3 py-2 font-mono text-sm text-foreground focus-visible:border-ring focus-visible:outline-none"
+              className="redsim-input font-mono max-w-sm"
             />
           </label>
           <button

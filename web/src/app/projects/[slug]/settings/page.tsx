@@ -43,11 +43,11 @@ export default function ProjectSettingsPage({
   }, [data]);
 
   if (!authed)
-    return <p className="text-muted-foreground">Signing in…</p>;
-  if (isLoading) return <p className="text-muted-foreground">Loading…</p>;
+    return <p className="text-ink-3">Signing in…</p>;
+  if (isLoading) return <p className="text-ink-3">Loading…</p>;
   if (error)
     return (
-      <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+      <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
         Failed to load: {String(error)}
       </p>
     );
@@ -78,27 +78,27 @@ export default function ProjectSettingsPage({
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold">{data.project.name}</h1>
-        <p className="font-mono text-xs text-muted-foreground">{data.project.slug}</p>
+        <h1>{data.project.name}</h1>
+        <p className="mt-1 font-mono text-xs text-ink-3">{data.project.slug}</p>
       </header>
 
-      <section className="space-y-3">
-        <h2 className="text-sm uppercase tracking-wide text-muted-foreground">
-          Members
-        </h2>
-        <div className="overflow-hidden rounded-md border border-border bg-card">
+      <section className="redsim-sheet">
+        <h2 className="redsim-sheet-label">Members</h2>
+        <div className="redsim-sheet-body overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
+            <thead className="text-left">
+              <tr className="border-b border-line-strong">
                 <th className="px-3 py-2">Email</th>
                 <th className="px-3 py-2">Role</th>
               </tr>
             </thead>
             <tbody>
               {data.members.map((m) => (
-                <tr key={m.sub} className="border-t border-border">
-                  <td className="px-3 py-2">{m.email}</td>
-                  <td className="px-3 py-2">{m.role}</td>
+                <tr key={m.sub} className="border-b border-line last:border-0">
+                  <td className="px-3 py-2.5 text-ink-1">{m.email}</td>
+                  <td className="px-3 py-2.5">
+                    <span className="redsim-chip">{m.role}</span>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -107,34 +107,36 @@ export default function ProjectSettingsPage({
       </section>
 
       <RoleGated minRole="admin" callerRole={callerRole}>
-        <section className="space-y-3">
-          <h2 className="text-sm uppercase tracking-wide text-muted-foreground">
-            LLM budget
-          </h2>
-          <div className="flex items-end gap-3">
-            <label className="flex flex-col text-sm">
-              <span className="mb-1">Daily limit (cents)</span>
-              <input
-                type="number"
-                min="0"
-                value={budget}
-                onChange={(e) => setBudget(e.target.value)}
-                className="rounded-md border border-input bg-background px-2 py-1.5"
-              />
-            </label>
-            <button
-              onClick={saveBudget}
-              disabled={busy}
-              className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-50"
-            >
-              Save
-            </button>
+        <section className="redsim-sheet">
+          <h2 className="redsim-sheet-label">LLM budget</h2>
+          <div className="redsim-sheet-body">
+            <div className="redsim-panel space-y-4 p-5">
+              <div className="flex flex-wrap items-end gap-3">
+                <label className="block text-sm">
+                  <span className="redsim-kicker mb-1 block">Daily limit (cents)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={budget}
+                    onChange={(e) => setBudget(e.target.value)}
+                    className="redsim-input w-48"
+                  />
+                </label>
+                <button
+                  onClick={saveBudget}
+                  disabled={busy}
+                  className="redsim-cta"
+                >
+                  Save
+                </button>
+              </div>
+              {err && (
+                <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                  {err}
+                </p>
+              )}
+            </div>
           </div>
-          {err && (
-            <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-              {err}
-            </p>
-          )}
         </section>
       </RoleGated>
     </div>

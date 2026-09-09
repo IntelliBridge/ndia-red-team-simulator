@@ -24,8 +24,7 @@ export const EMPTY_LLM_FORM: LlmFormState = {
   authProfileId: "",
 };
 
-const inputClass =
-  "mt-1 w-full rounded-sm border border-input bg-background px-3 py-2";
+const inputClass = "redsim-input mt-1";
 
 export function LlmRegisterForm({
   projectId,
@@ -72,11 +71,11 @@ export function LlmRegisterForm({
 
   return (
     <>
-      <label className="mt-4 block text-sm">
+      <label className="mt-4 block text-sm text-ink-1">
         <span className="flex items-baseline justify-between gap-3">
           Model
           {pythia?.gateway_host && (
-            <span className="font-mono text-xs text-muted-foreground">
+            <span className="font-mono text-xs text-ink-3">
               {pythia.gateway_host}
             </span>
           )}
@@ -104,13 +103,13 @@ export function LlmRegisterForm({
           />
         )}
         {!useSelect && !pythiaLoading && (
-          <span className="mt-1 block text-xs text-muted-foreground">
+          <span className="mt-1 block text-xs text-ink-3">
             {pythia?.error ??
               "Gateway model list unavailable; enter the canonical <vendor>/<model> id."}
           </span>
         )}
       </label>
-      <label className="mt-3 block text-sm">
+      <label className="mt-3 block text-sm text-ink-1">
         Persona
         <input
           value={value.persona}
@@ -119,7 +118,7 @@ export function LlmRegisterForm({
           placeholder="default"
         />
       </label>
-      <label className="mt-3 block text-sm">
+      <label className="mt-3 block text-sm text-ink-1">
         Guardrail mode
         <select
           value={value.guardrailMode}
@@ -134,11 +133,11 @@ export function LlmRegisterForm({
             </option>
           ))}
         </select>
-        <span className="mt-1 block text-xs text-muted-foreground">
+        <span className="mt-1 block text-xs text-ink-3">
           declares what the hit rates measure
         </span>
       </label>
-      <div className="mt-3 block text-sm">
+      <div className="mt-3 block text-sm text-ink-1">
         Probe key
         {bearerProfiles.length > 0 ? (
           <select
@@ -155,9 +154,9 @@ export function LlmRegisterForm({
             ))}
           </select>
         ) : (
-          <p className="mt-1 bg-muted p-3 text-xs text-muted-foreground">
+          <p className="mt-1 rounded-[4px] bg-ground p-3 text-xs text-ink-3">
             No bearer profile yet.{" "}
-            <Link href="/auth-profiles" className="underline">
+            <Link href="/auth-profiles" className="redsim-link">
               Create one
             </Link>{" "}
             — the Pythia key is stored there, never typed here.

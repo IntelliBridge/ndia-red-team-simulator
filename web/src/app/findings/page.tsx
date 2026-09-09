@@ -33,21 +33,21 @@ export default function FindingsPage() {
   const { data, error, isLoading } = useSWR(authed ? query : null, fetcher);
 
   if (!authed)
-    return <p className="text-muted-foreground">Signing in…</p>;
+    return <p className="text-ink-3">Signing in…</p>;
 
   const findings = data?.findings ?? [];
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">Findings</h1>
+        <h1>Findings</h1>
         <label className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Severity</span>
+          <span className="text-ink-3">Severity</span>
           <select
             aria-label="Filter by severity"
             value={severity}
             onChange={(e) => setSeverity(e.target.value)}
-            className="rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+            className="redsim-input w-auto"
           >
             <option value="">All</option>
             {SEVERITIES.map((s) => (
@@ -59,19 +59,19 @@ export default function FindingsPage() {
         </label>
       </div>
 
-      {isLoading && <p className="text-muted-foreground">Loading…</p>}
+      {isLoading && <p className="text-ink-3">Loading…</p>}
       {error && (
-        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           Failed to load findings: {String(error)}
         </p>
       )}
       {!isLoading && !error && findings.length === 0 && (
-        <p className="text-muted-foreground">
+        <p className="text-ink-3">
           No findings{severity ? ` at ${severity} severity` : ""} yet.
         </p>
       )}
       {findings.length > 0 && (
-        <ul className="space-y-3" aria-label="Findings across all accessible runs">
+        <ul className="m-0 list-none border-t border-line p-0" aria-label="Findings across all accessible runs">
           {findings.map((f: Finding) => (
             <FindingSummaryCard key={f.id} finding={f} />
           ))}
