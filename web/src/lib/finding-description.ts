@@ -72,3 +72,23 @@ export function findingLead(description: string | null | undefined, max = 240): 
   if (!what) return null;
   return what.text.length > max ? `${what.text.slice(0, max - 3).trimEnd()}...` : what.text;
 }
+
+/**
+ * The model a finding is about, for lists: the target value with a bundled:
+ * prefix dropped, or the LLM model id the probe run recorded (a legacy
+ * "<model> via <gateway> (<persona>)" name loses its suffix), plus the target
+ * row id to link to. Lives here rather than in api.ts so the page tests that
+ * mock api.ts keep working.
+ */
+export function findingModel(blob: {
+  target?: string | null;
+  affected_component?: string | null;
+}): { label: string; targetId: string | null } | null {
+  const raw = typeof blob.target === "string" ? blob.target : "";
+  const targetId =
+    typeof blob.affected_component === "string" && blob.affected_component ? blob.affected_component : null;
+  const base = (raw.startsWith("bundled:") ? raw.slice("bundled:".length) : raw) || targetId || "";
+  const label = base.replace(/\s+via\s+\S+(\s+\([^)]*\))?\s*$/, "").trim();
+  if (!label) return null;
+  return { label, targetId };
+}
