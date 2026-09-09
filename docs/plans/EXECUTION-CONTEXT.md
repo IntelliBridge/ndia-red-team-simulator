@@ -268,9 +268,9 @@ Account `140381642432`, region `us-east-1`:
   missing from the `api` extra), Unit tests (py3.13) and Dependency CVEs
   (`next` 14.2.35 advisory), the same three jobs as at `bb43bd7` (master plan
   section 4.1). Wave 4 lands the `python-multipart`, import-cycle and
-  trivy-baseline fixes and records the 3.13 lane's eager torch import
-  (`redsim/cli/ml.py` importing `redsim.ml.assets.build`) as still open in
-  `docs/dev/ci.md`. Local checks at `58461cc`: 1663 passed and 30 skipped, 8
+  trivy-baseline fixes and makes the asset builder's torch imports lazy
+  (`redsim/ml/assets/build.py`, so `redsim/cli/ml.py` parses options without
+  the `ml` extra; `docs/dev/ci.md`). Local checks at `58461cc`: 1663 passed and 30 skipped, 8
   e2e passed, ruff and mypy clean (190 files).
 
 ## Test doubles

@@ -947,7 +947,8 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
                     ref_row.expl_shift_n = len([o for o in observations if o.id in seen_obs])
                 ref_row.notes.append(f"expl_shift_mean = {shift:.4f} over {ref_row.expl_shift_n} explained "
                                      "samples (explain stage, reference budget only)")
-        if not explainer_stated_limitations:
+        if not explainer_stated_limitations and explain_meta:
+            # Only when at least one explainer ran; an all-unavailable stage already says so per attack.
             limitations.append(f"Up to {config.explain_k} flipped and {config.explain_k} unflipped samples were "
                                f"explained out of n={n}, at the reference budget eps={ref:g} only.")
         if weak_subject and observations:

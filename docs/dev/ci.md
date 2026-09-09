@@ -179,29 +179,34 @@ merge `10650da`, run 34308071046, failed the same three jobs):
 |---|---|---|
 | Coverage gate | 23 tests in `tests/ml/test_models_routes.py` and `tests/test_review22_models.py` failed with `AssertionError: The python-multipart library must be installed to use form parsing`: `POST /v1/models` with `source="upload"` reads a multipart form and no extra declared the parser. Coverage itself was 89.09% / 88.89%, above the 81% floor | `python-multipart>=0.0.9` is in the `api` extra in `pyproject.toml`. The Coverage gate, API integration and both unit lanes install `api`; `deploy/Dockerfile.api` installs `.[api,worker]`, so the image picks it up too |
 | Unit tests (py3.13) at `bb43bd7` | collection `ImportError: cannot import name 'as_model_input' from partially initialized module 'redsim.ml.datasets.sampling'`: the datasets -> targets -> datasets import cycle described under "The `ml` extra and the Python matrix" | `Sample` moved to `redsim.ml.datasets.sampling`, re-exported unchanged from `redsim.ml.targets.base`; `tests/ml/test_import_order.py` reproduces the 3.13 import order in a fresh interpreter and fails on a cycle |
-| Unit tests (py3.13) at `58461cc` | collection got past the cycle by luck of module order and ran 1090 tests; two failed: `tests/ml/test_cli_ml.py::test_build_options_come_from_args_and_the_cache_env` and `::test_bad_options_exit_2` raise `ModuleNotFoundError: No module named 'torch'` because `redsim/cli/ml.py` imports `redsim.ml.assets.build`, which imports `redsim.ml.assets.train_cnn` (`import torch` at module level) even to validate options | **Not fixed here.** The two tests are not `ml`-marked and do not `importorskip("torch")`, and the builder module imports torch eagerly. Either the tests skip without torch or `redsim/ml/assets/build.py` imports `train_cnn` inside the function that trains. Until one of those lands, this lane stays red and API integration (which also runs without the extra) fails the same two tests |
+| Unit tests (py3.13) at `58461cc` | collection got past the cycle by luck of module order and ran 1090 tests; two failed: `tests/ml/test_cli_ml.py::test_build_options_come_from_args_and_the_cache_env` and `::test_bad_options_exit_2` raise `ModuleNotFoundError: No module named 'torch'` because `redsim/cli/ml.py` imports `redsim.ml.assets.build`, which imports `redsim.ml.assets.train_cnn` (`import torch` at module level) even to validate options | Fixed at integration: `redsim/ml/assets/build.py` imports `train_cnn`, `train_url_classifier` and `targets.architectures` inside the functions that train (alias resolution in `BuildOptions` tolerates a missing extra; canonical ids still validate), and `train_url_classifier.py` imports `classification_metrics` lazily. Verified by running the two tests with torch and the other ml libraries blocked in `sys.modules`: 2 passed |
 | Dependency CVEs (pip-audit + trivy) | pip-audit clean; trivy reported CRITICAL `CVE-2026-75604` / `GHSA-2xp9-vwfh-vxw4` on `next 14.2.35` in `pnpm-lock.yaml`, fixed only in 15.5.24 / 16.3.3 | both IDs baselined in `.trivyignore` under the existing Next 14 -> 15 policy, with the windows-only reachability note (see "Dependency CVEs") |
 
 API integration, the Next.js build and the image builds carry `needs: unit`, so
 they were skipped on every one of these runs, not passed. They start running
-as soon as both unit lanes are green (the py3.13 lane is the one still red, for
-the `test_cli_ml.py` reason above). What to expect from them, measured from
+as soon as both unit lanes are green (with the `test_cli_ml.py` fix above the
+py3.13 lane has no known remaining failure). What to expect from them, measured from
 this tree on 2026-09-09 rather than assumed:
 
 - **API integration**: the job's selection (`-m "not e2e and not docker and not
   slow and not auth_required and not ml"`, no `ml` extra) run locally on the
-  sqlite harness with torch, ART, SHAP and scikit-learn blocked fails the same
-  two `test_cli_ml.py` tests and nothing else that is attributable to this
-  tree. Postgres-specific behaviour is not covered by that local run.
-- **Next.js build**: `pnpm --filter @redsim/design-system run typecheck` passes;
-  `pnpm --filter @redsim/web typecheck` fails (`web/src/__fixtures__/typed.ts:6`,
-  TS2352: the `campaign.json` fixture does not overlap the `Campaign` type) and
-  `pnpm --filter @redsim/web test` fails 11 of 274 tests in 3 files
-  (`src/app/runs/[id]/page.test.tsx`, `page.a11y.test.tsx`,
-  `src/app/findings/[id]/page.test.tsx`; the run page reads
-  `campaign.target.metadata.framework_versions` at `page.tsx:288` and the
-  fixture's `target` has no `metadata`). Expect this job red until the web
-  fixtures and `@/lib/api` types agree; `next build` was not reached.
+  sqlite harness with torch, ART, SHAP and scikit-learn blocked failed only the
+  same two `test_cli_ml.py` tests before the lazy-import fix above, and nothing
+  else attributable to this tree. Postgres-specific behaviour is not covered by
+  that local run.
+- **Next.js build**: `pnpm --filter @redsim/design-system run typecheck` passes.
+  Before the `#23` merge (`10650da`) `pnpm --filter @redsim/web typecheck` failed
+  (`web/src/__fixtures__/typed.ts:6`, TS2352: the `campaign.json` fixture did not
+  overlap the `Campaign` type) and `pnpm --filter @redsim/web test` failed 11 of
+  274 tests in 3 files (the run page read `campaign.target.metadata.framework_versions`
+  and the fixture's `target` had no `metadata`). `#23` fixed the fixture:
+  measured after rebasing onto `8e3083a`, `typecheck` passes and `test` fails 1
+  of 274 (`src/app/findings/[id]/page.test.tsx` "submits selected defense and
+  editable params": the page only enables Verify when a candidate
+  recommendation references the selected defense's `art_class` and passes the
+  recommendation id as a fourth argument, while the test's `useDefenses` mock
+  has no `art_class` and expects a three-argument call). Expect this job red
+  on that one test until the test and page agree; `next build` was not reached.
 - **Build images**: not run locally. The four Dockerfiles last built green at
   `ea39f97` on the same `python:3.14-slim` / `node:26` bases; the only new
   runtime dependency since then that the api image installs is
@@ -218,7 +223,8 @@ extra installed), 2026-09-09:
 | `mypy redsim` | clean (190 source files) |
 
 `Docs` builds on every docs change and its Pages deploy stays off.
-`Deploy to AWS` fails at the AssumeRole step. The CI state is recorded here as
+`Deploy to AWS` built and pushed the three images under OIDC on the `58461cc`
+push and skips its deploy job while `ECS_CLUSTER` is unset. The CI state is recorded here as
 of this commit. Re-run the workflow and update this section rather than
 carrying the statement forward.
 
