@@ -110,8 +110,14 @@ def test_full_chain_carries_5_11_vocabulary(harness: Harness) -> None:
     assert harden["skipped_reason"] == "not requested"
     assert harden["prompt_sha256"] is None and harden["completion_sha256"] is None
     report = by_action["report.render"]["detail"]
-    assert report["formats"] == ["md", "json", "html"]
-    assert set(report["artifact_ids"]) == {"report.md", "report.json", "report.html"}
+    # Wave B4 (REVIEW_REPORTS-16): the completion path renders every format, the PDF included when
+    # reportlab is importable; when it is not, the row lists the text formats and names the failure.
+    if "pdf_unavailable" in report:
+        assert report["formats"] == ["md", "json", "html"]
+        assert set(report["artifact_ids"]) == {"report.md", "report.json", "report.html"}
+    else:
+        assert report["formats"] == ["md", "json", "html", "pdf"]
+        assert set(report["artifact_ids"]) == {"report.md", "report.json", "report.html", "report.pdf"}
     complete = by_action["job.complete"]["detail"]
     assert complete["job_type"] == "attack.run" and complete["status"] == "succeeded"
     assert complete["n_findings"] == 2 and complete["n_measurements"] == 10
