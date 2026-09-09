@@ -23,6 +23,10 @@ export interface FindingCardProps {
   className?: string;
 }
 
+// The validation chip shows only a verify outcome (poc_passed / poc_failed /
+// inconclusive). Every finding starts "unvalidated", which says nothing more
+// than "not re-tested yet", and LLM probe findings have no verify loop at all,
+// so that default state renders no chip (owner decision 2026-09-09).
 // `poc_failed` is orange, not red: red is the brand accent in this UI.
 const VALIDATION_TONES: Record<string, string> = {
   poc_passed: "bg-emerald-400/10 text-emerald-300",
@@ -76,7 +80,7 @@ export function FindingCard({
         <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-foreground/80">
           status: {status}
         </span>
-        {validationState && (
+        {validationState && validationState !== "unvalidated" && (
           <span
             className={cn(
               "inline-flex items-center rounded px-1.5 py-0.5",
