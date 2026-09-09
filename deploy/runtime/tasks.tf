@@ -52,6 +52,9 @@ locals {
       REDSIM_API_URL     = local.api_internal
       KEYCLOAK_CLIENT_ID = "redsim-web"
       KEYCLOAK_ISSUER    = local.identity_internal
+      # The browser is redirected to the public realm URL; the token and
+      # userinfo calls stay on the in-VPC issuer above (web/src/server/better-auth).
+      KEYCLOAK_PUBLIC_ISSUER = "${local.origin}/auth/realms/redsim"
     }
     identity = {
       KC_DB                           = "postgres"
