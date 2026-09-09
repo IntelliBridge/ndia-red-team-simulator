@@ -21,12 +21,7 @@ export default function TestsPage() {
   return (
     <div className="space-y-6">
       <header>
-        <div className="redsim-kicker">test catalog</div>
-        <h1 className="text-3xl font-semibold tracking-tight">Tests</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Every probe and attack the platform can run, launchable against a
-          registered target from here.
-        </p>
+        <h1 className="text-2xl font-semibold">Tests</h1>
       </header>
       <div className="flex gap-2" role="group" aria-label="Test kind">
         {TABS.map((t) => (
