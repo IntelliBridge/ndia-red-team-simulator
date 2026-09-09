@@ -42,7 +42,7 @@ function ScoreSummaryBlock({ summary }: { summary: ModelTarget["score_summary"] 
   if (!isMri && summary.families.length === 0) return null;
   const headline = isMri
     ? `${summary.mri_mean ?? "—"}`
-    : `${summary.families.length} famil${summary.families.length === 1 ? "y" : "ies"}`;
+    : `${summary.families.length} categor${summary.families.length === 1 ? "y" : "ies"}`;
   const count = isMri
     ? `${summary.n_campaigns} campaign${summary.n_campaigns === 1 ? "" : "s"}`
     : `${summary.n_runs} run${summary.n_runs === 1 ? "" : "s"}`;
@@ -55,11 +55,11 @@ function ScoreSummaryBlock({ summary }: { summary: ModelTarget["score_summary"] 
         className="flex w-full items-center justify-between gap-3 text-left"
       >
         <span className="redsim-kicker">
-          {isMri ? "average robustness index" : "average hit rate by probe family"}
+          {isMri ? "average robustness index" : "average hit rate by category"}
         </span>
         <span className="flex items-center gap-3">
           <span className="text-xs text-muted-foreground">{count}</span>
-          <span className="text-lg font-semibold tabular-nums">{headline}</span>
+          <span className="text-sm font-semibold tabular-nums">{headline}</span>
           <span aria-hidden="true" className="text-muted-foreground">
             {open ? "▾" : "▸"}
           </span>
