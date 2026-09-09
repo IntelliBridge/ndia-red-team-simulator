@@ -11,16 +11,8 @@ export interface NavLink {
   label: string;
 }
 
-/**
- * Routes that render without a credential. Every link in the header leads to
- * a gated page, so on these the nav is only a row of ways back to the login
- * form and the branded sign-in reads cleaner without it.
- */
-const PUBLIC_PATHS = new Set(["/login"]);
-
 export function NavLinks({ links }: { links: NavLink[] }) {
   const pathname = usePathname() ?? "";
-  if (PUBLIC_PATHS.has(pathname)) return null;
   return (
     <>
       {links.map((link) => {
