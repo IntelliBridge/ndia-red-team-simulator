@@ -1,5 +1,13 @@
 # Fargate runtime
 
+**Retired on 2026-09-09.** The demo runs on a single EC2 host; see
+`deploy/ec2/README.md`. Every ECS service in this root is at desired count
+zero (`enable_services=false`, `enable_workers=false`) and the DNS record
+`aws_route53_record.runtime` was removed from this root's state, so an apply
+here must not be expected to manage the hostname. The foundation
+(`../terraform`) stays in use by the EC2 host. The rest of this page is the
+record of the Fargate runtime as it was operated.
+
 This root adds the ECS runtime to the foundation in `../terraform`. The
 bootstrap root in `../bootstrap` supplies a dedicated VPC and remote-state
 bucket. All three roots pin Terraform 1.16.1 and AWS provider 6.63.0.
