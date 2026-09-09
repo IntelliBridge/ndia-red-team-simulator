@@ -1,4 +1,18 @@
-"""Child entry point for bounded adversarial-ML execution."""
+"""Child entry point for bounded adversarial-ML execution.
+
+The child writes one typed envelope to ``<work_dir>/result.json`` (spec 9.4)::
+
+    {"ok": true,  "result": {"manifest": {...}}}            # validate
+    {"ok": true,  "result": {"record": <CampaignRecord>}}   # campaign
+    {"ok": false, "error_class": "<redsim.ml.errors name>",
+                  "error": "<operator-safe message>", "code": "<errors.<cls>.code>"}
+
+Exit status 0 means "an envelope was written" (success *or* a structured
+refusal); 2 means the request itself was unreadable; any other non-zero status
+means the process died before writing, which the parent reports as
+``SandboxKilled``. Refusals therefore never travel as stderr text: the parent
+rebuilds the typed class from ``error_class`` (``redsim.ml.sandbox``).
+"""
 
 from __future__ import annotations
 
@@ -6,6 +20,7 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -14,6 +29,12 @@ from redsim.ml.schema import CampaignConfig
 # Same name ``redsim.ml.targets.bundled.assets_dir`` reads; kept as a literal so
 # applying it needs no ML import (numpy, torch) before the request is trusted.
 ASSETS_DIR_ENV = "REDSIM_ML_ASSETS_DIR"
+
+#: Exit status for a request the child could not even read (mirrors the plugin worker).
+EXIT_BAD_REQUEST = 2
+
+#: Cap on the envelope the parent will read (spec 9.4: large arrays go to files).
+ENVELOPE_MAX_BYTES = 16 * 1024 * 1024
 
 
 def _apply_assets_dir(request: dict[str, Any]) -> Path | None:
@@ -48,7 +69,7 @@ def _apply_assets_dir(request: dict[str, Any]) -> Path | None:
 
 
 class DirectoryArtifactSink:
-    """Write child artifacts into one parent-owned temporary directory."""
+    """Write child artifacts into one parent-owned work directory."""
 
     def __init__(self, work_dir: Path) -> None:
         self.work_dir = work_dir.resolve()
@@ -81,18 +102,50 @@ class DirectoryArtifactSink:
             "sha256": digest,
             "reference": reference,
         })
-        (self.work_dir / "artifacts.json").write_text(
-            json.dumps(self.manifest), encoding="utf-8"
-        )
+        # Write-then-rename so a kill mid-write never leaves a truncated manifest
+        # for the parent's partial-evidence pass to misread.
+        tmp = self.work_dir / "artifacts.json.tmp"
+        tmp.write_text(json.dumps(self.manifest), encoding="utf-8")
+        os.replace(tmp, self.work_dir / "artifacts.json")
         return reference
 
     def sha256(self, name: str) -> str:
         return self.hashes[name]
 
 
-def _write_result(work_dir: Path, payload: dict[str, Any]) -> None:
-    (work_dir / "result.json").write_text(
-        json.dumps(payload), encoding="utf-8"
+def _write_envelope(work_dir: Path, envelope: dict[str, Any]) -> None:
+    """Atomically publish the typed envelope; a partial ``result.json`` is never visible."""
+    data = json.dumps(envelope)
+    if len(data.encode("utf-8")) > ENVELOPE_MAX_BYTES:
+        envelope = _error_envelope(
+            "EnvelopeInvalid",
+            f"sandbox envelope exceeds {ENVELOPE_MAX_BYTES} bytes; large arrays belong in artifact files",
+            code="envelope_invalid",
+        )
+        data = json.dumps(envelope)
+    tmp = work_dir / "result.json.tmp"
+    tmp.write_text(data, encoding="utf-8")
+    os.replace(tmp, work_dir / "result.json")
+
+
+def _ok_envelope(result: dict[str, Any]) -> dict[str, Any]:
+    return {"ok": True, "result": result}
+
+
+def _error_envelope(error_class: str, error: str, *, code: str | None = None) -> dict[str, Any]:
+    envelope: dict[str, Any] = {"ok": False, "error_class": error_class, "error": error[:4000]}
+    if code:
+        envelope["code"] = code
+    return envelope
+
+
+def _envelope_for_exception(exc: BaseException) -> dict[str, Any]:
+    """Structured refusal for ``exc``: class name, operator-safe text, spec 10.6 code when any."""
+    code = getattr(exc, "code", None)
+    return _error_envelope(
+        type(exc).__name__,
+        str(exc) or type(exc).__name__,
+        code=code if isinstance(code, str) else None,
     )
 
 
@@ -101,15 +154,11 @@ def _campaign(request: dict[str, Any], work_dir: Path) -> None:
     from redsim.ml.sandbox import partial_campaign_record
     from redsim.services.ml_models import artifact_target_from_path
 
-    config = CampaignConfig.model_validate(request["config"])
-    target_file = request.get("target_file")
-    target = None
-    if isinstance(target_file, str) and target_file:
-        target = artifact_target_from_path(
-            config.target_id,
-            Path(target_file),
-            dict(request.get("target_detail") or {}),
-        )
+    try:
+        config = CampaignConfig.model_validate(request["config"])
+    except Exception as exc:  # noqa: BLE001 - a bad request is reported, not a crash
+        _write_envelope(work_dir, _envelope_for_exception(exc))
+        return
     sink = DirectoryArtifactSink(work_dir)
     stages: list[str] = []
 
@@ -120,6 +169,17 @@ def _campaign(request: dict[str, Any], work_dir: Path) -> None:
             fh.flush()
 
     try:
+        # Building the uploaded target performs the sniff/digest/architecture
+        # checks, so a refused model is campaign failure evidence (a partial
+        # record naming ``ModelLoadRefused``/``UnsupportedArtifact``), not a crash.
+        target = None
+        target_file = request.get("target_file")
+        if isinstance(target_file, str) and target_file:
+            target = artifact_target_from_path(
+                config.target_id,
+                Path(target_file),
+                dict(request.get("target_detail") or {}),
+            )
         record = run_campaign(
             config,
             sink,
@@ -139,19 +199,30 @@ def _campaign(request: dict[str, Any], work_dir: Path) -> None:
             baseline_run_id=request.get("baseline_run_id"),
             parent_run_id=request.get("parent_run_id"),
         )
-    _write_result(work_dir, {"record": record.model_dump(mode="json")})
+    _write_envelope(work_dir, _ok_envelope({"record": record.model_dump(mode="json")}))
 
 
 def _validate(request: dict[str, Any], work_dir: Path) -> None:
-    from redsim.services.ml_models import artifact_target_from_path
+    """Load and probe the uploaded bytes; every outcome is a typed envelope."""
+    try:
+        from redsim.services.ml_models import artifact_target_from_path
 
-    target = artifact_target_from_path(
-        str(request["target_id"]),
-        Path(str(request["target_file"])),
-        dict(request.get("target_detail") or {}),
-    )
-    target.load()
-    _write_result(work_dir, {"manifest": target.manifest()})
+        target = artifact_target_from_path(
+            str(request["target_id"]),
+            Path(str(request["target_file"])),
+            dict(request.get("target_detail") or {}),
+        )
+        target.load()
+        manifest = target.manifest()
+    except Exception as exc:  # noqa: BLE001 - refusals travel as data, never as stderr text
+        _write_envelope(work_dir, _envelope_for_exception(exc))
+        return
+    if not isinstance(manifest, dict):
+        _write_envelope(work_dir, _error_envelope(
+            "EnvelopeInvalid", "target.manifest() did not return an object", code="envelope_invalid",
+        ))
+        return
+    _write_envelope(work_dir, _ok_envelope({"manifest": manifest}))
 
 
 def main() -> int:
@@ -160,18 +231,25 @@ def main() -> int:
     parser.add_argument("--work-dir", required=True)
     args = parser.parse_args()
     work_dir = Path(args.work_dir).resolve()
-    request = json.loads(Path(args.request).read_text(encoding="utf-8"))
+    try:
+        request = json.loads(Path(args.request).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"sandbox request unreadable: {exc}", file=sys.stderr)
+        return EXIT_BAD_REQUEST
     if not isinstance(request, dict):
-        raise TypeError("sandbox request must be an object")
+        print("sandbox request must be an object", file=sys.stderr)
+        return EXIT_BAD_REQUEST
     # Must precede the lazy ML imports in _campaign/_validate: they resolve the
     # manifest from REDSIM_ML_ASSETS_DIR the moment a target is built or loaded.
     _apply_assets_dir(request)
-    if request.get("mode") == "campaign":
+    mode = request.get("mode")
+    if mode == "campaign":
         _campaign(request, work_dir)
-    elif request.get("mode") == "validate":
+    elif mode == "validate":
         _validate(request, work_dir)
     else:
-        raise ValueError("unknown sandbox mode")
+        print(f"unknown sandbox mode {mode!r}", file=sys.stderr)
+        return EXIT_BAD_REQUEST
     return 0
 
 
