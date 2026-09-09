@@ -20,6 +20,7 @@ import platform
 import sys
 import tempfile
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from importlib import metadata
 from pathlib import Path
@@ -53,7 +54,11 @@ class SplitEntry(_Lenient):
     per_class: dict[str, int] = Field(default_factory=dict)
     seed: int | None = None                 # split seed when the dataset has no official split
     indices_sha256: str | None = None       # sha256 of the int64 source indices, for reproducibility
-    file: FileEntry | None = None           # bundled slice (npz / csv), if written
+    # The bundled slice a loader consumes: an ``.npz`` with ``x`` / ``y`` / ``indices`` (uint8 NCHW images,
+    # or float32 precomputed features for tabular data). ``rows_csv`` is the human-readable row listing the
+    # tabular build writes beside it (``index,url,type``); URL strings there are data, never fetched.
+    file: FileEntry | None = None
+    rows_csv: FileEntry | None = None
 
 
 class DatasetEntry(_Lenient):
@@ -280,23 +285,49 @@ def write_manifest(manifest: AssetManifest, path: Path) -> None:
             os.unlink(tmp_name)
 
 
+def model_entry(manifest: AssetManifest, model_id: str) -> ModelEntry | None:
+    """``models[model_id]``, also found under a legacy id that now maps to ``model_id`` (``url_classifier``)."""
+    from redsim.ml.assets import LEGACY_MODEL_IDS
+
+    entry = manifest.models.get(model_id)
+    if entry is not None:
+        return entry
+    for legacy, current in LEGACY_MODEL_IDS.items():
+        if current == model_id and legacy in manifest.models:
+            return manifest.models[legacy]
+    return None
+
+
+def iter_split_files(ds_id: str, ds: DatasetEntry, split_name: str | None = None
+                     ) -> Iterable[tuple[str, FileEntry]]:
+    """Bundled files of one dataset (every split, or ``split_name`` only)."""
+    for name, split in ds.splits.items():
+        if split_name is not None and name != split_name:
+            continue
+        if split.file is not None:
+            yield f"dataset {ds_id} split {name}", split.file
+        if split.rows_csv is not None:
+            yield f"dataset {ds_id} split {name} rows", split.rows_csv
+
+
+def iter_model_files(model_id: str, model: ModelEntry) -> Iterable[tuple[str, FileEntry]]:
+    yield f"model {model_id}", model.file
+    if model.surrogate is not None:
+        yield f"model {model_id} surrogate", model.surrogate.file
+
+
 def iter_file_entries(manifest: AssetManifest) -> Iterable[tuple[str, FileEntry]]:
     """Every bundled file the manifest references (slices, weights, surrogates), with a label for messages."""
     for ds_id, ds in manifest.datasets.items():
-        for split_name, split in ds.splits.items():
-            if split.file is not None:
-                yield f"dataset {ds_id} split {split_name}", split.file
+        yield from iter_split_files(ds_id, ds)
     for model_id, model in manifest.models.items():
-        yield f"model {model_id}", model.file
-        if model.surrogate is not None:
-            yield f"model {model_id} surrogate", model.surrogate.file
+        yield from iter_model_files(model_id, model)
 
 
-def verify_files(manifest: AssetManifest, root: Path) -> list[str]:
-    """Return one message per referenced file that is missing or whose sha256 differs."""
+def _check_files(entries: Iterable[tuple[str, FileEntry]], root: Path) -> list[str]:
     problems: list[str] = []
     root = Path(root)
-    for label, entry in iter_file_entries(manifest):
+    for label, entry in entries:
         target = root / entry.path
         if not target.exists():
             problems.append(f"{label}: missing file {entry.path}")
@@ -307,17 +338,66 @@ def verify_files(manifest: AssetManifest, root: Path) -> list[str]:
     return problems
 
 
+def verify_files(manifest: AssetManifest, root: Path) -> list[str]:
+    """Return one message per referenced file that is missing or whose sha256 differs."""
+    return _check_files(iter_file_entries(manifest), root)
+
+
+def _check_entry(model_id: str, model: ModelEntry) -> list[str]:
+    expected = manifest_digest(model)
+    if model.manifest_sha256 != expected:
+        recorded = (model.manifest_sha256 or "unset")[:12]
+        return [f"model {model_id}: manifest_sha256 mismatch (manifest {recorded}..., computed {expected[:12]}...)"]
+    return []
+
+
 def verify_entries(manifest: AssetManifest) -> list[str]:
     """Return one message per model entry whose ``manifest_sha256`` does not match its projection."""
     problems: list[str] = []
     for model_id, model in manifest.models.items():
-        expected = manifest_digest(model)
-        if model.manifest_sha256 != expected:
-            recorded = (model.manifest_sha256 or "unset")[:12]
-            problems.append(f"model {model_id}: manifest_sha256 mismatch (manifest {recorded}..., computed {expected[:12]}...)")
+        problems.extend(_check_entry(model_id, model))
     return problems
 
 
 def verify_manifest(manifest: AssetManifest, root: Path) -> list[str]:
     """Files and entry digests together; a run refuses to start on any problem (spec 9.5, 11.3.3)."""
     return verify_files(manifest, root) + verify_entries(manifest)
+
+
+@dataclass(frozen=True)
+class ModelAssetProblems:
+    """``verify_model_assets`` result, split by what failed so a loader can raise the right class."""
+
+    model: list[str]        # the weights / surrogate files, or the entry's manifest_sha256
+    dataset: list[str]      # the evaluation split the model is bound to
+
+    def __bool__(self) -> bool:
+        return bool(self.model or self.dataset)
+
+
+def verify_model_assets(manifest: AssetManifest, root: Path, model_id: str) -> ModelAssetProblems:
+    """Verify one bundled model's files and the evaluation split its manifest binds it to (spec 9.5, ATTACK-42).
+
+    Scoped to the model so a missing slice of another dataset does not block this target; the loaders
+    call this at every ``load()``. Problems with the split (missing, tampered, no such dataset or split
+    in ``datasets``) are reported separately from problems with the model's own files.
+    """
+    entry = model_entry(manifest, model_id)
+    if entry is None:
+        return ModelAssetProblems(model=[f"model {model_id}: no entry in the manifest"], dataset=[])
+    model_problems = _check_files(iter_model_files(model_id, entry), root) + _check_entry(model_id, entry)
+    dataset_problems: list[str] = []
+    ds = manifest.datasets.get(entry.dataset_id)
+    if ds is None:
+        dataset_problems.append(f"model {model_id}: dataset {entry.dataset_id!r} is not in the manifest's datasets")
+    else:
+        split = ds.splits.get(entry.dataset_split)
+        if split is None or split.file is None:
+            dataset_problems.append(f"model {model_id}: dataset {entry.dataset_id!r} has no bundled split "
+                                    f"{entry.dataset_split!r}")
+        else:
+            dataset_problems.extend(_check_files(iter_split_files(entry.dataset_id, ds, entry.dataset_split), root))
+        if entry.dataset_revision is not None and ds.revision is not None and entry.dataset_revision != ds.revision:
+            dataset_problems.append(f"model {model_id}: dataset_revision {entry.dataset_revision!r} differs from the "
+                                    f"dataset entry's revision {ds.revision!r}")
+    return ModelAssetProblems(model=model_problems, dataset=dataset_problems)

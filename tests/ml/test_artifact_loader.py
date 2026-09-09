@@ -122,11 +122,39 @@ def test_state_dict_with_non_tensor_global_refused(tmp_path: Path, tinynet_arch:
 
 def test_state_dict_requires_allowlisted_architecture(tmp_path: Path) -> None:
     p, _ = _state_dict_file(tmp_path / "m.pt")
-    assert "smallcnn" in artifact.architecture_ids()
+    assert {"small_cnn", "smallcnn", "resnet18"} <= set(artifact.architecture_ids())
+    assert artifact.canonical_architecture_id("smallcnn") == "small_cnn"
+    assert artifact.canonical_architecture_id("resnet18") == "resnet18"
     with pytest.raises(UnsupportedArtifact, match="architecture_required"):
         artifact.load_state_dict_module(p, None)
     with pytest.raises(UnsupportedArtifact, match="architecture_not_allowlisted"):
         artifact.load_state_dict_module(p, "resnet_from_the_internet")
+
+
+def test_allowlist_resolves_aliases_and_the_builders_architecture_block() -> None:
+    from redsim.ml.targets.architectures import ResNet18, SmallCNN
+
+    block = {"architecture_id": "small_cnn", "in_channels": 3, "n_classes": 3, "image_size": 8}
+    for spelling in ("small_cnn", "smallcnn"):
+        module = artifact.resolve_architecture(spelling, dict(block))
+        assert isinstance(module, SmallCNN) and module.n_classes == 3 and module.image_size == 8
+    assert isinstance(artifact.resolve_architecture("resnet18", {"n_classes": 3, "image_size": 8}), ResNet18)
+    with pytest.raises(UnsupportedArtifact, match="architecture_mismatch"):
+        artifact.resolve_architecture("resnet18", dict(block))          # block names another architecture
+    with pytest.raises(UnsupportedArtifact, match="rejected its kwargs"):
+        artifact.resolve_architecture("small_cnn", {"n_classes": 1})    # SmallCNN refuses n_classes < 2
+    # A state_dict saved from small_cnn loads under the alias with the builder's architecture block as kwargs.
+    net = SmallCNN(in_channels=3, n_classes=3, image_size=8).eval()
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "small.pt"
+        torch.save(net.state_dict(), path)
+        loaded = artifact.load_state_dict_module(path, "smallcnn", net.architecture_config())
+    assert isinstance(loaded, SmallCNN)
+    x = torch.rand(2, 3, 8, 8)
+    with torch.no_grad():
+        assert torch.allclose(loaded(x), net(x))
 
 
 def test_state_dict_architecture_mismatch_refused(tmp_path: Path, tinynet_arch: str) -> None:
@@ -244,15 +272,17 @@ def test_class_count_and_input_shape_mismatch_refused(tmp_path: Path, tinynet_ar
 
 
 # ----------------------------------------------------------------------------------------
-# ONNX path (onnxruntime, black-box estimator, no torch conversion)
+# ONNX path (onnxruntime predictions; onnx2torch conversion for gradients, agreement recorded)
 # ----------------------------------------------------------------------------------------
 
-def test_onnx_round_trip(tmp_path: Path, eval_data: tuple[np.ndarray, np.ndarray]) -> None:
+def test_onnx_round_trip_with_onnx2torch_gradients(tmp_path: Path, eval_data: tuple[np.ndarray, np.ndarray]) -> None:
+    pytest.importorskip("onnx2torch")
     net = _TinyNet(7).eval()
     p = _onnx_file(tmp_path / "tiny.onnx", net)
     assert artifact.detect_format(p, "onnx") == "onnx"
     t = ArtifactTarget("onnx1", p, class_names=list(CLASS_NAMES), eval_data=eval_data, dataset_id=DATASET,
                        declared_format="onnx", license="test fixture")
+    assert t.info().metadata["gradients"] is None      # unknown until the conversion has been attempted
     t.load()
     x, _ = eval_data
     proba = t.predict_proba(x)
@@ -261,18 +291,86 @@ def test_onnx_round_trip(tmp_path: Path, eval_data: tuple[np.ndarray, np.ndarray
     assert proba.shape == (30, 3) and np.allclose(proba, ref, atol=1e-4)
     assert np.array_equal(proba.argmax(1), ref.argmax(1))
     clf = t.art_classifier()
-    assert type(clf).__name__ == "BlackBoxClassifier" and clf.nb_classes == 3 and clf.input_shape == (3, 8, 8)
+    assert type(clf).__name__ == "PyTorchClassifier" and clf.nb_classes == 3 and clf.input_shape == (3, 8, 8)
     assert clf.predict(x[:5]).shape == (5, 3)
-    assert t.torch_model() is None                     # no differentiable module is faked
+    grad = clf.loss_gradient(x[:4], np.eye(3, dtype=np.float32)[[0, 1, 2, 0]])
+    assert grad.shape == (4, 3, 8, 8) and np.isfinite(grad).all()
+    module = t.torch_model()
+    assert isinstance(module, nn.Module) and not module.training
+    with torch.no_grad():
+        assert np.allclose(module(torch.from_numpy(x)).numpy(), net(torch.from_numpy(x)).numpy(), atol=1e-4)
     m = t.manifest()
-    assert m["format"] == "onnx" and m["gradients"] is False
+    assert m["format"] == "onnx" and m["gradients"] is True
     assert m["onnx"]["opsets"].get("ai.onnx") == 17 and m["onnx"]["output_kind"] == "logits"
-    assert m["onnx"]["estimator"] == "BlackBoxClassifier"
+    assert m["onnx"]["estimator"] == "PyTorchClassifier" and m["onnx"]["predictions"] == "onnxruntime"
+    assert m["onnx"]["conversion"]["status"] == "converted" and m["onnx"]["conversion"]["converter"] == "onnx2torch"
+    agreement = m["onnx_torch_argmax_agreement"]
+    assert agreement == {"n": 30, "n_agree": 30, "agreement": 1.0} == m["onnx"]["onnx_torch_argmax_agreement"]
+    assert m["library_versions"]["onnx2torch"] != "not installed"
     mm = MLModelManifest.model_validate(m)
-    assert mm.format == "onnx" and mm.gradients is False and mm.architecture_id is None and mm.bundled is False
+    assert mm.format == "onnx" and mm.gradients is True and mm.architecture_id is None and mm.bundled is False
     assert mm.sha256 == artifact.sha256_file(p) and mm.size_bytes == p.stat().st_size and mm.input_shape == [3, 8, 8]
     assert mm.dataset_id == DATASET and mm.dataset_split == "test" and mm.license == "test fixture"
-    assert t.info().metadata["gradients"] is False
+    info = t.info()
+    assert info.metadata["gradients"] is True and info.metadata["onnx_torch_argmax_agreement"] == agreement
+
+
+def test_onnx_without_onnx2torch_stays_black_box(tmp_path: Path, eval_data: tuple[np.ndarray, np.ndarray],
+                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    monkeypatch.setitem(sys.modules, "onnx2torch", None)     # simulate the converter being absent
+    p = _onnx_file(tmp_path / "tiny.onnx", _TinyNet(7).eval())
+    t = ArtifactTarget("onnx2", p, class_names=list(CLASS_NAMES), eval_data=eval_data, dataset_id=DATASET,
+                       declared_format="onnx")
+    t.load()
+    assert type(t.art_classifier()).__name__ == "BlackBoxClassifier"
+    assert t.torch_model() is None                        # no differentiable module is faked
+    m = t.manifest()
+    assert m["gradients"] is False and m["onnx_torch_argmax_agreement"] is None
+    assert m["onnx"]["estimator"] == "BlackBoxClassifier" and m["onnx"]["conversion"]["status"] == "unavailable"
+    assert "onnx2torch" in m["onnx"]["conversion"]["reason"] and "not run" in m["onnx"]["note"]
+    assert MLModelManifest.model_validate(m).gradients is False and t.info().metadata["gradients"] is False
+
+
+def test_onnx_conversion_failure_and_disagreement_are_recorded_not_hidden(
+        tmp_path: Path, eval_data: tuple[np.ndarray, np.ndarray], monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("onnx2torch")
+    p = _onnx_file(tmp_path / "tiny.onnx", _TinyNet(7).eval())
+
+    def failing(model):  # the converter rejects an operator
+        return None, {"status": "failed", "reason": "unsupported_onnx_op: NotImplementedError: Frobnicate",
+                      "converter": "onnx2torch", "version": "x"}
+
+    monkeypatch.setattr(artifact, "convert_onnx_to_torch", failing)
+    t = ArtifactTarget("onnx3", p, class_names=list(CLASS_NAMES), eval_data=eval_data, dataset_id=DATASET)
+    t.load()
+    m = t.manifest()
+    assert m["gradients"] is False and m["onnx"]["conversion"]["status"] == "failed"
+    assert "unsupported_onnx_op" in m["onnx"]["conversion"]["reason"] and t.torch_model() is None
+    assert type(t.art_classifier()).__name__ == "BlackBoxClassifier"
+
+    monkeypatch.undo()
+    monkeypatch.setattr(artifact, "onnx_torch_argmax_agreement",
+                        lambda model, module, x, max_n=artifact.AGREEMENT_MAX_N: {"n": 30, "n_agree": 21,
+                                                                                  "agreement": 0.7})
+    t2 = ArtifactTarget("onnx4", p, class_names=list(CLASS_NAMES), eval_data=eval_data, dataset_id=DATASET)
+    t2.load()
+    m2 = t2.manifest()
+    assert m2["onnx"]["conversion"]["status"] == "disagreement" and "21/30" in m2["onnx"]["conversion"]["reason"]
+    assert m2["onnx_torch_argmax_agreement"] == {"n": 30, "n_agree": 21, "agreement": 0.7}   # recorded as measured
+    assert m2["gradients"] is False and t2.torch_model() is None
+    assert type(t2.art_classifier()).__name__ == "BlackBoxClassifier"
+
+
+def test_missing_eval_slice_path_is_dataset_unavailable(tmp_path: Path, tinynet_arch: str) -> None:
+    from redsim.ml import errors
+
+    p, _ = _state_dict_file(tmp_path / "m.pt")
+    t = ArtifactTarget("nodata", p, class_names=list(CLASS_NAMES), eval_data=tmp_path / "absent.npz",
+                       dataset_id=DATASET, architecture_id=tinynet_arch)
+    with pytest.raises(errors.DatasetUnavailable, match="not found"):
+        t.load()
 
 
 def test_onnx_corrupt_file_refused(tmp_path: Path, eval_data: tuple[np.ndarray, np.ndarray]) -> None:

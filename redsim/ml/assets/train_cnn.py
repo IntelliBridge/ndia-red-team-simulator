@@ -1,10 +1,17 @@
-"""Seeded CPU training of ``SmallCNN`` for the bundled image models.
+"""Seeded CPU training of a catalog image architecture for the bundled image models.
 
 Inputs are uint8 NCHW splits from ``redsim.ml.assets.datasets``; pixels are
 scaled to float32 [0, 1] per batch and the per-channel mean / std of the
 training split are stored inside the model as buffers (spec 11.3.1). Every
 number that ends up in the manifest (clean accuracy, per-class counts, loss
 curve) is measured here, never asserted.
+
+``train_cnn`` builds the architecture named by ``arch`` from the in-tree
+catalog (``small_cnn`` by default, ``resnet18`` for the stronger vehicles
+backbone). For ``resnet18`` the ImageNet backbone weights are loaded only from
+the local torch hub cache; when they are absent the model starts from a random
+init and the training record says so. ``train_small_cnn`` is the original
+name and stays as a thin wrapper.
 """
 
 from __future__ import annotations
@@ -20,14 +27,20 @@ import numpy as np
 import torch
 from torch import nn
 
-from redsim.ml.targets.architectures import SmallCNN
+from redsim.ml.targets.architectures import (
+    CatalogModule,
+    ResNet18,
+    SmallCNN,
+    build_architecture,
+    canonical_architecture_id,
+)
 
 Log = Callable[[str], None]
 
 
 @dataclass
 class CnnTrainingResult:
-    model: SmallCNN
+    model: CatalogModule
     metrics: dict[str, Any]
     training: dict[str, Any]
     history: list[dict[str, float]] = field(default_factory=list)
@@ -95,10 +108,27 @@ def evaluate_model(model: nn.Module, x_uint8: np.ndarray, y: np.ndarray, class_n
     return classification_metrics(y, logits.argmax(axis=1), class_names)
 
 
-def train_small_cnn(x_train: np.ndarray, y_train: np.ndarray, x_eval: np.ndarray, y_eval: np.ndarray,
-                    class_names: list[str], *, epochs: int = 3, seed: int = 0, batch_size: int = 64,
-                    lr: float = 1e-3, weight_decay: float = 1e-4, log: Log = print) -> CnnTrainingResult:
-    """Train ``SmallCNN`` on CPU with a fixed seed and measure it on the eval split."""
+def build_image_model(arch: str, *, in_channels: int, n_classes: int, image_size: int,
+                      log: Log = print) -> tuple[CatalogModule, dict[str, Any]]:
+    """Instantiate the catalog architecture for a build and report how it was initialised.
+
+    ``resnet18`` tries the locally cached ImageNet backbone (never a download); the second
+    element records ``backbone_init`` so the manifest states random vs pretrained init.
+    """
+    model = build_architecture(arch, in_channels=in_channels, n_classes=n_classes, image_size=image_size)
+    init: dict[str, Any] = {"backbone_init": "random (seeded)"}
+    if isinstance(model, ResNet18):
+        loaded, note = model.init_imagenet_backbone()
+        init = {"backbone_init": note, "imagenet_backbone_loaded": loaded}
+        log(f"resnet18: {note}")
+    return model, init
+
+
+def train_cnn(x_train: np.ndarray, y_train: np.ndarray, x_eval: np.ndarray, y_eval: np.ndarray,
+              class_names: list[str], *, arch: str = "small_cnn", epochs: int = 3, seed: int = 0,
+              batch_size: int = 64, lr: float = 1e-3, weight_decay: float = 1e-4,
+              log: Log = print) -> CnnTrainingResult:
+    """Train the catalog architecture ``arch`` on CPU with a fixed seed and measure it on the eval split."""
     if x_train.ndim != 4 or x_train.dtype != np.uint8:
         raise ValueError("x_train must be uint8 NCHW")
     if epochs < 1:
@@ -106,10 +136,12 @@ def train_small_cnn(x_train: np.ndarray, y_train: np.ndarray, x_eval: np.ndarray
     n_train, in_channels, height, width = x_train.shape
     if height != width:
         raise ValueError("images must be square")
+    arch = canonical_architecture_id(arch)
     set_seed(seed)
     torch.set_num_threads(max(1, torch.get_num_threads()))
 
-    model = SmallCNN(in_channels=in_channels, n_classes=len(class_names), image_size=height)
+    model, init = build_image_model(arch, in_channels=in_channels, n_classes=len(class_names), image_size=height,
+                                    log=log)
     mean, std = channel_stats(x_train)
     model.set_input_normalization(torch.from_numpy(mean), torch.from_numpy(std))
 
@@ -148,6 +180,7 @@ def train_small_cnn(x_train: np.ndarray, y_train: np.ndarray, x_eval: np.ndarray
     metrics = evaluate_model(model, x_eval, y_eval, class_names)
     metrics["history"] = history
     training = {
+        "architecture_id": arch, **init,
         "optimizer": "adam", "lr": lr, "weight_decay": weight_decay, "batch_size": batch_size,
         "epochs": epochs, "seed": seed, "n_train": int(n_train), "n_eval": len(y_eval),
         "device": "cpu", "torch_threads": torch.get_num_threads(), "wall_time_s": round(wall, 3),
@@ -155,6 +188,14 @@ def train_small_cnn(x_train: np.ndarray, y_train: np.ndarray, x_eval: np.ndarray
         "loss": "cross_entropy", "nondeterminism": ["thread count may change floating-point reduction order"],
     }
     return CnnTrainingResult(model=model, metrics=metrics, training=training, history=history)
+
+
+def train_small_cnn(x_train: np.ndarray, y_train: np.ndarray, x_eval: np.ndarray, y_eval: np.ndarray,
+                    class_names: list[str], *, epochs: int = 3, seed: int = 0, batch_size: int = 64,
+                    lr: float = 1e-3, weight_decay: float = 1e-4, log: Log = print) -> CnnTrainingResult:
+    """``train_cnn`` with ``arch="small_cnn"`` (the original entry point)."""
+    return train_cnn(x_train, y_train, x_eval, y_eval, class_names, arch="small_cnn", epochs=epochs, seed=seed,
+                     batch_size=batch_size, lr=lr, weight_decay=weight_decay, log=log)
 
 
 def save_state_dict(model: nn.Module, path: Path) -> Path:
