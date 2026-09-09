@@ -195,16 +195,16 @@ resource "aws_ecs_service" "runtime" {
   # A discovery service with no registered task resolves to nothing, so the
   # api tasks are registered alongside identity rather than left out.
   #
-  # KNOWN HAZARD, unverified against this account: service_registries is
-  # ForceNew on aws_ecs_service, so adding this block to a service that was
-  # applied without it REPLACES that service rather than updating it. The api
-  # service was created before this block existed, so the next apply is
-  # expected to destroy and recreate it, taking its running tasks with it. Read
-  # the plan before applying and expect a replace line for
-  # aws_ecs_service.runtime["api"]. runtime.tftest.hcl runs against a mocked
-  # provider and cannot assert replacement, so nothing here catches it.
-  # TODO(#23): confirm against a real plan, and drain the service deliberately
-  # rather than discovering the replacement mid-apply.
+  # The api service was created before this block existed, and adding it is an
+  # in-place update rather than a replacement: service_registries carries no
+  # ForceNew on aws_ecs_service in the provider versions.tf pins, and the
+  # provider sends the attribute on update. An earlier note here read the
+  # other way and told an operator to expect the api service to be destroyed
+  # and recreated, which would have bought a maintenance window nothing needed.
+  #
+  # runtime.tftest.hcl runs against a mocked provider and can assert neither
+  # outcome, so still read the plan before applying and confirm there is no
+  # replace line for aws_ecs_service.runtime["api"].
   dynamic "service_registries" {
     for_each = contains(keys(local.discovery_services), each.key) ? [each.key] : []
     content { registry_arn = local.discovery_services[each.key] }
