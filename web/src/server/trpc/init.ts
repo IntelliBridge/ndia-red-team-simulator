@@ -47,7 +47,7 @@ export const createCallerFactory = t.createCallerFactory;
  * sure it reaches the caller even when the call never touched the upstream.
  *
  * A schema failure is refused before any upstream call, so it carries no
- * envelope; it still carries the id, because R3 wants an id a user can quote
+ * envelope. It still carries the id, because R3 wants an id a user can quote
  * for every call, not only for calls the API answered.
  */
 const withRequestId = t.middleware(async ({ ctx, next }) => {

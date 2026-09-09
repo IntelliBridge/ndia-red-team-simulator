@@ -32,7 +32,7 @@ export const RUNS_POLL_MS = 15_000;
  * the host locale and time zone, so the server HTML and the first client
  * render disagreed and React replaced the cell. Pinning both to UTC and
  * en-US, with the zone visible so nobody reads it as local time, is what
- * makes the hydrated markup stable. U5 owns the shared helper; this is the
+ * makes the hydrated markup stable. U5 owns the shared helper. This is the
  * same pinned call, replaced when it lands.
  */
 export function formatDateTime(iso: string): string {

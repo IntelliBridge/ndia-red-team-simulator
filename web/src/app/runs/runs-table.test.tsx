@@ -33,7 +33,7 @@ function run(over: Partial<Run> = {}): Run {
   };
 }
 
-/** A client that never reaches the network; only its key shapes are used. */
+/** A client that never reaches the network. Only its key shapes are used. */
 function keyProxy(queryClient: QueryClient) {
   const client = createTRPCClient<AppRouter>({
     links: [
@@ -159,7 +159,7 @@ describe("RunsTable when a poll fails over hydrated rows", () => {
       vi.advanceTimersByTime(RUNS_POLL_MS + 1);
     });
     expect(trpcFetch).toHaveBeenCalledTimes(1);
-    // The interval fired the request; this settles its answer into the query.
+    // The interval fired the request. This settles its answer into the query.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1);
     });

@@ -1,7 +1,7 @@
 locals {
   identity_internal = "http://identity.${aws_service_discovery_private_dns_namespace.runtime.name}:8080/auth/realms/redsim"
   # In-VPC base for the web tier's tRPC layer. Plain HTTP inside the VPC, the
-  # posture KEYCLOAK_ISSUER already takes; the session cookie rides every
+  # posture KEYCLOAK_ISSUER already takes. The session cookie rides every
   # upstream call on it.
   api_internal = "http://api.${aws_service_discovery_private_dns_namespace.runtime.name}:8000"
   common_environment = merge({

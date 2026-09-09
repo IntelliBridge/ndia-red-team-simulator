@@ -39,7 +39,7 @@ import { appRouter } from "./root";
  * Failing at import is the safe direction. A module-scoped memo would make the
  * two agree, but it would share one QueryClient across requests, which in this
  * app means one user's rows reaching another. A plain Node import supplies
- * `cache` instead; the server-component tests already do.
+ * `cache` instead. The server-component tests already do.
  */
 if (typeof React.cache !== "function") {
   throw new Error(

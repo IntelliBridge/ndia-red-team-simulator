@@ -11,7 +11,7 @@
 // here instead (KTD7). U7 extends the GET form with the dev-cookie clear.
 //
 // Both forms are gated. POST takes the origin legs of the shared mutation
-// gate, so a cross-site form post cannot force a logout; GET takes the
+// gate, so a cross-site form post cannot force a logout. GET takes the
 // credential-bound hop token instead, because a redirect leg recomputes
 // Sec-Fetch-Site against the original initiator.
 

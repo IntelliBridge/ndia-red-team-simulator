@@ -60,7 +60,7 @@ export type CookieReader = (name: string) => string | undefined;
 /**
  * The request as the context builder consumes it.
  *
- * A route handler passes the request's own headers; a server component passes
+ * A route handler passes the request's own headers. A server component passes
  * the results of `headers()` and `cookies()`. Keeping both behind one shape is
  * what makes `requestParts` the single site that changes when those Next APIs
  * become async in the six-major bump.
@@ -141,7 +141,7 @@ export function newRequestId(): string {
  *    middleware compares the client's header against the csrf cookie on its
  *    own request and answers 403 without it.
  * 2. Otherwise the dev-token cookie becomes a bearer, but only in `dev` or
- *    `test`. `prod`, `staging` and any unknown value forward nothing; an unset
+ *    `test`. `prod`, `staging` and any unknown value forward nothing. An unset
  *    value reads as `dev` through the env module's default.
  * 3. Otherwise there is no credential, and `upstreamFetch` refuses before any
  *    upstream call.

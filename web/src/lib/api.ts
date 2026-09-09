@@ -1,14 +1,14 @@
 // Unified API client.
 //
 // Being replaced by the tRPC layer under web/src/server/trpc/. The response
-// types below are the procedure output types and stay (R5); the fetch client
+// types below are the procedure output types and stay (R5). The fetch client
 // and the SWR-era helpers go in U14 once every page reads its data through a
 // procedure.
 //
 // A helper gains a marker naming its replacement as that procedure lands, so
 // U14 can tell what is still in use from what is only still exported. Only
 // upstreamError's counterpart mlErrorDetail carries one today, because runs is
-// the only router U1 shipped; U8 adds the rest and marks the helpers it
+// the only router U1 shipped. U8 adds the rest and marks the helpers it
 // retires as it goes.
 //
 // Auth modes:
@@ -626,7 +626,7 @@ export type JobHandle = {
  * readable from a live client error, whose data sits under `shape.data`, and
  * from a query the server prefetched and dehydrated, which crosses the RSC
  * boundary as a plain object with no prototype and no stack (KTD4). Every
- * honest state branches on `upstream.code`; nothing branches on message text.
+ * honest state branches on `upstream.code`. Nothing branches on message text.
  */
 export function upstreamError(error: unknown): UpstreamErrorBlock | undefined {
   const candidate = error as
@@ -639,7 +639,7 @@ export function upstreamError(error: unknown): UpstreamErrorBlock | undefined {
   return candidate?.data?.upstream ?? candidate?.shape?.data?.upstream;
 }
 
-/** Replaced by {@link upstreamError}; removed with the fetch client in U14. */
+/** Replaced by {@link upstreamError}. Removed with the fetch client in U14. */
 export function mlErrorDetail(error: unknown): MlErrorDetail {
   if (error instanceof ApiError) {
     try {

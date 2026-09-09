@@ -12,7 +12,7 @@ const PUBLIC_PATHS = new Set(["/login"]);
 
 export type GateRequest = {
   pathname: string;
-  /** Presence only. Middleware never validates a cookie; the API does (R12). */
+  /** Presence only. Middleware never validates a cookie. The API does (R12). */
   hasSessionCookie: boolean;
   hasDevTokenCookie: boolean;
 };
@@ -108,7 +108,7 @@ export async function mintHopToken(
  * Verify a hop token against the credential the incoming request still carries.
  *
  * A legitimate cross-site entry still sends its rejected cookie on the
- * top-level GET, so it passes; a token minted for a different value does not.
+ * top-level GET, so it passes. A token minted for a different value does not.
  */
 export async function verifyHopToken(
   secret: string,

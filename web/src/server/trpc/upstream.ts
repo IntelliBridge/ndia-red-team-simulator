@@ -185,7 +185,7 @@ export async function upstreamFetch<T>(
   // member expression because that is the only form Next inlines, which is
   // what lets a build without the flag drop the module from the output.
   // deploy/Dockerfile.web sets it to "0" so the comparison folds to false and
-  // the branch goes with it; U14 asserts the absence by grepping the build
+  // the branch goes with it. U14 asserts the absence by grepping the build
   // output for the module's sentinel.
   //
   // Compared against "1" rather than read for truthiness: the string "0" is

@@ -1,7 +1,7 @@
 // Client-safe tRPC types.
 //
 // Everything here is erased at build time. The router import is a top-level
-// `import type`, which verbatimModuleSyntax erases entirely; an inline type
+// `import type`, which verbatimModuleSyntax erases entirely. An inline type
 // specifier would leave the side-effect import behind and pull the server
 // router into the browser bundle, where the `server-only` guard turns it into
 // a build error (KTD2).

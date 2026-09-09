@@ -3,7 +3,7 @@
  *
  * A page passes only route ids and search params down to its client leaves
  * (R7), and this is the one site that reads the raw prop. Next 15 makes
- * `searchParams` a promise; that change lands here and nowhere else.
+ * `searchParams` a promise. That change lands here and nowhere else.
  */
 export type RawSearchParams = Record<string, string | string[] | undefined>;
 
