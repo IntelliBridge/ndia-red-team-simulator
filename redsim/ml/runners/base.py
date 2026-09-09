@@ -151,6 +151,42 @@ def npz_bytes(x_adv: np.ndarray, indices: np.ndarray, y: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
+#: Slice families every runner writes (mirrors ``redsim.ml.interop.parquet.FAMILY_*``; the runners never
+#: import the export). The attack label of the control family is the shared control adapter id.
+SLICE_FAMILY_CLEAN = "clean"
+SLICE_FAMILY_ADVERSARIAL = "adversarial"
+SLICE_FAMILY_CONTROL = "control"
+#: Row note when a slice was not retained under the ``REDSIM_ML_MAX_ADV_ARTIFACT_MB`` cap (never faked).
+SLICE_NOT_RETAINED_NOTE = "{what} slice not retained (over REDSIM_ML_MAX_ADV_ARTIFACT_MB)"
+
+
+def slice_bytes(*, family: str, attack: str, eps: float | None, **arrays: Any) -> bytes:
+    """A self-describing per-sample export slice (INTEROP-04), shared by every modality runner.
+
+    ``arrays`` are the per-sample columns: ``x`` or ``x_adv`` (a numeric input tensor), ``indices``,
+    ``y``, and when the runner has them ``y_pred_clean`` / ``y_pred_adv`` / ``conf_clean`` / ``conf_adv``.
+    The text runner carries its message strings as ``text`` / ``text_adv`` (unicode arrays, never
+    ``object``) since a text model has no numeric input tensor; the detection runner adds its packed
+    ``boxes`` / ``labels`` / ``offsets``. ``family`` / ``attack`` travel as zero-dimensional unicode
+    arrays and ``eps`` as a float scalar (omitted for the clean slice), so the export labels the slice
+    from its own bytes whatever the blob backend did with its name (``allow_pickle=False`` loads every
+    key). Compressed, no pickle: an ``object`` array is refused here rather than pickled.
+    """
+    payload: dict[str, Any] = {}
+    for key, value in arrays.items():
+        arr = np.asarray(value)
+        if arr.dtype == object:
+            arr = np.asarray([str(v) for v in arr.reshape(-1).tolist()], dtype=str).reshape(arr.shape)
+        payload[key] = arr
+    payload["family"] = np.asarray(family)
+    payload["attack"] = np.asarray(attack)
+    if eps is not None:
+        payload["eps"] = np.asarray(float(eps), dtype=np.float64)
+    buf = io.BytesIO()
+    np.savez_compressed(buf, **payload)
+    return buf.getvalue()
+
+
 def json_bytes(obj: Any) -> bytes:
     return json.dumps(obj, indent=2, sort_keys=True, default=str).encode("utf-8")
 
@@ -544,6 +580,10 @@ __all__ = [
     "MODALITY_RUNNERS",
     "NLTK_DATA_ENV",
     "REALIZABILITY_CAVEAT",
+    "SLICE_FAMILY_ADVERSARIAL",
+    "SLICE_FAMILY_CLEAN",
+    "SLICE_FAMILY_CONTROL",
+    "SLICE_NOT_RETAINED_NOTE",
     "SUBJECT_CENTERED_CAVEAT",
     "SURROGATE_NOTE_PREFIX",
     "SURROGATE_TRANSFER_LIMITATION_TEMPLATE",
@@ -571,6 +611,7 @@ __all__ = [
     "resolve_runner",
     "sha256_indices",
     "sink_work_dir",
+    "slice_bytes",
     "split_notes",
     "subject_centered",
     "surrogate_description",

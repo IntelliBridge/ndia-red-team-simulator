@@ -37,6 +37,9 @@ from tests.ml.test_tasks import (
     BASELINE_RUN_ID,
     DEFENSE,
     PROJECT_ID,
+    TRAINING_DEFENSE,
+    VERIFY_JOB_ID,
+    VERIFY_RUN_ID,
     Harness,
     fixture_record,
     verify_record,
@@ -485,3 +488,229 @@ def test_endpoint_campaign_resolves_the_vault_credential_and_records_broker_budg
     assert fake_token not in json.dumps(events) and fake_token not in record.model_dump_json()
     job = harness.row(Job, EP_JOB_ID)
     assert job is not None and fake_token not in json.dumps(job.detail or {})
+
+
+# --------------------------------------------------------------------------- BULK-16: shared defended run
+
+
+def _both_finding_ids(harness: Harness, fgsm_id: str) -> tuple[str, str]:
+    """``(fgsm, pgd)`` finding ids of the seeded baseline (``seed_baseline`` returns the fgsm one)."""
+    with harness.sessions() as session:
+        rows = session.query(Finding).filter(Finding.run_id == BASELINE_RUN_ID).all()
+        pgd = next(f for f in rows if f.schema_blob["ml"]["attack_id"] == "pgd")
+        return fgsm_id, str(pgd.id)
+
+
+def _add_bulk_verify(harness: Harness, finding_ids: list[str], run_id: str, job_id: str) -> None:
+    config = harness.baseline.config.model_dump(mode="json")
+    config["defense"] = DEFENSE
+    harness.add_job(
+        run_id=run_id, job_id=job_id, job_type="verify.replay", config=config,
+        detail={"finding_id": finding_ids[0], "finding_ids": list(finding_ids), "baseline_run_id": BASELINE_RUN_ID,
+                "batch_id": "batch-verify-1"},
+        kind="verify", baseline_run_id=BASELINE_RUN_ID, scanner="ml.verify",
+    )
+
+
+def test_verify_finding_ids_puts_the_primary_first_and_deduplicates() -> None:
+    from redsim.workers.tasks.ml_campaign import verify_finding_ids
+
+    assert verify_finding_ids({"finding_id": "a"}) == ["a"]
+    assert verify_finding_ids({"finding_id": "b", "finding_ids": ["a", "b", "c", "a"]}) == ["b", "a", "c"]
+    assert verify_finding_ids({"finding_ids": ["a", "", None, "b"]}) == ["a", "b"]
+    assert verify_finding_ids({}) == []
+
+
+def test_bulk_verify_projects_the_shared_record_onto_every_listed_finding(harness: Harness) -> None:
+    """Owner decision BULK-16 (worker half): one defended run, ``Job.detail.finding_ids`` two findings, each
+    projected from its own attack rows with its own ``verify.execute`` row, the primary first."""
+    from redsim.workers.tasks.ml_campaign import VERIFY_STATUS_MAP
+    from redsim.workers.tasks.verify import _STATE_MAP
+
+    fgsm, pgd = _both_finding_ids(harness, harness.seed_baseline())
+    _add_bulk_verify(harness, [fgsm, pgd], "run-verify-bulk", "job-verify-bulk")
+    record = verify_record(partial=False)
+    harness.install_sandbox(record)
+
+    result = harness.run_job("job-verify-bulk")
+
+    assert result["status"] == "succeeded" and result["verify"]["finding_ids"] == [fgsm, pgd]
+    projected: dict[str, Any] = {}
+    for fid in (fgsm, pgd):
+        finding = harness.row(Finding, fid)
+        assert finding is not None
+        ml = finding.schema_blob["ml"]
+        assert ml["verify"]["run_id"] == "run-verify-bulk" and ml["verify"]["defense"]["id"] == DEFENSE["id"]
+        assert ml["verify"]["baseline_run_id"] == BASELINE_RUN_ID
+        assert ml["verify"]["settings_hash"] == harness.baseline.settings_hash
+        assert ml["retests"][-1] == ml["verify"]
+        outcome = ml["verify"]["outcome"]
+        assert finding.status == VERIFY_STATUS_MAP[outcome] and finding.validation_state == _STATE_MAP[outcome]
+        projected[fid] = outcome
+    # Each finding is read from its own attack rows of the one record: the outcome is per attack.
+    from redsim.workers.tasks.ml_campaign import _verify_outcome
+
+    assert projected == {fgsm: _verify_outcome(record, "fgsm")[0], pgd: _verify_outcome(record, "pgd")[0]}
+    events = harness.events("run-verify-bulk")
+    verify_rows = [e for e in events if e["action"] == "verify.execute"]
+    assert [e["detail"]["finding_id"] for e in verify_rows] == [fgsm, pgd], "one row per finding, primary first"
+    for row in verify_rows:
+        assert row["detail"]["shared_run_projection"] is True
+        assert row["detail"]["primary_finding_id"] == fgsm and row["detail"]["finding_ids"] == [fgsm, pgd]
+        assert row["detail"]["outcome"] == projected[row["detail"]["finding_id"]]
+    assert [e["action"] for e in events].index("verify.execute") < [e["action"] for e in events].index("job.complete")
+    with harness.sessions() as session:
+        attempts = session.query(RemediationAttempt).filter(
+            RemediationAttempt.finding_id.in_([fgsm, pgd])).all()
+    assert {a.finding_id for a in attempts} == {fgsm, pgd}
+    for attempt in attempts:
+        summary = json.loads(attempt.detail["result"])
+        assert summary["verify_run_id"] == "run-verify-bulk"
+        assert summary["shared_run_projection"]["finding_ids"] == [fgsm, pgd]
+
+
+def test_failed_bulk_verify_leaves_every_listed_finding_inconclusive(harness: Harness) -> None:
+    from redsim.ml.errors import SandboxTimeout
+
+    fgsm, pgd = _both_finding_ids(harness, harness.seed_baseline())
+    _add_bulk_verify(harness, [fgsm, pgd], "run-verify-bulk-fail", "job-verify-bulk-fail")
+    harness.install_sandbox(verify_record(), stages=["load_target"],
+                            raise_after=SandboxTimeout("ML sandbox timed out after 1200s"))
+
+    with pytest.raises(SandboxTimeout):
+        harness.run_job("job-verify-bulk-fail")
+
+    for fid in (fgsm, pgd):
+        finding = harness.row(Finding, fid)
+        assert finding is not None
+        assert finding.validation_state == "inconclusive" and finding.status == "open"
+        retest = finding.schema_blob["ml"]["retests"][-1]
+        assert retest["run_id"] == "run-verify-bulk-fail" and retest["outcome"] == "inconclusive"
+        assert finding.schema_blob["ml"]["verify"] == retest
+
+
+def test_single_verify_is_unchanged_by_the_finding_ids_loop(harness: Harness) -> None:
+    """A single verify names one finding: one ``verify.execute`` row, no shared-run keys, the same result shape."""
+    finding_id = harness.seed_baseline()
+    _add_verify(harness, finding_id, "run-verify-single", "job-verify-single")
+    harness.install_sandbox(verify_record(partial=False))
+
+    result = harness.run_job("job-verify-single")
+
+    assert set(result["verify"]) == {"outcome", "validation_state", "status"}
+    rows = [e for e in harness.events("run-verify-single") if e["action"] == "verify.execute"]
+    assert len(rows) == 1 and "shared_run_projection" not in rows[0]["detail"]
+
+
+# --------------------------------------------------------------------------- REVIEW_REPORTS-16 / -20 (worker half)
+
+
+def test_completion_renders_every_report_format_and_records_the_first_snapshot(harness: Harness) -> None:
+    from redsim.db.models import ReportSnapshot
+    from redsim.ml.pdf import PDF_MAGIC
+    from redsim.ml.reporting import REPORT_FORMATS_ALL
+    from redsim.services.reports import REPORT_FORMATS as SERVICE_FORMATS
+    from redsim.workers.tasks.ml_campaign import REPORT_FORMATS
+
+    assert tuple(REPORT_FORMATS) == tuple(REPORT_FORMATS_ALL) == tuple(SERVICE_FORMATS) == ("md", "json", "html", "pdf")
+    harness.add_attack_job()
+    harness.install_sandbox(fixture_record())
+
+    result = harness.run_job(ATTACK_JOB_ID)
+
+    artifacts = {a.kind: a for a in harness.artifacts(ATTACK_RUN_ID)}
+    assert {"report.md", "report.json", "report.html", "report.pdf"} <= set(artifacts)
+    pdf = harness.store.get(str(artifacts["report.pdf"].location))
+    pdf_bytes = pdf.encode() if isinstance(pdf, str) else bytes(pdf)
+    assert pdf_bytes.startswith(PDF_MAGIC) and artifacts["report.pdf"].content_type == "application/pdf"
+    events = {e["action"]: e for e in harness.events(ATTACK_RUN_ID)}
+    render = events["report.render"]["detail"]
+    assert render["formats"] == ["md", "json", "html", "pdf"] and render["source"] == "completion"
+    assert "pdf_unavailable" not in render
+    for ext in REPORT_FORMATS:
+        assert render["artifact_ids"][f"report.{ext}"] == artifacts[f"report.{ext}"].id
+        assert render["sha256"][f"report.{ext}"] == artifacts[f"report.{ext}"].sha256
+    # REVIEW_REPORTS-20: exactly one snapshot, over the four report rows, projected from the run record bytes.
+    with harness.sessions() as session:
+        snapshots = session.query(ReportSnapshot).filter(ReportSnapshot.run_id == ATTACK_RUN_ID).all()
+    assert len(snapshots) == 1
+    snap = snapshots[0]
+    assert result["snapshot_id"] == snap.id and snap.project_id == PROJECT_ID and snap.archived is False
+    assert set(snap.artifact_ids) == {artifacts[f"report.{ext}"].id for ext in REPORT_FORMATS}
+    assert snap.record_sha256 == artifacts["ml.run_record"].sha256 and snap.created_by == "user:alice"
+    actions = [e["action"] for e in harness.events(ATTACK_RUN_ID)]
+    assert actions.index("report.render") < actions.index("job.complete")
+
+
+def test_missing_pdf_renderer_falls_back_to_the_text_formats_and_says_so(harness: Harness) -> None:
+    from redsim.db.models import ReportSnapshot
+
+    def no_reportlab(*_a: Any, **_k: Any) -> bytes:
+        raise ImportError("No module named 'reportlab'")
+
+    harness.monkeypatch.setattr("redsim.ml.pdf.render_pdf", no_reportlab)
+    harness.add_attack_job()
+    harness.install_sandbox(fixture_record())
+
+    result = harness.run_job(ATTACK_JOB_ID)
+
+    kinds = {a.kind for a in harness.artifacts(ATTACK_RUN_ID)}
+    assert {"report.md", "report.json", "report.html"} <= kinds and "report.pdf" not in kinds, "nothing faked"
+    render = next(e for e in harness.events(ATTACK_RUN_ID) if e["action"] == "report.render")["detail"]
+    assert render["formats"] == ["md", "json", "html"] and render["pdf_unavailable"].startswith("ImportError")
+    with harness.sessions() as session:
+        snap = session.query(ReportSnapshot).filter(ReportSnapshot.run_id == ATTACK_RUN_ID).one()
+    assert len(snap.artifact_ids) == 3 and result["snapshot_id"] == snap.id
+
+
+# --------------------------------------------------------------------------- spec 6.5: the record closes the table
+
+
+def test_stage_listed_done_by_the_record_is_succeeded_even_when_its_live_frame_was_missed(harness: Harness) -> None:
+    """A stage the returned record lists in ``stages_done`` completed; a live frame that never reached the parent
+    (here ``defense_apply``, which the tracker had marked skipped when ``sample`` closed) must not leave it skipped."""
+    from redsim.db.models import Run
+
+    finding_id = harness.seed_baseline()
+    harness.add_verify_job(finding_id, recommendation_id=None, defense=TRAINING_DEFENSE)
+    record = verify_record(partial=False, defense=TRAINING_DEFENSE)
+    assert "defense_apply" in record.stages_done
+    harness.install_sandbox(record, stages=[s for s in record.stages_done if s != "defense_apply"])
+
+    result = harness.run_job(VERIFY_JOB_ID)
+
+    assert result["status"] == "succeeded"
+    run = harness.row(Run, VERIFY_RUN_ID)
+    assert run is not None
+    stages = run.stage_table["stages"]
+    assert stages["defense_apply"]["status"] == "succeeded" and stages["defense_apply"]["job_id"] == VERIFY_JOB_ID
+    assert not any(entry["status"] == "skipped" for entry in stages.values())
+    assert run.stage_table["stages_done"] == list(record.stages_done)
+
+
+# --------------------------------------------------------------------------- INTEROP-04: the child env carries the cap
+
+
+@pytest.mark.parametrize("raw, forwarded", [("8", "8"), (" 0.5 ", "0.5"), ("0", None), ("-3", None),
+                                            ("nan", None), ("inf", None), ("lots", None), ("", None)])
+def test_child_env_forwards_a_valid_adv_artifact_cap_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
+                                                          raw: str, forwarded: str | None) -> None:
+    from redsim.ml import sandbox
+
+    monkeypatch.setenv(sandbox.MAX_ADV_ARTIFACT_ENV, raw)
+    env = sandbox._ml_child_env(sandbox.MlSandboxConfig.from_env(), assets=str(tmp_path), hash_seed=0,
+                                work_dir=tmp_path)
+    assert env.get(sandbox.MAX_ADV_ARTIFACT_ENV) == forwarded
+    # The pins are untouched and no other REDSIM_* value travels.
+    assert env["REDSIM_DISABLE_LLM"] == "1" and env["REDSIM_PLUGINS"] == "0"
+    assert set(k for k in env if k.startswith("REDSIM_")) - {sandbox.MAX_ADV_ARTIFACT_ENV} == set(sandbox._ALLOWED_REDSIM_KEYS)
+
+
+def test_child_env_has_no_cap_when_the_parent_sets_none(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    from redsim.ml import sandbox
+
+    monkeypatch.delenv(sandbox.MAX_ADV_ARTIFACT_ENV, raising=False)
+    env = sandbox._ml_child_env(sandbox.MlSandboxConfig.from_env(), assets=str(tmp_path), hash_seed=0,
+                                work_dir=tmp_path)
+    assert sandbox.MAX_ADV_ARTIFACT_ENV not in env
+    assert sorted(k for k in env if k.startswith("REDSIM_")) == sorted(sandbox._ALLOWED_REDSIM_KEYS)

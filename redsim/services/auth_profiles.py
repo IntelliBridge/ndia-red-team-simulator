@@ -13,6 +13,9 @@ Secret handling invariants:
 - ``resolve_auth_for_scan`` is the single decryption point, used by the
   worker just before an authenticated scan. Its name and return shape
   are a contract with the worker — do not change them.
+- A profile a live endpoint or LLM target references is never deleted
+  (``AuthProfileInUseError`` -> ``409 auth_profile_in_use``, ENDPOINT-18), so a
+  queued campaign cannot resolve a dangling credential.
 """
 
 from __future__ import annotations
@@ -36,6 +39,45 @@ VALID_KINDS = frozenset({"form", "bearer", "header", "cookie"})
 
 class DuplicateAuthProfileError(Exception):
     """An auth profile with this (project_id, name) already exists."""
+
+
+class AuthProfileInUseError(Exception):
+    """A live endpoint or LLM target still references the profile (spec 17.3 ``auth_profile_in_use``).
+
+    ``target_ids`` names the referencing ``ml_model_endpoint`` rows so the caller
+    can delete or re-point them first; a campaign must never pick up a dangling
+    credential (ENDPOINT-18).
+    """
+
+    def __init__(self, profile_id: str, target_ids: list[str]) -> None:
+        super().__init__(
+            f"auth profile {profile_id} is referenced by {len(target_ids)} live endpoint target(s): "
+            + ", ".join(target_ids)
+        )
+        self.profile_id = profile_id
+        self.target_ids = list(target_ids)
+
+
+def referencing_endpoint_targets(session: Session, profile_id: str, project_id: str) -> list[str]:
+    """Ids of the live (non-deleted) ``ml_model_endpoint`` targets of ``project_id`` that name ``profile_id``.
+
+    Reads the registration copy of the id (``detail.endpoint.auth_profile_id`` for a
+    black-box endpoint, ``detail.auth_profile_id`` for an LLM target) through
+    ``services.ml_models.endpoint_auth_profile_id``; never a credential. Sorted so
+    the refusal envelope is stable.
+    """
+    from sqlalchemy import select
+
+    from redsim.db.models import Target
+    from redsim.services.ml_models import ENDPOINT_KIND, endpoint_auth_profile_id, is_deleted
+
+    rows = session.execute(
+        select(Target).where(Target.project_id == project_id, Target.kind == ENDPOINT_KIND)
+    ).scalars().all()
+    return sorted(
+        str(row.id) for row in rows
+        if not is_deleted(row.detail) and endpoint_auth_profile_id(row.detail) == profile_id
+    )
 
 
 def _audit(audit_writer: AuditWriter | None, *, action: str, actor: str,
@@ -149,13 +191,31 @@ def delete_auth_profile(
     """Admission boundary for deleting an auth profile.
 
     Emits the chained ``auth_profile.delete`` event before the row is
-    removed. Raises ``LookupError`` if the profile does not exist.
+    removed. Raises ``LookupError`` if the profile does not exist and
+    :class:`AuthProfileInUseError` while a live endpoint or LLM target of the
+    project references it (ENDPOINT-18): that refusal is a ``success=False``
+    ``auth_profile.delete`` row naming the target ids, written before the
+    exception, and the row is kept.
     """
     from redsim.db.models import AuthProfile
 
     profile = session.get(AuthProfile, profile_id)
     if profile is None:
         raise LookupError(f"auth profile not found: {profile_id}")
+
+    in_use = referencing_endpoint_targets(session, profile_id, str(profile.project_id))
+    if in_use:
+        from redsim.audit.chain import resolve_writer
+        from redsim.config import load_config
+
+        writer = audit_writer if audit_writer is not None else resolve_writer(load_config())
+        writer.append(
+            action="auth_profile.delete", actor=actor, target=None, allowlist_check="n/a", override=False,
+            success=False, project_id=profile.project_id,
+            detail={"actor": actor, "op": "delete", "profile_id": profile_id, "name": profile.name,
+                    "kind": profile.kind, "refusal": "auth_profile_in_use", "target_ids": in_use},
+        )
+        raise AuthProfileInUseError(profile_id, in_use)
 
     _audit(audit_writer, action="auth_profile.delete", actor=actor,
            project_id=profile.project_id,

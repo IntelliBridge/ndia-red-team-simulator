@@ -3,16 +3,16 @@
 Redsim ships two complementary supply-chain controls so that the code you
 run can be tied back to the author who vouched for it:
 
-1. **Signed third-party plugins** — opt-in Ed25519 verification of the
+1. **Signed third-party plugins**, opt-in Ed25519 verification of the
    third-party scanner and attack adapters discovered through the
    [marketplace seam](../dev/extending.md#third-party-plugins-marketplace).
-2. **Signed + attested release images** — keyless [cosign](https://docs.sigstore.dev/cosign/overview/)
+2. **Signed + attested release images**, keyless [cosign](https://docs.sigstore.dev/cosign/overview/)
    signatures, a CycloneDX SBOM, and SLSA provenance on the four service
    images, all produced in CI at release time.
 
 Both are layered on top of existing behaviour: plugin enforcement is
 **off by default** (the marketplace works exactly as before until you
-opt in), and image signing runs only on `v*` release tags — it never
+opt in), and image signing runs only on `v*` release tags, it never
 touches a PR build.
 
 ---
@@ -22,11 +22,11 @@ touches a PR build.
 ### Why
 
 Loading a marketplace plugin runs its code **in-process** inside the API
-and worker — same privileges, same secrets, same network (see the
+and worker, same privileges, same secrets, same network (see the
 [allowlist danger note](../dev/extending.md#security-the-redsim_plugins_allow-allowlist)).
 The `REDSIM_PLUGINS_ALLOW` distribution allowlist plus a pinned lockfile
 bound *which* distributions load; signature verification adds the missing
-piece — **cryptographic proof of authorship**, bound to the exact code
+piece, **cryptographic proof of authorship**, bound to the exact code
 that will run.
 
 ### The trust model
@@ -40,19 +40,19 @@ redsim-plugin\n<dist_name>\n<version>\n<sha256-of-factory-module-source>
 
 The trailing field is the SHA-256 of the *source file* that defines the
 plugin's factory. Because the signature binds to the factory module's
-source, a signature can only authorise the code that actually runs — swap
+source, a signature can only authorise the code that actually runs, swap
 the implementation and the digest (and therefore the required signature)
 changes, invalidating any prior signature.
 
-- **Signature file** — a *detached* raw Ed25519 signature (64 bytes),
+- **Signature file**, a *detached* raw Ed25519 signature (64 bytes),
   stored **hex-encoded** in a file named `<dist_name>-<version>.sig`
   (`<dist_name>.sig` when the version is unknown).
-- **Trusted keys** — Ed25519 **public** keys in PEM form. The signature
+- **Trusted keys**, Ed25519 **public** keys in PEM form. The signature
   must verify under at least one of them.
-- **`key_id`** — the SHA-256 (hex) of the matching public key's raw
+- **`key_id`**, the SHA-256 (hex) of the matching public key's raw
   bytes. A verified plugin carries its `key_id` so an operator can tell
   *which* trusted key vouched for it. Key bytes and signature bytes are
-  never logged — only `key_id` digests and concise reasons.
+  never logged, only `key_id` digests and concise reasons.
 
 ### Enabling enforcement
 
@@ -64,7 +64,7 @@ with `REDSIM_PLUGINS`):
 |-----|---------|
 | `REDSIM_PLUGINS_REQUIRE_SIGNATURE` | Set to `1` (or `true`/`yes`/`on`) to require a valid signature before any third-party plugin loads. Unset/`0` = today's behaviour (no signature check). |
 | `REDSIM_PLUGINS_TRUSTED_KEYS` | Colon/comma-separated list of `*.pem` **public-key** files and/or directories of them. The signature must verify under one of these. |
-| `REDSIM_PLUGINS_SIG_DIR` | Colon/comma-separated directories where the `<dist>-<version>.sig` files live. Falls back to the trusted-key directories, then the plugin's own module directory — so a self-contained key+sig directory works with no extra config. |
+| `REDSIM_PLUGINS_SIG_DIR` | Colon/comma-separated directories where the `<dist>-<version>.sig` files live. Falls back to the trusted-key directories, then the plugin's own module directory, so a self-contained key+sig directory works with no extra config. |
 
 ```bash
 export REDSIM_PLUGINS=1                       # marketplace discovery on
@@ -86,13 +86,13 @@ When enforcement is on, each discovered plugin's distribution signature is
 checked **before** the plugin is registered:
 
 - A plugin with a **valid** signature loads normally and carries its
-  `key_id` — `redsim plugins list` shows `yes:<first-12-of-key_id>` in the
+  `key_id`, `redsim plugins list` shows `yes:<first-12-of-key_id>` in the
   **SIGNED** column.
 - A plugin that is **unsigned or whose signature does not verify** is
   **rejected** (not loaded) with a concise reason (`no signature found`,
   `signature does not verify`, `no trusted keys`) and surfaces as
   `rejected` in `redsim plugins list`.
-- One bad plugin never crashes discovery or sidelines a healthy one — the
+- One bad plugin never crashes discovery or sidelines a healthy one, the
   same resilience guarantee as Protocol-conformance validation.
 
 When enforcement is **off** (the default) the SIGNED column shows `-` for
@@ -124,7 +124,7 @@ redsim plugins sign \
 It prints the signature path and the `key_id` operators must trust. Ship
 the **public** key to operators (it is safe to publish); the private key
 stays with the author. Re-run `sign` whenever the factory module's source
-changes — the digest, and therefore the signature, moves with it.
+changes, the digest, and therefore the signature, moves with it.
 
 !!! tip "Generate a keypair"
     Any Ed25519 keypair works (e.g. `openssl genpkey -algorithm ed25519`).
@@ -162,7 +162,7 @@ signature gates apply to third-party attacks.
 The four service images (`api`, `worker`, `web`, `log_ingest`) are signed
 and attested at release time by
 [`.github/workflows/release-sign.yml`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/.github/workflows/release-sign.yml),
-which runs **only on `v*` tags** — it is the release-only, push-and-sign
+which runs **only on `v*` tags**, it is the release-only, push-and-sign
 counterpart to the no-push PR `docker-images` build. Everything executes in
 GitHub Actions; it cannot be run locally.
 
@@ -172,7 +172,7 @@ For each image the workflow:
    and captures the pushed **digest**.
 2. **Keyless-signs** the image **by digest** with cosign using the ambient
    GitHub OIDC token (`id-token: write`). No private keys are stored
-   anywhere — the signing identity is the workflow itself, recorded in a
+   anywhere, the signing identity is the workflow itself, recorded in a
    Fulcio-issued certificate and logged to the Rekor transparency log.
 3. **Generates a CycloneDX SBOM** with Syft and attaches it as a cosign
    **attestation** (`--type cyclonedx`).
@@ -226,7 +226,7 @@ cosign verify \
 ```
 
 Wire these into your deploy pipeline so a tampered or unsigned image fails
-the gate before `docker compose up` / `kubectl apply` — see the
+the gate before `docker compose up` / `kubectl apply`, see the
 [pre-deploy verification step](../ops/deploy.md#verify-release-images-before-deploy).
 
 !!! note "Verify by digest, not tag"
@@ -236,10 +236,60 @@ the gate before `docker compose up` / `kubectl apply` — see the
 
 ---
 
-## What's still deferred
+## garak and the LLM probe domain (Phase B, decision D5)
+
+The Phase B LLM red-teaming track (`redsim/ml/llm/`, waves B2 and B4) drives
+NVIDIA garak 0.16 through its OpenAI-compatible generator pointed at the
+Pythia gateway. The `garak` extra (`pyproject.toml`, pinned `garak>=0.16,<0.17`)
+pulls in the `openai` and `litellm` client libraries and their own transitive
+tree. What that means for the supply chain, and how it is bounded:
+
+- **Where the extra is installed.** No deploy image installs it:
+  `deploy/Dockerfile.worker` installs `.[worker,ml]` and `Dockerfile.api`
+  `.[api,worker]`. It is installed in two CI lanes (`garak offline`, and
+  `e2e-python` for the e2e-gated `tests/e2e/test_ml_llm.py`) and on a
+  developer venv that opts in. An operator who wants probe runs installs it
+  on the worker's `default` pool, the only pool with egress; the transitive
+  provider SDKs then exist there and nowhere else.
+- **No configuration path reaches those SDKs.** No provider key variable
+  exists anywhere (`.env.example` names `PYTHIA_API_KEY` as the only LLM
+  credential, and the probe key lives encrypted in a bearer `AuthProfile`,
+  never in the environment). `redsim/ml/llm/generator.py::PythiaGenerator`
+  posts `model`, `messages`, `temperature` and `max_tokens` only to the
+  configured gateway with the caller-supplied key and `max_retries=0`;
+  `assert_no_litellm` checks that litellm never enters the generator's class
+  hierarchy; the probe child (`python -m redsim.ml.llm.probe_child`) runs
+  under the plugin sandbox's interpreter allowlist with every `PYTHIA_*`,
+  `AWS_*`, `KAGGLE*`, `OPENAI*`, `HF_TOKEN` and `REDSIM_*` secret swept, reads
+  the key from a 0600 file it deletes at once, pins the garak version before
+  garak imports and configures garak through a written `garak.yaml`, never
+  argv; `redsim/llm/pricing.py` snapshots the environment around its own
+  `litellm` import so a cost lookup can never seed the process from a
+  developer's `.env`; and `tests/test_api_process_has_no_ml.py` builds the
+  API with `garak`, `openai` and `litellm` blocked.
+- **Offline by construction in CI.** The two lanes export no gateway
+  variable, the gate script removes every `PYTHIA_*` variable on top, and the
+  tests point the generator at `tests/ml/fake_openai_server.py` on the
+  loopback interface with a low-entropy fake token. Since wave B4 the gate's
+  garak step fails when nothing was collected, when every item was skipped or
+  when the extra is missing, so an absent dependency can never read as a
+  green lane.
+- **What garak ships.** garak loads its bundled probe corpora from the
+  installed package; redsim re-packages none of them and commits no prompt
+  text. The public data repository carries a copy of that directory with the
+  licence recorded per subset (spec 11.6 addendum, owner decision
+  TESTS_DOCS-33). Prompts are untrusted data sent only to an explicitly
+  entitled Pythia persona under the permission-gate-only guardrail default.
+- **Scanning.** `pip-audit` audits the resolved `api,worker,security`
+  environment, which excludes the `garak` and `ml` extras; the release
+  workflow's Syft SBOM covers the shipped worker image, which carries neither.
+  An operator who installs the extra on a worker should audit that
+  environment separately.
+
+## Signed release images: what's still deferred
 
 **Nix reproducible builds** remain deferred (see [ADR-0008](../adr/0008-nix-reproducible-builds.md);
-the upstream aegis roadmap page is not carried in this fork) as the last remaining piece of supply-chain hardening — bit-for-bit
+the upstream aegis roadmap page is not carried in this fork) as the last remaining piece of supply-chain hardening, bit-for-bit
 reproducible builds so the published image can be independently rebuilt and
 compared. Signed plugins, sigstore image signing, the SBOM attestation, and
 SLSA provenance have all shipped.

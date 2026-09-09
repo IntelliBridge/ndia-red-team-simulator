@@ -882,3 +882,162 @@ def test_bulk_verify_skips_dismissed_findings_and_collects_defense_refusals(
 def test_seeded_model_sha_is_the_fixture_constant() -> None:
     """Guard for the harness contract this file leans on (``seed_model`` writes ``SHA256`` into the manifest)."""
     assert len(SHA256) == 64 and MODEL == "model-image-1"
+
+
+# --------------------------------------------------------------------------- BULK-20/-21: the single routes
+
+
+def _seed_live_job(api: Harness, target_id: str) -> tuple[str, str]:
+    """A ``running`` campaign Job in the project: one concurrency slot in use (the state the cap exists for)."""
+    run_id, job_id = "run-live-slot", "job-live-slot"
+    with api.Session.begin() as session:
+        session.add(Run(id=run_id, project_id=PROJECT, target_id=target_id, mode="api", status="running",
+                        scanner="ml.campaign", created_by=ACTOR, stage_table={"stage": "attack", "jobs": {}}))
+        session.flush()
+        session.add(Job(id=job_id, run_id=run_id, project_id=PROJECT, type="attack.run", status="running",
+                        created_by=ACTOR, detail={"campaign_config": {}}))
+    return run_id, job_id
+
+
+@pytest.mark.skipif(not _capacity_available(), reason="redsim.services.ml_capacity is not on this tree")
+def test_single_attack_route_is_deferred_over_the_concurrency_cap(api: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    """BULK-21 (b): the single route never refuses on concurrency; the admission is written queued + deferred,
+    not enqueued, and the 202 body carries ``deferred`` and the ``capacity_deferred`` marker (a marker code)."""
+    from redsim.api.errors import CAPACITY_DEFERRED, MARKER_CODES
+    from redsim.services.ml_capacity import CAPACITY_KEY, DEFERRED_KEY
+
+    monkeypatch.setenv(CAPACITY_ENV, "1")
+    seed_model(api)
+    _seed_live_job(api, MODEL)
+    assert api.client is not None
+    _as(api, "scanner")
+    response = api.client.post(f"/v1/models/{MODEL}/attacks", json={"attack_ids": ["fgsm"]})
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["deferred"] is True and body["capacity"]["code"] == CAPACITY_DEFERRED in MARKER_CODES
+    assert body["capacity"]["active_runs"] == 1 and body["capacity"]["max_concurrent_runs"] == 1
+    assert api.delay_calls == [], "a deferred admission sends no broker message"
+    with api.Session() as session:
+        job = session.get(Job, body["job_ids"][0])
+        run = session.get(Run, body["run_id"])
+    assert job is not None and job.status == "queued" and job.celery_task_id is None
+    assert job.detail[DEFERRED_KEY] is True and job.detail[CAPACITY_KEY]["active_runs"] == 1
+    assert run is not None and run.status == "queued" and run.stage_table[DEFERRED_KEY] is True
+    # The admission row itself is the usual success row; capacity refused nothing.
+    admission = api.events("attack.run")
+    assert len(admission) == 1 and admission[0].success and admission[0].run_id == body["run_id"]
+    # With the slot free the same route enqueues at once and the body carries no capacity keys.
+    with api.Session.begin() as session:
+        live = session.get(Job, "job-live-slot")
+        assert live is not None
+        live.status = "succeeded"
+    second = api.client.post(f"/v1/models/{MODEL}/attacks", json={"attack_ids": ["fgsm"]})
+    assert second.status_code == 202, second.text
+    assert "deferred" not in second.json() and "capacity" not in second.json()
+    assert api.delay_calls == [second.json()["job_ids"][0]]
+
+
+@pytest.mark.skipif(not _capacity_available(), reason="redsim.services.ml_capacity is not on this tree")
+def test_single_attack_route_refuses_a_spent_daily_budget_with_an_audited_row(api: Harness,
+                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    """BULK-21 (a): the second admission of the UTC day is ``429 daily_budget_exceeded`` after a ``success=False``
+    row; no Run, Job or campaign row is written for it."""
+    monkeypatch.setenv(BUDGET_ENVS[0], "1")
+    seed_model(api)
+    assert api.client is not None
+    _as(api, "scanner")
+    first = api.client.post(f"/v1/models/{MODEL}/attacks", json={"attack_ids": ["fgsm"]})
+    assert first.status_code == 202, first.text
+    before = api.counts()
+    refused = api.client.post(f"/v1/models/{MODEL}/attacks", json={"attack_ids": ["fgsm"]})
+    assert refused.status_code == 429, refused.text
+    detail = refused.json()["detail"]
+    assert detail["code"] == "daily_budget_exceeded" and detail["budget"] == 1 and detail["used"] == 1
+    assert detail["requested"] == 1 and detail["resets_at"].endswith("Z") and detail["retry_after"] >= 1
+    assert api.counts() == before, "a refused admission writes no rows"
+    rows = [e for e in api.events("attack.run") if not e.success]
+    assert len(rows) == 1 and rows[0].detail["code"] == "daily_budget_exceeded" and rows[0].run_id is None
+    assert rows[0].detail["target_id"] == MODEL and rows[0].project_id == PROJECT
+    assert api.delay_calls == [first.json()["job_ids"][0]]
+
+
+@pytest.mark.skipif(not _capacity_available(), reason="redsim.services.ml_capacity is not on this tree")
+def test_single_verify_route_is_deferred_over_the_concurrency_cap(api: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    from redsim.services.ml_capacity import DEFERRED_KEY
+
+    ids = seed_verify_baseline(api, monkeypatch)
+    monkeypatch.setenv(CAPACITY_ENV, "1")
+    _seed_live_job(api, MODEL)
+    assert api.client is not None
+    _as(api, "remediator")
+    response = api.client.post(f"/v1/findings/{ids['fgsm']}/verify", json={})
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["deferred"] is True and body["capacity"]["code"] == "capacity_deferred"
+    assert api.delay_calls == []
+    with api.Session() as session:
+        job = session.get(Job, body["job_ids"][0])
+        finding = session.get(Finding, ids["fgsm"])
+    assert job is not None and job.status == "queued" and job.detail[DEFERRED_KEY] is True
+    assert finding is not None and finding.status == "fixing", "admitted, waiting for a slot"
+
+
+@pytest.mark.skipif(not _capacity_available(), reason="redsim.services.ml_capacity is not on this tree")
+def test_batch_members_are_decided_once_by_the_batch_service(api: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The batch passes ``capacity_check=False``: with the budget at exactly two admissions both members are
+    admitted (the single boundary does not count them a second time) and nothing is refused."""
+    monkeypatch.setenv(BUDGET_ENVS[0], "2")
+    seed_model(api)
+    seed_model(api, MODEL_2)
+    response = _post_batch(api, _body(MODEL, MODEL_2))
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert [m["target_id"] for m in body["members"]] == [MODEL, MODEL_2] and body["refused"] == []
+    assert api.delay_calls == [m["job_ids"][0] for m in body["members"]]
+    assert not [e for e in api.writer.events if not e.success]
+
+
+# --------------------------------------------------------------------------- rows before the broker message
+
+
+def test_batch_stamps_land_before_the_broker_message(api: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The batch stamps (``batch_id``, a verify's ``finding_ids`` and its per-finding ``verify.replay`` rows) are
+    written through the boundary's ``before_enqueue`` hook, so the Job the broker (or an eager worker) picks up
+    already carries them (BULK-16: the projection reaches every selected finding whenever the worker runs)."""
+    from redsim.services import ml_campaigns
+
+    seen_at_enqueue: list[dict[str, Any]] = []
+
+    def recording_enqueue(job_id: str) -> str | None:
+        with api.Session() as session:
+            job = session.get(Job, job_id)
+            assert job is not None
+            replay_rows = [e for e in api.writer.events if e.action == "verify.replay" and e.run_id == job.run_id]
+            seen_at_enqueue.append({"job_id": job_id, "batch_id": job.detail.get("batch_id"),
+                                    "finding_ids": job.detail.get("finding_ids"),
+                                    "n_replay_rows": len(replay_rows)})
+        api.delay_calls.append(job_id)
+        return f"task-{job_id}"
+
+    monkeypatch.setattr(ml_campaigns, "_enqueue_campaign", recording_enqueue)
+
+    # a campaign batch: batch_id is on the Job before the message
+    seed_model(api)
+    seed_model(api, MODEL_2)
+    response = _post_batch(api, _body(MODEL, MODEL_2))
+    assert response.status_code == 202, response.text
+    batch_id = response.json()["batch_id"]
+    assert [s["batch_id"] for s in seen_at_enqueue] == [batch_id, batch_id]
+    seen_at_enqueue.clear()
+
+    # a verify batch: finding_ids and one verify.replay row per selected finding precede the message
+    ids = seed_verify_baseline(api, monkeypatch)
+    _as(api, "remediator")
+    assert api.client is not None
+    response = api.client.post(f"/v1/findings/{ids['fgsm']}/verify/bulk", json={"defense": "feature_squeezing"})
+    assert response.status_code == 202, response.text
+    (member,) = response.json()["members"]
+    assert len(seen_at_enqueue) == 1 and seen_at_enqueue[0]["job_id"] == member["job_ids"][0]
+    assert seen_at_enqueue[0]["finding_ids"] == [ids["fgsm"], ids["pgd"]]
+    assert seen_at_enqueue[0]["batch_id"] == response.json()["batch_id"]
+    assert seen_at_enqueue[0]["n_replay_rows"] == 2, "the admission row and the second finding's row"

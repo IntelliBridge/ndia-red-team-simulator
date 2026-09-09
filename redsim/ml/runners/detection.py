@@ -23,7 +23,14 @@ counts boxes instead of labels:
 * there is no MRI. ``S_conf`` is undefined and ``S_expl`` has no input, so ``compute_mri`` refuses detection
   rows, the frame gets ``mri=False`` with the reason, and the run carries a ``DetectionScorecard`` per attack
   (worst-case recall ratio, suppression rate at the reference budget, recall AUC over the patch-area grid,
-  every value with its denominator) as the ``detection_scorecard.json`` artifact.
+  every value with its denominator) as the ``detection_scorecard.json`` artifact;
+* the per-sample export slices are the self-describing ``.npz`` every runner writes (INTEROP-04):
+  ``clean_slice.npz`` after ``clean_eval``, ``adv_slice/<attack>_<eps>.npz`` per attack row and
+  ``control_slice/<eps>.npz`` per control row, each with the image tensor (``x`` / ``x_adv``), ``indices``,
+  the per-image primary class ``y``, the packed ground-truth ``boxes`` / ``labels`` / ``offsets`` and the
+  ``family`` / ``attack`` / ``eps`` descriptors the export labels them by. A detector predicts boxes, not
+  one label per image, so the slices carry no ``y_pred_*`` columns and the export's ``flipped`` column
+  comes from the run's flip matrix (per image: any clean-matched box suppressed).
 
 ``run_detection_campaign(config, sink, ...)`` is a thin standalone frame with the same stages for trees
 where ``run_campaign`` cannot yet dispatch the ``detection`` modality (before wave B0's schema literals);
@@ -55,6 +62,10 @@ from redsim.ml.attacks import dpatch as _dpatch
 from redsim.ml.errors import AttackNotApplicable, ExplainerUnavailable, MLError, TargetUnavailable
 from redsim.ml.eval import eps_tag, perturbation_norms
 from redsim.ml.runners.base import (
+    SLICE_FAMILY_ADVERSARIAL,
+    SLICE_FAMILY_CLEAN,
+    SLICE_FAMILY_CONTROL,
+    SLICE_NOT_RETAINED_NOTE,
     CampaignFrame,
     ModalityResult,
     dataset_caveats,
@@ -62,6 +73,7 @@ from redsim.ml.runners.base import (
     manifest_get,
     max_adv_artifact_bytes,
     sha256_indices,
+    slice_bytes,
     split_notes,
     uniq,
     utcnow,
@@ -318,14 +330,25 @@ def _dist_version(dist: str) -> str:
         return "not installed"
 
 
-def _npz_bytes(x_adv: np.ndarray, indices: np.ndarray, targets: Sequence[Mapping[str, np.ndarray]]) -> bytes:
+def _npz_bytes(x_adv: np.ndarray, indices: np.ndarray, targets: Sequence[Mapping[str, np.ndarray]], *,
+               y: np.ndarray | None = None, family: str = SLICE_FAMILY_ADVERSARIAL, attack: str = "",
+               eps: float | None = None) -> bytes:
+    """A detection slice: the image tensor, the packed ground-truth boxes and the INTEROP-04 descriptors.
+
+    ``x_adv`` keeps its name for every family so ``tests/ml/test_detection_modality.py`` and the export read
+    one key; the clean slice passes the clean images under ``x`` instead (``family="clean"``).
+    """
     from redsim.ml.datasets.military_assets import pack_targets
 
     boxes, labels, offsets = pack_targets([t["boxes"] for t in targets], [t["labels"] for t in targets])
-    buf = io.BytesIO()
-    np.savez_compressed(buf, x_adv=np.asarray(x_adv, dtype=np.float32), indices=np.asarray(indices, dtype=np.int64),
-                        boxes=boxes, labels=labels, offsets=offsets)
-    return buf.getvalue()
+    arrays: dict[str, Any] = {
+        "indices": np.asarray(indices, dtype=np.int64), "boxes": boxes, "labels": labels, "offsets": offsets,
+    }
+    if y is not None:
+        arrays["y"] = np.asarray(y, dtype=np.int64)
+    tensor_key = "x" if family == SLICE_FAMILY_CLEAN else "x_adv"
+    arrays[tensor_key] = np.asarray(x_adv, dtype=np.float32)
+    return slice_bytes(family=family, attack=attack, eps=eps, **arrays)
 
 
 def resolve_detection_adapters(config: CampaignConfig) -> list[Any]:
@@ -588,10 +611,18 @@ def run_detection(config: CampaignConfig, target: Target, *, frame: CampaignFram
     measurements.append(m_clean)
     matched_clean = [np.asarray(f, dtype=bool) for f in ev_clean.matched]
     n_clean_matched = int(m_clean.n_correct)
+    # Per-sample export slices (INTEROP-04): the clean images with their ground truth, then one slice per
+    # attack row and per control row below, every one labelled from its own bytes.
+    max_adv_bytes = max_adv_artifact_bytes()
+    sample_indices = np.asarray(sample.indices)
+    blob = _npz_bytes(x, sample_indices, gts, y=y, family=SLICE_FAMILY_CLEAN, attack="", eps=None)
+    if len(blob) <= max_adv_bytes:
+        sink.put("clean_slice.npz", blob, "application/octet-stream")
+    else:
+        m_clean.notes.append(SLICE_NOT_RETAINED_NOTE.format(what="clean"))
     stage_done("clean_eval")
 
     # --- attack --------------------------------------------------------------------------------
-    max_adv_bytes = max_adv_artifact_bytes()
     flip_matrix: dict[str, dict[str, list[bool]]] = {}
     suppressed_boxes: dict[str, dict[str, list[list[bool]]]] = {}
     rows_by_attack: dict[str, dict[float, Measurement]] = {}
@@ -628,11 +659,11 @@ def run_detection(config: CampaignConfig, target: Target, *, frame: CampaignFram
             flip_matrix[aid][eps_tag(e)] = [any(flags) for flags in per_box]
             rows_by_eps[e] = m
             measurements.append(m)
-            blob = _npz_bytes(x_adv, np.asarray(sample.indices), gts)
+            blob = _npz_bytes(x_adv, sample_indices, gts, y=y, family=SLICE_FAMILY_ADVERSARIAL, attack=aid, eps=e)
             if len(blob) <= max_adv_bytes:
                 sink.put(f"adv_slice/{aid}_{eps_tag(e)}.npz", blob, "application/octet-stream")
             else:
-                m.notes.append("full adversarial slice not retained (over REDSIM_ML_MAX_ADV_ARTIFACT_MB)")
+                m.notes.append(SLICE_NOT_RETAINED_NOTE.format(what="full adversarial"))
             if math.isclose(e, ref, abs_tol=1e-12):
                 side = out.params.get("patch_side")
                 evidence_inputs[aid] = {
@@ -690,6 +721,12 @@ def run_detection(config: CampaignConfig, target: Target, *, frame: CampaignFram
                                    "this budget is not attributable to patch optimisation alone.")
             controls_by_eps[e] = m
             measurements.append(m)
+            blob = _npz_bytes(x_ctrl, sample_indices, gts, y=y, family=SLICE_FAMILY_CONTROL,
+                              attack=CONTROL_ATTACK_ID, eps=e)
+            if len(blob) <= max_adv_bytes:
+                sink.put(f"control_slice/{eps_tag(e)}.npz", blob, "application/octet-stream")
+            else:
+                m.notes.append(SLICE_NOT_RETAINED_NOTE.format(what="control"))
         stage_done("control")
     else:
         limitations.append("The benign patch control was disabled for this run (include_control=false); "

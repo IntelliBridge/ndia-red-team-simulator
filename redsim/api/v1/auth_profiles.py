@@ -5,7 +5,10 @@ Fernet-encrypted at rest (``security_utils.secrets``) and NEVER returned
 by any endpoint — workers obtain decrypted material server-side via
 ``services.auth_profiles.resolve_auth_for_scan``. Writes go through
 ``services.auth_profiles`` so each create/delete lands on the audit
-chain before the DB row is mutated (mirrors ``targets``).
+chain before the DB row is mutated (mirrors ``targets``). Since wave B2 the
+profiles also hold the credentials of black-box endpoint and LLM targets
+(``POST /v1/models`` ``source=endpoint``); deleting one a live target still
+references is ``409 auth_profile_in_use`` with the target ids (ENDPOINT-18).
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 
 from redsim.api.auth import CurrentUser, get_current_user
+from redsim.api.errors import AUTH_PROFILE_IN_USE, api_error
 from redsim.api.policy import Action, check, ensure_project_access
 from redsim.audit.chain import resolve_writer
 from redsim.config import load_config
@@ -102,4 +106,9 @@ def delete_auth_profile(profile_id: str,
         except LookupError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail="auth profile not found") from exc
+        except auth_profiles_svc.AuthProfileInUseError as exc:
+            # ENDPOINT-18: a live endpoint or LLM target still names the profile; the service wrote
+            # the success=False row and kept the row. The envelope lists the targets, never a secret.
+            raise api_error(AUTH_PROFILE_IN_USE, str(exc), target_ids=exc.target_ids,
+                            field="profile_id") from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -1151,8 +1151,9 @@ def _assert_report_routes(e2e_app: E2EApp, e2e_org: E2EOrg, run_id: str) -> tupl
         assert campaign[key] == value, key
     # The campaign projection adds the finding rows, the project, reviewer notes and (wave B2) the
     # scoring weights it was scored with; the record itself is the report.
+    # ... and (wave B4, BULK-02) the batch_id overlay from the ml_campaigns row (None for a single run).
     assert set(campaign) - set(report_json) <= {"findings", "project_id", "reviewer_notes", "weights",
-                                                "non_default_weights"}
+                                                "non_default_weights", "batch_id"}
     assert "config" in report_json and "provenance" in report_json and "limitations" in report_json
 
     html_response = _report(scanner, run_id, "html")
@@ -1172,11 +1173,18 @@ def _assert_report_routes(e2e_app: E2EApp, e2e_org: E2EOrg, run_id: str) -> tupl
         # URL strings are data: rendered as inert (escaped) text and never linked.
         assert url in unescape(html), url
 
-    # Wave B2: report.pdf is a worker-written artifact; the completion path renders md/json/html only, so
-    # before a POST report.render the PDF is 404 (never a filesystem fallback).
+    # Wave B4 (REVIEW_REPORTS-16): the completion path renders every format; report.pdf is a worker-written
+    # artifact, served when reportlab rendered it, else 404 (never a filesystem fallback) with the failure
+    # named under ``pdf_unavailable`` on the report.render row.
+    render_rows = _events(e2e_app, f"run:{run_id}", "report.render")
+    assert render_rows, "the completion path wrote a report.render row"
     pdf = _report(scanner, run_id, "pdf")
-    assert pdf.status_code == 404, pdf.text
-    assert pdf.json()["detail"] == "report not yet rendered"
+    if "pdf" in render_rows[-1]["detail"]["formats"]:
+        assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF-"), pdf.status_code
+    else:
+        assert pdf.status_code == 404, pdf.text
+        assert pdf.json()["detail"] == "report not yet rendered"
+        assert render_rows[-1]["detail"]["pdf_unavailable"], "a missing PDF names its failure"
 
     # The export gate (spec 7.3, 17.1): membership alone does not export; the other project sees nothing.
     assert _report(viewer, run_id, "md").status_code == 403
@@ -1184,7 +1192,7 @@ def _assert_report_routes(e2e_app: E2EApp, e2e_org: E2EOrg, run_id: str) -> tupl
     assert _report(e2e_org.client(h.STRANGER), run_id, "html").status_code in (403, 404)
 
     render = _events(e2e_app, f"run:{run_id}", "report.render")
-    assert render and render[-1]["detail"]["formats"] == ["md", "json", "html"]
+    assert render and render[-1]["detail"]["formats"] in (["md", "json", "html", "pdf"], ["md", "json", "html"])
     assert {ext: render[-1]["detail"]["sha256"][f"report.{ext}"] for ext in digests} == digests
     listing = viewer.get(f"/v1/runs/{run_id}/artifacts").json()["artifacts"]
     kinds = {row["kind"]: row["sha256"] for row in listing}

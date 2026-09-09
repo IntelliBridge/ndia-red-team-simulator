@@ -28,6 +28,10 @@ Severity = Literal["critical", "high", "medium", "low"]
 FindingType = Literal[
     "dependency", "sast", "dast", "runtime", "config", "code", "code_audit", "supply_chain",
     "adversarial_ml",
+    # Phase B (register LLM-24, REVIEW_REPORTS-05; wave B4): an LLM probe finding, whose evidence is a
+    # hit rate and never an MRI detail, and an analyst-authored draft over a campaign's evidence ids.
+    # Additive: every stored ``adversarial_ml`` blob still validates.
+    "adversarial_llm", "adversarial_ml_manual",
 ]
 Status = Literal["open", "fixing", "fixed", "failed", "false_positive"]
 Confidence = Literal["high", "medium", "low"]
@@ -96,7 +100,7 @@ class RedsimFinding(BaseModel):
     timestamp: str | None = None
     cvss_breakdown: dict[str, Any] | None = None
 
-    # Adversarial-ML detail (finding_type == "adversarial_ml"): the
+    # Adversarial-ML detail (finding_type "adversarial_ml" or "adversarial_ml_manual"): the
     # ``model_dump()`` of ``redsim.ml.schema.MLFindingDetail``, validated by
     # the worker before ``to_dict()``. Kept a plain dict here so the core
     # schema never imports ``redsim.ml``. Without this field ``extra="ignore"``

@@ -27,9 +27,11 @@ to ``./.env`` and the repo-root ``.env``, so a checkout holding a real gateway k
 would reach the child through the file even with every ``PYTHIA_*`` variable
 stripped, and naming an absent file inside the just-cleared work directory
 switches that fallback off) and ``REDSIM_DISABLE_LLM=1`` (the narrative is the
-worker parent's job, spec 10.8 / 16.1). No other ``REDSIM_*`` value, proxy setting or
-API token crosses the boundary, and the ML child never gets network
-configuration regardless of ``REDSIM_PLUGIN_SANDBOX_NETWORK``.
+worker parent's job, spec 10.8 / 16.1), plus one numeric bound forwarded only when
+the parent sets it to a positive number: ``REDSIM_ML_MAX_ADV_ARTIFACT_MB``, the
+per-slice artifact cap the modality runners apply (spec 12.8). No other
+``REDSIM_*`` value, proxy setting or API token crosses the boundary, and the ML
+child never gets network configuration regardless of ``REDSIM_PLUGIN_SANDBOX_NETWORK``.
 
 Endpoint targets (spec 9.1 rule 4, ENDPOINT-05): when a job names a remote predict
 endpoint, the parent starts a ``redsim.ml.endpoint_broker.PredictBroker`` on a unix
@@ -135,11 +137,17 @@ DISABLE_LLM_ENV = "REDSIM_DISABLE_LLM"
 #: Name of the guaranteed-absent ``.env`` the child is pointed at, inside its work dir.
 NO_ENV_FILE_NAME = "no-env"
 
+#: The per-slice artifact size cap the modality runners read (``redsim.ml.runners.base.max_adv_artifact_bytes``,
+#: spec 12.8). Forwarded to the child when the parent sets it to a positive number: a size bound, never a secret.
+MAX_ADV_ARTIFACT_ENV = "REDSIM_ML_MAX_ADV_ARTIFACT_MB"
+
 # Environment prefixes that must never appear in the child, whatever the allowlist grows into.
 _FORBIDDEN_ENV_PREFIXES = ("REDSIM_", "PYTHIA_", "KAGGLE_", "AWS_", "HF_TOKEN", "HUGGING_FACE")
-# The only REDSIM_* keys the child may carry: one resolved directory and three pins
-# (plugins off, .env lookup pointed at an absent file, LLM narrative off). Never a secret.
+# The REDSIM_* keys the child always carries: one resolved directory and three pins (plugins off, .env
+# lookup pointed at an absent file, LLM narrative off). Never a secret.
 _ALLOWED_REDSIM_KEYS = frozenset({ASSETS_DIR_ENV, "REDSIM_PLUGINS", ENV_FILE_VAR, DISABLE_LLM_ENV})
+# REDSIM_* keys forwarded only when the parent sets them to a valid value: numeric bounds, never a secret.
+_FORWARDED_REDSIM_KEYS = frozenset({MAX_ADV_ARTIFACT_ENV})
 
 _JOB_DIR_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
@@ -277,10 +285,14 @@ def _ml_child_env(
     ``REDSIM_ENV_FILE`` is pinned to :func:`no_env_file` so the gateway client's
     ``./.env`` / repo-root fallback cannot hand the child a key the environment
     sweep already removed, and ``REDSIM_DISABLE_LLM=1`` says the child never
-    narrates. A final sweep drops anything under a secret-bearing prefix so a
-    future widening of the shared allowlist cannot leak through this boundary.
+    narrates. ``REDSIM_ML_MAX_ADV_ARTIFACT_MB`` (the per-slice size cap the
+    runners apply, spec 12.8) is forwarded when the parent sets it to a positive
+    number, so the deployment's cap binds inside the child too. A final sweep
+    drops anything under a secret-bearing prefix so a future widening of the
+    shared allowlist cannot leak through this boundary.
     """
     env = _child_env(cfg.rlimits())
+    max_adv_mb = _positive_number(os.environ.get(MAX_ADV_ARTIFACT_ENV))
     env.update({
         "PYTHONUNBUFFERED": "1",
         "PYTHONHASHSEED": str(hash_seed),
@@ -297,12 +309,29 @@ def _ml_child_env(
         ENV_FILE_VAR: str(no_env_file(work_dir)),
         DISABLE_LLM_ENV: "1",
     })
+    if max_adv_mb is not None:
+        env[MAX_ADV_ARTIFACT_ENV] = max_adv_mb
     for key in list(env):
         if key in _NETWORK_ENV_KEYS:
             del env[key]
-        elif key.startswith(_FORBIDDEN_ENV_PREFIXES) and key not in _ALLOWED_REDSIM_KEYS:
+        elif (key.startswith(_FORBIDDEN_ENV_PREFIXES) and key not in _ALLOWED_REDSIM_KEYS
+              and key not in _FORWARDED_REDSIM_KEYS):
             del env[key]
     return env
+
+
+def _positive_number(raw: str | None) -> str | None:
+    """``raw`` stripped when it parses as a positive finite number, else ``None`` (malformed caps stay home)."""
+    if raw is None:
+        return None
+    text = raw.strip()
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    if not (value > 0) or value == float("inf"):
+        return None
+    return text
 
 
 def _safe_name(name: str) -> Path:

@@ -8,12 +8,12 @@
 #   mkdocs serve          # http://localhost:8001
 #   mkdocs build          # output: ./site
 #
-# CI builds on every PR; main deploys to GitHub Pages — see
-# .github/workflows/docs.yml.
+# CI builds on every PR (mkdocs build --strict). GitHub Pages publishing is
+# off: see .github/workflows/docs.yml.
 
 site_name: Redsim
 site_description: >-
-  Redsim adversarial-ML red-team simulator — attack, measure, explain,
+  Redsim adversarial-ML red-team simulator: attack, measure, explain,
   recommend. With a hash-chained audit log so what the platform did,
   against what target, on whose authority, always has a verifiable answer.
 site_url: https://redsim-docs.example.com
@@ -93,7 +93,7 @@ markdown_extensions:
       permalink: true
       toc_depth: 3
 
-  # PyMdown extras — these are bundled with mkdocs-material.
+  # PyMdown extras, bundled with mkdocs-material.
   - pymdownx.details
   - pymdownx.tabbed:
       alternate_style: true
@@ -105,7 +105,7 @@ markdown_extensions:
       check_paths: true
   - pymdownx.superfences:
       custom_fences:
-        # Native mermaid rendering — the markdown we already wrote
+        # Native mermaid rendering: the markdown we already wrote
         # (```mermaid blocks) renders without any rewrite.
         - name: mermaid
           class: mermaid
@@ -157,7 +157,7 @@ watch:
 #
 # CHANGELOG / CONTRIBUTING / SECURITY live at the repo root (GitHub
 # conventions) and aren't duplicated here. The nav points at the
-# GitHub-hosted copy via a full URL — mkdocs renders external URLs
+# GitHub-hosted copy via a full URL; mkdocs renders external URLs
 # as plain nav entries.
 
 nav:
@@ -220,16 +220,16 @@ nav:
       - Supply-chain integrity: security/supply-chain.md
       - "Policy (SECURITY.md)": https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/SECURITY.md
   - ADRs:
-      - "0001 — Vendored submodules": adr/0001-vendored-submodules.md
-      - "0002 — Registry seam + runners": adr/0002-registry-seam-and-runners.md
-      - "0004 — Unified effect-class gate": adr/0004-unified-effect-class-gate.md
-      - "0005 — Worker autoscaling + DR": adr/0005-worker-autoscaling-and-dr.md
-      - "0008 — Nix reproducible builds": adr/0008-nix-reproducible-builds.md
+      - "0001 Vendored submodules": adr/0001-vendored-submodules.md
+      - "0002 Registry seam + runners": adr/0002-registry-seam-and-runners.md
+      - "0004 Unified effect-class gate": adr/0004-unified-effect-class-gate.md
+      - "0005 Worker autoscaling + DR": adr/0005-worker-autoscaling-and-dr.md
+      - "0008 Nix reproducible builds": adr/0008-nix-reproducible-builds.md
   - "Changelog ↗": https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CHANGELOG.md
   - "Contributing ↗": https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CONTRIBUTING.md
 
 # ---------------------------------------------------------------------
-# Strictness — fail the build on broken refs so CI catches them.
+# Strictness: fail the build on broken refs so CI catches them.
 # ---------------------------------------------------------------------
 
 # In CI we run with `--strict` (see .github/workflows/docs.yml) which

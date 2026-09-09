@@ -14,11 +14,12 @@ The fixtures live in `conftest.py`; the builders and plain helpers live in
 `harness.py`. `test_harness_smoke.py` is the harness's own smoke test against
 the tree (asset build, bundled registration, one role gate, an image campaign
 through the real child, tabular campaigns, `audit verify --all` clean then
-broken, the mocked narrative flipping `narrative_source`). Wave 4 adds the
+broken, the mocked narrative flipping `narrative_source`). Wave 4 added the
 completion-criteria files `test_ml_campaigns.py`,
 `test_ml_verify_upload_reports.py` and `test_ml_governance.py` here (see
-"State at `58461cc` and the wave-4 files" below) and should not need to edit
-the fixtures.
+"State at `58461cc` and the wave-4 files" below), and Phase B wave B4 added
+the seven files of "Phase B wave B4 files" below; none of them edits the
+fixtures.
 
 ## Running
 
@@ -35,10 +36,33 @@ REDSIM_E2E=1 REDSIM_ML_KEEP_WORK_DIR=1 pytest -q -m e2e tests/e2e/test_ml_campai
 # run the campaign sandbox in-process instead of as a child (a traceback instead of
 # a child envelope when debugging; the child-process boundary is then not exercised)
 REDSIM_E2E=1 REDSIM_E2E_SANDBOX=inprocess pytest -q -m e2e tests/e2e
+
+# the tier as the Phase B gate and the e2e-python CI job run it: one invocation,
+# -rs, the stack and gateway variables scrubbed, the Postgres RLS lane on when
+# REDSIM_E2E_POSTGRES_URL names a migrated database (the step fails if the
+# harness still reports "Postgres lane is off"); `make check-phase-b` runs every step
+scripts/phase_b_gate.sh --only e2e
 ```
 
 Requirements: the `ml` extra (torch, ART, scikit-learn, SHAP) plus the `api`
-and `worker` extras. No network, no Kaggle, no Docker, no Redis, no Postgres.
+and `worker` extras; the `garak` extra for `test_ml_llm.py`, which is
+`garak`-marked as well and is skipped at collection without it
+(`tests/conftest.py`; the `e2e-python` CI job installs the extra for that
+reason). No network, no Kaggle, no Docker, no Redis; Postgres only for the RLS
+lane.
+
+**Running from a git worktree.** The tier spawns subprocesses: the ML sandbox
+child (`python -m redsim.ml.sandbox_worker`) and the CLI
+(`redsim audit verify --all`). They import `redsim` through the editable
+install, which points at the checkout that ran `make install`, so from that
+main checkout nothing is needed, while from a worktree they would silently run
+the *other* tree. Put the worktree first on `PYTHONPATH`
+(`PYTHONPATH=$PWD REDSIM_E2E=1 pytest -q -m e2e tests/e2e`); the sandbox
+allowlist forwards it to the child (`redsim/scanners/sandbox.py`
+`_SAFE_ENV_KEYS`) and `E2EApp.cli_env` prepends it for the CLI.
+`scripts/phase_b_gate.sh --only e2e` detects the mismatch itself (it resolves
+`redsim` from a neutral directory), prints a notice and sets the variable for
+the step.
 
 Gating is automatic. Every item collected under `tests/e2e` is stamped `e2e`
 by `conftest.py`, so:
@@ -75,6 +99,33 @@ on this harness, written in parallel with this page:
 A partial score in any of these is the honest state (`score` absent,
 `score_status` present, `mri` null with the missing dimension named as a
 limitation), never a number to assert on.
+
+## Phase B wave B4 files
+
+Plan 12 wave B4 (`docs/plans/12-phase-b-plan.md`) added the end-to-end
+evidence for everything waves B0 to B3 built, on the same fixtures. Each file
+drives the production route, the admission service, the eager worker and the
+real sandbox child, then asserts on what those left behind; where a finding is
+needed, it comes from an **uploaded** `SmallCNN` that memorises the harness's
+seeded images (the bundled 1-epoch CNN cannot yield one), and nothing measured
+is a demo result. A test that meets a product defect fails with an
+attribution naming the module (`pytest.fail(..., pytrace=False)` prefixed
+"product defect, not a harness problem"), never with a weaker assertion.
+
+| File | What it drives | Spec / register |
+|---|---|---|
+| `test_ml_endpoint.py` | the black-box endpoint connector against `tests/ml/tiny_endpoint_server.py` on the loopback interface: `POST /v1/models` `source=endpoint` and its refusal codes, validation through the worker-parent broker to `available`, a black-box campaign, the refusal of a white-box attack, egress and credential boundaries, the audit chain | 9.1, 17.2, 17.3, 21.7, 26.2 item 7, 26.3 items 12 to 14, 26.4 items 17, 20, 21, 26.5 item 22; ENDPOINT-20..23 |
+| `test_ml_llm.py` | garak probe runs through the gateway contract against `tests/ml/fake_openai_server.py`: the probe catalog (HarmBench excluded), LLM target registration gates, the probe-run gates and one end-to-end run with k/n scorecards that never enter an MRI. `garak`-marked: needs the extra | 11.6, 15.9, 17.4, 21.7, 26.4 item 20, 26.5 item 22; LLM-30 |
+| `test_ml_text_detection.py` | text (`sms_tfidf_lr`, word substitution under an edit budget, the harness synonym table) and detection (`assets_frcnn_mnv3`, patch area) campaigns on tiny assets the module builds with the real builders; each modality's scorecard is its own and detection has no MRI | TESTS_DOCS-08, -09; MODALITIES-47 |
+| `test_ml_attacks_harden.py` | norm tags enforced at admission, an L2 campaign (PGD, CW-L2, DeepFool) with minimal-norm rows and the control, ZOO, and a training defense (`adversarial_training`, `defensive_distillation`) verify that registers a derived target | TESTS_DOCS-10; ATTACKS_HARDEN-21, -23 |
+| `test_ml_review_reports.py` | the review workflow (states, independence, conflicts, retests, resolution), `report.pdf` with immutable snapshots and archive, `GET /v1/runs/compare` over three runs with no aggregate, `Idempotency-Key` replay and reuse, per-project scoring weights on the next campaign | 6.4, 7.7, 14.8, 15.3, 15.6 to 15.8, 17.3, 26.3 items 12 to 15, 26.5 item 22; REVIEW_REPORTS-02..12, -16..22, -26, -30..32 |
+| `test_ml_interop.py` | Croissant export and shards, a consumed slice bound to a model and a campaign, ATLAS technique tags and coverage, the Foundry push against `tests/ml/fake_foundry_server.py`, `audit verify --all` over the lot | 27.1 to 27.5, 26.5 item 22; INTEROP-05..16, -18, -20..25, -27..29 |
+| `test_ml_bulk.py` | batches, bulk upload (two state_dicts and the file cap), capacity deferral, dispatch and batch cancel, bulk verify projected onto every selected finding (owner decision BULK-16), single-run admission against the caps, the CLI matrix | owner requirement 5; BULK-03..09, -13..18, -20..22, -26, -30..32 |
+
+The count of record for the tier is the gate's e2e step (`scripts/phase_b_gate.sh
+--only e2e`, the `e2e-python` CI job); this page pins no pass count because the
+B4 files were written against the B3 tree and report product defects by
+attribution while those are being fixed.
 
 ## What the fixtures give you
 

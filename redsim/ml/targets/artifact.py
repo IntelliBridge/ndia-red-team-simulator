@@ -34,7 +34,7 @@ import hashlib
 import importlib.metadata
 import json
 import platform
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -93,6 +93,23 @@ ARCHITECTURES: dict[str, Callable[..., Any]] = {
 
 def canonical_architecture_id(architecture_id: str) -> str:
     return ARCHITECTURE_ALIASES.get(architecture_id, architecture_id)
+
+
+# Catalog architectures whose constructor is ``(in_channels, n_classes, image_size)``: when an upload names
+# one without an ``architecture_kwargs`` block, the loader derives the block from the evaluation binding
+# (NCHW sample shape, declared class list) instead of building the catalog defaults, which fit only the
+# 10-class 32x32 build (spec 9.2; the manifest records what was built).
+CATALOG_SHAPE_ARCHITECTURES: frozenset[str] = frozenset({"small_cnn", "resnet18"})
+
+
+def derived_architecture_kwargs(architecture_id: str | None, sample_shape: tuple[int, ...],
+                                n_classes: int) -> dict[str, Any]:
+    """Constructor kwargs implied by the evaluation binding, or ``{}`` when they cannot be derived."""
+    if not architecture_id or canonical_architecture_id(architecture_id) not in CATALOG_SHAPE_ARCHITECTURES:
+        return {}
+    if len(sample_shape) != 3 or sample_shape[1] != sample_shape[2]:
+        return {}
+    return {"in_channels": int(sample_shape[0]), "n_classes": int(n_classes), "image_size": int(sample_shape[1])}
 
 
 def architecture_ids() -> list[str]:
@@ -395,15 +412,76 @@ def _load_eval_data(source: EvalData) -> tuple[np.ndarray, np.ndarray, np.ndarra
     return np.asarray(x), np.asarray(y).reshape(-1), None
 
 
+def consumed_eval_slice(
+    block: Mapping[str, Any],
+) -> tuple[Callable[[], tuple[np.ndarray, np.ndarray]], list[str], str | None, str]:
+    """The evaluation binding over a consumed Parquet slice the worker parent materialised (INTEROP-16).
+
+    ``block`` is ``target_detail["consumed_slice"]`` as ``services.ml_models.materialize_consumed_slice``
+    wrote it: ``file`` (a path inside the work dir), ``sha256``, ``schema`` (the uploader's
+    ``DeclaredSchema`` mapping), ``class_names``, ``revision`` (the manifest digest) and ``max_rows``.
+    Returns ``(loader, class_names, dataset_revision, split)`` in the shape ``_evaluation_binding``
+    returns for a bundled split, with a zero-arg ``loader`` in place of the ``.npz`` path: it reads
+    the file with ``redsim.ml.interop.consume.load_consumed_slice`` (the same reader the parse child
+    used, so a campaign measures the rows that were validated and nothing else) and refuses every
+    declaration the file does not honour as ``UnsupportedArtifact("dataset_incompatible: …")``. Image
+    rows are scaled onto [0, 1] from the declared ``value_range`` (uint8 slices by 255) because the
+    targets consume unit-interval NCHW (spec 11.3.1); tabular rows pass through. The file's digest is
+    checked here again before a byte is parsed; the split of a consumed slice is always ``eval``.
+    """
+    from redsim.services.ml_datasets import DeclaredSchema
+
+    dataset_id = str(block.get("dataset_id") or "consumed slice")
+    file_value = block.get("file")
+    if not isinstance(file_value, str) or not file_value:
+        raise DatasetUnavailable(f"consumed slice {dataset_id!r}: the request names no materialised file")
+    path = Path(file_value)
+    if not path.is_file():
+        raise DatasetUnavailable(f"consumed slice {dataset_id!r}: evaluation file not found: {path}")
+    expected = block.get("sha256")
+    verify_sha256(path, str(expected) if isinstance(expected, str) and expected else None)
+    schema_value = block.get("schema")
+    try:
+        schema = DeclaredSchema.from_mapping(schema_value if isinstance(schema_value, Mapping) else {})
+    except (TypeError, ValueError) as exc:
+        raise UnsupportedArtifact(f"dataset_incompatible: consumed slice {dataset_id!r} declares no readable "
+                                  f"schema: {exc}") from exc
+    max_rows_value = block.get("max_rows")
+    max_rows = int(max_rows_value) if isinstance(max_rows_value, int) and max_rows_value > 0 else None
+
+    def load() -> tuple[np.ndarray, np.ndarray]:
+        from redsim.ml.interop.consume import ConsumeRefused, load_consumed_slice
+
+        try:
+            arrays = (load_consumed_slice(path, schema, max_rows=max_rows) if max_rows is not None
+                      else load_consumed_slice(path, schema))
+        except ConsumeRefused as exc:
+            raise UnsupportedArtifact(
+                f"dataset_incompatible: consumed slice {dataset_id!r} does not honour its declaration "
+                f"({exc.code}): {exc}"
+            ) from exc
+        x = np.asarray(arrays.x, dtype=np.float32)
+        if schema.modality == "image":
+            top = 255.0 if (schema.dtype or "") == "uint8" else (
+                float(schema.value_range[1]) if schema.value_range is not None else 1.0)
+            if top > 1.0:
+                x = (x / np.float32(top)).astype(np.float32)
+        return x, np.asarray(arrays.y).reshape(-1)
+
+    revision = block.get("revision")
+    return load, list(schema.class_names), (str(revision) if revision else None), "eval"
+
+
 # --------------------------------------------------------------------------------------
 # The Target
 # --------------------------------------------------------------------------------------
 
 class ArtifactTarget:
-    """A caller-supplied model file evaluated on a bundled dataset slice (uploads are never trained on).
+    """A caller-supplied model file evaluated on a bundled or consumed dataset slice (uploads are never trained on).
 
     ``eval_data`` is the evaluation split the artifact is bound to: ``(x, y)`` arrays, a zero-arg
-    callable returning them, or a path to an ``.npz`` with ``x``, ``y`` and optional ``indices``.
+    callable returning them (a consumed Parquet slice through :func:`consumed_eval_slice`), or a path
+    to an ``.npz`` with ``x``, ``y`` and optional ``indices``.
     ``dataset_id`` names that split's dataset and is required: an upload is bound to a dataset at
     registration (spec 5.5) and the manifest never guesses one. Images are uint8 or float32 NCHW in
     [0, 1]; the model must consume x directly (no external normalisation, spec section 11.3.1).
@@ -497,6 +575,8 @@ class ArtifactTarget:
             raise UnsupportedArtifact(f"shape_mismatch: manifest input_shape {self._declared_input_shape} vs "
                                       f"evaluation data {sample_shape}")
         if self._format in {"torch_state_dict", "safetensors_state_dict"}:
+            if not self._arch_kwargs:
+                self._arch_kwargs = derived_architecture_kwargs(self._arch_id, sample_shape, len(self._class_names))
             self._module = load_state_dict_module(
                 self._path,
                 self._arch_id,
@@ -646,6 +726,7 @@ __all__ = [
     "OnnxModel",
     "architecture_ids",
     "canonical_architecture_id",
+    "consumed_eval_slice",
     "convert_onnx_to_torch",
     "detect_format",
     "library_versions",

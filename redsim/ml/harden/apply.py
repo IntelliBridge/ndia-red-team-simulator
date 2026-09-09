@@ -431,7 +431,13 @@ def load_train_slice(train_slice: Any, *, target: Target, defense_id: str, n: in
             raise TrainingDefenseUnavailable(TrainingUnavailable(
                 defense_id=defense_id, target_id=target.id, domain=str(target.info().domain),
                 reason=NO_TRAIN_SLICE_REASON, infeasible=False))
-        train_slice = train_sample(int(n), int(seed))
+        try:
+            train_slice = train_sample(int(n), int(seed))
+        except LookupError as exc:
+            # The target has the accessor but its build recorded no training slice (``--no-train-slice``).
+            raise TrainingDefenseUnavailable(TrainingUnavailable(
+                defense_id=defense_id, target_id=target.id, domain=str(target.info().domain),
+                reason=NO_TRAIN_SLICE_REASON, infeasible=False)) from exc
     x_raw, y_raw, idx, names = _slice_arrays(train_slice)
     x = as_model_input(x_raw)
     if x.ndim < 2 or len(x) == 0:
