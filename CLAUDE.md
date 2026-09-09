@@ -663,14 +663,8 @@ developer's `.env`.
 `/models/[id]`, with `MriScorecard`, `DimensionBars`, `RobustnessCurve`,
 `MeasurementTable`, `ObservationCard`, `LabelBadge`, `PanelSection` and
 `CompatibilityList` in `@redsim/design-system`. The pages render an explicit
-`not_implemented` state on 404 or 501. `/login` is the branded sign-in:
-the form posts to `POST /api/auth/login`, which runs the Keycloak password
-grant server-side (`web/src/server/keycloak-password.ts`), verifies the
-id_token against the realm JWKS and mints the same cookie pair as the code
-flow; the dev-admin panel renders only when `NEXT_PUBLIC_REDSIM_ENV` is
-`dev` or `test`. The realm's `redsim-web` client needs Direct access grants
-and users need complete profiles (`docs/architecture/auth.md`). PR #22
-aligned the web contract with the mounted routes. Wiring beyond that alignment has not been exercised in a
+`not_implemented` state on 404 or 501. PR #22 aligned the web contract with
+the mounted routes. Wiring beyond that alignment has not been exercised in a
 browser against a running stack and is listed as open in the README.
 `web/src/lib/api.ts` defaults to `http://localhost:8000`, overridable with
 `NEXT_PUBLIC_REDSIM_API_URL`.

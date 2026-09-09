@@ -645,9 +645,7 @@ stamp on drafts, the `.env.example` and compose pass-through, the `batch_id`
 overlay, the single-run capacity admissions, the bulk-verify worker
 projection); those are no longer listed here.
 
-- **Web UI.** The one deferral of the Phase B plan. `/login` is now a
-  branded sign-in over the Keycloak password grant (Keycloak stays the
-  identity store; the hosted form is no longer shown). PR #22 aligned
+- **Web UI.** The one deferral of the Phase B plan. PR #22 aligned
   `@redsim/web` with the mounted routes, #24 and #25 added tRPC, env
   management and the design reference, and the pages render
   `not_implemented` states honestly, but the pages have not been exercised in
