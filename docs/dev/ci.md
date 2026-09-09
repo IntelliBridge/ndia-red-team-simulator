@@ -14,7 +14,7 @@ markers) see [Testing](testing.md), and for running the stack and the e2e tier s
 | Redsim CI | `redsim-ci.yml` | every PR and push to `main`, plus `workflow_dispatch` (with an opt-in E2E toggle) |
 | Docs | `docs.yml` | PRs and pushes that touch `docs/`, `mkdocs.yml`, `hooks/`, `pyproject.toml`, the root markdown files or the workflow itself. `mkdocs build --strict` only. The Pages deploy job is dormant behind the repo variable `ENABLE_PAGES` (Pages is off: the repository is private and the plan has no private Pages) |
 | Release sign | `release-sign.yml` | `v*` tags only. Builds, pushes, cosign-signs and SBOM-attests the four images |
-| Deploy to AWS | `deploy-aws.yml` | pushes to `main` that touch runtime paths. Builds api, worker and web images for ECR under GitHub OIDC and rolls whichever `ECS_SERVICE_*` variables are set. It fails at "Configure AWS credentials" (the AssumeRole is refused account-side) and runs none of the test gates. Applying the Fargate deployment is excluded from this completion pass |
+| Deploy to AWS | `deploy-aws.yml` | pushes to `main` that touch runtime paths. Builds api, worker and web images for ECR under GitHub OIDC and rolls whichever `ECS_SERVICE_*` variables are set. Since the `58461cc` push the AssumeRole step succeeds and the images are built and pushed; the deploy job is skipped while the repo variable `ECS_CLUSTER` is unset. It runs none of the test gates. The Fargate runtime itself is the remaining-work brief's package E (`docs/plans/10-remaining-work-brief.md`), not a Phase B wave |
 
 ## Redsim CI jobs
 
@@ -246,7 +246,53 @@ Docker base-image bump as a runtime change, not a routine one: it moves the
 interpreter the `ml` extra is validated on, and the 2026-09-08 bump to
 `node:26` broke the web image until #21 installed pnpm explicitly.
 
-## State of `main` at the time of writing (2026-09-09, after `58461cc`)
+## State of `main` at `29db42c` and the wave B1 push (2026-09-09)
+
+Written after the wave B0 push (`git push origin redsim-implementation:main`,
+`6cbb661..29db42c`) and together with the wave B1 push that follows it. Facts,
+in order:
+
+- Wave 4 landed on `main` before Phase B (`3dda572..e73dea0`, integration
+  commit `e73dea0`) with the three CI fixes the previous section describes:
+  `python-multipart` in the `api` extra, the `Sample` move that breaks the
+  `datasets` / `targets` import cycle, the `.trivyignore` baseline for the
+  `next` advisory, and the lazy torch imports behind `redsim ml build-assets`
+  (`d8a9f15`). PR #23 (the Fargate runtime) merged as `10650da`, PR #24 and
+  PR #25 (web) followed.
+- Wave B0 (`934838e..29db42c`, seven track commits plus the integration
+  commit) added the two jobs `e2e-python` and `garak-offline` to
+  `redsim-ci.yml` (validated with PyYAML: 14 jobs) and `not garak` to every
+  lane's marker expression. The `29db42c` push is therefore the first run of
+  both jobs on `main`. **That run had not been read when this page was
+  written**: whether the Postgres RLS lane of `e2e-python` passes on the
+  service database, and whether `garak>=0.16,<0.17` resolves next to the
+  platform extras on the runner, is proven by that run and by nothing on this
+  page. The last run this documentation has read is `58461cc` (red on the
+  three jobs below, all three causes fixed in wave 4). Nothing is claimed
+  green.
+- Local checks at `29db42c` with the venv interpreter (Python 3.12, `ml`
+  extra), from the wave B0 integration: `ruff check --select E4,E7,E9,F,I
+  redsim tests` clean, `mypy redsim` clean (197 source files), the default
+  tier `pytest -q -p no:cacheprovider --ignore=tests/e2e` 2081 passed, 35
+  skipped, 1 deselected (106 s), the e2e tier with the Postgres lane at
+  `localhost:5433` 22 passed (136 s), `mkdocs build --strict` exit 0, the
+  frozen fixture `tests/ml/fixtures/run_record.json` unchanged (sha256
+  `e5266f18…` matching the tripwire pin). The Postgres-gated cases of
+  `tests/test_migration_0011.py` and `tests/test_tenant_rls.py` skip without
+  `REDSIM_DB_URL` and were not run locally; the Coverage gate is where they
+  run.
+- Wave B1 was written in an isolated worktree on `7706950` (before B0) and
+  rebased onto `29db42c`. Its own checks before the rebase: ruff clean,
+  `mypy redsim` clean (213 source files), the seven writers' test files 206
+  passed, the default tier 1840 passed and 31 skipped (that worktree did not
+  yet carry B0's tests). The B1 integration commit re-runs the default tier
+  on the rebased tree; its counts are recorded in the integration commit
+  message, not here.
+
+Reading order for the rest of this section: the `58461cc` history below is
+kept because it explains why the three fixes exist.
+
+## State of `main` at `58461cc` (2026-09-09, before wave 4 landed)
 
 Redsim CI on `main` has been red on every push since `ea39f97` (the last
 green run, before the ML PRs landed). Do not read this page as a claim of a
@@ -292,8 +338,9 @@ this tree on 2026-09-09 rather than assumed:
   runtime dependency since then that the api image installs is
   `python-multipart`, a pure-Python wheel.
 
-Local results from this tree with the venv interpreter (Python 3.12, `ml`
-extra installed), 2026-09-09:
+Local results from the wave 4 working tree with the venv interpreter
+(Python 3.12, `ml` extra installed), 2026-09-09, before wave 4 was integrated
+(the `29db42c` numbers above supersede them):
 
 | Check | Result |
 |---|---|
@@ -304,9 +351,9 @@ extra installed), 2026-09-09:
 
 `Docs` builds on every docs change and its Pages deploy stays off.
 `Deploy to AWS` built and pushed the three images under OIDC on the `58461cc`
-push and skips its deploy job while `ECS_CLUSTER` is unset. The CI state is recorded here as
-of this commit. Re-run the workflow and update this section rather than
-carrying the statement forward.
+push and skips its deploy job while `ECS_CLUSTER` is unset. The CI state is
+recorded here as of the commits named. Re-run the workflow and update this
+section rather than carrying a statement forward.
 
 ## Docs build
 
@@ -323,8 +370,10 @@ green without editing content for the build:
 
 Every page under `docs/` should appear in the `nav` in `mkdocs.yml`. A page
 that exists but is not in the nav is only an INFO message, but readers cannot
-find it. As of this commit the gap register, the ops Pythia page and the three
-workstream pages are in the nav.
+find it. As of this commit the gap register, the ops Pythia page, the three
+workstream pages, the remaining-work brief, the Phase B register and plan and
+the endpoint predict contract page (`docs/api/endpoint-contract.md`) are in
+the nav.
 
 ## Reproduce locally
 
