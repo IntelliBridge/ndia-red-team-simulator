@@ -5,13 +5,16 @@ The capabilities route is exercised with a fully configured Pythia environment
 are exercised with a registry made unimportable, which must be a ``503
 ml_catalog_unavailable``, never a ``200`` with empty lists. ``/v1/datasets``
 reports the state of the asset manifest instead of hiding it behind ``[]``.
+``GET /v1/attacks`` registers opt-in attack plugins (``REDSIM_PLUGINS=1``) once
+per process and reports their discovery rows, and a loader failure is a ``503``.
 """
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -181,3 +184,158 @@ def test_datasets_catalog_reports_manifest_state(api: SimpleNamespace, monkeypat
     assert cifar["role"] == "ci_fixture" and cifar["fixture_only"] is True and cifar["reachability"] == "manifest_only"
     assert rows["kaggle:example/urls"]["compatible_modalities"] == ["tabular"]
     assert "pk_" not in json.dumps(built)
+
+
+# --- GET /v1/attacks: opt-in plugin adapters ---------------------------------------------
+
+FAKE_ATTACK_ID = "catalog-test-plugin-attack"
+BROKEN_ATTACK_ID = "catalog-test-broken-attack"
+FAKE_DIST = "catalog-fake-dist"
+
+
+def _fake_plugin_entry_points() -> list[SimpleNamespace]:
+    """Two ``redsim.ml.attacks`` entry points: one conformant adapter, one without ``run``."""
+    from redsim.ml.schema import AttackInfo
+
+    class FakePluginAttack:
+        id = FAKE_ATTACK_ID
+        domains = frozenset({"image"})
+        takes_eps = True
+        capabilities = frozenset({"adversarial_ml", "white_box", "takes_eps", "family:evasion", "modality:image"})
+
+        def info(self) -> AttackInfo:
+            return AttackInfo(id=self.id, name="Catalog test plugin", domain="image", family="evasion",
+                              access="white-box", requires_gradients=True)
+
+        def resolve_params(self, params: dict[str, Any]) -> dict[str, float | int | bool]:
+            return {}
+
+        def run(self, target: Any, x: Any, y: Any, params: Any, seed: int) -> Any:  # pragma: no cover
+            raise NotImplementedError
+
+    class BrokenPluginAttack:
+        """Non-conformant (no ``run``): must be reported, never listed."""
+
+        id = BROKEN_ATTACK_ID
+
+        def info(self) -> AttackInfo:
+            return AttackInfo(id=self.id, name="broken", domain="image", family="evasion")
+
+        def resolve_params(self, params: dict[str, Any]) -> dict[str, float | int | bool]:
+            return {}
+
+    dist = SimpleNamespace(name=FAKE_DIST, version="0.1")
+    return [
+        SimpleNamespace(name="good", load=lambda: (lambda: FakePluginAttack()), dist=dist),
+        SimpleNamespace(name="broken", load=lambda: (lambda: BrokenPluginAttack()), dist=dist),
+    ]
+
+
+def _patch_attack_entry_points(
+    monkeypatch: pytest.MonkeyPatch, eps: list[SimpleNamespace],
+) -> dict[str, int]:
+    """Serve ``eps`` for the ``redsim.ml.attacks`` group only, counting the scans."""
+    calls = {"n": 0}
+    real: Callable[..., Any] = importlib.metadata.entry_points
+
+    def fake_entry_points(**kwargs: Any) -> Any:
+        if kwargs.get("group") == "redsim.ml.attacks":
+            calls["n"] += 1
+            return eps
+        return real(**kwargs)
+
+    monkeypatch.setattr(importlib.metadata, "entry_points", fake_entry_points)
+    return calls
+
+
+def _fresh_plugin_state(monkeypatch: pytest.MonkeyPatch) -> Any:
+    from redsim.api.v1 import attacks as attacks_route
+
+    monkeypatch.setattr(attacks_route, "_PLUGIN_ROWS", None)
+    for key in ("REDSIM_PLUGINS", "REDSIM_PLUGINS_ALLOW", "REDSIM_PLUGINS_REQUIRE_SIGNATURE"):
+        monkeypatch.delenv(key, raising=False)
+    return attacks_route
+
+
+def test_attack_catalog_lists_plugin_adapters_only_behind_the_gate(
+    api: SimpleNamespace, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from redsim.ml.attacks.registry import ATTACKS
+
+    _fresh_plugin_state(monkeypatch)
+    calls = _patch_attack_entry_points(monkeypatch, _fake_plugin_entry_points())
+    try:
+        # Gate off: built-ins only, the group is never scanned, nothing is registered.
+        off = api.client.get("/v1/attacks")
+        assert off.status_code == 200, off.text
+        body = off.json()
+        ids = {row["id"] for row in body["attacks"]}
+        assert {"fgsm", "pgd", "hopskipjump", "noise_control"} <= ids
+        assert FAKE_ATTACK_ID not in ids
+        assert body["plugins"] == {"enabled": False}
+        assert calls["n"] == 0
+        assert FAKE_ATTACK_ID not in ATTACKS
+
+        # Gate on: the conformant plugin joins the catalog, the broken one is reported, not listed.
+        monkeypatch.setenv("REDSIM_PLUGINS", "1")
+        on = api.client.get("/v1/attacks")
+        assert on.status_code == 200, on.text
+        body = on.json()
+        ids = {row["id"] for row in body["attacks"]}
+        assert FAKE_ATTACK_ID in ids
+        assert BROKEN_ATTACK_ID not in ids
+        assert body["count"] == len(body["attacks"])
+        plugin_row = next(row for row in body["attacks"] if row["id"] == FAKE_ATTACK_ID)
+        assert plugin_row["name"] == "Catalog test plugin" and plugin_row["domain"] == "image"
+        assert body["plugins"]["enabled"] is True
+        rows = {row["name"]: row for row in body["plugins"]["rows"]}
+        assert set(rows) == {FAKE_ATTACK_ID, "broken"}
+        assert rows[FAKE_ATTACK_ID]["status"] == "loaded"
+        assert rows[FAKE_ATTACK_ID]["kind"] == "attack" and rows[FAKE_ATTACK_ID]["group"] == "redsim.ml.attacks"
+        assert rows[FAKE_ATTACK_ID]["distribution"] == FAKE_DIST and rows[FAKE_ATTACK_ID]["version"] == "0.1"
+        assert rows["broken"]["status"] == "rejected" and "AttackAdapter" in rows["broken"]["detail"]
+        assert calls["n"] == 1
+        assert "pk_" not in on.text
+
+        # Once per process: later requests list the plugin without rescanning the group.
+        again = api.client.get("/v1/attacks")
+        assert again.status_code == 200, again.text
+        assert FAKE_ATTACK_ID in {row["id"] for row in again.json()["attacks"]}
+        assert again.json()["plugins"] == body["plugins"]
+        assert calls["n"] == 1
+
+        # The modality filter applies to plugin adapters as it does to built-ins.
+        tabular = api.client.get("/v1/attacks", params={"modality": "tabular"})
+        assert tabular.status_code == 200, tabular.text
+        assert FAKE_ATTACK_ID not in {row["id"] for row in tabular.json()["attacks"]}
+    finally:
+        ATTACKS._items.pop(FAKE_ATTACK_ID, None)
+
+
+def test_attack_catalog_reports_plugin_loader_failure_and_recovers(
+    api: SimpleNamespace, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A loader that raises is a 503 with its reason, never a 200 that looks plugin-free."""
+    attacks_route = _fresh_plugin_state(monkeypatch)
+    _patch_attack_entry_points(monkeypatch, [])
+    monkeypatch.setenv("REDSIM_PLUGINS", "1")
+
+    def broken_loader() -> list[Any]:
+        raise RuntimeError("trusted keyring unreadable")
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr("redsim.plugins.load_ml_attack_plugins", broken_loader)
+        resp = api.client.get("/v1/attacks")
+    assert resp.status_code == 503, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "ml_plugins_unavailable"
+    assert "RuntimeError" in detail["reason"] and "trusted keyring unreadable" in detail["reason"]
+    assert detail["message"]
+    assert "attacks" not in resp.json(), "a failed plugin load must not look like a plugin-free catalog"
+    assert attacks_route._PLUGIN_ROWS is None, "a failed load is not cached"
+
+    # Once the loader works again the catalog recovers, with the (empty) discovery report.
+    recovered = api.client.get("/v1/attacks")
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["plugins"] == {"enabled": True, "rows": []}
+    assert recovered.json()["count"] >= 4

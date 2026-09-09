@@ -15,6 +15,13 @@ campaign measures the real model on exactly the rows it will store.
 
 Nothing here imports torch or ART at module import time; the adapters import
 them lazily inside ``run`` so listing the catalog stays cheap.
+
+Third-party adapters (the ``redsim.ml.attacks`` entry-point group) are not
+registered here: ``redsim.plugins.load_ml_attack_plugins`` does that behind the
+``REDSIM_PLUGINS=1`` gate, and it is called by the offline CLI (``redsim ml
+attack``), by the ``redsim.scanners`` import, and once per API process by
+``GET /v1/attacks``, so :func:`list_attacks` reports whatever has joined
+``ATTACKS`` by the time it runs.
 """
 
 from __future__ import annotations
