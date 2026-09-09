@@ -154,13 +154,9 @@ export default function ModelsPage() {
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="redsim-kicker">assurance catalog / phase A</div>
           <h1 className="text-3xl font-semibold tracking-tight">
             Model targets
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Register the exact artifact before measuring it.
-          </p>
         </div>
         <div className="flex items-center gap-2">
           <div className="inline-flex rounded-sm border border-border text-xs" role="group" aria-label="View">
