@@ -204,8 +204,20 @@ def _assert_tabular_row_shape(x: np.ndarray, x_adv: np.ndarray, eps: float | Non
 
 # --- registry and the frozen AttackInfo ------------------------------------------------------
 
+# The seven adapters bundled with the attacks package (Phase A four plus the Phase B cw_l2, deepfool, zoo).
+# Optional sibling adapters (dpatch, patch_noise_control, word_substitution, adv_patch) register only when
+# their modality validates against the schema, so registry pins filter to this set.
+BUNDLED_IDS = ["cw_l2", "deepfool", "fgsm", "hopskipjump", "noise_control", "pgd", "zoo"]
+
+
+def _bundled(adapters):
+    return [a.id for a in adapters if a.id in BUNDLED_IDS]
+
+
 def test_registry_lists_phase_a_adapters():
-    assert ATTACKS.ids() == ["fgsm", "hopskipjump", "noise_control", "pgd"]
+    ids = ATTACKS.ids()
+    assert ids == sorted(ids)
+    assert [i for i in ids if i in BUNDLED_IDS] == BUNDLED_IDS
     for adapter in ATTACKS:
         assert isinstance(adapter, AttackAdapter)
     infos = {i.id: i for i in list_attacks()}
@@ -232,7 +244,8 @@ def test_attack_info_follows_the_frozen_contract():
 
 
 def test_atlas_mapping_is_kept_for_phase_b2_and_never_stamped_in_phase_a():
-    assert set(ATLAS_TECHNIQUES) == {"fgsm", "pgd", "hopskipjump"}
+    assert {"fgsm", "pgd", "hopskipjump", "cw_l2", "deepfool", "zoo"} <= set(ATLAS_TECHNIQUES)
+    assert not any(a.info().family == "control" for a in ATTACKS if a.id in ATLAS_TECHNIQUES)
     for aid in ("fgsm", "pgd"):
         t = ATLAS_TECHNIQUES[aid]
         assert isinstance(t, AtlasTechnique)
@@ -246,7 +259,7 @@ def test_atlas_mapping_is_kept_for_phase_b2_and_never_stamped_in_phase_a():
 def test_registry_capability_tags():
     """G-ATK5: every adapter carries spec 12.1 capability tags drawn from a checked vocabulary."""
     caps = list_attack_capabilities()
-    assert set(caps) == {"fgsm", "pgd", "hopskipjump", "noise_control"}
+    assert set(BUNDLED_IDS) <= set(caps) and set(caps) == set(ATTACKS.ids())
     for aid, tags in caps.items():
         assert "adversarial_ml" in tags and "explainability" not in tags, aid
         assert set(tags) <= KNOWN_ATTACK_CAPABILITIES
@@ -260,9 +273,9 @@ def test_registry_capability_tags():
     assert {"black_box", "query_counted", "minimal_norm", "modality:tabular", "modality:image"} <= set(caps["hopskipjump"])
     assert "takes_eps" not in caps["hopskipjump"]
     assert "family:control" in caps["noise_control"] and "family:evasion" not in caps["noise_control"]
-    assert [a.id for a in attacks_with_capability("black_box")] == ["hopskipjump", "noise_control"]
-    assert [a.id for a in attacks_with_capability("modality:tabular")] == ["hopskipjump", "noise_control", "pgd"]
-    assert [a.id for a in attacks_with_capability("white_box")] == ["fgsm", "pgd"]
+    assert _bundled(attacks_with_capability("black_box")) == ["hopskipjump", "noise_control", "zoo"]
+    assert _bundled(attacks_with_capability("modality:tabular")) == ["hopskipjump", "noise_control", "pgd", "zoo"]
+    assert _bundled(attacks_with_capability("white_box")) == ["cw_l2", "deepfool", "fgsm", "pgd"]
     assert attacks_with_capability("explainability") == []
     with pytest.raises(ValueError, match="unknown capability tag"):
         attacks_with_capability("teleport")
