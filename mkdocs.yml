@@ -198,6 +198,7 @@ nav:
       - Multi-tenancy: architecture/multi-tenancy.md
       - Observability: architecture/observability.md
       - ML vertical: architecture/ml-vertical.md
+      - "Interoperability (Croissant, ATLAS, Foundry)": interop.md
       - Diagrams: architecture/diagrams/README.md
   - API reference:
       - "HTTP API (/v1)": api/v1.md
