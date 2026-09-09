@@ -302,13 +302,17 @@ def _upload(api: SimpleNamespace, **overrides: Any) -> Any:
     )
 
 
-def _assert_nothing_persisted(api: SimpleNamespace) -> None:
+def _assert_nothing_persisted(api: SimpleNamespace, reason: str) -> None:
     with api.Session() as sess:
         assert sess.query(Target).count() == 0
         assert sess.query(Run).count() == 0
         assert sess.query(Job).count() == 0
     assert _blob_files(api) == []
-    assert api.writer.events == []
+    # Wave 2 (G-ASSET11): a refused upload leaves exactly one ``model.register``
+    # ``success=False`` row on the project chain, carrying the reason and no bytes.
+    assert [(event.action, event.success) for event in api.writer.events] == [("model.register", False)]
+    assert api.writer.events[0].project_id == PROJECT
+    assert api.writer.events[0].detail["reason"] == reason
 
 
 @pytest.mark.parametrize(
@@ -331,7 +335,7 @@ def test_upload_is_refused_before_anything_is_persisted(
     assert resp.status_code == 422, resp.text
     detail = resp.json()["detail"]
     assert detail["code"] == code and detail["field"] == field
-    _assert_nothing_persisted(api)
+    _assert_nothing_persisted(api, code)
 
 
 def test_upload_without_built_assets_is_refused(
@@ -342,7 +346,7 @@ def test_upload_without_built_assets_is_refused(
     assert resp.status_code == 422, resp.text
     detail = resp.json()["detail"]
     assert detail["code"] == "dataset_incompatible" and "manifest is missing" in detail["message"]
-    _assert_nothing_persisted(api)
+    _assert_nothing_persisted(api, "dataset_incompatible")
 
 
 def test_upload_of_a_phase_b_modality_is_not_implemented(api: SimpleNamespace) -> None:
@@ -350,7 +354,7 @@ def test_upload_of_a_phase_b_modality_is_not_implemented(api: SimpleNamespace) -
     assert resp.status_code == 501, resp.text
     detail = resp.json()["detail"]
     assert detail["code"] == "not_implemented" and detail["phase"] == "B"
-    _assert_nothing_persisted(api)
+    _assert_nothing_persisted(api, "not_implemented")
 
 
 def test_valid_upload_registers_with_the_resolved_binding(

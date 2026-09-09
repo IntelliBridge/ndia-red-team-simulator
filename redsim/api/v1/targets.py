@@ -12,6 +12,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from redsim.api.auth import CurrentUser, get_current_user
+from redsim.api.errors import ApiError
 from redsim.api.policy import Action, check, ensure_project_access
 from redsim.audit.chain import resolve_writer
 from redsim.config import load_config
@@ -53,15 +54,23 @@ def create_target(body: CreateTargetBody = Body(default_factory=CreateTargetBody
     check(user, Action.TARGET_MANAGE, project_id)
     kind = body.kind
     value = body.value
-    if not value:
+    config = load_config()
+    if kind in targets_svc.ML_TARGET_KINDS:
+        # Spec 17.1: ML kinds go through POST /v1/models so the upload rules
+        # cannot be bypassed. The service refuses before ``value`` matters and
+        # writes the refused audit row; ``400 use_models_route`` comes back.
+        value = value or ""
+    elif not value:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="value required")
-    config = load_config()
-    record = targets_svc.create_target(
-        project_id=project_id, kind=kind, value=value,
-        actor=f"user:{user.sub}", config=config,
-        audit_writer=resolve_writer(config),
-    )
+    try:
+        record = targets_svc.create_target(
+            project_id=project_id, kind=kind, value=value,
+            actor=f"user:{user.sub}", config=config,
+            audit_writer=resolve_writer(config),
+        )
+    except ApiError as exc:
+        raise exc.as_http_exception() from exc
     return {"id": record.id, "kind": record.kind, "value": record.value,
             "project_id": record.project_id}
 
