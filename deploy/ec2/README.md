@@ -32,7 +32,9 @@ IAM roles, the VPC) stays and is what the host uses.
 Every unit starts through `/usr/local/bin/redsim-run <service> <command>`,
 which assembles the environment from `/opt/redsim/env/common.env` (or
 `web.env`, `identity.env`) and the Secrets Manager JSON `/opt/redsim/env/<service>.json`
-(plus `pythia.json` for the workers, which turns the narrative on), then
+(plus `pythia.json` for every Python service when the Pythia secret exists,
+which turns the LLM paths on: probes and narratives on the workers, the
+gateway model picker and LLM target registration on the api), then
 execs the command. JSON keeps PEM values intact; nothing secret reaches the
 command line or the journal. Keycloak's realm, the users and the application
 data are in RDS.
@@ -68,7 +70,9 @@ into `/opt/redsim/env/*.json` (0600, owner `redsim`). To change one, update
 the secret and re-run the secrets block of the bootstrap (or the whole
 bootstrap, it is idempotent), then restart the unit. `BETTER_AUTH_URL` is the
 public origin, never a callback path or localhost. `REDSIM_DISABLE_LLM` is
-`0` on the workers when `pythia.json` exists.
+`0` on every Python service when `pythia.json` exists, and the api adds the
+`PYTHIA_BASE_URL` host to `target_allowlist` (`redsim.config`), so LLM targets
+on the gateway register without a `redsim.yaml`.
 
 Schema migrations are not run by the deploy. When `redsim/db/migrations`
 changes, run Alembic once with the migration credentials

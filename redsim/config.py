@@ -176,6 +176,16 @@ def _apply_env_overrides(config: RedsimConfig) -> RedsimConfig:
         hosts = [h.strip() for h in allowlist.split(",") if h.strip()]
         if hosts:
             config.target_allowlist = hosts
+    # The configured Pythia gateway is trusted by configuration: a deployment that
+    # sets PYTHIA_BASE_URL wants LLM targets on that host to register without a
+    # separate allowlist entry (register LLM-26). Appended, never replacing.
+    gateway = os.environ.get("PYTHIA_BASE_URL", "").strip()
+    if gateway:
+        from urllib.parse import urlsplit
+
+        host = (urlsplit(gateway if "://" in gateway else f"https://{gateway}").hostname or "").lower()
+        if host and host not in {h.lower() for h in config.target_allowlist}:
+            config.target_allowlist = [*config.target_allowlist, host]
     config.llm_guardrails_enabled = _env_bool(
         "REDSIM_LLM_GUARDRAILS", config.llm_guardrails_enabled
     )
