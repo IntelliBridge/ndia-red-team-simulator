@@ -126,7 +126,7 @@ describe("/runs/[id] campaign review", () => {
     mocks.useRequireAuth.mockReturnValue(false);
     setCampaign(undefined);
     renderPage();
-    expect(screen.getByText("Redirecting to sign in…")).toBeTruthy();
+    expect(screen.getByText("Signing in…")).toBeTruthy();
 
     cleanup();
     mocks.useRequireAuth.mockReturnValue(true);

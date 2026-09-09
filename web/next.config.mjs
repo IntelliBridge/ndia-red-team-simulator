@@ -9,7 +9,11 @@ import "./src/env.js";
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: 'standalone',
+  // The Docker image runs the standalone server; the EC2 host runs `next start`
+  // on a full build, which Next refuses to combine with a standalone output
+  // (its pages/_error module goes missing and every server error falls back to
+  // the unstyled static 500 page). Opt in from the Dockerfile only.
+  ...(process.env.NEXT_OUTPUT_STANDALONE === '1' ? { output: 'standalone' } : {}),
   experimental: {
     serverActions: { allowedOrigins: ['localhost:3000'] },
   },

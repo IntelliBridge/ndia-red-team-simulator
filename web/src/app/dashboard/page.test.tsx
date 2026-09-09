@@ -37,6 +37,7 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@redsim/design-system", () => ({
   RunStatusBadge: ({ status }: { status: string }) =>
     h("span", { "data-testid": "run-status" }, status),
+  SeverityChip: ({ level }: { level: string }) => h("span", { "data-testid": "sev" }, level),
 }));
 
 import DashboardPage from "./page";
@@ -74,7 +75,7 @@ describe("DashboardPage", () => {
 
     render(h(DashboardPage));
 
-    expect(screen.getByText("Redirecting to sign in…")).toBeTruthy();
+    expect(screen.getByText("Signing in…")).toBeTruthy();
     // The heading must not render on the gated path.
     expect(screen.queryByText("Recent runs")).toBeNull();
   });
@@ -162,6 +163,51 @@ describe("DashboardPage", () => {
     expect(screen.getByText("proj-alpha")).toBeTruthy();
     expect(screen.getByText("proj-beta")).toBeTruthy();
     expect(screen.getByText("—")).toBeTruthy();
+  });
+
+  it("renders the stat tiles, the severity bars and the severe findings from the three lists", () => {
+    // The mock answers every SWR call with the same object, so it carries all
+    // three lists at once; the page reads only the key each hook expects.
+    useSWRMock.mockReturnValue({
+      data: {
+        runs: [run(), run({ id: "run-2", status: "running" }), run({ id: "run-3", status: "failed" })],
+        models: [
+          { id: "m1", status: "available", registered: true },
+          { id: "m2", status: "validating", registered: true },
+          { id: "b1", status: "available", registered: false },
+        ],
+        findings: [
+          { id: "f-1", run_id: "run-1", severity: "high", status: "open",
+            schema_blob: { title: "PGD flips predictions", target: "bundled:vehicles_cnn", affected_component: "vehicles_cnn-1234abcd",
+              description: "What happened: redsim took the images this model classified correctly. Measured: PGD ..." } },
+          { id: "f-2", run_id: "run-1", severity: "low", status: "open", schema_blob: { title: "Low one" } },
+          { id: "f-3", run_id: "run-1", severity: "critical", status: "false_positive", schema_blob: { title: "Dismissed" } },
+        ],
+        count: 3,
+      },
+      error: undefined,
+      isLoading: false,
+    });
+    render(h(DashboardPage));
+    expect(screen.getByText("Registered models").nextSibling?.textContent).toBe("2");
+    expect(screen.getByText("1 available to attack")).toBeTruthy();
+    expect(screen.getByText("Runs").nextSibling?.textContent).toBe("3");
+    expect(screen.getByText("1 running or queued")).toBeTruthy();
+    expect(screen.getByText("Open findings").nextSibling?.textContent).toBe("2");
+    expect(screen.getByText("High or critical").nextSibling?.textContent).toBe("2");
+    expect(screen.getByText("1 critical")).toBeTruthy();
+    // Severity bars carry label and count, never colour alone.
+    const bars = screen.getByLabelText("Findings by severity");
+    expect(bars.textContent).toContain("critical");
+    expect(bars.textContent).toContain("high");
+    expect(bars.textContent).toContain("low");
+    // The severe list shows the open high finding with its plain-language lead
+    // and omits the dismissed critical one.
+    expect(screen.getByRole("link", { name: "PGD flips predictions" }).getAttribute("href")).toBe("/findings/f-1");
+    expect(screen.getByText("redsim took the images this model classified correctly.")).toBeTruthy();
+    expect(screen.queryByText("Dismissed")).toBeNull();
+    // The model the finding is about, linked to its page.
+    expect(screen.getByRole("link", { name: "vehicles_cnn" }).getAttribute("href")).toBe("/models/vehicles_cnn-1234abcd");
   });
 
   it("shows the session email from getEmail()", () => {

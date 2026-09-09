@@ -187,9 +187,13 @@ export type FindingSchemaBlob = {
   description?: string;
   cve?: string;
   target?: string;
+  /** The Target row id the finding is about (RedsimFinding.affected_component). */
+  affected_component?: string;
   attack_id?: string;
   first_success_eps?: number;
   ml?: MLFindingDetail | null;
+  /** LLM probe detail (redsim.services.ml_findings.project_llm_findings); ids and counts only. */
+  llm?: { probe_id?: string; detector?: string; n_hits?: number; n_evaluated?: number; goal?: string | null } | null;
 };
 export type FindingReview = {
   state: "unreviewed" | "dismissed";
@@ -302,9 +306,43 @@ export type TargetMetadata = {
   manifest?: Record<string, unknown>;
   [key: string]: unknown;
 };
+/** Reading aid on the model card: means over the model's own scorecards (redsim.services.ml_scores). */
+export type ScoreSummary =
+  | {
+      kind: "mri";
+      n_campaigns: number;
+      mri_mean: number | null;
+      subscores_mean: Record<string, number | null>;
+      note: string;
+    }
+  | {
+      kind: "llm";
+      n_runs: number;
+      families: { family: string; n_hits: number; n_evaluated: number; hit_rate: number; n_probes: number }[];
+      note: string;
+    };
+
+/**
+ * The name to show for a model. LLM targets registered before 2026-09-09 were
+ * named "<model> via <gateway> (<persona>)"; the gateway is shown as a badge
+ * instead, so the suffix is stripped here and only the model id remains.
+ */
+export function modelDisplayName(m: { name: string; manifest?: Record<string, unknown> }): string {
+  const fromManifest = m.manifest && typeof m.manifest.model_id === "string" ? m.manifest.model_id : null;
+  const stripped = m.name.replace(/\s+via\s+\S+(\s+\([^)]*\))?\s*$/, "").trim();
+  return stripped || fromManifest || m.name;
+}
+
+/** The gateway an LLM target is reached through (a host name), for the provider badge. */
+export function modelGateway(m: { manifest?: Record<string, unknown> }): string | null {
+  const host = m.manifest?.gateway_host;
+  return typeof host === "string" && host ? host : null;
+}
+
 export type ModelTarget = {
   id: string;
   project_id: string;
+  score_summary?: ScoreSummary | null;
   name: string;
   source: "bundled" | "upload" | "endpoint";
   modality: "image" | "tabular" | "llm";
