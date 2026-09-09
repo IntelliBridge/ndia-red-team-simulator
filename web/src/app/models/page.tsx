@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { RoleGated, PanelSection } from "@redsim/design-system";
 import {
@@ -11,6 +11,7 @@ import {
   type ModelTarget,
 } from "@/lib/api";
 import { useModels } from "@/hooks/useModels";
+import { rowLink } from "@/lib/row-link";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
 import { useCapabilities } from "@/hooks/useMlCatalog";
@@ -39,6 +40,24 @@ export default function ModelsPage() {
           503: "Model service unavailable. Retry when the service is restored.",
         }[error.status] ?? `Model catalog refused (${error.status}).`)
       : "Model catalog unavailable. Retry.";
+  // Cards or a compact list; the choice is remembered per browser.
+  const [view, setView] = useState<"cards" | "list">("cards");
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(VIEW_KEY);
+      if (saved === "list" || saved === "cards") setView(saved);
+    } catch {
+      // storage unavailable: keep the default
+    }
+  }, []);
+  const chooseView = (next: "cards" | "list") => {
+    setView(next);
+    try {
+      window.localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // storage unavailable: the choice lasts for this page only
+    }
+  };
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -143,6 +162,25 @@ export default function ModelsPage() {
             Register the exact artifact before measuring it.
           </p>
         </div>
+        <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-sm border border-border text-xs" role="group" aria-label="View">
+            <button
+              type="button"
+              aria-pressed={view === "cards"}
+              onClick={() => chooseView("cards")}
+              className={`px-3 py-1.5 ${view === "cards" ? "bg-muted font-semibold" : "text-muted-foreground"}`}
+            >
+              Cards
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === "list"}
+              onClick={() => chooseView("list")}
+              className={`border-l border-border px-3 py-1.5 ${view === "list" ? "bg-muted font-semibold" : "text-muted-foreground"}`}
+            >
+              List
+            </button>
+          </div>
         {!error && <RoleGated
           minRole="remediator"
           callerRole={projectId ? roles[projectId] : undefined}
@@ -154,6 +192,7 @@ export default function ModelsPage() {
             Add model
           </button>
         </RoleGated>}
+        </div>
       </header>
       {error && (
         <div className="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
@@ -178,6 +217,54 @@ export default function ModelsPage() {
           </p>
         </PanelSection>
       )}
+      {view === "list" && models.length > 0 && (
+        <div className="overflow-x-auto rounded-sm border border-border bg-card">
+          <table className="w-full text-sm">
+            <caption className="sr-only">Registered model targets</caption>
+            <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2">Name</th>
+                <th className="px-3 py-2">ID</th>
+                <th className="px-3 py-2">Domain</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Source</th>
+                <th className="px-3 py-2">Clean accuracy / model</th>
+                <th className="px-3 py-2">Digest / persona</th>
+              </tr>
+            </thead>
+            <tbody>
+              {models.map((m: ModelTarget) => (
+                <tr key={m.id} {...rowLink(`/models/${m.id}`)} className={`border-t border-border ${rowLink("").className}`}>
+                  <td className="px-3 py-2 font-medium">
+                    <a className="text-primary underline" href={`/models/${m.id}`}>
+                      {m.name}
+                    </a>
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{m.id}</td>
+                  <td className="px-3 py-2">{isLlmTarget(m) ? "llm" : m.modality}</td>
+                  <td className="px-3 py-2">
+                    <span className="rounded-sm border border-border bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider">
+                      {m.status}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2">{m.source}</td>
+                  <td className="px-3 py-2">
+                    {isLlmTarget(m)
+                      ? (typeof m.manifest.model_id === "string" ? m.manifest.model_id : "—")
+                      : formatCleanAccuracy(m.manifest.clean_accuracy, m.manifest.clean_n)}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                    {isLlmTarget(m)
+                      ? (typeof m.manifest.persona === "string" ? m.manifest.persona : "—")
+                      : String(m.sha256 ?? "—").slice(0, 12)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {view === "cards" && (
       <div className="grid gap-3 md:grid-cols-2">
         {models.map((m: ModelTarget) => (
           <article key={m.id} className="redsim-panel rounded-sm p-4">
@@ -263,6 +350,7 @@ export default function ModelsPage() {
           </article>
         ))}
       </div>
+      )}
       {open && (
         <div className="fixed inset-0 z-40 grid place-items-center bg-foreground/30 p-4">
           <div
@@ -452,3 +540,5 @@ export default function ModelsPage() {
     </div>
   );
 }
+
+const VIEW_KEY = "redsim_models_view";
