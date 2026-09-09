@@ -38,9 +38,7 @@ const NAV_LINKS: { href: string; label: string }[] = [
 
 export default function RootLayout({
   children,
-}: {
-  children: React.ReactNode;
-}) {
+}: { children: React.ReactNode }) {
   return (
     // One dark theme, after labs.agiledefense.com. The `dark` class is fixed
     // so the vendored shadcn primitives' `dark:` variants apply; there is no
@@ -49,7 +47,7 @@ export default function RootLayout({
       <body className="min-h-screen bg-background text-foreground antialiased">
         <TRPCReactProvider>
           {/* Skip link: first focusable element, visually hidden until
-              keyboard-focused, so keyboard and screen-reader users can jump
+              keyboard-focused, so keyboard/screen-reader users can jump
               past the nav straight to the page content. */}
           <a
             href="#main-content"
