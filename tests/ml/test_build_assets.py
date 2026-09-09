@@ -22,25 +22,41 @@ from redsim.ml.assets import ARCH_CHOICES, canonical_model_id
 from redsim.ml.assets import datasets as ds
 from redsim.ml.assets.build import (
     DEFAULT_FIXTURE_PATH,
+    DETECTION_PIPELINE_CAVEATS,
+    FIXTURE_ONLY_CAVEAT,
     BuildOptions,
+    attach_train_slice,
     build_assets,
     build_cifar10_fixture,
+    build_cnn_asset,
+    build_detection_asset,
     build_url_asset,
+    resolve_detection_data,
+    resolve_detection_subset_root,
     summarize,
     write_url_eval_slice,
 )
 from redsim.ml.assets.manifest import (
+    BUILD_ASSET_IDS,
+    BUILD_DATASET_CHOICES,
+    BUILD_MODEL_IDS,
+    EXPLICIT_ONLY_DATASETS,
     MANIFEST_NAME,
     AssetManifest,
     DatasetEntry,
     FileEntry,
     SplitEntry,
+    all_build_datasets,
     load_manifest,
+    manifest_digest,
     sha256_file,
+    verify_manifest,
+    verify_model_assets,
     write_manifest,
 )
 from redsim.ml.datasets import DatasetUnavailable, cifar10
 from redsim.ml.datasets.url_features import FEATURE_NAMES, featurize_array
+from redsim.ml.schema import MLModelManifest
 
 pytestmark = pytest.mark.ml
 
@@ -59,7 +75,7 @@ def test_build_options_defaults_and_canonicalisation(tmp_path: Path):
     opts = BuildOptions(out=tmp_path)
     assert opts.prefer_xgboost is False, "sklearn_joblib is the default bundled tabular format"
     assert opts.arch == "small_cnn" and opts.build_models is True and opts.fixture is False
-    assert opts.selected == {"image", "cifar10", "tabular"} and opts.cache_dir == tmp_path / "cache"
+    assert opts.selected == {"image", "cifar10", "tabular", "text"} and opts.cache_dir == tmp_path / "cache"
     assert opts.fixture_out == DEFAULT_FIXTURE_PATH and opts.fixture_sidecar is None
     assert BuildOptions(only=("url_classifier",)).only == ("url_trees",)
     assert BuildOptions(only=("url_classifier",)).selected == {"tabular"}
@@ -73,6 +89,39 @@ def test_build_options_defaults_and_canonicalisation(tmp_path: Path):
         BuildOptions(only=("nope",))
     with pytest.raises(ValueError, match="dataset must be one of"):
         BuildOptions(dataset="bogus")
+
+
+def test_build_options_cover_the_phase_b_modalities_and_the_train_slice(tmp_path: Path):
+    # The vocabulary: P0's three plus text and detection; detection is never part of ``all``.
+    assert BUILD_DATASET_CHOICES == ("image", "tabular", "cifar10", "text", "detection", "all")
+    assert BUILD_MODEL_IDS == {"image": "vehicles_cnn", "cifar10": "cifar10_smallcnn", "tabular": "url_trees",
+                               "text": "sms_tfidf_lr", "detection": "assets_frcnn_mnv3"}
+    assert {BUILD_ASSET_IDS[m] for m in BUILD_ASSET_IDS} == set(BUILD_MODEL_IDS)
+    assert BUILD_ASSET_IDS["url_classifier"] == "tabular" and BUILD_ASSET_IDS["sms_tfidf_lr"] == "text"
+    assert EXPLICIT_ONLY_DATASETS == ("detection",) and all_build_datasets() == {"image", "cifar10", "tabular", "text"}
+    assert BuildOptions(dataset="text").selected == {"text"} and BuildOptions(dataset="detection").selected == {"detection"}
+    assert BuildOptions(only=("sms_tfidf_lr",)).selected == {"text"}
+    assert BuildOptions(only=("assets_frcnn_mnv3", "url_classifier")).selected == {"detection", "tabular"}
+    # The training slice is on by default, sized and seeded from the build; the detector reads its published subset.
+    opts = BuildOptions(out=tmp_path, seed=4)
+    assert opts.train_slice is True and opts.train_slice_n == ds.DEFAULT_TRAIN_SLICE_N == 1536
+    assert opts.train_slice_options == ds.TrainSliceOptions(n=1536, seed=4, enabled=True)
+    assert BuildOptions(train_slice=False, train_slice_n=8).train_slice_options == ds.TrainSliceOptions(n=8, seed=0, enabled=False)
+    assert opts.detection_image_size == 320 and opts.detection_subset is None and opts.attach_train_slice == ()
+    assert BuildOptions(detection_subset="/x/subset").detection_subset == Path("/x/subset")
+    # ``--attach-train-slice`` alone builds nothing; the id must be an image model.
+    attach = BuildOptions(build_models=False, attach_train_slice=("vehicles_cnn", "cifar10_smallcnn"))
+    assert attach.selected == set() and attach.attach_train_slice == ("vehicles_cnn", "cifar10_smallcnn")
+    with pytest.raises(ValueError, match="non-image model"):
+        BuildOptions(attach_train_slice=("url_classifier",))
+    with pytest.raises(ValueError, match="unknown model id"):
+        BuildOptions(only=("resnet_from_upload",))
+    with pytest.raises(ValueError, match="train_slice_n"):
+        BuildOptions(train_slice_n=0)
+    with pytest.raises(ValueError, match="holdout"):
+        BuildOptions(holdout=1.0)
+    with pytest.raises(ValueError, match="detection_image_size"):
+        BuildOptions(detection_image_size=4)
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +299,7 @@ def test_build_assets_replaces_the_legacy_tabular_entry_and_writes_the_fixture(t
     assert fixture_out.exists() and (fixture_out.parent / "MANIFEST.json").exists()
     assert json.loads((fixture_out.parent / "MANIFEST.json").read_text())["files"][cifar10.FIXTURE_NAME]["n_rows"] == 200
     text = summarize(result)
-    assert "url_trees: sklearn_joblib (sklearn_hist_gradient_boosting)" in text and "[fixture only]" in text
+    assert "url_trees: sklearn_joblib (sklearn_hist_gradient_boosting, tabular)" in text and "[fixture only]" in text
 
     # --fixture alone: no model built, manifest untouched, fixture rewritten from local files only.
     before = (root / MANIFEST_NAME).read_bytes()
@@ -387,3 +436,258 @@ def test_campaign_on_a_built_target_carries_the_dataset_caveats(tmp_path: Path, 
     finally:
         for target_id in ("vehicles_cnn", "url_trees"):
             get_target(target_id).unload()
+
+
+# ---------------------------------------------------------------------------
+# Phase B: the text build's fixture fallback, the detector build, the published subset reader, attach-train-slice
+# ---------------------------------------------------------------------------
+
+def test_text_build_falls_back_to_the_committed_sample_offline(tmp_path: Path, monkeypatch):
+    """``--dataset text`` with no UCI corpus in reach trains on the committed CI sample and says so: the entry is
+    fixture-only with the caveat, never a demo target (the tabular build's rule, applied to text)."""
+    pytest.importorskip("sklearn")
+    monkeypatch.setattr("redsim.ml.assets.build.inject_truststore", lambda: False)
+
+    def refuse(client, cache_dir, **kwargs):
+        raise ds.DatasetUnavailable("offline test: no UCI download")
+
+    monkeypatch.setattr(ds, "fetch_sms_spam", refuse)
+    root = tmp_path / "assets"
+    logs: list[str] = []
+    result = build_assets(BuildOptions(dataset="text", out=root), log=logs.append, warn=logs.append)
+    assert set(result.models) == {"sms_tfidf_lr"}
+    model = result.models["sms_tfidf_lr"]
+    assert model.modality == "text" and model.format == "sklearn_joblib" and model.fixture_only is True
+    assert model.gradients is False and model.train_slice_split is None
+    entry = result.datasets[model.dataset_id]
+    assert entry.fixture_only is True and FIXTURE_ONLY_CAVEAT in entry.caveats and model.dataset_caveats == entry.caveats
+    sample = ds.committed_sms_sample_path()
+    assert sample is not None and entry.revision == sha256_file(sample), "revision is the digest of the file trained on"
+    assert entry.source_files and entry.source_files[0].path == sample.name
+    assert entry.splits["eval"].file is not None and entry.splits["eval"].file.path.endswith("eval.jsonl")
+    assert any("falling back to the committed CI sample" in line and "offline test" in line for line in logs)
+    raw = json.loads((root / MANIFEST_NAME).read_text(encoding="utf-8"))
+    projected = MLModelManifest.model_validate(raw["models"]["sms_tfidf_lr"])
+    assert projected.modality == "text" and projected.manifest_sha256 == manifest_digest(projected)
+    loaded = load_manifest(root / MANIFEST_NAME)
+    assert verify_manifest(loaded, root) == [] and not verify_model_assets(loaded, root, "sms_tfidf_lr")
+    text = summarize(loaded)
+    assert "sms_tfidf_lr: sklearn_joblib (sklearn_tfidf_logreg, text)" in text and "[fixture only]" in text
+
+
+def test_detection_build_writes_a_detector_entry_the_target_loads(tmp_path: Path):
+    """One epoch on 12 synthetic 16 px rectangle images: the entry is a detection ``MLModelManifest`` whose
+    clean_accuracy is recall over boxes, the caveats say so, and ``BundledDetectionTarget`` loads the tree."""
+    pytest.importorskip("torchvision")
+    from redsim.ml.datasets import military_assets as ma
+    from redsim.ml.targets.detection import ARCHITECTURE_ID, BundledDetectionTarget
+
+    split = ma.synthetic_detection_split(12, image_size=16, seed=0)
+    train, evaluation = ds.detection_holdout(split, holdout=0.25, seed=0)
+    assert (train.n, evaluation.n) == (9, 3) and (train.name, evaluation.name) == ("train", "eval")
+    assert set(train.indices.tolist()) | set(evaluation.indices.tolist()) == set(range(12))
+    assert not set(train.indices.tolist()) & set(evaluation.indices.tolist())
+    assert train.seed == evaluation.seed == 0
+    with pytest.raises(ValueError, match="holdout"):
+        ds.detection_holdout(split, holdout=1.5, seed=0)
+    with pytest.raises(ds.DatasetUnavailable, match="at least two"):
+        ds.detection_holdout(split.subset(np.asarray([0])), holdout=0.2, seed=0)
+
+    dataset = DatasetEntry(id=ma.SYNTHETIC_DATASET_ID, source="local", revision="synthetic-v1", license="n/a",
+                           class_names=list(ma.SYNTHETIC_CLASS_NAMES), fixture_only=True, notes=["unit-test double"])
+    root = tmp_path / "assets"
+    logs: list[str] = []
+    entry, model = build_detection_asset(train, evaluation, dataset, model_id="assets_frcnn_mnv3", root=root, epochs=1,
+                                         seed=0, anchor_sizes=(4, 6, 8), pretrained=False, batch_size=4, threads=2,
+                                         notes=["capped"], log=logs.append)
+    assert model.modality == "detection" and model.format == "torch_state_dict"
+    assert model.architecture_id == ARCHITECTURE_ID == model.architecture["architecture_id"]
+    assert model.architecture["anchor_sizes"] == [4, 6, 8] and model.architecture["image_size"] == 16
+    assert model.input_shape == [3, 16, 16] and model.n_classes == 2 and model.class_names == list(ma.SYNTHETIC_CLASS_NAMES)
+    assert model.gradients is True and model.epochs == 1 and model.seed == 0 and model.fixture_only is True
+    assert model.train_split == "train" and model.dataset_split == "eval"
+    assert model.clean_accuracy is not None and model.clean_accuracy.split == "eval"
+    assert model.clean_accuracy.n == evaluation.n_boxes and 0.0 <= model.clean_accuracy.value <= 1.0
+    assert model.metrics["n_gt_boxes"] == evaluation.n_boxes and model.metrics["n_images"] == 3 and "map50" in model.metrics
+    assert model.detection is not None and model.detection.classes == list(ma.SYNTHETIC_CLASS_NAMES)
+    assert model.detection.input_size == [16, 16] and model.detection.box_format == "xyxy"
+    assert model.detection.iou_threshold == 0.5 and model.detection.score_threshold == 0.5
+    assert any("recall at IoU" in note and "not a classification accuracy" in note for note in model.notes)
+    assert "random init" in model.training["backbone_init"] and model.training["coco_weights_loaded"] is False
+    assert entry.splits["eval"].file is not None and entry.splits["eval"].file.path.endswith("/eval_det.npz")
+    assert entry.splits["train"].file is None and entry.splits["train"].n == 9 and entry.splits["eval"].n == 3
+    assert entry.splits["eval"].per_class == evaluation.per_class_boxes() and entry.splits["train"].seed == 0
+    assert entry.caveats == [*DETECTION_PIPELINE_CAVEATS, FIXTURE_ONLY_CAVEAT] and model.dataset_caveats == entry.caveats
+    assert entry.subject_centered is None and model.subject_centered is None and "capped" in entry.notes
+    assert entry.preprocessing["image_size"] == 16 and "boxes per class" in entry.preprocessing["per_class"]
+    assert any("recall@0.5" in line and "mAP@0.5" in line for line in logs)
+
+    manifest = AssetManifest.new()
+    manifest.datasets[entry.id] = entry
+    manifest.models[model.id] = model
+    write_manifest(manifest, root / MANIFEST_NAME)
+    loaded = load_manifest(root / MANIFEST_NAME)
+    assert verify_manifest(loaded, root) == [] and not verify_model_assets(loaded, root, "assets_frcnn_mnv3")
+    raw = json.loads((root / MANIFEST_NAME).read_text(encoding="utf-8"))["models"]["assets_frcnn_mnv3"]
+    projected = MLModelManifest.model_validate(raw)
+    assert projected.modality == "detection" and projected.detection is not None
+    assert projected.detection.classes == list(ma.SYNTHETIC_CLASS_NAMES)
+    assert projected.manifest_sha256 == manifest_digest(projected) == model.manifest_sha256
+    text = summarize(loaded)
+    assert "assets_frcnn_mnv3: torch_state_dict (fasterrcnn_mobilenet_v3_large_320_fpn, detection)" in text
+    assert "recall@0.5 over boxes" in text
+
+    # The registered detection target reads exactly what the builder wrote.
+    target = BundledDetectionTarget(assets_dir=root)
+    assert target.info().status == "available"
+    target.load()
+    manifest_view = target.manifest()
+    assert manifest_view["manifest_verified"] is True and manifest_view["eval_n"] == 3
+    assert manifest_view["class_names"] == list(ma.SYNTHETIC_CLASS_NAMES)
+    assert manifest_view["eval_n_boxes"] == evaluation.n_boxes
+
+
+def _png_chw(arr_chw: np.ndarray) -> bytes:
+    return _png(np.ascontiguousarray(arr_chw.transpose(1, 2, 0)))
+
+
+def _published_subset(root: Path, *, n: int = 3, width: int = 24, height: int = 20) -> dict:
+    """A subset tree in the B0 layout (``images/<split>/``, ``labels/<split>/``, ``manifest.json``)."""
+    from redsim.ml.assets.manifest import file_entry
+
+    pytest.importorskip("PIL")
+    rng = np.random.default_rng(0)
+    keep = list(ds.MILITARY_ASSETS_SUBSET_CLASSES)
+    keep_ids = [ds.military_assets_class_id(c) for c in keep]
+    labels: dict[str, list[ds.YoloBox]] = {}
+    files: dict[str, FileEntry] = {}
+    sizes: dict[str, tuple[int, int]] = {}
+    for i in range(n):
+        key = f"val/{i:06d}"
+        img = root / "images" / "val" / f"{i:06d}.png"
+        lab = root / "labels" / "val" / f"{i:06d}.txt"
+        img.parent.mkdir(parents=True, exist_ok=True)
+        lab.parent.mkdir(parents=True, exist_ok=True)
+        img.write_bytes(_png_chw(rng.integers(0, 256, size=(3, height, width), dtype=np.uint8)))
+        boxes = [ds.YoloBox(class_id=keep_ids[i % len(keep)], cx=0.5, cy=0.5, w=0.5, h=0.5),
+                 ds.YoloBox(class_id=keep_ids[(i + 1) % len(keep)], cx=0.2, cy=0.2, w=0.3, h=0.3)]
+        lab.write_text("".join(f"{b.class_id} {b.cx} {b.cy} {b.w} {b.h}\n" for b in boxes), encoding="utf-8")
+        labels[key] = boxes
+        files[key] = file_entry(root, img)
+        files[key + ".txt"] = file_entry(root, lab)
+        sizes[key] = (width, height)
+    manifest = ds.detection_subset_manifest(sorted(labels), labels, files, n_requested=n, seed=0, n_candidates=n,
+                                            splits_scanned=["val"], image_sizes=sizes)
+    (root / ds.MILITARY_ASSETS_SUBSET_MANIFEST).write_text(json.dumps(manifest, indent=1), encoding="utf-8")
+    return manifest
+
+
+def test_load_detection_subset_reads_the_published_layout_and_checks_digests(tmp_path: Path):
+    root = tmp_path / "assets"
+    subset_root = root / "cache" / ds.MILITARY_ASSETS_SUBSET_NAME
+    manifest = _published_subset(subset_root)
+    assert ds.detection_subset_root(root) == subset_root
+
+    subset = ds.load_detection_subset(subset_root, image_size=16)
+    split = subset.split
+    keep = list(ds.MILITARY_ASSETS_SUBSET_CLASSES)
+    assert split.n == 3 and split.class_names == keep and split.name == "subset" and split.seed == 0
+    assert split.x.shape == (3, 3, 16, 16) and split.x.dtype == np.uint8
+    assert split.filenames == ["val/000000", "val/000001", "val/000002"] and split.indices.tolist() == [0, 1, 2]
+    assert split.excluded_classes == list(ds.MILITARY_ASSETS_EXCLUDED_CLASSES)
+    # Labels are remapped into keep_classes order; boxes are scaled from 24x20 to the 16 px square.
+    assert [lab.tolist() for lab in split.labels] == [[0, 1], [1, 2], [2, 3]]
+    np.testing.assert_allclose(split.boxes[0][0], [4.0, 4.0, 12.0, 12.0], atol=1e-4)
+    assert split.n_boxes == manifest["n_boxes"] == 6 and split.per_class_boxes() == manifest["per_class_boxes"]
+    assert subset.manifest_sha256 == sha256_file(subset_root / "manifest.json") and subset.manifest == manifest
+
+    # The build resolves the subset from the cache (or <out>/cache), derives the entry and a seeded holdout.
+    opts = BuildOptions(dataset="detection", out=root, holdout=0.34)
+    assert resolve_detection_subset_root(opts) == subset_root
+    assert resolve_detection_subset_root(BuildOptions(dataset="detection", out=tmp_path / "elsewhere",
+                                                      detection_subset=subset_root)) == subset_root
+    train, evaluation, entry = resolve_detection_data(BuildOptions(dataset="detection", out=root, holdout=0.34,
+                                                                   detection_image_size=16), log=_quiet)
+    assert (train.n, evaluation.n) == (2, 1) and entry.id == ds.MILITARY_ASSETS_DATASET_ID
+    assert entry.revision == subset.manifest_sha256 and entry.class_names == keep and entry.source == "kaggle"
+    assert entry.caveats == list(ds.MILITARY_ASSETS_CAVEATS) and entry.n_rows == 3
+    with pytest.raises(ds.DatasetUnavailable, match="no published detection subset") as refused:
+        resolve_detection_subset_root(BuildOptions(dataset="detection", out=tmp_path / "empty"))
+    assert str(refused.value).count("manifest.json") == 1, "the default cache and <out>/cache coincide: named once"
+    # ... and refuses before training anything when it is absent.
+    with pytest.raises(ds.DatasetUnavailable, match="no published detection subset"):
+        build_assets(BuildOptions(dataset="detection", out=tmp_path / "empty"), log=_quiet)
+    assert not (tmp_path / "empty" / MANIFEST_NAME).exists()
+
+    # Integrity: a file that no longer matches its digest is refused; a class outside keep_classes is refused
+    # rather than edited away; a missing manifest names the B0 step.
+    label = subset_root / "labels" / "val" / "000001.txt"
+    original = label.read_text(encoding="utf-8")
+    label.write_text(original + "\n", encoding="utf-8")
+    with pytest.raises(ds.DatasetUnavailable, match="does not match the digest"):
+        ds.load_detection_subset(subset_root, image_size=16)
+    weapon = ds.military_assets_class_id("weapon")
+    label.write_text(original + f"{weapon} 0.7 0.7 0.2 0.2\n", encoding="utf-8")
+    with pytest.raises(ds.DatasetUnavailable, match="outside keep_classes"):
+        ds.load_detection_subset(subset_root, image_size=16, verify=False)
+    label.write_text(original, encoding="utf-8")
+    assert ds.load_detection_subset(subset_root, image_size=16).split.n == 3
+    with pytest.raises(ds.DatasetUnavailable, match="manifest not found"):
+        ds.load_detection_subset(tmp_path / "nowhere", image_size=16)
+
+
+def test_attach_train_slice_records_an_out_of_band_slice(tmp_path: Path):
+    """The vehicles_cnn case: the model was built before the slice existed; the slice was drawn later with its
+    ``train_slice.json`` sidecar; ``--attach-train-slice`` records it with the digest unchanged, no retraining."""
+    root = tmp_path / "assets"
+    data = _synthetic_images()
+    img_ds, img_model = build_cnn_asset(data, model_id="vehicles_cnn", root=root, epochs=1, seed=0,
+                                        train_slice=ds.TrainSliceOptions(enabled=False), log=_quiet)
+    assert img_model.train_slice_split is None and "train_slice" not in img_ds.splits
+    manifest = AssetManifest.new()
+    manifest.datasets[img_ds.id] = img_ds
+    manifest.models[img_model.id] = img_model
+    write_manifest(manifest, root / MANIFEST_NAME)
+    slice_path = root / "bundled" / "vehicles_cnn" / ds.TRAIN_SLICE_NAME
+    sidecar_path = slice_path.parent / ds.TRAIN_SLICE_SIDECAR_NAME
+    _sub, split = ds.write_train_slice(data.train, slice_path, root, n=20, seed=0)
+    sidecar = ds.TrainSliceSidecar(model_id="vehicles_cnn", dataset_id=img_ds.id, revision=img_ds.revision,
+                                   source_split="train", split_entry=split, n_requested=20, seed=0, note="drawn later")
+    ds.write_train_slice_sidecar(sidecar_path, sidecar)
+    assert ds.read_train_slice_sidecar(sidecar_path) == sidecar
+
+    logs: list[str] = []
+    result = build_assets(BuildOptions(out=root, build_models=False, attach_train_slice=("vehicles_cnn",)),
+                          log=logs.append)
+    model = result.models["vehicles_cnn"]
+    assert model.train_slice_split == "train_slice" and result.datasets[img_ds.id].splits["train_slice"] == split
+    assert model.manifest_sha256 == img_model.manifest_sha256, "the pointer sits outside the frozen projection"
+    assert any("training slice(s) recorded: vehicles_cnn (train_slice)" in line for line in logs)
+    loaded = load_manifest(root / MANIFEST_NAME)
+    assert loaded.models["vehicles_cnn"].train_slice_split == "train_slice"
+    assert verify_manifest(loaded, root) == [] and not verify_model_assets(loaded, root, "vehicles_cnn")
+    reloaded = ds.load_train_slice(root / split.file.path, expected_sha256=split.file.sha256)  # type: ignore[union-attr]
+    assert reloaded.n == 20 and "train slice train_slice" in summarize(loaded)
+
+    # Refusals: another split, another dataset, a slice the sidecar does not vouch for, a model not built.
+    for update, needle in (({"source_split": "other"}, "training split"),
+                           ({"dataset_id": "hf:someone/else"}, "bound to"),
+                           ({"revision": "another-rev"}, "revision"),
+                           ({"model_id": "cifar10_smallcnn"}, "describes")):
+        ds.write_train_slice_sidecar(sidecar_path, sidecar.model_copy(update=update))
+        with pytest.raises(DatasetUnavailable, match=needle):
+            attach_train_slice(load_manifest(root / MANIFEST_NAME), root, "vehicles_cnn", log=_quiet)
+    ds.write_train_slice_sidecar(sidecar_path, sidecar)
+    with pytest.raises(DatasetUnavailable, match="no entry"):
+        attach_train_slice(load_manifest(root / MANIFEST_NAME), root, "cifar10_smallcnn", log=_quiet)
+    payload = bytearray(slice_path.read_bytes())
+    payload[-1] ^= 0xFF
+    slice_path.write_bytes(bytes(payload))
+    with pytest.raises(DatasetUnavailable, match="refusing to record"):
+        attach_train_slice(load_manifest(root / MANIFEST_NAME), root, "vehicles_cnn", log=_quiet)
+    slice_path.unlink()
+    with pytest.raises(DatasetUnavailable, match="missing"):
+        attach_train_slice(load_manifest(root / MANIFEST_NAME), root, "vehicles_cnn", log=_quiet)
+    with pytest.raises(ds.DatasetUnavailable, match="sidecar"):
+        attach_train_slice(load_manifest(root / MANIFEST_NAME), root, "vehicles_cnn", sidecar=tmp_path / "none.json",
+                           log=_quiet)

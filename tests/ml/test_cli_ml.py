@@ -21,6 +21,13 @@ import pytest
 
 from redsim.cli.ml import BUILD_ASSETS_REASON, BUILD_ASSETS_STATUS, DATASET_CACHE_ENV, cmd_ml
 from redsim.ml.assets import ARCH_CHOICES, ASSET_IDS, DATASET_CHOICES, LEGACY_MODEL_IDS, MODEL_IDS
+from redsim.ml.assets.manifest import (
+    BUILD_ASSET_IDS,
+    BUILD_DATASET_CHOICES,
+    BUILD_MODEL_IDS,
+    EXPLICIT_ONLY_DATASETS,
+    all_build_datasets,
+)
 
 # ``redsim.cli`` re-exports the ``main`` function under the same name as the
 # module, so resolve the module through importlib.
@@ -43,12 +50,17 @@ def test_parser_has_ml_build_assets_with_defaults():
     assert args.prefer_xgboost is False, "sklearn_joblib is the default bundled format (spec 9.2)"
     assert args.arch == "small_cnn" and args.fixture is False and args.fixture_out is None
     assert args.fixture_sidecar is None and args.fixture_allow_synthetic is False
+    assert args.train_slice is True and args.train_slice_n == 1536 and args.attach_train_slice is None
+    assert args.detection_image_size == 320 and args.detection_subset is None
     assert "ml" in cli_main._COMMANDS
 
 
 def test_dataset_choices_match_the_builder():
+    # The P0 table is untouched; the build vocabulary (manifest.BUILD_*) adds text and detection before ``all``.
     assert DATASET_CHOICES == ("image", "tabular", "cifar10", "all")
-    for choice in DATASET_CHOICES:
+    assert BUILD_DATASET_CHOICES == ("image", "tabular", "cifar10", "text", "detection", "all")
+    assert EXPLICIT_ONLY_DATASETS == ("detection",) and all_build_datasets() == {"image", "tabular", "cifar10", "text"}
+    for choice in BUILD_DATASET_CHOICES:
         assert _parse(["ml", "build-assets", "--dataset", choice]).dataset == choice
     with pytest.raises(SystemExit):
         _parse(["ml", "build-assets", "--dataset", "bogus"])
@@ -61,9 +73,15 @@ def test_only_accepts_the_bundled_model_ids():
     assert set(ASSET_IDS) == {"vehicles_cnn", "cifar10_smallcnn", "url_trees", "url_classifier"}
     assert ASSET_IDS["url_classifier"] == ASSET_IDS["url_trees"] == "tabular"
     assert {ASSET_IDS[m] for m in ASSET_IDS} == {"image", "cifar10", "tabular"}
+    # Phase B: the text and detection ids join through the build vocabulary, on top of the P0 rows.
+    assert BUILD_MODEL_IDS == {**MODEL_IDS, "text": "sms_tfidf_lr", "detection": "assets_frcnn_mnv3"}
+    assert set(BUILD_ASSET_IDS) == set(ASSET_IDS) | {"sms_tfidf_lr", "assets_frcnn_mnv3"}
+    assert BUILD_ASSET_IDS["sms_tfidf_lr"] == "text" and BUILD_ASSET_IDS["assets_frcnn_mnv3"] == "detection"
     args = _parse(["ml", "build-assets", "--only", "cifar10_smallcnn", "--only", "url_trees"])
     assert args.only == ["cifar10_smallcnn", "url_trees"]
     assert _parse(["ml", "build-assets", "--only", "url_classifier"]).only == ["url_classifier"]
+    assert _parse(["ml", "build-assets", "--only", "sms_tfidf_lr", "--only", "assets_frcnn_mnv3"]).only == [
+        "sms_tfidf_lr", "assets_frcnn_mnv3"]
     with pytest.raises(SystemExit):
         _parse(["ml", "build-assets", "--only", "resnet_from_upload"])
 
@@ -85,6 +103,12 @@ def test_numeric_and_flag_options_parse():
                  "--fixture-synthetic-ok"])
     assert fx.fixture is True and fx.fixture_out == "/tmp/f.npz" and fx.fixture_sidecar == "/tmp/M.json"
     assert fx.fixture_allow_synthetic is True and fx.dataset is None
+    phase_b = _parse(["ml", "build-assets", "--no-train-slice", "--train-slice-n", "64", "--attach-train-slice",
+                      "vehicles_cnn", "--attach-train-slice", "cifar10_smallcnn", "--detection-image-size", "160",
+                      "--detection-subset", "/tmp/subset"])
+    assert phase_b.train_slice is False and phase_b.train_slice_n == 64
+    assert phase_b.attach_train_slice == ["vehicles_cnn", "cifar10_smallcnn"]
+    assert phase_b.detection_image_size == 160 and phase_b.detection_subset == "/tmp/subset"
 
 
 def test_ml_requires_an_action():
@@ -100,7 +124,8 @@ def test_help_text_describes_the_real_builder(capsys):
     for needle in ("MANIFEST.json", "--dataset", "--only", "--epochs", "KAGGLE_API_TOKEN", "REDSIM_ENV_FILE",
                    "KAGGLE_USERNAME", "KAGGLE_KEY", "MLModelManifest", DATASET_CACHE_ENV, "vehicles_cnn",
                    "cifar10_smallcnn", "url_trees", "url_classifier", "--fixture", "cifar10_test_500.npz", "--arch",
-                   "resnet18", "--xgboost"):
+                   "resnet18", "--xgboost", "sms_tfidf_lr", "assets_frcnn_mnv3", "SMS Spam", "train_slice.npz",
+                   "--attach-train-slice", "--no-train-slice", "--detection-subset", "military_assets_subset"):
         assert needle in text, needle
     assert "not implemented" not in text.lower()
 
@@ -199,6 +224,36 @@ def test_build_options_come_from_args_and_the_cache_env(tmp_path, monkeypatch):
         cli_main.main(["ml", "build-assets", "--dataset", "tabular", "--out", str(tmp_path / "o")])
     assert captured["opts"].cache_dir == tmp_path / "o" / "cache"
 
+    # Phase B options reach the builder: the text / detection selections, the slice options, the subset location.
+    with patch("redsim.config.load_config", return_value=None), \
+            patch("redsim.ml.assets.build.build_assets", side_effect=fake_build):
+        cli_main.main(["ml", "build-assets", "--dataset", "detection", "--detection-image-size", "160",
+                       "--detection-subset", str(tmp_path / "subset"), "--no-train-slice", "--train-slice-n", "32",
+                       "--out", str(tmp_path / "assets")])
+    det = captured["opts"]
+    assert det.selected == {"detection"} and det.detection_image_size == 160
+    assert det.detection_subset == tmp_path / "subset" and det.train_slice is False and det.train_slice_n == 32
+    assert det.train_slice_options.enabled is False and det.train_slice_options.n == 32
+    with patch("redsim.config.load_config", return_value=None), \
+            patch("redsim.ml.assets.build.build_assets", side_effect=fake_build):
+        cli_main.main(["ml", "build-assets", "--only", "sms_tfidf_lr", "--out", str(tmp_path / "assets")])
+    assert captured["opts"].selected == {"text"} and captured["opts"].only == ("sms_tfidf_lr",)
+    # ``--dataset all`` never includes the detector; ``--attach-train-slice`` alone builds nothing.
+    with patch("redsim.config.load_config", return_value=None), \
+            patch("redsim.ml.assets.build.build_assets", side_effect=fake_build):
+        cli_main.main(["ml", "build-assets", "--out", str(tmp_path / "assets")])
+    assert captured["opts"].selected == {"image", "cifar10", "tabular", "text"}
+    with patch("redsim.config.load_config", return_value=None), \
+            patch("redsim.ml.assets.build.build_assets", side_effect=fake_build):
+        cli_main.main(["ml", "build-assets", "--attach-train-slice", "vehicles_cnn", "--out", str(tmp_path / "assets")])
+    attach = captured["opts"]
+    assert attach.build_models is False and attach.selected == set() and attach.attach_train_slice == ("vehicles_cnn",)
+    with patch("redsim.config.load_config", return_value=None), \
+            patch("redsim.ml.assets.build.build_assets", side_effect=fake_build):
+        cli_main.main(["ml", "build-assets", "--attach-train-slice", "vehicles_cnn", "--dataset", "tabular",
+                       "--out", str(tmp_path / "assets")])
+    assert captured["opts"].build_models is True and captured["opts"].attach_train_slice == ("vehicles_cnn",)
+
 
 def test_bad_options_exit_2(tmp_path, capsys):
     pytest.importorskip("numpy")
@@ -206,6 +261,25 @@ def test_bad_options_exit_2(tmp_path, capsys):
         cli_main.main(["ml", "build-assets", "--dataset", "tabular", "--epochs", "0", "--out", str(tmp_path)])
     assert exc.value.code == 2
     assert "epochs must be >= 1" in capsys.readouterr().err
+    with patch("redsim.config.load_config", return_value=None), pytest.raises(SystemExit) as exc:
+        cli_main.main(["ml", "build-assets", "--attach-train-slice", "url_trees", "--out", str(tmp_path)])
+    assert exc.value.code == 2 and "non-image model" in capsys.readouterr().err
+
+
+def test_attach_train_slice_refusals_exit_1(tmp_path, capsys):
+    """A slice that is not there (or a model that was never built) is a refusal, not a traceback."""
+    pytest.importorskip("numpy")
+    from redsim.ml.assets.manifest import MANIFEST_NAME, AssetManifest, write_manifest
+
+    out = tmp_path / "assets"
+    write_manifest(AssetManifest.new(), out / MANIFEST_NAME)
+    with patch("redsim.config.load_config", return_value=None), \
+            patch("redsim.ml.assets.build.inject_truststore", return_value=False), pytest.raises(SystemExit) as exc:
+        cli_main.main(["ml", "build-assets", "--attach-train-slice", "vehicles_cnn", "--out", str(out)])
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "asset build failed" in captured.err and "no entry in the manifest" in captured.err
+    assert "attach-train-slice: recording vehicles_cnn" in captured.out
 
 
 # ---------------------------------------------------------------------------
@@ -467,20 +541,24 @@ def test_ml_attack_refuses_endpoint_and_fixture(tmp_path, monkeypatch, capsys):
 
 SEED_WEIGHTS = b"PK\x03\x04 vehicles state_dict placeholder: digest-checked, never deserialized by seed"
 SEED_JOBLIB = b"\x80\x04\x95 url_trees joblib placeholder: digest-checked, never deserialized by seed"
+SEED_TEXT_JOBLIB = b"\x80\x04\x95 sms_tfidf_lr joblib placeholder: digest-checked, never deserialized by seed"
 SEED_IMAGE_DS = "hf:example/vehicles"
 SEED_TABULAR_DS = "kaggle:example/urls"
+SEED_TEXT_DS = "uci:sms-spam-collection"
 SEED_CIFAR_DS = "hf:uoft-cs/cifar10"
 SEED_IMAGE_CLASSES = ["Air Defense", "BMP", "Tank"]
 SEED_URL_CLASSES = ["benign", "defacement", "malware", "phishing"]
+SEED_TEXT_CLASSES = ["ham", "spam"]
 
 
 def _seedable_asset_tree(root: Path) -> Path:
     """An asset tree in the shape ``redsim ml build-assets`` writes, with two bundled demo models.
 
-    ``vehicles_cnn`` (image, torch_state_dict) and ``url_trees`` (tabular, sklearn_joblib) carry
-    digest-consistent files and evaluation splits so ``register_bundled_model`` verifies them;
-    ``cifar10_smallcnn`` is the fixture-only entry the seed must skip. The bytes are placeholders:
-    the seed path hashes files and never deserializes a model, and nothing here is evidence.
+    ``vehicles_cnn`` (image, torch_state_dict), ``url_trees`` (tabular, sklearn_joblib) and the Phase B
+    ``sms_tfidf_lr`` (text, sklearn_joblib) carry digest-consistent files and evaluation splits so
+    ``register_bundled_model`` verifies them; ``cifar10_smallcnn`` is the fixture-only entry the seed must
+    skip. The bytes are placeholders: the seed path hashes files and never deserializes a model, and nothing
+    here is evidence.
     """
     from redsim.ml.assets.manifest import (
         MANIFEST_NAME,
@@ -505,9 +583,11 @@ def _seedable_asset_tree(root: Path) -> Path:
     image_split = write("datasets/hf--example--vehicles/rev1/test_coarse.npz", b"npz placeholder")
     cifar_split = write("datasets/hf--uoft-cs--cifar10/rev1/test.npz", b"cifar placeholder")
     url_split = write("datasets/kaggle--example--urls/rev2/eval.npz", b"features placeholder")
+    text_split = write("datasets/uci--sms-spam-collection/rev3/eval.jsonl", b'{"index": 0, "text": "x", "label": 0}\n')
     vehicles_weights = write("bundled/vehicles_cnn/weights.pt", SEED_WEIGHTS)
     cifar_weights = write("bundled/cifar10_smallcnn/weights.pt", SEED_WEIGHTS + b"-cifar")
     url_model = write("bundled/url_trees/model.joblib", SEED_JOBLIB)
+    text_model = write("bundled/sms_tfidf_lr/model.joblib", SEED_TEXT_JOBLIB)
 
     manifest = AssetManifest.new()
     manifest.datasets[SEED_IMAGE_DS] = DatasetEntry(
@@ -524,6 +604,11 @@ def _seedable_asset_tree(root: Path) -> Path:
         id=SEED_TABULAR_DS, source="kaggle", revision="rev2", license="CC0: Public Domain",
         class_names=SEED_URL_CLASSES, splits={"eval": SplitEntry(name="eval", n=4, seed=0, file=url_split)},
         preprocessing={"features": [f"f{i}" for i in range(16)], "extractor": "redsim.ml.datasets.url_features"},
+    )
+    manifest.datasets[SEED_TEXT_DS] = DatasetEntry(
+        id=SEED_TEXT_DS, source="uci", revision="rev3", license="CC BY 4.0", class_names=SEED_TEXT_CLASSES,
+        splits={"eval": SplitEntry(name="eval", n=1, seed=0, file=text_split)},
+        preprocessing={"tokenizer": r"(?u)\\w+", "eval_slice": "eval.jsonl"},
     )
 
     def image_model(model_id: str, weights: FileEntry, dataset_id: str, split: str, classes: list[str],
@@ -556,8 +641,37 @@ def _seedable_asset_tree(root: Path) -> Path:
         seed=0, epochs=None, gradients=False, license="CC0: Public Domain",
         clean_accuracy=CleanAccuracy(value=0.5, n=4, split="eval"), metrics={"clean_accuracy": 0.5, "n": 4},
     ))
+    manifest.models["sms_tfidf_lr"] = stamp_manifest_sha256(ModelEntry(
+        id="sms_tfidf_lr", name="sms_tfidf_lr (test build)", modality="text", format="sklearn_joblib",
+        sha256=text_model.sha256, size_bytes=text_model.size_bytes, file=text_model,
+        architecture_id="sklearn_tfidf_logreg", architecture={"library": "scikit-learn"},
+        input_shape=[], n_classes=2, class_names=SEED_TEXT_CLASSES,
+        dataset_id=SEED_TEXT_DS, dataset_revision="rev3", dataset_split="eval", train_split="train",
+        seed=0, epochs=None, gradients=False, license="CC BY 4.0",
+        clean_accuracy=CleanAccuracy(value=0.5, n=1, split="eval"), metrics={"clean_accuracy": 0.5, "n": 1},
+    ))
     write_manifest(manifest, root / MANIFEST_NAME)
     return root
+
+
+def test_seed_candidates_include_every_non_fixture_manifest_model(tmp_path):
+    """The seed offers whatever the manifest holds (text and detection included) minus fixture-only entries."""
+    pytest.importorskip("numpy")
+    from redsim.ml.assets.manifest import load_manifest
+
+    assets = _seedable_asset_tree(tmp_path / "assets")
+    document = json.loads((assets / "MANIFEST.json").read_text(encoding="utf-8"))
+    bundled, skipped = cli_ml._seed_candidates(document, [])
+    assert bundled == ["sms_tfidf_lr", "url_trees", "vehicles_cnn"] and skipped == ["cifar10_smallcnn"]
+    assert cli_ml._seed_candidates(document, ["sms_tfidf_lr"]) == (["sms_tfidf_lr"], [])
+    # A detector entry, once built, is offered the same way (the loaded manifest is the shape the CLI reads).
+    manifest = load_manifest(assets / "MANIFEST.json")
+    document["models"]["assets_frcnn_mnv3"] = {**manifest.models["vehicles_cnn"].model_dump(mode="json"),
+                                               "id": "assets_frcnn_mnv3", "modality": "detection"}
+    bundled, skipped = cli_ml._seed_candidates(document, [])
+    assert bundled == ["assets_frcnn_mnv3", "sms_tfidf_lr", "url_trees", "vehicles_cnn"]
+    with pytest.raises(cli_ml.SeedUnavailable, match="manifest lacks"):
+        cli_ml._seed_candidates(document, ["resnet_from_upload"])
 
 
 @pytest.mark.integration
@@ -576,6 +690,7 @@ def test_ml_seed_registers_or_explains(tmp_path, monkeypatch, capsys):
     from sqlalchemy import create_engine, select
     from sqlalchemy.orm import Session
 
+    import redsim.ml.targets.text  # noqa: F401  (registers sms_tfidf_lr; the service refuses ids the registry lacks)
     import redsim.services.ml_models as ml_models
     from redsim.db import session as db_session
     from redsim.db.models import AuditEvent, Base, Organization, Project, Target
@@ -633,15 +748,17 @@ def test_ml_seed_registers_or_explains(tmp_path, monkeypatch, capsys):
         cli_main.main(["ml", "seed", "--project", "demo", "--actor", "cli:test"])
     out = capsys.readouterr().out
     assert "skipping cifar10_smallcnn" in out and "fixture-only" in out
-    assert "seeding ['url_trees', 'vehicles_cnn'] into project p1" in out, "sorted, fixture-only skipped"
+    assert "seeding ['sms_tfidf_lr', 'url_trees', 'vehicles_cnn'] into project p1" in out, "sorted, fixture-only skipped"
+    assert "registered: sms_tfidf_lr (target sms_tfidf_lr-" in out
     assert "registered: url_trees (target url_trees-" in out
     assert "registered: vehicles_cnn (target vehicles_cnn-" in out and ", status available)" in out
-    assert "already present:" not in out and "2 registered, 0 already present, 0 refused" in out
+    assert "already present:" not in out and "3 registered, 0 already present, 0 refused" in out
 
     targets, events = rows()
     by_bundled = {t.detail["bundled_id"]: t for t in targets}
-    assert set(by_bundled) == {"url_trees", "vehicles_cnn"} and len(targets) == 2
-    digests = {"vehicles_cnn": sha256_bytes(SEED_WEIGHTS), "url_trees": sha256_bytes(SEED_JOBLIB)}
+    assert set(by_bundled) == {"sms_tfidf_lr", "url_trees", "vehicles_cnn"} and len(targets) == 3
+    digests = {"vehicles_cnn": sha256_bytes(SEED_WEIGHTS), "url_trees": sha256_bytes(SEED_JOBLIB),
+               "sms_tfidf_lr": sha256_bytes(SEED_TEXT_JOBLIB)}
     for bundled_id, target in by_bundled.items():
         assert re.fullmatch(rf"{bundled_id}-[0-9a-f]{{8}}", target.id), "per-project Target.id <bundled_id>-<8 hex>"
         assert target.value == f"bundled:{bundled_id}" and target.kind == "ml_model_artifact" and target.verified
@@ -651,12 +768,17 @@ def test_ml_seed_registers_or_explains(tmp_path, monkeypatch, capsys):
         assert (blob_root / digests[bundled_id][:2] / digests[bundled_id]).is_file(), "the weights blob was put"
     # One model.register row per registration on the project chain, hash-linked, written before the row it names.
     assert [(e.chain_id, e.seq, e.action, e.success) for e in events] == [
-        ("project:p1", 1, "model.register", True), ("project:p1", 2, "model.register", True)]
-    assert [e.detail["bundled_id"] for e in events] == ["url_trees", "vehicles_cnn"]
-    assert [e.detail["target_id"] for e in events] == [by_bundled["url_trees"].id, by_bundled["vehicles_cnn"].id]
+        ("project:p1", 1, "model.register", True), ("project:p1", 2, "model.register", True),
+        ("project:p1", 3, "model.register", True)]
+    assert [e.detail["bundled_id"] for e in events] == ["sms_tfidf_lr", "url_trees", "vehicles_cnn"]
+    assert [e.detail["target_id"] for e in events] == [by_bundled["sms_tfidf_lr"].id, by_bundled["url_trees"].id,
+                                                       by_bundled["vehicles_cnn"].id]
+    assert [e.detail["modality"] for e in events] == ["text", "tabular", "image"]
     assert all(e.actor == "cli:test" and e.detail["source"] == "bundled" and e.project_id == "p1" for e in events)
     assert events[0].prev_hash is None and events[1].prev_hash == events[0].this_hash
-    assert events[0].detail["blob_key"] == "ml/assets/bundled/url_trees/model.joblib"
+    assert events[2].prev_hash == events[1].this_hash
+    assert events[0].detail["blob_key"] == "ml/assets/bundled/sms_tfidf_lr/model.joblib"
+    assert events[1].detail["blob_key"] == "ml/assets/bundled/url_trees/model.joblib"
 
     # 4. Seeding again: both are already present (found read-only, the service is not called), no new
     #    Target or blob, and the chain is untouched: a re-seed is idempotent, not a refused admission, so
@@ -666,19 +788,22 @@ def test_ml_seed_registers_or_explains(tmp_path, monkeypatch, capsys):
                          side_effect=AssertionError("the service must not be called for a present model")):
         cli_main.main(["ml", "seed", "--project", "demo", "--actor", "cli:test"])
     out = capsys.readouterr().out
+    assert f"already present: sms_tfidf_lr (target {by_bundled['sms_tfidf_lr'].id}, status available)" in out
     assert f"already present: url_trees (target {by_bundled['url_trees'].id}, status available)" in out
     assert f"already present: vehicles_cnn (target {by_bundled['vehicles_cnn'].id}, status available)" in out
-    assert "registered:" not in out and "0 registered, 2 already present, 0 refused" in out
+    assert "registered:" not in out and "0 registered, 3 already present, 0 refused" in out
     targets_again, events_again = rows()
     assert [t.id for t in targets_again] == [t.id for t in targets]
-    assert len([p for p in blob_root.rglob("*") if p.is_file()]) == 2
+    assert len([p for p in blob_root.rglob("*") if p.is_file()]) == 3
     assert [(e.chain_id, e.seq, e.action, e.success) for e in events_again] == [
-        ("project:p1", 1, "model.register", True), ("project:p1", 2, "model.register", True)], \
+        ("project:p1", 1, "model.register", True), ("project:p1", 2, "model.register", True),
+        ("project:p1", 3, "model.register", True)], \
         "a re-seed writes no refusal row"
     assert all(e.success for e in events_again)
 
     # 5. A genuine refusal: tampered url_trees weights fail verification into the second project, the command
-    #    exits 1 after still registering vehicles_cnn there, and the refusal is on p2's chain with no Target.
+    #    exits 1 after still registering sms_tfidf_lr and vehicles_cnn there, and the refusal is on p2's chain
+    #    with no Target.
     (assets / "bundled" / "url_trees" / "model.joblib").write_bytes(SEED_JOBLIB + b" tampered")
     with patch("redsim.config.load_config", return_value=config), pytest.raises(SystemExit) as exc:
         cli_main.main(["ml", "seed", "--project", "p2", "--actor", "cli:test"])
@@ -687,13 +812,14 @@ def test_ml_seed_registers_or_explains(tmp_path, monkeypatch, capsys):
     assert "url_trees: refused (model_load_refused)" in captured.err and "assets_unverified" in captured.err
     assert "sha256 mismatch" in captured.err
     assert "registered: vehicles_cnn (target vehicles_cnn-" in captured.out
-    assert "1 registered, 0 already present, 1 refused" in captured.out
+    assert "registered: sms_tfidf_lr (target sms_tfidf_lr-" in captured.out
+    assert "2 registered, 0 already present, 1 refused" in captured.out
     targets_p2 = [t for t in rows()[0] if t.project_id == "p2"]
-    assert [t.detail["bundled_id"] for t in targets_p2] == ["vehicles_cnn"]
+    assert [t.detail["bundled_id"] for t in targets_p2] == ["sms_tfidf_lr", "vehicles_cnn"]
     p2_events = [e for e in rows()[1] if e.chain_id == "project:p2"]
     assert [(e.seq, e.success, e.detail["bundled_id"], e.detail.get("reason")) for e in p2_events] == [
-        (1, False, "url_trees", "model_load_refused"), (2, True, "vehicles_cnn", None)]
-    assert p2_events[0].detail["refusal_reason"] == "assets_unverified"
+        (1, True, "sms_tfidf_lr", None), (2, False, "url_trees", "model_load_refused"), (3, True, "vehicles_cnn", None)]
+    assert p2_events[1].detail["refusal_reason"] == "assets_unverified"
     assert "tampered" not in json.dumps([e.detail for e in p2_events]), "audit detail never carries payload bytes"
 
     # 6. --only with an id the manifest lacks is a usage error, an unknown project a clear refusal, and a
@@ -707,5 +833,5 @@ def test_ml_seed_registers_or_explains(tmp_path, monkeypatch, capsys):
     with patch("redsim.config.load_config", return_value=config):
         cli_main.main(["ml", "seed", "--project", "demo", "--only", "cifar10_smallcnn"])
     assert "nothing to seed" in capsys.readouterr().out
-    assert len(rows()[1]) == 4, ("no audit row for a usage error, an unknown project, a fixture-only selection "
-                                 "or a re-seed: two registrations on p1, one refusal and one registration on p2")
+    assert len(rows()[1]) == 6, ("no audit row for a usage error, an unknown project, a fixture-only selection "
+                                 "or a re-seed: three registrations on p1, one refusal and two registrations on p2")

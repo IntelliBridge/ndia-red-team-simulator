@@ -45,6 +45,7 @@ from urllib.parse import quote
 
 import httpx
 import numpy as np
+from pydantic import BaseModel, ConfigDict
 
 from redsim.llm.pythia import env_file_path, resolve_env
 from redsim.ml.assets.manifest import (
@@ -775,12 +776,11 @@ def sample_url_table(csv_path: Path, sidecar_path: Path | None = None) -> UrlTab
 def dataset_source(preferred: str) -> DatasetSource:
     """``preferred`` when ``manifest.DatasetSource`` admits it, else ``"local"``.
 
-    ``DatasetSource`` lives in ``redsim.ml.assets.manifest`` (not this track's
-    file). The Phase B sources (``uci`` for the SMS corpus, ``github`` for the
-    nltk_data WordNet zip) are requested there as an additive literal change;
-    until it lands the entries record ``local`` (the bytes are read from the
-    local cache) and say so in their notes, with the origin in ``url`` and
-    ``source_files``. Once the literal gains the member this returns it.
+    ``manifest.DatasetSource`` carries ``uci`` (the SMS corpus) and ``github``
+    (the nltk_data WordNet zip) since Phase B, so the entries below record
+    their real source; the fallback stays for a manifest schema without a
+    member (the entry then says so in its notes, with the origin in ``url``
+    and ``source_files``).
     """
     if preferred in get_args(DatasetSource):
         return cast(DatasetSource, preferred)
@@ -1482,6 +1482,141 @@ def military_assets_dataset_entry(manifest: Mapping[str, Any], *, index_sha256: 
 
 
 # ---------------------------------------------------------------------------
+# The published detection subset, read back for the detector build (MODALITIES-27 / -29)
+#
+# B0 publishes the capped subset under ``<assets>/cache/military_assets_subset`` in a flat layout keyed by
+# upstream split (``images/<split>/<stem>.jpg`` beside ``labels/<split>/<stem>.txt``) with ``manifest.json``
+# (``detection_subset_manifest``) listing every file and its digest. ``redsim.ml.datasets.military_assets``
+# reads the ``<split>/images`` YOLO layout; this reader follows the subset manifest instead and checks each
+# file against it, so the detector is trained on exactly the bytes the subset manifest vouches for.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DetectionSubset:
+    """The subset as one ``DetectionSplit`` plus the manifest it was verified against."""
+
+    split: Any                      # redsim.ml.datasets.military_assets.DetectionSplit (imported lazily)
+    manifest: dict[str, Any]
+    manifest_sha256: str            # the dataset revision the asset manifest records
+    root: Path
+
+
+def detection_subset_root(assets_root: Path) -> Path:
+    """Where B0 publishes the subset under an assets root (``military_assets.SUBSET_RELATIVE_DIR``)."""
+    return Path(assets_root) / "cache" / MILITARY_ASSETS_SUBSET_NAME
+
+
+def load_detection_subset(subset_root: Path, *, image_size: int = 320, verify: bool = True) -> DetectionSubset:
+    """Decode every image ``manifest.json`` lists at ``image_size`` (square; boxes scaled), digest-checked.
+
+    Boxes carry the manifest's ``keep_classes`` remapped to a contiguous 0-based list in that order; the
+    selection rule promises no other class appears, so a label outside them is refused rather than edited
+    away. ``indices`` are positions in the manifest's image list sorted by key and ``filenames`` the keys
+    (``<upstream split>/<stem>``), so every row traces back to the subset manifest.
+    """
+    from PIL import Image
+
+    from redsim.ml.datasets.military_assets import DetectionSplit, parse_yolo_label
+
+    root = Path(subset_root)
+    manifest_path = root / MILITARY_ASSETS_SUBSET_MANIFEST
+    if not manifest_path.is_file():
+        raise DatasetUnavailable(f"detection subset manifest not found: {manifest_path}; the capped military-assets "
+                                 "subset (MODALITIES-27) is published there by the B0 datasets step and needs a "
+                                 "Kaggle token to reproduce")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise DatasetUnavailable(f"{manifest_path}: not JSON ({exc})") from exc
+    if not isinstance(manifest, dict) or manifest.get("dataset_id") != MILITARY_ASSETS_DATASET_ID:
+        raise DatasetUnavailable(f"{manifest_path}: not a {MILITARY_ASSETS_DATASET_ID!r} subset manifest")
+    images = manifest.get("images")
+    if not isinstance(images, list) or not images:
+        raise DatasetUnavailable(f"{manifest_path}: lists no images")
+    all_names = [str(c) for c in (manifest.get("class_names") or MILITARY_ASSETS_CLASS_NAMES)]
+    keep = [str(c) for c in (manifest.get("keep_classes") or MILITARY_ASSETS_SUBSET_CLASSES)]
+    raw_ids = manifest.get("keep_class_ids")
+    keep_ids = [int(i) for i in raw_ids] if isinstance(raw_ids, list) and raw_ids else [all_names.index(c) for c in keep]
+    if len(keep_ids) != len(keep):
+        raise DatasetUnavailable(f"{manifest_path}: keep_class_ids and keep_classes disagree")
+    remap = {old: new for new, old in enumerate(keep_ids)}
+    excluded = [str(c) for c in (manifest.get("excluded_classes") or MILITARY_ASSETS_EXCLUDED_CLASSES)]
+    raw_selection = manifest.get("selection")
+    selection: dict[str, Any] = dict(raw_selection) if isinstance(raw_selection, dict) else {}
+    seed = selection.get("seed")
+
+    xs: list[np.ndarray] = []
+    boxes: list[np.ndarray] = []
+    labels: list[np.ndarray] = []
+    keys: list[str] = []
+    for item in sorted(images, key=lambda it: str(it.get("key", ""))):
+        if not isinstance(item, dict) or not isinstance(item.get("image"), dict) or not isinstance(item.get("label"), dict):
+            raise DatasetUnavailable(f"{manifest_path}: malformed image record {item!r}")
+        image_ref = FileEntry.model_validate(item["image"])
+        label_ref = FileEntry.model_validate(item["label"])
+        image_path = root / image_ref.path
+        label_path = root / label_ref.path
+        for ref, path in ((image_ref, image_path), (label_ref, label_path)):
+            if not path.is_file():
+                raise DatasetUnavailable(f"detection subset file missing: {path}")
+            if verify and sha256_file(path) != ref.sha256:
+                raise DatasetUnavailable(f"detection subset file {path} does not match the digest in {manifest_path}")
+        try:
+            with Image.open(image_path) as im:
+                rgb = im.convert("RGB")
+                width, height = rgb.size
+                if (width, height) != (image_size, image_size):
+                    rgb = rgb.resize((image_size, image_size), Image.Resampling.BILINEAR)
+                arr = np.ascontiguousarray(np.asarray(rgb, dtype=np.uint8).transpose(2, 0, 1))
+        except OSError as exc:
+            raise DatasetUnavailable(f"cannot decode {image_path}: {exc}") from exc
+        raw_boxes, raw_labels = parse_yolo_label(label_path.read_text(encoding="utf-8"), width, height)
+        if raw_labels.size == 0:
+            raise DatasetUnavailable(f"{label_path}: no boxes; the subset rule requires at least one per image")
+        outside = sorted({all_names[int(c)] if 0 <= int(c) < len(all_names) else str(int(c))
+                          for c in raw_labels if int(c) not in remap})
+        if outside:
+            raise DatasetUnavailable(f"{label_path}: class(es) {outside} are outside keep_classes {keep}; the subset "
+                                     "manifest promises none, so the file is refused rather than edited")
+        scale = np.asarray([image_size / float(width), image_size / float(height)] * 2, dtype=np.float32)
+        xs.append(arr)
+        boxes.append(np.clip(raw_boxes * scale, 0.0, float(image_size)).astype(np.float32))
+        labels.append(np.asarray([remap[int(c)] for c in raw_labels], dtype=np.int64))
+        keys.append(str(item.get("key") or image_path.stem))
+    split = DetectionSplit(
+        name="subset", x=np.stack(xs), boxes=boxes, labels=labels,
+        indices=np.arange(len(xs), dtype=np.int64), class_names=keep, filenames=keys, excluded_classes=excluded,
+        seed=int(seed) if isinstance(seed, int) else None,
+    )
+    return DetectionSubset(split=split, manifest=manifest, manifest_sha256=sha256_file(manifest_path), root=root)
+
+
+def detection_holdout(split: Any, *, holdout: float, seed: int) -> tuple[Any, Any]:
+    """Seeded stratified ``(train, eval)`` of a ``DetectionSplit`` by primary class (the subset has no split).
+
+    ``round(n * holdout)`` images, at least one and at most ``n - 1``, go to ``eval`` (named ``eval``); the
+    rest are ``train``. Both keep their positions in the source ``indices`` so the draw is reproducible.
+    """
+    from redsim.ml.datasets.military_assets import stratified_detection_indices
+
+    if not 0.0 < holdout < 1.0:
+        raise ValueError("holdout must be in (0, 1)")
+    n = int(split.n)
+    if n < 2:
+        raise DatasetUnavailable(f"the detection subset holds {n} image(s); a holdout needs at least two")
+    n_eval = min(max(int(round(n * holdout)), 1), n - 1)
+    eval_pos = np.sort(stratified_detection_indices(split, n_eval, seed))
+    mask = np.ones(n, dtype=bool)
+    mask[eval_pos] = False
+    train = split.subset(np.flatnonzero(mask))
+    evaluation = split.subset(eval_pos)
+    train.name, evaluation.name = "train", "eval"
+    train.seed = evaluation.seed = int(seed)
+    return train, evaluation
+
+
+# ---------------------------------------------------------------------------
 # Bundled training slice for the image dataset (ATTACKS_HARDEN-11)
 # ---------------------------------------------------------------------------
 
@@ -1540,6 +1675,47 @@ def write_train_slice(split: ImageSplit, dest: Path, root: Path, *, n: int = DEF
     entry = SplitEntry(name=sub.name, n=sub.n, per_class=sub.per_class(), seed=seed,
                        indices_sha256=indices_sha256(sub.indices), file=file_entry(Path(root), dest))
     return sub, entry
+
+
+TRAIN_SLICE_SIDECAR_NAME = "train_slice.json"
+
+
+class TrainSliceSidecar(BaseModel):
+    """``bundled/<model>/train_slice.json``: what a training slice was drawn from and the ``SplitEntry`` it makes.
+
+    Written beside the slice by ``build_cnn_asset`` and read back by ``build.attach_train_slice`` when a slice
+    drawn out-of-band (the B0 draw for ``vehicles_cnn``) is recorded in an existing manifest: the model and
+    dataset it belongs to, the dataset revision and source split it was drawn from, the requested size and
+    seed, and the split entry (``file`` relative to the assets root) that goes under the dataset's ``splits``.
+    """
+
+    model_config = ConfigDict(extra="ignore", protected_namespaces=())
+
+    model_id: str
+    dataset_id: str
+    revision: str | None = None
+    source_split: str
+    split_entry: SplitEntry
+    n_requested: int
+    seed: int
+    note: str = ""
+
+
+def write_train_slice_sidecar(path: Path, sidecar: TrainSliceSidecar) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(sidecar.model_dump(mode="json"), indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def read_train_slice_sidecar(path: Path) -> TrainSliceSidecar:
+    path = Path(path)
+    if not path.is_file():
+        raise DatasetUnavailable(f"training slice sidecar {path} is missing")
+    try:
+        return TrainSliceSidecar.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise DatasetUnavailable(f"training slice sidecar {path} is not readable: {exc}") from exc
 
 
 def load_train_slice(path: Path, *, expected_sha256: str | None = None) -> ImageSplit:

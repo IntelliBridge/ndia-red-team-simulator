@@ -28,6 +28,9 @@ Two test surfaces:
 ``ml_batches``, ``ml_datasets``), each through the same four checks: the
 insert trigger backfills ``org_id``, ``FORCE ROW LEVEL SECURITY`` is set, a
 session scoped to another org sees nothing, the update guard rejects drift.
+``TestTenantReconcileSqlite`` scans all thirteen tables (the reconciler's
+``_SCOPED_TABLES`` covers the 0006, 0010 and 0011 sets), with the
+migration-owned ``ml_campaigns`` mirrored by hand as the worker harnesses do.
 
 NB: sqlalchemy / redsim.db imports are deferred into methods. The offline unit
 job installs without the api/worker extras (no sqlalchemy), and a module-level
@@ -48,18 +51,22 @@ pytest.importorskip("sqlalchemy")
 
 REDSIM_DB = os.environ.get("REDSIM_DB_URL")
 
-# Tables that gained a denormalized org_id + RLS in 0005.
-_SCOPED_TABLES = (
+# Tables that gained a denormalized org_id + RLS in 0005/0006 (ORM models).
+_P0_SCOPED_TABLES = (
     "targets", "runs", "jobs", "findings", "llm_usage", "artifacts",
     "remediation_attempts", "application_logs",
 )
 
-# Tables that gained the same denormalized org_id + RLS parity in 0011. Kept
-# apart from ``_SCOPED_TABLES`` because the tenant reconciler
-# (``redsim.workers.tasks.tenant_reconcile``) scans the 0006 set only.
+# Tables that gained the same denormalized org_id + RLS parity in 0011 (ORM
+# models); ``ml_campaigns`` (0010) is migration-owned and has no ORM model.
 _PHASE_B_SCOPED_TABLES = (
     "report_snapshots", "idempotency_keys", "ml_batches", "ml_datasets",
 )
+_ML_CAMPAIGNS_TABLE = "ml_campaigns"
+
+# Everything the tenant reconciler (``redsim.workers.tasks.tenant_reconcile``)
+# scans: the 0006 eight, ml_campaigns and the four Phase B tables.
+_SCOPED_TABLES = (*_P0_SCOPED_TABLES, _ML_CAMPAIGNS_TABLE, *_PHASE_B_SCOPED_TABLES)
 
 
 def _patch_jsonb_for_sqlite() -> None:
@@ -92,9 +99,37 @@ def _make_sqlite_session():
     )
     try:
         Base.metadata.create_all(bind=engine)
+        _ml_campaigns_mirror(engine)
     except Exception as exc:  # noqa: BLE001  # pragma: no cover - defensive
         raise unittest.SkipTest(f"sqlite can't host the schema: {exc}")
     return sessionmaker(engine, expire_on_commit=False, future=True), engine
+
+
+def _ml_campaigns_mirror(engine):
+    """``ml_campaigns`` as migration 0010 (plus 0011's ``batch_id``) shapes it: migration-owned, no ORM model,
+    so the sqlite harness creates it by hand (mirrors tests/ml/test_tasks.py) under its own MetaData."""
+    from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table, Text
+
+    Table(
+        "ml_campaigns", MetaData(),
+        Column("run_id", String, primary_key=True),
+        Column("project_id", String, nullable=False),
+        Column("org_id", String),
+        Column("target_id", String, nullable=False),
+        Column("kind", String, nullable=False),
+        Column("modality", String, nullable=False),
+        Column("config", JSON, nullable=False),
+        Column("settings_hash", String),
+        Column("provenance", JSON),
+        Column("score", JSON),
+        Column("limitations", JSON, nullable=False),
+        Column("baseline_run_id", String),
+        Column("parent_run_id", String),
+        Column("batch_id", String),
+        Column("reviewer_notes", Text),
+        Column("created_at", DateTime),
+        Column("completed_at", DateTime),
+    ).create(engine)
 
 
 class TestTenantSeamSqlite(unittest.TestCase):
@@ -103,7 +138,7 @@ class TestTenantSeamSqlite(unittest.TestCase):
 
     def test_models_declare_org_id_on_scoped_tables(self):
         from redsim.db.models import Base
-        for table in _SCOPED_TABLES:
+        for table in _P0_SCOPED_TABLES:
             cols = Base.metadata.tables[table].columns
             self.assertIn("org_id", cols, f"{table} missing org_id")
             # Nullable on the ORM — the DB trigger backfills it.
@@ -183,12 +218,27 @@ class TestTenantReconcileSqlite(unittest.TestCase):
     of the 0009 trigger lets us seed a drifted row to detect."""
 
     def setUp(self):
-        from redsim.db.models import Finding, Organization, Project, Run
+        from sqlalchemy import text
+
+        from redsim.db.models import (
+            Finding,
+            IdempotencyKey,
+            MlBatch,
+            MlDataset,
+            Organization,
+            Project,
+            ReportSnapshot,
+            Run,
+        )
 
         self.Session, self.engine = _make_sqlite_session()
         self.Finding = Finding
         self.Run = Run
-        # Two orgs, two projects, one run+finding each (org-matched, clean).
+        self.MlBatch = MlBatch
+        self.ReportSnapshot = ReportSnapshot
+        self.IdempotencyKey = IdempotencyKey
+        # Two orgs, two projects, one run+finding each (org-matched, clean), plus one clean row in every table
+        # that joined the scan later: ml_campaigns (0010) and the four Phase B tables (0011).
         with self.Session() as s:
             for org, proj in (("org-a", "proj-a"), ("org-b", "proj-b")):
                 s.add(Organization(id=org, name=org, slug=org))
@@ -202,19 +252,105 @@ class TestTenantReconcileSqlite(unittest.TestCase):
                 id="find-a", scanner_finding_id="s-a", run_id="run-a",
                 project_id="proj-a", org_id="org-a",
                 schema_blob={"id": "s-a"}, severity="high"))
+            s.flush()
+            s.add(ReportSnapshot(id="snap-a", run_id="run-a", project_id="proj-a", org_id="org-a",
+                                 artifact_ids=["art-1"], record_sha256="0" * 64))
+            s.add(MlBatch(id="batch-a", project_id="proj-a", org_id="org-a", kind="campaign", config={}))
+            s.add(MlDataset(id="ds-a", project_id="proj-a", org_id="org-a", status="available"))
+            # The same idempotency key in both projects: the primary key is (project_id, key).
+            for proj, org in (("proj-a", "org-a"), ("proj-b", "org-b")):
+                s.add(IdempotencyKey(project_id=proj, key="k1", org_id=org, route="POST /v1/x",
+                                     request_sha256="1" * 64, response_status=202))
+            s.execute(text(
+                "INSERT INTO ml_campaigns (run_id, project_id, org_id, target_id, kind, modality, config, limitations) "
+                "VALUES ('run-a', 'proj-a', 'org-a', 'tgt-a', 'campaign', 'image', '{}', '[]')"))
             s.commit()
 
     def test_clean_db_reports_no_drift(self):
         from redsim.workers.tasks.tenant_reconcile import (
+            _SCOPED_TABLES as RECONCILED,
+        )
+        from redsim.workers.tasks.tenant_reconcile import (
+            row_id_column,
             verify_tenant_integrity_in_session,
         )
         with self.Session() as s:
             report = verify_tenant_integrity_in_session(s)
         self.assertTrue(report.ok)
         self.assertEqual(report.total, 0)
-        # Every scoped table was scanned (count 0 each).
+        # Every scoped table was scanned (count 0 each): the 0006 eight, ml_campaigns and the four 0011 tables.
         self.assertEqual(set(report.per_table), set(_SCOPED_TABLES))
+        self.assertEqual(set(RECONCILED), set(_SCOPED_TABLES))
+        self.assertEqual(len(report.per_table), 13)
         self.assertTrue(all(v == 0 for v in report.per_table.values()))
+        # The identifying column follows each table's key.
+        self.assertEqual(row_id_column("ml_campaigns"), "run_id")
+        self.assertEqual(row_id_column("idempotency_keys"), "key")
+        for table in (*_P0_SCOPED_TABLES, "report_snapshots", "ml_batches", "ml_datasets"):
+            self.assertEqual(row_id_column(table), "id", table)
+
+    def test_reconciliation_finds_drift_in_ml_campaigns_and_the_phase_b_tables(self):
+        from sqlalchemy import text
+
+        from redsim.workers.tasks.tenant_reconcile import (
+            verify_tenant_integrity_in_session,
+        )
+        # No trigger on sqlite: seed one drifted row per later-joined table (out-of-band writes).
+        with self.Session() as s:
+            s.get(self.MlBatch, "batch-a").org_id = "org-b"
+            s.get(self.ReportSnapshot, "snap-a").org_id = None
+            s.execute(text("UPDATE ml_campaigns SET org_id = 'org-b' WHERE run_id = 'run-a'"))
+            s.commit()
+
+        with self.Session() as s:
+            report = verify_tenant_integrity_in_session(s)
+        self.assertFalse(report.ok)
+        self.assertEqual(report.total, 3)
+        self.assertEqual(report.per_table["ml_batches"], 1)
+        self.assertEqual(report.per_table["report_snapshots"], 1)
+        self.assertEqual(report.per_table["ml_campaigns"], 1)
+        self.assertEqual(report.per_table["runs"], 0)
+        by_table = {d.table: d for d in report.drifts}
+        self.assertEqual((by_table["ml_batches"].row_id, by_table["ml_batches"].stored_org_id,
+                          by_table["ml_batches"].expected_org_id), ("batch-a", "org-b", "org-a"))
+        self.assertEqual((by_table["report_snapshots"].row_id, by_table["report_snapshots"].stored_org_id),
+                         ("snap-a", None))
+        # ml_campaigns is keyed by run_id: that is what the report names.
+        self.assertEqual((by_table["ml_campaigns"].row_id, by_table["ml_campaigns"].project_id), ("run-a", "proj-a"))
+
+        # Repair rewrites exactly those rows from their projects; a second scan is clean.
+        with self.Session() as s:
+            repaired = verify_tenant_integrity_in_session(s, repair=True)
+            s.commit()
+        self.assertEqual(repaired.total, 3)
+        with self.Session() as s:
+            self.assertEqual(s.get(self.MlBatch, "batch-a").org_id, "org-a")
+            self.assertEqual(s.get(self.ReportSnapshot, "snap-a").org_id, "org-a")
+            self.assertEqual(s.execute(text("SELECT org_id FROM ml_campaigns WHERE run_id = 'run-a'")).scalar_one(),
+                             "org-a")
+            self.assertTrue(verify_tenant_integrity_in_session(s).ok)
+
+    def test_repair_of_idempotency_keys_is_scoped_by_project_and_key(self):
+        from redsim.workers.tasks.tenant_reconcile import (
+            verify_tenant_integrity_in_session,
+        )
+        # proj-b's "k1" drifts to org-a; proj-a's "k1" (same key, other project) is clean and must stay untouched.
+        with self.Session() as s:
+            s.get(self.IdempotencyKey, ("proj-b", "k1")).org_id = "org-a"
+            s.commit()
+        with self.Session() as s:
+            report = verify_tenant_integrity_in_session(s)
+        self.assertEqual(report.total, 1)
+        drift = report.drifts[0]
+        self.assertEqual((drift.table, drift.row_id, drift.project_id, drift.stored_org_id, drift.expected_org_id),
+                         ("idempotency_keys", "k1", "proj-b", "org-a", "org-b"))
+        with self.Session() as s:
+            verify_tenant_integrity_in_session(s, repair=True)
+            s.commit()
+        with self.Session() as s:
+            self.assertEqual(s.get(self.IdempotencyKey, ("proj-b", "k1")).org_id, "org-b")
+            self.assertEqual(s.get(self.IdempotencyKey, ("proj-a", "k1")).org_id, "org-a")
+            self.assertTrue(verify_tenant_integrity_in_session(s).ok)
 
     def test_reconciliation_finds_seeded_mismatch(self):
         from redsim.workers.tasks.tenant_reconcile import (

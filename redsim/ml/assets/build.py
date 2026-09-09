@@ -7,12 +7,26 @@ record everything in ``MANIFEST.json``. Each model entry is a
 ``build_*_asset`` functions take in-memory data, so tests drive them with
 synthetic inputs and never touch the network; only ``build_assets`` fetches.
 
-The manifest shape the loaders (``redsim.ml.targets.bundled`` / ``tabular``)
-read is the one written here: weights at ``models[id].file.path``, the
-architecture kwargs at ``models[id].architecture``, the evaluation slice at
+The manifest shape the loaders (``redsim.ml.targets.bundled`` / ``tabular`` /
+``text`` / ``detection``) read is the one written here: weights at
+``models[id].file.path``, the architecture kwargs at
+``models[id].architecture``, the evaluation slice at
 ``datasets[models[id].dataset_id].splits[models[id].dataset_split].file`` and
 the tabular surrogate at ``models[id].surrogate.file``. Model ids are the
-registry ids (``vehicles_cnn``, ``cifar10_smallcnn``, ``url_trees``).
+registry ids (``vehicles_cnn``, ``cifar10_smallcnn``, ``url_trees``, and since
+Phase B ``sms_tfidf_lr`` for ``--dataset text`` and ``assets_frcnn_mnv3`` for
+``--dataset detection``; the vocabulary is ``manifest.BUILD_*``).
+
+Phase B additions (plan 12): the image builds also write the bundled training
+slice a training defense fine-tunes on (``bundled/<model>/train_slice.npz``,
+recorded as a split of the dataset and named by ``models[id].train_slice_split``,
+ATTACKS_HARDEN-11) with a sidecar ``train_slice.json``; ``attach_train_slice``
+records a slice drawn out-of-band from that sidecar (``--attach-train-slice``)
+without retraining. The text build (``build_text_asset`` in
+``train_text_classifier``) reads the cached UCI corpus, falling back to the
+committed fixture as the tabular build does; the detection build reads the
+published capped subset under ``<assets>/cache/military_assets_subset`` and is
+never part of ``--dataset all`` (it cannot fetch its own input).
 
 ``build_cifar10_fixture`` writes the committed CI slice
 ``tests/ml/fixtures/cifar10_test_500.npz`` (``--fixture``) from a local copy of
@@ -34,6 +48,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 import numpy as np
 
 from redsim.ml.assets import (
@@ -47,17 +62,27 @@ from redsim.ml.assets import (
 )
 from redsim.ml.assets import datasets as ds
 from redsim.ml.assets.manifest import (
+    BUILD_ASSET_IDS,
+    BUILD_DATASET_CHOICES,
+    BUILD_MODEL_IDS,
+    BUILD_MODEL_NAMES,
+    DETECTION_MODEL_ID,
+    EXPLICIT_ONLY_DATASETS,
     MANIFEST_NAME,
+    TEXT_MODEL_ID,
     AssetManifest,
     DatasetEntry,
     FileEntry,
     ModelEntry,
     SplitEntry,
     SurrogateEntry,
+    all_build_datasets,
     file_entry,
     library_versions,
     load_manifest,
     load_or_new,
+    manifest_digest,
+    model_entry,
     sha256_file,
     stamp_manifest_sha256,
     with_dataset_caveats,
@@ -68,17 +93,21 @@ from redsim.ml.datasets import cifar10
 from redsim.ml.datasets.url_features import EXTRACTOR_VERSION, FEATURE_NAMES, N_FEATURES, featurize_array
 from redsim.ml.schema import AccuracyPoint, CleanAccuracy
 
-# torch-backed modules (train_cnn, train_url_classifier via classification_metrics, targets.architectures) are
-# imported inside the functions that train, so ``redsim ml build-assets`` parses and refuses bad options without
-# the ``ml`` extra (tests/ml/test_cli_ml.py runs on the py3.13 lane).
+# torch-backed modules (train_cnn, train_url_classifier via classification_metrics, targets.architectures,
+# train_text_classifier, train_detector) are imported inside the functions that train, so ``redsim ml
+# build-assets`` parses and refuses bad options without the ``ml`` extra (tests/ml/test_cli_ml.py runs on the
+# py3.13 lane).
 
 Log = Callable[[str], None]
 
 __all__ = [
-    "ASSET_IDS", "CIFAR10_CAVEATS", "DATASET_CAVEATS", "DATASET_CHOICES", "DEFAULT_FIXTURE_PATH",
-    "FIXTURE_ONLY_CAVEAT", "KAGGLE_URL_CAVEATS", "MODEL_IDS", "MODEL_NAMES", "SUBJECT_CENTERED",
-    "URL_PIPELINE_CAVEATS", "VEHICLES_CAVEATS", "VEHICLES_DATASET_ID", "BuildOptions", "FixtureBuild", "build_assets",
-    "build_cifar10_fixture", "build_cnn_asset", "build_url_asset", "dataset_caveats", "inject_truststore",
+    "ASSET_IDS", "BUILD_ASSET_IDS", "BUILD_DATASET_CHOICES", "BUILD_MODEL_IDS", "BUILD_MODEL_NAMES",
+    "CIFAR10_CAVEATS", "DATASET_CAVEATS", "DATASET_CHOICES", "DEFAULT_FIXTURE_PATH", "DETECTION_MODEL_ID",
+    "DETECTION_PIPELINE_CAVEATS", "EXPLICIT_ONLY_DATASETS", "FIXTURE_ONLY_CAVEAT", "KAGGLE_URL_CAVEATS", "MODEL_IDS",
+    "MODEL_NAMES", "SUBJECT_CENTERED", "TEXT_MODEL_ID", "URL_PIPELINE_CAVEATS", "VEHICLES_CAVEATS",
+    "VEHICLES_DATASET_ID", "BuildOptions", "FixtureBuild", "attach_train_slice", "build_assets",
+    "build_cifar10_fixture", "build_cnn_asset", "build_detection_asset", "build_url_asset", "dataset_caveats",
+    "inject_truststore", "resolve_detection_data", "resolve_detection_subset_root", "resolve_sms_table",
     "subject_centered_for", "summarize", "write_url_eval_slice",
 ]
 
@@ -163,10 +192,24 @@ KAGGLE_URL_CAVEATS: tuple[str, ...] = (
 FIXTURE_ONLY_CAVEAT = ("CI / fixture dataset (spec 11.1): never a demo target, never populates a Finding and never "
                        "appears as evidence; campaign output on it is a test result, not a result about any dataset.")
 
+# Properties of the detector build (MODALITIES-29): true for every subset it processes, the published one and a
+# synthetic double alike. The corpus caveats of the subset itself travel on the dataset entry
+# (``ds.MILITARY_ASSETS_CAVEATS``, also the table row below).
+DETECTION_PIPELINE_CAVEATS: tuple[str, ...] = (
+    ("Detection clean_accuracy is recall at IoU >= 0.5 over the evaluation split's ground-truth boxes (n counts "
+     "boxes, not images), measured at build time; it is not a classification accuracy. mAP@0.5 and per-class box "
+     "counts sit beside it in the model entry's metrics (MODALITIES-29)."),
+    ("Images are stretched to a square input at load time and boxes are scaled with the same factors, so aspect "
+     "ratios differ from the source photographs."),
+    ("A few-hundred-image CPU fine-tune of a COCO-initialised detector yields modest mAP; the figures describe this "
+     "build on this capped subset and no other detector or dataset."),
+)
+
 DATASET_CAVEATS: dict[str, tuple[str, ...]] = {
     VEHICLES_DATASET_ID: VEHICLES_CAVEATS,
     cifar10.DATASET_ID: CIFAR10_CAVEATS,
     KAGGLE_URL_DATASET_ID: KAGGLE_URL_CAVEATS,
+    ds.MILITARY_ASSETS_DATASET_ID: ds.MILITARY_ASSETS_CAVEATS,
 }
 
 # Spec 13.4 / 11.3.1 caveat 5: the vehicle photographs are not reliably centred; CIFAR-10 thumbnails are object-centred
@@ -225,6 +268,10 @@ def inject_truststore() -> bool:
     return True
 
 
+# Dataset selections whose model is trained on an image split and so carries a training slice.
+_IMAGE_DATASETS: frozenset[str] = frozenset({"image", "cifar10"})
+
+
 @dataclass
 class BuildOptions:
     dataset: str = "all"
@@ -243,21 +290,42 @@ class BuildOptions:
     prefer_xgboost: bool = False         # sklearn_joblib is what every worker image can load (spec 9.2)
     holdout: float = 0.2
     arch: str = "small_cnn"              # image architecture for the CNN builds (``--arch``)
-    build_models: bool = True            # False: ``--fixture`` alone, no training and no network
+    build_models: bool = True            # False: ``--fixture`` / ``--attach-train-slice`` alone, no training
     fixture: bool = False                # also write the committed CIFAR-10 test slice
     fixture_out: Path = DEFAULT_FIXTURE_PATH
     fixture_sidecar: Path | None = None  # default: MANIFEST.json beside ``fixture_out``
     fixture_allow_synthetic: bool = False
+    # ATTACKS_HARDEN-11: the image builds write ``bundled/<model>/train_slice.npz`` (``--no-train-slice`` skips it).
+    train_slice: bool = True
+    train_slice_n: int = ds.DEFAULT_TRAIN_SLICE_N
+    # Image model ids whose out-of-band slice (``train_slice.json`` sidecar) is recorded in the manifest.
+    attach_train_slice: tuple[str, ...] = ()
+    # MODALITIES-29: the detector build reads the published subset (default: ``<cache>/military_assets_subset``,
+    # else ``<out>/cache/military_assets_subset``) at this square input size.
+    detection_image_size: int = 320
+    detection_subset: Path | None = None
 
     def __post_init__(self) -> None:
-        if self.dataset not in DATASET_CHOICES:
-            raise ValueError(f"dataset must be one of {DATASET_CHOICES}, got {self.dataset!r}")
+        if self.dataset not in BUILD_DATASET_CHOICES:
+            raise ValueError(f"dataset must be one of {BUILD_DATASET_CHOICES}, got {self.dataset!r}")
         self.only = tuple(canonical_model_id(m) for m in self.only)
-        unknown = [m for m in self.only if m not in ASSET_IDS]
+        unknown = [m for m in self.only if m not in BUILD_ASSET_IDS]
         if unknown:
-            raise ValueError(f"unknown model id(s) {unknown}; known: {sorted(ASSET_IDS)}")
+            raise ValueError(f"unknown model id(s) {unknown}; known: {sorted(BUILD_ASSET_IDS)}")
+        self.attach_train_slice = tuple(canonical_model_id(m) for m in self.attach_train_slice)
+        not_image = [m for m in self.attach_train_slice
+                     if BUILD_ASSET_IDS.get(m) not in _IMAGE_DATASETS]
+        if not_image:
+            raise ValueError(f"attach_train_slice names non-image model id(s) {not_image}; a training slice belongs "
+                             f"to an image model: {sorted(m for m, d in BUILD_ASSET_IDS.items() if d in _IMAGE_DATASETS)}")
         if self.epochs < 1:
             raise ValueError("epochs must be >= 1")
+        if self.train_slice_n < 1:
+            raise ValueError("train_slice_n must be >= 1")
+        if self.detection_image_size < 8:
+            raise ValueError("detection_image_size must be >= 8")
+        if not 0.0 < self.holdout < 1.0:
+            raise ValueError("holdout must be in (0, 1)")
         try:
             from redsim.ml.targets.architectures import canonical_architecture_id
         except ImportError:  # no ``ml`` extra: aliases cannot be resolved, canonical ids still validate below
@@ -271,14 +339,21 @@ class BuildOptions:
         self.fixture_out = Path(self.fixture_out)
         if self.fixture_sidecar is not None:
             self.fixture_sidecar = Path(self.fixture_sidecar)
+        if self.detection_subset is not None:
+            self.detection_subset = Path(self.detection_subset)
 
     @property
     def selected(self) -> set[str]:
+        """Dataset selections to build: ``--only`` ids win; ``all`` leaves out ``EXPLICIT_ONLY_DATASETS``."""
         if not self.build_models:
             return set()
         if self.only:
-            return {ASSET_IDS[m] for m in self.only}
-        return {"image", "cifar10", "tabular"} if self.dataset == "all" else {self.dataset}
+            return {BUILD_ASSET_IDS[m] for m in self.only}
+        return all_build_datasets() if self.dataset == "all" else {self.dataset}
+
+    @property
+    def train_slice_options(self) -> ds.TrainSliceOptions:
+        return ds.TrainSliceOptions(n=self.train_slice_n, seed=self.seed, enabled=self.train_slice)
 
 
 # ---------------------------------------------------------------------------
@@ -307,21 +382,48 @@ def _clean_accuracy(metrics: dict[str, object], split: str) -> CleanAccuracy:
     return CleanAccuracy(value=float(value), n=n, split=split)
 
 
+def write_image_train_slice(data: ds.ImageDataset, root: Path, entry: DatasetEntry, model_id: str, *,
+                            options: ds.TrainSliceOptions) -> SplitEntry:
+    """Draw the bundled training slice of ``model_id`` from ``data.train`` and record it on ``entry`` (ATTACKS_HARDEN-11).
+
+    The slice goes to ``bundled/<model_id>/train_slice.npz`` with its ``train_slice.json`` sidecar and the
+    ``SplitEntry`` (named ``<train split>_slice``) under ``entry.splits``. When train and eval come from one
+    pool (same split name) the evaluation rows are excluded so the slice never overlaps what is measured.
+    """
+    same_pool = data.train.name == data.eval.name
+    dest = Path(root) / "bundled" / model_id / ds.TRAIN_SLICE_NAME
+    _sub, slice_entry = ds.write_train_slice(data.train, dest, root, n=options.n, seed=options.seed,
+                                             exclude_indices=data.eval.indices if same_pool else None)
+    entry.splits[slice_entry.name] = slice_entry
+    ds.write_train_slice_sidecar(dest.parent / ds.TRAIN_SLICE_SIDECAR_NAME, ds.TrainSliceSidecar(
+        model_id=model_id, dataset_id=entry.id, revision=entry.revision, source_split=data.train.name,
+        split_entry=slice_entry, n_requested=options.n, seed=options.seed,
+        note=(f"seeded stratified draw over the {data.train.name} split (redsim.ml.assets.datasets.write_train_slice); "
+              + ("disjoint from the evaluation rows by construction" if same_pool
+                 else f"train and evaluation ({data.eval.name}) are distinct source splits")),
+    ))
+    return slice_entry
+
+
 def build_cnn_asset(data: ds.ImageDataset, *, model_id: str, root: Path, epochs: int, seed: int,
                     arch: str = "small_cnn", fixture_only: bool = False, notes: Sequence[str] = (),
                     caveats: Sequence[str] = (), subject_centered: bool | None = None,
-                    name: str | None = None, log: Log = print) -> tuple[DatasetEntry, ModelEntry]:
+                    name: str | None = None, train_slice: ds.TrainSliceOptions | None = None,
+                    log: Log = print) -> tuple[DatasetEntry, ModelEntry]:
     """Train the catalog architecture ``arch`` on ``data``; write weights, eval slice and manifest entries.
 
     The dataset entry gets its spec 11.3 caveats (``dataset_caveats``: the table row for its id, the fixture-only
     statement, then ``caveats``) and its ``subject_centered`` flag (``subject_centered`` when given, else the table
-    value, else ``None``); both are copied onto the model entry (spec 13.4, 14.5).
+    value, else ``None``); both are copied onto the model entry (spec 13.4, 14.5). The bundled training slice
+    (``train_slice``; the defaults when ``None``, ``TrainSliceOptions(enabled=False)`` to skip) is written beside
+    the weights and named by the model entry's ``train_slice_split`` (ATTACKS_HARDEN-11).
     """
     from redsim.ml.assets.train_cnn import save_state_dict, train_cnn
     from redsim.ml.targets.architectures import canonical_architecture_id
 
     root = Path(root).resolve()
     arch = canonical_architecture_id(arch)
+    slice_options = train_slice if train_slice is not None else ds.TrainSliceOptions(seed=seed)
     class_names = list(data.train.class_names)
     log(f"{model_id}: training {arch} for {epochs} epoch(s), seed {seed}, "
         f"n_train={data.train.n}, n_eval={data.eval.n}, image_size={data.train.x.shape[-1]}")
@@ -337,11 +439,17 @@ def build_cnn_asset(data: ds.ImageDataset, *, model_id: str, root: Path, epochs:
     eval_file = write_image_eval_slice(data.eval, root, entry)
     entry.splits[data.train.name] = ds.split_entry(data.train)
     entry.splits[data.eval.name] = ds.split_entry(data.eval, file=eval_file)
+    slice_name: str | None = None
+    if slice_options.enabled:
+        slice_entry = write_image_train_slice(data, root, entry, model_id, options=slice_options)
+        slice_name = slice_entry.name
+        log(f"{model_id}: training slice {slice_entry.name} n={slice_entry.n} (requested {slice_options.n}, seed "
+            f"{slice_options.seed}) at {slice_entry.file.path}")  # type: ignore[union-attr]
 
     init_note = str(result.training.get("backbone_init", "random (seeded)"))
     model = ModelEntry(
-        id=model_id, name=name or MODEL_NAMES.get(model_id, model_id), modality="image", format="torch_state_dict",
-        sha256=weights.sha256, size_bytes=weights.size_bytes, file=weights,
+        id=model_id, name=name or BUILD_MODEL_NAMES.get(model_id, model_id), modality="image",
+        format="torch_state_dict", sha256=weights.sha256, size_bytes=weights.size_bytes, file=weights,
         architecture_id=result.model.architecture_id, architecture=result.model.architecture_config(),
         input_shape=list(result.model.input_shape), n_classes=len(class_names), class_names=class_names,
         dataset_id=entry.id, dataset_revision=entry.revision, dataset_split=data.eval.name, train_split=data.train.name,
@@ -349,7 +457,7 @@ def build_cnn_asset(data: ds.ImageDataset, *, model_id: str, root: Path, epochs:
         license=entry.license, source_url=entry.url,
         seed=seed, epochs=epochs, training=result.training, metrics=result.metrics,
         library_versions=library_versions(("torch", "torchvision", "numpy")),
-        fixture_only=entry.fixture_only,
+        fixture_only=entry.fixture_only, train_slice_split=slice_name,
         notes=["Input contract: float32 [0, 1] NCHW; channel normalisation is inside the model.",
                "Clean accuracy is measured on the full bundled evaluation split at build time.",
                f"Initialisation: {init_note}."],
@@ -359,6 +467,59 @@ def build_cnn_asset(data: ds.ImageDataset, *, model_id: str, root: Path, epochs:
         f"weights sha256 {model.sha256[:12]}..., {len(entry.caveats)} dataset caveat(s), "
         f"subject_centered={entry.subject_centered}")
     return entry, model
+
+
+def attach_train_slice(manifest: AssetManifest, root: Path, model_id: str, *, sidecar: Path | None = None,
+                       log: Log = print) -> SplitEntry:
+    """Record a training slice drawn out-of-band in ``manifest`` from its ``train_slice.json`` sidecar.
+
+    For a model the manifest already holds (``vehicles_cnn`` built before the slice existed): the sidecar must
+    name this model, its dataset, revision and training split; the slice file must be where the sidecar says
+    and hash to its recorded digest. The ``SplitEntry`` then joins the dataset's ``splits`` and the model entry
+    gets ``train_slice_split``, which sits outside the frozen projection, so ``manifest_sha256`` is unchanged
+    and nothing is retrained. Returns the split entry recorded.
+    """
+    root = Path(root).resolve()
+    model_id = canonical_model_id(model_id)
+    entry = model_entry(manifest, model_id)
+    if entry is None:
+        raise SliceUnavailable(f"{model_id!r} has no entry in the manifest; build it before attaching a training slice")
+    sidecar_path = Path(sidecar) if sidecar is not None else root / "bundled" / model_id / ds.TRAIN_SLICE_SIDECAR_NAME
+    record = ds.read_train_slice_sidecar(sidecar_path)
+    if record.model_id != model_id:
+        raise SliceUnavailable(f"{sidecar_path} describes {record.model_id!r}, not {model_id!r}")
+    if record.dataset_id != entry.dataset_id:
+        raise SliceUnavailable(f"{sidecar_path}: the slice was drawn from {record.dataset_id!r}; {model_id!r} is bound "
+                               f"to {entry.dataset_id!r}")
+    if record.revision is not None and entry.dataset_revision is not None and record.revision != entry.dataset_revision:
+        raise SliceUnavailable(f"{sidecar_path}: the slice was drawn from revision {record.revision!r}; the model was "
+                               f"trained on {entry.dataset_revision!r}")
+    if record.source_split != entry.train_split:
+        raise SliceUnavailable(f"{sidecar_path}: the slice was drawn from split {record.source_split!r}; the model's "
+                               f"training split is {entry.train_split!r}")
+    split = record.split_entry
+    if split.file is None:
+        raise SliceUnavailable(f"{sidecar_path}: the split entry names no file")
+    path = root / split.file.path
+    if not path.is_file():
+        raise SliceUnavailable(f"training slice {path} is missing (named by {sidecar_path})")
+    actual = sha256_file(path)
+    if actual != split.file.sha256 or path.stat().st_size != split.file.size_bytes:
+        raise SliceUnavailable(f"training slice {path} has sha256 {actual[:12]}... and {path.stat().st_size} bytes; "
+                               f"{sidecar_path} records {split.file.sha256[:12]}... and {split.file.size_bytes}; "
+                               "refusing to record a slice the sidecar does not vouch for")
+    dataset = manifest.datasets.get(entry.dataset_id)
+    if dataset is None:
+        raise SliceUnavailable(f"dataset {entry.dataset_id!r} of {model_id!r} is not in the manifest")
+    dataset.splits[split.name] = split
+    updated = entry.model_copy(update={"train_slice_split": split.name})
+    if manifest_digest(updated) != manifest_digest(entry):  # pragma: no cover - the field is outside the projection
+        raise RuntimeError("train_slice_split changed the frozen projection; refusing to write")
+    key = model_id if model_id in manifest.models else next(k for k, v in manifest.models.items() if v is entry)
+    manifest.models[key] = updated
+    log(f"{model_id}: recorded training slice {split.name} (n={split.n}, seed {split.seed}) at {split.file.path}; "
+        f"manifest_sha256 unchanged")
+    return split
 
 
 def _per_class(labels: np.ndarray, idx: np.ndarray, class_names: Sequence[str]) -> dict[str, int]:
@@ -441,7 +602,7 @@ def build_url_asset(table: ds.UrlTable, *, model_id: str, root: Path, seed: int,
                                       accuracy=result.surrogate_agreement),
     )
     model = ModelEntry(
-        id=model_id, name=name or MODEL_NAMES.get(model_id, model_id), modality="tabular", format=result.format,
+        id=model_id, name=name or BUILD_MODEL_NAMES.get(model_id, model_id), modality="tabular", format=result.format,
         sha256=model_file.sha256, size_bytes=model_file.size_bytes, file=model_file,
         architecture_id="xgboost_classifier" if result.library == "xgboost" else "sklearn_hist_gradient_boosting",
         architecture={"library": result.library, "params": result.training["params"]},
@@ -462,6 +623,112 @@ def build_url_asset(table: ds.UrlTable, *, model_id: str, root: Path, seed: int,
     log(f"{model_id}: clean accuracy {model.clean_accuracy.value:.4f} on n={model.clean_accuracy.n}, "  # type: ignore[union-attr]
         f"model sha256 {model.sha256[:12]}..., surrogate agreement {result.surrogate_agreement:.4f}, "
         f"{len(entry.caveats)} dataset caveat(s)")
+    return entry, model
+
+
+# ---------------------------------------------------------------------------
+# The detector (MODALITIES-29): the published subset, a seeded holdout, a bounded CPU fine-tune
+# ---------------------------------------------------------------------------
+
+def _detection_spec(result_block: dict[str, Any], *, class_names: Sequence[str], image_size: int,
+                    excluded_classes: Sequence[str]) -> dict[str, Any]:
+    """The frozen ``MLModelManifest.detection`` block (``schema.DetectionModelSpec``) from the trainer's record.
+
+    The trainer's block names ``class_names`` and a ``[C, H, W]`` size; the schema wants ``classes``,
+    ``[H, W]`` and the excluded dataset classes. Thresholds are copied as measured.
+    """
+    return {
+        "box_format": "xyxy",
+        "input_size": [int(image_size), int(image_size)],
+        "iou_threshold": float(result_block.get("iou_threshold", 0.5)),
+        "score_threshold": float(result_block.get("score_threshold", 0.5)),
+        "classes": [str(c) for c in class_names],
+        "excluded_classes": [str(c) for c in excluded_classes],
+    }
+
+
+def build_detection_asset(train: Any, eval_split: Any, dataset: DatasetEntry, *, model_id: str, root: Path,
+                          epochs: int, seed: int, anchor_sizes: Sequence[int] | None = None,
+                          pretrained: bool = True, batch_size: int | None = None, threads: int | None = None,
+                          caveats: Sequence[str] = (), notes: Sequence[str] = (), name: str | None = None,
+                          log: Log = print) -> tuple[DatasetEntry, ModelEntry]:
+    """Fine-tune the bundled detector on ``train``, measure it on ``eval_split``; write weights, slice and entries.
+
+    ``train`` / ``eval_split`` are ``redsim.ml.datasets.military_assets.DetectionSplit`` rows (uint8 NCHW at
+    one square size, xyxy boxes) and ``dataset`` the entry for what they were drawn from. ``clean_accuracy``
+    is recall at IoU >= 0.5 over the evaluation split's ground-truth boxes (``n`` counts boxes) and is
+    labelled so in the model notes and ``DETECTION_PIPELINE_CAVEATS``; mAP@0.5 and the per-class counts
+    stay in ``metrics``. ``anchor_sizes`` / ``pretrained`` / ``batch_size`` / ``threads`` pass through to
+    ``train_detector`` (tests use small anchors on 16 px synthetic rectangles). No network here.
+    """
+    from redsim.ml.assets.train_detector import save_state_dict, train_detector, write_eval_slice
+    from redsim.ml.datasets.military_assets import EVAL_SLICE_NAME
+
+    root = Path(root).resolve()
+    class_names = list(train.class_names)
+    image_size = int(train.x.shape[-1])
+    log(f"{model_id}: fine-tuning the detector for {epochs} epoch(s), seed {seed}, n_train={train.n} "
+        f"({train.n_boxes} boxes), n_eval={eval_split.n} ({eval_split.n_boxes} boxes), image_size={image_size}")
+    extra: dict[str, Any] = {}
+    if batch_size is not None:
+        extra["batch_size"] = int(batch_size)
+    result = train_detector(train, eval_split, epochs=epochs, seed=seed, anchor_sizes=anchor_sizes,
+                            pretrained=pretrained, threads=threads, log=log, **extra)
+    weights = file_entry(root, save_state_dict(result.model, root / "bundled" / model_id / "weights.pt"))
+
+    entry = dataset.model_copy(deep=True)
+    entry.notes = list(entry.notes) + list(notes)
+    entry.caveats = dataset_caveats(entry, pipeline=DETECTION_PIPELINE_CAVEATS, extra=caveats)
+    entry.subject_centered = None          # boxes locate the subjects; the centre-mass heuristic does not apply
+    eval_path = dataset_dir(root, entry) / EVAL_SLICE_NAME
+    write_eval_slice(eval_split, eval_path, dataset_id=entry.id, dataset_revision=entry.revision)
+    eval_file = file_entry(root, eval_path)
+    entry.splits[train.name] = SplitEntry(name=train.name, n=train.n, per_class=train.per_class_boxes(), seed=seed,
+                                          indices_sha256=ds.indices_sha256(train.indices))
+    entry.splits[eval_split.name] = SplitEntry(name=eval_split.name, n=eval_split.n,
+                                               per_class=eval_split.per_class_boxes(), seed=seed,
+                                               indices_sha256=ds.indices_sha256(eval_split.indices), file=eval_file)
+    entry.preprocessing = {
+        **entry.preprocessing,
+        "image_size": image_size, "layout": "uint8 NCHW RGB; boxes xyxy in pixels at image_size",
+        "split": f"seeded stratified holdout by primary class, seed {seed} (the subset has no official split)",
+        "per_class": "SplitEntry.per_class counts ground-truth boxes per class, not images",
+        "eval_slice": f"{EVAL_SLICE_NAME} packs x, boxes, labels, offsets, indices and class_names "
+                      "(redsim.ml.datasets.military_assets.save_detection_npz)",
+    }
+
+    metrics = dict(result.metrics)
+    recall = metrics.get("recall")
+    n_gt = metrics.get("n_gt_boxes")
+    if recall is None or not n_gt:
+        raise SliceUnavailable("the detection evaluation split has no ground-truth boxes; recall is undefined and "
+                               "the model entry would record no clean accuracy")
+    init_note = str(result.training.get("backbone_init", "random (seeded)"))
+    model = ModelEntry(
+        id=model_id, name=name or BUILD_MODEL_NAMES.get(model_id, model_id), modality="detection",
+        format="torch_state_dict", sha256=weights.sha256, size_bytes=weights.size_bytes, file=weights,
+        architecture_id=str(result.architecture["architecture_id"]), architecture=dict(result.architecture),
+        input_shape=[3, image_size, image_size], n_classes=len(class_names), class_names=class_names,
+        dataset_id=entry.id, dataset_revision=entry.revision, dataset_split=eval_split.name, train_split=train.name,
+        clean_accuracy=CleanAccuracy(value=float(recall), n=int(n_gt), split=eval_split.name), gradients=True,
+        license=entry.license, source_url=entry.url,
+        seed=seed, epochs=epochs, training=result.training, metrics=metrics,
+        detection=_detection_spec(result.detection, class_names=class_names, image_size=image_size,
+                                  excluded_classes=list(train.excluded_classes)),
+        library_versions=library_versions(("torch", "torchvision", "numpy")),
+        fixture_only=entry.fixture_only,
+        notes=[("clean_accuracy is recall at IoU >= 0.5 over the evaluation split's ground-truth boxes (n counts "
+                "boxes), measured at build time; it is not a classification accuracy. metrics carries map50, "
+                "n_matched, n_predictions and the per-class counts."),
+               "Input contract: float32 [0, 1] NCHW at input_shape (uint8 slices are scaled at load); predictions "
+               "are xyxy boxes in pixels with 0-based labels into class_names.",
+               f"Initialisation: {init_note}."],
+    )
+    model = stamp_manifest_sha256(with_dataset_caveats(model, entry))
+    map50 = metrics.get("map50")
+    map_s = f"{float(map50):.4f}" if map50 is not None else "n/a"
+    log(f"{model_id}: recall@0.5 {float(recall):.4f} over n={int(n_gt)} boxes, mAP@0.5 {map_s}, "
+        f"weights sha256 {model.sha256[:12]}..., {len(entry.caveats)} dataset caveat(s)")
     return entry, model
 
 
@@ -653,6 +920,73 @@ def resolve_url_table(opts: BuildOptions, log: Log, warn: Log) -> ds.UrlTable:
     return ds.sample_url_table(sample)
 
 
+def resolve_sms_table(opts: BuildOptions, client: httpx.Client, log: Log, warn: Log) -> Any:
+    """The ``SmsSpamTable`` the text build trains on: the UCI corpus, else the committed CI sample.
+
+    ``ds.fetch_sms_spam`` reuses a cached corpus whose digest still matches without a request and otherwise
+    downloads the pinned zip; the rows are read with ``redsim.ml.datasets.sms_spam.load_sms_spam`` against
+    the pinned digest. When neither is possible (offline, a digest that no longer matches) the build falls
+    back to ``tests/ml/fixtures/sms_spam_sample.tsv`` exactly as the tabular build falls back to its committed
+    sample: the model is then ``fixture_only`` and carries ``FIXTURE_ONLY_CAVEAT``, never a demo target. The
+    committed sample is in the ``write_sms_tsv`` layout (``index``, ``label``, ``text``; the index cites the
+    corpus row) and is read with ``ds.read_sms_tsv``; the corpus itself is ``<label>\t<text>``. Nothing is
+    faked: the warning names the reason and the entry names the file it was trained on.
+    """
+    from redsim.ml.datasets import sms_spam
+
+    assert opts.cache_dir is not None
+    try:
+        corpus = ds.fetch_sms_spam(client, opts.cache_dir, log=log)
+        return sms_spam.load_sms_spam(corpus, expected_sha256=ds.SMS_SPAM_FILE_SHA256)
+    except (ds.DatasetUnavailable, SliceUnavailable, httpx.HTTPError) as exc:
+        warn(f"sms_spam: the UCI SMS Spam Collection is not available ({type(exc).__name__}: {exc}); falling back to "
+             "the committed CI sample. The text model of this build is fixture-only, never a demo target.")
+    sample = ds.committed_sms_sample_path()
+    if sample is None:
+        raise ds.DatasetUnavailable("the UCI SMS corpus could not be fetched and the committed sample "
+                                    f"tests/ml/fixtures/{ds.SMS_SAMPLE_NAME} is not present in this installation; "
+                                    "run from a source checkout or retry with network access")
+    _indices, texts, label_names = ds.read_sms_tsv(sample)      # (source_indices, texts, labels)
+    return sms_spam.SmsSpamTable(texts=list(texts), labels=sms_spam.encode_labels(label_names),
+                                 label_names=list(label_names), source_path=sample, source_sha256=sha256_file(sample),
+                                 fixture_only=True)
+
+
+def resolve_detection_subset_root(opts: BuildOptions) -> Path:
+    """Where the published military-assets subset sits: ``opts.detection_subset``, else the cache, else ``<out>``.
+
+    Raises ``DatasetUnavailable`` naming every location looked at when no ``manifest.json`` is found, so a
+    detection build refuses before anything is trained rather than after the other selections.
+    """
+    assert opts.cache_dir is not None
+    candidates: list[Path] = []
+    if opts.detection_subset is not None:
+        candidates.append(Path(opts.detection_subset))
+    else:
+        for candidate in (Path(opts.cache_dir) / ds.MILITARY_ASSETS_SUBSET_NAME, ds.detection_subset_root(opts.out)):
+            if candidate not in candidates:         # the default cache is <out>/cache: one location, named once
+                candidates.append(candidate)
+    for candidate in candidates:
+        if (candidate / ds.MILITARY_ASSETS_SUBSET_MANIFEST).is_file():
+            return candidate
+    looked = ", ".join(str(c / ds.MILITARY_ASSETS_SUBSET_MANIFEST) for c in candidates)
+    raise ds.DatasetUnavailable(f"no published detection subset: looked for {looked}. The capped subset of "
+                                f"{ds.MILITARY_ASSETS_SLUG} (MODALITIES-27) is written by the B0 datasets step with a "
+                                "Kaggle token; pass --detection-subset to name where it lives")
+
+
+def resolve_detection_data(opts: BuildOptions, log: Log) -> tuple[Any, Any, DatasetEntry]:
+    """``(train, eval, dataset entry)`` for the detector build from the published subset (no network)."""
+    subset_root = resolve_detection_subset_root(opts)
+    log(f"detection: reading the published subset at {subset_root} (image_size={opts.detection_image_size})")
+    subset = ds.load_detection_subset(subset_root, image_size=opts.detection_image_size)
+    train, evaluation = ds.detection_holdout(subset.split, holdout=opts.holdout, seed=opts.seed)
+    entry = ds.military_assets_dataset_entry(subset.manifest, index_sha256=subset.manifest_sha256)
+    log(f"detection: {subset.split.n} images / {subset.split.n_boxes} boxes verified against manifest.json "
+        f"(sha256 {subset.manifest_sha256[:12]}...); holdout {opts.holdout} -> train {train.n}, eval {evaluation.n}")
+    return train, evaluation, entry
+
+
 def build_assets(opts: BuildOptions, log: Log = print, warn: Log | None = None) -> AssetManifest:
     """Run the selected builds and write ``<out>/MANIFEST.json``.
 
@@ -660,8 +994,12 @@ def build_assets(opts: BuildOptions, log: Log = print, warn: Log | None = None) 
     this run built are replaced, so re-runs and two builds into the same root
     (say ``--dataset image`` beside ``--dataset tabular``) keep each other's
     entries. A legacy entry (``url_classifier``) is dropped once its current id
-    (``url_trees``) has been built. With ``opts.fixture`` the committed CIFAR-10
-    slice is written afterwards from local files only.
+    (``url_trees``) has been built. ``opts.attach_train_slice`` records the
+    named models' out-of-band training slices in the manifest after the builds
+    (``attach_train_slice``; no training). With ``opts.fixture`` the committed
+    CIFAR-10 slice is written afterwards from local files only. A detection
+    selection checks that the published subset is present before any model is
+    trained.
     """
     inject_truststore()
     warn = warn or log
@@ -680,7 +1018,10 @@ def build_assets(opts: BuildOptions, log: Log = print, warn: Log | None = None) 
 
     built: list[str] = []
     selected = opts.selected
-    client = ds.make_client() if selected & {"image", "cifar10"} else None
+    if "detection" in selected:
+        resolve_detection_subset_root(opts)      # refuse now, before hours of CPU go into the other selections
+    slice_options = opts.train_slice_options
+    client = ds.make_client() if selected & {"image", "cifar10", "text"} else None
     try:
         if "image" in selected and client is not None:
             data = ds.fetch_imagefolder(client, opts.cache_dir, opts.image_repo, split_dirs=ds.VEHICLES_SPLIT_DIRS,
@@ -688,23 +1029,42 @@ def build_assets(opts: BuildOptions, log: Log = print, warn: Log | None = None) 
                                         max_train=opts.max_train, max_eval=opts.max_eval, seed=opts.seed,
                                         workers=opts.workers, log=log, license_note=VEHICLES_LICENSE_NOTE,
                                         notes=VEHICLES_NOTES)
-            entry, model = build_cnn_asset(data, model_id=MODEL_IDS["image"], root=root, epochs=opts.epochs,
-                                           seed=opts.seed, arch=opts.arch, notes=cap_notes, log=log)
+            entry, model = build_cnn_asset(data, model_id=BUILD_MODEL_IDS["image"], root=root, epochs=opts.epochs,
+                                           seed=opts.seed, arch=opts.arch, notes=cap_notes, train_slice=slice_options,
+                                           log=log)
             built_datasets[entry.id] = entry
             built_models[model.id] = model
             built.append(model.id)
         if "cifar10" in selected and client is not None:
             data = ds.fetch_cifar10(client, opts.cache_dir, revision=opts.cifar10_revision, max_train=opts.max_train,
                                     max_eval=opts.max_eval, seed=opts.seed, log=log)
-            entry, model = build_cnn_asset(data, model_id=MODEL_IDS["cifar10"], root=root, epochs=opts.epochs,
-                                           seed=opts.seed, arch=opts.arch, fixture_only=True, notes=cap_notes, log=log)
+            entry, model = build_cnn_asset(data, model_id=BUILD_MODEL_IDS["cifar10"], root=root, epochs=opts.epochs,
+                                           seed=opts.seed, arch=opts.arch, fixture_only=True, notes=cap_notes,
+                                           train_slice=slice_options, log=log)
             built_datasets[entry.id] = entry
             built_models[model.id] = model
             built.append(model.id)
         if "tabular" in selected:
             table = resolve_url_table(opts, log, warn)
-            entry, model = build_url_asset(table, model_id=MODEL_IDS["tabular"], root=root, seed=opts.seed,
+            entry, model = build_url_asset(table, model_id=BUILD_MODEL_IDS["tabular"], root=root, seed=opts.seed,
                                            holdout=opts.holdout, prefer_xgboost=opts.prefer_xgboost, log=log)
+            built_datasets[entry.id] = entry
+            built_models[model.id] = model
+            built.append(model.id)
+        if "text" in selected and client is not None:
+            from redsim.ml.assets.train_text_classifier import build_text_asset
+
+            table = resolve_sms_table(opts, client, log, warn)
+            entry, model = build_text_asset(root, table=table, model_id=BUILD_MODEL_IDS["text"], seed=opts.seed,
+                                            holdout=opts.holdout, log=log)
+            built_datasets[entry.id] = entry
+            built_models[model.id] = model
+            built.append(model.id)
+        if "detection" in selected:
+            train, evaluation, dataset = resolve_detection_data(opts, log)
+            entry, model = build_detection_asset(train, evaluation, dataset, model_id=BUILD_MODEL_IDS["detection"],
+                                                 root=root, epochs=opts.epochs, seed=opts.seed, notes=cap_notes,
+                                                 log=log)
             built_datasets[entry.id] = entry
             built_models[model.id] = model
             built.append(model.id)
@@ -720,9 +1080,19 @@ def build_assets(opts: BuildOptions, log: Log = print, warn: Log | None = None) 
             if current in built_models and legacy in manifest.models:
                 del manifest.models[legacy]
                 log(f"dropped the legacy manifest entry {legacy!r}; {current!r} replaces it")
+    attached: list[str] = []
+    for model_id in opts.attach_train_slice:
+        split = attach_train_slice(manifest, root, model_id, log=log)
+        attached.append(f"{model_id} ({split.name})")
+    if built or attached:
         manifest.touch()
         write_manifest(manifest, manifest_path)
-        log(f"wrote {manifest_path} ({len(built)} model(s) built: {', '.join(built)})")
+        what = []
+        if built:
+            what.append(f"{len(built)} model(s) built: {', '.join(built)}")
+        if attached:
+            what.append(f"training slice(s) recorded: {', '.join(attached)}")
+        log(f"wrote {manifest_path} ({'; '.join(what)})")
     else:
         log("no model selected for this run; the manifest is unchanged")
     if opts.fixture:
@@ -738,9 +1108,12 @@ def summarize(manifest: AssetManifest) -> str:
     for model in manifest.models.values():
         rev = (model.dataset_revision or "unpinned")[:12]
         acc = model.clean_accuracy
+        acc_label = "recall@0.5 over boxes" if model.modality == "detection" else "clean accuracy"
         acc_s = f"{acc.value:.4f} (n={acc.n}, {acc.split})" if acc is not None else "n/a"
         flag = "  [fixture only]" if model.fixture_only else ""
         caveats = f", {len(model.dataset_caveats)} dataset caveat(s)" if model.dataset_caveats else ""
-        lines.append(f"  {model.id}: {model.format} ({model.architecture_id}) on {model.dataset_id}@{rev}, "
-                     f"clean accuracy {acc_s}, sha256 {model.sha256[:12]}...{caveats}{flag}")
+        train_slice = f", train slice {model.train_slice_split}" if model.train_slice_split else ""
+        lines.append(f"  {model.id}: {model.format} ({model.architecture_id}, {model.modality}) on "
+                     f"{model.dataset_id}@{rev}, {acc_label} {acc_s}, sha256 {model.sha256[:12]}..."
+                     f"{caveats}{train_slice}{flag}")
     return "\n".join(lines)
