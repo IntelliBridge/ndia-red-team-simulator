@@ -2,9 +2,10 @@
 
 Decision-based: it uses only the model's ``predict`` output, which the adapter counts so
 ``queries_mean`` can be recorded. It takes no eps: the campaign thresholds the achieved
-perturbation norm against each grid eps (spec 15.1), so ``takes_eps`` is ``False``.
-Defaults are capped below ART's own for CPU budgets. Its random initial point and
-Monte-Carlo gradient estimate are seeded but recorded as a nondeterminism source (12.7).
+perturbation norm against each grid eps (spec 15.1), so ``takes_eps`` is ``False``. It
+searches in the campaign norm (``norm_l2``), so ``norms`` is ``{"linf", "l2"}``. Defaults
+are capped below ART's own for CPU budgets. Its random initial point and Monte-Carlo
+gradient estimate are seeded but recorded as a nondeterminism source (12.7).
 
 ``queries_mean`` denominator (spec 12.5 ``queries(a)``, settled here): predict rows spent
 divided by the number of samples whose prediction the attack flipped away from the
@@ -20,6 +21,15 @@ percent of every feature's declared range and the achieved norm is directly comp
 with the scaled eps grid. Frozen features go to ART as ``mask``, integer features are
 rounded after the search, and the rounded row is what is measured. Image targets keep
 running through ``Target.art_classifier()``.
+
+Image domain (spec 12.2 row "Image | HopSkipJump", ATTACKS_HARDEN-04): the same adapter
+serves image targets; only the cost differs. The schema defaults are the spec 12.2 tabular
+caps (``max_iter`` 20, ``max_eval`` 1000, ``init_eval`` 100, ``init_size`` 100). For images
+``IMAGE_DEFAULTS`` applies when the caller omits a key (``registry.apply_domain_defaults``,
+or ``resolve_params(..., domain="image")``); the values were measured on the bundled
+resnet18@128 ``vehicles_cnn`` and the measurement is recorded next to them, as a budget and
+never as an accuracy claim. Spec 12.2 lists image HopSkipJump under Phase B while the adapter
+is a Phase A adapter with one ``phase``; that divergence is recorded in the docs, not here.
 """
 
 from __future__ import annotations
@@ -31,47 +41,82 @@ import numpy as np
 
 from redsim.ml.attacks import (
     CPU_FLOAT32_NOTE,
+    MINIMAL_NORM_NOTE,
     NONDETERMINISM_PREFIX,
+    QUERIES_DENOMINATOR_NOTE,
     TabularScaling,
     apply_mask,
     library_versions,
     perturbable_mask,
+    queries_summary,
     resolve_from_schema,
     seed_all,
 )
 from redsim.ml.attacks.base import AttackOutput
+from redsim.ml.attacks.registry import apply_domain_defaults
 from redsim.ml.eval import perturbation_norms
 from redsim.ml.schema import AttackInfo, ParamSpec
 from redsim.ml.targets.base import Target
 
+__all__ = ["ADAPTER", "HSJ_NONDETERMINISM", "IMAGE_DEFAULTS", "QUERIES_DENOMINATOR_NOTE", "HopSkipJumpAdapter"]
+
 HSJ_NONDETERMINISM = ("HopSkipJump random initial adversarial point and Monte-Carlo gradient estimate "
                       "(seed={seed}; ART draws the initial point from an unseeded RandomState, so repeated "
                       "runs differ even under the same seed)")
-QUERIES_DENOMINATOR_NOTE = ("queries_mean denominator = samples flipped from the model's clean prediction (the "
-                            "query cost of one successful decision-boundary crossing); the rate over all "
-                            "attacked samples is recorded beside it")
 FROZEN_METHOD = "ART mask on every HopSkipJump step (mask= passed to generate)"
+
+#: Image-domain cost defaults (ATTACKS_HARDEN-04, -22), applied only to keys the caller omitted.
+#: Measured 2026-09-09 on the bundled ``vehicles_cnn`` (resnet18 @ 128x128, 7 classes) on a CPU-only
+#: Apple silicon laptop with torch pinned to 2 threads (the sandbox child's pin), torch 2.14.0 /
+#: ART 1.20.1, n=8 eval samples, seed 0, L-inf: see the ``MEASUREMENT`` record below. At these values one
+#: sample costs about 8 s and 1045 predict rows, so n_samples=64 is roughly 8.5 minutes inside the
+#: 1200 s sandbox wall clock and n_samples=200 would not fit. The spec 12 bounds hold (``max_iter`` <= 50,
+#: ``max_eval`` <= 5000).
+IMAGE_DEFAULTS: dict[str, int] = {"max_iter": 10, "max_eval": 250, "init_eval": 50, "init_size": 50}
+
+#: The measurement behind ``IMAGE_DEFAULTS`` (a CPU budget record, spec 12.8 / 26.1; not evidence about
+#: the model). One offline run through this adapter; the flip count is the run's own query-denominator
+#: bookkeeping and says nothing about robustness.
+MEASUREMENT: dict[str, Any] = {
+    "date": "2026-09-09",
+    "target": "vehicles_cnn (resnet18 @ 128x128, 7 classes)",
+    "machine": "Apple silicon laptop, CPU only, torch threads pinned to 2",
+    "library_versions": {"torch": "2.14.0", "art": "1.20.1"},
+    "n_samples": 8, "seed": 0, "norm": "linf",
+    "params": dict(IMAGE_DEFAULTS),
+    "forward_pass_ms_per_row_batch64": 7.1,
+    "wall_time_s_total": 63.3, "wall_time_s_per_sample": 7.9, "predict_rows_per_sample": 1044.8,
+    "predict_rows_total": 8358, "predict_calls_total": 1670, "samples_flipped_from_clean": "6/8",
+    "queries_mean_per_flipped_sample": 1393.0,
+    "n_samples_guidance": "keep image HopSkipJump campaigns at n_samples <= 64 on a 128x128 CNN",
+    "note": "figures are budgets for sizing n_samples and the sandbox wall clock, never accuracy claims",
+}
 
 
 class HopSkipJumpAdapter:
     id = "hopskipjump"
     domains = frozenset({"tabular", "image"})
     takes_eps = False
+    norms = frozenset({"linf", "l2"})
     capabilities: ClassVar[frozenset[str]] = frozenset({"adversarial_ml", "black_box", "query_counted",
-                                                        "minimal_norm", "family:evasion",
-                                                        "modality:image", "modality:tabular"})
+                                                        "decision_based", "minimal_norm", "family:evasion",
+                                                        "modality:image", "modality:tabular", "norm:linf",
+                                                        "norm:l2"})
+    domain_defaults: ClassVar[dict[str, dict[str, Any]]] = {"image": dict(IMAGE_DEFAULTS)}
 
     _schema: ClassVar[list[ParamSpec]] = [
         ParamSpec(name="norm_l2", type="bool", default=False,
                   description="Search in L2 instead of L-inf (must match the campaign's eps grid norm)."),
         ParamSpec(name="max_iter", type="int", default=20, min=1, max=50,
-                  description="Boundary-walk iterations."),
+                  description="Boundary-walk iterations (tabular default 20; image default 10)."),
         ParamSpec(name="max_eval", type="int", default=1000, min=100, max=5000,
-                  description="Maximum model evaluations per iteration for the gradient estimate."),
+                  description="Maximum model evaluations per iteration for the gradient estimate (tabular default "
+                              "1000; image default 250)."),
         ParamSpec(name="init_eval", type="int", default=100, min=1, max=1000,
-                  description="Initial evaluations for the gradient estimate (must not exceed max_eval)."),
+                  description="Initial evaluations for the gradient estimate (must not exceed max_eval; image "
+                              "default 50)."),
         ParamSpec(name="init_size", type="int", default=100, min=1, max=1000,
-                  description="Trials for the random initial adversarial point."),
+                  description="Trials for the random initial adversarial point (image default 50)."),
         ParamSpec(name="batch_size", type="int", default=64, min=1, max=1024,
                   description="Prediction batch size (no effect on the result)."),
     ]
@@ -80,15 +125,19 @@ class HopSkipJumpAdapter:
         return AttackInfo(
             id=self.id, name="HopSkipJump (decision-based black-box)", domain="tabular", family="evasion",
             description=("Query-efficient successor of the Boundary Attack: walks the decision boundary "
-                         "using only predicted labels. No gradients, no surrogate; queries are counted."),
+                         "using only predicted labels. No gradients, no surrogate; queries are counted. Runs on "
+                         "tabular and image targets; on images every step is a batch of forward passes, so the "
+                         "image defaults are lower (max_iter 10, max_eval 250, init_eval 50, init_size 50) and "
+                         "campaigns should keep n_samples small (<= 64 on a 128x128 CNN)."),
             params_schema=list(self._schema),
             references=["Chen, Jordan, Wainwright 2020, arXiv:1904.02144",
                         "art.attacks.evasion.HopSkipJump"],
             phase="A", access="black-box", requires_gradients=False, status="available", reason=None,
         )
 
-    def resolve_params(self, params: dict[str, Any]) -> dict[str, float | int | bool]:
-        p = resolve_from_schema(self._schema, params)
+    def resolve_params(self, params: dict[str, Any], *, domain: str | None = None) -> dict[str, float | int | bool]:
+        """Fill defaults and check bounds; with ``domain`` the per-modality cost defaults fill omitted keys first."""
+        p = resolve_from_schema(self._schema, apply_domain_defaults(self, domain, params))
         if int(p["init_eval"]) > int(p["max_eval"]):
             raise ValueError(f"init_eval={p['init_eval']} must not exceed max_eval={p['max_eval']}")
         return p
@@ -169,23 +218,11 @@ class HopSkipJumpAdapter:
         y_clean = np.asarray(target.predict_proba(x)).argmax(axis=1)
         y_adv = np.asarray(target.predict_proba(x_adv)).argmax(axis=1)
         n_flipped = int((y_clean != y_adv).sum())
-        rows, calls = counter["rows"], counter["calls"]
-        per_attacked = rows / n if n else 0.0
-        queries_mean: float | None
-        if n_flipped > 0:
-            queries_mean = rows / n_flipped
-            queries_note = (f"queries_mean = {queries_mean:.1f} predict rows per flipped sample ({rows} rows in "
-                            f"{calls} predict calls; {n_flipped}/{n} samples flipped from the model's clean "
-                            f"prediction; {per_attacked:.1f} rows per attacked sample)")
-        else:
-            queries_mean = None
-            queries_note = (f"queries_mean not computed (denominator 0: 0/{n} samples flipped from the model's "
-                            f"clean prediction); {rows} predict rows in {calls} predict calls were spent "
-                            f"({per_attacked:.1f} rows per attacked sample)")
+        queries_mean, queries_note = queries_summary(counter["rows"], counter["calls"], n, n_flipped)
         notes = [f"norm={'L2' if norm == 2 else 'Linf'}; black-box decision-based; no gradients, no surrogate",
-                 ("minimal-norm attack: success at eps is defined by thresholding the achieved perturbation "
-                  "norm against each grid eps (spec 15.1)"),
-                 queries_note, QUERIES_DENOMINATOR_NOTE]
+                 MINIMAL_NORM_NOTE, queries_note, QUERIES_DENOMINATOR_NOTE,
+                 (f"cost parameters in effect: max_iter={p['max_iter']}, max_eval={p['max_eval']}, "
+                  f"init_eval={p['init_eval']}, init_size={p['init_size']}")]
         if scaling is not None:
             notes.append("HopSkipJump searched min-max-scaled feature space (unit cube over the declared ranges) "
                          "through the real model's predict; the achieved norm is in scaled units")
