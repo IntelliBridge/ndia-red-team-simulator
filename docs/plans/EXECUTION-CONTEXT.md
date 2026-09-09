@@ -201,13 +201,13 @@ Account `140381642432`, region `us-east-1`:
   reporting a false-positive green deploy.
 - `deploy/terraform/` (#19, `b40f7e1`) is the code-only Fargate foundation: no
   listeners, task definitions or services, nothing applied from this tree.
-  Open PR #23 (`feat/p7-fargate-runtime`, William) adds `deploy/bootstrap/`
+  PR #23 (`feat/p7-fargate-runtime`, William, merged as `10650da` with two review fixes) adds `deploy/bootstrap/`
   and `deploy/runtime/` and reports a public HTTPS demo runtime at
   https://redsim.ndia.agiledefense.xyz applied to this account (migrations
   through `0010`, health, login and OIDC discovery 200, unauthenticated API
   401, workers at zero until a pinned asset bundle exists, demo users and
   memberships and real assets outstanding, automatic rollout disabled).
-  `deploy/runtime/README.md` on that branch is the sequence. Fargate,
+  `deploy/runtime/README.md` on `main` is the sequence. Fargate,
   Terraform and Helm apply and compose operations stay outside the
   completion pass (master plan section 8).
 - **Action: rotate the bootstrap AWS access keys.** Keys were pasted in

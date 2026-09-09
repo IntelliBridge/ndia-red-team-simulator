@@ -59,18 +59,18 @@ def _plugins_unavailable(exc: Exception) -> HTTPException:
 
 
 def _attack_plugins() -> dict[str, Any]:
-    """Register opt-in attack plugins once per process and report the discovery rows.
+    """Load the opt-in attack plugins once per process and report the discovery rows.
 
-    ``{"enabled": False}`` when ``REDSIM_PLUGINS`` is not ``1`` (nothing is
-    scanned or imported). Otherwise the first call runs
-    :func:`redsim.plugins.load_ml_attack_plugins` (allowlist, conformance and
-    signature gates, and a plugin whose id is already registered is rejected, never
-    substituted) and later calls reuse its rows: the registry is a process
-    singleton, so a second scan would only report every plugin as "already
-    registered". When ``redsim.scanners`` registered the group earlier in this
-    process (its import runs the same loader), the rows here read exactly that
-    way while the adapters are listed in the catalog. Loader exceptions propagate
-    to the caller.
+    ``{"enabled": False}`` when ``REDSIM_PLUGINS`` is not ``1``. Nothing is
+    scanned or imported in that case. Otherwise the first call runs
+    :func:`redsim.plugins.load_ml_attack_plugins` (the allowlist, conformance
+    and signature gates) and caches its rows. Later calls return the same rows.
+    The loader is idempotent, so a second call in the same process (for
+    example when ``redsim.scanners`` imported the group first) reports the same
+    ``loaded`` rows for the plugins it already registered and never a duplicate
+    refusal. A plugin whose id is already taken by the built-in catalog is
+    ``rejected`` and is never substituted for the registered adapter. Loader
+    exceptions propagate to the caller.
     """
     from redsim.plugins import load_ml_attack_plugins, plugins_enabled
 

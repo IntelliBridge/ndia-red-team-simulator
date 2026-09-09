@@ -346,7 +346,7 @@ in progress in parallel: the three end-to-end completion-criteria files
 `tests/e2e/test_ml_campaigns.py`, `tests/e2e/test_ml_verify_upload_reports.py`
 and `tests/e2e/test_ml_governance.py` (added in wave 4, on the wave-3
 harness), the CI fixes, the admission follow-ups and this documentation pass.
-Open PR #23 (`feat/p7-fargate-runtime`, William) is recorded in section 4.1:
+PR #23 (`feat/p7-fargate-runtime`, William, merged as `10650da` with two review fixes) is recorded in section 4.1:
 a public HTTPS Fargate demo runtime its author reports applied to the AWS
 account, with the pinned asset bundle, demo users and automatic rollout still
 outstanding. Nothing in D1 to D13 changes and no new divergence is recorded:
@@ -1188,7 +1188,7 @@ tree, not a completion claim:
   4.1).
 - No campaign has been run on a deployed stack. The Fargate foundation (#19)
   in this tree has no task definitions or services and nothing is applied
-  from it. Open PR #23 carries a runtime its author reports applied, with
+  from it. PR #23 (merged as `10650da` with two review fixes) carries a runtime its author reports applied, with
   workers at zero and no assets or demo users yet.
 
 Excluded from this completion pass and listed as open, in the README as well:
