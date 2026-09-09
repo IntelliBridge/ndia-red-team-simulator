@@ -23,6 +23,16 @@ GHSA-q4gf-8mx6-v5v3  # Next.js DoS (Server Components)
 CVE-2026-64641       # Next.js DoS via crafted requests to App Router
 CVE-2026-64645       # Next.js SSRF
 CVE-2026-64649       # Next.js SSRF via malicious host redirection in Server Actions
+
+# --- Next.js 14.2.35 (web/, pnpm-lock.yaml), third batch (trivy on main at
+# 58461cc, 2026-09-09). Fixed only in 15.5.24 / 16.3.3: the same Next 14 -> 15+
+# major upgrade as the entries above, tracked as the web-workstream follow-up
+# (the web UI is auth-gated internal admin). Both IDs are one advisory:
+# unauthenticated RCE in the Image Optimization API when AVIF files are
+# processed on windows-hosted servers. Our web image (deploy/Dockerfile.web) is
+# a Linux container, so the affected code path is not reachable as deployed.
+CVE-2026-75604       # Next.js unauthenticated RCE, Image Optimization API on windows-hosted servers
+GHSA-2xp9-vwfh-vxw4  # GHSA alias of CVE-2026-75604 (same advisory, same fix versions)
 # --- postcss 8.4.31 (pnpm-lock.yaml). Fixed in 8.5.12 / 8.5.18, but this copy
 # is pinned EXACTLY (postcss: 8.4.31) by next@14.2.35 itself, so it cannot move
 # independently of the Next upgrade. The web app's own postcss is already 8.5.x.
