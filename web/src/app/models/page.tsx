@@ -18,6 +18,73 @@ import { useCapabilities } from "@/hooks/useMlCatalog";
 import { useDatasets } from "@/hooks/useMlCatalog";
 import { isLlmTarget, registerLlmTarget } from "@/lib/llm";
 import { EMPTY_LLM_FORM, LlmRegisterForm } from "./llm-register-form";
+const DIMENSION_LABELS: Record<string, string> = {
+  S_acc: "Accuracy under attack",
+  S_asr: "Resistance to attack success",
+  S_eps: "Perturbation budget needed",
+  S_conf: "Confidence stability",
+  S_expl: "Explanation stability",
+};
+
+/** Average score of a model by category, from its own scorecards; nothing when unscored. */
+function ScoreSummaryBlock({ summary }: { summary: ModelTarget["score_summary"] }) {
+  if (!summary) return null;
+  if (summary.kind === "mri") {
+    const dims = Object.entries(summary.subscores_mean).filter(([, v]) => v !== null) as [string, number][];
+    if (summary.mri_mean === null && dims.length === 0) return null;
+    return (
+      <div className="mt-4 border-t border-border pt-3" data-testid="score-summary">
+        <div className="flex items-baseline justify-between">
+          <div className="redsim-kicker">average robustness index</div>
+          <div className="text-xs text-muted-foreground">
+            {summary.n_campaigns} campaign{summary.n_campaigns === 1 ? "" : "s"}
+          </div>
+        </div>
+        <div className="text-2xl font-semibold tabular-nums">{summary.mri_mean ?? "—"}</div>
+        <ul className="mt-2 space-y-1">
+          {dims.map(([key, value]) => (
+            <li key={key} className="grid grid-cols-[1fr_6rem_2.5rem] items-center gap-2 text-xs">
+              <span className="truncate">{DIMENSION_LABELS[key] ?? key}</span>
+              <span className="h-2 rounded-sm bg-muted" aria-hidden="true">
+                <span className="block h-2 rounded-sm bg-primary" style={{ width: `${Math.max(2, Math.min(100, value))}%` }} />
+              </span>
+              <span className="text-right tabular-nums">{value}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-2 text-[11px] text-muted-foreground" title={summary.note}>
+          Mean over this model&apos;s scored campaigns; each scorecard keeps its denominators.
+        </p>
+      </div>
+    );
+  }
+  if (summary.families.length === 0) return null;
+  return (
+    <div className="mt-4 border-t border-border pt-3" data-testid="score-summary">
+      <div className="flex items-baseline justify-between">
+        <div className="redsim-kicker">average hit rate by probe family</div>
+        <div className="text-xs text-muted-foreground">
+          {summary.n_runs} run{summary.n_runs === 1 ? "" : "s"}
+        </div>
+      </div>
+      <ul className="mt-2 space-y-1">
+        {summary.families.map((f) => (
+          <li key={f.family} className="grid grid-cols-[1fr_6rem_3.5rem] items-center gap-2 text-xs">
+            <span className="truncate">{f.family}</span>
+            <span className="h-2 rounded-sm bg-muted" aria-hidden="true">
+              <span className="block h-2 rounded-sm bg-orange-500" style={{ width: `${Math.max(2, Math.round(f.hit_rate * 100))}%` }} />
+            </span>
+            <span className="text-right tabular-nums">{Math.round(f.hit_rate * 100)}%</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[11px] text-muted-foreground" title={summary.note}>
+        Hits over evaluated replies, pooled across runs; a hit is the detector&apos;s judgement.
+      </p>
+    </div>
+  );
+}
+
 export default function ModelsPage() {
   const authed = useRequireAuth();
   const router = useRouter();
@@ -318,15 +385,7 @@ export default function ModelsPage() {
                   </>
                 )}
               </div>
-              {isLlmTarget(m) &&
-                (typeof m.manifest.gateway_host === "string" ||
-                  typeof m.manifest.guardrail_mode === "string") && (
-                  <div className="mt-2 font-mono text-xs text-muted-foreground">
-                    {[m.manifest.gateway_host, m.manifest.guardrail_mode]
-                      .filter((v): v is string => typeof v === "string")
-                      .join(" · ")}
-                  </div>
-                )}
+              <ScoreSummaryBlock summary={m.score_summary} />
               {m.reason && (
                 <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
                   {m.reason}
