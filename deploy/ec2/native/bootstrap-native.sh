@@ -118,7 +118,7 @@ $VENV/bin/pip install --quiet --index-url https://download.pytorch.org/whl/cpu "
 $VENV/bin/python -c "import redsim, torch, art; print('venv ok', torch.__version__)"
 
 echo "== web dependencies"
-(cd $SRC && pnpm install --frozen-lockfile)
+(cd $SRC && CI=true pnpm install --frozen-lockfile)   # CI=true: no TTY prompt when node_modules is replaced
 
 echo "== keycloak ${KC_VERSION}"
 if [ ! -x /opt/keycloak/bin/kc.sh ]; then

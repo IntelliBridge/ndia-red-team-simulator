@@ -42,7 +42,7 @@ fi
 restart_web=0
 if grep -qE '^(pnpm-lock.yaml|web/package.json|packages/design-system/package.json)$' <<<"$changed"; then
   echo "web dependencies changed: pnpm install"
-  sudo -u redsim pnpm install --frozen-lockfile
+  sudo -u redsim CI=true pnpm install --frozen-lockfile
   restart_web=1
 fi
 if grep -qE '^deploy/ec2/native/systemd/' <<<"$changed"; then
