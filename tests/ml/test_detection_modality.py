@@ -27,7 +27,7 @@ pytest.importorskip("art")
 import numpy as np
 
 from redsim.ml.artifacts import FilesystemSink
-from redsim.ml.attacks import ATTACKS, KNOWN_ATTACK_CAPABILITIES, attack_capabilities
+from redsim.ml.attacks import ATLAS_TECHNIQUES, ATTACKS, attack_capabilities, attack_norms
 from redsim.ml.attacks import dpatch as dp
 from redsim.ml.datasets import DatasetUnavailable
 from redsim.ml.datasets import military_assets as ma
@@ -48,8 +48,8 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def detection_config(**overrides: Any) -> CampaignConfig:
-    cfg: dict[str, Any] = {"target_id": "tiny_detector", "modality": td.DETECTION_MODALITY, "attack_ids": ["dpatch"],
-                           "attack_params": {"dpatch": {"max_iter": 2}}, "norm": td.PATCH_AREA_NORM, "eps_grid": GRID,
+    cfg: dict[str, Any] = {"target_id": "tiny_detector", "modality": "detection", "attack_ids": ["dpatch"],
+                           "attack_params": {"dpatch": {"max_iter": 2}}, "norm": "patch_area", "eps_grid": GRID,
                            "reference_eps": REF, "n_samples": N, "seed": 0, "explain_k": 3, "dataset_id": "synthetic"}
     cfg.update(overrides)
     return CampaignConfig(**cfg)
@@ -192,7 +192,8 @@ def test_tiny_detector_satisfies_the_detection_target_contract(target: TinyDetec
     assert isinstance(target, Target) and isinstance(target, td.DetectionTarget)
     info = target.info()
     assert info.status == "available" and info.metadata["modality"] == "detection"
-    assert info.domain == td.DETECTION_DOMAIN and td.is_detection_target(target)
+    assert info.domain == "detection" == td.DETECTION_DOMAIN and td.is_detection_target(target)
+    assert (td.DETECTION_MODALITY, td.PATCH_AREA_NORM) == ("detection", "patch_area")
     assert isinstance(slice_, td.DetectionSample) and slice_.x.shape == (N, 3, IMAGE_SIZE, IMAGE_SIZE)
     assert slice_.x.dtype == np.float32 and float(slice_.x.max()) <= 1.0
     assert len(slice_.targets) == N and slice_.n_boxes >= N
@@ -207,7 +208,13 @@ def test_tiny_detector_satisfies_the_detection_target_contract(target: TinyDetec
     est = target.art_estimator()
     assert hasattr(est, "loss_gradient") and target.art_classifier() is est
     man = target.manifest()
-    assert man["detection"]["score_threshold"] == 0.5 and man["detection"]["class_names"] == CLASS_NAMES
+    # The block is schema.DetectionModelSpec: classes in index order, [H, W] input size, xyxy boxes.
+    assert man["detection"]["score_threshold"] == 0.5 and man["detection"]["classes"] == CLASS_NAMES
+    assert man["detection"]["input_size"] == [IMAGE_SIZE, IMAGE_SIZE] and man["detection"]["box_format"] == "xyxy"
+    projected = MLModelManifest.model_validate({**man, "format": "torch_state_dict", "sha256": man["weights_sha256"],
+                                                "size_bytes": 1, "modality": "detection", "name": "tiny",
+                                                "status": "available", "architecture_id": "TinyBoxNet"})
+    assert projected.detection is not None and projected.detection.classes == CLASS_NAMES
     assert man["label_offset"] == td.LABEL_OFFSET and "test double" in man["caveats"][0]
 
 
@@ -258,7 +265,7 @@ def test_patch_control_same_area_same_locations_and_no_model_access(target: Tiny
     assert "family:control" in dp.CONTROL.capabilities and "black_box" in dp.CONTROL.capabilities
 
 
-def test_dpatch_params_domains_and_registration_guard() -> None:
+def test_dpatch_params_domains_and_registration() -> None:
     p = dp.ADAPTER.resolve_params({"eps": 0.03})
     assert p == {"eps": 0.03, "max_iter": 10, "learning_rate": 5.0, "batch_size": 4}
     with pytest.raises(ValueError):
@@ -268,17 +275,15 @@ def test_dpatch_params_domains_and_registration_guard() -> None:
     with pytest.raises(ValueError):
         dp.patch_side(0.0, 16, 16)
     info = dp.ADAPTER.info()
-    assert info.id == "dpatch" and info.family == "evasion" and info.access == "white-box"
+    assert info.id == "dpatch" and info.family == "evasion" and info.access == "white-box" and info.domain == "detection"
     assert info.requires_gradients is True and info.phase == "B" and dp.ADAPTER.domains == frozenset({"detection"})
     assert "white_box" in dp.ADAPTER.capabilities and dp.ADAPTER.takes_eps is True
-    knows_detection = "modality:detection" in KNOWN_ATTACK_CAPABILITIES
-    assert dp.REGISTERED is knows_detection
-    assert (ATTACKS.maybe_get("dpatch") is not None) is knows_detection
-    if knows_detection:
-        assert {"modality:detection", "white_box", "family:evasion", "takes_eps"} <= attack_capabilities(dp.ADAPTER)
-    else:
-        with pytest.raises(ValueError):
-            attack_capabilities(dp.ADAPTER)      # the vocabulary lacks the tag: refused, never registered wrongly
+    # Both adapters are registered by the attacks package with the bundled set; the control is never an attack.
+    assert ATTACKS.get("dpatch") is dp.ADAPTER and ATTACKS.get("patch_noise_control") is dp.CONTROL
+    assert {"modality:detection", "white_box", "family:evasion", "takes_eps", "norm:patch_area"} <= attack_capabilities(dp.ADAPTER)
+    assert {"modality:detection", "black_box", "family:control", "norm:patch_area"} <= attack_capabilities(dp.CONTROL)
+    assert attack_norms(dp.ADAPTER) == attack_norms(dp.CONTROL) == frozenset({"patch_area"})
+    assert ATLAS_TECHNIQUES["dpatch"].id == "AML.T0043" and "patch_noise_control" not in ATLAS_TECHNIQUES
 
 
 def test_dpatch_without_a_differentiable_estimator_is_not_applicable(slice_: td.DetectionSample) -> None:
@@ -499,7 +504,8 @@ def test_train_detector_one_epoch_and_bundled_target_loads_digest_checked_state_
     assert result.metrics["n_gt_boxes"] == eval_split.n_boxes and result.metrics["n_images"] == 8
     assert "recall" in result.metrics and "map50" in result.metrics and len(result.history) == 1
     assert tr.MODEST_MAP_NOTE in result.metrics["notes"] and result.architecture["architecture_id"] == td.ARCHITECTURE_ID
-    assert result.detection["class_names"] == list(ma.SYNTHETIC_CLASS_NAMES)
+    assert result.detection["classes"] == list(ma.SYNTHETIC_CLASS_NAMES)
+    assert result.detection["input_size"] == [IMAGE_SIZE, IMAGE_SIZE]
     # The default-anchor module reports the cache miss honestly instead of downloading.
     loaded, note = td.init_coco_weights(td.build_detector_module(n_classes=2, image_size=IMAGE_SIZE))
     assert loaded is False and "no cached COCO checkpoint" in note

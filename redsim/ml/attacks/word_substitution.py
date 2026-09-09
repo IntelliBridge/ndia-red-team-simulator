@@ -273,7 +273,7 @@ def slice_vocabulary(texts: Sequence[str]) -> list[str]:
 # --------------------------------------------------------------------------------------- the attack
 
 class WordSubstitutionAdapter:
-    id = ATTACK_ID
+    id: str = ATTACK_ID
     domains = frozenset({"text"})
     takes_eps = True
     norms: ClassVar[frozenset[str]] = frozenset({"edit"})
@@ -445,7 +445,7 @@ class WordSubstitutionAdapter:
 class TextRandomSwapControl:
     """Benign control for text (spec 12.4): random word swaps at the attack's edit budget, no model access."""
 
-    id = CONTROL_ID
+    id: str = CONTROL_ID
     domains = frozenset({"text"})
     takes_eps = True
     norms: ClassVar[frozenset[str]] = frozenset({"edit"})

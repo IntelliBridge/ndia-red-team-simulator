@@ -77,6 +77,9 @@ from redsim.ml.artifacts import ArtifactSink
 from redsim.ml.attacks import (
     ATTACKS,
     CPU_FLOAT32_NOTE,
+    apply_domain_defaults,
+    attack_norms,
+    attack_supports_norm,
     library_versions,
 )
 from redsim.ml.errors import AttackNotApplicable, ExplainUnavailable, MLError, TargetUnavailable
@@ -147,6 +150,8 @@ TRAINING_DEFENSE_LIMITATION = (
 TRAINING_DEFENSE_MODULE = "redsim.ml.harden.apply"
 TRAINING_DEFENSE_HOOK = "apply_training_defense"
 TRAINING_DEFENSE_KIND = "training"
+#: ``code`` of the hook's typed refusal (``redsim.ml.harden.apply.TrainingDefenseUnavailable``).
+TRAINING_DEFENSE_UNAVAILABLE_CODE = "training_defense_unavailable"
 MRI_SCOPE_LIMITATION = (
     "The MRI summarises this campaign only (one model, one modality, the declared attack set, eps grid "
     "and reference budget); it is not comparable across campaigns with different settings and is never "
@@ -354,7 +359,19 @@ def _apply_defense(target: Target, config: CampaignConfig, sink: ArtifactSink) -
             return target, {"id": config.defense.id, "kind": TRAINING_DEFENSE_KIND, "status": "unavailable",
                             "reason": f"{TRAINING_DEFENSE_MODULE!r} defines no callable {TRAINING_DEFENSE_HOOK!r}",
                             "requested": requested}
-        defended = call_supported(hook, target, config.defense, config=config, sink=sink, seed=config.seed)
+        try:
+            defended = call_supported(hook, target, config.defense, config=config, sink=sink, seed=config.seed)
+        except MLError as exc:
+            if getattr(exc, "code", None) != TRAINING_DEFENSE_UNAVAILABLE_CODE:
+                raise
+            # The hook refused the defense for this target (no training slice, a tree ensemble): recorded as
+            # unavailable with its typed reason; the run measures the undefended model and withholds the score.
+            record = getattr(exc, "unavailable", None)
+            dump = getattr(record, "model_dump", None)
+            typed: dict[str, Any] = dict(dump(mode="json")) if callable(dump) else {}
+            return target, {**typed, "id": config.defense.id, "kind": TRAINING_DEFENSE_KIND,
+                            "status": "unavailable", "code": TRAINING_DEFENSE_UNAVAILABLE_CODE,
+                            "reason": str(typed.get("reason") or exc), "requested": requested}
         if defended is None:
             raise MLError(f"{TRAINING_DEFENSE_MODULE}.{TRAINING_DEFENSE_HOOK} returned no target for "
                           f"{config.defense.id!r}")
@@ -386,15 +403,32 @@ def _resolve_attacks(config: CampaignConfig, domain: str) -> list[Any]:
         domains = getattr(adapter, "domains", frozenset({info.domain}))
         if domain not in domains:
             raise AttackNotApplicable(f"attack {aid!r} applies to {sorted(domains)}, not {domain!r}")
-        if config.norm == "l2" and not any(s.name == "norm_l2" for s in info.params_schema):
-            raise AttackNotApplicable(f"attack {aid!r} supports the L-inf norm only; the campaign norm is 'l2'")
+        if not attack_supports_norm(adapter, config.norm):
+            # Spec 12.3 / ATTACKS_HARDEN-03: an adapter is evaluated only in a norm it declares (a minimal-norm
+            # attack's achieved norm is thresholded in that norm); it is never silently re-normed.
+            raise AttackNotApplicable(f"attack {aid!r} supports the {norm_phrase(attack_norms(adapter))}; "
+                                      f"the campaign norm is {config.norm!r}")
         adapters.append(adapter)
     return adapters
 
 
-def _attack_params(config: CampaignConfig, adapters: list[Any]) -> dict[str, dict[str, Any]]:
+NORM_LABELS: dict[str, str] = {"linf": "L-inf", "l2": "L2", "edit": "edit", "patch_area": "patch_area"}
+
+
+def norm_phrase(norms: frozenset[str] | set[str]) -> str:
+    """``"L-inf norm only"`` for one norm, ``"norms L2 and L-inf"`` for several (refusal wording)."""
+    labels = [NORM_LABELS.get(n, n) for n in sorted(norms)]
+    if len(labels) == 1:
+        return f"{labels[0]} norm only"
+    return "norms " + ", ".join(labels[:-1]) + f" and {labels[-1]}"
+
+
+def _attack_params(config: CampaignConfig, adapters: list[Any],
+                   domain: str | None = None) -> dict[str, dict[str, Any]]:
     """``config.attack_params`` per adapter. ``eps`` comes from the grid and ``norm_l2`` from
-    ``config.norm``, so a caller that sets either per attack has a configuration error."""
+    ``config.norm``, so a caller that sets either per attack has a configuration error. With ``domain``
+    the adapter's ``domain_defaults[domain]`` (ATTACKS_HARDEN-04) fill every key the caller omitted, so the
+    values in effect land in ``Measurement.params`` like any other parameter."""
     out: dict[str, dict[str, Any]] = {}
     l2 = config.norm == "l2"
     for a in adapters:
@@ -403,6 +437,7 @@ def _attack_params(config: CampaignConfig, adapters: list[Any]) -> dict[str, dic
         if clash:
             raise ValueError(f"attack_params[{a.id!r}] must not set {clash}: eps comes from eps_grid and the "
                              "norm from config.norm")
+        given = apply_domain_defaults(a, domain, given)
         if any(s.name == "norm_l2" for s in a.info().params_schema):
             given["norm_l2"] = l2
         out[a.id] = given
@@ -410,7 +445,7 @@ def _attack_params(config: CampaignConfig, adapters: list[Any]) -> dict[str, dic
 
 
 def _stages() -> tuple[str, ...]:
-    """``schema.STAGES`` as it is at run time (Phase B adds ``defense_apply``; never copied here)."""
+    """``schema.STAGES`` as it is at run time (never copied here); ``defense_apply`` follows ``load_target``."""
     return tuple(_schema.STAGES)
 
 
@@ -447,7 +482,6 @@ def _run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool,
                   on_stage: Callable[[str], None] | None, target_override: Target | None) -> CampaignRecord:
     started_at = utcnow()
     run_id = uuid.uuid4().hex
-    stages = _stages()
     runner: ModalityRunner = resolve_runner(config.modality)   # a missing runner module refuses before any stage
 
     # --- load_target -------------------------------------------------------------------------
@@ -463,7 +497,7 @@ def _run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool,
     manifest = dict(target.manifest() or {})
     model_sha256 = manifest_get(manifest, "model_sha256", "weights_sha256", "sha256")
     adapters = _resolve_attacks(config, domain)
-    params_by_attack = _attack_params(config, adapters)
+    params_by_attack = _attack_params(config, adapters, domain)
     grid = [float(e) for e in config.eps_grid]
     ref = float(config.reference_eps)
     l2 = config.norm == "l2"
@@ -492,7 +526,9 @@ def _run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool,
     nondeterminism = frame.nondeterminism
     versions = frame.versions
     stage_done("load_target")
-    if config.defense is not None and defense_unavailable is None and "defense_apply" in stages:
+    if config.defense is not None and defense_unavailable is None:
+        # Spec 6.5: a verify campaign records ``defense_apply`` directly after ``load_target`` (STAGES order);
+        # a defense that could not be applied writes no such stage, since nothing was applied.
         stage_done("defense_apply")
     if defense_unavailable is not None:
         limitations.append(

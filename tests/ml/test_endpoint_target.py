@@ -24,6 +24,7 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("art")
 
+import httpx
 import numpy as np
 
 from redsim.ml import sandbox
@@ -31,20 +32,27 @@ from redsim.ml.artifacts import FilesystemSink
 from redsim.ml.campaign import run_campaign
 from redsim.ml.endpoint_broker import (
     CONTRACT_VERSION,
-    EgressRefused,
-    EndpointAuthFailed,
     EndpointLimits,
-    EndpointSchemaMismatch,
-    EndpointUnreachable,
     HttpPredictTransport,
     PredictBroker,
-    QueryBudgetExceeded,
     TokenBucket,
-    validate_predict_response,
 )
-from redsim.ml.errors import MLError
+
+# The endpoint failure classes resolve by name through redsim.ml.errors (ENDPOINT-05): the transport ones live
+# there, the egress and contract ones are re-exported from the wave B0 modules that own their rules.
+from redsim.ml.errors import (
+    EgressRefused,
+    EndpointAuthFailed,
+    EndpointNotAllowlisted,
+    EndpointSchemaMismatch,
+    EndpointUnreachable,
+    EndpointUrlInvalid,
+    MLError,
+    QueryBudgetExceeded,
+)
 from redsim.ml.sandbox import probe_endpoint_sandboxed, run_campaign_sandboxed
 from redsim.ml.schema import CampaignConfig, MLModelManifest
+from redsim.ml.targets import endpoint_contract as ec
 from redsim.ml.targets.base import Target
 from redsim.ml.targets.endpoint import ACCESS_LABEL, EndpointTarget, SocketPredictTransport
 from tests.ml.fakes import CLASS_NAMES, TinyTarget
@@ -175,22 +183,35 @@ def test_logits_are_softmaxed_client_side_and_recorded() -> None:
 
 
 def test_response_contract_is_never_coerced() -> None:
-    rows, kind = validate_predict_response({"probabilities": [[0.2, 0.3, 0.5]] * 2}, n_rows=2, n_classes=3)
+    """The broker validates responses with the endpoint-v1 module's own checker; nothing local, nothing coerced."""
+    rows, kind = ec.validate_response({"probabilities": [[0.2, 0.3, 0.5]] * 2}, n=2, n_classes=3)
     assert kind == "probabilities" and rows[0] == [0.2, 0.3, 0.5]
-    rows, kind = validate_predict_response({"logits": [[0.0, 0.0, 0.0]]}, n_rows=1, n_classes=3)
+    rows, kind = ec.validate_response({"logits": [[0.0, 0.0, 0.0]]}, n=1, n_classes=3)
     assert kind == "logits" and abs(sum(rows[0]) - 1.0) < 1e-9
-    bad: list[tuple[Any, str]] = [
-        ({"probabilities": [[0.2, 0.3, 0.5]]}, "rows"),                        # wrong row count
-        ({"probabilities": [[0.5, 0.5]] * 2}, "columns"),                      # wrong class count
-        ({"probabilities": [[0.5, 0.4, 0.0]] * 2}, "sums"),                    # row sum 0.9
-        ({"probabilities": [[float("nan"), 0.5, 0.5]] * 2}, "finite"),         # NaN
-        ({"probabilities": [[1.5, -0.5, 0.0]] * 2}, "outside"),                # out of range
-        ({"scores": [[0.2, 0.3, 0.5]] * 2}, "neither"),                        # unknown key
-        ([[0.2, 0.3, 0.5]] * 2, "object"),                                     # not an object
+    bad: list[tuple[Any, str, str]] = [
+        ({"probabilities": [[0.2, 0.3, 0.5]]}, "rows", "probabilities"),                   # wrong row count
+        ({"probabilities": [[0.5, 0.5]] * 2}, "2 values, n_classes is 3", "probabilities"),  # wrong class count
+        ({"probabilities": [[0.5, 0.4, 0.0]] * 2}, "sums", "probabilities"),               # row sum 0.9
+        ({"probabilities": [[float("nan"), 0.5, 0.5]] * 2}, "finite", "probabilities"),    # NaN
+        ({"probabilities": [[1.5, -0.5, 0.0]] * 2}, "outside", "probabilities"),           # out of range
+        ({"scores": [[0.2, 0.3, 0.5]] * 2}, "not permitted", "scores"),                    # unknown key
+        ([[0.2, 0.3, 0.5]] * 2, "object", "body"),                                         # not an object
     ]
-    for body, needle in bad:
-        with pytest.raises(EndpointSchemaMismatch, match=needle):
-            validate_predict_response(body, n_rows=2, n_classes=3)
+    for body, needle, field in bad:
+        with pytest.raises(EndpointSchemaMismatch, match=needle) as info:
+            ec.validate_response(body, n=2, n_classes=3)
+        assert info.value.field == field and info.value.code == "endpoint_schema_mismatch"
+    # The request side is the contract module's encoder too: images must be [C][H][W] in [0, 1].
+    with TinyEndpointServer() as srv:
+        transport = HttpPredictTransport(srv.url, AUTH, limits=FAST, n_classes=3, modality="image",
+                                         input_shape=[3, 8, 8])
+        with pytest.raises(EndpointSchemaMismatch, match="outside") as info2:
+            transport.predict([[[[2.0] * 8] * 8] * 3])
+        assert info2.value.field == "inputs"
+        with pytest.raises(EndpointSchemaMismatch, match="registered input_shape"):
+            transport.predict([[[[0.0] * 4] * 4] * 3])
+        assert srv.n_requests == 0, "a request that violates the contract never leaves the worker"
+        transport.close()
 
 
 # --- typed failures (spec 6.3; ENDPOINT-05, -07, -08) -------------------------------------------------
@@ -200,20 +221,43 @@ def test_schema_mismatch_is_a_typed_failure_in_probe_and_campaign(tmp_path: Path
     with TinyEndpointServer(n_columns=2) as srv:
         transport = HttpPredictTransport(srv.url, AUTH, limits=FAST, n_classes=3)
         target = _target(transport)
-        with pytest.raises(EndpointSchemaMismatch, match="2 columns") as info:
+        with pytest.raises(EndpointSchemaMismatch, match="2 values, n_classes is 3") as info:
             target.load()
-        assert info.value.code == "endpoint_schema_mismatch"
+        assert info.value.code == "endpoint_schema_mismatch" and info.value.field == "probabilities"
         assert transport.stats.failures == 1 and transport.stats.rows == 0, "a refused response counts no row"
         # Through the campaign the same failure surfaces before any measurement exists.
         with pytest.raises(EndpointSchemaMismatch):
             run_campaign(_config(), FilesystemSink(tmp_path / "sink"), explain=False, target_override=_target(transport))
         transport.close()
-    # The child names the class in its envelope; the parent rebuilds the typed class (validate mode).
+    # The child names the class in its envelope; the parent rebuilds the typed class (validate mode) by name
+    # through redsim.ml.errors, with the structured detail when the envelope carries it.
     err = sandbox._typed_error(
         {"ok": False, "error_class": "EndpointSchemaMismatch", "error": "probe response has 2 columns"},
         mode="validate",
     )
-    assert isinstance(err, EndpointSchemaMismatch) and isinstance(err, MLError)
+    assert isinstance(err, EndpointSchemaMismatch) and isinstance(err, MLError) and "2 columns" in str(err)
+    detailed = sandbox._typed_error(
+        {"ok": False, "error_class": "EndpointSchemaMismatch", "error": "probabilities: row 0 has 2 values",
+         "code": "endpoint_schema_mismatch", "detail": {"field": "probabilities", "reason": "row 0 has 2 values"}},
+        mode="validate",
+    )
+    assert isinstance(detailed, EndpointSchemaMismatch) and detailed.field == "probabilities"
+    assert str(detailed) == "probabilities: row 0 has 2 values"
+    refused = sandbox._typed_error(
+        {"ok": False, "error_class": "EndpointNotAllowlisted", "code": "endpoint_not_allowlisted",
+         "error": "endpoint_not_allowlisted (not_allowlisted): host 'models.example.mil' is not in target_allowlist",
+         "detail": {"code": "endpoint_not_allowlisted", "rule": "not_allowlisted",
+                    "reason": "host 'models.example.mil' is not in target_allowlist", "host": "models.example.mil"}},
+        mode="campaign",
+    )
+    assert isinstance(refused, EndpointNotAllowlisted) and isinstance(refused, EgressRefused)
+    assert refused.code == "endpoint_not_allowlisted" and refused.rule == "not_allowlisted"
+    assert refused.host == "models.example.mil" and "not in target_allowlist" in str(refused)
+    invalid = sandbox._typed_error({"ok": False, "error_class": "EndpointUrlInvalid", "error": "x"}, mode="campaign")
+    assert isinstance(invalid, EndpointUrlInvalid) and invalid.code == "endpoint_url_invalid"
+    unreachable = sandbox._typed_error({"ok": False, "error_class": "EndpointUnreachable", "error": "down"},
+                                       mode="campaign")
+    assert isinstance(unreachable, EndpointUnreachable) and str(unreachable) == "down"
 
 
 def test_auth_failure_unreachable_and_retries_are_typed(server: TinyEndpointServer) -> None:
@@ -240,38 +284,82 @@ def test_auth_failure_unreachable_and_retries_are_typed(server: TinyEndpointServ
     transport.close()
 
 
-@pytest.mark.parametrize("url,needle", [
-    ("https://a:b@127.0.0.1/predict", "userinfo"),
-    ("http://127.0.0.1/predict?k=v", "query"),
-    ("http://127.0.0.1/predict#frag", "fragment"),
-    ("ftp://127.0.0.1/predict", "scheme"),
-    ("http://10.0.0.5/predict", "allowlist"),
-    ("https://models.example.mil/predict", "allowlist"),
+@pytest.mark.parametrize("url,needle,cls,code", [
+    ("https://a:b@127.0.0.1/predict", "userinfo", EndpointUrlInvalid, "endpoint_url_invalid"),
+    ("http://127.0.0.1/predict?k=v", "query", EndpointUrlInvalid, "endpoint_url_invalid"),
+    ("http://127.0.0.1/predict#frag", "fragment", EndpointUrlInvalid, "endpoint_url_invalid"),
+    ("ftp://127.0.0.1/predict", "scheme", EndpointUrlInvalid, "endpoint_url_invalid"),
+    ("http://10.0.0.5/predict", "target_allowlist", EndpointNotAllowlisted, "endpoint_not_allowlisted"),
+    ("https://models.example.mil/predict", "target_allowlist", EndpointNotAllowlisted, "endpoint_not_allowlisted"),
 ])
-def test_egress_refusals_happen_before_any_request(url: str, needle: str) -> None:
+def test_egress_refusals_happen_before_any_request(url: str, needle: str, cls: type, code: str) -> None:
+    """``EgressPolicy.check_endpoint`` runs in the transport constructor: the refusal is the policy's own class."""
     with pytest.raises(EgressRefused, match=needle) as info:
         HttpPredictTransport(url, AUTH, limits=FAST)
-    assert info.value.code == "egress_refused"
+    assert isinstance(info.value, cls) and info.value.code == code
+    assert "a:b@" not in str(info.value) and "k=v" not in str(info.value), "messages never carry userinfo or query"
 
 
 def test_plaintext_to_a_non_loopback_host_and_private_resolution_are_refused() -> None:
-    with pytest.raises(EgressRefused, match="plaintext"):
+    with pytest.raises(EndpointUrlInvalid, match="plaintext"):
         HttpPredictTransport("http://models.example.mil/predict", AUTH, limits=FAST,
                              allowlist=["models.example.mil"])
 
-    def resolves_private(*_a: Any, **_k: Any) -> list[Any]:
-        return [(2, 1, 6, "", ("10.0.0.5", 443))]
+    def resolves_private(host: str, port: int) -> list[str]:
+        return ["10.0.0.5"]
 
-    with pytest.raises(EgressRefused, match="10.0.0.5"):
+    with pytest.raises(EgressRefused, match="10.0.0.5") as info:
         HttpPredictTransport("https://models.example.mil/predict", AUTH, limits=FAST,
                              allowlist=["models.example.mil"], resolver=resolves_private)
-    # A CIDR on the allowlist that contains the resolved address permits it (no request is made here).
+    assert info.value.code == "egress_refused" and info.value.rule == "address_class"
+    # A private CIDR on the allowlist that contains the resolved address permits it (no request is made here).
     transport = HttpPredictTransport("https://models.example.mil/predict", AUTH, limits=FAST,
                                      allowlist=["models.example.mil", "10.0.0.0/8"], resolver=resolves_private)
-    assert transport.stats.resolved_addresses == ["10.0.0.5"]
+    assert transport.stats.resolved_addresses == ["10.0.0.5"] and transport.stats.pinned_address == "10.0.0.5"
     assert transport.stats.tls_mode in {"truststore", "default"} or transport.stats.tls_mode.startswith("ca-bundle:")
     assert transport.stats.proxy_env_honoured is True
     transport.close()
+
+
+def test_requests_connect_to_the_pinned_address_with_the_hostname_as_sni_and_host() -> None:
+    """ENDPOINT-07: the first permitted address is pinned at load; every request dials it with the hostname as TLS
+    SNI and Host header, and ``verify_pin`` refuses any other address for that host (DNS rebinding)."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"probabilities": [[0.2, 0.3, 0.5]]})
+
+    transport = HttpPredictTransport(
+        "https://models.example.mil/predict", AUTH, limits=FAST, n_classes=3, modality="tabular",
+        allowlist=["models.example.mil"], transport=httpx.MockTransport(handler),
+        resolver=lambda host, port: ["8.8.8.8", "8.8.4.4"],
+    )
+    assert transport.pinned_address == "8.8.8.8" and transport.stats.resolved_addresses == ["8.8.8.8", "8.8.4.4"]
+    assert transport.policy.session.pinned("models.example.mil") == "8.8.8.8"
+    result = transport.predict([[0.1, 0.2, 0.3, 0.4]], purpose="probe")
+    assert result.probabilities == [[0.2, 0.3, 0.5]] and result.http_status == 200
+    request = seen[0]
+    assert request.url.scheme == "https" and request.url.host == "8.8.8.8" and request.url.path == "/predict"
+    assert request.headers["host"] == "models.example.mil"
+    assert request.extensions.get("sni_hostname") == "models.example.mil"
+    assert request.headers["authorization"] == f"Bearer {DEFAULT_TOKEN}"
+    assert json.loads(request.content) == {"contract": CONTRACT_VERSION, "input_format": "tabular_features",
+                                           "inputs": [[0.1, 0.2, 0.3, 0.4]]}
+    assert any("pinned to 8.8.8.8" in n for n in transport.stats.egress_notes)
+    assert not any("no IP pinning" in n for n in transport.stats.egress_notes)
+    with pytest.raises(EgressRefused, match="dns_rebinding") as info:
+        transport.policy.session.verify_pin("models.example.mil", "8.8.4.4")
+    assert info.value.code == "egress_refused"
+    transport.close()
+
+    # A literal-IP loopback endpoint pins itself and carries no SNI (an IP is not a TLS server name).
+    with TinyEndpointServer() as srv:
+        plain = HttpPredictTransport(srv.url, AUTH, limits=FAST, n_classes=3)
+        assert plain.pinned_address == "127.0.0.1" and plain.stats.scheme == "http"
+        plain.predict([[[[0.0] * 8] * 8] * 3])
+        assert srv.n_requests == 1 and srv.requests[0]["auth_ok"]
+        plain.close()
 
 
 def test_query_budget_stops_at_the_cap_with_no_invented_rows(server: TinyEndpointServer) -> None:
@@ -378,9 +466,14 @@ def test_broker_error_frames_reach_the_child_typed(work_root: Path) -> None:
         work_dir = Path(tempfile.mkdtemp(prefix="job-", dir=work_root))
         with PredictBroker(srv.url, AUTH, work_dir=work_dir, limits=FAST, n_classes=3) as broker:
             transport = SocketPredictTransport(broker.socket_path)
-            with pytest.raises(EndpointSchemaMismatch, match="2 columns"):
+            with pytest.raises(EndpointSchemaMismatch, match="2 values, n_classes is 3") as info:
                 transport.predict([[[[0.0] * 8] * 8] * 3])
+            # The frame carried the class name and its structured detail; the child rebuilt the same class.
+            assert info.value.field == "probabilities" and info.value.code == "endpoint_schema_mismatch"
             assert transport.stats_dict()["failures"] == 1
+            with pytest.raises(EndpointSchemaMismatch, match="images nor flat") as info2:
+                transport.predict([[[0.0]]])   # rank 2: neither an image nor a feature vector
+            assert info2.value.field == "inputs"
     # A socket nobody serves is "unreachable", never a fabricated prediction.
     with pytest.raises(EndpointUnreachable):
         SocketPredictTransport(work_dir / "absent.sock").predict([[[[0.0] * 8] * 8] * 3])
@@ -518,8 +611,9 @@ def test_probe_endpoint_sandboxed_is_the_endpoint_variant_of_validate(
 
     # A contract violation at probe time is the typed refusal, rebuilt in the parent from the envelope.
     with TinyEndpointServer(n_columns=2) as bad:
-        with pytest.raises(EndpointSchemaMismatch, match="2 columns"):
+        with pytest.raises(EndpointSchemaMismatch, match="2 values, n_classes is 3") as mismatch:
             probe_endpoint_sandboxed("endpoint-tiny", _target_endpoint(bad.url), AUTH, job_id="ep-probe-2")
+        assert mismatch.value.field == "probabilities", "the envelope's detail rebuilt the contract field"
     # A wrong credential is an auth failure, and the egress policy refuses before any child is spawned.
     with TinyEndpointServer() as srv2:
         with pytest.raises(EndpointAuthFailed):
@@ -527,9 +621,10 @@ def test_probe_endpoint_sandboxed_is_the_endpoint_variant_of_validate(
                                      {"kind": "bearer", "secret": "tok-wrong"}, job_id="ep-probe-3")
     spawned_before = captured["spawns"]
     assert spawned_before == 3, "the three probes above each ran a real child"
-    with pytest.raises(EgressRefused):
+    with pytest.raises(EndpointNotAllowlisted) as refused:
         probe_endpoint_sandboxed("endpoint-tiny", _target_endpoint("http://10.0.0.5/predict"), AUTH,
                                  job_id="ep-probe-4")
+    assert refused.value.code == "endpoint_not_allowlisted" and refused.value.host == "10.0.0.5"
     assert captured["spawns"] == spawned_before, "no child is spawned for a URL the egress policy refuses"
     assert not (Path(sandbox.work_dir_root()) / "ep-probe-4").exists(), "the refused job's work dir is removed"
     assert sys.executable  # the real interpreter ran the children above

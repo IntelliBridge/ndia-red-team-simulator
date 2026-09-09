@@ -2,10 +2,10 @@
 
 Three things live here because they share one contract and one owner:
 
-* the tolerant schema constants (``DETECTION_DOMAIN``, ``DETECTION_MODALITY``, ``PATCH_AREA_NORM``):
-  wave B0 adds ``"detection"`` to ``Domain`` / ``Modality`` and ``"patch_area"`` to ``Norm``; until that
-  lands each constant falls back to the nearest existing literal and ``TargetInfo.metadata["modality"]``
-  carries the truth, so this module imports and runs on either side of the rebase;
+* the schema constants (``DETECTION_DOMAIN``, ``DETECTION_MODALITY``, ``PATCH_AREA_NORM``): the
+  ``"detection"`` ``Domain`` / ``Modality`` literal and the ``"patch_area"`` ``Norm`` literal a detection
+  campaign, its target and its adapters are typed against, plus ``detection_spec_block`` (the manifest's
+  ``detection`` block on ``schema.DetectionModelSpec``);
 * the in-repo detection evaluation (``match_boxes``, ``evaluate_detections``): greedy per-image IoU
   matching at one threshold and one score threshold, recall with its box denominators, per-class
   ``n`` / ``n_correct`` counts, all-point-interpolated AP averaged over classes with ground truth
@@ -28,12 +28,10 @@ import platform
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, cast, get_args, runtime_checkable
+from typing import Any, Final, Protocol, cast, runtime_checkable
 
 import numpy as np
-from pydantic import BaseModel, Field, ValidationError
 
-from redsim.ml import schema
 from redsim.ml.datasets import DatasetUnavailable
 from redsim.ml.datasets.military_assets import (
     DetectionSplit,
@@ -48,7 +46,7 @@ from redsim.ml.errors import (
     TargetUnavailable,
     UnsupportedArtifact,
 )
-from redsim.ml.schema import Domain, Measurement, TargetInfo
+from redsim.ml.schema import DetectionModelSpec, Domain, Modality, Norm, TargetInfo, TargetStatus
 from redsim.ml.targets.artifact import library_versions, model_manifest, sha256_file, verify_sha256
 from redsim.ml.targets.bundled import (
     BUILD_HINT,
@@ -65,15 +63,16 @@ from redsim.ml.targets.bundled import (
     weights_ref,
 )
 
-# --- tolerant schema constants (wave B0 adds the literals; see the module docstring) -------------------
+# --- schema constants (spec 12.1 detection row; ``schema.Domain`` / ``Modality`` / ``Norm`` literals) ---------
 
 MODALITY = "detection"
-DETECTION_DOMAIN: str = "detection" if "detection" in get_args(schema.Domain) else "image"
-DETECTION_MODALITY: str = "detection" if "detection" in get_args(schema.Modality) else "image"
-PATCH_AREA_NORM: str = "patch_area" if "patch_area" in get_args(schema.Norm) else "linf"
-SCHEMA_HAS_DETECTION_LITERALS: bool = DETECTION_DOMAIN == "detection"
-MEASUREMENT_HAS_DETECTION: bool = "detection" in Measurement.model_fields
-OBSERVATION_HAS_DETECTION: bool = "detection" in schema.Observation.model_fields
+DETECTION_DOMAIN: Final[Domain] = "detection"
+DETECTION_MODALITY: Final[Modality] = "detection"
+PATCH_AREA_NORM: Final[Norm] = "patch_area"
+#: ``Measurement.detection`` (``DetectionMetrics``) and ``Observation.detection`` (``DetectionObservation``) are
+#: schema fields; the runner fills them on every detection row beside the scalar ``det_*`` params.
+MEASUREMENT_HAS_DETECTION: Final = True
+OBSERVATION_HAS_DETECTION: Final = True
 BUDGET_LABEL = "patch area (share of image)"
 
 # torchvision detection label space: 0 is background, classes start at 1.
@@ -90,34 +89,24 @@ NO_CLASSIFIER_REASON = "an object detector is not a classifier: predict_proba is
 EXPLAINER_UNAVAILABLE_REASON = "no SHAP explainer for object detectors"
 
 
-# --- detection spec block (B0 ``MLModelManifest.detection: DetectionModelSpec``) ----------------------
-
-class _LocalDetectionModelSpec(BaseModel):
-    """Fallback for B0's ``schema.DetectionModelSpec`` with the fields the brief names."""
-
-    score_threshold: float = Field(ge=0.0, le=1.0)
-    iou_threshold: float = Field(gt=0.0, le=1.0)
-    class_names: list[str]
-    input_size: list[int]
-
+# --- detection spec block (``MLModelManifest.detection: schema.DetectionModelSpec``) -------------------
 
 def detection_spec_block(*, score_threshold: float, iou_threshold: float, class_names: Sequence[str],
-                         input_size: Sequence[int]) -> dict[str, Any]:
-    """The ``detection`` manifest block, validated through ``schema.DetectionModelSpec`` when B0 has landed.
+                         input_size: Sequence[int], excluded_classes: Sequence[str] = ()) -> dict[str, Any]:
+    """The ``detection`` manifest block: ``schema.DetectionModelSpec`` dumped in field order.
 
-    When the B0 class exists but rejects this shape the block is kept as written and ``schema_note`` says
-    so, so the run still records what the model declares instead of failing on a field name."""
-    block: dict[str, Any] = {"score_threshold": float(score_threshold), "iou_threshold": float(iou_threshold),
-                             "class_names": [str(c) for c in class_names], "input_size": [int(d) for d in input_size]}
-    spec_cls: Any = getattr(schema, "DetectionModelSpec", None)
-    if spec_cls is None:
-        _LocalDetectionModelSpec.model_validate(block)
-        return block
-    try:
-        validated: Any = spec_cls.model_validate(block).model_dump(mode="json")
-    except ValidationError as exc:
-        return {**block, "schema_note": f"schema.DetectionModelSpec rejected this block; kept as written: {exc}"}
-    return dict(validated)
+    ``class_names`` are the detector's classes in index order (the spec field is ``classes``);
+    ``input_size`` may be given as ``[C, H, W]`` (the slice shape) or ``[H, W]`` (what the spec records).
+    Boxes are ``xyxy`` in pixels everywhere in this module. A shape the spec rejects is a bug and raises.
+    """
+    size = [int(d) for d in input_size]
+    if len(size) == 3:
+        size = size[1:]
+    spec = DetectionModelSpec(
+        box_format="xyxy", input_size=size, iou_threshold=float(iou_threshold), score_threshold=float(score_threshold),
+        classes=[str(c) for c in class_names], excluded_classes=[str(c) for c in excluded_classes],
+    )
+    return spec.model_dump(mode="json")
 
 
 # --- samples ------------------------------------------------------------------------------------------
@@ -491,16 +480,11 @@ def is_detection_target(target: Any) -> bool:
     return str(info.metadata.get("modality", "")) == MODALITY or str(info.domain) == MODALITY
 
 
-def detection_target_info(target_id: str, name: str, *, status: str, reason: str | None = None,
+def detection_target_info(target_id: str, name: str, *, status: TargetStatus, reason: str | None = None,
                           metadata: Mapping[str, Any] | None = None) -> TargetInfo:
-    """``TargetInfo`` for a detector: domain ``detection`` once B0 has landed (else the fallback literal), and
-    ``metadata["modality"] = "detection"`` always."""
+    """``TargetInfo`` for a detector: domain ``detection`` and ``metadata["modality"] = "detection"``."""
     meta = {"modality": MODALITY, "budget": BUDGET_LABEL, **dict(metadata or {})}
-    if not SCHEMA_HAS_DETECTION_LITERALS:
-        meta["domain_note"] = ("schema.Domain has no 'detection' literal in this build; domain carries the "
-                               f"fallback {DETECTION_DOMAIN!r} and this metadata field carries the modality")
-    return TargetInfo(id=target_id, name=name, domain=cast(Domain, DETECTION_DOMAIN),
-                      status=cast(Any, status), reason=reason, metadata=meta)
+    return TargetInfo(id=target_id, name=name, domain=DETECTION_DOMAIN, status=status, reason=reason, metadata=meta)
 
 
 INFO_KEYS: tuple[str, ...] = (
@@ -606,8 +590,8 @@ class BundledDetectionTarget:
         names = [str(c) for c in (entry.get("class_names") or [])]
         raw_detection = entry.get("detection")
         detection: dict[str, Any] = dict(raw_detection) if isinstance(raw_detection, dict) else {}
-        if not names and isinstance(detection.get("class_names"), list):
-            names = [str(c) for c in detection["class_names"]]
+        if not names and isinstance(detection.get("classes"), list):    # DetectionModelSpec.classes
+            names = [str(c) for c in detection["classes"]]
         if not names:
             raise UnsupportedArtifact(f"manifest entry {self.id!r} declares no class_names")
         n_classes = int(entry.get("n_classes") or kwargs.get("n_classes") or len(names))
@@ -707,7 +691,7 @@ __all__ = [
     "COCO_CHECKPOINT_FILENAME", "DEFAULT_INPUT_SIZE", "DEFAULT_IOU_THRESHOLD", "DEFAULT_SCORE_THRESHOLD",
     "DETECTION_DOMAIN", "DETECTION_MODALITY", "EXPLAINER_UNAVAILABLE_REASON", "INFO_KEYS", "LABEL_OFFSET",
     "MEASUREMENT_HAS_DETECTION", "MODALITY", "NO_CLASSIFIER_REASON", "OBSERVATION_HAS_DETECTION", "PATCH_AREA_NORM",
-    "SCHEMA_HAS_DETECTION_LITERALS", "BundledDetectionTarget", "DetectionEval", "DetectionSample", "DetectionTarget",
+    "BundledDetectionTarget", "DetectionEval", "DetectionSample", "DetectionTarget",
     "art_targets", "average_precision", "box_iou", "build_detector_module", "coco_detector_checkpoint",
     "detection_sample", "detection_spec_block", "detection_target_info", "detector_architecture_config",
     "evaluate_detections", "init_coco_weights", "is_detection_target", "load_detector_state_dict",

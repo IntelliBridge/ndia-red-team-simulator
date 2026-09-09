@@ -47,7 +47,7 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, cast, get_args
 
 import numpy as np
 
@@ -57,6 +57,7 @@ from redsim.ml.schema import (
     CampaignConfig,
     Interpretation,
     Measurement,
+    Modality,
     Observation,
     RobustnessCurve,
     TargetInfo,
@@ -95,15 +96,18 @@ EXPLAIN_MODULES: dict[str, str] = {"image": "redsim.ml.explain.shap_image", "tab
 EXPLAIN_FIELDS = ("expl_shift_mean", "expl_shift_n", "expl_shift_n_excluded", "expl_shift_noise_floor",
                   "expl_shift_noise_floor_n")
 
-#: Registry of modality runners: modality -> ``"<module>:<attribute>"``, imported lazily by
-#: :func:`resolve_runner`. ``text`` and ``detection`` are registered by name for the sibling tracks
-#: (spec plan 12, wave B1): their modules may be absent in a given tree, which is reported, not faked.
+#: Registry of modality runners: one entry per ``schema.Modality`` literal, ``"<module>:<attribute>"``,
+#: imported lazily by :func:`resolve_runner` (a runner module that fails to import is reported as
+#: ``ModalityRunnerUnavailable`` before any stage runs, never replaced by another modality's runner).
 MODALITY_RUNNERS: dict[str, str] = {
     "image": "redsim.ml.runners.classification:run_classification",
     "tabular": "redsim.ml.runners.classification:run_classification",
     "text": "redsim.ml.runners.text:run_text",
     "detection": "redsim.ml.runners.detection:run_detection",
 }
+if set(MODALITY_RUNNERS) != set(get_args(Modality)):   # a Modality literal without a runner is a build error
+    raise RuntimeError(f"MODALITY_RUNNERS {sorted(MODALITY_RUNNERS)} does not match schema.Modality "
+                       f"{sorted(get_args(Modality))}")
 
 #: Offline pins for the sandbox child (MODALITIES-10): WordNet lives under the assets dir, torch hub and
 #: weight caches are pointed inside the work dir so nothing downloads. Applied only when unset.

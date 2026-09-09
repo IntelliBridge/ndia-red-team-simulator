@@ -35,20 +35,17 @@ import numpy as np
 
 from redsim.ml.datasets.sampling import per_class_counts, stratified_indices, stratified_sample
 from redsim.ml.endpoint_broker import (
-    CONTRACT_VERSION,
-    EndpointError,
     EndpointLimits,
-    EndpointSchemaMismatch,
-    EndpointUnreachable,
     PredictResult,
-    endpoint_error_class,
+    error_from_frame,
     read_frame,
     write_frame,
 )
-from redsim.ml.errors import UnsupportedArtifact
+from redsim.ml.errors import EndpointError, EndpointUnreachable, UnsupportedArtifact
 from redsim.ml.schema import Domain, TargetInfo
 from redsim.ml.targets.artifact import EvalData, _load_eval_data, model_manifest
 from redsim.ml.targets.base import Sample
+from redsim.ml.targets.endpoint_contract import CONTRACT_VERSION, EndpointSchemaMismatch
 
 #: ``TargetInfo.metadata["access"]`` value the explainer caps key on (ENDPOINT-14).
 ACCESS_LABEL = "black-box-endpoint"
@@ -103,19 +100,18 @@ class SocketPredictTransport:
         finally:
             sock.close()
         if not isinstance(reply, dict):
-            raise EndpointSchemaMismatch("predict broker answered with a non-object frame")
+            raise EndpointSchemaMismatch("predict broker answered with a non-object frame", field="frame")
         if reply.get("ok") is True:
             return reply
-        name = str(reply.get("error_class") or "EndpointError")
-        message = str(reply.get("error") or name)
-        cls = endpoint_error_class(name) or EndpointError
-        raise cls(message)
+        # The broker's typed frame names the class (``redsim.ml.errors`` resolves it by name) and carries the
+        # structured detail (egress rule / host, contract field) the class is rebuilt from.
+        raise error_from_frame(reply)
 
     def predict(self, inputs: list[Any], *, purpose: str = DEFAULT_PURPOSE) -> PredictResult:
         reply = self._roundtrip({"op": "predict", "inputs": inputs, "purpose": purpose})
         rows = reply.get("probabilities")
         if not isinstance(rows, list):
-            raise EndpointSchemaMismatch("predict broker reply carries no probabilities")
+            raise EndpointSchemaMismatch("predict broker reply carries no probabilities", field="frame")
         return PredictResult(
             probabilities=rows, output_kind=str(reply.get("output_kind") or "probabilities"),
             http_status=int(reply.get("http_status") or 0), latency_ms=float(reply.get("latency_ms") or 0.0),
@@ -190,6 +186,7 @@ class EndpointTarget:
         self._indices: np.ndarray | None = None
         self._clf: Any = None
         self._manifest: dict[str, Any] | None = None
+        self._endpoint_block: dict[str, Any] = {}
         self._probe: dict[str, Any] | None = None
         self._fingerprint: str | None = None
         self._output_kind: str | None = None
@@ -229,7 +226,7 @@ class EndpointTarget:
         if result.probabilities.shape[1] != len(self._class_names):
             raise EndpointSchemaMismatch(
                 f"probe response has {result.probabilities.shape[1]} columns; the target declares "
-                f"{len(self._class_names)} classes",
+                f"{len(self._class_names)} classes", field="probabilities",
             )
         stats = self._safe_stats()
         self._fingerprint = stats.get("fingerprint_sha256") if isinstance(stats.get("fingerprint_sha256"), str) else None
@@ -245,6 +242,12 @@ class EndpointTarget:
             "dataset_split": self._dataset["dataset_split"], "dataset_revision": self._dataset["dataset_revision"],
             "input_shape": list(sample_shape), "class_names": self._class_names,
         }
+        # ``schema.EndpointSpec``: host[:port], the AuthProfile id (never the credential), the contract the probe
+        # was validated against and the caps; ``MLModelManifest`` requires it whenever ``format`` is ``endpoint``.
+        self._endpoint_block = {
+            "url_host": self._url_host, "auth_profile_id": self._auth_profile_id, "contract_version": self._contract,
+            "input_shape": list(sample_shape), "batch_rows": self._batch_rows, "timeout_s": self._timeout_s,
+        }
         self._manifest = model_manifest(
             f"endpoint model {self._url_host}",
             name=self._name, modality=self._domain, format="endpoint", sha256=descriptor_sha256(descriptor),
@@ -252,6 +255,7 @@ class EndpointTarget:
             class_names=self._class_names, features=self._features, dataset_id=self._dataset["dataset_id"],
             dataset_revision=self._dataset["dataset_revision"], dataset_split=self._dataset["dataset_split"],
             status="available", gradients=False, bundled=False, license=self._dataset["license"],
+            endpoint=dict(self._endpoint_block),
         )
         self._x, self._y, self._indices = x, y.astype(np.int64), idx
 
@@ -280,6 +284,7 @@ class EndpointTarget:
         if proba.ndim != 2 or proba.shape[0] != batch.shape[0]:
             raise EndpointSchemaMismatch(
                 f"response shape {tuple(proba.shape)} does not match {batch.shape[0]} requested rows",
+                field="probabilities",
             )
         return _Rows(proba, result.output_kind, result.http_status, result.latency_ms)
 
@@ -295,7 +300,7 @@ class EndpointTarget:
             if result.probabilities.shape[1] != len(self._class_names):
                 raise EndpointSchemaMismatch(
                     f"response has {result.probabilities.shape[1]} columns; the target declares "
-                    f"{len(self._class_names)} classes",
+                    f"{len(self._class_names)} classes", field="probabilities",
                 )
             outs.append(result.probabilities)
         return np.concatenate(outs)
@@ -349,18 +354,13 @@ class EndpointTarget:
         self.load()
         assert self._y is not None and self._manifest is not None
         stats = self._safe_stats()
-        # ``endpoint`` carries the wave B0 ``EndpointSpec`` field names exactly; endpoint-specific extras live
-        # beside it so a stricter spec model never rejects them.
-        endpoint_block: dict[str, Any] = {
-            "url_host": self._url_host, "auth_profile_id": self._auth_profile_id,
-            "contract_version": self._contract, "input_shape": list(self._manifest.get("input_shape") or []),
-            "batch_rows": self._batch_rows, "timeout_s": self._timeout_s,
-        }
+        # ``endpoint`` is the validated ``schema.EndpointSpec`` block from load(); the endpoint-specific extras
+        # (probe, fingerprint, counters, limits) live beside it under their own keys.
         return {
             **self._manifest,
             "source": "endpoint", "access": ACCESS_LABEL, "gradients": False, "torch_model": None,
             "surrogate": None, "scheme": self._scheme,
-            "endpoint": endpoint_block,
+            "endpoint": dict(self._endpoint_block),
             "endpoint_probe": dict(self._probe or {}),
             "endpoint_fingerprint": {
                 "sha256": self._fingerprint, "label": stats.get("fingerprint_label")

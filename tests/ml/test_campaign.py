@@ -25,7 +25,7 @@ import types
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 pytest.importorskip("torch")
 pytest.importorskip("art")
@@ -1270,8 +1270,7 @@ def test_training_defense_is_applied_through_the_harden_hook(no_optional_modules
                                       "derived_sha256": "0" * 64}
     assert rec.score is not None                                         # measured on the derived model, scored
     assert TRAINING_DEFENSE_LIMITATION in rec.limitations and DEFENSE_LIMITATION not in rec.limitations
-    assert "defense_apply" not in rec.stages_done                        # this tree's STAGES has no such stage
-    assert rec.stages_done[:2] == ["load_target", "sample"]
+    assert rec.stages_done[:3] == ["load_target", "defense_apply", "sample"]   # spec 6.5: right after load_target
 
 
 def test_training_defense_without_harden_module_is_recorded_unavailable_and_unscored(no_optional_modules, monkeypatch,
@@ -1292,21 +1291,73 @@ def test_training_defense_without_harden_module_is_recorded_unavailable_and_unsc
     assert DEFENSE_LIMITATION not in rec.limitations and TRAINING_DEFENSE_LIMITATION not in rec.limitations
     assert [m.family for m in rec.measurements] == ["clean", "evasion", "evasion", "evasion", "control", "control", "control"]
     assert not (Path(sink.root) / "artifacts" / "score.json").exists()
+    assert "defense_apply" not in rec.stages_done                       # nothing was applied, so no such stage
     RunRecord.model_validate(rec.model_dump())
 
 
-def test_defense_apply_stage_is_emitted_only_when_schema_stages_carry_it(no_optional_modules, monkeypatch, sink,
-                                                                        tmp_path):
-    """The stage vocabulary is read from ``schema.STAGES`` at run time (B0 adds ``defense_apply``); with it present a
-    verify run records the stage right after load_target, an attack run never does."""
-    import redsim.ml.schema as schema_module
+class _TrainingUnavailableRecord(BaseModel):
+    """The shape of ``redsim.ml.harden.apply.TrainingUnavailable`` the hook attaches to its typed refusal."""
 
+    defense_id: str
+    target_id: str
+    code: str = "training_defense_unavailable"
+    reason: str
+    infeasible: bool
+    register_item: str | None = None
+
+
+class _FakeTrainingDefenseUnavailable(MLError):
+    code = "training_defense_unavailable"
+
+    def __init__(self, unavailable: _TrainingUnavailableRecord) -> None:
+        super().__init__(f"{unavailable.defense_id} on {unavailable.target_id!r}: {unavailable.reason}")
+        self.unavailable = unavailable
+
+
+def test_training_defense_refused_by_the_hook_is_recorded_unavailable_and_unscored(no_optional_modules, monkeypatch,
+                                                                                   sink):
+    """The hook raises its typed ``training_defense_unavailable`` (no training slice, a tree ensemble): the run measures
+    the undefended model, records the typed reason in the provenance and withholds the score; any other MLError from
+    the hook still fails the run."""
+    monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses_catalog())
+    harden = make_fake_harden()
+
+    def refuse(target, defense, *, config, sink, seed):
+        raise _FakeTrainingDefenseUnavailable(_TrainingUnavailableRecord(
+            defense_id=defense.id, target_id=target.id, reason="no training slice is bundled for this target",
+            infeasible=False, register_item="ATTACKS_HARDEN-11"))
+
+    harden.apply_training_defense = refuse
+    monkeypatch.setitem(sys.modules, HARDEN_MOD, harden)
+    rec = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="adv_train")), sink,
+                       explain=False)
+    assert rec.status == "succeeded" and rec.kind == "verify"
+    prov = rec.provenance.defense
+    assert prov["status"] == "unavailable" and prov["code"] == "training_defense_unavailable"
+    assert prov["reason"] == "no training slice is bundled for this target" and prov["infeasible"] is False
+    assert prov["register_item"] == "ATTACKS_HARDEN-11" and prov["target_id"] == "tiny" and prov["id"] == "adv_train"
+    assert rec.score is None and rec.score_status is not None and rec.score_status.state == "unavailable"
+    assert any(lim.startswith("Defense 'adv_train' (kind training) was not applied") for lim in rec.limitations)
+    assert "defense_apply" not in rec.stages_done and [m.family for m in rec.measurements][0] == "clean"
+
+    def crash(target, defense, *, config, sink, seed):
+        raise MLError("the trainer fell over")
+
+    harden.apply_training_defense = crash
+    with pytest.raises(MLError, match="fell over"):
+        run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="adv_train")),
+                     FilesystemSink(Path(sink.root).parent / "crash"), explain=False)
+
+
+def test_defense_apply_stage_follows_load_target_on_a_verify_run_only(no_optional_modules, monkeypatch, sink, tmp_path):
+    """Spec 6.5: the verify campaign records ``defense_apply`` directly after ``load_target`` (the ``schema.STAGES``
+    order, read at run time); an attack run never writes it and is otherwise stage-for-stage identical."""
+    assert STAGES.index("defense_apply") == STAGES.index("load_target") + 1 and STAGES[-1] == "report"
     monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses())
-    widened = ("load_target", "defense_apply", *tuple(s for s in STAGES if s != "load_target"))
-    monkeypatch.setattr(schema_module, "STAGES", widened)
     verify = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="feature_squeezing")),
                           sink, explain=False)
     assert verify.stages_done[:3] == ["load_target", "defense_apply", "sample"]
+    assert all(s.split(":")[0] in STAGES for s in verify.stages_done)
     attack = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}), FilesystemSink(tmp_path / "attack"),
                           explain=False)
     assert "defense_apply" not in attack.stages_done

@@ -5,10 +5,6 @@ bundled ``sms_tfidf_lr`` (on an inline corpus, since the committed SMS fixture b
 digest-gated text target; the edit-budget bounds, determinism and query counting of ``word_substitution``;
 the random word-swap control at the same budget; the SHAP text explainer's alignment rule and noise floor;
 and a full text campaign through ``redsim.ml.runners.text`` with denominators on every row.
-
-On a tree whose schema predates wave B0 the module-scoped ``text_schema`` fixture widens the ``Domain`` /
-``Modality`` / ``Norm`` literals for the duration of this module (``tests.ml.fakes_text.widened_text_schema``)
-and restores them afterwards; once B0 has landed it is a no-op.
 """
 
 from __future__ import annotations
@@ -28,53 +24,24 @@ import numpy as np
 
 from redsim.ml import campaign as campaign_mod
 from redsim.ml.artifacts import FilesystemSink
+from redsim.ml.attacks import ATLAS_TECHNIQUES
 from redsim.ml.attacks import word_substitution as ws
-from redsim.ml.attacks.registry import ATTACKS, KNOWN_ATTACK_CAPABILITIES
+from redsim.ml.attacks.registry import ATTACKS, attack_capabilities, attack_norms
 from redsim.ml.campaign import run_campaign
 from redsim.ml.datasets import sms_spam
 from redsim.ml.errors import AttackNotApplicable, DatasetUnavailable, UnsupportedArtifact
 from redsim.ml.explain import shap_text
 from redsim.ml.explain.base import ExplainOutput
-from redsim.ml.registry import Registry
 from redsim.ml.runners import text as text_runner
 from redsim.ml.runners.base import MODALITY_RUNNERS, ModalityRunnerUnavailable, resolve_runner
-from redsim.ml.schema import CampaignConfig, CampaignRecord, Measurement, MLModelManifest, Observation
-from tests.ml.fakes_text import (
-    SYNONYMS_TINY,
-    TEXT_CLASS_NAMES,
-    TinyTextTarget,
-    text_schema_present,
-    tiny_tsv,
-    widened_text_schema,
-)
+from redsim.ml.schema import CampaignConfig, CampaignRecord, MLModelManifest, Observation
+from tests.ml.fakes_text import SYNONYMS_TINY, TEXT_CLASS_NAMES, TinyTextTarget, tiny_tsv
 
 pytestmark = pytest.mark.ml
 
 GRID = [0.1, 0.2, 0.3]
 REF = 0.2
 N = 12
-
-
-@pytest.fixture(scope="module", autouse=True)
-def text_schema():
-    """Widen the schema literals when B0 is absent, and let the frame resolve ``word_substitution``.
-
-    On a pre-B0 tree ``redsim.ml.attacks`` records the adapter as skipped (its ``AttackInfo`` cannot carry
-    ``domain="text"``), so the campaign frame is pointed at a registry copy that also holds the adapter for the
-    duration of this module. Once B0 has landed the adapter is registered by the package and nothing is patched.
-    """
-    with widened_text_schema() as widened:
-        mp = pytest.MonkeyPatch()
-        if ATTACKS.maybe_get(ws.ATTACK_ID) is None:
-            local: Registry = Registry("attack", None)
-            for adapter in ATTACKS:
-                local.register(adapter)
-            local.register(ws.ADAPTER)
-            mp.setattr(campaign_mod, "ATTACKS", local)
-        try:
-            yield widened
-        finally:
-            mp.undo()
 
 
 @pytest.fixture(scope="module")
@@ -213,8 +180,7 @@ def test_build_text_asset_writes_verifiable_manifest(tmp_path: Path):
     manifest.models[model.id] = model
     write_manifest(manifest, root / "MANIFEST.json")
     assert verify_manifest(load_manifest(root / "MANIFEST.json"), root) == []
-    if text_schema_present():
-        assert getattr(model, "text", None) is not None, "B0's MLModelManifest.text must carry the tokenizer spec"
+    assert model.text is not None and projected.text is not None, "MLModelManifest.text carries the tokenizer spec"
 
 
 # --- the bundled target ---------------------------------------------------------------------------------------
@@ -283,7 +249,15 @@ def test_bundled_text_target_loads_only_digest_matching_joblib(tmp_path: Path):
     with_lex = BundledTextTarget(assets_dir=root)
     lex = with_lex.synonym_lexicon()
     assert isinstance(lex, ws.SynonymLexicon) and lex.synonyms("bake") == ["prune", "roast", "toast"]
-    assert with_lex.manifest()["lexicon"]["sha256"] == lex.sha256
+    manifest = with_lex.manifest()
+    assert manifest["lexicon"]["sha256"] == lex.sha256
+    # The target's text block carries the schema name of the token regex (TextModelSpec.token_pattern) and the
+    # attack / masker names, all the same value, so the frozen projection never claims whitespace tokenisation.
+    assert manifest["text"]["token_pattern"] == manifest["text"]["tokenizer_regex"] == sms_spam.TOKEN_PATTERN
+    assert manifest["text"]["masker_split_regex"] == sms_spam.MASKER_SPLIT_PATTERN
+    spec = MLModelManifest.model_validate(manifest).text
+    assert spec is not None and spec.token_pattern == sms_spam.TOKEN_PATTERN and spec.ngram_range == [1, 2]
+    assert with_lex.info().metadata["text"]["token_pattern"] == sms_spam.TOKEN_PATTERN
 
 
 # --- the attack ----------------------------------------------------------------------------------------------
@@ -295,10 +269,8 @@ def test_word_substitution_info_and_capability_tags(adapter: ws.WordSubstitution
     assert "counter-fitted" in info.description and any("1907.11932" in r for r in info.references)
     assert {"black_box", "modality:text", "norm:edit", "query_counted", "takes_eps"} <= adapter.capabilities
     assert adapter.norms == frozenset({"edit"}) and adapter.domains == frozenset({"text"})
-    if {"modality:text", "norm:edit"} <= KNOWN_ATTACK_CAPABILITIES:
-        from redsim.ml.attacks.registry import attack_capabilities
-
-        assert {"modality:text", "norm:edit", "black_box"} <= attack_capabilities(adapter)
+    assert {"modality:text", "norm:edit", "black_box"} <= attack_capabilities(adapter)
+    assert attack_norms(adapter) == attack_norms(ws.CONTROL) == frozenset({"edit"})
     with pytest.raises(ValueError):
         adapter.resolve_params({"eps": 0.0})
     with pytest.raises(ValueError):
@@ -464,14 +436,10 @@ def test_run_text_is_the_registered_text_runner():
     assert resolve_runner("text") is text_runner.run_text
     with pytest.raises(ModalityRunnerUnavailable):
         resolve_runner("holograms")
-    from redsim.ml.attacks import OPTIONAL_ADAPTER_SKIPPED
-
-    if ATTACKS.maybe_get(ws.ATTACK_ID) is None:
-        assert "literal" in OPTIONAL_ADAPTER_SKIPPED.get("word_substitution", "").lower() or \
-            "registration refused" in OPTIONAL_ADAPTER_SKIPPED.get("word_substitution", ""), \
-            "pre-B0: the package must record why the text adapter is not listed"
-    else:
-        assert "word_substitution" not in OPTIONAL_ADAPTER_SKIPPED
+    # The attacks package registers the text attack with the bundled set; the text control is the runner's own
+    # (run directly, its rows recorded as noise_control) and is deliberately not an attack in the catalog.
+    assert ATTACKS.get(ws.ATTACK_ID) is ws.ADAPTER and ATTACKS.maybe_get(ws.CONTROL_ID) is None
+    assert ATLAS_TECHNIQUES[ws.ATTACK_ID].id == "AML.T0040"
 
 
 def test_text_campaign_end_to_end_through_the_frame(tmp_path: Path, target):
@@ -496,11 +464,8 @@ def test_text_campaign_end_to_end_through_the_frame(tmp_path: Path, target):
         assert m.conf_gap_mean is not None and m.conf_gap_n == N
         if m.family == "evasion":
             eps = float(m.params["eps"])
-            frac = getattr(m, "edit_fraction_mean", None)
-            if frac is not None:
-                assert frac <= eps + 1 / 5 + 1e-9, "bounded by ceil(eps * n_words) with n_words >= 5"
-            elif "edit_fraction_mean" not in Measurement.model_fields:
-                assert text_runner.EDIT_FIELD_ABSENT_NOTE in m.notes
+            assert m.edit_fraction_mean is not None, "Measurement.edit_fraction_mean is filled on every text evasion row"
+            assert m.edit_fraction_mean <= eps + 1 / 5 + 1e-9, "bounded by ceil(eps * n_words) with n_words >= 5"
             assert any(n.startswith("edit budget") for n in m.notes) and ws.DEVIATIONS_NOTE in m.notes
             assert any(n.startswith("lexicon: source=json:synonyms_synthetic_tiny.json") for n in m.notes)
         else:
@@ -581,8 +546,12 @@ def test_text_campaign_records_not_run_without_a_lexicon(tmp_path: Path, monkeyp
 
 
 def test_text_runner_refuses_a_non_edit_norm(tmp_path: Path, target):
-    with pytest.raises(ValueError, match="norm is 'edit'"):
+    # The frame refuses before any stage (spec 12.3: an adapter is evaluated only in a norm it declares) ...
+    with pytest.raises(AttackNotApplicable, match="supports the edit norm only; the campaign norm is 'linf'"):
         run_campaign(_config(norm="linf"), FilesystemSink(tmp_path / "a"), target_override=target)
+    # ... and the runner keeps its own guard for a caller that bypasses the frame.
+    with pytest.raises(ValueError, match="norm is 'edit'"):
+        text_runner.run_text(_config(norm="linf"), target, frame=None)  # type: ignore[arg-type]
 
 
 def test_default_edit_grid_fits_the_config_validator():
