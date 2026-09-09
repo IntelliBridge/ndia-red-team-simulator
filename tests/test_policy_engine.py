@@ -140,7 +140,7 @@ class TestStaticPolicyEnginePhaseBActions:
     BARS = [
         (Action.LLM_PROBE_RUN, "scanner", "remediator"),
         (Action.DATASET_REGISTER, "scanner", "remediator"),
-        (Action.DATASET_EXPORT, "viewer", "scanner"),
+        (Action.DATASET_EXPORT, "scanner", "remediator"),
         (Action.INTEGRATION_PUSH, "approver", "admin"),
         (Action.BATCH_RUN, "viewer", "scanner"),
         (Action.REPORT_RENDER, "viewer", "scanner"),

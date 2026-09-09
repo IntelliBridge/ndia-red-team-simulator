@@ -424,7 +424,7 @@ class TestQueueRouting(unittest.TestCase):
             {"redsim.scan_start", "redsim.verify_replay", "redsim.report_render",
              "redsim.reap_stale_jobs", "redsim.verify_tenant_integrity",
              "redsim.export_chains_to_worm", "redsim.ml_campaign_run",
-             "redsim.ml_model_validate"},
+             "redsim.ml_model_validate", "redsim.ml_llm_probe_run"},
         )
 
 

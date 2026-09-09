@@ -496,7 +496,7 @@ def _seed_report(api: dict[str, Any], kind: str, data: bytes, *, created_at: dat
                              created_at=created_at))
 
 
-def test_report_route_serves_newest_artifact_and_pdf_is_501(ml_api: dict[str, Any]) -> None:
+def test_report_route_serves_newest_artifact_and_pdf_is_404_until_rendered(ml_api: dict[str, Any]) -> None:
     now = datetime.now(UTC)
     _seed_report(ml_api, "ml.report_md", b"# old report\n", created_at=now - timedelta(hours=1),
                  artifact_id="report-md-old")
@@ -524,9 +524,10 @@ def test_report_route_serves_newest_artifact_and_pdf_is_501(ml_api: dict[str, An
     as_json = scanner.get(f"/v1/runs/{BASELINE}/report.json")
     assert as_json.status_code == 200 and as_json.json()["run_id"] == BASELINE
 
+    # Phase B: report.pdf is a rendered artifact; with none rendered it is 404, never a filesystem fallback.
     pdf = scanner.get(f"/v1/runs/{BASELINE}/report.pdf")
-    assert pdf.status_code == 501
-    assert pdf.json()["detail"]["code"] == "not_implemented" and pdf.json()["detail"]["phase"] == "B"
+    assert pdf.status_code == 404, pdf.text
+    assert pdf.json()["detail"] == "report not yet rendered"
 
     assert scanner.get(f"/v1/runs/{BASELINE}/report.txt").status_code == 400
     assert scanner.get("/v1/runs/missing/report.md").status_code == 404
@@ -587,7 +588,7 @@ def test_ml_report_render_rerenders_from_run_record(ml_api: dict[str, Any], monk
     result = report_render.apply(args=["job-report-1"]).get()
     writer.on_append = None
 
-    assert result["source"] == "ml.run_record" and result["formats"] == ["md", "json", "html"]
+    assert result["source"] == "ml.run_record" and result["formats"] == ["md", "json", "html", "pdf"]
     assert result["record_sha256"] == _sha(ml_api["records"][BASELINE].model_dump_json().encode())
     assert result["reviewer_notes_present"] is True
     assert result["finding_states"]["ml.pgd"]["validation_state"] == "poc_failed"
@@ -597,7 +598,7 @@ def test_ml_report_render_rerenders_from_run_record(ml_api: dict[str, Any], monk
     with sessions() as session:
         rows = {row.kind: row for row in session.query(Artifact).filter(
             Artifact.run_id == BASELINE, Artifact.kind.like("ml.report_%")).all()}
-    assert set(rows) == {"ml.report_md", "ml.report_json", "ml.report_html"}
+    assert set(rows) == {"ml.report_md", "ml.report_json", "ml.report_html", "ml.report_pdf"}
     markdown = store.get(rows["ml.report_md"].location).decode()
     assert "### Reviewer notes" in markdown and "Notes added after the run finished." in markdown
     assert rows["ml.report_md"].sha256 == _sha(markdown.encode()) == result["artifacts"]["md"]["sha256"]
@@ -607,7 +608,7 @@ def test_ml_report_render_rerenders_from_run_record(ml_api: dict[str, Any], monk
 
     event = writer.last("report.render")
     assert event.run_id == BASELINE and event.project_id == PROJECT and event.success is True
-    assert event.detail["formats"] == ["md", "json", "html"] and event.detail["source"] == "ml.run_record"
+    assert event.detail["formats"] == ["md", "json", "html", "pdf"] and event.detail["source"] == "ml.run_record"
     assert event.detail["finding_states"] == {"ml.fgsm": "unvalidated", "ml.pgd": "poc_failed"}
     assert event.detail["reviewer_notes_sha256"] == _sha(b"Notes added after the run finished.")
     assert "Notes added" not in json.dumps(event.detail)

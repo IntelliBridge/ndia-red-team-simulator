@@ -2,7 +2,8 @@
 
 Register row INTEROP-01 and the wave B0 ``route-stubs`` track of
 ``docs/plans/12-phase-b-plan.md``: the tree is truthful about Phase B from the
-first push. Each stub runs the lookup, membership and role gates its real
+first push. Wave B2 replaced the LLM probe, report.render and snapshot stubs
+with real handlers; those rows left ``STUBS`` and stay in ``OPENAPI_PATHS``. Each stub runs the lookup, membership and role gates its real
 handler will run and only then raises the spec 17.3 envelope
 ``{"code": "not_implemented", "message": ..., "phase": "B", "reason": ...}``.
 
@@ -10,7 +11,8 @@ Pinned here, offline over the shared sqlite harness with the real app in dev
 auth and the user dependency overridden:
 
 * an allowed role gets ``501`` with ``code``, ``phase == "B"``, a message and a
-  ``reason`` on every stub, and ``report.pdf`` still answers the same way;
+  ``reason`` on every stub, and ``report.pdf`` (a real format since wave B2) is
+  ``404`` until a render exists;
 * a ``viewer`` gets ``403`` (a plain-string detail, never the 501 envelope) on
   every gated stub, and ``501`` on the read stubs its membership admits;
 * a non-member is refused before the 501 wherever a project can be resolved
@@ -68,9 +70,6 @@ STUBS: list[tuple[str, str, dict[str, Any] | None, str, bool]] = [
     ("GET", f"/v1/runs/{RUN}/atlas-coverage", None, "run", False),
     ("POST", f"/v1/runs/{RUN}/integrations/foundry", None, "run", True),
     ("GET", "/v1/integrations", None, "none", False),
-    ("GET", "/v1/llm/probes", None, "none", False),
-    ("POST", f"/v1/models/{TARGET}/probes", {}, "target", True),
-    ("GET", f"/v1/runs/{RUN}/llm-scorecard", None, "run", False),
     ("POST", "/v1/campaigns/batch", {"project_id": PROJECT, "target_ids": [TARGET]}, "project", True),
     ("GET", "/v1/campaigns/batch/batch-1", None, "none", False),
     ("GET", f"/v1/campaigns/batch?project={PROJECT}", None, "query", False),
@@ -79,8 +78,6 @@ STUBS: list[tuple[str, str, dict[str, Any] | None, str, bool]] = [
     ("POST", "/v1/models/bulk", {"project_id": PROJECT}, "project", True),
     ("POST", f"/v1/findings/{FINDING}/verify/bulk", {}, "finding", True),
     ("GET", f"/v1/ml/capacity?project={PROJECT}", None, "query", False),
-    ("POST", f"/v1/runs/{RUN}/report.render", {}, "run", True),
-    ("GET", f"/v1/runs/{RUN}/snapshots", None, "run", False),
 ]
 
 #: Every stub as an OpenAPI template path and its method.
@@ -186,12 +183,11 @@ def test_admin_gets_501_with_phase_on_every_stub(api: SimpleNamespace, method: s
     _assert_not_implemented(api.call(ADMIN, method, path, body))
 
 
-def test_report_pdf_stays_501(api: SimpleNamespace) -> None:
-    """The one Phase B refusal that predates wave B0 keeps its envelope (spec 17.4), gates first."""
+def test_report_pdf_is_404_until_rendered(api: SimpleNamespace) -> None:
+    """report.pdf is a rendered artifact since wave B2: 404 while none exists, the gate still speaks first."""
     resp = api.call(ADMIN, "GET", f"/v1/runs/{RUN}/report.pdf")
-    assert resp.status_code == 501, resp.text
-    detail = resp.json()["detail"]
-    assert detail["code"] == "not_implemented" and detail["phase"] == "B" and detail["field"] == "ext"
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["detail"] == "report not yet rendered"
     _assert_plain_403(api.call(VIEWER, "GET", f"/v1/runs/{RUN}/report.pdf"))
 
 

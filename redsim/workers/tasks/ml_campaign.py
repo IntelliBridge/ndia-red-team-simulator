@@ -1159,9 +1159,8 @@ def _endpoint_request_block(target: Any, config: CampaignConfig) -> dict[str, An
 
     The full request URL is an internal field of the ``Target`` row, never the manifest / report / export
     (D3: those carry ``url_host`` only). The endpoint-admission track (``services.ml_models`` /
-    ``api/v1/models`` endpoint branch) stores it; this reader accepts it under ``detail['endpoint_url']``,
-    ``detail['url']`` or ``detail['endpoint']['url']`` and is noted in the cross-track notes so the two
-    tracks agree after the rebase. No credential is read here: only the ``auth_profile_id`` travels, and
+    ``api/v1/models`` endpoint branch) stores it as ``Target.value``; this reader also accepts it under
+    ``detail['endpoint_url']``, ``detail['url']`` or ``detail['endpoint']['url']`` for older rows. No credential is read here: only the ``auth_profile_id`` travels, and
     the secret is resolved separately at run time (:func:`_resolve_endpoint_auth`).
     """
     detail = getattr(target, "detail", None)
@@ -1174,6 +1173,12 @@ def _endpoint_request_block(target: Any, config: CampaignConfig) -> dict[str, An
     detail_endpoint = dict(detail_endpoint) if isinstance(detail_endpoint, dict) else {}
     url = (detail.get("endpoint_url") or detail.get("url")
            or detail_endpoint.get("url") or endpoint.get("url"))
+    if not url:
+        # endpoint-admission (services.ml_models / api/v1/models) stores the normalised request URL
+        # as ``Target.value`` and keeps ``detail`` host-only (D3); accept that as the primary location.
+        value = getattr(target, "value", None)
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            url = value
     if not url:
         raise RuntimeError(
             "endpoint target carries no stored request URL (detail.endpoint_url / detail.url); "
