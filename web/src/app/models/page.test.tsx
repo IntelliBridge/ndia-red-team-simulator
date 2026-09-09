@@ -127,7 +127,8 @@ describe("/models", () => {
       mutate: vi.fn(),
     });
     render(createElement(ModelsPage));
-    const blocks = screen.getAllByTestId("score-summary");
+    // Sorted by name, so "Chat" (the LLM row) comes before "Model".
+    const blocks = screen.getAllByTestId("score-summary").reverse();
     expect(blocks).toHaveLength(2);
     // Collapsed by default: the headline and the count show, the categories do not.
     expect(blocks[0]!.textContent).toContain("55.5");
@@ -153,6 +154,74 @@ describe("/models", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cards" }));
     expect(screen.queryByRole("table")).toBeNull();
     expect(localStorage.getItem("redsim_models_view")).toBe("cards");
+  });
+
+  const catalog = () =>
+    useModels.mockReturnValue({
+      data: [
+        { id: "m1", project_id: "default", name: "Vehicles", source: "bundled", modality: "image", format: "onnx",
+          sha256: null, manifest: { clean_accuracy: 0.76 }, status: "available",
+          score_summary: { kind: "mri", n_campaigns: 1, mri_mean: 55, subscores_mean: {}, note: "n" } },
+        { id: "m2", project_id: "default", name: "URL trees", source: "bundled", modality: "tabular",
+          format: "sklearn_joblib", sha256: null, manifest: { clean_accuracy: 0.9 }, status: "available",
+          score_summary: { kind: "mri", n_campaigns: 1, mri_mean: 72, subscores_mean: {}, note: "n" } },
+        { id: "m3", project_id: "default", name: "Upload", source: "upload", modality: "image", format: "onnx",
+          sha256: null, manifest: {}, status: "refused" },
+      ],
+      isLoading: false,
+      mutate: vi.fn(),
+    });
+
+  it("filters the catalog by domain, status and text and reports the count", () => {
+    catalog();
+    render(createElement(ModelsPage));
+    expect(screen.getByTestId("models-count").textContent).toBe("3 models");
+    expect(screen.queryByRole("button", { name: "Clear filters" })).toBeNull();
+    fireEvent.change(screen.getByLabelText("domain"), { target: { value: "tabular" } });
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByText("URL trees")).toBeTruthy();
+    expect(screen.getByTestId("models-count").textContent).toBe("1 of 3 models");
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(screen.getAllByRole("article")).toHaveLength(3);
+    fireEvent.change(screen.getByLabelText("status"), { target: { value: "refused" } });
+    expect(screen.getAllByRole("article").map((a) => a.textContent)).toEqual([
+      expect.stringContaining("Upload"),
+    ]);
+    fireEvent.change(screen.getByLabelText("search"), { target: { value: "nothing here" } });
+    expect(screen.queryAllByRole("article")).toHaveLength(0);
+    expect(screen.getByText("No models match")).toBeTruthy();
+  });
+
+  it("sorts the cards from the toolbar and remembers the order", () => {
+    catalog();
+    render(createElement(ModelsPage));
+    const names = () => screen.getAllByRole("article").map((a) => a.querySelector(".text-lg")!.textContent);
+    expect(names()).toEqual(["Upload", "URL trees", "Vehicles"]);
+    fireEvent.change(screen.getByLabelText("sort"), { target: { value: "score:desc" } });
+    expect(names()).toEqual(["URL trees", "Vehicles", "Upload"]);
+    expect(localStorage.getItem("redsim_models_sort")).toBe("score:desc");
+    fireEvent.change(screen.getByLabelText("sort"), { target: { value: "clean_accuracy:asc" } });
+    expect(names()).toEqual(["Vehicles", "URL trees", "Upload"]);
+  });
+
+  it("sorts the list view from its column headers", () => {
+    catalog();
+    localStorage.setItem("redsim_models_view", "list");
+    render(createElement(ModelsPage));
+    const cells = () =>
+      within(screen.getByRole("table")).getAllByRole("link").map((a) => a.textContent);
+    expect(cells()).toEqual(["Upload", "URL trees", "Vehicles"]);
+    const header = screen.getByRole("columnheader", { name: /^Name/ });
+    expect(header.getAttribute("aria-sort")).toBe("ascending");
+    fireEvent.click(within(header).getByRole("button"));
+    expect(header.getAttribute("aria-sort")).toBe("descending");
+    expect(cells()).toEqual(["Vehicles", "URL trees", "Upload"]);
+    const source = screen.getByRole("columnheader", { name: /^Source/ });
+    fireEvent.click(within(source).getByRole("button"));
+    expect(source.getAttribute("aria-sort")).toBe("ascending");
+    expect(cells()).toEqual(["URL trees", "Vehicles", "Upload"]);
+    expect(screen.getByRole("columnheader", { name: /^Name/ }).getAttribute("aria-sort")).toBe("none");
+    expect((screen.getByLabelText("sort") as HTMLSelectElement).value).toBe("source:asc");
   });
 
   it("states that the catalog API is not implemented when /v1/models answers 404", () => {
@@ -182,7 +251,8 @@ describe("/models", () => {
   });
   it("renders availability state and disables the endpoint connector", () => {
     render(createElement(ModelsPage));
-    expect(screen.getByText("available")).toBeTruthy();
+    // The status chip on the card; the status filter offers the same word as an option.
+    expect(within(screen.getByRole("article")).getByText("available")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Add model" }));
     expect(
       screen.getByRole("button", { name: /connect endpoint/i }),

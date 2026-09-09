@@ -20,6 +20,21 @@ import { useCapabilities } from "@/hooks/useMlCatalog";
 import { useDatasets } from "@/hooks/useMlCatalog";
 import { isLlmTarget, registerLlmTarget } from "@/lib/llm";
 import { EMPTY_LLM_FORM, LlmRegisterForm } from "./llm-register-form";
+import {
+  DEFAULT_SORT,
+  EMPTY_FILTERS,
+  SORT_OPTIONS,
+  facetValues,
+  filterModels,
+  hasActiveFilters,
+  modelDomain,
+  parseSort,
+  sortModels,
+  sortValue,
+  type ModelFilters,
+  type ModelSort,
+  type SortKey,
+} from "./model-list";
 /** Provider badge for LLM targets: the gateway the model is reached through. */
 function GatewayBadge({ host }: { host: string }) {
   const label = /pythia/i.test(host) ? "Pythia" : host;
@@ -30,6 +45,36 @@ function GatewayBadge({ host }: { host: string }) {
     >
       {label}
     </span>
+  );
+}
+
+/** A list-view column header that sorts on click and announces the order. */
+function SortableHeader({
+  label,
+  column,
+  sort,
+  onSort,
+}: {
+  label: string;
+  column: SortKey;
+  sort: ModelSort;
+  onSort: (key: SortKey) => void;
+}) {
+  const active = sort.key === column;
+  const ariaSort = active ? (sort.direction === "asc" ? "ascending" : "descending") : "none";
+  return (
+    <th scope="col" aria-sort={ariaSort} className="px-3 py-2">
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className={`inline-flex items-center gap-1 uppercase tracking-wide ${active ? "text-foreground" : ""}`}
+      >
+        {label}
+        <span aria-hidden="true" className="text-[10px]">
+          {active ? (sort.direction === "asc" ? "▲" : "▼") : "↕"}
+        </span>
+      </button>
+    </th>
   );
 }
 
@@ -160,6 +205,37 @@ export default function ModelsPage() {
       // storage unavailable: the choice lasts for this page only
     }
   };
+  // Filters live for the page; the sort order is remembered per browser.
+  const [filters, setFilters] = useState<ModelFilters>(EMPTY_FILTERS);
+  const [sort, setSort] = useState<ModelSort>(DEFAULT_SORT);
+  useEffect(() => {
+    try {
+      setSort(parseSort(window.localStorage.getItem(SORT_KEY)));
+    } catch {
+      // storage unavailable: keep the default
+    }
+  }, []);
+  const chooseSort = (next: ModelSort) => {
+    setSort(next);
+    try {
+      window.localStorage.setItem(SORT_KEY, sortValue(next));
+    } catch {
+      // storage unavailable: the choice lasts for this page only
+    }
+  };
+  // A column header click sorts by that column, a second click flips it.
+  const sortByColumn = (key: SortKey) =>
+    chooseSort({
+      key,
+      direction: sort.key === key && sort.direction === "asc" ? "desc" : "asc",
+    });
+  const setFilter = (patch: Partial<ModelFilters>) =>
+    setFilters((f) => ({ ...f, ...patch }));
+  const domains = facetValues(models, modelDomain);
+  const statuses = facetValues(models, (m) => m.status);
+  const sources = facetValues(models, (m) => m.source);
+  const shown = sortModels(filterModels(models, filters), sort);
+  const filtering = hasActiveFilters(filters);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -306,6 +382,98 @@ export default function ModelsPage() {
           <div className="h-28 animate-pulse bg-muted" />
         </div>
       )}{" "}
+      {!isLoading && !error && models.length > 0 && (
+        <div
+          className="flex flex-wrap items-end gap-3 rounded-sm border border-border bg-card p-3 text-sm"
+          role="search"
+          aria-label="Filter and sort models"
+        >
+          <label className="flex min-w-[12rem] flex-1 flex-col gap-1">
+            <span className="redsim-kicker">search</span>
+            <input
+              type="search"
+              value={filters.query}
+              onChange={(e) => setFilter({ query: e.target.value })}
+              placeholder="name, id or model id"
+              className="rounded-sm border border-input bg-background px-3 py-1.5"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="redsim-kicker">domain</span>
+            <select
+              value={filters.domain}
+              onChange={(e) => setFilter({ domain: e.target.value })}
+              className="rounded-sm border border-input bg-background px-3 py-1.5"
+            >
+              <option value="">All</option>
+              {domains.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="redsim-kicker">status</span>
+            <select
+              value={filters.status}
+              onChange={(e) => setFilter({ status: e.target.value })}
+              className="rounded-sm border border-input bg-background px-3 py-1.5"
+            >
+              <option value="">All</option>
+              {statuses.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="redsim-kicker">source</span>
+            <select
+              value={filters.source}
+              onChange={(e) => setFilter({ source: e.target.value })}
+              className="rounded-sm border border-input bg-background px-3 py-1.5"
+            >
+              <option value="">All</option>
+              {sources.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="redsim-kicker">sort</span>
+            <select
+              value={sortValue(sort)}
+              onChange={(e) => chooseSort(parseSort(e.target.value))}
+              className="rounded-sm border border-input bg-background px-3 py-1.5"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="flex items-center gap-3 pb-1.5 text-xs text-muted-foreground">
+            <span aria-live="polite" data-testid="models-count">
+              {filtering ? `${shown.length} of ${models.length}` : models.length} model
+              {models.length === 1 ? "" : "s"}
+            </span>
+            {filtering && (
+              <button
+                type="button"
+                className="redsim-ghost px-2 py-1"
+                onClick={() => setFilters(EMPTY_FILTERS)}
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       {!isLoading && !error && models.length === 0 && (
         <PanelSection title="No registered models" eyebrow="catalog empty">
           <p className="text-sm text-muted-foreground">
@@ -313,23 +481,35 @@ export default function ModelsPage() {
           </p>
         </PanelSection>
       )}
-      {view === "list" && models.length > 0 && (
+      {!isLoading && !error && models.length > 0 && shown.length === 0 && (
+        <PanelSection title="No models match" eyebrow="filtered">
+          <p className="text-sm text-muted-foreground">
+            No registered model matches these filters. Clear a filter to widen the list.
+          </p>
+        </PanelSection>
+      )}
+      {view === "list" && shown.length > 0 && (
         <div className="overflow-x-auto rounded-sm border border-border bg-card">
           <table className="w-full text-sm">
             <caption className="sr-only">Registered model targets</caption>
             <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">ID</th>
-                <th className="px-3 py-2">Domain</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Source</th>
-                <th className="px-3 py-2">Clean accuracy / model</th>
-                <th className="px-3 py-2">Digest / persona</th>
+                <SortableHeader label="Name" column="name" sort={sort} onSort={sortByColumn} />
+                <th scope="col" className="px-3 py-2">ID</th>
+                <SortableHeader label="Domain" column="domain" sort={sort} onSort={sortByColumn} />
+                <SortableHeader label="Status" column="status" sort={sort} onSort={sortByColumn} />
+                <SortableHeader label="Source" column="source" sort={sort} onSort={sortByColumn} />
+                <SortableHeader
+                  label="Clean accuracy / model"
+                  column="clean_accuracy"
+                  sort={sort}
+                  onSort={sortByColumn}
+                />
+                <th scope="col" className="px-3 py-2">Digest / persona</th>
               </tr>
             </thead>
             <tbody>
-              {models.map((m: ModelTarget) => (
+              {shown.map((m: ModelTarget) => (
                 <tr key={m.id} {...rowLink(`/models/${m.id}`)} className={`border-t border-border ${rowLink("").className}`}>
                   <td className="px-3 py-2 font-medium">
                     <a className="text-primary underline" href={`/models/${m.id}`}>
@@ -363,7 +543,7 @@ export default function ModelsPage() {
       )}
       {view === "cards" && (
       <div className="grid gap-3 md:grid-cols-2">
-        {models.map((m: ModelTarget) => (
+        {shown.map((m: ModelTarget) => (
           <article key={m.id} className="redsim-panel rounded-sm p-4">
             <button
               className="w-full text-left transition-transform hover:-translate-y-0.5"
@@ -634,3 +814,5 @@ export default function ModelsPage() {
 }
 
 const VIEW_KEY = "redsim_models_view";
+
+const SORT_KEY = "redsim_models_sort";
