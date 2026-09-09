@@ -85,7 +85,8 @@ state; never recreate or import the deployed resources casually.
 8. Apply with `enable_services=true` to start API, web and Keycloak. Verify
    `/health`, `/login`, the OIDC discovery document and an unauthenticated API
    request. Inspect ECS target health and CloudWatch logs.
-9. Configure Keycloak users and application project memberships. The temporary
+9. Configure Keycloak users and their project memberships as described under
+   [Project membership claim](#project-membership-claim). The temporary
    Keycloak bootstrap administrator is `redsim-admin`; its password is the
    `KC_BOOTSTRAP_ADMIN_PASSWORD` field in `ndia-red-team/demo/identity` in
    Secrets Manager. Retrieve it privately using your operator identity.
@@ -94,6 +95,57 @@ state; never recreate or import the deployed resources casually.
 web image while retaining its installed dependencies. Supply `BASE_IMAGE` as
 an immutable ECR digest. It copies the current web source and performs a full,
 strict Next.js build; it does not suppress type errors.
+
+## Project membership claim
+
+The application does not authorise from Keycloak realm roles. The browser
+path (NextAuth copies the claim from the Keycloak profile into the API
+session cookie) and the CLI bearer path both read project memberships from
+the `redsim_project_roles` token claim: a JSON object that maps a project ID
+to one role, `{"<project_id>": "approver"}`. Roles are `viewer`, `scanner`,
+`remediator`, `approver` and `admin` (`redsim/api/policy.py`). A user whose
+token lacks the claim signs in successfully and has access to no project.
+
+`identity/realm.json` therefore gives the `redsim-web` client a User
+Attribute protocol mapper (`oidc-usermodel-attribute-mapper`) that copies the
+user attribute `redsim_project_roles` into the ID token, access token and
+userinfo response with claim JSON type `JSON`. The mapper is defined on the
+client itself (its dedicated scope), so every token issued to the client
+carries it and the realm keeps Keycloak's built-in default client scopes.
+The realm's user profile declares `redsim_project_roles` as an attribute that
+only administrators can view or edit, so users cannot grant themselves
+memberships through the account console. The realm roles in the file remain
+informational only.
+
+To grant memberships, open the user in the admin console and set the
+**Project memberships (redsim_project_roles)** field on the Details tab to a
+single JSON object. Keys are project IDs (`projects.id`, as listed by
+`GET /v1/projects`) and values are role names:
+
+```json
+{"proj-demo": "approver", "proj-eval": "viewer"}
+```
+
+Store the whole object in one attribute value, not one value per project.
+A user who is already signed in receives the new claim at the next sign-in.
+Verify with **Clients -> redsim-web -> Client scopes -> Evaluate**, choose the
+user, and confirm the generated ID token contains `redsim_project_roles`.
+
+Keycloak's `--import-realm` skips a realm that already exists, so the realm
+applied on 2026-09-08 does not pick up this change when the identity task is
+redeployed with the new image. Update the live realm once, either way:
+
+- Admin console: **Clients -> redsim-web -> Client scopes ->
+  redsim-web-dedicated -> Add mapper -> By configuration -> User Attribute**.
+  Set the name and token claim name to `redsim_project_roles`, the user
+  attribute to `redsim_project_roles`, the claim JSON type to `JSON`, and
+  enable *Add to ID token*, *Add to access token* and *Add to userinfo*.
+  Then **Realm settings -> User profile -> Create attribute**
+  `redsim_project_roles` with *Who can edit* and *Who can view* limited to
+  Admin, so the field appears on user forms.
+- Re-import: delete the `redsim` realm and restart the identity service so
+  `--import-realm` recreates it from the pinned image. This removes every
+  user in the realm; use it only before demo users exist.
 
 ## Worker assets
 
