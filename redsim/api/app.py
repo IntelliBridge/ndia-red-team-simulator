@@ -81,15 +81,19 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
         settings=settings,
     ))
 
-    # Correlation-id propagation + OTel + Prometheus.
+    # Correlation-id propagation + OTel + Prometheus. The direct-mode
+    # log-ingest shipper is env-gated (REDSIM_LOG_INGEST_URL) and a no-op
+    # otherwise.
     from redsim.observability import (
+        configure_log_shipper,
         configure_otel,
         configure_structlog,
         metrics_handler,
         request_id_middleware,
     )
     configure_otel(service_name="redsim-api")
-    configure_structlog()
+    configure_structlog(service_name="redsim-api")
+    configure_log_shipper(service_name="redsim-api")
     app.middleware("http")(request_id_middleware())
     app.get("/metrics")(metrics_handler())
 

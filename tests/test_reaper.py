@@ -17,7 +17,7 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from redsim.db.models import Job, Organization, Project, Run
-from redsim.workers.tasks.reaper import reap_stale_jobs_in_session
+from redsim.workers.tasks.reaper import REAPED_ERROR, reap_stale_jobs_in_session
 from tests.conftest import make_sqlite_session_factory as _make_session_factory
 
 # DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
@@ -126,6 +126,39 @@ class TestReaper(unittest.TestCase):
             self.assertEqual(s.get(Job, "stale-2").status, "failed")
             self.assertEqual(s.get(Job, "fresh-1").status, "running")
             self.assertEqual(s.get(Job, "queued-1").status, "queued")
+        # Spec 6.2: a queued/running job remains, so the run is not terminal.
+        with self.Session() as s:
+            self.assertEqual(s.get(Run, "run-1").status, "running")
+
+    def test_reaping_the_last_live_job_rolls_run_up(self):
+        # G-ROLLUP: the reaper calls rollup_run_status, so a run whose jobs
+        # all ended reaches its terminal status instead of staying running.
+        old = NOW - timedelta(seconds=TTL_SECONDS + 1)
+        with self.Session() as s:
+            s.add(_make_job("job-stale", "running", old))
+            s.commit()
+
+        with self.session_cm() as s:
+            reaped = reap_stale_jobs_in_session(s, TTL_SECONDS, now=NOW)
+
+        self.assertEqual(reaped, 1)
+        with self.Session() as s:
+            run = s.get(Run, "run-1")
+            self.assertEqual(run.status, "failed")
+            self.assertIsNotNone(run.completed_at)
+            self.assertEqual(run.stage_table["jobs"]["job-stale"]["status"], "failed")
+            self.assertEqual(run.stage_table["jobs"]["job-stale"]["error"], REAPED_ERROR)
+
+    def test_nothing_reaped_leaves_run_untouched(self):
+        with self.Session() as s:
+            s.add(_make_job("job-fresh", "running", NOW - timedelta(seconds=1)))
+            s.commit()
+        with self.session_cm() as s:
+            self.assertEqual(reap_stale_jobs_in_session(s, TTL_SECONDS, now=NOW), 0)
+        with self.Session() as s:
+            run = s.get(Run, "run-1")
+            self.assertEqual(run.status, "running")
+            self.assertEqual(run.stage_table or {}, {})
 
 
 if __name__ == "__main__":

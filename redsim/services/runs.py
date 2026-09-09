@@ -43,8 +43,29 @@ class TerminalRunError(RuntimeError):
         )
 
 
+#: ``runs.status`` values no roll-up may move away from (spec 6.2: "a
+#: terminal run never becomes running again"; ``cancelled`` is written only by
+#: :func:`cancel_run`).
+TERMINAL_RUN_STATUSES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
+
+
 def rollup_run_status(session: Session, run_id: str) -> str:
-    """Derive Run status from its jobs without ever reopening a terminal run."""
+    """Derive ``Run.status`` from its jobs (spec 6.2) without reopening a terminal run.
+
+    Rules, evaluated over every ``Job`` of the run in the caller's session:
+
+    * all jobs ``queued`` → ``queued``;
+    * any job ``running``, or a mix of ``queued`` and terminal → ``running``;
+    * all jobs terminal, at least one ``succeeded``, none ``failed`` → ``succeeded``;
+    * all jobs terminal and at least one ``failed`` → ``failed``;
+    * all jobs ``cancelled`` → ``cancelled`` (the run was normally cancelled
+      by :func:`cancel_run` first, which this function then leaves alone).
+
+    ``completed_at`` is set when the status becomes terminal and cleared
+    otherwise. A run already in :data:`TERMINAL_RUN_STATUSES` is returned
+    unchanged — follow-on jobs attach to the run for ``run_id``/RLS purposes
+    but never reopen it. A run with no jobs keeps its status.
+    """
     from sqlalchemy import select
 
     from redsim.db.models import Job, Run
@@ -52,15 +73,14 @@ def rollup_run_status(session: Session, run_id: str) -> str:
     run = session.get(Run, run_id)
     if run is None:
         raise LookupError(f"run not found: {run_id}")
-    if run.status == "cancelled":
+    if run.status in TERMINAL_RUN_STATUSES:
         return run.status
     statuses = list(session.execute(
         select(Job.status).where(Job.run_id == run_id)
     ).scalars())
     if not statuses:
         return run.status
-    terminal = {"succeeded", "failed", "cancelled"}
-    if all(value in terminal for value in statuses):
+    if all(value in TERMINAL_RUN_STATUSES for value in statuses):
         new_status = ("failed" if "failed" in statuses else
                       "succeeded" if "succeeded" in statuses else "cancelled")
         run.status = new_status
@@ -95,13 +115,25 @@ def cancel_run(
     from redsim.db.session import get_session
     from redsim.workers.job_state import set_job_status
 
+    def _refuse_terminal(run_status: str, project: str) -> TerminalRunError:
+        # A refused admission still leaves a chained ``success=False`` row
+        # (``authorize`` cannot express a refusal for a target-less action).
+        audit_writer.append(
+            action="run.cancel", actor=actor, target=None,
+            allowlist_check="n/a", override=False, success=False,
+            detail={"actor": actor, "run_id": run_id,
+                    "reason": TerminalRunError.code, "run_status": run_status},
+            run_id=run_id, project_id=project,
+        )
+        return TerminalRunError(run_id, run_status)
+
     with get_session() as sess:
         run = sess.get(Run, run_id)
         if run is None:
             raise LookupError(f"run not found: {run_id}")
-        if run.status in {"succeeded", "failed", "cancelled"}:
-            raise TerminalRunError(run_id, run.status)
         project_id = run.project_id
+        if run.status in TERMINAL_RUN_STATUSES:
+            raise _refuse_terminal(run.status, project_id)
 
     authorize(
         "run.cancel", None,
@@ -117,8 +149,8 @@ def cancel_run(
         if run is None:
             raise LookupError(f"run not found: {run_id}")
         # Recheck after authorization: a worker may have completed meanwhile.
-        if run.status in {"succeeded", "failed", "cancelled"}:
-            raise TerminalRunError(run_id, run.status)
+        if run.status in TERMINAL_RUN_STATUSES:
+            raise _refuse_terminal(run.status, project_id)
         run.status = "cancelled"
         run.completed_at = now
         jobs = sess.execute(
@@ -146,5 +178,6 @@ def cancel_run(
 
 
 __all__ = [
-    "CancelOutcome", "TerminalRunError", "cancel_run", "rollup_run_status",
+    "TERMINAL_RUN_STATUSES", "CancelOutcome", "TerminalRunError", "cancel_run",
+    "rollup_run_status",
 ]

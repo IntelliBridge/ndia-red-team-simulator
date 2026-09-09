@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from celery import Celery
+from celery.signals import worker_init, worker_process_init
 
 from redsim.storage.worm import worm_export_interval
 
@@ -23,6 +25,23 @@ app = Celery(
         "redsim.workers.tasks.ml_model",
     ],
 )
+
+
+@worker_init.connect(weak=False)
+@worker_process_init.connect(weak=False)
+def init_worker_observability(**_kwargs: Any) -> None:
+    """Initialise OTel + structlog + the direct log shipper in the worker.
+
+    ``worker_init`` covers the solo/threads pools and the prefork parent;
+    ``worker_process_init`` re-runs it in every forked child so exporter
+    threads exist post-fork. ``configure_worker_observability`` is idempotent
+    per process id and every piece is env-gated (``OTEL_EXPORTER_OTLP_ENDPOINT``,
+    ``REDSIM_LOG_INGEST_URL``), so an unconfigured worker is unchanged.
+    """
+    from redsim.observability import configure_worker_observability
+
+    configure_worker_observability()
+
 
 app.conf.task_acks_late = True
 app.conf.task_track_started = True
