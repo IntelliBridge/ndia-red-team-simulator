@@ -25,15 +25,19 @@ SRC=/opt/redsim/src
 VENV=/opt/redsim/venv
 ORIGIN="${REDSIM_PUBLIC_ORIGIN:?}"
 
+# Every git command runs as the checkout's owner (the redsim service user):
+# root in a redsim-owned repository is "dubious ownership" (exit 128) and
+# would leave root-owned files under .git.
+g() { sudo -u redsim -H git -C "$SRC" "$@"; }
 cd "$SRC"
-before="$(git rev-parse HEAD)"
-sudo -u redsim git fetch --quiet origin
-target="$(git rev-parse "origin/$REF" 2>/dev/null || git rev-parse "$REF")"
-sudo -u redsim git checkout --quiet --detach "$target"
+before="$(g rev-parse HEAD)"
+g fetch --quiet origin
+target="$(g rev-parse "origin/$REF" 2>/dev/null || g rev-parse "$REF")"
+g checkout --quiet --detach "$target"
 echo "checkout: ${before:0:7} -> ${target:0:7} ($REF)"
 install -m 0755 "$SRC/deploy/ec2/native/redsim-deploy" /usr/local/bin/redsim-deploy
 install -m 0755 "$SRC/deploy/ec2/native/redsim-run" /usr/local/bin/redsim-run
-changed="$(git diff --name-only "$before" "$target" || true)"
+changed="$(g diff --name-only "$before" "$target" || true)"
 
 if [ "$BUILD" = 1 ] || grep -qx 'pyproject.toml' <<<"$changed"; then
   echo "python dependencies changed: reinstalling the venv"
