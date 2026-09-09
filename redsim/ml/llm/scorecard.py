@@ -218,6 +218,7 @@ class UsageSummary(BaseModel):
     responses_with_usage: int = 0
     wall_time_s: float = 0.0
     retries: int = 0
+    retry_after_honoured: int = 0
     http_errors: dict[str, int] = Field(default_factory=dict)
     transport_errors: dict[str, int] = Field(default_factory=dict)
     models_seen: dict[str, int] = Field(default_factory=dict)

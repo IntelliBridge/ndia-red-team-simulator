@@ -120,7 +120,8 @@ class LLMProbeChildSpec(BaseModel):
     eval_threshold: float = Field(0.5, gt=0.0, le=1.0)
     generations: Literal[1] = 1
     request_timeout_s: float = Field(60.0, gt=0.0, le=600.0)
-    transport_max_tries: int = Field(4, ge=1, le=10)
+    transport_max_tries: int = Field(8, ge=1, le=12)
+    transport_max_sleep_s: float = Field(60.0, ge=0, le=600, allow_inf_nan=False)
     max_tokens: int = Field(400, ge=1, le=4096)
     temperature: float = Field(0.7, ge=0.0, le=2.0)
     target_lang: str = "en"
@@ -249,6 +250,7 @@ def garak_run_config(spec: LLMProbeChildSpec, work_dir: Path) -> dict[str, Any]:
         "temperature": spec.temperature,
         "request_timeout_s": spec.request_timeout_s,
         "transport_max_tries": spec.transport_max_tries,
+        "transport_max_sleep_s": spec.transport_max_sleep_s,
     }
     if spec.persona:
         generator_options["persona"] = spec.persona
