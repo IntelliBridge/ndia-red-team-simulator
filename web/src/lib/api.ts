@@ -831,11 +831,93 @@ export async function deleteTarget(targetId: string): Promise<void> {
 // json/md as nosniff downloads — see redsim/api/v1/reports.py). They
 // mirror the existing HTML-report anchor (apiBase + path), so we expose
 // URL builders rather than blob helpers.
-export type ReportExt = "html" | "json" | "md";
+/** The report formats of spec 14.8 and 17.1, in the order the UI lists them. */
+export const REPORT_EXTS = ["md", "json", "html", "pdf"] as const;
+export type ReportExt = (typeof REPORT_EXTS)[number];
 
 export function reportUrl(runId: string, ext: ReportExt): string {
   return `${BASE}/v1/runs/${encodeURIComponent(runId)}/report.${ext}`;
 }
+
+/** The Croissant manifest of a run's adversarial dataset export (`GET /v1/datasets/{run_id}`, spec 27.1). */
+export function datasetManifestUrl(runId: string): string {
+  return `${BASE}/v1/datasets/${encodeURIComponent(runId)}`;
+}
+
+// ── Exports inventory (`GET /v1/exports`) ──────────────────────────
+// One row per campaign or verify run with the state of its report formats
+// and of its adversarial dataset export. Ids, digests, sizes and counts only;
+// never a score (spec 15.7). Read through the tRPC `exports` router.
+
+/** One report format as a content-addressed artifact row. */
+export type ExportArtifactRef = {
+  artifact_id: string;
+  kind: string;
+  sha256: string;
+  size_bytes: number;
+  /** `snapshot` when the newest non-archived snapshot names it, else `artifact`. */
+  source: "snapshot" | "artifact";
+  snapshot_version?: number;
+};
+
+export type ExportReports = {
+  run_id: string;
+  formats: Record<ReportExt, ExportArtifactRef | null>;
+  available: ReportExt[];
+  missing: ReportExt[];
+  snapshot_count: number;
+  latest_snapshot: {
+    id: string;
+    version: number;
+    rendered_at: string | null;
+    archived: boolean;
+  } | null;
+  render_in_flight: boolean;
+};
+
+export type ExportDatasetStatus = "not_exported" | "queued" | "running" | "exported" | "failed";
+export type ExportDatasetBlocker = "not_terminal" | "run_failed" | "fixture_target" | "no_slices";
+
+export type ExportDataset = {
+  format: string;
+  status: ExportDatasetStatus;
+  manifest_artifact_id: string | null;
+  manifest_sha256: string | null;
+  files: number;
+  bytes: number;
+  card: boolean;
+  job_id: string | null;
+  follow_up_run_id: string | null;
+  error: string | null;
+  blockers: ExportDatasetBlocker[];
+};
+
+export type ExportRow = {
+  run_id: string;
+  project_id: string;
+  kind: "campaign" | "verify";
+  status: string;
+  terminal: boolean;
+  created_at: string | null;
+  completed_at: string | null;
+  model: {
+    target_id: string | null;
+    name: string | null;
+    value: string | null;
+    modality: string | null;
+    fixture: boolean;
+  };
+  reports: ExportReports;
+  dataset: ExportDataset;
+};
+
+export type ExportsList = {
+  exports: ExportRow[];
+  count: number;
+  report_formats: string[];
+  dataset_format: string;
+  limit: number;
+};
 
 // --- Per-tenant cost (multi-tenancy) ---
 // Mirrors GET /v1/orgs/{org_id}/cost?days=N. cents are integers throughout;

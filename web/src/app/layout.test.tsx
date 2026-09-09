@@ -56,6 +56,7 @@ describe("RootLayout", () => {
       ["Runs", "/runs"],
       ["Tests", "/tests"],
       ["Findings", "/findings"],
+      ["Exports", "/exports"],
       ["Audit", "/audit"],
     ]);
 
