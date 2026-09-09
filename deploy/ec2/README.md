@@ -1,129 +1,98 @@
-# Single-host EC2 runtime
+# Single-host EC2 runtime (native processes)
 
-The demo runs on one EC2 instance since 2026-09-09. The ECS runtime in
-`../runtime` is retired: every ECS service is at desired count zero and the
-DNS record is no longer managed by that Terraform root. The foundation
-(`../terraform`: RDS PostgreSQL, Redis, the artifacts and audit buckets, the
+The demo runs on one EC2 instance as native processes under systemd since
+2026-09-09. No containers, no image build, no registry. The ECS runtime in
+`../runtime` is retired (services at zero, DNS record unmanaged there). The
+foundation (`../terraform`: RDS PostgreSQL, Redis, the artifacts bucket, the
 IAM roles, the VPC) stays and is what the host uses.
 
 | Item | Value |
 |---|---|
-| Instance | `i-0cc7eb0ee0880ea3b`, `t3.xlarge`, Ubuntu 24.04, us-east-1a, public subnet `ndia-red-team-demo-public-a` |
+| Instance | `i-0cc7eb0ee0880ea3b`, `t3.xlarge`, Ubuntu 24.04, us-east-1a, subnet `ndia-red-team-demo-public-a` |
 | Elastic IP | `100.61.75.31` (`eipalloc-0de107af31e9bf3aa`), A record `redsim.ndia.agiledefense.xyz`, TTL 60 |
-| Security groups | `redsim-ec2` (443 and 80 from anywhere, 22 from the operator's IP), plus the foundation's `api` and `identity` groups, which the RDS and Redis groups already admit |
-| Instance role | `redsim-ec2`: SSM core, ECR read, `secretsmanager:GetSecretValue` on `ndia-red-team/demo/*`, read and write on the artifacts bucket |
-| Key pair | `redsim-ec2` (the operator holds the private key; SSM works without it) |
-| Images | ECR `ndia-red-team/{api,worker,web,identity}` at a `main` commit sha, pulled by the host |
-| TLS | Caddy with Let's Encrypt on the hostname (ports 80 and 443) |
+| Security groups | `redsim-ec2` (443 and 80 public, 22 from the operator IP) plus the foundation's `api` and `identity` groups, which RDS and Redis admit |
+| Instance role | `redsim-ec2`: SSM core, ECR read, `secretsmanager:GetSecretValue` on `ndia-red-team/demo/*`, the artifacts bucket |
+| Checkout | `/opt/redsim/src` (a clone of this repository, detached at the deployed commit) |
+| Python | `/opt/redsim/venv` (3.12, `.[api,worker,ml]` with CPU torch, editable install of the checkout) |
+| Node | Node 20, pnpm 10 through corepack, `node_modules` in the checkout |
+| Keycloak | `/opt/keycloak` (26.7.3, Java 21), realm import from `deploy/runtime/identity/realm.json` |
+| TLS | Caddy from the apt package, Let's Encrypt on the hostname (`/etc/caddy/Caddyfile`) |
 
-## What runs on the host
+## Processes
 
-`deploy/ec2/user-data.sh` is the cloud-init script, with its placeholders
-filled by the launcher. It installs Docker and the AWS CLI, fetches the
-per-service secrets from Secrets Manager (`ndia-red-team/demo/{api,scans,
-default,beat,web,identity}` and, when present, `ndia-red-team/demo/pythia`)
-into `/opt/redsim/env/*.secret.env` (mode 0600, JSON-quoted so PEM values
-survive), writes the non-secret environment that the ECS task definitions
-carried, downloads and verifies the pinned asset bundle into
-`/opt/redsim/assets`, and starts `/opt/redsim/docker-compose.yml`:
-
-| Container | Image | Role |
+| Unit | Command | Listens |
 |---|---|---|
-| `caddy` | `caddy:2` | TLS and routing: `/v1/*`, `/health`, `/ws/*` to the API; `/auth/*` to Keycloak; the rest to the web app |
-| `identity` | identity | Keycloak (`start --import-realm`) on the existing `redsim_identity` database |
-| `api` | api | `uvicorn redsim.api.app:create_app`, bundle mounted read-only |
-| `web` | web | Next.js with Better Auth (`BETTER_AUTH_URL`, `KEYCLOAK_PUBLIC_ISSUER`, `REDSIM_API_URL=http://api:8000`) |
-| `scans`, `default` | worker | Celery pools, bundle mounted, Pythia variables when the secret exists |
-| `beat` | worker | Celery beat |
+| `redsim-identity` | `kc.sh start --import-realm` | 127.0.0.1:8080 (`/auth`) |
+| `redsim-api` | `uvicorn redsim.api.app:create_app --factory` | 127.0.0.1:8000 |
+| `redsim-scans`, `redsim-default` | `celery worker -Q scans` / `-Q default` | none |
+| `redsim-beat` | `celery beat` | none |
+| `redsim-web` | `pnpm --filter @redsim/web dev` (Next.js dev server on the checkout) | 127.0.0.1:3000 |
+| `caddy` | routes `/v1/*`, `/health`, `/ws/*` to the API, `/auth/*` to Keycloak, the rest to the web app | 80, 443 |
 
-Keycloak's realm, the demo users and the application data are in RDS, so
-nothing was re-seeded for the move.
+Every unit starts through `/usr/local/bin/redsim-run <service> <command>`,
+which assembles the environment from `/opt/redsim/env/common.env` (or
+`web.env`, `identity.env`) and the Secrets Manager JSON `/opt/redsim/env/<service>.json`
+(plus `pythia.json` for the workers, which turns the narrative on), then
+execs the command. JSON keeps PEM values intact; nothing secret reaches the
+command line or the journal. Keycloak's realm, the users and the application
+data are in RDS.
 
-## Releases
+Logs: `journalctl -u redsim-api -f` (or any unit), `/var/log/redsim-native-bootstrap.log`.
 
-Every push to `main` runs `.github/workflows/deploy-host.yml`: one SSM
-command on the host runs `redsim-deploy`, which fast-forwards the checkout in
-`/opt/redsim/src`, installs that checkout's `deploy/ec2/redsim-deploy` and
-`deploy/ec2/redsim-render-env.sh` as the host scripts, re-renders the
-environment from Secrets Manager, rebuilds the dependency images only when
-`pyproject.toml`, a Dockerfile or the lockfile changed, restarts the
-containers of `deploy/ec2/compose.host.yml` (they bind-mount the checkout)
-and requires `/health` to answer 200. About a minute. The job waits for the
-command result and fails on a non-zero exit. The deploy role
-`ndia-red-team-gha-deploy` holds `ssm:SendCommand` on this one instance; the
-repository variable `EC2_INSTANCE_ID` names it. `make deploy-host` sends the
-same command from a laptop.
+## Releases: a push to main is a deploy
 
-The image-based path stays for a fresh host or a rebuild of the dependency
-images: `.github/workflows/deploy-aws.yml` (manual) builds the four images
-and its `deploy-ec2` job installs `deploy/ec2/redsim-render-env.sh` and
-`deploy/ec2/redsim-roll.sh` on the host, then runs `redsim-roll <sha>`, which
-re-tags `/opt/redsim/docker-compose.yml`, re-renders the environment, repairs
-the compose env_file lists of an older bootstrap, pulls and recreates.
+`.github/workflows/deploy-host.yml` runs on every push to `main`: one SSM
+command on the instance named by the repository variable `EC2_INSTANCE_ID`
+runs `redsim-deploy`, which fast-forwards the checkout, reinstalls only what
+the diff touched (venv when `pyproject.toml` changed, node modules when the
+lockfile changed, realm when it changed), restarts the units and requires
+`/health` 200. Under a minute. The web dev server reloads by itself.
 
-By hand, from a machine with the hackathon profile:
+From a laptop, without waiting for GitHub:
 
 ```bash
 export AWS_PROFILE=ndia-hackathon AWS_CA_BUNDLE=$HOME/.aws/Zscaler_Root_CA.pem AWS_REGION=us-east-1
-aws ssm send-command --instance-ids i-0cc7eb0ee0880ea3b --document-name AWS-RunShellScript \
-  --parameters 'commands=["/usr/local/bin/redsim-deploy main"]'   # SSM runs as root; no sudo
-# or interactively
-aws ssm start-session --target i-0cc7eb0ee0880ea3b
-ssh -i ~/.ssh/redsim-ec2.pem ubuntu@100.61.75.31
+make deploy-host            # origin/main
+make deploy-host REF=my-branch
+aws ssm start-session --target i-0cc7eb0ee0880ea3b        # a shell on the host
+ssh -i ~/.ssh/redsim-ec2.pem ubuntu@100.61.75.31          # from the operator IP
 ```
 
-On the host: `cd /opt/redsim && docker compose ps`, `docker compose logs -f
-api`, `/var/log/redsim-bootstrap.log` for the first boot.
+`deploy-aws.yml` (the ECR image build) is manual only and not part of any deploy.
 
 ## Environment
 
-Non-secret values live in `/opt/redsim/env/{common,web,identity}.env` and
-are written by the bootstrap. Secrets come from Secrets Manager through
-`/usr/local/bin/redsim-render-env` (canonical copy
-`deploy/ec2/redsim-render-env.sh`), which the bootstrap runs once and every
-`redsim-deploy` (and `redsim-roll`) runs again before recreating the
-containers, so adding or rotating a secret takes effect on the next merge to `main`. It writes the
-per-service `*.secret.env` files, `pythia.env` (the four Pythia variables
-from `ndia-red-team/demo/pythia`, empty when that secret is absent) and
-`llm.env`: `REDSIM_DISABLE_LLM` (`0` when the Pythia secret exists, else `1`)
-and `REDSIM_TARGET_ALLOWLIST` (loopback and docker hosts plus the Pythia
-gateway host, so an LLM target registration passes the egress check; the
-API image ships no `redsim.yaml`). `api`, `scans` and `default` layer
-`llm.env` and `pythia.env`; `beat` layers `llm.env`. The api container needs
-them as much as the workers: the gateway model picker (`GET /v1/llm/models`),
-the LLM capability flags and the default `gateway_url` of an LLM target
-registration read them. Hosts bootstrapped before the evening of 2026-09-09
-gave Pythia to the workers only; `compose.host.yml` now layers the files for
-the api as well, and `redsim-roll` repairs an image-based compose file in place. `BETTER_AUTH_URL` is the public origin
-(`https://redsim.ndia.agiledefense.xyz`), never a callback path or
-localhost: Better Auth derives the callback from it and the tRPC layer
-compares request origins against it.
+Non-secret values: `/opt/redsim/env/{common,web,identity}.env`, written by
+the bootstrap. Secrets: fetched from `ndia-red-team/demo/*` at bootstrap
+into `/opt/redsim/env/*.json` (0600, owner `redsim`). To change one, update
+the secret and re-run the secrets block of the bootstrap (or the whole
+bootstrap, it is idempotent), then restart the unit. `BETTER_AUTH_URL` is the
+public origin, never a callback path or localhost. `REDSIM_DISABLE_LLM` is
+`0` on the workers when `pythia.json` exists.
 
-## Launching a replacement host
+Schema migrations are not run by the deploy. When `redsim/db/migrations`
+changes, run Alembic once with the migration credentials
+(`ndia-red-team/demo/migration` plus the RDS master secret, as
+`deploy/runtime/scripts/migrate.py` does).
 
-1. `deploy/ec2/user-data.sh`: fill `__REGION__`, `__ACCOUNT__`,
-   `__IMAGE_TAG__` (a `main` sha with images in ECR), `__ORIGIN__`,
-   `__HOST__`, `__BUCKET__`, `__BUNDLE_KEY__`, `__BUNDLE_SHA__`, `__DB_HOST__`.
-2. `aws ec2 run-instances` with the Ubuntu 24.04 AMI from SSM parameter
-   `/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id`,
-   the public subnet, the three security groups, `--iam-instance-profile
-   Name=redsim-ec2`, `--metadata-options HttpTokens=required,HttpPutResponseHopLimit=2`
-   (the containers read the instance role through IMDS), an 80 GB gp3 root
-   and the user data.
-3. `aws ec2 associate-address --allocation-id eipalloc-0de107af31e9bf3aa
-   --instance-id <new id>`, then set the repository variable
-   `EC2_INSTANCE_ID` and the deploy role's `ssm:SendCommand` resource to the
-   new instance.
-4. Wait for `/var/log/redsim-bootstrap.log` to end with `redsim bootstrap
-   finished`; Caddy obtains the certificate within a minute of the EIP
-   pointing at the host.
+## Building or rebuilding a host
+
+1. Launch Ubuntu 24.04 (`t3.xlarge` or larger) in the public subnet with the
+   three security groups, `--iam-instance-profile Name=redsim-ec2`,
+   `--metadata-options HttpTokens=required,HttpPutResponseHopLimit=2`, an
+   80 GB gp3 root, and associate the Elastic IP.
+2. On the host: `git clone https://github.com/IntelliBridge/ndia-red-team-simulator.git /opt/redsim/src`,
+   write `/opt/redsim/deploy.env` with `REDSIM_PUBLIC_ORIGIN=https://redsim.ndia.agiledefense.xyz`
+   and `REDSIM_DB_HOST=<rds host>`, download and extract the asset bundle
+   into `/opt/redsim/assets` (`assets/bundles/<sha>.tar.gz` in the artifacts
+   bucket, verify the SHA-256), then
+   `bash /opt/redsim/src/deploy/ec2/native/bootstrap-native.sh`.
+3. Point `EC2_INSTANCE_ID` and the deploy role's `ssm:SendCommand` resource at
+   the new instance.
 
 ## Known limits
 
-- One host, no redundancy; a reboot restarts every container
-  (`restart: unless-stopped`).
-- The ECR login is refreshed by a systemd timer every six hours; a pull
-  more than twelve hours after the last refresh runs `redsim-ecr-login`
-  first (`redsim-roll` does).
-- The ACM certificate of the ECS runtime is unused; Caddy holds its own.
+- One host, no redundancy; units restart on failure and on reboot.
+- The web app runs the Next.js dev server for instant reloads; first page
+  loads compile on demand and take a few seconds.
 - Port 22 admits only the operator IP recorded at launch; SSM needs no port.
