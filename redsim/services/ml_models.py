@@ -18,6 +18,21 @@ that shape first and still accepts the pre-manifest flat ``models[*].eval_split`
 entries, so an upload declared against a bundled dataset binds to the same
 slice a bundled model is measured on.
 
+Bundled registration. :func:`register_bundled_model` is the admission boundary
+for ``POST /v1/models`` with ``source: "bundled"`` and for the ``redsim ml seed``
+CLI (spec 9.3, 17.2): it resolves the bundled id through the target registry
+and the asset manifest, refuses fixture-only entries (never a demo target,
+spec 5.5), verifies the weights and the bound evaluation split against their
+recorded digests, writes the ``model.register`` audit row, copies the weights
+into the blob store and only then creates a per-project ``Target`` row whose
+``value`` is ``bundled:<id>``. The registry id lives in ``detail.bundled_id``;
+the row id is per project so two projects can register the same bundled model.
+
+Refusals. :func:`audit_refused_admission` writes the ``success=False`` audit row
+every refused admission carries (spec 5.11, 9.5) through the same writer the
+successful path uses; the detail names the reason and never carries payload
+bytes.
+
 Deletion. ``DELETE /v1/models/{id}`` is a soft delete: every upload creates an
 ``ml.ingest`` Run whose ``target_id`` references the Target, and campaigns
 reference it from ``ml_campaigns``, so the row must stay for history (spec 17:
@@ -37,15 +52,24 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any, cast
+from uuid import uuid4
+
+# ``redsim.api.errors`` itself is FastAPI-free, but importing it resolves the
+# ``redsim.api`` package, whose ``__init__`` builds the app. The worker and the
+# sandbox child import this module, so the error table is loaded lazily inside
+# :func:`register_bundled_model` and never at import time.
 
 if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
     from redsim.audit.chain import AuditWriter
     from redsim.config import RedsimConfig
     from redsim.db.models import Target
@@ -59,6 +83,25 @@ ML_KINDS = frozenset({"ml_model_artifact", "ml_model_endpoint"})
 
 #: ``targets.detail.status`` of a soft-deleted model target.
 DELETED_STATUS = "deleted"
+
+#: ``Run.scanner`` values that make up a model's campaign history (spec 5.2).
+CAMPAIGN_SCANNERS = ("ml.campaign", "ml.verify")
+
+#: Blob key prefix the bundled weights are copied under (gap register G-ASSET4).
+BUNDLED_BLOB_PREFIX = "ml/assets/bundled"
+
+#: Detail ``reason`` carried by a 404 for a bundled id outside the demo catalog
+#: (spec 17.2 names it ``unknown_bundled_model``; the 17.3 code is ``not_found``).
+UNKNOWN_BUNDLED_MODEL = "unknown_bundled_model"
+
+
+class MlCatalogUnavailable(RuntimeError):
+    """The ML target registry could not be imported in this process (503 at the API)."""
+
+    def __init__(self, what: str, exc: ImportError) -> None:
+        super().__init__(f"{what} catalog is unavailable in this process: {exc}")
+        self.what = what
+        self.reason = str(exc)
 
 # Same names ``redsim.ml.targets.bundled`` reads; kept as literals so the API
 # process can locate the manifest without importing the ML target package.
@@ -479,6 +522,390 @@ def uploaded_target(target: Target, blob_store: BlobStore) -> Iterator[ArtifactT
 
 
 # ---------------------------------------------------------------------------
+# Refused admissions and upload naming (``POST /v1/models``)
+# ---------------------------------------------------------------------------
+
+
+def audit_refused_admission(
+    writer: AuditWriter,
+    *,
+    action: str,
+    actor: str,
+    project_id: str | None,
+    detail: dict[str, Any],
+    run_id: str | None = None,
+) -> None:
+    """Write the ``success=False`` audit row of a refused admission (spec 5.11, 9.5).
+
+    Goes through the same ``AuditWriter`` the successful path uses, so the
+    refusal sits on the project chain next to the admissions it precedes.
+    ``target`` is ``None`` (an in-boundary artifact, ``allowlist_check`` is
+    ``n/a``) and ``detail`` must already be free of payload bytes and secrets;
+    the durable writers redact it as they do every other event.
+    """
+    writer.append(
+        action=action, actor=actor, target=None,
+        allowlist_check="n/a", override=False, success=False,
+        detail={"actor": actor, **detail},
+        run_id=run_id, project_id=project_id,
+    )
+
+
+def safe_filename(name: str | None, default: str = "model") -> str:
+    """The upload's file name reduced to ``[A-Za-z0-9._-]`` and its last path segment.
+
+    Runs of refused characters collapse to one ``_`` and a ``_`` before an
+    extension dot is dropped, so ``my model (v2).onnx`` becomes ``my_model_v2.onnx``.
+    """
+    base = PurePath(str(name or "").replace("\\", "/")).name
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", base)
+    cleaned = re.sub(r"_+", "_", cleaned)
+    cleaned = re.sub(r"_(?=\.)", "", cleaned).strip("._")
+    return cleaned or default
+
+
+def upload_blob_key(project_id: str, target_id: str, filename: str) -> str:
+    """``{project_id}/models/{target_id}/{safe_filename}`` (spec 9.3 step 3)."""
+    return f"{project_id}/models/{target_id}/{safe_filename(filename)}"
+
+
+def dataset_modality(entry: dict[str, Any], dataset_id: str, document: dict[str, Any]) -> str | None:
+    """The modality a manifest dataset entry records, or ``None`` when it does not say."""
+    return _dataset_modality(entry, dataset_id, _model_entries(document))
+
+
+def dataset_entries(document: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """``datasets`` of an asset manifest keyed by id (public read of :func:`_dataset_entries`)."""
+    return _dataset_entries(document)
+
+
+# ---------------------------------------------------------------------------
+# Bundled registration (``POST /v1/models`` source=bundled, ``redsim ml seed``)
+# ---------------------------------------------------------------------------
+
+
+def _confined_asset_path(root: Path, rel: str) -> Path:
+    """``root / rel`` resolved inside the asset tree; escapes are refused."""
+    from redsim.api.errors import MODEL_LOAD_REFUSED, ApiError
+
+    root_r = root.resolve()
+    candidate = (root_r / rel).resolve()
+    if candidate != root_r and root_r not in candidate.parents:
+        raise ApiError(MODEL_LOAD_REFUSED, f"asset path escapes the asset tree: {rel!r}",
+                       refusal_reason="assets_unverified")
+    return candidate
+
+
+def _registry_info(bundled_id: str) -> Any:
+    """``TargetInfo`` of a registered bundled target, ``None`` when the id is not registered."""
+    try:
+        from redsim.ml.targets import TARGETS
+    except ImportError as exc:
+        raise MlCatalogUnavailable("bundled model", exc) from exc
+    target = TARGETS.maybe_get(bundled_id)
+    return None if target is None else target.info()
+
+
+def canonical_bundled_id(bundled_id: str) -> str:
+    """The registry id a bundled id (or a legacy build id such as ``url_classifier``) stands for."""
+    from redsim.ml.assets import LEGACY_MODEL_IDS
+
+    return LEGACY_MODEL_IDS.get(bundled_id, bundled_id)
+
+
+def bundled_target_id(bundled_id: str) -> str:
+    """A per-project ``Target.id`` for a bundled registration (the registry id stays in ``detail``)."""
+    return f"{bundled_id}-{uuid4().hex[:8]}"
+
+
+def find_bundled_registration(session: Session, project_id: str, bundled_id: str) -> Target | None:
+    """The live (not soft-deleted) Target row registering ``bundled_id`` in ``project_id``, if any."""
+    from sqlalchemy import select
+
+    from redsim.db.models import Target
+
+    rows = session.execute(
+        select(Target).where(
+            Target.project_id == project_id,
+            Target.kind.in_(ML_KINDS),
+            Target.value == f"bundled:{bundled_id}",
+        )
+    ).scalars().all()
+    for row in rows:
+        if not is_deleted(row.detail):
+            return row
+    return None
+
+
+def register_bundled_model(
+    session: Session,
+    project_id: str,
+    bundled_id: str,
+    actor: str,
+    *,
+    audit_writer: AuditWriter | None = None,
+    config: RedsimConfig | None = None,
+    blob_store: BlobStore | None = None,
+    assets_root: str | Path | None = None,
+) -> Target:
+    """Admission boundary for registering a bundled model into a project (spec 9.3, 17.2).
+
+    Order: resolve the id through the registry and the asset manifest, refuse
+    fixture-only entries, verify the weights and the bound evaluation split
+    against the manifest digests, refuse a duplicate in the project, write the
+    ``model.register`` audit row (``source=bundled``), copy the weights into the
+    blob store, then add the ``Target`` row to ``session`` (the caller owns the
+    transaction). Raises :class:`redsim.api.errors.ApiError` with the 17.3 code:
+    ``not_found`` (``reason=unknown_bundled_model``) for an unknown or
+    fixture-only id, ``model_load_refused`` when the assets are missing or fail
+    verification, ``already_registered`` for a live duplicate.
+    :class:`MlCatalogUnavailable` when the registry cannot be imported.
+    """
+    from redsim.api.errors import ALREADY_REGISTERED, MODEL_LOAD_REFUSED, NOT_FOUND, ApiError
+    from redsim.ml.assets.manifest import (
+        AssetManifest,
+        model_entry,
+        model_manifest,
+        verify_model_assets,
+    )
+    from redsim.safety import authorize
+
+    requested = (bundled_id or "").strip()
+    bundled_id = canonical_bundled_id(requested)
+    if not bundled_id:
+        raise ApiError(NOT_FOUND, "bundled_id is required", reason=UNKNOWN_BUNDLED_MODEL, field="bundled_id")
+    info = _registry_info(bundled_id)
+    if info is None or info.metadata.get("source") != "bundled":
+        raise ApiError(NOT_FOUND, f"{requested!r} is not a bundled model in the target registry",
+                       reason=UNKNOWN_BUNDLED_MODEL, field="bundled_id")
+    root = assets_root_path(assets_root)
+    try:
+        document = read_asset_manifest(root)
+    except DatasetBindingError as exc:
+        raise ApiError(MODEL_LOAD_REFUSED, f"bundled assets for {bundled_id!r} are not built: {exc}",
+                       status="not_implemented", refusal_reason="bundled_assets_missing") from exc
+    try:
+        manifest = AssetManifest.model_validate(document)
+    except ValueError as exc:
+        raise ApiError(MODEL_LOAD_REFUSED, f"bundled asset manifest at {root} is invalid: {exc}",
+                       status="not_implemented", refusal_reason="bundled_assets_missing") from exc
+    entry = model_entry(manifest, bundled_id)
+    if entry is None:
+        raise ApiError(MODEL_LOAD_REFUSED,
+                       f"bundled assets for {bundled_id!r} are missing: no entry in {root / MANIFEST_NAME}",
+                       status="not_implemented", refusal_reason="bundled_assets_missing")
+    if entry.fixture_only or info.metadata.get("fixture_only"):
+        # CI fixtures are never demo targets (spec 5.5, 11.1); the catalog hides them.
+        raise ApiError(NOT_FOUND, f"{bundled_id!r} is a CI fixture and is never registered as a model",
+                       reason=UNKNOWN_BUNDLED_MODEL, field="bundled_id")
+    problems = verify_model_assets(manifest, root, bundled_id)
+    if problems:
+        raise ApiError(MODEL_LOAD_REFUSED,
+                       f"bundled assets for {bundled_id!r} fail verification against the manifest",
+                       status="refused", refusal_reason="assets_unverified",
+                       reasons=list(problems.model) + list(problems.dataset))
+    existing = find_bundled_registration(session, project_id, bundled_id)
+    if existing is not None:
+        raise ApiError(ALREADY_REGISTERED,
+                       f"bundled model {bundled_id!r} is already registered in project {project_id!r}",
+                       target_id=existing.id, sha256=entry.sha256)
+
+    weights_path = _confined_asset_path(root, entry.file.path)
+    projection = model_manifest(entry).model_dump(mode="json")
+    projection["status"] = "available"
+    target_id = bundled_target_id(bundled_id)
+    filename = PurePath(entry.file.path).name
+    blob_key = f"{BUNDLED_BLOB_PREFIX}/{bundled_id}/{safe_filename(filename)}"
+
+    if config is None:
+        from redsim.config import load_config
+
+        config = load_config()
+    if audit_writer is None:
+        from redsim.audit.chain import resolve_writer
+
+        audit_writer = resolve_writer(config)
+    # The chained event precedes the blob and the row (spec 6.7 invariant 4, 9.3 step 4).
+    authorize(
+        "model.register",
+        None,
+        allowlist=config.target_allowlist,
+        actor=actor,
+        writer=audit_writer,
+        project_id=project_id,
+        detail={
+            "actor": actor,
+            "target_id": target_id,
+            "kind": "ml_model_artifact",
+            "source": "bundled",
+            "bundled_id": bundled_id,
+            "declared_format": entry.format,
+            "sha256": entry.sha256,
+            "size_bytes": entry.size_bytes,
+            "architecture_id": entry.architecture_id,
+            "modality": entry.modality,
+            "filename": filename,
+            "dataset_id": entry.dataset_id,
+            "dataset_revision": entry.dataset_revision,
+            "dataset_split": entry.dataset_split,
+            "manifest_sha256": entry.manifest_sha256,
+            "blob_key": blob_key,
+        },
+    )
+
+    data = weights_path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != entry.sha256:
+        raise ApiError(MODEL_LOAD_REFUSED, f"bundled weights for {bundled_id!r} changed under verification",
+                       status="refused", refusal_reason="assets_unverified")
+    if blob_store is None:
+        from redsim.storage.blobs import open_blob_store
+
+        blob_store = open_blob_store()
+    ref = blob_store.put(blob_key, data, content_type="application/octet-stream")
+
+    from redsim.db.models import Target
+
+    registered_at = datetime.now(UTC).isoformat()
+    detail: dict[str, Any] = {
+        **projection,
+        "source": "bundled",
+        "bundled_id": bundled_id,
+        "status": "available",
+        "fixture_only": False,
+        "manifest": projection,
+        "blob": {"key": blob_key, "location": ref.location, "sha256": ref.sha256, "size_bytes": ref.size_bytes},
+        "assets_dir": str(root),
+        "validation": {
+            "detected_format": entry.format,
+            "input_shape": list(entry.input_shape),
+            "class_count": entry.n_classes,
+            "gradients": entry.gradients,
+            "onnx_torch_argmax_agreement": None,
+            "refusal_reason": None,
+            "ingest_job_id": None,
+            "ingest_run_id": None,
+            "source": "asset_manifest",
+        },
+        "registered_by": actor,
+        "registered_at": registered_at,
+    }
+    target = Target(id=target_id, project_id=project_id, kind="ml_model_artifact",
+                    value=f"bundled:{bundled_id}", verified=True)
+    target.detail = detail
+    session.add(target)
+    session.flush()
+    logger.info("register_bundled_model project_id=%s target_id=%s bundled_id=%s sha256=%s",
+                project_id, target_id, bundled_id, entry.sha256)
+    return target
+
+
+def assets_root_path(explicit: str | Path | None = None) -> Path:
+    """The asset tree root (``REDSIM_ML_ASSETS_DIR`` or ``./assets``), as :func:`assets_root` resolves it."""
+    return assets_root(explicit)
+
+
+# ---------------------------------------------------------------------------
+# Campaign history (``GET /v1/models`` ``last_run_id``, ``GET /v1/models/{id}``)
+# ---------------------------------------------------------------------------
+
+
+def _campaign_rows(session: Session, run_ids: Iterable[str]) -> tuple[dict[str, Any], bool]:
+    """``{run_id: ml_campaigns row}`` for the given runs; ``(rows, available)``.
+
+    The table is migration-owned and reflected, never redeclared. When it is
+    not present (a harness that only built the ORM metadata) the history is
+    served from the Run rows alone and says so, rather than inventing config.
+    """
+    ids = [rid for rid in run_ids]
+    if not ids:
+        return {}, True
+    try:
+        from sqlalchemy import MetaData, Table
+
+        table = Table("ml_campaigns", MetaData(), autoload_with=session.get_bind())
+        rows = session.execute(table.select().where(table.c.run_id.in_(ids))).mappings().all()
+    except Exception:  # noqa: BLE001 - NoSuchTableError / OperationalError depending on the dialect
+        logger.info("ml_campaigns is not readable here; campaign history is served from Run rows only")
+        return {}, False
+    return {str(row["run_id"]): dict(row) for row in rows}, True
+
+
+def _campaign_runs(session: Session, target_id: str) -> list[Any]:
+    from sqlalchemy import select
+
+    from redsim.db.models import Run
+
+    return list(session.execute(
+        select(Run).where(Run.target_id == target_id, Run.scanner.in_(list(CAMPAIGN_SCANNERS)))
+        .order_by(Run.created_at.desc(), Run.id.desc())
+    ).scalars().all())
+
+
+def campaign_history(session: Session, target_id: str) -> list[dict[str, Any]]:
+    """Campaigns that ran on a model, newest first (spec 17.2 ``GET /v1/models/{id}``).
+
+    One entry per ``ml.campaign`` / ``ml.verify`` Run with the attack ids,
+    ``reference_eps`` and ``settings_hash`` from the campaign row and the MRI as
+    a link into the full scorecard (``scorecard_url``), never as a bare number
+    (spec 15.7). ``score_status`` is ``scored``, ``pending`` (run not terminal)
+    or ``unavailable``; ``campaign_record`` is ``"unavailable"`` when the
+    ``ml_campaigns`` table cannot be read.
+    """
+    runs = _campaign_runs(session, target_id)
+    campaigns, available = _campaign_rows(session, [run.id for run in runs])
+    history: list[dict[str, Any]] = []
+    for run in runs:
+        row = campaigns.get(run.id, {})
+        config = row.get("config") if isinstance(row.get("config"), dict) else {}
+        scored = row.get("score") is not None
+        if scored:
+            score_status = "scored"
+        elif run.status in {"queued", "running"}:
+            score_status = "pending"
+        else:
+            score_status = "unavailable"
+        entry: dict[str, Any] = {
+            "run_id": run.id,
+            "kind": "verify" if run.scanner == "ml.verify" else "attack",
+            "status": run.status,
+            "created_at": run.created_at.isoformat() if run.created_at is not None else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at is not None else None,
+            "attack_ids": list(config.get("attack_ids") or []),
+            "reference_eps": config.get("reference_eps"),
+            "settings_hash": row.get("settings_hash"),
+            "baseline_run_id": row.get("baseline_run_id"),
+            "score_status": score_status,
+            "scorecard_url": f"/v1/runs/{run.id}/campaign" if scored else None,
+            "status_url": f"/v1/runs/{run.id}",
+        }
+        if not available:
+            entry["campaign_record"] = "unavailable"
+        history.append(entry)
+    return history
+
+
+def last_run_ids(session: Session, target_ids: Iterable[str]) -> dict[str, str]:
+    """``{target_id: newest campaign or verify run id}`` for the given targets (spec 17.2 list row)."""
+    from sqlalchemy import select
+
+    from redsim.db.models import Run
+
+    ids = list(target_ids)
+    if not ids:
+        return {}
+    rows = session.execute(
+        select(Run.target_id, Run.id).where(
+            Run.target_id.in_(ids), Run.scanner.in_(list(CAMPAIGN_SCANNERS)),
+        ).order_by(Run.created_at.desc(), Run.id.desc())
+    ).all()
+    out: dict[str, str] = {}
+    for target_id, run_id in rows:
+        if target_id is not None and target_id not in out:
+            out[str(target_id)] = str(run_id)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Soft delete (``DELETE /v1/models/{id}``)
 # ---------------------------------------------------------------------------
 
@@ -640,16 +1067,32 @@ def delete_model_target(
 
 
 __all__ = [
+    "BUNDLED_BLOB_PREFIX",
+    "CAMPAIGN_SCANNERS",
     "DELETED_STATUS",
     "ML_KINDS",
+    "UNKNOWN_BUNDLED_MODEL",
     "DatasetBinding",
     "DatasetBindingError",
+    "MlCatalogUnavailable",
     "artifact_target_from_path",
+    "assets_root_path",
+    "audit_refused_admission",
+    "bundled_target_id",
+    "campaign_history",
+    "canonical_bundled_id",
     "check_upload_dataset",
+    "dataset_entries",
+    "dataset_modality",
     "delete_model_target",
+    "find_bundled_registration",
     "is_deleted",
+    "last_run_ids",
     "read_asset_manifest",
+    "register_bundled_model",
     "resolve_dataset_binding",
+    "safe_filename",
+    "upload_blob_key",
     "uploaded_model_file",
     "uploaded_target",
 ]

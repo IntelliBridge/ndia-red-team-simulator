@@ -23,6 +23,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: ``Target.kind`` values owned by ``POST /v1/models`` (spec 17.1: ``400 use_models_route``).
+ML_TARGET_KINDS = frozenset({"ml_model_artifact", "ml_model_endpoint"})
+
 
 @dataclass
 class TargetRecord:
@@ -42,7 +45,27 @@ def create_target(
     config: RedsimConfig,
     audit_writer: AuditWriter,
 ) -> TargetRecord:
-    """Admission boundary for adding a target to a project's allowlist."""
+    """Admission boundary for adding a target to a project's allowlist.
+
+    ML kinds are refused with ``ApiError(use_models_route)`` (spec 17.1) so the
+    upload and bundled-registration rules of ``POST /v1/models`` cannot be
+    bypassed; the refusal writes its ``success=False`` audit row first.
+    """
+    if kind in ML_TARGET_KINDS:
+        # Lazy: ``redsim.api`` builds the FastAPI app on package import and this
+        # service is shared with the CLI.
+        from redsim.api.errors import USE_MODELS_ROUTE, ApiError
+        from redsim.services.ml_models import audit_refused_admission
+
+        audit_refused_admission(
+            audit_writer, action="target.manage", actor=actor, project_id=project_id,
+            detail={"op": "create", "kind": kind, "reason": USE_MODELS_ROUTE},
+        )
+        raise ApiError(
+            USE_MODELS_ROUTE,
+            f"targets of kind {kind!r} are registered through POST /v1/models",
+            field="kind",
+        )
     authorize(
         "target.manage", value,
         allowlist=config.target_allowlist,

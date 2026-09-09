@@ -1,23 +1,15 @@
-"""ART defense catalog; importing this router does not import ART."""
+"""ART defense catalog (spec 17.2 ``GET /v1/defenses``); importing this router does not import ART."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
 
 from redsim.api.auth import CurrentUser, get_current_user
+from redsim.api.v1.ml_capabilities import catalog_unavailable
 
 router = APIRouter(prefix="/defenses", tags=["ml-defenses"])
-
-
-def _catalog_unavailable(exc: ImportError) -> HTTPException:
-    """The defense registry could not be imported in this API process: 503, never an empty ``200``."""
-    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={
-        "code": "ml_catalog_unavailable",
-        "message": "defense catalog is unavailable in this API process",
-        "reason": str(exc),
-    })
 
 
 @router.get("")
@@ -27,7 +19,8 @@ def list_defense_catalog(_user: CurrentUser = Depends(get_current_user)) -> dict
 
         source = list_defenses()
     except ImportError as exc:
-        raise _catalog_unavailable(exc) from exc
+        # 503 with the reason, never an empty 200 (review #22 F2).
+        raise catalog_unavailable(exc, "defense") from exc
     defenses = [{
         **row,
         "modalities": list(row.get("domains", [])),
