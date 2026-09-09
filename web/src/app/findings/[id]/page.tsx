@@ -24,6 +24,7 @@ import {
 } from "@/lib/api";
 import { useFinding } from "@/hooks/useFinding";
 import { useDefenses } from "@/hooks/useMlCatalog";
+import { describeFinding } from "@/lib/finding-description";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
 
@@ -92,6 +93,31 @@ function InputEvidence({ observation }: { observation: Observation }) {
             {key === "control" ? "same-ε control" : key}
           </figcaption>
         </figure>
+      ))}
+    </div>
+  );
+}
+
+/** The description as labelled boxes: the plain account first, the measured sections after it. */
+function DescriptionBoxes({ description }: { description: string | undefined }) {
+  const sections = describeFinding(description);
+  if (sections.length === 0) {
+    return <p>Measured threshold crossing; inspect the recorded evidence below.</p>;
+  }
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {sections.map((s, i) => (
+        <section
+          key={`${s.key}-${i}`}
+          className={
+            s.plain
+              ? "rounded-md border border-primary/30 bg-primary/5 p-3 sm:col-span-2"
+              : "rounded-md border border-border bg-card p-3"
+          }
+        >
+          <h3 className="redsim-kicker mb-1 text-xs uppercase tracking-wide text-muted-foreground">{s.heading}</h3>
+          <p className={s.plain ? "text-sm leading-relaxed" : "text-xs leading-relaxed text-muted-foreground"}>{s.text}</p>
+        </section>
       ))}
     </div>
   );
@@ -218,8 +244,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
           </RoleGated>
         }
       >
-        {data.schema_blob.description ??
-          "Measured threshold crossing; inspect the recorded evidence below."}
+        <DescriptionBoxes description={data.schema_blob.description} />
       </FindingCard>
       {feedback && (
         <p
