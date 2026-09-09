@@ -389,6 +389,43 @@ describe("fixture mode (KTD13)", () => {
     }
   });
 
+  it("stays off when only the public build flag is on, so a build flag cannot fabricate evidence", async () => {
+    // The failing direction of the AND. ctx.fixtures is the runtime authority:
+    // it is env.REDSIM_DEV_FIXTURES and the dev-environment check together, so
+    // a deployment that merely carries the public flag answers from the API or
+    // refuses, and never from recorded fixtures. In a tool that reports
+    // measured robustness, a fixture answering a production request would be
+    // fabricated evidence.
+    const ctx = ctxWith({});
+    process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES = "1";
+    try {
+      const error = await upstreamFetch({ ...ctx, fixtures: false }, {
+        method: "GET",
+        segments: ["v1", "runs"],
+      }).catch((e: unknown) => e);
+
+      // Refused for want of a credential, which is the non-fixture path.
+      expect(upstreamError(error)).toMatchObject({ status: 401, code: "unauthenticated" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES;
+    }
+  });
+
+  it("stays off when the runtime says yes and the build flag is absent", async () => {
+    // The other half: without the literal read Next cannot inline anything, so
+    // the flag has to gate the dynamic import as well as the runtime check.
+    delete process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES;
+    const ctx = ctxWith({});
+    const error = await upstreamFetch({ ...ctx, fixtures: true }, {
+      method: "GET",
+      segments: ["v1", "runs"],
+    }).catch((e: unknown) => e);
+
+    expect(upstreamError(error)).toMatchObject({ status: 401, code: "unauthenticated" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("refuses a route it has no fixture for rather than reaching upstream", async () => {
     const ctx = ctxWith({});
     const fixtureCtx: ProcedureContext = { ...ctx, fixtures: true };
