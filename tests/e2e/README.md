@@ -257,6 +257,13 @@ REDSIM_DB_URL="$REDSIM_E2E_POSTGRES_URL" alembic upgrade head
 REDSIM_E2E=1 pytest -q -m e2e tests/e2e -k postgres
 ```
 
+Write the URL driver-qualified, `postgresql+psycopg://...`, as in the example.
+A bare `postgresql://` scheme names SQLAlchemy's `psycopg2` default. The
+governance file (`test_ml_governance.py`) normalises a bare scheme to the
+driver this interpreter has, but the `postgres_url` fixture in `conftest.py`
+does not, so in a venv without `psycopg2` a bare scheme fails the harness
+lane with a missing-module error instead of running it.
+
 `postgres_url` returns the URL, skips when it is unset and fails (does not
 skip) when the database lacks `ml_campaigns`, `audit_events` or `targets`.
 Remember that a Postgres superuser bypasses RLS even under `FORCE ROW LEVEL

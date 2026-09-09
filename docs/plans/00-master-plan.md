@@ -482,9 +482,10 @@ in progress in parallel: the three end-to-end completion-criteria files
 and `tests/e2e/test_ml_governance.py` (added in wave 4, on the wave-3
 harness), the CI fixes, the admission follow-ups and this documentation pass.
 PR #23 (`feat/p7-fargate-runtime`, William; open when v2.4 was written,
-merged as `10650da` on 2026-09-08) is recorded in section 4.1: a public HTTPS
-Fargate demo runtime its author reports applied to the AWS account, with the
-pinned asset bundle, demo users and automatic rollout still outstanding. Nothing in D1 to D13 changes and no new divergence is recorded:
+merged as `10650da` on 2026-09-08 with two review fixes) is recorded in
+section 4.1: a public HTTPS Fargate demo runtime its author reports applied to
+the AWS account, with the pinned asset bundle, demo users and automatic rollout
+still outstanding at that time (brief package E, PR #29 since). Nothing in D1 to D13 changes and no new divergence is recorded:
 the surrogate-transfer admission exemption of `58461cc` follows spec 12.9
 rather than departing from it.
 
@@ -1347,9 +1348,10 @@ description of the tree, not a completion claim:
   run on `main` after `58461cc` has been read (section 4.1). No green CI run
   is claimed.
 - No campaign has been run on a deployed stack. The Fargate foundation (#19)
-  has no task definitions or services; the runtime of PR #23 (`10650da`) is
-  reported applied with workers at zero and no assets or demo users yet
-  (brief package E).
+  in this tree has no task definitions or services and nothing is applied
+  from it. PR #23 (merged as `10650da` with two review fixes) carries a
+  runtime its author reports applied, with workers at zero and no assets or
+  demo users at that time (brief package E; PR #29 reports them supplied).
 
 Excluded from the completion passes and listed as open, in the README as
 well:

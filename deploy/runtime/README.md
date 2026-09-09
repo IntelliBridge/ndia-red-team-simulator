@@ -96,6 +96,132 @@ web image while retaining its installed dependencies. Supply `BASE_IMAGE` as
 an immutable ECR digest. It copies the current web source and performs a full,
 strict Next.js build; it does not suppress type errors.
 
+## Bringing the demo to a running campaign (operator sequence, 2026-09-09)
+
+The steps below complete the runtime after the initial verification: the
+Phase B images and migration, the project artifact prefix, the asset bundle,
+the seeded project and models, the Keycloak claim and demo users, and the
+workers. Every input the runtime root needs can be reconstructed from the
+remote state when the original operator inputs are not at hand: the image
+digests and Secrets Manager references are attributes of the task
+definitions in `runtime/terraform.tfstate`, the FQDN and zone are on the
+certificate and the alias record. A plan with the reconstructed inputs must
+report no changes before anything else is done.
+
+Terraform 1.16.1 is pinned. Behind a TLS-inspecting proxy set
+`AWS_CA_BUNDLE` for the AWS CLI and `SSL_CERT_FILE` for Python. Keep the
+inputs file (`*.tfvars.json`) and plan files outside the repository.
+
+1. **Images and migration.** Set `images` to the ECR digests of the `main`
+   commit to deploy (the `Deploy to AWS` workflow pushes them, tagged with
+   the commit sha; `aws ecr describe-images --repository-name
+   ndia-red-team/<family>`). Apply the migration task definition first and
+   run it, then apply the rest, so the serving API never runs ahead of the
+   schema:
+
+   ```sh
+   terraform -chdir=deploy/runtime apply -target='aws_ecs_task_definition.runtime["migration"]' -var-file=<inputs>
+   terraform -chdir=deploy/runtime output -json > <runtime-outputs.json>
+   python deploy/runtime/scripts/run_task.py --runtime-outputs <runtime-outputs.json> --task migration
+   terraform -chdir=deploy/runtime apply -var-file=<inputs>
+   ```
+
+   The full apply rolls api, web and identity to the new task definitions
+   (circuit breaker with rollback) and adds the project artifact policies
+   of step 2.
+2. **Project artifact prefix.** Campaign evidence and uploaded models are
+   stored under `<project_id>/...` in the artifacts bucket, and the
+   foundation grants only `assets/`. Name the demo project in
+   `project_artifact_prefixes = ["demo"]`; `artifacts.tf` grants that
+   prefix to the api, scans, default and assets task roles. Nothing wider
+   is granted, and an empty list grants nothing.
+3. **Asset bundle.** Build the tree with `redsim ml build-assets` on a
+   permitted host (it is the only step with network access to the dataset
+   sources), then upload it with `scripts/upload_assets.py` and put the
+   emitted `asset_bundle` object in the inputs. Apply: every bundle
+   consumer (api, scans, default and the one-off assets task) gains a
+   `load-assets` init container that verifies the SHA-256 and extracts the
+   archive into a task-local volume mounted read-only at `/app/assets`.
+   Then validate it: `run_task.py --task assets` runs `redsim doctor
+   --worker-mode` on the mounted tree (manifest digests, the ml extra, a
+   sandbox child launch) and requires exit 0.
+4. **Seed the project and the models.** Both run through the assets task
+   definition with a command override, so they see the mounted bundle and
+   the assets role's database and S3 access:
+
+   ```sh
+   python deploy/runtime/scripts/run_task.py --runtime-outputs <outputs> --task assets \
+     --command "$(python -c 'import json,sys; print(json.dumps(["python","-c",open("deploy/runtime/scripts/seed_project.py").read(),"demo-org","demo","Demo"]))')"
+   python deploy/runtime/scripts/run_task.py --runtime-outputs <outputs> --task assets \
+     --command '["redsim","ml","seed","--project","demo"]'
+   ```
+
+   `seed_project.py` creates the organisation and project rows and is a
+   no-op when they exist. `redsim ml seed` registers every non-fixture
+   bundled model audit-first and reports `already present` on a rerun.
+5. **Keycloak claim, CLI client and demo users.** `scripts/seed_identity.py`
+   adds the `redsim_project_roles` mapper and user-profile attribute to the
+   live realm (the `--import-realm` gap described under
+   [Project membership claim](#project-membership-claim)), optionally a
+   public direct-grant client `redsim-cli` whose tokens carry the API
+   audience, and the users of a JSON file, each with the memberships object
+   as the attribute value and a generated password stored in Secrets Manager
+   (`ndia-red-team/demo/demo-users`, never printed). A second run changes
+   nothing.
+
+   ```sh
+   SSL_CERT_FILE=<ca.pem> python deploy/runtime/scripts/seed_identity.py --cli-client redsim-cli --users <users.json>
+   ```
+
+6. **Workers.** Set `enable_workers = true` and apply: scans, default and
+   beat go to desired count one. Then `make smoke-live` with a demo user
+   (`REDSIM_SMOKE_USER`, `REDSIM_SMOKE_PASSWORD`, `REDSIM_SMOKE_CAMPAIGN=1`)
+   runs one FGSM campaign through the deployed path and requires it to
+   reach `succeeded` with a report.
+
+Pythia stays off on this runtime (`REDSIM_DISABLE_LLM=1` on every pool):
+the ML workers have no internet egress, and the narrative would need the
+gateway CIDR opened in the foundation (`pythia_ipv4_cidrs`) plus the
+`PYTHIA_*` values as `service_secrets` on the pool that runs
+`redsim.ml_campaign_run` (the scans pool, where the narrative is written in
+the worker parent). Recommendations then carry `narrative_source: rules`.
+
+## Scale to zero and teardown
+
+Between demos, stop the workers first and then the serving tier; both are
+inputs of this root, so the state stays accurate:
+
+```sh
+terraform -chdir=deploy/runtime apply -var-file=<inputs> -var enable_workers=false
+terraform -chdir=deploy/runtime apply -var-file=<inputs> -var enable_services=false
+```
+
+With `enable_services=false` every ECS service has desired count zero. The
+ALB, the RDS instance, the Redis nodes and the interface endpoints keep
+billing (the standing costs in the next section); stopping RDS from the
+console pauses it for up to seven days. Bring the stack back in the same
+order reversed: services, then workers.
+
+Teardown destroys the roots in reverse order of creation. Each root reads
+the previous root's state, so the order is fixed:
+
+```sh
+terraform -chdir=deploy/runtime destroy -var-file=<runtime inputs>
+terraform -chdir=deploy/terraform destroy -var-file=<foundation inputs>
+terraform -chdir=deploy/bootstrap destroy
+```
+
+The runtime destroy removes the certificate, DNS records, listeners, task
+definitions and services; the foundation destroy removes the data services
+(RDS deletion protection and final-snapshot settings apply as configured
+there), the cluster, the ALB, the endpoints, the buckets and the roles; the
+bootstrap destroy removes the VPC and finally the state bucket, which must
+be emptied of the other two state files first. The audit bucket carries
+Object Lock; objects under retention cannot be deleted before it expires,
+so a bucket with locked objects fails the foundation destroy until then.
+Secrets Manager secrets created outside Terraform
+(`ndia-red-team/demo/demo-users`) are deleted by hand.
+
 ## Project membership claim
 
 The application does not authorise from Keycloak realm roles. The browser
