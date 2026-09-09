@@ -98,9 +98,7 @@ from redsim.ml.targets.detection import (
     BUDGET_LABEL,
     DETECTION_MODALITY,
     EXPLAINER_UNAVAILABLE_REASON,
-    MEASUREMENT_HAS_DETECTION,
     MODALITY,
-    OBSERVATION_HAS_DETECTION,
     DetectionEval,
     DetectionSample,
     evaluate_detections,
@@ -305,12 +303,10 @@ def measure_detection(id: str, family: MeasurementFamily, ev: DetectionEval, *, 
         "per_class": {k: dict(v) for k, v in ev.per_class.items()}, "wall_time_s": float(wall_time_s),
         "notes": row_notes,
     }
-    if MEASUREMENT_HAS_DETECTION:
-        try:
-            return Measurement(**fields, detection=block)
-        except Exception as exc:  # noqa: BLE001 - B0 field shape differs: keep the scalars, say so
-            row_notes.append(f"Measurement.detection block not written ({type(exc).__name__}); det_* params carry it")
-    return Measurement(**fields)
+    # ``Measurement.detection`` is a schema field since wave B0 (``DetectionMetrics``): every detection row
+    # carries the box-level block beside the scalar ``det_*`` params, so the report can print each rate with
+    # its denominator.
+    return Measurement(**fields, detection=block)
 
 
 # --- small helpers -------------------------------------------------------------------------------------------
@@ -333,15 +329,14 @@ def _npz_bytes(x_adv: np.ndarray, indices: np.ndarray, targets: Sequence[Mapping
 
 
 def resolve_detection_adapters(config: CampaignConfig) -> list[Any]:
-    """The attack adapters for a detection campaign: this module's ``dpatch`` first, then ``ATTACKS`` by id.
+    """The attack adapters for a detection campaign, resolved from ``ATTACKS`` by id.
 
-    The registry is consulted second because ``dpatch`` registers there only once the capability vocabulary
-    knows ``modality:detection`` (``redsim.ml.attacks.dpatch.REGISTERED``); before that the standalone frame
-    still resolves it by name. An adapter whose ``domains`` exclude ``detection`` is refused."""
-    local: dict[str, Any] = {_dpatch.DPATCH_ID: _dpatch.ADAPTER}
+    ``dpatch`` is a registered member of the pinned attack catalog (wave B1 checks the ten ids at import), so
+    the registry is the single lookup; an unknown id, a non-evasion adapter or an adapter whose ``domains``
+    exclude ``detection`` is refused with ``AttackNotApplicable``."""
     out: list[Any] = []
     for aid in dict.fromkeys(config.attack_ids):
-        adapter = local.get(aid) or ATTACKS.maybe_get(aid)
+        adapter = ATTACKS.maybe_get(aid)
         if adapter is None:
             raise AttackNotApplicable(f"unknown attack {aid!r}")
         info = adapter.info()
@@ -420,14 +415,15 @@ def _observation(obs_id: str, *, sample_index: int, class_names: Sequence[str], 
         "confidence_adv": float(conf_a.mean()) if conf_a.size else 0.0,
         "artifacts": artifacts, "artifact_sha256": digests, "metric_note": OBS_METRIC_NOTE,
     }
-    if OBSERVATION_HAS_DETECTION:
-        block = {"n_boxes": n_gt, "n_matched_clean": k_clean, "n_matched_adv": k_adv,
-                 "n_suppressed": int((matched_clean & ~matched_adv).sum()), "patch": patch}
-        try:
-            return Observation(**fields, detection=block)
-        except Exception:  # noqa: BLE001 - B0 shape differs: the boxes.json artifact carries the same facts
-            pass
-    return Observation(**fields)
+    # ``Observation.detection`` is a schema field since wave B0 (``DetectionObservation``): ``n_gt``,
+    # ``n_matched_clean``, ``n_matched_adv`` and the patch box in pixels of the attacked image
+    # (``[x_min, y_min, x_max, y_max]``; None on control rows). The per-box tables stay in boxes.json.
+    patch_bbox: list[float] | None = None
+    if patch is not None:
+        r, c, s = int(patch["row"]), int(patch["col"]), int(patch["side"])
+        patch_bbox = [float(c), float(r), float(c + s), float(r + s)]
+    block = {"n_gt": n_gt, "n_matched_clean": k_clean, "n_matched_adv": k_adv, "patch_bbox": patch_bbox}
+    return Observation(**fields, detection=block)
 
 
 def write_box_evidence(sink: ArtifactSink, *, attack_id: str, eps: float, sample: DetectionSample, x_adv: np.ndarray,

@@ -134,9 +134,16 @@ def make_pipeline(seed: int) -> tuple[Any, dict[str, Any]]:
 
 
 def text_model_spec(pipeline: Any, train_texts: Sequence[str]) -> dict[str, Any]:
-    """The ``TextModelSpec`` block (MODALITIES-05): what the tokenizer is, so the masker and attack can match it."""
+    """The ``TextModelSpec`` block (MODALITIES-05): what the tokenizer is, so the masker and attack can match it.
+
+    ``token_pattern`` is the ``schema.TextModelSpec`` name of the vectoriser's token regex, so the manifest's
+    ``ModelEntry.text`` records it (a producer that emitted only ``tokenizer_regex`` left it ``None``);
+    ``tokenizer_regex`` carries the same value under the name the attack and the SHAP text masker read, and
+    ``masker_split_regex`` is the split regex handed to ``shap.maskers.Text``.
+    """
     vectorizer = pipeline.named_steps["tfidf"]
     return {
+        "token_pattern": sms_spam.TOKEN_PATTERN,
         "tokenizer_regex": sms_spam.TOKEN_PATTERN,
         "masker_split_regex": sms_spam.MASKER_SPLIT_PATTERN,
         "lowercase": bool(vectorizer.lowercase),

@@ -13,6 +13,13 @@ the hash-chained audit trail at ``<out>/<run_id>/audit.jsonl``. It makes no
 network call and never talks to Pythia (``narrative_source`` stays ``rules``).
 ``endpoint_stub`` and fixture-only targets are refused before anything is
 written, and the process exits non-zero on a refusal or a failed campaign.
+``--norm`` accepts every ``schema.Norm`` literal (``linf``, ``l2``, ``edit``,
+``patch_area``); what the caller omits is filled per norm from the spec 12.3
+table (:func:`resolve_attack_defaults`): the norm itself from the target's
+modality in the asset manifest (``edit`` for a text target, ``patch_area`` for a
+detection target, ``linf`` otherwise), then the attack set (``fgsm,pgd``,
+``word_substitution`` or ``dpatch``), the budget grid and the reference budget.
+The adapter validates whatever is sent; a norm it cannot run yet is its refusal.
 
 Phase B (plan 12): ``build-assets --dataset text`` trains the SMS spam
 classifier (``sms_tfidf_lr``) and ``--dataset detection`` the military-assets
@@ -56,8 +63,9 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -90,6 +98,24 @@ DB_URL_ENV = "REDSIM_DB_URL"
 
 EXIT_REFUSED = 1
 EXIT_USAGE = 2
+
+# ``redsim ml attack`` budget defaults per norm (spec 12.3; MODALITIES-06). Literals so building the parser
+# stays import-light; tests/ml/test_cli_ml.py asserts they equal the attack modules' constants
+# (``redsim.ml.scoring`` for linf and l2, ``word_substitution.DEFAULT_EDIT_GRID``,
+# ``dpatch.DEFAULT_PATCH_AREA_GRID`` / ``DEFAULT_REFERENCE_PATCH_AREA``) so the two cannot drift.
+NORM_CHOICES: tuple[str, ...] = ("linf", "l2", "edit", "patch_area")
+#: Default attack set per norm: the Phase A pair for the pixel and feature norms, the text and detection
+#: adapters for their own norms. The modality's noise control runs automatically in every case.
+NORM_DEFAULT_ATTACKS: dict[str, tuple[str, ...]] = {
+    "linf": DEFAULT_ATTACK_IDS, "l2": DEFAULT_ATTACK_IDS, "edit": ("word_substitution",), "patch_area": ("dpatch",),
+}
+NORM_DEFAULT_GRIDS: dict[str, tuple[float, ...]] = {
+    "linf": (0.01, 0.03, 0.1), "l2": (0.25, 0.5, 1.0), "edit": (0.1, 0.2, 0.3), "patch_area": (0.01, 0.03, 0.05),
+}
+NORM_DEFAULT_REFERENCE: dict[str, float] = {"linf": 0.03, "l2": 0.5, "edit": 0.2, "patch_area": 0.03}
+#: The norm a target's modality is measured under when ``--norm`` is omitted (``schema.Modality`` literals);
+#: the modality comes from the asset manifest entry of the target, ``linf`` when the manifest does not name it.
+MODALITY_DEFAULT_NORM: dict[str, str] = {"image": "linf", "tabular": "linf", "text": "edit", "detection": "patch_area"}
 
 
 def add_ml_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -203,12 +229,18 @@ def add_ml_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     )
     p_attack.add_argument("target_id", help="Bundled target id (vehicles_cnn, url_trees, and once built sms_tfidf_lr, "
                                             "assets_frcnn_mnv3); see GET /v1/models")
-    p_attack.add_argument("--attacks", default=",".join(DEFAULT_ATTACK_IDS),
-                          help="Comma-separated attack ids (default: %(default)s); noise_control runs automatically")
+    p_attack.add_argument("--attacks", default=None,
+                          help=(f"Comma-separated attack ids (default per norm: {','.join(DEFAULT_ATTACK_IDS)} for linf "
+                                f"and l2, {NORM_DEFAULT_ATTACKS['edit'][0]} for edit, "
+                                f"{NORM_DEFAULT_ATTACKS['patch_area'][0]} for patch_area); the modality's noise "
+                                "control runs automatically"))
     p_attack.add_argument("--eps", default=None,
-                          help="Comma-separated eps grid, ascending, each in (0, 1] (default: the norm's spec 12.3 grid)")
+                          help=("Comma-separated budget grid, ascending, each in (0, 1] (default: the norm's spec 12.3 "
+                                "grid: " + "; ".join(f"{n} {','.join(f'{e:g}' for e in g)}"
+                                                     for n, g in NORM_DEFAULT_GRIDS.items()) + ")"))
     p_attack.add_argument("--reference-eps", dest="reference_eps", type=float, default=None,
-                          help="Reference budget; must be a grid member (default: 0.03 for linf when in the grid)")
+                          help=("Reference budget; must be a grid member (default per norm, when in the grid: "
+                                + ", ".join(f"{n} {r:g}" for n, r in NORM_DEFAULT_REFERENCE.items()) + ")"))
     p_attack.add_argument("--n-samples", dest="n_samples", type=int, default=200,
                           help="Stratified evaluation slice size, 10..1000 (default: 200)")
     p_attack.add_argument("--seed", type=int, default=0, help="Sampling and attack seed (default: 0)")
@@ -216,7 +248,10 @@ def add_ml_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
                           help="SHAP explanations per attack at the reference eps, 0..32; 0 skips explain (default: 8)")
     p_attack.add_argument("--no-control", dest="no_control", action="store_true", default=False,
                           help="Skip the benign noise control (the report then says so)")
-    p_attack.add_argument("--norm", choices=("linf", "l2"), default="linf", help="Perturbation norm (default: linf)")
+    p_attack.add_argument("--norm", choices=NORM_CHOICES, default=None,
+                          help=("Budget norm (default: the target's modality norm from the asset manifest: linf for "
+                                "an image or tabular target, edit for a text target, patch_area for a detection "
+                                "target; linf when the manifest does not name the target)"))
     p_attack.add_argument("--out", default=None,
                           help="Runs root; the run lands in <out>/<run_id>/ (default: the config output_dir)")
     p_attack.add_argument("--assets-dir", dest="assets_dir", default=None,
@@ -328,6 +363,65 @@ def _output_dir(args: argparse.Namespace, config: RedsimConfig | None) -> Path:
     return Path(str(getattr(config, "output_dir", None) or "redsim_output"))
 
 
+@dataclass(frozen=True)
+class AttackDefaults:
+    """What ``redsim ml attack`` sends after the per-norm defaults filled what the caller omitted."""
+
+    norm: str
+    attack_ids: tuple[str, ...]
+    eps_grid: tuple[float, ...]
+    reference_eps: float | None
+    filled: tuple[str, ...]        # which of norm / attacks / eps / reference_eps came from the defaults
+
+
+def resolve_attack_defaults(*, modality: str | None, norm: str | None, attacks: Sequence[str] | None,
+                            eps: Sequence[float] | None, reference_eps: float | None) -> AttackDefaults:
+    """Fill the omitted budget settings from the norm, and the norm from the target's modality (spec 12.3).
+
+    Explicit values always win and are passed through unchanged for the adapter to
+    validate. A reference the caller omitted is the norm's default only when that
+    value is a member of the grid in use; otherwise it stays ``None`` and the adapter
+    applies its own rule.
+    """
+    filled: list[str] = []
+    chosen_norm = norm
+    if chosen_norm is None:
+        chosen_norm = MODALITY_DEFAULT_NORM.get(modality or "", "linf")
+        filled.append("norm")
+    if chosen_norm not in NORM_CHOICES:
+        raise ValueError(f"--norm must be one of {list(NORM_CHOICES)}, got {chosen_norm!r}")
+    attack_ids = tuple(str(a) for a in attacks) if attacks else ()
+    if not attack_ids:
+        attack_ids = NORM_DEFAULT_ATTACKS[chosen_norm]
+        filled.append("attacks")
+    grid = tuple(float(e) for e in eps) if eps else ()
+    if not grid:
+        grid = NORM_DEFAULT_GRIDS[chosen_norm]
+        filled.append("eps")
+    reference = reference_eps
+    if reference is None and NORM_DEFAULT_REFERENCE[chosen_norm] in grid:
+        reference = NORM_DEFAULT_REFERENCE[chosen_norm]
+        filled.append("reference_eps")
+    return AttackDefaults(norm=chosen_norm, attack_ids=attack_ids, eps_grid=grid, reference_eps=reference,
+                          filled=tuple(filled))
+
+
+def _target_modality(assets_dir: Path, target_id: str) -> str | None:
+    """The ``modality`` the asset manifest records for ``target_id``, or ``None`` (no manifest, unknown id).
+
+    Read from ``<assets>/MANIFEST.json`` only (import-light, no registry, no model bytes);
+    the adapter resolves and refuses the target itself afterwards.
+    """
+    from redsim.ml.assets.manifest import MANIFEST_NAME, load_manifest, model_entry
+
+    try:
+        entry = model_entry(load_manifest(Path(assets_dir) / MANIFEST_NAME), target_id)
+    except (OSError, ValueError):
+        return None
+    modality = getattr(entry, "modality", None)
+    return str(modality) if modality else None
+
+
 def cmd_ml_attack(args: argparse.Namespace, config: RedsimConfig) -> None:
     """Run one offline campaign. Heavy imports live in the runner, behind the refusal checks."""
     from redsim.ml.campaign_adapter import (
@@ -339,8 +433,17 @@ def cmd_ml_attack(args: argparse.Namespace, config: RedsimConfig) -> None:
     from redsim.ml.errors import MLError
     from redsim.plugins import load_ml_attack_plugins
 
-    attacks = _csv(getattr(args, "attacks", None)) or list(DEFAULT_ATTACK_IDS)
-    eps = _csv_floats(getattr(args, "eps", None), flag="--eps")
+    assets_dir = resolve_assets_dir(getattr(args, "assets_dir", None))
+    modality = _target_modality(assets_dir, args.target_id)
+    try:
+        defaults = resolve_attack_defaults(
+            modality=modality, norm=getattr(args, "norm", None), attacks=_csv(getattr(args, "attacks", None)),
+            eps=_csv_floats(getattr(args, "eps", None), flag="--eps"),
+            reference_eps=getattr(args, "reference_eps", None),
+        )
+    except ValueError as exc:
+        _console._err(str(exc))
+        sys.exit(EXIT_USAGE)
     n_samples = int(args.n_samples)
     if not 10 <= n_samples <= 1000:
         _console._err(f"--n-samples must lie in [10, 1000] (CampaignConfig), got {n_samples}")
@@ -350,15 +453,16 @@ def cmd_ml_attack(args: argparse.Namespace, config: RedsimConfig) -> None:
         _console._err(f"--explain-k must lie in [0, 32] (CampaignConfig), got {explain_k}")
         sys.exit(EXIT_USAGE)
     request = OfflineCampaignRequest(
-        target_id=args.target_id, attack_ids=tuple(attacks), eps_grid=tuple(eps) if eps else None,
-        reference_eps=getattr(args, "reference_eps", None), n_samples=n_samples, seed=int(args.seed),
+        target_id=args.target_id, attack_ids=defaults.attack_ids, eps_grid=defaults.eps_grid,
+        reference_eps=defaults.reference_eps, n_samples=n_samples, seed=int(args.seed),
         explain_k=explain_k, include_control=not bool(getattr(args, "no_control", False)),
-        norm=str(getattr(args, "norm", "linf")), actor=str(getattr(args, "actor", None) or DEFAULT_ACTOR),
+        norm=defaults.norm, actor=str(getattr(args, "actor", None) or DEFAULT_ACTOR),
     )
     out_dir = _output_dir(args, config)
-    assets_dir = resolve_assets_dir(getattr(args, "assets_dir", None))
-    _console._info(f"offline campaign: target={request.target_id} attacks={list(request.attack_ids)} "
-                   f"assets={assets_dir} out={out_dir}")
+    _console._info(f"offline campaign: target={request.target_id} modality={modality or 'not in the manifest'} "
+                   f"norm={request.norm} attacks={list(request.attack_ids)} eps={list(defaults.eps_grid)} "
+                   f"reference={defaults.reference_eps if defaults.reference_eps is not None else 'adapter default'} "
+                   f"(defaults filled: {', '.join(defaults.filled) or 'none'}) assets={assets_dir} out={out_dir}")
     _console._info("no network, no Pythia: llm_narrative=false, narrative_source stays 'rules'")
     # Opt-in third-party attack adapters (REDSIM_PLUGINS=1) join the registry before resolution.
     for row in load_ml_attack_plugins():

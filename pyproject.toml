@@ -68,8 +68,11 @@ worker = [
     "opentelemetry-sdk>=1.24",
     "opentelemetry-exporter-otlp-proto-http>=1.24",
     # Phase B report.pdf (spec 14.8, 17.4; REVIEW_REPORTS-15): pure-Python PDF
-    # renderer with the DejaVu faces bundled under redsim/ml/pdf_fonts/. Worker
-    # and CLI only; the API process never imports it (tests/test_api_process_has_no_ml.py).
+    # renderer with the DejaVu faces bundled under redsim/ml/pdf_fonts/, imported by
+    # redsim.ml.pdf on the worker's report.render path only. Declared here once: the
+    # worker image installs .[worker,ml] and every CI lane installs the worker extra;
+    # the offline CLI (redsim ml attack) writes the three text formats and needs no
+    # PDF renderer. The API process never imports it (tests/test_api_process_has_no_ml.py).
     "reportlab>=4.2",
     "pillow>=10",
 ]
@@ -96,8 +99,6 @@ ml = [
     "pillow>=10",
     "pyarrow>=15",
     "httpx>=0.27",
-    # report.pdf for the offline CLI path (redsim ml attack writes every format).
-    "reportlab>=4.2",
 ]
 llm = [
     # Optional: the official Pythia SDK (private IntelliBridge repo). redsim.llm.pythia

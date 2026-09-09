@@ -52,14 +52,37 @@ from redsim.ml.pdf import PDF_MAGIC, PDF_SECTION_HEADINGS, render_pdf
 from redsim.ml.reporting import (
     DEFAULT_WEIGHTS_NOTE,
     DELTA_HEADING,
+    DERIVED_MODEL_HEADING,
+    DETECTION_EVIDENCE_HEADING,
+    DETECTION_SCORECARD_HEADING,
     EXPORT_REDACTION_NOTE,
     LICENCE_UNRECORDED,
+    LLM_EMBED_NOTE,
+    LLM_HEADING,
     NON_DEFAULT_WEIGHTS_BADGE,
     REPORT_FORMATS_ALL,
     SECTION_HEADINGS,
+    TEXT_BUDGET_HEADING,
+    TEXT_EVIDENCE_HEADING,
+    is_llm_probe_record,
     render_campaign_reports,
+    render_html,
+    render_markdown,
 )
-from redsim.ml.schema import CampaignConfig, CampaignRecord, MRIWeights, ScoringConfig
+from redsim.ml.schema import (
+    AttackInfo,
+    CampaignConfig,
+    CampaignRecord,
+    DetectionMetrics,
+    DetectionObservation,
+    Measurement,
+    MRIWeights,
+    Observation,
+    ScoreStatus,
+    ScoringConfig,
+    TargetInfo,
+    TextObservation,
+)
 from tests.ml.test_findings_routes import (  # noqa: F401 - fixture import
     BASELINE,
     FOREIGN,
@@ -113,6 +136,134 @@ def _call(api: dict[str, Any], user: Any, method: str, url: str, **kwargs: Any) 
 def _pdf_text(data: bytes) -> str:
     reader = pypdf.PdfReader(io.BytesIO(data))
     return "\n".join(page.extract_text() for page in reader.pages)
+
+
+def _flat(text: str) -> str:
+    """PDF text with wrapping normalised: pypdf yields one line per typeset line, so a table cell that
+    wrapped at a space comes back with a newline where the space was."""
+    return " ".join(text.split())
+
+
+def _unscored(**overrides: Any) -> dict[str, Any]:
+    """Record fields of a run that carries no MRI: text, detection and LLM probe records are scorecard runs."""
+    return {
+        "score": None, "score_status": ScoreStatus(state="unavailable", reason="no MRI for this modality"),
+        "curve": [], "interpretation": [], "recommendations": [], **overrides,
+    }
+
+
+def _text_record() -> CampaignRecord:
+    """A text campaign the way the text runner records it: edit budget, realised edit fraction, word positions."""
+    config = CampaignConfig(
+        target_id="sms_tfidf_lr", modality="text", attack_ids=["word_substitution"], norm="edit",
+        eps_grid=[0.1, 0.2, 0.3], reference_eps=0.2, n_samples=200, seed=0, explain_k=8,
+        dataset_id="uci:sms-spam-collection", dataset_revision="rev-1",
+    )
+    measurements = [
+        Measurement(id="m.clean", family="clean", n=200, n_correct=180, accuracy=0.9),
+        Measurement(id="m.evasion.word_substitution.eps0.2", family="evasion", attack_id="word_substitution",
+                    params={"eps": 0.2, "norm": "edit"}, n=200, n_correct=120, accuracy=0.6,
+                    n_flipped_from_clean=60, n_clean_correct=180, attack_success_rate=round(60 / 180, 4),
+                    edit_fraction_mean=0.1875, wall_time_s=3.5),
+        Measurement(id="m.control.noise.eps0.2", family="control", attack_id="text_noise_control",
+                    params={"eps": 0.2, "norm": "edit"}, n=200, n_correct=176, accuracy=0.88,
+                    n_flipped_from_clean=4, n_clean_correct=180, attack_success_rate=round(4 / 180, 4),
+                    edit_fraction_mean=0.19),
+    ]
+    observation = Observation(
+        id="o.000", sample_index=5, true_label="spam", pred_clean="spam", pred_adv="ham", flipped=True,
+        confidence_clean=0.97, confidence_adv=0.58, artifacts={"text_diff": "art-o.000-diff"},
+        metric_note="token attribution shift over aligned word positions",
+        text=TextObservation(n_tokens=12, n_changed=2, changed_positions=[3, 7], edit_fraction=2 / 12,
+                             top_tokens_clean=[3, 0, 7], top_tokens_adv=[7, 3, 1],
+                             attribution_artifacts={"shap_text": "art-o.000-shap"}),
+    )
+    return _record(
+        run_id="run-text-1", config=config, measurements=measurements, observations=[observation],
+        target=TargetInfo(id="sms_tfidf_lr", name="SMS spam classifier", domain="text", status="available"),
+        attacks=[AttackInfo(id="word_substitution", name="Word substitution", domain="text", family="evasion")],
+        **_unscored(),
+    )
+
+
+def _detection_record() -> CampaignRecord:
+    """A detection campaign: box counts on every row (``Measurement.detection``), a patch box per observation."""
+    config = CampaignConfig(
+        target_id="assets_frcnn_mnv3", modality="detection", attack_ids=["dpatch"], norm="patch_area",
+        eps_grid=[0.01, 0.03, 0.05], reference_eps=0.03, n_samples=50, seed=0, explain_k=8,
+        dataset_id="kaggle:military-assets", dataset_revision="rev-1",
+    )
+    measurements = [
+        Measurement(id="m.clean", family="clean", n=120, n_correct=96, accuracy=0.8,
+                    detection=DetectionMetrics(n_boxes=120, n_matched=96, map50=0.71, recall=0.8)),
+        Measurement(id="m.evasion.dpatch.eps0.03", family="evasion", attack_id="dpatch",
+                    params={"eps": 0.03, "norm": "patch_area"}, n=120, n_correct=60, accuracy=0.5,
+                    n_flipped_from_clean=36, n_clean_correct=96, attack_success_rate=0.375, wall_time_s=91.2,
+                    detection=DetectionMetrics(n_boxes=120, n_matched=60, map50=0.4, recall=0.5,
+                                               suppression_rate=0.375)),
+    ]
+    observation = Observation(
+        id="o.003.dpatch", sample_index=3, true_label="tank", pred_clean="4/4 boxes matched",
+        pred_adv="2/4 boxes matched", flipped=True, confidence_clean=0.9, confidence_adv=0.7,
+        artifacts={"boxes": "art-o.003-boxes"}, metric_note="no attribution metric for detection",
+        detection=DetectionObservation(n_gt=4, n_matched_clean=4, n_matched_adv=2, patch_bbox=[10, 12, 42, 44]),
+    )
+    return _record(
+        run_id="run-detection-1", config=config, measurements=measurements, observations=[observation],
+        target=TargetInfo(id="assets_frcnn_mnv3", name="Military assets detector", domain="detection",
+                          status="available"),
+        attacks=[AttackInfo(id="dpatch", name="DPatch", domain="detection", family="evasion")],
+        **_unscored(),
+    )
+
+
+def _training_verify_record() -> CampaignRecord:
+    """The verify record of a training defense: provenance.defense kind training plus the derived_from block."""
+    data = _verify_record().model_dump(mode="json")
+    data["provenance"]["defense"] = {
+        "kind": "training", "id": "adversarial_training", "art_class": "art.defences.trainer.AdversarialTrainer",
+        "params": {"epochs": 3}, "parent_sha256": "a1" * 32, "derived_sha256": "b2" * 32,
+        "training_report": {"epochs_run": 3, "epochs_requested": 3, "wall_time_s": 41.5, "wall_budget_s": 600,
+                            "weights_changed": True, "backbone_frozen": False, "budget_exhausted": False,
+                            "n_train": 1536},
+    }
+    data["provenance"]["model_manifest"]["derived_from"] = {
+        "parent_target_id": "vehicles_cnn-1a2b3c4d", "parent_sha256": "a1" * 32,
+        "defense_id": "adversarial_training", "training_budget": {"epochs": 3, "wall_s": 600},
+    }
+    return CampaignRecord.model_validate(data)
+
+
+def _llm_probe_record() -> CampaignRecord:
+    """A probe run carried as a CampaignRecord: an LLM endpoint target and the scorecard dump in the manifest."""
+    from redsim.ml.llm.scorecard import (
+        DetectorResult,
+        LLMProbeScorecard,
+        ProbeFamilyResult,
+        ProbeResult,
+        llm_standing_limitations,
+    )
+
+    card = LLMProbeScorecard(
+        run_id="run-probe-1", target_id="llm-gateway-1", model_id="openai/gpt-4o-mini",
+        gateway_host="pythia.example.test", guardrail_mode="permission_gate_only", garak_version="0.16.0",
+        catalog_garak_version="0.16.0", probe_ids_requested=["dan.Dan_11_0"],
+        families=[ProbeFamilyResult(family="dan", n_probes_run=1, probes=[ProbeResult(
+            probe_id="dan.Dan_11_0", short_id="Dan_11_0", family="dan", status="run", n_prompts_sent=4, n_outputs=4,
+            detectors=[DetectorResult(row_id="dan.Dan_11_0/dan.DAN", detector="dan.DAN", n_evaluated=4, n_hits=1,
+                                      n_passed=3, hit_rate=0.25)],
+        )])],
+        limitations=llm_standing_limitations(guardrail_mode="permission_gate_only", max_prompts_per_probe=16,
+                                             seed=0, garak_version="0.16.0"),
+    )
+    provenance = {**_verify_record().provenance.model_dump(mode="json"), "defense": None, "baseline_run_id": None}  # type: ignore[union-attr]
+    provenance["model_manifest"] = {"endpoint": {"kind": "llm"}, "llm_scorecard": card.model_dump(mode="json")}
+    return _record(
+        run_id="run-probe-1", provenance=provenance, measurements=[], observations=[],
+        target=TargetInfo(id="llm-gateway-1", name="Gateway LLM", domain="llm", status="available",
+                          metadata={"endpoint_kind": "llm", "model_id": "openai/gpt-4o-mini"}),
+        **_unscored(),
+    )
 
 
 def _custom_weights_record() -> CampaignRecord:
@@ -434,6 +585,94 @@ def test_snapshot_archive_is_an_audited_admin_soft_flag(ml_api: dict[str, Any], 
     assert _call(ml_api, scanner, "GET", f"/v1/runs/{BASELINE}/snapshots/1").status_code == 200
     final = _call(ml_api, scanner, "GET", f"/v1/runs/{BASELINE}/snapshots/1").json()
     assert {k: v for k, v in final.items() if k != "archived"} == {k: v for k, v in snap.items() if k != "archived"}
+
+
+# --------------------------------------------------------------------------- Phase B projections (B2 reconcile)
+
+
+def test_schema_version_and_llm_hook_render_for_a_real_record_and_a_probe_record() -> None:
+    """The fixture record shows schema_version and no LLM block; a probe record embeds the LLM fragment nested."""
+    from redsim.ml.llm.report_section import LLM_SECTION_HEADING
+    from redsim.ml.llm.scorecard import D9_SENTENCE
+
+    real = CampaignRecord.model_validate_json(FIXTURE.read_bytes())
+    md = render_markdown(real, generated_at=NOW)
+    assert "- **Schema version:** `campaign-record-1`" in md and real.schema_version == "campaign-record-1"
+    assert not is_llm_probe_record(real) and LLM_HEADING not in md and "LLM probe scorecard" not in md
+    pdf_text = _flat(_pdf_text(render_pdf(real, generated_at=NOW)))
+    assert "campaign-record-1" in pdf_text and "LLM probe results" not in pdf_text
+
+    probe = _llm_probe_record()
+    assert is_llm_probe_record(probe)
+    md = render_markdown(probe, generated_at=NOW)
+    assert [line for line in md.splitlines() if line.startswith("## ")] == list(SECTION_HEADINGS), \
+        "the embedded fragment adds no seventh section"
+    assert LLM_HEADING in md and LLM_EMBED_NOTE in md
+    assert "#### " + LLM_SECTION_HEADING.removeprefix("## ") in md, "the fragment's own heading is nested"
+    assert "#### 2. Probe scorecard" in md and "**Family `dan`" in md, "sections nest, sub-headings become bold lines"
+    assert "1/4 (0.2500)" in md and D9_SENTENCE in md and "openai/gpt-4o-mini" in md
+    assert md.index(SECTION_HEADINGS[1]) < md.index(LLM_HEADING) < md.index(SECTION_HEADINGS[2])
+    assert "MRI not computed" in md, "a probe record has no MRI and the scorecard says so"
+    html = render_html(md, probe)
+    assert "<h4>" in html and "<h5>" not in html
+    pdf_text = _flat(_pdf_text(render_pdf(probe, generated_at=NOW)))
+    assert "LLM probe results" in pdf_text and "1/4 (0.2500)" in pdf_text and "campaign-record-1" in pdf_text
+    # The PDF and the Markdown of one render agree on the stamp; the PDF is deterministic for the probe record too.
+    assert render_pdf(probe, generated_at=NOW) == render_pdf(probe, generated_at=NOW)
+
+
+def test_text_and_detection_scorecards_render_in_markdown_and_pdf() -> None:
+    """MODALITIES-43: the Phase B rows and observation blocks reach every projection with their denominators."""
+    text = _text_record()
+    md = render_markdown(text, generated_at=NOW)
+    assert "- **Norm:** edit; budget axis: edit budget (share of words substituted)" in md
+    assert TEXT_BUDGET_HEADING in md and "| 0.1875 |" in md and "60/180 (0.3333)" in md
+    assert TEXT_EVIDENCE_HEADING in md and "2/12 (0.1667)" in md and "| 3, 7 |" in md
+    assert "3, 0, 7 → 7, 3, 1" in md and "shap_text: art-o.000-shap" in md
+    assert DETECTION_SCORECARD_HEADING not in md and DETECTION_EVIDENCE_HEADING not in md
+    pdf_text = _flat(_pdf_text(render_pdf(text, generated_at=NOW)))
+    assert "Text edit budget" in pdf_text and "0.1875" in pdf_text and "60/180 (0.3333)" in pdf_text
+    assert "Text evidence" in pdf_text and "2/12 (0.1667)" in pdf_text
+
+    detection = _detection_record()
+    md = render_markdown(detection, generated_at=NOW)
+    assert "- **Norm:** patch_area; budget axis: patch area (share of the image area)" in md
+    assert DETECTION_SCORECARD_HEADING in md and "96/120 (0.8000)" in md and "60/120 (0.5000)" in md
+    assert "36/96 (0.3750)" in md and "n/a (clean row)" in md and "| 0.7100 |" in md and "| 0.4000 |" in md
+    assert DETECTION_EVIDENCE_HEADING in md and "4/4 (1.0000)" in md and "2/4 (0.5000)" in md
+    assert "[10, 12, 42, 44] (x_min, y_min, x_max, y_max px)" in md
+    assert TEXT_BUDGET_HEADING not in md and TEXT_EVIDENCE_HEADING not in md
+    assert "MRI not computed" in md and "MRI 0" not in md
+    pdf_text = _flat(_pdf_text(render_pdf(detection, generated_at=NOW)))
+    assert "Detection scorecard" in pdf_text and "96/120 (0.8000)" in pdf_text and "36/96 (0.3750)" in pdf_text
+    assert "Detection evidence" in pdf_text and "[10, 12, 42, 44]" in pdf_text
+    # report.json stays the record dump: the Phase B fields round-trip untouched.
+    reports = {name: data for name, data, _ct in render_campaign_reports(detection, generated_at=NOW,
+                                                                        formats=REPORT_FORMATS_ALL)}
+    assert set(reports) == {"report.md", "report.json", "report.html", "report.pdf"}
+    payload = json.loads(reports["report.json"])
+    assert payload["measurements"][1]["detection"]["suppression_rate"] == 0.375
+    assert payload["observations"][0]["detection"]["patch_bbox"] == [10.0, 12.0, 42.0, 44.0]
+    assert CampaignRecord.model_validate(payload) == detection
+
+
+def test_derived_model_lineage_renders_in_the_delta_block_and_the_pdf() -> None:
+    """ATTACKS_HARDEN-13: the training defense's lineage the worker recorded reaches the verify report and PDF."""
+    record = _training_verify_record()
+    md = render_markdown(record, generated_at=NOW)
+    assert DERIVED_MODEL_HEADING in md
+    assert md.index(DELTA_HEADING) < md.index(DERIVED_MODEL_HEADING) < md.index("**ΔMRI +15**")
+    assert f"Parent weights sha256: `{'a1' * 32}`; derived weights sha256: `{'b2' * 32}`" in md
+    assert "3 of 3 epochs; wall time 41.5 s of a 600 s budget; budget exhausted: no; weights changed: yes" in md
+    assert "backbone frozen: no; n_train = 1536." in md
+    assert "Lineage (derived_from): parent target `vehicles_cnn-1a2b3c4d`" in md
+    assert "not a claim about the result" in md
+    pdf_text = _flat(_pdf_text(render_pdf(record, generated_at=NOW)))
+    assert "Derived model (training defense; the verify run measures it)" in pdf_text
+    assert "3 of 3 epochs" in pdf_text and "weights changed: yes" in pdf_text and "vehicles_cnn-1a2b3c4d" in pdf_text
+    # A verify record without a training defense keeps the block out (nothing inferred).
+    plain_verify = render_markdown(_verify_record(), generated_at=NOW)
+    assert DERIVED_MODEL_HEADING not in plain_verify and "Lineage (derived_from)" not in plain_verify
 
 
 # --------------------------------------------------------------------------- N-run compare (REVIEW_REPORTS-26, -30)

@@ -3,8 +3,12 @@
 ``render_pdf`` typesets the same six-section Markdown ``redsim.ml.reporting``
 produces, so the PDF is a third projection of the record and never a
 recomputation: every number, fraction, table and caveat is the Markdown's,
-converted line by line (headings, tables, bullets, block quotes, paragraphs;
-``**bold**`` and ```code``` inline) into reportlab platypus flowables.
+converted line by line (headings to four levels, tables, bullets, block quotes,
+paragraphs; ``**bold**`` and ```code``` inline) into reportlab platypus
+flowables. Whatever the Markdown gains (the Phase B text edit-budget and
+detection scorecard tables, the per-modality observation evidence, the
+derived-model lineage of a training defense, the nested LLM probe block) is in
+the PDF by construction; the tests read it back with pypdf.
 
 Choices recorded by REVIEW_REPORTS-15:
 
@@ -154,6 +158,8 @@ class _Styles:
         self.title = ParagraphStyle("title", fontName=FONT_BOLD, fontSize=15, leading=19, spaceAfter=8)
         self.h2 = ParagraphStyle("h2", fontName=FONT_BOLD, fontSize=12, leading=15, spaceBefore=10, spaceAfter=5)
         self.h3 = ParagraphStyle("h3", fontName=FONT_BOLD, fontSize=10, leading=13, spaceBefore=7, spaceAfter=3)
+        # The LLM probe fragment's own headings, nested under "LLM probe results" by redsim.ml.reporting.
+        self.h4 = ParagraphStyle("h4", fontName=FONT_BOLD, fontSize=9, leading=11.5, spaceBefore=5, spaceAfter=2)
         self.body = ParagraphStyle("body", fontName=FONT_REGULAR, fontSize=8, leading=10.5, spaceAfter=2)
         self.bullet = ParagraphStyle("bullet", parent=self.body, leftIndent=12, bulletIndent=2)
         self.bullet2 = ParagraphStyle("bullet2", parent=self.body, leftIndent=26, bulletIndent=14)
@@ -218,6 +224,8 @@ def flowables_from_markdown(markdown: str, styles: _Styles, available: float) ->
             story.append(Paragraph(inline(line[3:]), styles.h2))
         elif line.startswith("### "):
             story.append(Paragraph(inline(line[4:]), styles.h3))
+        elif line.startswith("#### "):
+            story.append(Paragraph(inline(line[5:]), styles.h4))
         elif line.startswith("- "):
             story.append(Paragraph(inline(line[2:]), styles.bullet, bulletText="•"))
         elif line.startswith("  - "):
