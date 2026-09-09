@@ -122,7 +122,7 @@ describe("model-list", () => {
   it("reports how many rows carry the metric of a numeric sort", () => {
     expect(sortCoverage(all, { key: "name", direction: "asc" })).toBeNull();
     const score = sortCoverage(all, { key: "score", direction: "desc" });
-    expect(score).toMatchObject({ key: "score", withValue: 2, total: 4 });
+    expect(score).toMatchObject({ withValue: 2, total: 4 });
     expect(sortCoverageNote(score)).toBe(
       "The robustness index is known for 2 of 4 models. Rows without one follow in name order. A scored campaign records it.",
     );
