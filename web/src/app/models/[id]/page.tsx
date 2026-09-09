@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { PanelSection, RoleGated, LabelBadge } from "@redsim/design-system";
 import {
   formatCleanAccuracy,
+  modelDisplayName,
   startCampaign,
   type AttackInfo,
   type CampaignRequest,
@@ -191,7 +192,7 @@ export default function ModelPage({
       <header>
         <div className="redsim-kicker">model target / {params.id}</div>
         <h1 className="text-2xl font-semibold">
-          {model?.name ?? "Model detail"}
+          {model ? modelDisplayName(model) : "Model detail"}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {model?.reason ??

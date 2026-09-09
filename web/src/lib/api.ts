@@ -306,6 +306,23 @@ export type ScoreSummary =
       note: string;
     };
 
+/**
+ * The name to show for a model. LLM targets registered before 2026-09-09 were
+ * named "<model> via <gateway> (<persona>)"; the gateway is shown as a badge
+ * instead, so the suffix is stripped here and only the model id remains.
+ */
+export function modelDisplayName(m: { name: string; manifest?: Record<string, unknown> }): string {
+  const fromManifest = m.manifest && typeof m.manifest.model_id === "string" ? m.manifest.model_id : null;
+  const stripped = m.name.replace(/\s+via\s+\S+(\s+\([^)]*\))?\s*$/, "").trim();
+  return stripped || fromManifest || m.name;
+}
+
+/** The gateway an LLM target is reached through (a host name), for the provider badge. */
+export function modelGateway(m: { manifest?: Record<string, unknown> }): string | null {
+  const host = m.manifest?.gateway_host;
+  return typeof host === "string" && host ? host : null;
+}
+
 export type ModelTarget = {
   id: string;
   project_id: string;
