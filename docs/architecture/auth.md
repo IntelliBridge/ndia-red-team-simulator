@@ -19,13 +19,38 @@ silently downgrading a bearer call.
 
 ---
 
-## Browser auth (Better Auth + Redsim-signed cookie)
+## Browser auth (branded sign-in + Redsim-signed cookie)
 
-The Keycloak code flow is owned by Better Auth. FastAPI never sees the
-upstream access token, nor Better Auth's own session cookie. An
-after-hook on the callback mints a separate `redsim_api_session` cookie
-that FastAPI verifies against a Redsim-managed RSA key. Three concerns,
-three keys:
+The web app's `/login` is a branded form. It posts the username and
+password to `POST /api/auth/login` on the Next server, which runs the
+OAuth 2.0 password grant (Keycloak's "direct access grants") against the
+realm's token endpoint, verifies the returned `id_token` against the
+realm JWKS with the issuer and audience checked, projects the claims
+through the same `claimsFromAccount` the code flow uses, and mints the
+`redsim_api_session` and `redsim_csrf` pair through the same
+`setRedsimCookies`. Keycloak stays the identity store (users, passwords,
+the `redsim_project_roles` attribute, brute-force lockout); the user
+never leaves the app for Keycloak's hosted form. Any refusal of the
+credentials is answered as `401 invalid_credentials`, one reason for an
+unknown user, a wrong password, a disabled account and a lockout alike.
+The route is behind the same origin and content-type gate as every
+mutation, and the password is never logged, stored or echoed.
+
+Two realm conditions for the grant to complete. The `redsim-web` client
+needs **Direct access grants** enabled (the confidential client on the
+deployed realm also sends `KEYCLOAK_CLIENT_SECRET`). And every user's
+profile must be complete: Keycloak's `VERIFY_PROFILE` refuses the grant
+with "Account is not fully set up" when a required attribute such as
+first or last name is empty, because the hosted form would have prompted
+for it and the grant cannot. Both realm files carry a user-profile
+component with `unmanagedAttributePolicy: ADMIN_EDIT`, so an admin can
+set `redsim_project_roles` on a user and the mapper reads it.
+
+The Better Auth Keycloak code flow below is still mounted at
+`/api/auth/[...all]` and still mints the same pair through its
+after-hook, but nothing in the UI starts it any more. FastAPI never sees
+the upstream access token, nor Better Auth's own session cookie. Three
+concerns, three keys:
 
 | Concern         | Holder            | Key                                                  |
 |-----------------|-------------------|------------------------------------------------------|

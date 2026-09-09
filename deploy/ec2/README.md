@@ -75,6 +75,35 @@ change one, update the secret and re-run the render loop from the bootstrap
 localhost: Better Auth derives the callback from it and the tRPC layer
 compares request origins against it.
 
+### Branded sign-in (password grant)
+
+The web app's `/login` posts credentials to its own `/api/auth/login`,
+which runs Keycloak's direct access grant server-side. `--import-realm`
+skips a realm that already exists, so on a host whose `redsim_identity`
+database predates this change the realm has to be brought in line once
+through the admin console (or `kcadm.sh`):
+
+1. Clients, `redsim-web`, Capability config: enable **Direct access
+   grants**. `deploy/runtime/identity/realm.json` carries the flag for a
+   fresh import.
+2. Realm settings, User profile, JSON editor: set
+   `unmanagedAttributePolicy` to `ADMIN_EDIT`, so `redsim_project_roles`
+   can be set on a user and the id_token mapper reads it.
+3. Realm settings, Security defenses, Brute force detection: enable it
+   (lockout for 1 minute after 10 failures, up to 15 minutes). The hosted
+   form used to be the only thing in front of the password check; the
+   grant is now reachable from the app's own origin.
+4. Every demo user needs a complete profile (email, first name, last name)
+   and no pending required action. A user missing one gets "Account is
+   not fully set up" from the grant, where the hosted form would have
+   prompted them.
+
+No web-tier variable changes: `KEYCLOAK_ISSUER`, `KEYCLOAK_CLIENT_ID`,
+`KEYCLOAK_CLIENT_SECRET` and `REDSIM_API_SESSION_PRIVATE_KEY` are already
+in `web.env` and `web.secret.env`, and the API already holds the matching
+public key. `REDSIM_ENV=prod` keeps the developer-access panel off the
+page and the `dev:` bearer refused by the API.
+
 ## Launching a replacement host
 
 1. `deploy/ec2/user-data.sh`: fill `__REGION__`, `__ACCOUNT__`,
