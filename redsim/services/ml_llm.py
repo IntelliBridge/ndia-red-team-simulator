@@ -660,7 +660,9 @@ def register_llm_target(
                         f"already registered in project {project_id!r}", target_id=existing.id))
 
     target_id = f"llm-{uuid4().hex[:12]}"
-    name = str(fields.get("name") or f"{model_id} via {host} ({persona})").strip()[:256]
+    # The gateway and persona are recorded in the manifest and shown as a badge; the
+    # default name is the model id alone (owner request, 2026-09-09).
+    name = str(fields.get("name") or model_id).strip()[:256]
     expected_garak: str | None = None
     try:
         expected_garak = load_probe_catalog().garak_version

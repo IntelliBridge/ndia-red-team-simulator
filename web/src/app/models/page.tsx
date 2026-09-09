@@ -8,6 +8,8 @@ import {
   deleteModel,
   formatCleanAccuracy,
   mlErrorDetail,
+  modelDisplayName,
+  modelGateway,
   type ModelTarget,
 } from "@/lib/api";
 import { useModels } from "@/hooks/useModels";
@@ -18,6 +20,19 @@ import { useCapabilities } from "@/hooks/useMlCatalog";
 import { useDatasets } from "@/hooks/useMlCatalog";
 import { isLlmTarget, registerLlmTarget } from "@/lib/llm";
 import { EMPTY_LLM_FORM, LlmRegisterForm } from "./llm-register-form";
+/** Provider badge for LLM targets: the gateway the model is reached through. */
+function GatewayBadge({ host }: { host: string }) {
+  const label = /pythia/i.test(host) ? "Pythia" : host;
+  return (
+    <span
+      className="rounded-sm border border-sky-400/50 bg-sky-400/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-sky-200"
+      title={`via ${host}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 const DIMENSION_LABELS: Record<string, string> = {
   S_acc: "Accuracy under attack",
   S_asr: "Resistance to attack success",
@@ -318,8 +333,9 @@ export default function ModelsPage() {
                 <tr key={m.id} {...rowLink(`/models/${m.id}`)} className={`border-t border-border ${rowLink("").className}`}>
                   <td className="px-3 py-2 font-medium">
                     <a className="text-primary underline" href={`/models/${m.id}`}>
-                      {m.name}
+                      {modelDisplayName(m)}
                     </a>
+                    {modelGateway(m) && <GatewayBadge host={modelGateway(m)!} />}
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{m.id}</td>
                   <td className="px-3 py-2">{isLlmTarget(m) ? "llm" : m.modality}</td>
@@ -355,7 +371,10 @@ export default function ModelsPage() {
             >
               <div className="flex items-start justify-between">
                 <div>
-                  <div className="text-lg font-semibold">{m.name}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-lg font-semibold">{modelDisplayName(m)}</span>
+                    {modelGateway(m) && <GatewayBadge host={modelGateway(m)!} />}
+                  </div>
                   <div className="mt-1 font-mono text-xs text-muted-foreground">
                     {m.id}
                   </div>
@@ -493,7 +512,7 @@ export default function ModelsPage() {
                   </option>
                   {(capabilities?.bundled_models ?? []).map((model) => (
                     <option key={model.id} value={model.id}>
-                      {model.name} · {model.modality}
+                      {modelDisplayName(model)} · {model.modality}
                     </option>
                   ))}
                 </select>
@@ -573,7 +592,7 @@ export default function ModelsPage() {
                 className="mt-1 w-full rounded-sm border border-input bg-background px-3 py-2"
                 placeholder={
                   source === "llm"
-                    ? "defaults to <model> via <gateway> (<persona>)"
+                    ? "defaults to the model id"
                     : "vehicle-classifier-v1"
                 }
               />
