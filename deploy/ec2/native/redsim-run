@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Launch one redsim process with its environment assembled from files.
+
+    redsim-run <service> <command...>
+
+Reads, in order, ``/opt/redsim/env/common.env`` (KEY=VALUE lines) for the
+Python services or ``<service>.env`` for web and identity, then the
+Secrets Manager JSON ``/opt/redsim/env/<service>.json`` (and ``pythia.json``
+for every Python service when present), and execs the command with that
+environment. The api needs the Pythia variables as much as the workers: the
+gateway model picker (``GET /v1/llm/models``), the LLM capability flags, the
+default ``gateway_url`` of an LLM target registration and the allowlist entry
+for the gateway host (``redsim.config`` derives it from ``PYTHIA_BASE_URL``)
+all read them; without them the deployed UI shows no gateway models.
+JSON keeps multi-line PEM values intact, which systemd EnvironmentFile
+cannot. Secrets never touch the command line or the journal.
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+ENV_DIR = Path("/opt/redsim/env")
+PYTHON_SERVICES = {"api", "scans", "default", "beat"}
+
+
+def read_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.is_file():
+        return values
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip()
+    return values
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2:
+        print("usage: redsim-run <service> <command...>", file=sys.stderr)
+        return 2
+    service, command = argv[0], argv[1:]
+    env = dict(os.environ)
+    env.update(read_env_file(ENV_DIR / ("common.env" if service in PYTHON_SERVICES else f"{service}.env")))
+    for name in ([service] + (["pythia"] if service in PYTHON_SERVICES else [])):
+        path = ENV_DIR / f"{name}.json"
+        if path.is_file():
+            env.update({k: str(v) for k, v in json.loads(path.read_text()).items()})
+    if service in PYTHON_SERVICES:
+        env.setdefault("PATH", "")
+        env["PATH"] = "/opt/redsim/venv/bin:" + env["PATH"]
+        # The Pythia secret turns the LLM paths on for every Python service; the
+        # workers run the probes and narratives, the api registers targets and
+        # lists the gateway's models.
+        if env.get("PYTHIA_API_KEY"):
+            env["REDSIM_DISABLE_LLM"] = "0"
+    os.execvpe(command[0], command, env)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

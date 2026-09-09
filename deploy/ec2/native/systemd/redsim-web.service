@@ -1,0 +1,23 @@
+[Unit]
+Description=redsim web (Next.js production server on the checkout build)
+After=network-online.target redsim-identity.service redsim-api.service
+Wants=network-online.target
+[Service]
+Type=simple
+User=redsim
+Group=redsim
+Environment=HOME=/var/lib/redsim
+Environment=COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+WorkingDirectory=/opt/redsim/src
+# Build once when no build exists (a host that moved from the dev server, or a
+# fresh checkout); redsim-deploy rebuilds on web changes. Runs as User=redsim.
+ExecStartPre=/bin/sh -c 'test -f web/.next/BUILD_ID || CI=true /usr/local/bin/redsim-run web pnpm --filter @redsim/web build'
+TimeoutStartSec=900
+ExecStart=/usr/local/bin/redsim-run web pnpm --filter @redsim/web start -p 3000 -H 127.0.0.1
+Restart=always
+RestartSec=3
+KillMode=mixed
+TimeoutStopSec=60
+LimitNOFILE=65536
+[Install]
+WantedBy=multi-user.target

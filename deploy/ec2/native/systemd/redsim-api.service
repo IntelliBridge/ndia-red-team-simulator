@@ -1,0 +1,19 @@
+[Unit]
+Description=redsim API (uvicorn)
+After=network-online.target redsim-identity.service
+Wants=network-online.target
+[Service]
+Type=simple
+User=redsim
+Group=redsim
+Environment=HOME=/var/lib/redsim
+Environment=COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+WorkingDirectory=/opt/redsim/src
+ExecStart=/usr/local/bin/redsim-run api uvicorn redsim.api.app:create_app --factory --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=always
+RestartSec=3
+KillMode=mixed
+TimeoutStopSec=60
+LimitNOFILE=65536
+[Install]
+WantedBy=multi-user.target

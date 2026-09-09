@@ -83,7 +83,7 @@ export default function TargetsPage() {
   const profiles: AuthProfile[] = Array.isArray(profilesData) ? profilesData : [];
 
   if (!authed)
-    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
+    return <p className="text-muted-foreground">Signing in…</p>;
   if (error) return <p className="text-muted-foreground">Failed to load.</p>;
 
   const create = async () => {

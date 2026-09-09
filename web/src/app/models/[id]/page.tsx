@@ -126,7 +126,7 @@ export default function ModelPage({
     }
     setPreselect({ honoured, skipped });
   }, [requestedAttacks, model, llmTarget, attacks]);
-  if (!authed) return <p>Redirecting to sign in…</p>;
+  if (!authed) return <p>Signing in…</p>;
   const catalogError =
     modelError ??
     attacksError ??

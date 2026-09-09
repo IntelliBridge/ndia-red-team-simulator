@@ -1,0 +1,19 @@
+[Unit]
+Description=redsim identity (Keycloak)
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+User=redsim
+Group=redsim
+Environment=HOME=/var/lib/redsim
+Environment=COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+WorkingDirectory=/opt/keycloak
+Environment=JAVA_OPTS_KC_HEAP=-Xms512m -Xmx2g
+ExecStart=/usr/local/bin/redsim-run identity /opt/keycloak/bin/kc.sh start --import-realm
+Restart=always
+RestartSec=5
+TimeoutStartSec=600
+TimeoutStopSec=60
+[Install]
+WantedBy=multi-user.target

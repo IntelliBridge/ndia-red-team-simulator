@@ -167,6 +167,25 @@ def _apply_env_overrides(config: RedsimConfig) -> RedsimConfig:
     """Overlay ``REDSIM_LLM_*`` environment variables onto the LLM-guardrail
     fields. Env wins over YAML so an operator can flip a guard at runtime
     without editing the config file (the established override precedence)."""
+    # ``REDSIM_TARGET_ALLOWLIST`` (comma-separated hosts) replaces the YAML
+    # list. The container images ship no redsim.yaml, so this is how a
+    # deployment names the hosts the egress check admits, e.g. the Pythia
+    # gateway an LLM target registration points at (register LLM-26).
+    allowlist = os.environ.get("REDSIM_TARGET_ALLOWLIST")
+    if allowlist is not None:
+        hosts = [h.strip() for h in allowlist.split(",") if h.strip()]
+        if hosts:
+            config.target_allowlist = hosts
+    # The configured Pythia gateway is trusted by configuration: a deployment that
+    # sets PYTHIA_BASE_URL wants LLM targets on that host to register without a
+    # separate allowlist entry (register LLM-26). Appended, never replacing.
+    gateway = os.environ.get("PYTHIA_BASE_URL", "").strip()
+    if gateway:
+        from urllib.parse import urlsplit
+
+        host = (urlsplit(gateway if "://" in gateway else f"https://{gateway}").hostname or "").lower()
+        if host and host not in {h.lower() for h in config.target_allowlist}:
+            config.target_allowlist = [*config.target_allowlist, host]
     config.llm_guardrails_enabled = _env_bool(
         "REDSIM_LLM_GUARDRAILS", config.llm_guardrails_enabled
     )

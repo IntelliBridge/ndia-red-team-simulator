@@ -28,7 +28,6 @@ const NAV_LINKS: { href: string; label: string }[] = [
   { href: "/models", label: "Models" },
   { href: "/runs", label: "Runs" },
   { href: "/tests", label: "Tests" },
-  { href: "/projects", label: "Projects" },
   { href: "/auth-profiles", label: "Auth Profiles" },
   { href: "/findings", label: "Findings" },
   { href: "/logs", label: "Logs" },
@@ -91,8 +90,8 @@ export default function RootLayout({
                   aria-hidden="true"
                   className="hidden h-5 w-px bg-border sm:block"
                 />
-                <span className="redsim-meta hidden sm:block">
-                  UNCLASSIFIED // OPEN PUBLIC DATA
+                <span className="redsim-meta hidden font-semibold text-emerald-600 dark:text-emerald-400 sm:block">
+                  UNCLASSIFIED
                 </span>
               </div>
               <nav className="flex flex-wrap items-center justify-end gap-x-5 gap-y-1">
