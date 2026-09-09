@@ -8,12 +8,20 @@ returned envelope into durable evidence:
   name-to-kind table is the spec 5.8 vocabulary (``ml.curve``, ``ml.shap.*``,
   ``ml.feature_diff``, ``ml.harden.*``, ``report.md`` / ``report.json`` /
   ``report.html``; a killed child's files under ``ml/partial/`` become
-  ``ml.partial.*``).
+  ``ml.partial.*``). Phase B adds the text modality's ``ml.text.diff`` /
+  ``ml.shap.text``, the detection modality's ``ml.detection.boxes`` /
+  ``ml.detection.scorecard`` (its drawn images stay ``ml.input.clean`` /
+  ``ml.input.adv``) and the training defenses' ``ml.derived_model`` /
+  ``ml.training_report`` (MODALITIES-44, ATTACKS_HARDEN-15).
 * **Run.stage_table** in the spec 6.5 shape: ``stage``, ``stages_done``, a
   ``stages`` map with per-stage ``status`` (``queued | running | succeeded |
   failed | skipped | cancelled | timed_out``), ``started_at`` / ``finished_at``
   and ``job_id``, the ``jobs`` map and ``completeness``; every transition is
   also published as a ``{"type": "stage", "name": ..., "status": ...}`` frame.
+  ``defense_apply`` is expected right after ``load_target`` when the campaign
+  applies a ``kind: training`` defense (``redsim.ml.defenses``); a
+  preprocessing defense wraps the target inside ``load_target`` and adds no
+  stage.
 * **Audit rows** in the spec 10.5 order through ``redsim.safety.authorize``:
   ``model.load``, ``attack.execute.<attack_id>``, ``explain.execute``,
   ``campaign.score``, ``harden.execute``, ``verify.execute``, ``report.render``
@@ -211,6 +219,12 @@ _EXACT_KINDS: dict[str, str] = {
     HARDEN_PROMPT_NAME: "ml.harden.prompt",
     HARDEN_COMPLETION_NAME: "ml.harden.completion",
     HARDEN_NARRATIVE_NAME: "ml.harden.narrative",
+    # Training defenses (redsim.ml.harden.apply.WEIGHTS_ARTIFACT / REPORT_ARTIFACT): the derived state_dict
+    # and the training record of a defense_apply stage (ATTACKS_HARDEN-12/-15).
+    "derived_model/weights.pt": "ml.derived_model",
+    "derived_model/training_report.json": "ml.training_report",
+    # Detection modality (redsim.ml.runners.detection.SCORECARD_NAME): the campaign-level box scorecard.
+    "detection_scorecard.json": "ml.detection.scorecard",
     "report.md": "report.md",
     "report.json": "report.json",
     "report.html": "report.html",
@@ -229,6 +243,16 @@ _BASENAME_KINDS: dict[str, str] = {
     "top_features.json": "ml.feature_diff",
     "shap_pair.png": "ml.shap.force",
     "events.jsonl": "ml.events",
+    # Text modality (redsim.ml.explain.shap_text.TEXT_DIFF_NAME / TEXT_PLOT_NAME): the escaped word diff of
+    # one observation and its token-attribution bars (MODALITIES-19/-44). shap_values.npz keeps ml.shap.values.
+    "text_diff.json": "ml.text.diff",
+    "shap_text.png": "ml.shap.text",
+    # Detection modality (redsim.ml.runners.detection.BOXES_JSON_NAME / CLEAN_PNG_NAME / ADV_PNG_NAME): the
+    # per-observation box record (GT, clean and adversarial predictions, matches, patch location) and the drawn
+    # clean / patched inputs (MODALITIES-35/-44).
+    "boxes.json": "ml.detection.boxes",
+    "clean_boxes.png": "ml.input.clean",
+    "adv_boxes.png": "ml.input.adv",
 }
 _PREFIX_KINDS: tuple[tuple[str, str], ...] = (
     ("curve/", "ml.curve"),
@@ -360,9 +384,35 @@ def _publish_stage(run_id: str, job_id: str, stage: str, status: str = "succeede
     )
 
 
+def _applies_training_defense(config: CampaignConfig) -> bool:
+    """True when ``config.defense`` names a ``kind: training`` row of the defense catalog.
+
+    Mirrors ``redsim.ml.campaign._defense_kind``: an unknown id or an absent catalog reads as
+    preprocessing (the child then refuses or wraps inside ``load_target``; no ``defense_apply``).
+    """
+    if config.defense is None:
+        return False
+    try:
+        from redsim.ml.defenses import is_training_defense
+    except ImportError:
+        return False
+    try:
+        return bool(is_training_defense(config.defense.id))
+    except ValueError:
+        return False
+
+
 def expected_stages(config: CampaignConfig) -> list[str]:
-    """The stage keys this campaign is expected to write, in order (spec 6.5, ``schema.STAGES``)."""
-    out = ["load_target", "sample", "clean_eval"]
+    """The stage keys this campaign is expected to write, in order (spec 6.5, ``schema.STAGES``).
+
+    ``defense_apply`` follows ``load_target`` only when the campaign applies a training defense
+    (ATTACKS_HARDEN-15); the child emits it after fine-tuning the copy it then attacks. A
+    preprocessing defense wraps the loaded target and has no stage of its own.
+    """
+    out = ["load_target"]
+    if _applies_training_defense(config):
+        out.append("defense_apply")
+    out.extend(["sample", "clean_eval"])
     out.extend(f"attack:{aid}" for aid in config.attack_ids)
     if config.include_control:
         out.append("control")
@@ -1222,7 +1272,9 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
             tracker.completed(stage)
             # Live rows: model.load once the child loaded the model, one attack.execute.<id> per
             # attack as its stage completes with the executed configuration (a not_run attack has
-            # no stage and gets its refused row from the record once the child returns).
+            # no stage and gets its refused row from the record once the child returns). A
+            # defense_apply stage (training defense) carries no row of its own: the derived model
+            # and its training record are artifacts and Provenance.defense on the returned record.
             if stage == "load_target" and not emitter.has("model.load"):
                 emitter.emit("model.load", dict(load_detail), success=True)
             if stage == "attack":

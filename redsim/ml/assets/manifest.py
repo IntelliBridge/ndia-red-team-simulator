@@ -18,6 +18,22 @@ campaign appends ``caveats`` / ``dataset_caveats`` it finds there to the run's
 limitations. Both are build-record fields outside the frozen projection, so
 ``manifest_sha256`` does not change when they are added and manifests written
 before they existed still verify (they read back as ``[]`` / ``None``).
+
+Phase B (plan 12): ``DatasetSource`` gains ``uci`` (the SMS Spam Collection) and
+``github`` (the nltk_data WordNet zip); ``ModelEntry.train_slice_split`` names
+the bundled training slice an image model carries for the training defenses
+(ATTACKS_HARDEN-11: a ``SplitEntry`` under the dataset's ``splits`` whose
+``file`` is ``bundled/<model>/train_slice.npz``), again outside the frozen
+projection. The frozen ``MLModelManifest`` drops its optional Phase B blocks
+(``text``, ``detection``, ``endpoint``, ``derived_from``) while they are
+``None``, so an entry written before them keeps its digest (MODALITIES-05); a
+manifest that carries a block has it in the digest, as it should.
+
+The Phase B bundled ids (``sms_tfidf_lr`` text, ``assets_frcnn_mnv3``
+detection) live here (``PHASE_B_MODEL_IDS`` and the ``BUILD_*`` tables) so the
+builder and the import-light CLI parser read one vocabulary; the P0 tables in
+``redsim.ml.assets`` are untouched and the merge is idempotent should they
+gain the same rows.
 """
 
 from __future__ import annotations
@@ -37,12 +53,51 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from redsim.ml.assets import ASSET_IDS, DATASET_CHOICES, LEGACY_MODEL_IDS, MODEL_IDS, MODEL_NAMES
 from redsim.ml.schema import AccuracyPoint, MLModelManifest, ModelStatus, SurrogateInfo
 
 MANIFEST_NAME = "MANIFEST.json"
 BUILDER_NAME = "redsim ml build-assets"
 
-DatasetSource = Literal["huggingface", "kaggle", "local"]
+# ``uci`` (UCI Machine Learning Repository, the SMS Spam Collection) and ``github`` (a pinned file in a GitHub
+# repository, the nltk_data WordNet zip) joined in Phase B; ``local`` stays the committed-fixture source.
+DatasetSource = Literal["huggingface", "kaggle", "uci", "github", "local"]
+
+# ---------------------------------------------------------------------------
+# Bundled model ids of the Phase B modalities (MODALITIES-26 text, MODALITIES-29 detection)
+#
+# ``redsim.ml.assets`` holds the P0 tables (image / cifar10 / tabular). The ``BUILD_*`` tables below are what
+# ``redsim ml build-assets`` and ``BuildOptions`` validate against: the P0 rows plus these, merged so that
+# nothing changes once ``redsim.ml.assets`` carries the same rows. This module is import-light (pydantic and
+# ``redsim.ml.schema`` only), which is what lets the CLI parser read the vocabulary without the ``ml`` extra.
+# ---------------------------------------------------------------------------
+
+TEXT_MODEL_ID = "sms_tfidf_lr"
+DETECTION_MODEL_ID = "assets_frcnn_mnv3"
+PHASE_B_MODEL_IDS: dict[str, str] = {"text": TEXT_MODEL_ID, "detection": DETECTION_MODEL_ID}
+PHASE_B_MODEL_NAMES: dict[str, str] = {
+    TEXT_MODEL_ID: "SMS spam classifier (TF-IDF word 1-2 grams + logistic regression, UCI SMS Spam Collection)",
+    DETECTION_MODEL_ID: "Military assets detector (Faster R-CNN MobileNetV3-Large 320 FPN, capped CC BY 4.0 subset)",
+}
+# Datasets ``--dataset all`` leaves out: they need an input that is not fetched by the build itself (the
+# detection subset is published under ``<assets>/cache/military_assets_subset`` by the B0 datasets step and
+# needs a Kaggle token to reproduce), so a default build never fails on their absence. Named explicitly only.
+EXPLICIT_ONLY_DATASETS: tuple[str, ...] = ("detection",)
+
+BUILD_MODEL_IDS: dict[str, str] = {**MODEL_IDS, **{k: v for k, v in PHASE_B_MODEL_IDS.items() if k not in MODEL_IDS}}
+BUILD_DATASET_CHOICES: tuple[str, ...] = (
+    *(c for c in DATASET_CHOICES if c != "all"),
+    *(c for c in PHASE_B_MODEL_IDS if c not in DATASET_CHOICES),
+    "all",
+)
+BUILD_ASSET_IDS: dict[str, str] = {**ASSET_IDS, **{mid: ds for ds, mid in PHASE_B_MODEL_IDS.items()}}
+BUILD_ASSET_IDS.update({legacy: BUILD_ASSET_IDS[current] for legacy, current in LEGACY_MODEL_IDS.items()})
+BUILD_MODEL_NAMES: dict[str, str] = {**PHASE_B_MODEL_NAMES, **MODEL_NAMES}
+
+
+def all_build_datasets() -> set[str]:
+    """What ``--dataset all`` builds: every dataset choice except ``all`` and the explicit-only ones."""
+    return {c for c in BUILD_DATASET_CHOICES if c != "all" and c not in EXPLICIT_ONLY_DATASETS}
 
 
 class _Lenient(BaseModel):
@@ -150,6 +205,9 @@ class ModelEntry(MLModelManifest):
     # carries them into the campaign (spec 11.3, 13.4, 14.5). Outside the frozen projection: no digest change.
     dataset_caveats: list[str] = Field(default_factory=list)
     subject_centered: bool | None = None
+    # ATTACKS_HARDEN-11: the split (in the bound dataset's ``splits``) whose ``file`` is the bundled training
+    # slice a training defense fine-tunes on; ``None`` when the build wrote none. Build record, outside the digest.
+    train_slice_split: str | None = None
     status: ModelStatus = "available"
     bundled: bool = True
 
@@ -319,8 +377,6 @@ def write_manifest(manifest: AssetManifest, path: Path) -> None:
 
 def model_entry(manifest: AssetManifest, model_id: str) -> ModelEntry | None:
     """``models[model_id]``, also found under a legacy id that now maps to ``model_id`` (``url_classifier``)."""
-    from redsim.ml.assets import LEGACY_MODEL_IDS
-
     entry = manifest.models.get(model_id)
     if entry is not None:
         return entry
@@ -412,7 +468,9 @@ def verify_model_assets(manifest: AssetManifest, root: Path, model_id: str) -> M
 
     Scoped to the model so a missing slice of another dataset does not block this target; the loaders
     call this at every ``load()``. Problems with the split (missing, tampered, no such dataset or split
-    in ``datasets``) are reported separately from problems with the model's own files.
+    in ``datasets``) are reported separately from problems with the model's own files. The training slice
+    named by ``train_slice_split`` (ATTACKS_HARDEN-11) is checked the same way when the entry declares one,
+    so a training defense never fine-tunes on a slice the manifest does not vouch for.
     """
     entry = model_entry(manifest, model_id)
     if entry is None:
@@ -429,6 +487,14 @@ def verify_model_assets(manifest: AssetManifest, root: Path, model_id: str) -> M
                                     f"{entry.dataset_split!r}")
         else:
             dataset_problems.extend(_check_files(iter_split_files(entry.dataset_id, ds, entry.dataset_split), root))
+        if entry.train_slice_split is not None:
+            slice_split = ds.splits.get(entry.train_slice_split)
+            if slice_split is None or slice_split.file is None:
+                dataset_problems.append(f"model {model_id}: dataset {entry.dataset_id!r} has no bundled training "
+                                        f"slice {entry.train_slice_split!r}")
+            else:
+                dataset_problems.extend(
+                    _check_files(iter_split_files(entry.dataset_id, ds, entry.train_slice_split), root))
         if entry.dataset_revision is not None and ds.revision is not None and entry.dataset_revision != ds.revision:
             dataset_problems.append(f"model {model_id}: dataset_revision {entry.dataset_revision!r} differs from the "
                                     f"dataset entry's revision {ds.revision!r}")

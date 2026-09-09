@@ -14,8 +14,18 @@ network call and never talks to Pythia (``narrative_source`` stays ``rules``).
 ``endpoint_stub`` and fixture-only targets are refused before anything is
 written, and the process exits non-zero on a refusal or a failed campaign.
 
+Phase B (plan 12): ``build-assets --dataset text`` trains the SMS spam
+classifier (``sms_tfidf_lr``) and ``--dataset detection`` the military-assets
+detector (``assets_frcnn_mnv3``; named explicitly only, it needs the published
+subset); ``--only`` accepts both ids. The image builds also write the bundled
+training slice a training defense fine-tunes on, and ``--attach-train-slice``
+records a slice drawn out-of-band in an existing manifest without retraining.
+The vocabulary comes from ``redsim.ml.assets.manifest`` (import-light) so the
+parser needs neither numpy nor the builder.
+
 ``redsim ml seed`` registers the bundled, non-fixture models of the manifest
-into a project through ``redsim.services.ml_models.register_bundled_model``
+(image, tabular and, once built, text and detection alike: every entry that is
+not fixture-only) into a project through ``redsim.services.ml_models.register_bundled_model``
 (the audit-first admission boundary ``POST /v1/models`` with ``source=bundled``
 uses): the service verifies the bundled files against the manifest, writes the
 ``model.register`` audit row, copies the weights into the blob store and adds a
@@ -52,7 +62,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from redsim.cli import _console
-from redsim.ml.assets import ARCH_CHOICES, ASSET_IDS, DATASET_CHOICES, LEGACY_MODEL_IDS, MODEL_IDS
+from redsim.ml.assets import ARCH_CHOICES, LEGACY_MODEL_IDS
+from redsim.ml.assets.manifest import (
+    BUILD_ASSET_IDS,
+    BUILD_DATASET_CHOICES,
+    BUILD_MODEL_IDS,
+    EXPLICIT_ONLY_DATASETS,
+    all_build_datasets,
+)
 from redsim.ml.campaign_adapter import ASSETS_DIR_ENV, DEFAULT_ACTOR, DEFAULT_ATTACK_IDS
 
 if TYPE_CHECKING:
@@ -81,29 +98,40 @@ def add_ml_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     ml_sub = p_ml.add_subparsers(dest="ml_action", required=True)
 
     legacy_ids = ", ".join(f"{old} (alias of {new})" for old, new in LEGACY_MODEL_IDS.items())
+    all_datasets = ", ".join(sorted(all_build_datasets()))
+    explicit_only = ", ".join(EXPLICIT_ONLY_DATASETS)
     p_build = ml_sub.add_parser(
         "build-assets",
         help="Fetch the open datasets of spec section 11, train the bundled models on CPU, write assets/MANIFEST.json",
         description=(
             "Fetch each dataset by pinned revision (HuggingFace hub via its API and resolve URLs; the Kaggle "
             "malicious-URLs file with KAGGLE_API_TOKEN read from the environment or a .env file (REDSIM_ENV_FILE), "
-            "or the older KAGGLE_USERNAME / KAGGLE_KEY pair, else the committed CI sample), train the "
-            f"bundled image CNN ({MODEL_IDS['image']}, {MODEL_IDS['cifar10']}) and URL classifier "
-            f"({MODEL_IDS['tabular']}) with a fixed seed on CPU, and record dataset ids, revisions, splits, weight "
-            "sha256s, clean metrics and library versions in <out>/MANIFEST.json. Each model entry is a "
+            "or the older KAGGLE_USERNAME / KAGGLE_KEY pair, else the committed CI sample; the UCI SMS Spam "
+            "Collection zip, else its committed CI sample), train the bundled image CNN "
+            f"({BUILD_MODEL_IDS['image']}, {BUILD_MODEL_IDS['cifar10']}), URL classifier ({BUILD_MODEL_IDS['tabular']}), "
+            f"SMS spam classifier ({BUILD_MODEL_IDS['text']}) and military-assets detector "
+            f"({BUILD_MODEL_IDS['detection']}) with a fixed seed on CPU, and record dataset ids, revisions, splits, "
+            "weight sha256s, clean metrics and library versions in <out>/MANIFEST.json. Each model entry is a "
             "redsim.ml.schema.MLModelManifest plus the build record, under the id the target registry serves "
-            f"(legacy ids still accepted by --only: {legacy_ids}). --fixture writes the committed CIFAR-10 test "
-            "slice tests/ml/fixtures/cifar10_test_500.npz with its sidecar MANIFEST.json entry from local files only. "
+            f"(legacy ids still accepted by --only: {legacy_ids}). --dataset all builds {all_datasets}; {explicit_only} "
+            "is built only when named because its input, the capped subset under "
+            "<assets>/cache/military_assets_subset, is published by the datasets step and not fetched here. The "
+            "image builds also write bundled/<model>/train_slice.npz, the training slice a training defense "
+            "fine-tunes on; --attach-train-slice records a slice drawn out-of-band (its train_slice.json sidecar) "
+            "in an existing manifest without retraining. --fixture writes the committed CIFAR-10 test slice "
+            "tests/ml/fixtures/cifar10_test_500.npz with its sidecar MANIFEST.json entry from local files only. "
             "Network access happens only here, never in the worker or the tests."
         ),
     )
-    p_build.add_argument("--dataset", choices=DATASET_CHOICES, default=None,
+    p_build.add_argument("--dataset", choices=BUILD_DATASET_CHOICES, default=None,
                          help="Which asset to build: image (vehicle CNN), tabular (URL classifier), cifar10 "
-                              "(CI fixture CNN), or all (the default unless --fixture is given alone)")
-    p_build.add_argument("--only", action="append", choices=sorted(ASSET_IDS), default=None, metavar="MODEL_ID",
+                              "(CI fixture CNN), text (SMS spam classifier), detection (military-assets detector; "
+                              f"named only), or all ({all_datasets}; the default unless --fixture or "
+                              "--attach-train-slice is given alone)")
+    p_build.add_argument("--only", action="append", choices=sorted(BUILD_ASSET_IDS), default=None, metavar="MODEL_ID",
                          help="Build only the named bundled model (repeatable; one of %(choices)s). "
                               "Overrides --dataset")
-    p_build.add_argument("--epochs", type=int, default=3, help="CNN training epochs (default: 3)")
+    p_build.add_argument("--epochs", type=int, default=3, help="CNN / detector training epochs (default: 3)")
     p_build.add_argument("--out", default="assets",
                          help="Assets root; MANIFEST.json is written here (default: assets/)")
     p_build.add_argument("--cache-dir", dest="cache_dir", default=None,
@@ -143,6 +171,21 @@ def add_ml_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p_build.add_argument("--fixture-synthetic-ok", dest="fixture_allow_synthetic", action="store_true", default=False,
                          help="When no local CIFAR-10 test split exists, let --fixture write a seeded synthetic "
                               "stand-in labelled synthetic=true in the sidecar (never over a real committed draw)")
+    p_build.add_argument("--no-train-slice", dest="train_slice", action="store_false", default=True,
+                         help="Skip writing bundled/<model>/train_slice.npz for the image builds (the seeded "
+                              "stratified training slice a training defense fine-tunes on; written by default)")
+    p_build.add_argument("--train-slice-n", dest="train_slice_n", type=int, default=1536,
+                         help="Rows in the training slice (default: 1536; capped at the training split's size)")
+    p_build.add_argument("--attach-train-slice", dest="attach_train_slice", action="append", default=None,
+                         metavar="MODEL_ID",
+                         help="Record an existing bundled/<MODEL_ID>/train_slice.npz (described by its train_slice.json "
+                              "sidecar, digest-checked) in <out>/MANIFEST.json for a model already built there; "
+                              "repeatable, no training, no download. Alone, builds no model")
+    p_build.add_argument("--detection-image-size", dest="detection_image_size", type=int, default=320,
+                         help="Square input resolution for the detector build (default: 320)")
+    p_build.add_argument("--detection-subset", dest="detection_subset", default=None,
+                         help="Directory of the published military-assets subset (manifest.json, images/, labels/); "
+                              "default: <cache-dir>/military_assets_subset, else <out>/cache/military_assets_subset")
 
     p_attack = ml_sub.add_parser(
         "attack",
@@ -158,7 +201,8 @@ def add_ml_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
             "written. The narrative stays rules-only (narrative_source=rules): Pythia is never called here."
         ),
     )
-    p_attack.add_argument("target_id", help="Bundled target id (vehicles_cnn, url_trees); see GET /v1/models")
+    p_attack.add_argument("target_id", help="Bundled target id (vehicles_cnn, url_trees, and once built sms_tfidf_lr, "
+                                            "assets_frcnn_mnv3); see GET /v1/models")
     p_attack.add_argument("--attacks", default=",".join(DEFAULT_ATTACK_IDS),
                           help="Comma-separated attack ids (default: %(default)s); noise_control runs automatically")
     p_attack.add_argument("--eps", default=None,
@@ -185,7 +229,9 @@ def add_ml_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         description=(
             "Open the configured database (REDSIM_DB_URL) and call "
             f"{SEED_SERVICE_MODULE}.{SEED_SERVICE_FUNCTION}(session, project_id, bundled_id, actor, ...) for each "
-            "bundled model in <assets>/MANIFEST.json that is not fixture-only: the service verifies the bundled "
+            "bundled model in <assets>/MANIFEST.json that is not fixture-only (the image CNN, the URL classifier "
+            f"and, once built, the text classifier {BUILD_MODEL_IDS['text']} and the detector "
+            f"{BUILD_MODEL_IDS['detection']}; the registry must serve the id): the service verifies the bundled "
             "files against the manifest, writes the model.register audit row first, puts the weights blob and "
             "creates the ml_model_artifact Target (id <bundled_id>-<8 hex>, value bundled:<bundled_id>) as "
             "available; each registration is committed before the next model. A model the project already holds "
@@ -215,7 +261,9 @@ def cmd_ml_build_assets(args: argparse.Namespace, _config: RedsimConfig) -> None
     cache_env = os.environ.get(DATASET_CACHE_ENV, "").strip()
     cache_dir = Path(args.cache_dir) if args.cache_dir else (Path(cache_env) if cache_env else None)
     fixture = bool(getattr(args, "fixture", False))
+    attach = tuple(getattr(args, "attach_train_slice", None) or ())
     explicit_selection = args.dataset is not None or bool(args.only)
+    detection_subset = getattr(args, "detection_subset", None)
     try:
         opts = BuildOptions(
             dataset=args.dataset or "all", only=tuple(args.only or ()), epochs=args.epochs, out=args.out,
@@ -223,10 +271,15 @@ def cmd_ml_build_assets(args: argparse.Namespace, _config: RedsimConfig) -> None
             image_revision=args.image_revision, cifar10_revision=args.cifar10_revision,
             max_train=args.max_train, max_eval=args.max_eval, workers=args.workers,
             prefer_xgboost=bool(getattr(args, "prefer_xgboost", False)), arch=getattr(args, "arch", "small_cnn"),
-            build_models=explicit_selection or not fixture, fixture=fixture,
+            build_models=explicit_selection or not (fixture or attach), fixture=fixture,
             fixture_out=Path(args.fixture_out) if getattr(args, "fixture_out", None) else DEFAULT_FIXTURE_PATH,
             fixture_sidecar=Path(args.fixture_sidecar) if getattr(args, "fixture_sidecar", None) else None,
             fixture_allow_synthetic=bool(getattr(args, "fixture_allow_synthetic", False)),
+            train_slice=bool(getattr(args, "train_slice", True)),
+            train_slice_n=int(getattr(args, "train_slice_n", 1536)),
+            attach_train_slice=attach,
+            detection_image_size=int(getattr(args, "detection_image_size", 320)),
+            detection_subset=Path(detection_subset) if detection_subset else None,
         )
     except ValueError as exc:
         _console._err(str(exc))
@@ -234,7 +287,10 @@ def cmd_ml_build_assets(args: argparse.Namespace, _config: RedsimConfig) -> None
     if opts.build_models:
         what = ", ".join(opts.only) if opts.only else f"{opts.dataset} asset(s)"
         _console._info(f"building {what} into {opts.out} (epochs={opts.epochs}, seed={opts.seed}, arch={opts.arch}, "
-                       f"cache={opts.cache_dir})")
+                       f"cache={opts.cache_dir}, train_slice={'on' if opts.train_slice else 'off'})")
+    if opts.attach_train_slice:
+        _console._info(f"attach-train-slice: recording {', '.join(opts.attach_train_slice)} from the train_slice.json "
+                       f"sidecar(s) under {opts.out}/bundled (no training, no download)")
     if opts.fixture:
         _console._info(f"fixture: writing {opts.fixture_out} from local files only (no download)")
     try:
