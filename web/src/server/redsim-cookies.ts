@@ -3,13 +3,13 @@
 //
 // Lives under server/ because everything here touches the Redsim signing key.
 // The minting itself stays in redsim-session.ts, which the FastAPI
-// session-cookie contract freezes byte for byte (R18); this module is the
-// caller, not a replacement.
+// session-cookie contract freezes byte for byte; this module is the caller,
+// not a replacement.
 
 import { createPublicKey } from "node:crypto";
 
 import { createAuthMiddleware } from "better-auth/api";
-import { importSPKI, jwtVerify } from "jose";
+import { decodeJwt, importSPKI, jwtVerify } from "jose";
 
 import { env } from "@/env";
 
@@ -64,14 +64,15 @@ export const redsimCookieNames = {
  * Only ever applied to the id_token Better Auth stored on the account, which
  * arrived over the verified OIDC code exchange. Never applied to a value that
  * came from the browser.
+ *
+ * jose's decodeJwt is the deliberately unverified counterpart to the jwtVerify
+ * above. It throws JWTInvalid on anything that is not a well-formed token, so
+ * the catch is what turns a malformed id_token into an empty claim set rather
+ * than a failed sign-in.
  */
 function decodeJwtPayload(token: string): Record<string, unknown> {
-  const [, payload] = token.split(".");
-  if (!payload) return {};
   try {
-    return JSON.parse(
-      Buffer.from(payload, "base64url").toString("utf8"),
-    ) as Record<string, unknown>;
+    return decodeJwt(token);
   } catch {
     return {};
   }
@@ -81,7 +82,7 @@ function decodeJwtPayload(token: string): Record<string, unknown> {
  * Read the Keycloak identity out of a linked account record.
  *
  * `accountId` is the Keycloak `sub`. Better Auth's `session.user.id` is a
- * fresh nanoid per login and must never reach the `sub` claim (R20): it drives
+ * fresh nanoid per login and must never reach the `sub` claim: it drives
  * route auth and the rate-limit bucket key on the FastAPI side, so a per-login
  * value would write a different audited identity every time, with no error
  * anywhere. The roles map comes from the stored id_token rather than the
@@ -109,7 +110,7 @@ export function claimsFromAccount(
  * Set the redsim pair on the response for the given claims.
  *
  * @throws whatever `mintRedsimSessionJwt` throws. Callers decide whether that
- *   is fatal: the after-hook swallows it (R27), the refresh route returns 500.
+ *   is fatal: the after-hook swallows it, the refresh route returns 500.
  */
 export async function setRedsimCookies(
   claims: RedsimClaims,
@@ -136,7 +137,7 @@ export function clearRedsimCookies(
  *
  * A mint failure (typically REDSIM_API_SESSION_PRIVATE_KEY unset in local dev)
  * is logged and swallowed, so the Better Auth login still completes and API
- * calls surface 401 (R27), which is the behaviour this migration replaced.
+ * calls surface 401.
  */
 export const mintFromAccount = createAuthMiddleware(async (ctx) => {
   const newSession = ctx.context.newSession;
@@ -162,9 +163,9 @@ export const mintFromAccount = createAuthMiddleware(async (ctx) => {
  * Verify an existing redsim_api_session cookie and return its claims, bound to
  * the caller.
  *
- * Two properties, both load-bearing (R22, KTD12). The signature is verified
- * against the public half of REDSIM_API_SESSION_PRIVATE_KEY, along with issuer
- * and audience, because re-signing claims decoded without verification would
+ * Two properties, both load-bearing. The signature is verified against the
+ * public half of REDSIM_API_SESSION_PRIVATE_KEY, along with issuer and
+ * audience, because re-signing claims decoded without verification would
  * let any logged-in user forge roles into a freshly minted token. And the
  * cookie's email claim must match the caller's Better Auth session email,
  * compared case-insensitively, so a cookie that is authentic but belongs to

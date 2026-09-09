@@ -1,8 +1,8 @@
 // @vitest-environment node
 //
 // The carry-forward verifier and the cookie attribute builder. These are the
-// pieces the refresh route depends on for the property R22 names: a cookie
-// that is authentic but belongs to someone else must be rejected.
+// pieces the refresh route depends on to reject a cookie that is authentic
+// but belongs to someone else.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { exportPKCS8, generateKeyPair, SignJWT } from "jose";
@@ -123,6 +123,30 @@ describe("claims read from the linked account", () => {
     expect(
       claimsFromAccount(
         { accountId: "kc-sub-123" },
+        { email: "fallback@redsim.local", name: "Fallback" },
+      ),
+    ).toEqual({
+      sub: "kc-sub-123",
+      email: "fallback@redsim.local",
+      name: "Fallback",
+      projectMemberships: {},
+    });
+  });
+
+  // A present but undecodable id_token is a different path from an absent one,
+  // and it was the unexercised one. Each of these throws inside decodeJwt, so
+  // the fallbacks are what keep a malformed token from failing the sign-in.
+  it.each([
+    ["not a jwt at all", "garbage"],
+    ["a token whose payload is not base64url", "e30.!!!not-base64!!!.sig"],
+    ["a token whose payload is not JSON", `e30.${Buffer.from("plain text").toString("base64url")}.sig`],
+    ["a token whose payload is a JSON scalar", `e30.${Buffer.from('"a string"').toString("base64url")}.sig`],
+    ["an empty string", ""],
+  ])("falls back on %s", async (_label, idToken) => {
+    const { claimsFromAccount } = await load();
+    expect(
+      claimsFromAccount(
+        { accountId: "kc-sub-123", idToken },
         { email: "fallback@redsim.local", name: "Fallback" },
       ),
     ).toEqual({
