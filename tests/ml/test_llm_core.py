@@ -772,3 +772,66 @@ def test_write_key_file_is_0600(tmp_path: Path) -> None:
 
     path = write_key_file(tmp_path, FAKE_KEY)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600 and path.read_text() == FAKE_KEY
+
+
+@pytest.mark.garak
+@pytest.mark.parametrize("header,expected", [("2", 2.0), ("0", 0.0), ("invalid", None),
+                                               ("nan", None), ("inf", None),
+                                               ("Thu, 01 Jan 1970 00:00:12 GMT", 2.0),
+                                               ("Thu, 01 Jan 1970 00:00:01 GMT", 0.0)])
+def test_retry_after_parser(header, expected):
+    from redsim.ml.llm.generator import retry_after_seconds
+    assert retry_after_seconds(header, now=10.0) == expected
+
+
+@pytest.mark.garak
+def test_child_honours_retry_after_and_completes_five_attempts(tmp_path, garak_env):
+    with FakeOpenAIServer(fail_status=429, fail_first=3, retry_after=2) as server:
+        spec = _spec(server, prepare_work_dir("retry-child", root=tmp_path),
+                     ["dan.DanInTheWild"], max_prompts_per_probe=5)
+        outcome = run_probe_child(spec, api_key=FAKE_KEY)
+        assert outcome.result is not None and outcome.result.status == "succeeded"
+        assert outcome.result.probes[0].n_attempts_complete == 5
+        assert outcome.result.usage["retries"] == 3
+        assert outcome.result.usage["retry_after_honoured"] == 3
+        assert len(server.chat_requests) == 8
+        card = build_scorecard(outcome.result, run_id="retry-run", target_id="retry-target",
+                               guardrail_mode="content_filtered",
+                               selection=resolve_selection(load_catalog(), probe_ids=spec.probe_ids))
+        assert card.completeness == "complete"
+        assert card.usage.retry_after_honoured == 3
+
+
+@pytest.mark.garak
+def test_retry_after_above_operator_cap_never_retries_early(garak_env):
+    import garak.exception
+
+    from redsim.ml.llm.generator import PythiaGenerator, gateway_uri
+    with FakeOpenAIServer(fail_status=429, retry_after=61) as server:
+        gen = PythiaGenerator(name=MODEL_ID, api_key=FAKE_KEY, uri=gateway_uri(server.base_url))
+        try:
+            with pytest.raises(garak.exception.GarakException, match="exceeds retry wait budget"):
+                gen._call_model([])
+            assert len(server.chat_requests) == 1
+            assert gen.ledger.retries == 0
+        finally:
+            gen.close()
+
+
+def test_worker_passes_validated_retry_overrides(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from redsim.workers.tasks.ml_llm import _run_child
+    monkeypatch.setenv("REDSIM_LLM_PROBE_TRANSPORT_MAX_TRIES", "11")
+    monkeypatch.setenv("REDSIM_LLM_PROBE_TRANSPORT_MAX_SLEEP_S", "42")
+    runner = SimpleNamespace(prepare_work_dir=lambda job: tmp_path,
+                             run_probe_child=lambda spec, **kw: spec)
+    spec = _run_child(runner, detail={"probe_ids": ["dan.DanInTheWild"]},
+                      gateway_url="https://gateway.invalid", model_id=MODEL_ID, persona="test",
+                      api_key=FAKE_KEY, job_id="retry-job", is_cancelled=lambda: False)
+    assert spec.transport_max_tries == 11 and spec.transport_max_sleep_s == 42
+    monkeypatch.setenv("REDSIM_LLM_PROBE_TRANSPORT_MAX_TRIES", "13")
+    with pytest.raises(ValueError):
+        _run_child(runner, detail={"probe_ids": ["dan.DanInTheWild"]},
+                   gateway_url="https://gateway.invalid", model_id=MODEL_ID, persona="test",
+                   api_key=FAKE_KEY, job_id="retry-job", is_cancelled=lambda: False)

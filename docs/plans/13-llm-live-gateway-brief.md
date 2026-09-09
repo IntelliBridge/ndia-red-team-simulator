@@ -240,7 +240,11 @@ No key material, no prompt text, no completion text, no readiness wording.
   records. Catalog requests do not consume completion failure indices.
   `tests/ml/test_fake_openai_server.py` has six passing cases covering the
   observed status/code shapes, selection, legacy failure modes and auth
-  precedence. Existing garak regression validation is pending the local
-  dependency installation; L5 acceptance remains open until it passes.
-- L1–L4, L6 and packages R/A/D remain open. No live gateway traffic or runtime
+  precedence. All 12 existing garak regression tests also passed on 2026-09-09;
+  L5 acceptance is complete.
+- **L1 implemented:** bounded retries default to 8 tries/60 seconds, with
+  validated worker overrides, seconds/date `Retry-After` handling and a
+  `retry_after_honoured` ledger counter. A header above the wait budget aborts
+  rather than retrying early. Regression validation is recorded in its PR.
+- L2–L4, L6 and packages R/A/D remain open. No live gateway traffic or runtime
   changes were made for this test-helper increment.
