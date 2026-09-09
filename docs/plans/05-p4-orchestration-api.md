@@ -21,6 +21,75 @@ The v1 standalone `redsim/` package is gone: no `redsim/runs.py`, no
 `redsim/jobs.py`, no thread pool, no `run.json`, and no new `create_app`. The paths below are the
 real redsim paths on `main`.
 
+## Landed status (2026-09-08, `main` at `bb43bd7`)
+
+The body below is the pre-merge plan and is kept as written. This block
+records what is on `main`, what lands with wave 3, and what is still open.
+Where the body and the tree disagree, the tree wins.
+
+On `main` (PR #22 `a864da6`, completion waves 1 and 2):
+
+- Routers mounted on `redsim/api/app.py` under `/v1`: `ml_capabilities`
+  (`GET /v1/ml/capabilities`), `attacks` (`GET /v1/attacks`, `POST
+  /v1/models/{id}/attacks`), `datasets` and `defenses` (`GET`), `models`,
+  `artifacts` (`GET /v1/artifacts/{id}`, `GET /v1/runs/{id}/artifacts`),
+  `compare` (`GET /v1/runs/{id}/campaign`, `GET /v1/runs/{id}/compare?with=`,
+  `PATCH /v1/runs/{id}/reviewer-notes`), `ml_findings` (`POST
+  /v1/findings/{id}/explain`, `POST /v1/findings/{id}/harden`, `PATCH
+  /v1/findings/{id}/status`), `verify` (`POST /v1/findings/{id}/verify`),
+  `runs_cancel` (`409 run_terminal` on a terminal run), `reports` (`GET
+  /v1/runs/{id}/report.{md,json,html}`, `report.pdf` answers `501`) and
+  `audit` (`GET /v1/audit/verify`, `?run=` resolved through
+  `ensure_run_access`, `?all=1` answering `{"chains": [...]}`).
+- `redsim/api/errors.py` is the single copy of the spec 17.3 code table and
+  defines `ApiError`. Every ML route answers `{"detail": {"code", "message",
+  ...}}` with a listed snake_case code and no message parsing. `GET
+  /v1/ml/capabilities` reports `pickle_accepted: false`, `sandbox_enabled:
+  true`, the architecture allowlist and whether Pythia is configured, never
+  its URL or key.
+- `redsim/services/ml_campaigns.py`: audit-first admission for `attack.run`
+  and `verify.replay` (the audit row before any `Run` or `Job` row and before
+  `task.delay`), the default ε grid and reference budget, `parent_run_id`
+  reruns of a terminal failed or cancelled campaign with the original rows
+  untouched, `503 queue_unavailable` when the enqueue fails (rows removed and
+  a second `success=False` row written), `celery_task_id` stamped on the job.
+- Tasks: `redsim.ml_campaign_run` and `redsim.ml_model_validate` on the
+  `scans` queue (`redsim/workers/celery_app.py`), the ML branch of
+  `redsim.report_render` (re-render from `ml.run_record` with the reviewer
+  notes overlay after a `report.render` audit row), and the reaper calling
+  `rollup_run_status`. The six task names and the per-attack chain in section
+  4 of this file were not built. `explain.run`, `harden.recommend` and
+  `verify.replay` are job types on `redsim.ml_campaign_run`. The divergence
+  is recorded in master plan section 0 (v2.3).
+- The worker emits the spec 10.5 vocabulary (`model.load`,
+  `attack.execute.<id>`, `explain.execute`, `campaign.score`,
+  `harden.execute`, `verify.execute`, `report.render` with `formats`,
+  `job.complete`) as `worker:<job.type>` with `requested_by` in the detail,
+  keeps `Run.stage_table` in the spec 6.5 shape with per-stage `failed`,
+  `timed_out` and `cancelled`, publishes stage frames on the run channel, and
+  maps artifact names to the spec 5.8 kinds (`ml.input.*`,
+  `ml.perturbation`, `ml.shap.*`, `ml.validation_report`, `ml.curve`,
+  `report.md` / `report.json` / `report.html`).
+- Observability: worker OTel and structlog init with `run_id`, `job_id` and
+  `project_id` bound on the log context and a `job.run` span
+  (`redsim/workers/bootstrap.py`), the `stage_span` helper
+  (`ml.stage.<name>`) in `redsim/observability.py`, and
+  `redsim_ml_campaigns_total` incremented per outcome.
+- Web contract: `web/src/lib/api.ts` and the run and finding pages were
+  aligned to these routes in PR #22.
+
+Wave 3, landing 2026-09-09: `GET /v1/attacks` loads the opt-in attack plugins.
+`CampaignScannerAdapter` (`ml-campaign`, capabilities `adversarial_ml` and
+`explainability`) registers on the scanner registry and appears in `GET
+/v1/scanners` and `redsim doctor`. `redsim audit verify --run` gains a
+`--run-dir` fallback for the offline chain, and the audit chain persists `ts`
+canonically so a sqlite-backed chain verifies. Admission no longer freezes
+`eps` into `attack_params`.
+
+Still open: the web UI beyond the PR #22 contract alignment and a Playwright
+browser e2e (P5), the Fargate services (P7). Phase B routes stay `501
+not_implemented`.
+
 ---
 
 ## 1. Objective
