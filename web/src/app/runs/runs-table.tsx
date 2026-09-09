@@ -61,8 +61,12 @@ export function RunsTable({ project, limit }: RunsTableProps) {
     refetchInterval: RUNS_POLL_MS,
   });
 
-  if (query.error) {
-    const upstream = upstreamError(query.error);
+  const upstream = upstreamError(query.error);
+
+  // Blocking only when there is nothing to show. TanStack keeps `data`
+  // alongside `error`, so with retry off and a 15 s poll one failed poll would
+  // otherwise replace rows that are still in cache with this alert (R10).
+  if (query.error && query.data === undefined) {
     return (
       <div
         role="alert"
@@ -85,56 +89,79 @@ export function RunsTable({ project, limit }: RunsTableProps) {
 
   const runs = query.data?.runs ?? [];
 
+  // A failed poll over rows that are still cached. `status` rather than
+  // `alert`: the rows below stay usable and readable, and the only claim being
+  // made is that they may have moved on.
+  const stale = query.error ? (
+    <div
+      role="status"
+      className="rounded-md border border-border bg-muted/50 p-3 text-sm text-muted-foreground"
+    >
+      <p>
+        These rows may be out of date: <code>{upstream?.code ?? "unknown_error"}</code>
+      </p>
+      <button type="button" className="mt-2 underline" onClick={() => void query.refetch()}>
+        Retry
+      </button>
+    </div>
+  ) : null;
+
   if (runs.length === 0) {
     return (
-      <p className="text-muted-foreground">
-        No runs yet. Head to{" "}
-        <Link className="text-primary underline" href="/models">
-          /models
-        </Link>{" "}
-        to register a target and start one.
-      </p>
+      <div className="space-y-3">
+        {stale}
+        <p className="text-muted-foreground">
+          No runs yet. Head to{" "}
+          <Link className="text-primary underline" href="/models">
+            /models
+          </Link>{" "}
+          to register a target and start one.
+        </p>
+      </div>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-md border border-border bg-card">
-      <Table>
-        <TableCaption className="sr-only">All runs</TableCaption>
-        <TableHeader>
-          <TableRow>
-            <TableHead scope="col">Run</TableHead>
-            <TableHead scope="col">Model</TableHead>
-            <TableHead scope="col">Attacks</TableHead>
-            <TableHead scope="col">Status</TableHead>
-            <TableHead scope="col">Created</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {runs.map((run) => (
-            <TableRow key={run.id}>
-              <TableCell className="font-mono text-xs">
-                <Link className="text-primary underline" href={`/runs/${run.id}`}>
-                  {run.id}
-                </Link>
-              </TableCell>
-              {/* The run row carries a scanner, not a model or an attack list.
-                  Until the API grows a per-run campaign summary these read
-                  "not recorded" rather than inventing a value (KTD12). */}
-              <TableCell className="text-muted-foreground">
-                {run.scanner ?? "not recorded"}
-              </TableCell>
-              <TableCell className="text-muted-foreground">not recorded</TableCell>
-              <TableCell>
-                <RunStatusBadge status={run.status} />
-              </TableCell>
-              <TableCell className="text-muted-foreground">
-                {formatDateTime(run.created_at)}
-              </TableCell>
+    <div className="space-y-3">
+      {stale}
+      <div className="overflow-hidden rounded-md border border-border bg-card">
+        <Table>
+          <TableCaption className="sr-only">All runs</TableCaption>
+          <TableHeader>
+            <TableRow>
+              <TableHead scope="col">Run</TableHead>
+              <TableHead scope="col">Model</TableHead>
+              <TableHead scope="col">Attacks</TableHead>
+              <TableHead scope="col">Status</TableHead>
+              <TableHead scope="col">Created</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {runs.map((run) => (
+              <TableRow key={run.id}>
+                <TableCell className="font-mono text-xs">
+                  <Link className="text-primary underline" href={`/runs/${run.id}`}>
+                    {run.id}
+                  </Link>
+                </TableCell>
+                {/* The run row carries a scanner, not a model or an attack list.
+                    Until the API grows a per-run campaign summary these read
+                    "not recorded" rather than inventing a value (KTD12). */}
+                <TableCell className="text-muted-foreground">
+                  {run.scanner ?? "not recorded"}
+                </TableCell>
+                <TableCell className="text-muted-foreground">not recorded</TableCell>
+                <TableCell>
+                  <RunStatusBadge status={run.status} />
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {formatDateTime(run.created_at)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }

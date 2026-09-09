@@ -138,6 +138,55 @@ describe("RunsTable hydration", () => {
   });
 });
 
+describe("RunsTable when a poll fails over hydrated rows", () => {
+  it("keeps the rows and says they may be stale, rather than blanking them", async () => {
+    // TanStack keeps `data` alongside `error`. With retry off and a 15 s poll,
+    // branching on query.error alone replaced rows that were still in cache
+    // with the blocking alert, so one transient failure emptied the page.
+    const dehydratedState = await dehydratedRunsList({
+      data: { runs: [run({ id: "run-7", status: "running" })], count: 1 },
+    });
+
+    vi.useFakeTimers();
+    const { trpcFetch } = renderWithProviders(<RunsTable />, {
+      dehydratedState,
+      respond: () => [trpcUpstreamError(503, { message: "database is unavailable" })],
+    });
+
+    expect(screen.getByRole("link", { name: "run-7" })).toBeTruthy();
+
+    await act(async () => {
+      vi.advanceTimersByTime(RUNS_POLL_MS + 1);
+    });
+    expect(trpcFetch).toHaveBeenCalledTimes(1);
+    // The interval fired the request; this settles its answer into the query.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+
+    // Still on screen, in a real table.
+    expect(screen.getByRole("link", { name: "run-7" })).toBeTruthy();
+    expect(screen.getByRole("table")).toBeTruthy();
+    // And the failure is admitted, non-blocking, next to them.
+    const stale = screen.getByRole("status");
+    expect(stale.textContent).toContain("out of date");
+    expect(stale.textContent).toContain("db_unavailable");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("still blocks when the failure arrives with nothing in cache", async () => {
+    vi.useRealTimers();
+    renderWithProviders(<RunsTable />, {
+      respond: () => [trpcUpstreamError(503, { message: "database is unavailable" })],
+    });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Runs are unavailable");
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+});
+
 describe("RunsTable states", () => {
   beforeEach(() => {
     vi.useRealTimers();
