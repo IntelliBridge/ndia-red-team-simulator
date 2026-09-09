@@ -81,7 +81,7 @@ function clientReachableFiles(): Array<{ file: string; source: string }> {
     );
 }
 
-/** Where a specifier lands, for the two forms that can reach src/server. */
+/** Where a specifier lands, for any of the forms that can reach src/server. */
 function resolveSpecifier(fromFile: string, specifier: string): string | null {
   if (specifier.startsWith("@/")) return path.join(SRC, specifier.slice(2));
   if (specifier.startsWith(".")) return path.resolve(path.dirname(fromFile), specifier);
@@ -97,10 +97,15 @@ function namesServerModule(fromFile: string, specifier: string): boolean {
 type Reference = { file: string; specifier: string; statement: string; typeOnly: boolean };
 
 /**
- * Every `import`/`export ... from` and dynamic `import()` naming src/server.
+ * Every `import`/`export ... from`, dynamic `import()` and bare side-effect
+ * `import "..."` naming src/server.
  *
- * A regex rather than a parser: the shapes it has to tell apart are the four
+ * A regex rather than a parser: the shapes it has to tell apart are the few
  * this rule is about, and a dependency-free check is one that keeps running.
+ * Three passes rather than one, because the three shapes have nothing in
+ * common syntactically. The bare side-effect form in particular has no clause
+ * and no parenthesis, so neither of the first two can see it, and it is the
+ * one form that is always a value import.
  */
 function serverReferences(file: string, source: string): Reference[] {
   const found: Reference[] = [];
@@ -116,6 +121,23 @@ function serverReferences(file: string, source: string): Reference[] {
       // The whole clause is type-only, as `import type {...}` and
       // `export type {...} from` are. An inline `{ type X }` is not.
       typeOnly: /^\s*type\s/.test(clause),
+    });
+  }
+
+  // No `from` clause at all: `import "@/server/trpc/upstream";`. Nothing is
+  // bound, so there is no type-only variant of it, and the module is
+  // evaluated for its side effects, which is exactly what pulls it into the
+  // bundle. The quote has to follow the keyword directly, so a clause-bearing
+  // import and `import(` both fall outside this pattern.
+  const sideEffect = /(?:^|[\n;])[ \t]*import\s*["']([^"']+)["']/g;
+  for (const match of source.matchAll(sideEffect)) {
+    const specifier = match[1] ?? "";
+    if (!namesServerModule(file, specifier)) continue;
+    found.push({
+      file,
+      specifier,
+      statement: `import "${specifier}"`,
+      typeOnly: false,
     });
   }
 
@@ -156,7 +178,7 @@ describe("the browser bundle boundary", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("reads a top-level type import as allowed and the other three forms as not", () => {
+  it("reads a top-level type import as allowed and every other form as not", () => {
     // The rule's own unit test. Without it a refactor of the matcher could
     // make the check above pass by matching nothing at all.
     const file = path.join(SRC, "lib", "example.ts");
@@ -166,8 +188,11 @@ describe("the browser bundle boundary", () => {
       value: `import { upstreamFetch } from "@/server/trpc/upstream";`,
       dynamic: `const m = await import("@/server/trpc/upstream");`,
       relativeValue: `import { appRouter } from "../server/trpc/root";`,
+      sideEffect: `import "@/server/trpc/upstream";`,
+      relativeSideEffect: `import "../server/trpc/upstream";`,
       exportType: `export type { AppRouter } from "@/server/trpc/root";`,
       unrelated: `import { env } from "@/env";`,
+      unrelatedSideEffect: `import "@/styles/globals.css";`,
     };
 
     const formOf = (source: string) => serverReferences(file, source);
@@ -176,12 +201,23 @@ describe("the browser bundle boundary", () => {
     expect(formOf(forms.topLevelType)[0]?.typeOnly).toBe(true);
     expect(formOf(forms.exportType)[0]?.typeOnly).toBe(true);
 
-    for (const source of [forms.inlineType, forms.value, forms.dynamic, forms.relativeValue]) {
+    for (const source of [
+      forms.inlineType,
+      forms.value,
+      forms.dynamic,
+      forms.relativeValue,
+      // A bare side-effect import has no clause to inspect, so it can only
+      // ever be a value import. It is also the form the other two matchers
+      // cannot see: both require a `from` or a paren.
+      forms.sideEffect,
+      forms.relativeSideEffect,
+    ]) {
       const references = formOf(source);
       expect(references).toHaveLength(1);
       expect(references[0]?.typeOnly).toBe(false);
     }
 
     expect(formOf(forms.unrelated)).toEqual([]);
+    expect(formOf(forms.unrelatedSideEffect)).toEqual([]);
   });
 });
