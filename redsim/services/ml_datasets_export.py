@@ -45,6 +45,10 @@ _SLICE_KINDS = ("ml.adv_slice", "ml.clean_slice", "ml.control_slice")
 _MANIFEST_KIND = "ml.dataset.manifest"
 _EXPORT_JOB_TYPE = "dataset.export"
 _EXPORT_SCANNER = "ml.dataset_export"
+#: Public names for the inventory read (``services.ml_exports``); the values above are the contract.
+EXPORT_SLICE_KINDS = _SLICE_KINDS
+DATASET_EXPORT_JOB_TYPE = _EXPORT_JOB_TYPE
+DATASET_EXPORT_SCANNER = _EXPORT_SCANNER
 
 
 @dataclass
@@ -294,4 +298,5 @@ def get_export_manifest(session: Session, run_id: str, *, blob_store: BlobStore 
     return parsed if isinstance(parsed, dict) else None
 
 
-__all__ = ["ExportJobHandle", "admit_export", "get_export_manifest"]
+__all__ = ["DATASET_EXPORT_JOB_TYPE", "DATASET_EXPORT_SCANNER", "EXPORT_SLICE_KINDS", "ExportJobHandle",
+           "admit_export", "get_export_manifest"]
