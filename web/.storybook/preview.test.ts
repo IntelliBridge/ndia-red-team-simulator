@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 // preview.ts imports globals.css; that import is irrelevant to the config
 // shape and will fail under vitest (no CSS loader). Stub it.
-vi.mock("../src/app/globals.css", () => ({}));
+vi.mock("../src/styles/globals.css", () => ({}));
 
 // @storybook/react is a type-only import in preview.ts so no runtime mock needed.
 

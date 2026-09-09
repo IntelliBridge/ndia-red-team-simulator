@@ -211,6 +211,24 @@ jobs:
           echo "$out" | grep -q "kind: ExternalSecret" || {
             echo "::error::ExternalSecret was not rendered when externalSecrets.enabled=true"; exit 1; }
           echo "ExternalSecret rendered as expected"
+      # The same guard rejects a prod deployment that supplied every other
+      # secret but left the API session keypair empty. That one renders and
+      # installs today, then answers 401 to every call after a successful
+      # login, so the render is the only place it can be caught.
+      - name: helm template (prod + empty api session keys) fails the guard
+        run: |
+          out="$(helm template redsim deploy/helm/redsim \
+            -f deploy/helm/redsim/ci/prod-api-session-keys-values.yaml 2>&1)" && rc=0 || rc=$?
+          echo "$out"
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::prod-secret guard did NOT fire: render succeeded with an empty API session keypair"
+            exit 1
+          fi
+          for half in apiSessionPrivateKey apiSessionPublicKey; do
+            echo "$out" | grep -q "config.secret.$half" || {
+              echo "::error::render failed but did not name config.secret.$half (unexpected error)"; exit 1; }
+          done
+          echo "prod-secret guard fired as expected"
       # A prod deployment with secrets overridden by real values renders cleanly.
       - name: helm template (prod + real secrets) succeeds
         run: |
@@ -218,7 +236,9 @@ jobs:
             --set config.env=prod \
             --set config.secret.s3AccessKeyId=ci-real-access-key \
             --set config.secret.s3SecretAccessKey=ci-real-secret-key \
-            --set config.secret.nextAuthSecret=ci-real-nextauth-secret > /dev/null
+            --set config.secret.betterAuthSecret=ci-real-better-auth-secret-0123456789 \
+            --set-string config.secret.apiSessionPrivateKey=ci-not-a-real-key \
+            --set-string config.secret.apiSessionPublicKey=ci-not-a-real-key > /dev/null
 
   sast:
     name: SAST (semgrep + bandit)
@@ -425,18 +445,23 @@ jobs:
     needs: unit
     steps:
       - uses: actions/checkout@v7
+      # No version input: the root package.json now declares
+      # packageManager: pnpm@10.33.2, and the action aborts with "Multiple
+      # versions of pnpm specified" when both are present and differ.
       - uses: pnpm/action-setup@v6
-        with:
-          version: "10"
       - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          # Matches deploy/Dockerfile.web's node:26-bookworm-slim base.
+          node-version: "26"
           cache: "pnpm"
           cache-dependency-path: pnpm-lock.yaml
       # Workspace lives at the repo root (v0.4.0 F16); install from
       # there so both @redsim/web and @redsim/design-system are linked.
       - name: Install (frozen lockfile)
         run: pnpm install --frozen-lockfile
+      # Flat config at the repo root, scoped to web/ with basePath.
+      - name: Lint
+        run: pnpm run lint
       # Design-system ships the shared component layer; its real source
       # (components + primitives + index) must type-check cleanly. Stories
       # are excluded via tsconfig.build.json (their @storybook/react types
@@ -448,6 +473,10 @@ jobs:
       - name: Test web (vitest)
         run: pnpm --filter @redsim/web test
       - name: Build
+        # No runtime environment exists in CI, and web/src/env.js validates at
+        # config load. Same hatch the Docker builder stage takes.
+        env:
+          SKIP_ENV_VALIDATION: "1"
         run: pnpm --filter @redsim/web build
 
   docker-images:

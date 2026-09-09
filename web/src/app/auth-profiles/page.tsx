@@ -1,6 +1,6 @@
 "use client";
 
-// DAST authentication profiles (feat/authenticated-dast).
+// DAST authentication profiles.
 //
 // Profiles hold the non-secret config; the secret (password / token /
 // header value / cookie value) is write-only — the API never returns it,
@@ -20,7 +20,7 @@ import {
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
 
-// Same project scoping as /targets (single hard-coded project for now).
+// Same project scoping as /targets: a single hard-coded project.
 const PROJECT = "default";
 
 const KINDS: { value: AuthProfileKind; label: string }[] = [

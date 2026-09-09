@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 
@@ -25,8 +26,10 @@ export default function DashboardPage() {
   if (!authed)
     return <p className="text-muted-foreground">Redirecting to sign in…</p>;
 
-  const signOut = () => {
-    logout();
+  // Awaited, so the redirect follows both the Better Auth sign-out and the
+  // redsim cookie clear rather than racing them.
+  const signOut = async () => {
+    await logout();
     router.push("/login");
   };
 
@@ -54,7 +57,10 @@ export default function DashboardPage() {
       {!isLoading && !error && (!data || data.runs.length === 0) && (
         <p className="text-muted-foreground">
            No runs yet. Head to{" "}
-           <a className="text-primary underline" href="/models">/models</a> to
+           <Link className="text-primary underline" href="/models">
+             /models
+           </Link>{" "}
+           to
           register a target and start one.
         </p>
       )}

@@ -8,6 +8,6 @@ config:
     existingSecret: ""
     s3AccessKeyId: redsim
     s3SecretAccessKey: redsim-secret
-    nextAuthSecret: dev-secret-change-me
+    betterAuthSecret: dev-better-auth-secret-change-me-32chars
     externalSecrets:
       enabled: false
