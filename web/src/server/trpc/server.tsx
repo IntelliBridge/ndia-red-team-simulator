@@ -30,14 +30,24 @@ import { appRouter } from "./root";
 /**
  * Per-request memoization.
  *
- * Stable React 18.3.1 exports no `cache()` (only Next's bundled canary does),
- * so reading it unguarded would throw at import in every server-component
- * test. The identity fallback is correct but not shared: on this baseline each
- * caller in one render gets its own QueryClient, which is safe because no
- * instance is ever reused across requests. The guard goes away with React 19.
+ * Next supplies `React.cache` in the app-router server runtime. Stable React
+ * 18.3.1 exports none, and the identity fallback this used to carry was a live
+ * wrong answer rather than a safe one: with it, `prefetch` and `HydrateClient`
+ * each got their own QueryClient, so the page dehydrated an empty cache and
+ * shipped HTML with nothing behind it.
+ *
+ * Failing at import is the safe direction. A module-scoped memo would make the
+ * two agree, but it would share one QueryClient across requests, which in this
+ * app means one user's rows reaching another. A plain Node import supplies
+ * `cache` instead; the server-component tests already do.
  */
-const memoize: <T>(fn: () => T) => () => T =
-  typeof React.cache === "function" ? React.cache : (fn) => fn;
+if (typeof React.cache !== "function") {
+  throw new Error(
+    "React.cache is required for per-request memoization. Next supplies it in " +
+      "the app-router server runtime, and a plain Node import has to provide it.",
+  );
+}
+const memoize: <T>(fn: () => T) => () => T = React.cache;
 
 /** One QueryClient per request. Never shared across users. */
 export const getQueryClient = memoize<QueryClient>(() => makeQueryClient());
