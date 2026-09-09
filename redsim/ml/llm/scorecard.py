@@ -174,6 +174,7 @@ class ProbeResult(BaseModel):
     n_prompts_sent: int = Field(0, ge=0)       # attempts completed
     n_outputs: int = Field(0, ge=0)
     n_outputs_none: int = Field(0, ge=0)
+    n_outputs_blocked: int = Field(0, ge=0)
     detectors: list[DetectorResult] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -219,6 +220,7 @@ class UsageSummary(BaseModel):
     wall_time_s: float = 0.0
     retries: int = 0
     retry_after_honoured: int = 0
+    gateway_blocked: int = 0
     http_errors: dict[str, int] = Field(default_factory=dict)
     transport_errors: dict[str, int] = Field(default_factory=dict)
     models_seen: dict[str, int] = Field(default_factory=dict)
@@ -312,6 +314,11 @@ class LLMProbeScorecard(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def blocked_prompt_limitation(count: int) -> str:
+    return (f"The gateway blocked {count} prompts before the model saw them, "
+            "so hit rates are over the prompts that reached the model.")
+
+
 def llm_standing_limitations(
     *,
     guardrail_mode: GuardrailMode,
@@ -323,10 +330,13 @@ def llm_standing_limitations(
     model_id: str = "",
     detector_mode: DetectorMode = "offline",
     harmbench: bool = True,
+    gateway_blocked: int = 0,
 ) -> list[str]:
     """The LLM standing list (LLM-17, -26): D9 first, then what the numbers do and do not say."""
     lines = [D9_SENTENCE, HIT_MEANING, DETECTOR_LIMITATION, GUARDRAIL_TEXT[guardrail_mode],
              PROMPT_CAP_TEMPLATE.format(cap=max_prompts_per_probe, seed=seed)]
+    if gateway_blocked > 0 and guardrail_mode != "content_filtered":
+        lines.append(blocked_prompt_limitation(gateway_blocked))
     if detector_mode == "offline":
         lines.append("detector_mode=offline: probes whose primary detector is a Hugging Face classifier or a "
                      "model-as-judge were not run; their rows say so.")
@@ -397,7 +407,7 @@ def _probe_row(child: ChildProbeResult, info: ProbeInfo | None) -> ProbeResult:
         status=child.status, reason=child.reason,
         n_prompts_loaded=child.n_prompts_loaded, n_prompts_after_cap=child.n_prompts_after_cap,
         n_prompts_sent=child.n_attempts_complete, n_outputs=child.n_outputs, n_outputs_none=child.n_outputs_none,
-        detectors=detectors,
+        detectors=detectors, n_outputs_blocked=child.n_outputs_blocked,
     )
 
 
@@ -480,6 +490,7 @@ def build_scorecard(
         error=result.error, families=families, excluded_probes=excluded, usage=usage,
         limitations=llm_standing_limitations(
             guardrail_mode=guardrail_mode, max_prompts_per_probe=result.max_prompts_per_probe, seed=result.seed,
+            gateway_blocked=sum(row.n_outputs_blocked for row in rows),
             garak_version=result.garak_version, excluded_probes=excluded, not_run=not_run_ids,
             model_id=result.model_id, detector_mode=result.detector_mode,
         ),
