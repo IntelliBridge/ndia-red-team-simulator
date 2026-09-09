@@ -1,8 +1,15 @@
 """Explain-stage output contract (master plan section 5, spec 13.3 and 13.5) and shared helpers.
 
 Besides ``ExplainOutput`` this module holds the on-disk explanation cache of spec
-13.10 (``ExplanationCache``) and the artifact-name compatibility table for the
-tabular per-sample files renamed to the spec 5.8 names. It imports nothing heavy.
+13.10 (``ExplanationCache``), the artifact-name compatibility table for the
+tabular per-sample files renamed to the spec 5.8 names, and the explainer
+roster shared by every explainer and by the catalog route (spec 13.2, 17.2):
+the four explainer families (``EXPLAINER_KINDS``), the per-modality roster
+(``EXPLAINER_ROSTER``), the spec 13.2 background size for the KernelExplainer
+(``KERNEL_BACKGROUND_ROWS``) and the query caps a black-box endpoint target is
+explained under (``EXPLAIN_QUERY_CAPS``, ``explain_caps_for``,
+``estimate_kernel_explain_rows``). It imports nothing heavy: the API process
+may import it for the roster without pulling shap, torch or sklearn.
 """
 
 from __future__ import annotations
@@ -12,10 +19,11 @@ import json
 import logging
 import os
 import tempfile
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
@@ -110,6 +118,170 @@ class ExplainOutput:
     def measurement_fields(self) -> dict[str, Any]:
         """The reference-row ``Measurement`` fields as an update mapping for ``Measurement.model_copy``."""
         return {name: getattr(self, name) for name in MEASUREMENT_FIELDS}
+
+
+# --------------------------------------------------------------------------- explainer roster, kinds, query caps
+
+#: The four explainer families (spec 13.2, 13.8). Every explanation records the shap class that ran as
+#: ``explainer`` and its family as ``explainer_kind``, so a reader never has to infer the family from a name.
+ExplainerKind = Literal["kernel", "tree", "gradient", "partition"]
+EXPLAINER_KINDS: tuple[str, ...] = ("kernel", "tree", "gradient", "partition")
+EXPLAINER_KIND_BY_NAME: dict[str, str] = {
+    "TreeExplainer": "tree",
+    "KernelExplainer": "kernel",
+    "GradientExplainer": "gradient",
+    "DeepExplainer": "gradient",
+    "PartitionExplainer": "partition",
+}
+
+
+def explainer_kind(name: str) -> str:
+    """The family (``kernel | tree | gradient | partition``) of a shap explainer class name."""
+    try:
+        return EXPLAINER_KIND_BY_NAME[name]
+    except KeyError:
+        raise ValueError(f"unknown explainer {name!r}; known: {sorted(EXPLAINER_KIND_BY_NAME)}") from None
+
+
+#: Spec 13.2 (Tabular non-tree, Black-box any): the KernelExplainer background is a seeded 100-row sample of
+#: the evaluation slice, drawn outside the explained rows. The effective size is recorded whenever the slice
+#: is smaller.
+KERNEL_BACKGROUND_ROWS = 100
+
+#: ``TargetInfo.metadata["access"]`` value a black-box endpoint target declares (register ENDPOINT-04).
+ENDPOINT_ACCESS = "black-box-endpoint"
+
+
+@dataclass(frozen=True)
+class ExplainQueryCaps:
+    """Query budget an explainer runs under when every model call is a remote request (ENDPOINT-14).
+
+    ``background_rows`` caps the KernelExplainer background, ``nsamples`` the coalition samples per explained
+    input (the PartitionExplainer's ``max_evals`` on the image path) and ``explain_k`` the flipped / unflipped
+    rows explained. The caps bound the cost, they do not change what is recorded: the effective values and the
+    requested ones both land in the explainer meta.
+    """
+
+    background_rows: int
+    nsamples: int
+    explain_k: int
+
+    @classmethod
+    def from_mapping(cls, m: Mapping[str, Any]) -> ExplainQueryCaps:
+        return cls(background_rows=int(m["background_rows"]), nsamples=int(m["nsamples"]),
+                   explain_k=int(m["explain_k"]))
+
+    def per_observation_rows(self, with_control: bool = True) -> int:
+        """Worst-case predict rows for one explained observation (clean, adversarial and, if any, control)."""
+        return (3 if with_control else 2) * (self.nsamples * self.background_rows + 1)
+
+    def estimate_rows(self, k: int, with_control: bool = True) -> int:
+        """Worst-case predict rows for a whole explain stage at these caps (``estimate_kernel_explain_rows``)."""
+        return estimate_kernel_explain_rows(k=min(int(k), self.explain_k), background_rows=self.background_rows,
+                                            nsamples=self.nsamples, with_control=with_control)
+
+    def as_dict(self) -> dict[str, int]:
+        return {"background_rows": self.background_rows, "nsamples": self.nsamples, "explain_k": self.explain_k}
+
+
+#: The endpoint caps (register ENDPOINT-14): background <= 20 rows, nsamples <= 200, explain_k <= 8. The
+#: endpoint track imports these for admission budgets; the explainers apply them when ``explain_caps_for``
+#: recognises the target or when a caller passes ``query_caps`` explicitly.
+EXPLAIN_QUERY_CAPS = ExplainQueryCaps(background_rows=20, nsamples=200, explain_k=8)
+
+
+def estimate_kernel_explain_rows(*, k: int, background_rows: int, nsamples: int, with_control: bool = True) -> int:
+    """Upper bound on the predict rows a KernelExplainer stage issues (ENDPOINT-08 explain estimate).
+
+    shap evaluates at most ``nsamples`` coalitions against every background row per explained input, plus the
+    input itself, and the background once for the null expectation. Up to ``2 * k`` rows are explained, each
+    on two inputs (clean, adversarial) or three when a control is explained. The real count is measured by
+    ``QueryCounter`` and recorded beside this bound; the bound is never reported as a measurement.
+    """
+    inputs = 3 if with_control else 2
+    return 2 * int(k) * inputs * (int(nsamples) * int(background_rows) + 1) + int(background_rows)
+
+
+def explain_caps_for(target: Any) -> ExplainQueryCaps | None:
+    """``EXPLAIN_QUERY_CAPS`` when the target declares ``metadata["access"] == "black-box-endpoint"``, else None.
+
+    Tolerant of any target: a failing or absent ``info()`` means no caps (the local paths are not budgeted).
+    """
+    info_fn = getattr(target, "info", None)
+    if not callable(info_fn):
+        return None
+    try:
+        info = info_fn()
+    except Exception as exc:  # noqa: BLE001 -- caps are a bound on cost, never a reason to fail
+        logger.debug("explain_caps_for: info() failed: %s", type(exc).__name__)
+        return None
+    metadata = getattr(info, "metadata", None)
+    if not isinstance(metadata, Mapping):
+        return None
+    return EXPLAIN_QUERY_CAPS if metadata.get("access") == ENDPOINT_ACCESS else None
+
+
+class QueryCounter:
+    """Counts the calls and rows a sampled explainer sends through ``predict_proba`` (purpose ``explain``).
+
+    The count is taken on the explainer side, so it is the same for a local model and for an endpoint
+    transport; the endpoint broker keeps its own tally and the two are recorded side by side, never summed.
+    """
+
+    def __init__(self, fn: Callable[[np.ndarray], np.ndarray], purpose: str = "explain") -> None:
+        self._fn = fn
+        self.purpose = purpose
+        self.calls = 0
+        self.rows = 0
+
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        arr = np.asarray(x)
+        self.calls += 1
+        self.rows += int(arr.shape[0]) if arr.ndim >= 1 else 1
+        return self._fn(arr)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"purpose": self.purpose, "calls": self.calls, "rows": self.rows,
+                "counted_by": "explainer-side wrapper around target.predict_proba"}
+
+
+#: Register ATTACKS_HARDEN-08, recorded and not built. KernelSHAP over image pixels treats every pixel as a
+#: feature: the bundled input is 3 x 128 x 128 = 49,152 features and shap's default ``nsamples`` is
+#: ``2 * M + 2048``, about 100,000 predict calls per explained sample, hours on CPU and impossible against a
+#: rate-limited endpoint. ``shap_image`` takes the spec 13.2 black-box image path instead
+#: (``PartitionExplainer`` with ``shap.maskers.Image``, ``explain_k`` capped at 8). A request for
+#: ``KernelExplainer`` on an image target is refused by ``shap_image.explain`` (it is not one of its choices).
+KERNEL_IMAGE_INFEASIBLE_NOTE = (
+    "KernelExplainer is not offered for images: KernelSHAP over 3x128x128 = 49,152 pixel features needs about "
+    "2 x M + 2048 (~100k) predict calls per explained sample, hours on CPU and impossible against a rate-limited "
+    "endpoint. The black-box image explainer is shap.PartitionExplainer with shap.maskers.Image over "
+    "predict_proba (explain_k capped at 8), whose masking attributions are recorded as a different quantity "
+    "from gradient attributions."
+)
+
+#: The catalog roster (register ATTACKS_HARDEN-09, spec 17.2 ``GET /v1/ml/capabilities``): which shap
+#: explainers each modality and access level gets. Pure data. ``k_cap_black_box`` mirrors
+#: ``shap_image.PARTITION_K_CAP`` (asserted equal in the tests so the two cannot drift).
+EXPLAINER_ROSTER: dict[str, dict[str, Any]] = {
+    "image": {
+        "white_box": ["GradientExplainer", "DeepExplainer"],
+        "black_box": ["PartitionExplainer"],
+        "k_cap_black_box": 8,
+        "kernel_shap": "not built",
+        "kernel_shap_reason": KERNEL_IMAGE_INFEASIBLE_NOTE,
+    },
+    "tabular": {
+        "tree": ["TreeExplainer"],
+        "non_tree_or_black_box": ["KernelExplainer"],
+        "kernel_background_rows": KERNEL_BACKGROUND_ROWS,
+    },
+    "endpoint": {
+        "image": ["PartitionExplainer"],
+        "tabular": ["KernelExplainer"],
+        "query_caps": EXPLAIN_QUERY_CAPS.as_dict(),
+    },
+    "kinds": {name: kind for name, kind in EXPLAINER_KIND_BY_NAME.items()},
+}
 
 
 # --------------------------------------------------------------------------- explanation cache (spec 13.10)
