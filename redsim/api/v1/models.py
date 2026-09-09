@@ -89,9 +89,6 @@ from redsim.api.v1.ml_capabilities import (
     catalog_unavailable,
     upload_max_bytes,
 )
-
-# Light service module: manifest JSON reads and the ORM only, no ML imports
-# (tests/test_api_process_has_no_ml.py).
 from redsim.services.ml_models import (
     DELETED_STATUS,
     ENDPOINT_KIND,
@@ -112,6 +109,10 @@ from redsim.services.ml_models import (
     safe_filename,
     upload_blob_key,
 )
+
+# Light service module: manifest JSON reads and the ORM only, no ML imports
+# (tests/test_api_process_has_no_ml.py).
+from redsim.services.ml_scores import score_summary
 
 router = APIRouter(prefix="/models", tags=["ml-models"])
 logger = logging.getLogger(__name__)
@@ -365,6 +366,11 @@ def list_models(
         live = [row for row in targets if not _is_deleted(row)]
         models = [_project_model(row) for row in live]
         latest = last_run_ids(sess, [row.id for row in live])
+        # The card's "average score by category" block (owner request): a
+        # reading aid over the model's own scorecards, None when nothing scored.
+        summaries = {row.id: score_summary(sess, row) for row in live}
+    for model in models:
+        model["score_summary"] = summaries.get(str(model["id"]))
     for model in models:
         model["last_run_id"] = latest.get(str(model["id"]))
     registered_bundled = {model["bundled_id"] for model in models if model["bundled_id"]}

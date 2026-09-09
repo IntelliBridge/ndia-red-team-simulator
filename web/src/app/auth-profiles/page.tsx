@@ -39,8 +39,9 @@ const SECRET_LABEL: Record<AuthProfileKind, string> = {
 
 const fetcher = () => listAuthProfiles(PROJECT);
 
-const inputCls = "rounded-md border border-border bg-background px-2 py-1.5";
-const labelCls = "flex flex-col text-sm";
+const inputCls = "redsim-input";
+const labelCls = "block text-sm";
+const fieldLabelCls = "redsim-kicker mb-1 block";
 
 export default function AuthProfilesPage() {
   const authed = useRequireAuth();
@@ -64,9 +65,9 @@ export default function AuthProfilesPage() {
   const [err, setErr] = useState<string | null>(null);
 
   if (!authed)
-    return <p className="text-muted-foreground">Signing in…</p>;
-  if (isLoading) return <p className="text-muted-foreground">Loading…</p>;
-  if (error) return <p className="text-muted-foreground">Failed to load.</p>;
+    return <p className="text-ink-3">Signing in…</p>;
+  if (isLoading) return <p className="text-ink-3">Loading…</p>;
+  if (error) return <p className="text-ink-3">Failed to load.</p>;
 
   const callerRole = roles[PROJECT];
   const profiles = data ?? [];
@@ -134,24 +135,24 @@ export default function AuthProfilesPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-semibold">Auth Profiles</h1>
-        <p className="text-sm text-muted-foreground">
+        <h1>Auth Profiles</h1>
+        <p className="mt-1 max-w-[60ch] text-sm text-ink-3">
           Credentials DAST scanners use to test behind a login. Secrets are
           write-only and never shown again.
         </p>
       </header>
 
       {err && (
-        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           {err}
         </p>
       )}
 
-      <div className="overflow-hidden rounded-md border border-border bg-card">
+      <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <caption className="sr-only">DAST authentication profiles</caption>
-          <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
-            <tr>
+          <thead className="text-left">
+            <tr className="border-b border-line-strong">
               <th scope="col" className="px-3 py-2">Name</th>
               <th scope="col" className="px-3 py-2">Kind</th>
               <th scope="col" className="px-3 py-2">Config</th>
@@ -162,25 +163,25 @@ export default function AuthProfilesPage() {
           <tbody>
             {profiles.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-3 py-4 text-muted-foreground">
+                <td colSpan={5} className="px-3 py-4 text-ink-3">
                   No authentication profiles yet.
                 </td>
               </tr>
             )}
             {profiles.map((p) => (
-              <tr key={p.id} className="border-t border-border">
-                <td className="px-3 py-2">{p.name}</td>
-                <td className="px-3 py-2">{p.kind}</td>
-                <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+              <tr key={p.id} className="border-b border-line last:border-0">
+                <td className="px-3 py-2.5 text-ink-1">{p.name}</td>
+                <td className="px-3 py-2.5"><span className="redsim-chip">{p.kind}</span></td>
+                <td className="px-3 py-2.5 font-mono text-xs text-ink-3">
                   {Object.entries(p.config ?? {})
                     .map(([k, v]) => `${k}=${v}`)
                     .join(" ") || "—"}
                 </td>
-                <td className="px-3 py-2 text-muted-foreground">{p.created_at}</td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2.5 tabular-nums text-ink-3">{p.created_at}</td>
+                <td className="px-3 py-2.5">
                   <RoleGated minRole="admin" callerRole={callerRole}>
                     <button
-                      className="rounded-md border border-destructive/40 px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                      className="redsim-ghost redsim-btn-sm border-destructive/50 text-destructive"
                       disabled={busy}
                       onClick={() => remove(p)}
                     >
@@ -195,11 +196,12 @@ export default function AuthProfilesPage() {
       </div>
 
       <RoleGated minRole="admin" callerRole={callerRole}>
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold">Create profile</h2>
+        <section className="redsim-sheet">
+          <h2 className="redsim-sheet-label">Create profile</h2>
+          <div className="redsim-sheet-body redsim-panel space-y-4 p-5">
           <div className="flex flex-wrap items-end gap-3">
             <label className={labelCls}>
-              <span className="mb-1">Name</span>
+              <span className={fieldLabelCls}>Name</span>
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -208,7 +210,7 @@ export default function AuthProfilesPage() {
               />
             </label>
             <label className={labelCls}>
-              <span className="mb-1">Kind</span>
+              <span className={fieldLabelCls}>Kind</span>
               <select
                 value={kind}
                 onChange={(e) => setKind(e.target.value as AuthProfileKind)}
@@ -226,7 +228,7 @@ export default function AuthProfilesPage() {
           {kind === "form" && (
             <div className="flex flex-wrap items-end gap-3">
               <label className={labelCls}>
-                <span className="mb-1">Login URL</span>
+                <span className={fieldLabelCls}>Login URL</span>
                 <input
                   value={loginUrl}
                   onChange={(e) => setLoginUrl(e.target.value)}
@@ -235,7 +237,7 @@ export default function AuthProfilesPage() {
                 />
               </label>
               <label className={labelCls}>
-                <span className="mb-1">Username field</span>
+                <span className={fieldLabelCls}>Username field</span>
                 <input
                   value={usernameField}
                   onChange={(e) => setUsernameField(e.target.value)}
@@ -244,7 +246,7 @@ export default function AuthProfilesPage() {
                 />
               </label>
               <label className={labelCls}>
-                <span className="mb-1">Password field</span>
+                <span className={fieldLabelCls}>Password field</span>
                 <input
                   value={passwordField}
                   onChange={(e) => setPasswordField(e.target.value)}
@@ -253,7 +255,7 @@ export default function AuthProfilesPage() {
                 />
               </label>
               <label className={labelCls}>
-                <span className="mb-1">Username</span>
+                <span className={fieldLabelCls}>Username</span>
                 <input
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
@@ -266,7 +268,7 @@ export default function AuthProfilesPage() {
           {kind === "header" && (
             <div className="flex flex-wrap items-end gap-3">
               <label className={labelCls}>
-                <span className="mb-1">Header name</span>
+                <span className={fieldLabelCls}>Header name</span>
                 <input
                   value={headerName}
                   onChange={(e) => setHeaderName(e.target.value)}
@@ -279,7 +281,7 @@ export default function AuthProfilesPage() {
           {kind === "cookie" && (
             <div className="flex flex-wrap items-end gap-3">
               <label className={labelCls}>
-                <span className="mb-1">Cookie name</span>
+                <span className={fieldLabelCls}>Cookie name</span>
                 <input
                   value={cookieName}
                   onChange={(e) => setCookieName(e.target.value)}
@@ -292,7 +294,7 @@ export default function AuthProfilesPage() {
 
           <div className="flex flex-wrap items-end gap-3">
             <label className={labelCls}>
-              <span className="mb-1">{SECRET_LABEL[kind]}</span>
+              <span className={fieldLabelCls}>{SECRET_LABEL[kind]}</span>
               <input
                 type="password"
                 autoComplete="new-password"
@@ -302,12 +304,13 @@ export default function AuthProfilesPage() {
               />
             </label>
             <button
-              className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              className="redsim-cta"
               onClick={create}
               disabled={busy}
             >
               Create
             </button>
+          </div>
           </div>
         </section>
       </RoleGated>

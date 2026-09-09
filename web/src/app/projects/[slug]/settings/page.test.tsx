@@ -94,10 +94,10 @@ describe("ProjectSettingsPage", () => {
     expect(el.textContent).toContain("not found");
   });
 
-  it("renders 'Redirecting to sign in…' when not authed", () => {
+  it("renders 'Signing in…' when not authed", () => {
     useRequireAuthMock.mockReturnValue(false);
     render(React.createElement(ProjectSettingsPage, { params: { slug: "demo" } }));
-    const el = screen.getByText("Redirecting to sign in…");
+    const el = screen.getByText("Signing in…");
     expect(el.tagName.toLowerCase()).toBe("p");
   });
 

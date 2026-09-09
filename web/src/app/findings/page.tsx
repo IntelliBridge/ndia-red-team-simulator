@@ -12,23 +12,16 @@
 import { useState } from "react";
 import useSWR from "swr";
 
-import {
-  SeverityChip,
-  Table,
-  TableBody,
-  TableCaption,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@redsim/design-system";
+import { SeverityChip } from "@redsim/design-system";
 import { api, type Finding } from "@/lib/api";
+import { FindingSummaryCard } from "@/components/finding-summary-card";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 
 const fetcher = (path: string) =>
   api<{ findings: Finding[]; count: number }>(path);
 
 const SEVERITIES = ["critical", "high", "medium", "low", "info"] as const;
+
 
 export default function FindingsPage() {
   const authed = useRequireAuth();
@@ -40,21 +33,21 @@ export default function FindingsPage() {
   const { data, error, isLoading } = useSWR(authed ? query : null, fetcher);
 
   if (!authed)
-    return <p className="text-muted-foreground">Signing in…</p>;
+    return <p className="text-ink-3">Signing in…</p>;
 
   const findings = data?.findings ?? [];
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold">Findings</h1>
+        <h1>Findings</h1>
         <label className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Severity</span>
+          <span className="text-ink-3">Severity</span>
           <select
             aria-label="Filter by severity"
             value={severity}
             onChange={(e) => setSeverity(e.target.value)}
-            className="rounded-md border border-border bg-background px-3 py-1.5 text-sm"
+            className="redsim-input w-auto"
           >
             <option value="">All</option>
             {SEVERITIES.map((s) => (
@@ -66,73 +59,23 @@ export default function FindingsPage() {
         </label>
       </div>
 
-      {isLoading && <p className="text-muted-foreground">Loading…</p>}
+      {isLoading && <p className="text-ink-3">Loading…</p>}
       {error && (
-        <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
           Failed to load findings: {String(error)}
         </p>
       )}
       {!isLoading && !error && findings.length === 0 && (
-        <p className="text-muted-foreground">
+        <p className="text-ink-3">
           No findings{severity ? ` at ${severity} severity` : ""} yet.
         </p>
       )}
       {findings.length > 0 && (
-        <div className="overflow-hidden rounded-md border border-border bg-card">
-          <Table>
-            <TableCaption className="sr-only">
-              Findings across all accessible runs
-            </TableCaption>
-            <TableHeader>
-              <TableRow>
-                <TableHead scope="col">ID</TableHead>
-                <TableHead scope="col">Severity</TableHead>
-                <TableHead scope="col">Title</TableHead>
-                <TableHead scope="col">Validation</TableHead>
-                <TableHead scope="col">Attack</TableHead>
-                <TableHead scope="col">First ε</TableHead>
-                <TableHead scope="col">Run</TableHead>
-                <TableHead scope="col">Status</TableHead>
-                <TableHead scope="col">Source</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {findings.map((f: Finding) => (
-                <TableRow key={f.id}>
-                  <TableCell className="font-mono text-xs">
-                    <a
-                      className="text-primary underline"
-                      href={`/findings/${f.id}`}
-                    >
-                      {f.id}
-                    </a>
-                  </TableCell>
-                  <TableCell>
-                    <SeverityChip level={f.severity} />
-                  </TableCell>
-                  <TableCell>{f.schema_blob.title ?? "—"}</TableCell>
-                  <TableCell>{f.validation_state}</TableCell>
-                  <TableCell>{f.schema_blob.ml?.attack_id ?? "—"}</TableCell>
-                  <TableCell>
-                    {f.schema_blob.ml?.first_success_eps ?? "—"}
-                  </TableCell>
-                  <TableCell className="font-mono text-xs">
-                    <a
-                      className="text-primary underline"
-                      href={`/runs/${f.run_id}`}
-                    >
-                      {f.run_id}
-                    </a>
-                  </TableCell>
-                  <TableCell>{f.status}</TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {f.source_tool ?? "—"}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+        <ul className="m-0 list-none border-t border-line p-0" aria-label="Findings across all accessible runs">
+          {findings.map((f: Finding) => (
+            <FindingSummaryCard key={f.id} finding={f} />
+          ))}
+        </ul>
       )}
     </div>
   );

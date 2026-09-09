@@ -18,16 +18,14 @@ import {
   type StartProbeRunBody,
 } from "@/lib/llm";
 import { useProbeCatalog } from "@/hooks/useLlm";
+import { rowLink } from "@/lib/row-link";
 import { useModels } from "@/hooks/useModels";
 import { useRoles } from "@/hooks/useRoles";
 
 const TARGET_KEY = "redsim.tests.llmTarget";
-const inputClass =
-  "mt-1 w-full rounded-sm border border-input bg-background px-2 py-1 text-sm";
-const chipClass =
-  "rounded-sm border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider";
-const smallButton =
-  "rounded-sm border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent";
+const inputClass = "redsim-input mt-1";
+const chipClass = "redsim-chip";
+const smallButton = "redsim-ghost redsim-btn-sm";
 
 function describeError(e: unknown): string {
   const d = mlErrorDetail(e);
@@ -56,7 +54,7 @@ function StatusBadge({ probe, hf }: { probe: ProbeInfo; hf: boolean }) {
   const status: ProbeStatus = probe.status ?? "offline";
   if (status === "offline") {
     return (
-      <span className={`${chipClass} border-primary/40 text-primary`}>
+      <span className={`${chipClass} border-data-adv/60 text-data-adv`}>
         runnable
       </span>
     );
@@ -64,7 +62,7 @@ function StatusBadge({ probe, hf }: { probe: ProbeInfo; hf: boolean }) {
   if (status === "extended") {
     return (
       <span
-        className={`${chipClass} ${hf ? "" : "text-muted-foreground"}`}
+        className={`${chipClass} ${hf ? "" : "text-ink-3"}`}
         title={
           hf
             ? "runs with detector_mode=hf"
@@ -216,8 +214,6 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
   const selectedRunnable = (catalog?.probes ?? [])
     .filter((p) => selected.has(p.id) && runnable(p))
     .map((p) => p.id);
-  const estimate =
-    selectedRunnable.length * (Number.isFinite(maxPromptsN) ? maxPromptsN : 0);
 
   // ── Launch ────────────────────────────────────────────────────────
   const [busy, setBusy] = useState<string | null>(null);
@@ -255,45 +251,51 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
   return (
     <div className="space-y-4">
       {/* ── Summary strip ─────────────────────────────────────────── */}
-      <PanelSection title="LLM probe catalog" eyebrow="garak via Pythia">
-        <div className="grid gap-4 md:grid-cols-[1fr_1fr_1fr_1fr_2fr]">
-          <div>
+      <section aria-label="LLM probe summary">
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
+          <div className="redsim-stat">
             <div className="redsim-kicker">offline · runnable</div>
-            <div className="text-2xl font-semibold">
+            <div className="redsim-numeral text-3xl">
               {catalog?.counts.offline ?? "…"}
             </div>
-            <div className="text-xs text-muted-foreground">
+            <div className="redsim-stat-note">
               {catalog?.statuses.offline}
             </div>
           </div>
-          <div>
+          <div className="redsim-stat">
             <div className="redsim-kicker">extended</div>
-            <div className="text-2xl font-semibold">
+            <div className="redsim-numeral text-3xl">
               {catalog?.counts.extended ?? "…"}
             </div>
-            <div className="text-xs text-muted-foreground">
+            <div className="redsim-stat-note">
               {catalog?.statuses.extended}
             </div>
           </div>
-          <div>
+          <div className="redsim-stat">
             <div className="redsim-kicker">excluded</div>
-            <div className="text-2xl font-semibold">
+            <div className="redsim-numeral text-3xl">
               {catalog?.counts.excluded ?? "…"}
             </div>
-            <div className="text-xs text-muted-foreground">
+            <div className="redsim-stat-note">
               {catalog?.statuses.excluded}
             </div>
           </div>
-          <div>
+          <div className="redsim-stat">
             <div className="redsim-kicker">garak</div>
-            <div className="font-mono text-lg">
+            <div className="redsim-numeral font-mono text-3xl">
               {catalog?.garak_version ?? "…"}
             </div>
-            <div className="text-xs text-muted-foreground">
+            <div className="redsim-stat-note">
               {catalog?.count ?? "…"} probes ·{" "}
               {hf ? "HF detectors enabled" : "offline detectors only"}
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* ── Run parameters ─────────────────────────────────────── */}
+      <section className="redsim-panel p-5" aria-label="Probe run parameters">
+        <div className="grid gap-4 text-sm md:grid-cols-[2fr_1fr_1fr_1fr_1fr]">
           <label className="block text-sm">
             Target
             {llmTargets.length > 0 ? (
@@ -309,24 +311,20 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
                 ))}
               </select>
             ) : (
-              <div className="mt-1 text-xs text-muted-foreground">
+              <div className="mt-1 text-xs text-ink-3">
                 No available LLM target is registered.{" "}
-                <Link href="/models" className="underline">
+                <Link href="/models" className="redsim-link">
                   Register an LLM target
                 </Link>
                 .
               </div>
             )}
             {target && (
-              <span className="mt-1 block font-mono text-xs text-muted-foreground">
+              <span className="mt-1 block font-mono text-xs text-ink-3">
                 {target.id}
               </span>
             )}
           </label>
-        </div>
-
-        {/* ── Run controls ────────────────────────────────────────── */}
-        <div className="mt-4 grid gap-3 border-t border-border pt-4 text-sm md:grid-cols-4">
           <label>
             Max prompts per probe
             <input
@@ -338,7 +336,7 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
               onChange={(e) => setMaxPrompts(e.target.value)}
               className={inputClass}
             />
-            <span className="mt-1 block text-xs text-muted-foreground">
+            <span className="mt-1 block text-xs text-ink-3">
               1 to {maxAllowed}
             </span>
           </label>
@@ -375,7 +373,7 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
                 className={inputClass}
               />
             )}
-            <span className="mt-1 block text-xs text-muted-foreground">
+            <span className="mt-1 block text-xs text-ink-3">
               {hf
                 ? catalog?.statuses.extended
                 : "HF detectors are not enabled on this API"}
@@ -392,20 +390,20 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
               onChange={(e) => setThreshold(e.target.value)}
               className={inputClass}
             />
-            <span className="mt-1 block text-xs text-muted-foreground">
+            <span className="mt-1 block text-xs text-ink-3">
               above 0, at most 1
             </span>
           </label>
         </div>
 
         {/* ── Quick actions ───────────────────────────────────────── */}
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
           <span className="redsim-kicker mr-2">quick actions</span>
           <RoleGated minRole="remediator" callerRole={callerRole}>
             <button
               disabled={!canLaunch || !coreSet}
               onClick={() => launch("core", { probe_set: "redsim-core" })}
-              className="rounded-sm bg-primary px-3 py-1.5 text-sm font-semibold text-primary-foreground disabled:opacity-40"
+              className="redsim-cta redsim-btn-sm"
               title={
                 coreSet
                   ? `${coreSet.n_probes} probes · ${coreSet.n_offline} offline`
@@ -421,7 +419,7 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
                 onClick={() =>
                   launch("extended", { probe_set: "redsim-extended" })
                 }
-                className="rounded-sm border border-primary px-3 py-1.5 text-sm font-semibold text-primary disabled:opacity-40"
+                className="redsim-ghost redsim-btn-sm"
                 title={`${extendedSet.n_probes} probes · ${extendedSet.n_offline} offline${
                   effectiveDetector === "offline" &&
                   extendedSet.n_offline < extendedSet.n_probes
@@ -435,13 +433,13 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
             )}
           </RoleGated>
           {!targetId && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-ink-3">
               Choose an available LLM target to run anything.
             </span>
           )}
         </div>
         {isLoading && (
-          <p className="mt-3 text-xs text-muted-foreground">
+          <p className="mt-3 text-xs text-ink-3">
             Loading probe catalog…
           </p>
         )}
@@ -450,7 +448,7 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
             Probe catalog unavailable: {describeError(catalogError)}
           </p>
         )}
-      </PanelSection>
+      </section>
 
       {/* ── Filter bar ───────────────────────────────────────────── */}
       <div className="flex flex-wrap items-end gap-3 text-sm">
@@ -494,7 +492,7 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
         >
           Clear selection
         </button>
-        <span className="pb-2 text-xs text-muted-foreground">
+        <span className="pb-2 text-xs text-ink-3">
           {selected.size} selected · {selectedRunnable.length} runnable
         </span>
       </div>
@@ -515,9 +513,9 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
             <details
               key={family}
               open
-              className="redsim-panel rounded-sm"
+              className="border-t border-line-strong py-2"
             >
-              <summary className="flex cursor-pointer flex-wrap items-center gap-3 px-4 py-2 text-sm">
+              <summary className="flex cursor-pointer flex-wrap items-center gap-3 px-3 py-2 text-sm">
                 <input
                   type="checkbox"
                   aria-label={`Select all runnable probes in ${family}`}
@@ -529,18 +527,18 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
                   onClick={(e) => e.stopPropagation()}
                   onChange={(e) => setMany(visibleRunnable, e.target.checked)}
                 />
-                <span className="font-mono font-semibold">{family}</span>
-                <span className="text-xs text-muted-foreground">
+                <span className="font-mono font-semibold text-ink-1">{family}</span>
+                <span className="text-xs text-ink-3">
                   {probes.length} probes · {runnableIds.length} runnable
                   {visible.length !== probes.length
                     ? ` · ${visible.length} shown`
                     : ""}
                 </span>
               </summary>
-              <div className="overflow-x-auto border-t border-border">
+              <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
-                  <thead className="text-muted-foreground">
-                    <tr>
+                  <thead>
+                    <tr className="border-b border-line">
                       <th className="w-8 px-3 py-2" />
                       <th className="px-3 py-2 font-medium">Probe</th>
                       <th className="px-3 py-2 font-medium">Goal</th>
@@ -557,7 +555,8 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
                       return (
                         <tr
                           key={p.id}
-                          className={`border-t border-border ${blocked ? "text-muted-foreground" : ""} ${isSelected ? "bg-primary/5" : ""}`}
+                          {...rowLink(`/tests/probes/${encodeURIComponent(p.id)}`)}
+                          className={`border-b border-line last:border-0 ${blocked ? "text-ink-3" : ""} ${isSelected ? "bg-surface-2" : ""} ${rowLink("").className}`}
                         >
                           <td className="px-3 py-2 align-top">
                             <input
@@ -569,15 +568,15 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
                             />
                           </td>
                           <td className="px-3 py-2 align-top">
-                            <div className="font-mono">{p.short_id}</div>
-                            <div className="font-mono text-[10px] text-muted-foreground">
+                            <div className="font-mono text-ink-1">{p.short_id}</div>
+                            <div className="font-mono text-[11px] text-ink-3">
                               {p.id}
                             </div>
                           </td>
                           <td className="max-w-md px-3 py-2 align-top">
                             {p.goal}
                             {p.status === "excluded" && p.reason && (
-                              <div className="mt-1 text-[11px] text-muted-foreground">
+                              <div className="mt-1 text-[11px] text-ink-3">
                                 {p.reason}
                               </div>
                             )}
@@ -618,20 +617,16 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
           );
         })}
         {catalog && families.every(([, ps]) => ps.filter(matches).length === 0) && (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-ink-3">
             No probes match the current filter.
           </p>
         )}
       </div>
 
       {/* ── Sticky action bar ────────────────────────────────────── */}
-      <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border border-border bg-card p-3 shadow-sm">
-        <div className="text-xs text-muted-foreground">
-          <div className="redsim-kicker">Prompt estimate</div>
-          {selectedRunnable.length} probes ×{" "}
-          {Number.isFinite(maxPromptsN) ? maxPromptsN : 0} prompts ≈{" "}
-          <span className="font-mono">{estimate}</span> prompts at most; each
-          probe corpus may be smaller than the cap.
+      <div className="redsim-panel sticky bottom-2 z-10 flex flex-wrap items-center justify-between gap-3 p-3 shadow-lg">
+        <div className="text-xs text-ink-3">
+          {selectedRunnable.length} probe{selectedRunnable.length === 1 ? "" : "s"} selected.
           {selected.size > selectedRunnable.length && (
             <span>
               {" "}
@@ -645,7 +640,7 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
           <button
             disabled={!canLaunch || selectedRunnable.length === 0}
             onClick={() => launch("selected", { probe_ids: selectedRunnable })}
-            className="rounded-sm bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-40"
+            className="redsim-cta"
           >
             {busy === "selected"
               ? "Starting probe run…"
@@ -657,7 +652,7 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
       </div>
       {err && (
         <p
-          className="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+          className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
           role="alert"
         >
           {err}
@@ -665,7 +660,7 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
       )}
 
       {/* ── Footer ───────────────────────────────────────────────── */}
-      <footer className="space-y-2 text-xs text-muted-foreground">
+      <footer className="space-y-2 text-xs text-ink-3">
         {catalog?.limitations?.length ? (
           <details>
             <summary className="cursor-pointer">

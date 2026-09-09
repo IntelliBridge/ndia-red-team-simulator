@@ -1,8 +1,8 @@
-// AuditChainBadge — surfaces verify state for a chain (run or project).
+// AuditChainBadge — verify state for a hash chain (run or project).
 //
-// Three states map to colours: verified ✓ (green), broken ✗ (orange),
-// pending (gray). The chain id and event count are tooltip / aria
-// affordances only — the user mostly cares about the ✓.
+// Three states: verified (green), broken (orange), pending (neutral). The
+// chain id and event count are tooltip / aria affordances; the glyph and
+// the word carry the state.
 
 import { type HTMLAttributes } from "react";
 import { cn } from "../lib/utils";
@@ -17,9 +17,9 @@ const ICON: Record<ChainVerifyState, string> = {
 
 // `broken` is orange, not red: red is the brand accent in this UI.
 const TONE: Record<ChainVerifyState, string> = {
-  verified: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
-  broken: "border-orange-400/50 bg-orange-500/20 text-orange-200",
-  pending: "border-border bg-muted text-muted-foreground",
+  verified: "border-emerald-400/40 text-emerald-200",
+  broken: "border-orange-400/50 text-orange-200",
+  pending: "border-line-strong text-ink-3",
 };
 
 export interface AuditChainBadgeProps extends HTMLAttributes<HTMLSpanElement> {
@@ -41,7 +41,7 @@ export function AuditChainBadge({
       title={chainId ?? label}
       aria-label={label}
       className={cn(
-        "inline-flex items-center gap-1 rounded-md border px-2 py-0.5 font-mono text-xs",
+        "inline-flex items-center gap-1.5 rounded-[3px] border px-2 py-0.5 text-xs font-medium",
         TONE[state],
         className,
       )}
@@ -50,7 +50,7 @@ export function AuditChainBadge({
       <span aria-hidden="true">{ICON[state]}</span>
       <span>chain</span>
       {events !== undefined && (
-        <span className="opacity-70">{events}</span>
+        <span className="font-mono tabular-nums opacity-70">{events}</span>
       )}
     </span>
   );
