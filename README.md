@@ -541,7 +541,7 @@ Quickstart (`redsim ml attack`, `3ab9de7`).
 | `make dev-worker` | `celery -A redsim.workers.celery_app worker -Q scans,default`. Not on the `dev` line, needs Redis and Postgres first. |
 | `make test` | `pytest -q` plus `pnpm --filter @redsim/web test` |
 | `make test-cov` | pytest with `--cov=redsim --cov-report=term-missing` |
-| `make lint` | `lint-py` (bare `ruff check redsim tests`, wider than CI's selection) then `lint-web` (printed as a skip line while `web/` has no ESLint config) |
+| `make lint` | `lint-py` (`ruff check --select E4,E7,E9,F,I redsim tests`, the CI selection) then `lint-web` (printed as a skip line while `web/` has no ESLint config) |
 | `make typecheck` | `typecheck-py` (`mypy redsim`) then `typecheck-web` (`tsc --noEmit`) |
 | `make check` | lint, typecheck, test |
 | `make up` / `make down` | `docker compose -f deploy/docker-compose.yml up -d --build` / `down` |
