@@ -22,13 +22,13 @@ export interface ToastListProps {
   className?: string;
 }
 
-// On the panel surface. `error` is orange, not red: red is the brand
+// Glass on the navy ground. `error` is orange, not red: red is the brand
 // accent in this UI.
 const TONE: Record<ToastTone, string> = {
-  info: "border-sky-400/40 bg-surface-2 text-sky-200",
-  success: "border-emerald-400/40 bg-surface-2 text-emerald-200",
-  warning: "border-amber-400/50 bg-surface-2 text-amber-200",
-  error: "border-orange-400/50 bg-surface-2 text-orange-200",
+  info: "border-sky-400/40 bg-navy-mid/90 text-sky-200",
+  success: "border-emerald-400/40 bg-navy-mid/90 text-emerald-200",
+  warning: "border-amber-400/50 bg-navy-mid/90 text-amber-200",
+  error: "border-orange-400/50 bg-navy-mid/90 text-orange-200",
 };
 
 export function ToastList({ toasts, onDismiss, className }: ToastListProps) {
@@ -45,7 +45,7 @@ export function ToastList({ toasts, onDismiss, className }: ToastListProps) {
         <li
           key={t.id}
           className={cn(
-            "rounded-md border px-3 py-2 text-sm shadow-lg",
+            "rounded-md border px-3 py-2 text-sm shadow-lg backdrop-blur-xl",
             TONE[t.tone ?? "info"],
           )}
         >

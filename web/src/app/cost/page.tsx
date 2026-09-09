@@ -29,9 +29,13 @@ function StatCard({
   tone?: string;
 }) {
   return (
-    <div className="redsim-stat">
-      <div className="redsim-kicker">{label}</div>
-      <div className={`redsim-numeral text-3xl ${tone ?? ""}`}>{value}</div>
+    <div className="rounded-md border border-border bg-card p-4">
+      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1 text-2xl font-semibold ${tone ?? "text-foreground"}`}>
+        {value}
+      </div>
     </div>
   );
 }
@@ -44,7 +48,7 @@ function ByDayChart({ byDay }: { byDay: Record<string, number> }) {
 
   if (entries.length === 0) {
     return (
-      <p className="text-sm text-ink-3">No daily usage in range.</p>
+      <p className="text-sm text-muted-foreground">No daily usage in range.</p>
     );
   }
 
@@ -66,7 +70,7 @@ function ByDayChart({ byDay }: { byDay: Record<string, number> }) {
             <div
               data-testid="bar"
               data-day={day}
-              className="w-full bg-data-adv"
+              className="w-full rounded-t bg-primary"
               style={{ height: `${pct}%` }}
             />
           </div>
@@ -87,11 +91,11 @@ function BreakdownTable({
 }) {
   const sorted = Object.entries(rows).sort(([, a], [, b]) => b - a);
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-hidden rounded-md border border-border bg-card">
       <table className="w-full text-sm">
         <caption className="sr-only">Spend by {caption}</caption>
-        <thead className="text-left">
-          <tr className="border-b border-line-strong">
+        <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
+          <tr>
             <th scope="col" className="px-3 py-2">
               {keyLabel}
             </th>
@@ -105,16 +109,16 @@ function BreakdownTable({
             <tr>
               <td
                 colSpan={2}
-                className="px-3 py-4 text-center text-ink-3"
+                className="px-3 py-4 text-center text-muted-foreground"
               >
                 No {caption} usage in range.
               </td>
             </tr>
           ) : (
             sorted.map(([name, cents]) => (
-              <tr key={name} className="border-b border-line last:border-0">
-                <td className="px-3 py-2.5 font-mono text-xs">{name}</td>
-                <td className="px-3 py-2.5 text-right tabular-nums text-ink-1">{centsToUsd(cents)}</td>
+              <tr key={name} className="border-t border-border">
+                <td className="px-3 py-2 font-mono text-xs">{name}</td>
+                <td className="px-3 py-2 text-right">{centsToUsd(cents)}</td>
               </tr>
             ))
           )}
@@ -144,18 +148,18 @@ export default function CostPage() {
   );
 
   if (!authed)
-    return <p className="text-ink-3">Signing in…</p>;
+    return <p className="text-muted-foreground">Signing in…</p>;
 
   const error = projectsError ?? costError;
   if (error)
     return (
-      <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+      <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
         Failed to load cost: {String(error)}
       </p>
     );
 
   if (projectsLoading || costLoading || !data)
-    return <p className="text-ink-3">Loading…</p>;
+    return <p className="text-muted-foreground">Loading…</p>;
 
   const { total_cents, call_count, by_day, by_model, by_task, budget } = data;
   const cap =
@@ -174,18 +178,18 @@ export default function CostPage() {
     <div className="space-y-6">
       <header className="flex items-end justify-between">
         <div>
-          <h1>Cost</h1>
-          <p className="mt-1 text-sm text-ink-3">
+          <h1 className="text-2xl font-semibold">Cost</h1>
+          <p className="text-sm text-muted-foreground">
             Per-tenant LLM spend for org{" "}
             <span className="font-mono">{orgId}</span> over the last {days}{" "}
             days.
           </p>
         </div>
-        <label className="flex items-center gap-2 text-sm text-ink-3">
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
           <span>Window</span>
           <select
             aria-label="Days window"
-            className="redsim-input w-auto py-1.5"
+            className="rounded-md border border-border bg-background px-2 py-1 text-sm"
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
           >
@@ -198,27 +202,29 @@ export default function CostPage() {
         </label>
       </header>
 
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <StatCard label="Total spend" value={centsToUsd(total_cents)} />
         <StatCard label="Call count" value={call_count.toLocaleString()} />
-        <div className="redsim-stat">
-          <div className="redsim-kicker">Budget</div>
-          <dl className="mt-2 space-y-1 text-sm">
-            <div className="flex justify-between gap-3">
-              <dt className="text-ink-3">Monthly cap</dt>
-              <dd className="m-0 tabular-nums text-ink-1">{cap}</dd>
+        <div className="rounded-md border border-border bg-card p-4">
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">
+            Budget
+          </div>
+          <dl className="mt-1 space-y-1 text-sm">
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Monthly cap</dt>
+              <dd className="font-medium">{cap}</dd>
             </div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-ink-3">Month to date</dt>
-              <dd className="m-0 tabular-nums text-ink-1">
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Month to date</dt>
+              <dd className="font-medium">
                 {centsToUsd(budget.month_spent_cents)}
               </dd>
             </div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-ink-3">Remaining</dt>
+            <div className="flex justify-between">
+              <dt className="text-muted-foreground">Remaining</dt>
               <dd
-                className={`m-0 tabular-nums ${
-                  remainingNegative ? "font-medium text-destructive" : "text-ink-1"
+                className={`font-medium ${
+                  remainingNegative ? "text-destructive" : "text-foreground"
                 }`}
               >
                 {remainingNegative ? `over budget — ${remaining}` : remaining}
@@ -229,32 +235,26 @@ export default function CostPage() {
       </div>
 
       {noUsage ? (
-        <p className="text-sm text-ink-3">
+        <p className="rounded-md border border-border bg-card p-4 text-sm text-muted-foreground">
           No usage recorded for this org in the selected window.
         </p>
       ) : (
         <>
-          <section className="redsim-sheet">
-            <h2 className="redsim-sheet-label">Spend by day</h2>
-            <div className="redsim-sheet-body">
-              <ByDayChart byDay={by_day} />
-            </div>
+          <section className="rounded-md border border-border bg-card p-4">
+            <h2 className="mb-3 text-sm font-semibold text-foreground">
+              Spend by day
+            </h2>
+            <ByDayChart byDay={by_day} />
           </section>
 
-          <section className="redsim-sheet">
-            <h2 className="redsim-sheet-label">
-              Spend by model and task
-              <small className="redsim-sheet-note">Largest first</small>
-            </h2>
-            <div className="redsim-sheet-body grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <BreakdownTable
-                caption="model"
-                keyLabel="Model"
-                rows={by_model}
-              />
-              <BreakdownTable caption="task" keyLabel="Task" rows={by_task} />
-            </div>
-          </section>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <BreakdownTable
+              caption="model"
+              keyLabel="Model"
+              rows={by_model}
+            />
+            <BreakdownTable caption="task" keyLabel="Task" rows={by_task} />
+          </div>
         </>
       )}
     </div>

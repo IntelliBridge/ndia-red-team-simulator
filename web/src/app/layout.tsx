@@ -51,7 +51,7 @@ export default function RootLayout({
           >
             Skip to content
           </a>
-          <header className="sticky top-0 z-40 border-b border-border bg-ground/85 backdrop-blur-md">
+          <header className="sticky top-0 z-40 border-b border-border bg-navy-deepest/80 backdrop-blur-xl">
             {/* Inside the banner landmark rather than loose above it, so the
                 shell keeps every element inside a landmark, and first within
                 it, so it is read before the nav and any page content. A
@@ -60,17 +60,17 @@ export default function RootLayout({
             {showsFixtureRibbon ? (
               <div
                 data-testid="fixture-ribbon"
-                className="border-b border-border bg-warning px-6 py-1.5 text-center text-xs font-medium text-warning-foreground"
+                className="border-b border-border bg-warning px-6 py-2 text-center font-mono text-xs font-medium uppercase tracking-wider text-warning-foreground"
               >
                 Fixture mode. Every row on these pages is illustrative recorded
                 data, not measurements from a run.
               </div>
             ) : null}
-            <div className="mx-auto flex h-14 max-w-6xl items-center justify-between gap-6 px-6">
-              <div className="flex min-w-0 items-center gap-4">
+            <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-6 px-6">
+              <div className="flex items-center gap-4">
                 <a
                   href="/dashboard"
-                  className="flex h-[24px] shrink-0 items-center"
+                  className="flex h-[26px] items-center"
                   data-testid="brand-link"
                 >
                   {/* The Agile Defense Labs mark, white on the navy header.
@@ -78,23 +78,27 @@ export default function RootLayout({
                   <img
                     src="/brand/agile-labs.svg"
                     alt="Agile Defense Labs"
-                    width={52}
-                    height={24}
-                    className="h-[24px] w-auto"
+                    width={56}
+                    height={26}
+                    className="h-[26px] w-auto"
                   />
                 </a>
                 <span
                   aria-hidden="true"
-                  className="hidden h-5 w-px bg-line-strong sm:block"
+                  className="hidden h-5 w-px bg-border sm:block"
                 />
-                <span className="hidden truncate text-sm font-medium tracking-tight text-ink-1 sm:block">
+                <span className="hidden text-sm font-semibold tracking-tight text-white sm:block">
                   Adversarial ML Red-Team Simulator
                 </span>
-                <span className="redsim-marking hidden sm:inline-flex">
+                <span
+                  aria-hidden="true"
+                  className="hidden h-5 w-px bg-border sm:block"
+                />
+                <span className="redsim-meta hidden font-semibold text-emerald-600 dark:text-emerald-400 sm:block">
                   UNCLASSIFIED
                 </span>
               </div>
-              <nav className="flex flex-wrap items-center justify-end gap-x-5 gap-y-0">
+              <nav className="flex flex-wrap items-center justify-end gap-x-5 gap-y-1">
                 <NavLinks links={NAV_LINKS} />
               </nav>
             </div>
@@ -106,12 +110,12 @@ export default function RootLayout({
           >
             {children}
             <footer className="redsim-footer">
-              <span className="redsim-wordmark">redsim</span>
-              <span className="max-w-[60ch]">
-                Proof of concept on open, unclassified public data. Results are
-                evidence for human review, not a safety, readiness, or
-                certification determination.
-              </span>
+              <div className="redsim-meta mb-2">
+                REDSIM // ADVERSARIAL ML RED-TEAM SIMULATOR
+              </div>
+              Proof of concept on open, unclassified public data. Results are
+              evidence for human review, not a safety, readiness, or
+              certification determination.
             </footer>
           </main>
           <CommandPalette links={NAV_LINKS} />
