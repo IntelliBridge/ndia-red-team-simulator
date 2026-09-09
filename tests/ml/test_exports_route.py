@@ -74,6 +74,9 @@ def api(sqlite_session_factory: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: 
                         verified=True, detail={"modality": "image", "fixture_only": True}))
         sess.add(Target(id="tgt-other", project_id=OTHER, kind="ml_model_artifact", value="bundled:url_trees",
                         verified=True, detail={"modality": "tabular"}))
+        sess.add(Target(id="tgt-endpoint", project_id=PROJECT, kind="ml_model_endpoint",
+                        value="https://models.example.test:8443/tenants/acme/v1/predict?key=REDACTED-FAKE",
+                        verified=True, detail={"modality": "tabular", "endpoint": {"host": "models.example.test:8443"}}))
         sess.flush()
         # run-1: a finished campaign with three report formats in a snapshot, a PDF as a bare
         # artifact, an exported dataset and a render in flight.
@@ -90,6 +93,9 @@ def api(sqlite_session_factory: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: 
         # run-4: a finished campaign on the CI fixture with no slices.
         sess.add(Run(id="run-4", project_id=PROJECT, target_id="tgt-fixture", mode="api", scanner="ml.campaign",
                      status="succeeded", stage_table={}, created_at=_at(4), completed_at=_at(8)))
+        # run-5: a finished campaign against a black-box endpoint (its URL must never leave).
+        sess.add(Run(id="run-5", project_id=PROJECT, target_id="tgt-endpoint", mode="api", scanner="ml.campaign",
+                     status="succeeded", stage_table={}, created_at=_at(0), completed_at=_at(1)))
         # Not exports of anything: a probe run and another project's campaign.
         sess.add(Run(id="run-probe", project_id=PROJECT, target_id=None, mode="api", scanner="ml.llm_probe",
                      status="succeeded", stage_table={}, created_at=_at(9)))
@@ -150,12 +156,13 @@ def _rows(resp: Any) -> dict[str, dict[str, Any]]:
 def test_lists_campaign_and_verify_runs_newest_first_and_nothing_else(api: SimpleNamespace) -> None:
     resp = api.get(ADMIN)
     body = resp.json()
-    assert [row["run_id"] for row in body["exports"]] == ["run-4", "run-3", "run-2", "run-1"]
-    assert body["count"] == 4
+    assert [row["run_id"] for row in body["exports"]] == ["run-4", "run-3", "run-2", "run-1", "run-5"]
+    assert body["count"] == 5
     assert body["report_formats"] == ["md", "json", "html", "pdf"]
     assert body["dataset_format"] == "croissant-parquet"
     kinds = {row["run_id"]: row["kind"] for row in body["exports"]}
-    assert kinds == {"run-1": "campaign", "run-2": "verify", "run-3": "campaign", "run-4": "campaign"}
+    assert kinds == {"run-1": "campaign", "run-2": "verify", "run-3": "campaign", "run-4": "campaign",
+                     "run-5": "campaign"}
 
 
 def test_report_block_reads_the_snapshot_then_falls_back_to_bare_artifacts(api: SimpleNamespace) -> None:
@@ -238,7 +245,7 @@ def test_dataset_blockers_name_why_an_export_cannot_start(api: SimpleNamespace) 
 
 def test_kind_filter_and_limit(api: SimpleNamespace) -> None:
     assert list(_rows(api.get(ADMIN, "/v1/exports?kind=verify"))) == ["run-2"]
-    assert list(_rows(api.get(ADMIN, "/v1/exports?kind=campaign"))) == ["run-4", "run-3", "run-1"]
+    assert list(_rows(api.get(ADMIN, "/v1/exports?kind=campaign"))) == ["run-4", "run-3", "run-1", "run-5"]
     assert list(_rows(api.get(ADMIN, "/v1/exports?limit=2"))) == ["run-4", "run-3"]
     for path in ("/v1/exports?kind=probe", "/v1/exports?limit=0", "/v1/exports?limit=501"):
         resp = api.get(ADMIN, path)
@@ -248,7 +255,7 @@ def test_kind_filter_and_limit(api: SimpleNamespace) -> None:
 
 def test_membership_gates(api: SimpleNamespace) -> None:
     # A viewer reads the inventory the way a viewer reads /v1/runs.
-    assert list(_rows(api.get(VIEWER))) == ["run-4", "run-3", "run-2", "run-1"]
+    assert list(_rows(api.get(VIEWER))) == ["run-4", "run-3", "run-2", "run-1", "run-5"]
     # A named project the caller is not a member of is refused before any read.
     resp = api.get(ADMIN, f"/v1/exports?project={OTHER}")
     assert resp.status_code == 403, resp.text
@@ -256,7 +263,18 @@ def test_membership_gates(api: SimpleNamespace) -> None:
     assert api.get(STRANGER, f"/v1/exports?project={PROJECT}").status_code == 403
     # Without a project the listing is scoped to the caller's memberships.
     assert list(_rows(api.get(STRANGER))) == ["run-other"]
-    assert list(_rows(api.get(ADMIN, f"/v1/exports?project={PROJECT}"))) == ["run-4", "run-3", "run-2", "run-1"]
+    assert list(_rows(api.get(ADMIN, f"/v1/exports?project={PROJECT}"))) == ["run-4", "run-3", "run-2", "run-1",
+                                                                             "run-5"]
+
+
+def test_endpoint_target_shows_its_host_and_never_its_url(api: SimpleNamespace) -> None:
+    resp = api.get(ADMIN)
+    model = _rows(resp)["run-5"]["model"]
+    assert model["value"] == "models.example.test:8443"
+    assert model["name"] == "models.example.test:8443"
+    text = resp.text
+    for leaked in ("https://", "/tenants/acme", "REDACTED-FAKE", "predict"):
+        assert leaked not in text, leaked
 
 
 def test_rows_carry_no_score_and_the_route_writes_nothing(api: SimpleNamespace) -> None:

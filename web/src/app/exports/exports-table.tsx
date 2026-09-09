@@ -235,19 +235,28 @@ export function ExportsTable({ project, kind, limit }: ExportsTableProps) {
   });
   const { roles } = useRoles();
 
-  // Per-row action state: the run whose action is in flight, and the last
-  // refusal per run, kept until the next attempt on that run.
-  const [pendingRun, setPendingRun] = useState<string | null>(null);
+  // Per-row action state, keyed by run and action so two rows (or the two
+  // actions of one row) in flight at once never overwrite each other. The
+  // last refusal per run stays until the next attempt on that run.
+  const [pending, setPending] = useState<Set<string>>(() => new Set());
   const [refusals, setRefusals] = useState<Record<string, string>>({});
 
-  const settle = (runId: string) => (error: unknown) => {
-    setPendingRun(null);
+  const begin = (key: string, runId: string) => {
+    setPending((prev) => new Set(prev).add(key));
     setRefusals((prev) => {
+      if (!(runId in prev)) return prev;
       const next = { ...prev };
-      if (error) next[runId] = refusalText(error);
-      else delete next[runId];
+      delete next[runId];
       return next;
     });
+  };
+  const settle = (key: string, runId: string) => (error?: unknown) => {
+    setPending((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+    if (error) setRefusals((prev) => ({ ...prev, [runId]: refusalText(error) }));
     void query.refetch();
   };
 
@@ -255,18 +264,14 @@ export function ExportsTable({ project, kind, limit }: ExportsTableProps) {
   const exportDataset = useMutation(trpc.exports.exportDataset.mutationOptions());
 
   const startRender = (runId: string) => {
-    setPendingRun(runId);
-    renderReport.mutate(
-      { runId },
-      { onSuccess: () => settle(runId)(undefined), onError: settle(runId) },
-    );
+    const key = `${runId}:render`;
+    begin(key, runId);
+    renderReport.mutate({ runId }, { onSuccess: () => settle(key, runId)(), onError: settle(key, runId) });
   };
   const startExport = (runId: string) => {
-    setPendingRun(runId);
-    exportDataset.mutate(
-      { runId },
-      { onSuccess: () => settle(runId)(undefined), onError: settle(runId) },
-    );
+    const key = `${runId}:export`;
+    begin(key, runId);
+    exportDataset.mutate({ runId }, { onSuccess: () => settle(key, runId)(), onError: settle(key, runId) });
   };
 
   const upstream = upstreamError(query.error);
@@ -360,7 +365,6 @@ export function ExportsTable({ project, kind, limit }: ExportsTableProps) {
           <TableBody>
             {rows.map((row) => {
               const role = roles[row.project_id];
-              const pending = pendingRun === row.run_id;
               const refusal = refusals[row.run_id];
               return (
                 <TableRow key={row.run_id} {...rowLink(`/runs/${row.run_id}`)}>
@@ -389,7 +393,7 @@ export function ExportsTable({ project, kind, limit }: ExportsTableProps) {
                     <ReportCell
                       row={row}
                       role={role}
-                      pending={pending}
+                      pending={pending.has(`${row.run_id}:render`)}
                       onRender={() => startRender(row.run_id)}
                     />
                   </TableCell>
@@ -397,7 +401,7 @@ export function ExportsTable({ project, kind, limit }: ExportsTableProps) {
                     <DatasetCell
                       row={row}
                       role={role}
-                      pending={pending}
+                      pending={pending.has(`${row.run_id}:export`)}
                       onExport={() => startExport(row.run_id)}
                     />
                   </TableCell>

@@ -328,6 +328,48 @@ describe("ExportsTable actions", () => {
     expect(screen.getByRole("link", { name: "run-1" })).toBeTruthy();
   });
 
+  it("keeps each row's pending state while two actions are in flight at once", async () => {
+    rolesMock.roles = { default: "remediator" };
+    const rows = [row({ run_id: "run-a" }), row({ run_id: "run-b" })];
+    const dehydratedState = await dehydratedList({ data: list(rows) });
+    const { trpcFetch } = renderWithProviders(<ExportsTable />, { dehydratedState });
+
+    // Hold every answer until both actions have been started, so both are in flight together.
+    const release: Array<() => void> = [];
+    trpcFetch.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          release.push(() =>
+            resolve(
+              new Response(JSON.stringify([trpcResult(list(rows))]), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              }),
+            ),
+          );
+        }),
+    );
+
+    await act(async () => {
+      screen.getAllByRole("button", { name: "Export dataset" })[0]!.click();
+    });
+    await act(async () => {
+      screen.getAllByRole("button", { name: "Render again" })[1]!.click();
+    });
+
+    // Row A's export and row B's render are both pending; neither cleared the other.
+    expect(screen.getByRole("button", { name: "Starting…" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Rendering…" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Export dataset" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Render again" })).toHaveLength(1);
+
+    await act(async () => {
+      for (const done of release) done();
+    });
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Starting…" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "Rendering…" })).toBeNull();
+  });
+
   it("posts a render for a scanner and marks the render in flight from the refetched row", async () => {
     rolesMock.roles = { default: "scanner" };
     const dehydratedState = await dehydratedList({ data: list([row()]) });

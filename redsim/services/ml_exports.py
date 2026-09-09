@@ -75,13 +75,23 @@ def _artifact_view(row: Any, *, source: str, snapshot_version: int | None = None
 
 
 def _model_block(target: Any | None, target_id: str | None) -> dict[str, Any]:
-    """The credential-free identity of the run's model: id, a display name, the value and modality."""
+    """The credential-free identity of the run's model: id, a display name, the value and modality.
+
+    For an endpoint target ``Target.value`` is the inference URL, and the models
+    route never returns it (a path can carry a tenant's routing). ``value`` is
+    therefore the ``host[:port]`` of ``endpoint_host`` for that kind, the same
+    projection the campaign record and the audit rows carry.
+    """
+    from redsim.services.ml_models import ENDPOINT_KIND, endpoint_host
+
     detail = getattr(target, "detail", None) if target is not None else None
     detail = detail if isinstance(detail, dict) else {}
     raw_manifest = detail.get("manifest")
     manifest: dict[str, Any] = raw_manifest if isinstance(raw_manifest, dict) else {}
-    name = detail.get("name") or manifest.get("name") or detail.get("bundled_id")
     value = str(getattr(target, "value", "") or "") if target is not None else ""
+    if target is not None and str(getattr(target, "kind", "")) == ENDPOINT_KIND:
+        value = endpoint_host(value)
+    name = detail.get("name") or manifest.get("name") or detail.get("bundled_id")
     if not name:
         name = value.split(":", 1)[1] if value.startswith("bundled:") else (value or target_id)
     return {
