@@ -35,6 +35,11 @@ function request(
   });
 }
 
+/** A request carrying a `Cookie` header verbatim, encoding and all. */
+function rawCookieRequest(cookie: string): Request {
+  return new Request("http://localhost:3000/api/trpc/runs.list", { headers: { cookie } });
+}
+
 beforeEach(() => {
   vi.resetModules();
 });
@@ -155,5 +160,55 @@ describe("createContext credential rules", () => {
     setEnv({ REDSIM_ENV: "dev" });
     const off = await loadContext();
     expect(off.createContext(off.requestPartsFromRequest(request())).fixtures).toBe(false);
+  });
+});
+
+describe("a malformed cookie in the jar", () => {
+  // `decodeURIComponent("100%")` throws a URIError, and both entry points build
+  // the context synchronously outside any try/catch: the tRPC route handler
+  // before `fetchRequestHandler`, and the sign-out hop before it can clear
+  // anything. An unguarded decode turned one bad cookie into a raw 500 on every
+  // procedure call and on the recovery hop itself.
+  const MALFORMED = "junk=100%";
+  const ENCODED_DEV_TOKEN = "redsim_dev_token=dev%3Aoperator%40example.test";
+
+  it("is skipped by the reader the sign-out hop uses, leaving the rest of the jar readable", async () => {
+    setEnv();
+    const { cookieReaderFromHeader } = await loadContext();
+
+    const cookie = cookieReaderFromHeader(`${MALFORMED}; ${ENCODED_DEV_TOKEN}`);
+
+    expect(cookie("junk")).toBeUndefined();
+    // Decoded, not raw: this reader has to agree with `cookies()` on the
+    // server-component side or the hop refuses a legitimate credential.
+    expect(cookie("redsim_dev_token")).toBe("dev:operator@example.test");
+  });
+
+  it("does not stop the tRPC route handler building a context", async () => {
+    setEnv({ REDSIM_ENV: "dev" });
+    const { createContext, requestPartsFromRequest } = await loadContext();
+
+    const ctx = createContext(
+      requestPartsFromRequest(rawCookieRequest(`${MALFORMED}; ${ENCODED_DEV_TOKEN}`)),
+    );
+
+    expect(ctx.credential).toEqual({ kind: "bearer", token: "dev:operator@example.test" });
+  });
+
+  it("does not stop the session credential being read either", async () => {
+    setEnv();
+    const { createContext, requestPartsFromRequest } = await loadContext();
+
+    const ctx = createContext(
+      requestPartsFromRequest(
+        rawCookieRequest(`redsim_api_session=s; ${MALFORMED}; redsim_csrf=c`),
+      ),
+    );
+
+    expect(ctx.credential).toEqual({
+      kind: "cookie",
+      cookieHeader: "redsim_api_session=s; redsim_csrf=c",
+      csrfHeader: null,
+    });
   });
 });

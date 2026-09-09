@@ -56,7 +56,24 @@ export type CookieReader = (name: string) => string | undefined;
  */
 export type RequestParts = { headers: Headers; cookie: CookieReader };
 
-/** Parse a `Cookie` header into a lookup. */
+/**
+ * Parse a `Cookie` header into a lookup.
+ *
+ * A pair whose value is not valid percent-encoding is skipped, the way Next's
+ * own cookie parser skips it. `decodeURIComponent` throws a `URIError` on a
+ * value like `junk=100%`, and both callers run this synchronously outside any
+ * try/catch: the tRPC route handler builds the context before
+ * `fetchRequestHandler`, and the sign-out hop builds it before it can clear
+ * anything. One malformed cookie anywhere in the jar would otherwise turn
+ * every procedure call and the recovery hop alike into a raw 500, leaving the
+ * user with no way out.
+ *
+ * The raw value is deliberately not kept as a fallback. This reader has to
+ * agree with `cookies()` on the server-component side, which decodes, and a
+ * raw value here would make a legitimately encoded credential such as
+ * `redsim_dev_token=dev%3Aoperator%40example.test` read differently on the two
+ * paths and refuse the hop.
+ */
 export function cookieReaderFromHeader(header: string | null): CookieReader {
   const jar = new Map<string, string>();
   for (const part of (header ?? "").split(";")) {
@@ -64,7 +81,13 @@ export function cookieReaderFromHeader(header: string | null): CookieReader {
     if (!trimmed) continue;
     const eq = trimmed.indexOf("=");
     if (eq < 1) continue;
-    jar.set(trimmed.slice(0, eq), decodeURIComponent(trimmed.slice(eq + 1)));
+    try {
+      jar.set(trimmed.slice(0, eq), decodeURIComponent(trimmed.slice(eq + 1)));
+    } catch {
+      // Not a cookie this app can read. Skipping the pair keeps the rest of
+      // the jar usable, which is what makes the recovery hop reachable.
+      continue;
+    }
   }
   return (name) => jar.get(name);
 }
