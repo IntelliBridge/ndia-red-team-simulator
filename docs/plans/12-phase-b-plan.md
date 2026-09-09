@@ -100,6 +100,8 @@ All default-valued; announced in the master plan before the PR that adds them.
 
 ### Wave B0: contracts, tripwires, stubs, datasets
 
+Status (2026-09-09): landed on `main` at `29db42c` (seven track commits `934838e`, `a625583`, `7b1f2fa`, `3cd3362`, `0b0981b`, `ff9e658`, `622d741` plus the integration commit `29db42c`; 2081 passed, 35 skipped in the default tier and 22 e2e passed at that commit). Open items carried to B1 to B4 are recorded in `docs/plans/00-master-plan.md` section 4.1.
+
 Goal: land every frozen-contract change once, make the tree truthful about
 Phase B with `501` stubs, and acquire the data, so every later wave builds on
 landed fields.
@@ -120,6 +122,8 @@ answers 501 with a reason.
 
 ### Wave B1: runners, targets, attacks, hardening (library layer)
 
+Status (2026-09-09): landed. Seven track commits plus the integration commit (`refactor(ml): split run_campaign into a frame plus modality runners` through `fix: integrate Phase B wave B1 tracks`), written in an isolated worktree in parallel with B0, rebased onto `29db42c` and pushed to `main` with this documentation pass; the B0 reconciliation list (schema literals, contract imports, hardening hooks, registration wiring) is closed in the integration commit. `adv_patch` (MODALITIES-32) is recorded as not built. The B1 gate's offline CLI runs (`redsim ml attack sms_tfidf_lr` and against the detector) need the `--dataset text` / `--dataset detection` builds that the integration commit wires into `redsim ml build-assets`.
+
 Depends on B0.
 
 | Track | Items | Files owned | Brief |
@@ -137,6 +141,8 @@ endpoint server and the golden-record test; `redsim ml attack sms_tfidf_lr`
 and `redsim ml attack <detector>` complete offline.
 
 ### Wave B2: services, workers and routes for B1
+
+Status (2026-09-09): not started. Every route it builds is mounted as a `501 not_implemented` stub with the reason (`docs/api/v1.md`, "Phase B routes").
 
 Depends on B1.
 
@@ -157,6 +163,8 @@ verify run with adversarial training registers a derived target.
 
 ### Wave B3: interoperability and bulk
 
+Status (2026-09-09): not started. Its routes are mounted as `501 not_implemented` stubs; migration `0011_phase_b_platform` (its tables `ml_batches`, `ml_datasets`, `idempotency_keys`, `report_snapshots` and `ml_campaigns.batch_id`) and the `dataset.register`, `dataset.export`, `integration.push` and `batch.run` actions are already on `main` from B0.
+
 Depends on B2.
 
 | Track | Items | Files owned | Brief |
@@ -172,6 +180,8 @@ schema, a consumed slice bound to a campaign, an ATLAS-stamped finding, a fake
 Foundry push, and a batch across both bundled models plus an uploaded ONNX.
 
 ### Wave B4: end-to-end evidence, gate, documentation
+
+Status (2026-09-09): not started. The documentation items that B0 and B1 made true (TESTS_DOCS-28, -29, -30, the `0011` and public-repository citations, `docs/api/endpoint-contract.md` for ENDPOINT-02) were brought forward into the B1 documentation pass; the rest of the docs track, the e2e files and the gate wait for B2 and B3.
 
 Depends on B3.
 
