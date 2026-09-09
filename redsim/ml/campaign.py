@@ -19,6 +19,15 @@ MRI is computed only when all five subscores exist and the score record is
 otherwise partial with the reason in ``missing`` and ``limitations``; every
 citation resolves to a recorded id; candidates carry no measured delta.
 
+An attack whose adapter raises ``AttackNotApplicable`` at run time (a white-box
+attack on a target without loss gradients, spec 9.5) is recorded ``not_run`` in an
+``Interpretation``, a limitation and ``flip_matrix.json`` and is removed from the
+in-scope attack set BEFORE scoring (spec 15.4); it has no rows, no curve and no
+finding, and the score describes only the attacks that ran. On a tabular target
+whose manifest declares a build-time surrogate, white-box adapters receive a view of
+the target whose ``art_classifier()`` is the surrogate estimator while predictions
+(and therefore every measurement) stay on the real model; the rows say so (12.9).
+
 The returned ``CampaignRecord`` is a ``RunRecord`` plus the queryable projections
 (``curve``, ``settings_hash``, ``completeness``, ``missing``, ``score_status``).
 """
@@ -103,8 +112,34 @@ WHITE_BOX_STANDING = "White-box gradient attacks assume full model access; black
 WHITE_BOX_WITH_BLACK_BOX = (
     "White-box gradient attacks assume full model access; the black-box attack hopskipjump was evaluated "
     "with label-only query access; physical-world attacks were not evaluated.")
+# The D3 bounds statement (spec 11.1, 21.5, 26 item 9), printed with every campaign's limitations.
+D3_BOUNDS_LIMITATION = (
+    "Open, unclassified public data only (D3). This tool evaluates and hardens the robustness of a classifier; it "
+    "never trains, optimises or deploys targeting or weapons models and connects to no mission system. Results are "
+    "evidence for human review, not a readiness or certification determination.")
+# Spec 13.4: appended to Observation.metric_note and the limitations when the manifest flags subject_centered=false.
+SUBJECT_CENTERED_CAVEAT = (
+    "The dataset manifest flags subject_centered=false: subjects are not reliably centred or tightly framed, so the "
+    "centre-mass ratio is weaker evidence of attention on the subject on this dataset than on a centred fixture; it "
+    "stays a heuristic proxy.")
+# Spec 12.9: white-box rows on a tree ensemble came from the declared surrogate; scored on the real model.
+SURROGATE_TRANSFER_LIMITATION_TEMPLATE = (
+    "White-box rows for {attacks} were computed by surrogate transfer: the gradients came from the declared surrogate "
+    "({surrogate}), the adversarial rows were scored on the real model. They measure the transfer of gradient-aligned "
+    "perturbations onto the target, not direct white-box access to it, and remain feature-space evidence whose "
+    "realizability is not established.")
+# Spec 12.2 / 12.9 row label for surrogate-transfer rows (the adapters use the same prefix).
+SURROGATE_NOTE_PREFIX = "white-box via surrogate transfer: "
+CURVE_PNG_NAME = "curve/robustness_curve.png"          # spec 12.3, Artifact kind ml.curve (rendered form)
+SHAP_SUMMARY_TEXT_NAME = "shap_summary.txt"            # spec 13.6 / 13.7, Artifact kind ml.shap.summary_text
 _EXPLAIN_MODULES = {"image": "redsim.ml.explain.shap_image", "tabular": "redsim.ml.explain.shap_tabular"}
+_SUMMARY_MODULE = "redsim.ml.explain.summary"
 _THREAD_ENV_VARS = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "REDSIM_ML_SANDBOX_THREADS")
+# Robustness-curve series colours: a fixed categorical order (never cycled), validated colour-vision-safe for
+# adjacent pairs; the control is neutral and the clean point is ink. Identity is also carried by the legend.
+_CURVE_SERIES_COLOURS = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948")
+_CURVE_CONTROL_COLOUR = "#6b6b6b"
+_CURVE_INK = "#0b0b0b"
 
 
 def _utcnow() -> datetime:
@@ -245,6 +280,195 @@ def _explain_fields(out: Any) -> dict[str, Any]:
             return dict(got)
     meta = dict(getattr(out, "meta", {}) or {})
     return {name: getattr(out, name, meta.get(name)) for name in _EXPLAIN_FIELDS}
+
+
+# --- control predicate (spec 12.4) ----------------------------------------------------------------------
+
+def _control_tolerance(acc_clean: float, n: int) -> float:
+    """``max(0.02, sqrt(acc_clean * (1 - acc_clean) / n))``: two points or one binomial standard error."""
+    if n <= 0:
+        return 0.02
+    p = min(1.0, max(0.0, float(acc_clean)))
+    return max(0.02, math.sqrt(p * (1.0 - p) / n))
+
+
+def _control_verdict(clean: Measurement, control: Measurement) -> tuple[bool, str]:
+    """``(preserved, how)`` for the spec 12.4 "control preserves accuracy" predicate on two measurement rows.
+
+    Prefers ``redsim.ml.scoring.control_preserves_accuracy(clean, control)`` (the scoring track's exact
+    binomial predicate) and falls back to the local closed form ``|acc_control - acc_clean| <= max(0.02, one
+    binomial SE)`` when the symbol is absent or has another calling convention. ``how`` states which
+    predicate answered and its thresholds, so the row note and the Interpretation print them."""
+    scoring = importlib.import_module("redsim.ml.scoring")
+    predicate = getattr(scoring, "control_preserves_accuracy", None)
+    if callable(predicate):
+        try:
+            preserved = bool(predicate(clean, control))
+        except TypeError:
+            logger.debug("scoring.control_preserves_accuracy has another signature; using the campaign fallback")
+        else:
+            floor = getattr(scoring, "CONTROL_ACCURACY_FLOOR", 0.02)
+            alpha = getattr(scoring, "DEFAULT_CONTROL_ALPHA", 0.05)
+            pvalue_fn = getattr(scoring, "control_degradation_pvalue", None)
+            p_value = None
+            if callable(pvalue_fn):
+                with contextlib.suppress(Exception):
+                    p_value = pvalue_fn(clean, control)
+            how = (f"scoring.control_preserves_accuracy: within {float(floor):g} of the clean accuracy or not "
+                   f"significantly below it (one-sided exact binomial test, alpha={float(alpha):g}"
+                   + (f", p={float(p_value):.4f})" if isinstance(p_value, (int, float)) else ")"))
+            return preserved, how
+    acc_clean = clean.n_correct / clean.n if clean.n else 0.0
+    acc_control = control.n_correct / control.n if control.n else 0.0
+    tol = _control_tolerance(acc_clean, control.n)
+    return (abs(acc_control - acc_clean) <= tol,
+            f"campaign fallback: |acc_control - acc_clean| <= max(0.02, one binomial SE) = {tol:.4f}")
+
+
+# --- manifest readers (spec 11.5, 13.4) -----------------------------------------------------------------
+
+def _manifest_sources(manifest: dict[str, Any], metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = [manifest]
+    for key in ("dataset", "preprocessing"):
+        nested = manifest.get(key)
+        if isinstance(nested, dict):
+            out.append(nested)
+    out.append(metadata)
+    return out
+
+
+def _dataset_caveats(manifest: dict[str, Any], metadata: dict[str, Any]) -> list[str]:
+    """The build-time dataset caveats (spec 11.3) as recorded in the manifest or the target metadata."""
+    out: list[str] = []
+    for source in _manifest_sources(manifest, metadata):
+        for key in ("caveats", "dataset_caveats"):
+            v = source.get(key)
+            if isinstance(v, str) and v.strip():
+                out.append(v.strip())
+            elif isinstance(v, (list, tuple)):
+                out.extend(str(s).strip() for s in v if isinstance(s, str) and s.strip())
+    return _uniq(out)
+
+
+def _subject_centered(manifest: dict[str, Any], metadata: dict[str, Any]) -> bool | None:
+    """The manifest's ``subject_centered`` flag (spec 13.4), ``None`` when the dataset does not declare it."""
+    for source in _manifest_sources(manifest, metadata):
+        v = source.get("subject_centered")
+        if isinstance(v, bool):
+            return v
+    return None
+
+
+def _surrogate_description(manifest: dict[str, Any]) -> str:
+    """``kind=..., sha256=..., agreement_clean=k/n`` from the manifest's ``surrogate`` block (spec 5.5)."""
+    decl = manifest.get("surrogate")
+    if not isinstance(decl, dict):
+        return "declared surrogate"
+    parts = [f"kind={decl.get('kind', 'unknown')}"]
+    sha = decl.get("sha256")
+    if isinstance(sha, str) and sha:
+        parts.append(f"sha256={sha[:16]}...")
+    agree = decl.get("agreement_clean")
+    if isinstance(agree, dict) and agree.get("n"):
+        n_agree = agree.get("n_correct")
+        if n_agree is None and isinstance(agree.get("value"), (int, float)):
+            n_agree = round(float(agree["value"]) * int(agree["n"]))
+        parts.append(f"agreement_clean={n_agree}/{agree['n']}" if n_agree is not None
+                     else f"agreement_clean n={agree['n']}")
+    else:
+        parts.append("agreement_clean=not recorded")
+    return ", ".join(parts)
+
+
+class _SurrogateTargetView:
+    """A target whose ``art_classifier()`` is the declared surrogate estimator (spec 12.9 surrogate transfer).
+
+    Everything else (``predict_proba``, ``manifest``, ``info``, ``sample``, feature ranges, ...) is delegated to
+    the real target, so the attack's gradients come from the surrogate while every prediction the campaign
+    measures comes from the real model. Used only for adapters that need gradients on a target without them."""
+
+    def __init__(self, target: Target, surrogate_clf: Any) -> None:
+        self._target = target
+        self._surrogate_clf = surrogate_clf
+        self.id = target.id
+
+    def art_classifier(self) -> Any:
+        return self._surrogate_clf
+
+    def surrogate_art_classifier(self) -> Any:
+        return self._surrogate_clf
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._target, name)
+
+
+def _surrogate_for_white_box(target: Target) -> Any | None:
+    """The surrogate estimator to hand white-box adapters, or ``None`` when the target's own estimator has
+    loss gradients (no transfer needed) or no surrogate is declared. Never introduces a surrogate silently:
+    the caller notes the transfer on every row and in the limitations."""
+    try:
+        own = target.art_classifier()
+    except Exception:  # noqa: BLE001 - the adapter reports an unusable estimator itself
+        own = None
+    if own is not None and hasattr(own, "loss_gradient"):
+        return None
+    getter = getattr(target, "surrogate_art_classifier", None)
+    if not callable(getter):
+        return None
+    try:
+        sur = getter()
+    except Exception:  # noqa: BLE001 - a broken surrogate is the same as no surrogate; the attack is then not_run
+        logger.debug("surrogate_art_classifier() failed", exc_info=True)
+        return None
+    return sur if sur is not None and hasattr(sur, "loss_gradient") else None
+
+
+# --- robustness curve rendering (spec 12.3) --------------------------------------------------------------
+
+def render_curve_png(curves: list[RobustnessCurve], *, norm: str, reference_eps: float) -> bytes:
+    """One PNG for the campaign: every in-scope attack's accuracy over the grid, the benign control at the same
+    eps, and the clean point at eps=0, all on one accuracy axis with the denominator ``n`` in the title.
+    Raises ``ImportError`` when matplotlib is absent; the caller records that as a limitation."""
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=(6.4, 4.2), dpi=100)
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(111)
+    clean = curves[0].clean if curves else None
+    n_txt = f"n = {clean.n} per point; clean {clean.n_correct}/{clean.n}" if clean is not None else "no clean row"
+    for idx, curve in enumerate(curves):
+        xs = [0.0] + [p.eps for p in curve.points if p.accuracy is not None]
+        ys = ([clean.accuracy if clean is not None and clean.accuracy is not None else float("nan")]
+              + [float(p.accuracy) for p in curve.points if p.accuracy is not None])
+        colour = _CURVE_SERIES_COLOURS[idx % len(_CURVE_SERIES_COLOURS)]
+        ax.plot(xs, ys, color=colour, linewidth=2.0, marker="o", markersize=5, label=f"{curve.attack_id} (evasion)")
+    control = curves[0].control if curves else []
+    if control:
+        xs_c = [0.0] + [p.eps for p in control if p.accuracy is not None]
+        ys_c = ([clean.accuracy if clean is not None and clean.accuracy is not None else float("nan")]
+                + [float(p.accuracy) for p in control if p.accuracy is not None])
+        ax.plot(xs_c, ys_c, color=_CURVE_CONTROL_COLOUR, linewidth=2.0, linestyle="--", marker="s", markersize=5,
+                label="noise_control (benign control)")
+    if clean is not None and clean.accuracy is not None:
+        ax.plot([0.0], [clean.accuracy], color=_CURVE_INK, marker="D", markersize=6, linestyle="none",
+                label=f"clean ({clean.n_correct}/{clean.n})")
+    ax.axvline(float(reference_eps), color=_CURVE_INK, linewidth=0.8, linestyle=":", alpha=0.6)
+    ax.text(float(reference_eps), 1.01, f"reference eps {reference_eps:g}", fontsize=7, ha="center", va="bottom",
+            color=_CURVE_INK)
+    ax.set_ylim(0.0, 1.05)
+    ax.set_xlabel(f"eps ({norm}); 0 = clean input", fontsize=9)
+    ax.set_ylabel("accuracy (n_correct / n)", fontsize=9)
+    ax.set_title(f"Robustness curve, {n_txt}", fontsize=10)
+    ax.grid(True, color="#d9d9d9", linewidth=0.6)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    ax.legend(fontsize=7, loc="lower left", frameon=False)
+    fig.text(0.01, -0.04, "Measured behaviour under the declared attack set, eps grid and slice; not a readiness "
+             "or certification statement.", fontsize=6, color="#52514e")
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
+    return buf.getvalue()
 
 
 # --- configuration -> runnable pieces -------------------------------------------------------------------
@@ -390,6 +614,9 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
     dataset_revision = config.dataset_revision or _manifest_get(manifest, "dataset_revision", "revision")
     slice_note = (f"slice: dataset={dataset_name}, split={config.dataset_split}, n_samples={n}, "
                   f"seed={config.seed}, selection=target.sample(n, seed)")
+    # Dataset caveats recorded at build time travel with every campaign on that dataset (spec 11.3, 14.5).
+    limitations.extend(f"Dataset caveat ({dataset_name}): {c}" for c in _dataset_caveats(manifest, info.metadata))
+    subject_centered = _subject_centered(manifest, info.metadata)
     stage_done("sample")
 
     # --- clean_eval --------------------------------------------------------------------------
@@ -409,38 +636,80 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
     flip_matrix: dict[str, dict[str, list[bool]]] = {}
     max_adv_bytes = _max_adv_artifact_bytes()
     tabular = domain == "tabular"
+    not_run: dict[str, str] = {}              # attack_id -> reason (spec 9.5): no rows, no curve, no finding
+    via_surrogate: list[str] = []             # white-box attacks that ran on the declared surrogate (12.9)
+    surrogate_desc = _surrogate_description(manifest)
+
+    AttackOutputs = list[tuple[float, np.ndarray, dict[str, Any], list[str], float, float | None]]
+
+    def attack_outputs(adapter: Any, attack_target: Any) -> AttackOutputs:
+        """Run one adapter on ``attack_target`` for every grid eps: ``(eps, x_adv, params, notes, wall, queries)``
+        per row. A minimal-norm attack runs once and is thresholded against the grid (spec 15.1); examples over
+        budget revert to the clean input for that eps row. Raises ``AttackNotApplicable`` untouched."""
+        aid = adapter.id
+        rows: AttackOutputs = []
+        if getattr(adapter, "takes_eps", True):
+            for e in grid:
+                p = adapter.resolve_params({**params_by_attack[aid], "eps": e})
+                out = adapter.run(attack_target, x, y, p, config.seed)
+                versions.update(out.library_versions)
+                rows.append((e, np.asarray(out.x_adv, dtype=np.float32), dict(out.params), list(out.notes),
+                             float(out.wall_time_s), out.queries_mean))
+            return rows
+        p = adapter.resolve_params(params_by_attack[aid])
+        out = adapter.run(attack_target, x, y, p, config.seed)
+        versions.update(out.library_versions)
+        norms = per_sample_norm(x, out.x_adv, l2=l2)
+        x_adv_full = np.asarray(out.x_adv, dtype=np.float32)
+        for e in grid:
+            within = norms <= e + 1e-9
+            x_adv_e = np.where(within.reshape((-1,) + (1,) * (x.ndim - 1)), x_adv_full, x)
+            notes = list(out.notes) + [
+                (f"thresholded at eps={e:g}: {int(within.sum())}/{n} adversarial examples within budget; "
+                 "the rest revert to the clean input for this row"),
+                "wall_time_s is the single attack run shared by every eps row"]
+            rows.append((e, x_adv_e.astype(np.float32), {**p, "eps": e}, notes, float(out.wall_time_s),
+                         out.queries_mean))
+        return rows
+
+    def record_not_run(aid: str, reason: str) -> None:
+        """Recorded not_run (spec 9.5, 15.4): no measurement row is written for this attack, it leaves the
+        in-scope set before scoring, and the record says so. Nothing is interpolated or faked."""
+        not_run[aid] = reason
+        interpretation.append(Interpretation(
+            id=f"i.attack.not_run.{aid}",
+            statement=(f"Attack {aid!r} was not run against this target ({reason}); it is recorded as not_run "
+                       "and was removed from the in-scope attack set before scoring. No evasion measurement, "
+                       "curve point or finding exists for it, and the score does not describe robustness to it."),
+            basis=["m.clean"]))
+        limitations.append(f"Attack {aid!r} was not run ({reason}); it was removed from the in-scope attack set "
+                           "before scoring and no evasion row, curve or finding exists for it.")
 
     for adapter in adapters:
         aid = adapter.id
-        flip_matrix[aid] = {}
         rows_by_eps: dict[float, Measurement] = {}
-        takes_eps = getattr(adapter, "takes_eps", True)
-        outputs: list[tuple[float, np.ndarray, dict[str, Any], list[str], float, float | None]] = []
-
-        if takes_eps:
-            for e in grid:
-                p = adapter.resolve_params({**params_by_attack[aid], "eps": e})
-                out = adapter.run(target, x, y, p, config.seed)
-                versions.update(out.library_versions)
-                outputs.append((e, np.asarray(out.x_adv, dtype=np.float32), dict(out.params), list(out.notes),
-                                float(out.wall_time_s), out.queries_mean))
-        else:
-            # Minimal-norm attack: one run, then success at eps by thresholding the achieved norm
-            # (spec 15.1). Examples over budget revert to the clean input for that eps row.
-            p = adapter.resolve_params(params_by_attack[aid])
-            out = adapter.run(target, x, y, p, config.seed)
-            versions.update(out.library_versions)
-            norms = per_sample_norm(x, out.x_adv, l2=l2)
-            x_adv_full = np.asarray(out.x_adv, dtype=np.float32)
-            for e in grid:
-                within = norms <= e + 1e-9
-                x_adv_e = np.where(within.reshape((-1,) + (1,) * (x.ndim - 1)), x_adv_full, x)
-                notes = list(out.notes) + [
-                    (f"thresholded at eps={e:g}: {int(within.sum())}/{n} adversarial examples within budget; "
-                     "the rest revert to the clean input for this row"),
-                    "wall_time_s is the single attack run shared by every eps row"]
-                outputs.append((e, x_adv_e.astype(np.float32), {**p, "eps": e}, notes, float(out.wall_time_s),
-                                out.queries_mean))
+        view_used = False
+        try:
+            outputs = attack_outputs(adapter, target)
+        except AttackNotApplicable as exc:
+            # Surrogate transfer (12.9) as a fallback for adapters that do not resolve the declared surrogate
+            # themselves: a white-box adapter on a target without loss gradients is retried on a view whose
+            # estimator is the surrogate; predictions below still come from the real target. Never silent.
+            reason = str(exc) or type(exc).__name__
+            surrogate_clf = _surrogate_for_white_box(target) if adapter.info().requires_gradients else None
+            if surrogate_clf is None:
+                record_not_run(aid, reason)
+                continue
+            try:
+                outputs = attack_outputs(adapter, _SurrogateTargetView(target, surrogate_clf))
+            except AttackNotApplicable as exc2:
+                record_not_run(aid, f"{reason}; retried on the declared surrogate: {exc2}")
+                continue
+            view_used = True
+        adapter_noted_surrogate = any(n_.startswith(SURROGATE_NOTE_PREFIX) for row in outputs for n_ in row[3])
+        if view_used or adapter_noted_surrogate:
+            via_surrogate.append(aid)
+        flip_matrix[aid] = {}
 
         flips_by_eps: dict[float, np.ndarray] = {}
         norms_by_eps: dict[float, np.ndarray] = {}
@@ -451,9 +720,9 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
             y_adv = proba_adv.argmax(axis=1)
             if tabular:
                 row_notes.append(REALIZABILITY_CAVEAT)
-                surrogate = manifest.get("surrogate")
-                if surrogate and aid != "hopskipjump":
-                    row_notes.append(f"white-box via surrogate transfer: {surrogate}")
+            if view_used and not adapter_noted_surrogate:
+                row_notes.append(f"{SURROGATE_NOTE_PREFIX}{surrogate_desc}; the campaign handed the adapter the "
+                                 "declared surrogate estimator; scored on the real model")
             m = measure(f"m.evasion.{aid}.{eps_tag(e)}", "evasion", y, y_adv, class_names, attack_id=aid,
                         params={**p, "eps": e, "norm": config.norm}, x_ref=x, x_adv=x_adv, y_pred_clean=y_clean,
                         proba=proba_adv, queries_mean=queries, wall_time_s=wall, notes=row_notes)
@@ -493,9 +762,19 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
                                f"{config.finding_asr_threshold:g} (first success at eps={fi.first_success_eps:g})")
         stage_done(f"attack:{aid}")
 
+    # The in-scope attack set is what ran (spec 15.4). The declared config stays on the record and in the
+    # settings hash; scoring, curves and the explain stage read the reduced set.
+    adapters = [a for a in adapters if a.id not in not_run]
+    in_scope_ids = [a.id for a in adapters]
+    scoring_config = config if not not_run else config.model_copy(update={
+        "attack_ids": in_scope_ids,
+        "attack_params": {k: v for k, v in config.attack_params.items() if k in in_scope_ids}})
+    if not adapters:
+        limitations.append("No declared attack could run against this target (all recorded not_run); the campaign "
+                           "carries clean and control rows only and no score.")
+
     # --- control -----------------------------------------------------------------------------
     x_ctrl_ref: np.ndarray | None = None   # control slice at the reference eps: the explainer's noise floor (13.5)
-    control_drop = float(config.scoring.interpretation.control_drop)
     if config.include_control:
         control = ATTACKS.get(CONTROL_ATTACK_ID)
         for e in grid:
@@ -511,13 +790,25 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
                         attack_id=CONTROL_ATTACK_ID, params={**p, "norm": config.norm}, x_ref=x, x_adv=out.x_adv,
                         y_pred_clean=y_clean, proba=proba_ctrl, wall_time_s=out.wall_time_s,
                         notes=row_notes + ["control rows never create a Finding and never enter the MRI"])
-            if acc_clean - m.accuracy > control_drop:
-                m.notes.append(f"benign noise alone reduced accuracy from {m_clean.n_correct}/{n} to "
-                               f"{m.n_correct}/{n} at eps={e:g}, more than the configured control_drop "
-                               f"{control_drop:g}")
+            # Spec 12.4: "control preserves accuracy" is |acc_control - acc_clean| <= max(0.02, one binomial SE).
+            # A degradation beyond that is an inferred statement with its basis ids, not a caption on the row.
+            preserved, how = _control_verdict(m_clean, m)
+            if preserved:
+                m.notes.append(f"control preserves accuracy at eps={e:g}: {m.n_correct}/{n} against clean "
+                               f"{m_clean.n_correct}/{n} ({how})")
+            else:
+                m.notes.append(f"benign noise alone reduced accuracy from {m_clean.n_correct}/{n} to {m.n_correct}/{n} "
+                               f"at eps={e:g}; the control did not preserve accuracy ({how})")
+                interpretation.append(Interpretation(
+                    id=f"i.control.noise_sensitive.{eps_tag(e)}",
+                    statement=(f"The model is noise-sensitive at eps={e:g}: the benign control alone reduced accuracy "
+                               f"from {m_clean.n_correct}/{n} to {m.n_correct}/{n}, a drop of "
+                               f"{acc_clean - m.accuracy:.4f} that the control predicate does not accept ({how}); "
+                               "evasion results at this eps are not attributable to adversarial alignment alone."),
+                    basis=["m.clean", m.id]))
                 limitations.append(f"The model is noise-sensitive at eps={e:g}: the benign control alone reduced "
-                                   f"accuracy by more than {control_drop:g}, so evasion results at this eps are not "
-                                   "attributable to adversarial alignment alone.")
+                                   f"accuracy from {m_clean.n_correct}/{n} to {m.n_correct}/{n}, so evasion results "
+                                   "at this eps are not attributable to adversarial alignment alone.")
             measurements.append(m)
         stage_done("control")
     else:
@@ -526,26 +817,41 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
 
     # One RobustnessCurve per attack (spec 12.3), read back from the measurement table so the curve and
     # the rows can never disagree; the control points are the same for every attack.
-    curves: list[RobustnessCurve] = robustness_curves(config, measurements)
+    curves: list[RobustnessCurve] = robustness_curves(scoring_config, measurements) if adapters else []
     for curve in curves:
         sink.put(f"curve/{curve.attack_id}.json", curve.model_dump_json(indent=2).encode("utf-8"),
                  "application/json")
-    sink.put("flip_matrix.json", _json_bytes({"attack_ids": [a.id for a in adapters], "eps_grid": grid, "n": n,
-                                              "norm": config.norm,
+    if curves:
+        # The rendered form of the ml.curve artifact (spec 12.3), beside the JSON. Skipped, and said so, without
+        # matplotlib; a rendering failure never fails the run and is never replaced by a placeholder image.
+        try:
+            png = render_curve_png(curves, norm=config.norm, reference_eps=ref)
+        except ImportError:
+            limitations.append(f"{CURVE_PNG_NAME} not rendered: matplotlib is not installed in this worker; the "
+                               "curve JSON carries every point with its denominator.")
+        except Exception as exc:  # noqa: BLE001 - rendering is not evidence
+            limitations.append(f"{CURVE_PNG_NAME} not rendered ({type(exc).__name__}: {exc}); the curve JSON carries "
+                               "every point with its denominator.")
+        else:
+            sink.put(CURVE_PNG_NAME, png, "image/png")
+    sink.put("flip_matrix.json", _json_bytes({"attack_ids": in_scope_ids, "eps_grid": grid, "n": n,
+                                              "norm": config.norm, "not_run": not_run,
                                               "indices": [int(i) for i in np.asarray(sample.indices)],
                                               "flipped": flip_matrix}), "application/json")
 
     # --- explain -----------------------------------------------------------------------------
     explain_meta: dict[str, dict[str, Any]] = {}   # attack_id -> explainer meta (noise floor, counts, settings)
-    explain_attempted = explain and config.explain_k > 0
+    explain_attempted = explain and config.explain_k > 0 and bool(adapters)
     if not explain_attempted:
-        why = "explain disabled" if not explain else "explain_k = 0"
+        why = ("explain disabled" if not explain else "explain_k = 0" if config.explain_k <= 0
+               else "no in-scope attack ran")
         limitations.append(f"Explanations were not computed ({why}); S_expl has no input and the MRI is not "
                            "computed (spec 15.4). No observation was recorded.")
     else:
         module_name = _EXPLAIN_MODULES.get(domain)
         seen_obs: set[str] = set()
         explainer_stated_limitations = False
+        weak_subject = domain == "image" and subject_centered is False
         for adapter in adapters:
             aid = adapter.id
             ref_row_id = f"m.evasion.{aid}.{eps_tag(ref)}"
@@ -576,6 +882,9 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
             for obs in list(getattr(out, "observations", []) or []):
                 if obs.id in seen_obs:
                     obs = obs.model_copy(update={"id": f"{obs.id}.{aid}"})
+                if weak_subject and SUBJECT_CENTERED_CAVEAT not in obs.metric_note:
+                    # Spec 13.4: the centre-mass caveat travels on the observation itself, not only in prose.
+                    obs = obs.model_copy(update={"metric_note": f"{obs.metric_note} {SUBJECT_CENTERED_CAVEAT}"})
                 seen_obs.add(obs.id)
                 observations.append(obs)
             fields = _explain_fields(out)
@@ -609,11 +918,17 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
         if not explainer_stated_limitations:
             limitations.append(f"Up to {config.explain_k} flipped and {config.explain_k} unflipped samples were "
                                f"explained out of n={n}, at the reference budget eps={ref:g} only.")
+        if weak_subject and observations:
+            limitations.append(SUBJECT_CENTERED_CAVEAT)
         stage_done("explain")
 
     # --- score -------------------------------------------------------------------------------
-    score, score_reason = score_run(config=config, measurements=measurements, settings_hash=shash,
-                                    computed_at=_utcnow())
+    if adapters:
+        score, score_reason = score_run(config=scoring_config, measurements=measurements, settings_hash=shash,
+                                        computed_at=_utcnow())
+    else:
+        score, score_reason = None, ("MRI not computed: no declared attack ran against this target (not_run: "
+                                     + "; ".join(f"{k}: {v}" for k, v in not_run.items()) + "). Nothing to score.")
     if score_reason:
         limitations.append(score_reason)
     if len(grid) == 1:
@@ -715,13 +1030,30 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
 
     # --- report ------------------------------------------------------------------------------
     finished_at = _utcnow()
-    limitations = standing + limitations
+    limitations = standing + [D3_BOUNDS_LIMITATION] + limitations
     if tabular:
         limitations.append(TABULAR_LIMITATION)
+    if via_surrogate:
+        limitations.append(SURROGATE_TRANSFER_LIMITATION_TEMPLATE.format(attacks=", ".join(via_surrogate),
+                                                                         surrogate=surrogate_desc))
     if config.defense is not None:
         limitations.append(DEFENSE_LIMITATION)
     if score is not None and score.mri is not None:
         limitations.append(MRI_SCOPE_LIMITATION)
+    if "explain" in stages_done:
+        # The SHAP text summary is an artifact of every campaign with an explain stage (spec 13.6, ml.shap.summary_text),
+        # not only the LLM writer's input. Unavailable is recorded, never a placeholder.
+        try:
+            summary_mod = importlib.import_module(_SUMMARY_MODULE)
+            summary_text_out = _call_supported(
+                summary_mod.text_summary, measurements, observations, score,
+                explain_meta=meta_flat, scoring_reason=score_reason, limitations=_uniq(limitations),
+                norm=config.norm)
+            sink.put(SHAP_SUMMARY_TEXT_NAME, str(summary_text_out).encode("utf-8"), "text/plain; charset=utf-8")
+        except Exception as exc:  # noqa: BLE001 - the summary is derived text, never evidence
+            why_summary = (f"module {_SUMMARY_MODULE!r} not importable" if isinstance(exc, ImportError)
+                           else f"{type(exc).__name__}: {exc}")
+            limitations.append(f"{SHAP_SUMMARY_TEXT_NAME} not written ({why_summary}).")
     provenance = Provenance(
         redsim_version=_redsim_version(), python=platform.python_version(),
         torch=versions.get("torch", "not installed"), art=versions.get("art", "not installed"),
@@ -808,4 +1140,4 @@ def _standing(dataset_name: Any, grid: list[float], attack_ids: list[str]) -> li
     return out
 
 
-__all__ = ["AttackInfo", "CampaignRecord", "MRIRecord", "run_campaign"]
+__all__ = ["AttackInfo", "CampaignRecord", "MRIRecord", "render_curve_png", "run_campaign"]
