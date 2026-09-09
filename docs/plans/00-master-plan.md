@@ -27,6 +27,66 @@ outstanding. Nothing in D1 to D13 changes and no new divergence is recorded:
 the surrogate-transfer admission exemption of `58461cc` follows spec 12.9
 rather than departing from it.
 
+### v2.4 change note: Phase B schema additions (2026-09-09, wave B0)
+
+Announced under the plan 01 section 8 protocol in the commit that adds them
+(`docs/plans/12-phase-b-plan.md` section 3, register
+`docs/plans/11-phase-b-register-2026-09-09.md`). Every item is additive and
+default-valued: no field is renamed or retyped, the frozen
+`tests/ml/fixtures/run_record.json` validates unchanged and dumps unchanged
+under `exclude_unset`, and the tripwire `tests/ml/test_schema_compat.py`
+holds. One line per addition, in `redsim/ml/schema.py`:
+
+- `Domain` gains `text` and `detection`; `Modality` gains `text` and
+  `detection` (MODALITIES-01).
+- `Norm` gains `edit` (text: ε is the maximum share of words replaced per
+  input) and `patch_area` (detection: ε is the patch area as a fraction of the
+  image area) (MODALITIES-02).
+- `Measurement.edit_fraction_mean: float | None = None` and
+  `Measurement.detection: DetectionMetrics | None = None`; new
+  `DetectionMetrics(n_boxes, n_matched, map50, recall, suppression_rate)`, all
+  optional (MODALITIES-03).
+- `Observation.text: TextObservation | None = None` and
+  `Observation.detection: DetectionObservation | None = None`; new
+  `TextObservation` (word counts, positions, attribution artifact names, no
+  message text) and `DetectionObservation` (box counts, `patch_bbox`)
+  (MODALITIES-04).
+- `MLModelManifest.text: TextModelSpec | None = None` and
+  `MLModelManifest.detection: DetectionModelSpec | None = None`
+  (MODALITIES-05).
+- `MLModelManifest.endpoint: EndpointSpec | None = None`; new
+  `EndpointSpec(url_host, auth_profile_id, contract_version, input_shape,
+  batch_rows, timeout_s)`, no credential and no URL string; `format ==
+  "endpoint"` requires the block, the block requires `format == "endpoint"`
+  and no gradients (ENDPOINT-03).
+- `MLModelManifest.derived_from: DerivedFrom | None = None`; new
+  `DerivedFrom(parent_target_id, parent_sha256, defense_id, training_budget)`
+  (ATTACKS_HARDEN-15).
+- The four manifest blocks are omitted from `model_dump` while `None`, so
+  `manifest_sha256` of every manifest written before Phase B (built asset
+  trees, stored `targets.detail`) is unchanged (MODALITIES-05 risk).
+- `ReviewState` gains `draft`, `in_review`, `confirmed`, `resolved`;
+  `FindingReview.history: list[ReviewEvent] = []` and
+  `FindingReview.revisions: list[FindingRevision] = []`; new `ReviewEvent`
+  and `FindingRevision` (REVIEW_REPORTS-01).
+- `MLFindingDetail.retests: list[FindingVerify] = []` (`verify` stays the
+  latest); `FindingVerify.settings_hash: str | None = None` and
+  `FindingVerify.baseline_run_id: str | None = None` (REVIEW_REPORTS-08).
+- `CampaignRecord.schema_version: str = "campaign-record-1"` (constant
+  `CAMPAIGN_RECORD_SCHEMA_VERSION`); `report.json` stays the record dump and
+  now discloses it (REVIEW_REPORTS-18).
+- `RunSummary.kind: RunKind | None = None` with `RunKind = Literal["attack",
+  "verify", "ingest", "llm_probe"]`, and `RunSummary.probe_ids: list[str] =
+  []` (LLM-24).
+- `STAGES` gains `defense_apply` directly after `load_target`, where spec 6.5
+  places it; the Phase A stages keep their relative order and `report` stays
+  last. The worker's `expected_stages` emits it only for a verify run with a
+  training defense, in wave B1 (ATTACKS_HARDEN-15).
+- Not added, by design: `CampaignConfig.explainer` (ATTACKS_HARDEN-15 item 3)
+  and the artifact-kind names of MODALITIES-44 are outside plan 12 section 3
+  and wait for their owning tracks; the LLM records live in
+  `redsim/ml/llm/schema.py`, never in the frozen module.
+
 ### v2.3 (2026-09-08, night): change note
 
 The ML vertical is on `main` end to end at `bb43bd7`: routes, admission,
@@ -394,6 +454,32 @@ passes that followed PR #22.
   #8 is being adapted to P0's names and semantics (section 4.1). A change to
   the frozen contract follows `01-p0-contracts-api-skeleton.md` section 8:
   announce it first and prefer additive optional fields.
+  Phase B additions (wave B0, 2026-09-09; the section 0 v2.4 change note has
+  the detail), every one additive and default-valued so a Phase A record
+  validates unchanged:
+  - `Domain` and `Modality` gain `text` and `detection` (MODALITIES-01).
+  - `Norm` gains `edit` and `patch_area` (MODALITIES-02).
+  - `Measurement.edit_fraction_mean` and `Measurement.detection:
+    DetectionMetrics | None` (MODALITIES-03).
+  - `Observation.text: TextObservation | None` and `Observation.detection:
+    DetectionObservation | None` (MODALITIES-04).
+  - `MLModelManifest.text: TextModelSpec | None` and `.detection:
+    DetectionModelSpec | None` (MODALITIES-05).
+  - `MLModelManifest.endpoint: EndpointSpec | None` (ENDPOINT-03).
+  - `MLModelManifest.derived_from: DerivedFrom | None` (ATTACKS_HARDEN-15).
+  - The four manifest blocks are omitted from dumps while `None`, so
+    `manifest_sha256` of pre-Phase-B manifests is unchanged.
+  - `ReviewState` gains `draft`, `in_review`, `confirmed`, `resolved`;
+    `FindingReview.history: list[ReviewEvent]` and `FindingReview.revisions:
+    list[FindingRevision]` (REVIEW_REPORTS-01).
+  - `MLFindingDetail.retests: list[FindingVerify]`; `FindingVerify.settings_hash`
+    and `FindingVerify.baseline_run_id` (REVIEW_REPORTS-08).
+  - `CampaignRecord.schema_version: str = "campaign-record-1"`
+    (REVIEW_REPORTS-18).
+  - `RunSummary.kind: RunKind | None` and `RunSummary.probe_ids: list[str]`
+    (LLM-24).
+  - `STAGES` gains `defense_apply` after `load_target`; `report` stays last
+    (ATTACKS_HARDEN-15).
 - **Registries** (`redsim/ml/registry.py`): one id-keyed `Registry[T]` class
   with `register(item)` (`TypeError` when the item misses a non-empty string
   `id` or fails the protocol check, `DuplicateRegistration` on a repeated id),
