@@ -44,6 +44,24 @@ campaign admission refuses it (``409 model_load_refused``: status is not
 ``available``) and the blob is removed unless another live model target shares
 the same content-addressed bytes. The ``target.manage`` audit event is written
 before the row changes.
+
+Endpoint registration (Phase B, ENDPOINT-01, -18, -29). ``POST /v1/models`` with
+``source: "endpoint"`` registers a black-box predict endpoint as a Target of
+kind ``ml_model_endpoint`` whose ``value`` is the inference URL (no userinfo,
+query or fragment by construction). :func:`admit_endpoint_registration` runs
+the static checks that are allowed in the API process: the body through
+``redsim.ml.targets.endpoint_contract.EndpointRegistration``, the URL through
+the egress policy, the AuthProfile by id (same project, kind ``bearer`` or
+``header``), the dataset binding through :func:`check_upload_dataset` and the
+class list against the bound split. Nothing is queried here. The worker task
+(``redsim.workers.tasks.ml_model``) builds the credential-free
+``target_endpoint`` request block with :func:`endpoint_request_block`, resolves
+the credential through ``services.auth_profiles.resolve_auth_for_scan`` at
+pickup and hands it to the broker in memory only. Soft delete keeps the row,
+skips the blob store (the value is a URL) and records the host, never the URL.
+Endpoint rows carry ``Target.verified = False``: the pentest-era ownership
+check is gone (owner decision ENDPOINT-26, option a), and the compensating
+controls are the admin gate, the operator allowlist and the audited attestation.
 """
 
 from __future__ import annotations
@@ -72,20 +90,33 @@ if TYPE_CHECKING:
 
     from redsim.audit.chain import AuditWriter
     from redsim.config import RedsimConfig
-    from redsim.db.models import Target
-    from redsim.ml.schema import Domain
+    from redsim.db.models import AuthProfile, Target
+    from redsim.ml.schema import Domain, ModelStatus
     from redsim.ml.targets.artifact import ArtifactTarget
+    from redsim.ml.targets.endpoint_contract import EndpointRegistration
     from redsim.storage import BlobStore
 
 logger = logging.getLogger(__name__)
 
 ML_KINDS = frozenset({"ml_model_artifact", "ml_model_endpoint"})
 
+#: ``Target.kind`` of a registered black-box inference endpoint (spec 5.2, 9.1 rule 4).
+ENDPOINT_KIND = "ml_model_endpoint"
+
+#: AuthProfile kinds the predict broker can present (``Authorization: Bearer`` or a named header).
+#: ``form`` and ``cookie`` are login flows for the retired DAST scanners, not API credentials.
+SUPPORTED_ENDPOINT_AUTH_KINDS = frozenset({"bearer", "header"})
+
 #: ``targets.detail.status`` of a soft-deleted model target.
 DELETED_STATUS = "deleted"
 
 #: ``Run.scanner`` values that make up a model's campaign history (spec 5.2).
 CAMPAIGN_SCANNERS = ("ml.campaign", "ml.verify")
+#: Run scanners that count as a model's history for ``last_run_id`` (spec 17.2 list row): the campaign
+#: scanners plus the LLM probe scanner (``services.ml_llm.LLM_SCANNER``). Probe runs never join
+#: ``campaign_history`` (D9: no campaign row, no MRI); ``services.ml_llm.probe_history`` lists them.
+LLM_PROBE_SCANNER = "ml.llm_probe"
+HISTORY_SCANNERS = (*CAMPAIGN_SCANNERS, LLM_PROBE_SCANNER)
 
 #: Blob key prefix the bundled weights are copied under (gap register G-ASSET4).
 BUNDLED_BLOB_PREFIX = "ml/assets/bundled"
@@ -534,18 +565,22 @@ def audit_refused_admission(
     project_id: str | None,
     detail: dict[str, Any],
     run_id: str | None = None,
+    target: str | None = None,
+    allowlist_check: str = "n/a",
 ) -> None:
     """Write the ``success=False`` audit row of a refused admission (spec 5.11, 9.5).
 
     Goes through the same ``AuditWriter`` the successful path uses, so the
     refusal sits on the project chain next to the admissions it precedes.
-    ``target`` is ``None`` (an in-boundary artifact, ``allowlist_check`` is
-    ``n/a``) and ``detail`` must already be free of payload bytes and secrets;
-    the durable writers redact it as they do every other event.
+    ``target`` is ``None`` for an in-boundary artifact (``allowlist_check`` is
+    ``n/a``); an endpoint registration refused by the egress allowlist passes
+    the URL and ``allowlist_check="fail"`` so the chain reads like every other
+    allowlist refusal (ENDPOINT-07). ``detail`` must already be free of payload
+    bytes and secrets; the durable writers redact it as they do every other event.
     """
     writer.append(
-        action=action, actor=actor, target=None,
-        allowlist_check="n/a", override=False, success=False,
+        action=action, actor=actor, target=target,
+        allowlist_check=allowlist_check, override=False, success=False,
         detail={"actor": actor, **detail},
         run_id=run_id, project_id=project_id,
     )
@@ -805,6 +840,350 @@ def assets_root_path(explicit: str | Path | None = None) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Endpoint targets (``POST /v1/models`` source=endpoint; the validate and campaign workers)
+# ---------------------------------------------------------------------------
+
+
+def is_endpoint_target(detail_or_target: Any) -> bool:
+    """True for a black-box endpoint model: a Target of kind ``ml_model_endpoint`` or its detail.
+
+    Campaign admission (``services.ml_campaigns``) uses this to force
+    ``gradients=False`` (white-box attacks are refused with
+    ``attack_requires_gradients``), to pass the URL as the audit target and to
+    dispatch the worker onto the broker path. Accepts the ORM row, a
+    ``target_snapshot`` mapping (``{"kind", "detail"}``) or the bare detail.
+    """
+    kind = getattr(detail_or_target, "kind", None)
+    if isinstance(kind, str):
+        return kind == ENDPOINT_KIND
+    if not isinstance(detail_or_target, dict):
+        return False
+    if detail_or_target.get("kind") == ENDPOINT_KIND:
+        return True
+    nested = detail_or_target.get("detail")
+    detail: dict[str, Any] = nested if isinstance(nested, dict) else detail_or_target
+    manifest_value = detail.get("manifest")
+    manifest: dict[str, Any] = manifest_value if isinstance(manifest_value, dict) else {}
+    return (detail.get("source") == "endpoint" or detail.get("format") == "endpoint"
+            or manifest.get("format") == "endpoint" or isinstance(detail.get("endpoint"), dict))
+
+
+def endpoint_host(url: str) -> str:
+    """``host[:port]`` of an endpoint URL: what audit rows, projections and exports may carry (D3).
+
+    Never the scheme, path, userinfo or query. A default port is dropped; an IPv6
+    literal keeps its brackets.
+    """
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(str(url or ""))
+    host = parts.hostname or ""
+    if not host:
+        return ""
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    default = 443 if parts.scheme.lower() == "https" else 80
+    return host if port in (None, default) else f"{host}:{port}"
+
+
+def endpoint_auth_profile_id(detail: Any, job_detail: Any = None) -> str | None:
+    """The AuthProfile id an endpoint job resolves at pickup (spec 5.10, ENDPOINT-29).
+
+    ``Job.detail.auth_profile_id`` (written at admission) wins; the registration
+    copy under ``detail.endpoint.auth_profile_id`` / ``detail.auth_profile_id``
+    is the fallback. Never a credential: ids only.
+    """
+    for source in (job_detail, detail):
+        if isinstance(source, dict):
+            value = source.get("auth_profile_id")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    if isinstance(detail, dict):
+        for block_name in ("endpoint", "manifest"):
+            block = detail.get(block_name)
+            if isinstance(block, dict):
+                nested = block.get("endpoint") if block_name == "manifest" else block
+                if isinstance(nested, dict):
+                    value = nested.get("auth_profile_id")
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+    return None
+
+
+def endpoint_request_block(
+    value: str,
+    detail: dict[str, Any] | None,
+    *,
+    auth_profile_id: str | None = None,
+) -> dict[str, Any]:
+    """The ``target_endpoint`` block ``redsim.ml.sandbox`` takes for an endpoint job.
+
+    ``url`` is read by the parent only (the sandbox replaces it by ``url_host`` and
+    ``scheme`` before the request file is written); everything else is the binding
+    the child needs to build its ``EndpointTarget``. The credential is not here: it
+    travels as the separate ``endpoint_auth`` argument, straight into the broker.
+    """
+    detail = dict(detail or {})
+    manifest_value = detail.get("manifest")
+    manifest: dict[str, Any] = dict(manifest_value) if isinstance(manifest_value, dict) else {}
+    endpoint_value = detail.get("endpoint") if isinstance(detail.get("endpoint"), dict) else manifest.get("endpoint")
+    endpoint: dict[str, Any] = dict(endpoint_value) if isinstance(endpoint_value, dict) else {}
+
+    def pick(key: str) -> Any:
+        for source in (detail, manifest):
+            if source.get(key) is not None:
+                return source.get(key)
+        return None
+
+    class_names = pick("class_names")
+    n_classes = pick("n_classes")
+    if n_classes is None and isinstance(class_names, list) and class_names:
+        n_classes = len(class_names)
+    binding: dict[str, Any] = {
+        "modality": pick("modality") or "image",
+        "dataset_id": pick("dataset_id"),
+        "dataset_split": pick("dataset_split"),
+        "dataset_revision": pick("dataset_revision"),
+        "n_classes": n_classes,
+        "class_names": list(class_names) if isinstance(class_names, list) else None,
+        "input_shape": list(pick("input_shape") or endpoint.get("input_shape") or []) or None,
+        "features": pick("features"),
+        "name": pick("name"),
+        "license": pick("license"),
+    }
+    block: dict[str, Any] = {
+        "url": str(value),
+        "auth_profile_id": auth_profile_id or endpoint_auth_profile_id(detail) or "",
+        "manifest": {k: v for k, v in binding.items() if v is not None},
+    }
+    batch_rows = endpoint.get("batch_rows")
+    if isinstance(batch_rows, int) and not isinstance(batch_rows, bool) and batch_rows > 0:
+        block["batch_rows"] = batch_rows
+    timeout_s = endpoint.get("timeout_s")
+    if isinstance(timeout_s, (int, float)) and not isinstance(timeout_s, bool) and timeout_s > 0:
+        block["timeout_s"] = float(timeout_s)
+    limits = detail.get("endpoint_limits")
+    if isinstance(limits, dict) and limits:
+        block["limits"] = dict(limits)
+    return block
+
+
+class EndpointAdmissionError(ValueError):
+    """A static refusal of an endpoint registration: ``code`` is the spec 17.3 code, ``field`` the body field.
+
+    ``extra`` carries the audit-safe context of the refusal (an egress rule and
+    host, an AuthProfile kind, a dataset id); never a URL with userinfo or query,
+    never a credential.
+    """
+
+    def __init__(self, code: str, message: str, *, field: str, **extra: Any) -> None:
+        super().__init__(message)
+        self.code = code
+        self.field = field
+        self.extra = extra
+
+
+@dataclass(frozen=True)
+class EndpointAdmission:
+    """What the static checks of an endpoint registration established (nothing was queried)."""
+
+    registration: EndpointRegistration
+    url: str                      # normalised: lower-case host, default port dropped
+    host: str                     # host[:port], the only URL fragment that reaches audit and projections
+    scheme: str
+    plaintext: bool
+    allowlist_entry: str
+    auth_kind: str
+    auth_header_name: str | None
+    binding: DatasetBinding
+    descriptor_sha256: str
+
+    def manifest(self, *, status: ModelStatus = "validating") -> dict[str, Any]:
+        """The ``MLModelManifest`` dump the Target row is created with (ENDPOINT-03 conventions)."""
+        from redsim.ml.schema import EndpointSpec, MLModelManifest
+
+        reg = self.registration
+        manifest = MLModelManifest(
+            name=reg.name, modality=reg.modality, format="endpoint", sha256=self.descriptor_sha256,
+            size_bytes=0, input_shape=list(reg.input_shape), n_classes=len(self.binding.class_names),
+            class_names=list(self.binding.class_names), dataset_id=self.binding.dataset_id,
+            dataset_revision=self.binding.revision, dataset_split=self.binding.split,
+            status=status, gradients=False, bundled=False, license=reg.license_statement,
+            endpoint=EndpointSpec(
+                url_host=self.host, auth_profile_id=reg.auth_profile_id, contract_version=reg.contract_version,
+                input_shape=list(reg.input_shape), batch_rows=reg.batch_rows, timeout_s=reg.timeout_s,
+            ),
+        )
+        return manifest.model_dump(mode="json")
+
+    def audit_detail(self) -> dict[str, Any]:
+        """Ids, host, digests and counts for the ``model.register`` row (spec 5.11; ENDPOINT-19, -31)."""
+        reg = self.registration
+        return {
+            "kind": ENDPOINT_KIND, "source": "endpoint", "host": self.host, "scheme": self.scheme,
+            "plaintext": self.plaintext, "allowlist_entry": self.allowlist_entry,
+            "auth_profile_id": reg.auth_profile_id, "auth_kind": self.auth_kind,
+            "modality": reg.modality, "input_format": reg.resolved_input_format,
+            "dataset_id": self.binding.dataset_id, "dataset_split": self.binding.split,
+            "dataset_revision": self.binding.revision, "n_classes": len(self.binding.class_names),
+            "input_shape": list(reg.input_shape), "contract": reg.contract_version,
+            "descriptor_sha256": self.descriptor_sha256, "sha256": self.descriptor_sha256,
+            "batch_rows": reg.batch_rows, "timeout_s": reg.timeout_s,
+            "attestation": {"evaluation_instance": bool(reg.evaluation_instance_attestation)},
+        }
+
+
+def load_endpoint_auth_profile(session: Session, profile_id: str, project_id: str) -> AuthProfile:
+    """The AuthProfile an endpoint registration names, checked for project and kind (never decrypted).
+
+    Raises :class:`EndpointAdmissionError` with ``not_found`` (unknown id, or a
+    profile of another project: the id is not leaked across tenants),
+    ``auth_profile_required`` (blank id) or ``auth_profile_kind_unsupported``
+    (``form`` / ``cookie``, or ``header`` without ``config.header_name``).
+    """
+    from redsim.db.models import AuthProfile
+
+    profile_id = (profile_id or "").strip()
+    if not profile_id:
+        raise EndpointAdmissionError("auth_profile_required", "auth_profile_id is required: the endpoint credential "
+                                     "is an AuthProfile of this project", field="auth_profile_id")
+    profile = session.get(AuthProfile, profile_id)
+    if profile is None or profile.project_id != project_id:
+        raise EndpointAdmissionError("not_found", f"auth profile {profile_id!r} not found in project {project_id!r}",
+                                     field="auth_profile_id", auth_profile_id=profile_id)
+    kind = str(profile.kind or "")
+    if kind not in SUPPORTED_ENDPOINT_AUTH_KINDS:
+        raise EndpointAdmissionError(
+            "auth_profile_kind_unsupported",
+            f"auth profile kind {kind!r} cannot authenticate a predict endpoint; "
+            f"use one of {sorted(SUPPORTED_ENDPOINT_AUTH_KINDS)}",
+            field="auth_profile_id", auth_profile_id=profile_id, auth_kind=kind,
+        )
+    if kind == "header":
+        header_name = str((profile.config or {}).get("header_name") or "").strip()
+        if not header_name or any(ch in header_name for ch in " :\r\n"):
+            raise EndpointAdmissionError(
+                "auth_profile_kind_unsupported",
+                "an auth profile of kind 'header' needs a valid config.header_name to carry the credential",
+                field="auth_profile_id", auth_profile_id=profile_id, auth_kind=kind,
+            )
+    return profile
+
+
+def admit_endpoint_registration(
+    session: Session,
+    body: dict[str, Any],
+    *,
+    project_id: str,
+    allowlist: Iterable[str],
+    assets_root: str | Path | None = None,
+) -> EndpointAdmission:
+    """Static admission of ``POST /v1/models`` ``source=endpoint`` (spec 9.3 steps 1 to 3; ENDPOINT-01, -07).
+
+    Order: body shape (``EndpointRegistration``), URL and egress policy,
+    AuthProfile, dataset binding, declared classes against the bound split.
+    Every refusal is an :class:`EndpointAdmissionError` naming the 17.3 code and
+    the body field; the route writes the ``success=False`` row and raises the
+    envelope. Nothing is resolved, connected or queried.
+    """
+    from pydantic import ValidationError
+
+    from redsim.ml.endpoint_egress import EgressRefused
+    from redsim.ml.targets.endpoint_contract import EndpointRegistration
+
+    try:
+        registration = EndpointRegistration.model_validate(body)
+    except ValidationError as exc:
+        raise _registration_error(exc) from None
+
+    try:
+        parsed = registration.check_url(list(allowlist))
+    except EgressRefused as exc:
+        # ``detail()`` is the audit-safe context (rule, host, address); ``code`` is the constructor's own.
+        context = {key: value for key, value in exc.detail().items() if key != "code"}
+        raise EndpointAdmissionError(exc.code, str(exc), field="url", **context) from exc
+
+    profile = load_endpoint_auth_profile(session, registration.auth_profile_id, project_id)
+    header_name = str((profile.config or {}).get("header_name") or "").strip() or None
+
+    try:
+        binding = check_upload_dataset(registration.dataset_id, modality=registration.modality,
+                                       dataset_split=registration.dataset_split, root=assets_root)
+    except DatasetBindingError as exc:
+        raise EndpointAdmissionError(DatasetBindingError.code, str(exc), field=exc.field,
+                                     dataset_id=registration.dataset_id) from exc
+    if binding.fixture_only:
+        raise EndpointAdmissionError(
+            DatasetBindingError.code, f"dataset {binding.dataset_id!r} is a CI fixture and never binds a model",
+            field="dataset_id", dataset_id=binding.dataset_id,
+        )
+    declared = registration.resolved_n_classes
+    if declared != len(binding.class_names):
+        raise EndpointAdmissionError(
+            DatasetBindingError.code,
+            f"the endpoint declares {declared} classes; the bound split {binding.dataset_id!r}/{binding.split!r} "
+            f"has {len(binding.class_names)}",
+            field="n_classes" if registration.class_names is None else "class_names",
+            dataset_id=binding.dataset_id,
+        )
+    if registration.class_names is not None and list(registration.class_names) != list(binding.class_names):
+        raise EndpointAdmissionError(
+            DatasetBindingError.code,
+            f"declared class_names differ from the bound split's class order for {binding.dataset_id!r}",
+            field="class_names", dataset_id=binding.dataset_id,
+        )
+    return EndpointAdmission(
+        registration=registration, url=parsed.url, host=endpoint_host(parsed.url), scheme=parsed.scheme,
+        plaintext=parsed.plaintext, allowlist_entry=parsed.allowlist_entry, auth_kind=str(profile.kind),
+        auth_header_name=header_name, binding=binding, descriptor_sha256=registration.descriptor_sha256(),
+    )
+
+
+# Body field -> the spec 17.3 code a shape error on it maps to. ``auth_profile_required`` is
+# a Phase B addendum code the errors table may still lack; the route resolves it by name.
+_REGISTRATION_FIELD_CODES: dict[str, str] = {
+    "url": "endpoint_url_invalid",
+    "auth_profile_id": "auth_profile_required",
+    "license_statement": "license_required",
+    "dataset_id": DatasetBindingError.code,
+    "dataset_split": DatasetBindingError.code,
+    "modality": "not_implemented",
+    "input_format": "not_implemented",
+    "input_shape": "schema_undeclared",
+    "class_names": "schema_undeclared",
+    "n_classes": "schema_undeclared",
+    # The D3 attestation is a required statement like the licence (ENDPOINT-31); the route
+    # swaps in ``attestation_required`` when the errors table carries it.
+    "evaluation_instance_attestation": "license_required",
+}
+
+
+def _registration_error(exc: Any) -> EndpointAdmissionError:
+    """Map the first pydantic error of an ``EndpointRegistration`` body onto a code and a field."""
+    errors = list(exc.errors()) if hasattr(exc, "errors") else []
+    field = "body"
+    message = str(exc)
+    if errors:
+        first = errors[0]
+        loc = [str(part) for part in first.get("loc", ()) if not isinstance(part, int)]
+        field = loc[0] if loc else "body"
+        message = f"{'.'.join(loc) or 'body'}: {first.get('msg', 'invalid')}"
+        if not loc:
+            # A model-level check names its field in the message ("one of class_names or n_classes is
+            # required", "input_shape for modality 'image' must have 3 dimensions"): the first name
+            # mentioned is the field the check is about.
+            mentioned = [(message.find(name), name) for name in _REGISTRATION_FIELD_CODES if name in message]
+            if mentioned:
+                field = min(mentioned)[1]
+    code = _REGISTRATION_FIELD_CODES.get(field, "params_out_of_range")
+    return EndpointAdmissionError(code, message, field=field)
+
+
+# ---------------------------------------------------------------------------
 # Campaign history (``GET /v1/models`` ``last_run_id``, ``GET /v1/models/{id}``)
 # ---------------------------------------------------------------------------
 
@@ -885,7 +1264,7 @@ def campaign_history(session: Session, target_id: str) -> list[dict[str, Any]]:
 
 
 def last_run_ids(session: Session, target_ids: Iterable[str]) -> dict[str, str]:
-    """``{target_id: newest campaign or verify run id}`` for the given targets (spec 17.2 list row)."""
+    """``{target_id: newest campaign, verify or probe run id}`` for the given targets (spec 17.2 list row)."""
     from sqlalchemy import select
 
     from redsim.db.models import Run
@@ -895,7 +1274,7 @@ def last_run_ids(session: Session, target_ids: Iterable[str]) -> dict[str, str]:
         return {}
     rows = session.execute(
         select(Run.target_id, Run.id).where(
-            Run.target_id.in_(ids), Run.scanner.in_(list(CAMPAIGN_SCANNERS)),
+            Run.target_id.in_(ids), Run.scanner.in_(list(HISTORY_SCANNERS)),
         ).order_by(Run.created_at.desc(), Run.id.desc())
     ).all()
     out: dict[str, str] = {}
@@ -1001,13 +1380,30 @@ def delete_model_target(
 
     manifest_value = detail.get("manifest")
     manifest: dict[str, Any] = manifest_value if isinstance(manifest_value, dict) else {}
-    bundled = value.startswith("bundled:") or detail.get("source") == "bundled"
-    source = detail.get("source") or ("bundled" if bundled else "upload")
+    endpoint = kind == ENDPOINT_KIND
+    bundled = not endpoint and (value.startswith("bundled:") or detail.get("source") == "bundled")
+    source = detail.get("source") or ("endpoint" if endpoint else "bundled" if bundled else "upload")
     previous_status = detail.get("status") or manifest.get("status")
 
     # The chained event precedes the row change (spec 6.7 invariant 4). ML
     # targets are in-boundary artifacts, not network locations: target=None
-    # records allowlist_check "n/a", as model.register does.
+    # records allowlist_check "n/a", as model.register does. An endpoint's value
+    # is a URL: the row carries the host only (ENDPOINT-18, -19).
+    audit_detail: dict[str, Any] = {
+        "actor": actor,
+        "op": "delete",
+        "kind": kind,
+        "target_id": target_id,
+        "value": endpoint_host(value) if endpoint else value,
+        "source": source,
+        "sha256": detail.get("sha256") or manifest.get("sha256"),
+        "previous_status": previous_status,
+        "soft_delete": True,
+        "blob_shared": False if endpoint else blob_shared,
+    }
+    if endpoint:
+        audit_detail["host"] = endpoint_host(value)
+        audit_detail["auth_profile_id"] = endpoint_auth_profile_id(detail)
     authorize(
         "target.manage",
         None,
@@ -1015,18 +1411,7 @@ def delete_model_target(
         actor=actor,
         writer=audit_writer,
         project_id=project_id,
-        detail={
-            "actor": actor,
-            "op": "delete",
-            "kind": kind,
-            "target_id": target_id,
-            "value": value,
-            "source": source,
-            "sha256": detail.get("sha256") or manifest.get("sha256"),
-            "previous_status": previous_status,
-            "soft_delete": True,
-            "blob_shared": blob_shared,
-        },
+        detail=audit_detail,
     )
 
     deleted_at = datetime.now(UTC).isoformat()
@@ -1044,7 +1429,10 @@ def delete_model_target(
         sess.add(target)
 
     blob_deleted: bool | None = None
-    if not bundled:
+    if endpoint:
+        # The value is a URL, nothing was ever stored for it (ENDPOINT-18).
+        blob_deleted = None
+    elif not bundled:
         if blob_shared:
             blob_deleted = False
             logger.info("delete_model_target target_id=%s blob %s shared with another live model; retained",
@@ -1069,12 +1457,19 @@ def delete_model_target(
 __all__ = [
     "BUNDLED_BLOB_PREFIX",
     "CAMPAIGN_SCANNERS",
+    "HISTORY_SCANNERS",
+    "LLM_PROBE_SCANNER",
     "DELETED_STATUS",
+    "ENDPOINT_KIND",
     "ML_KINDS",
+    "SUPPORTED_ENDPOINT_AUTH_KINDS",
     "UNKNOWN_BUNDLED_MODEL",
     "DatasetBinding",
     "DatasetBindingError",
+    "EndpointAdmission",
+    "EndpointAdmissionError",
     "MlCatalogUnavailable",
+    "admit_endpoint_registration",
     "artifact_target_from_path",
     "assets_root_path",
     "audit_refused_admission",
@@ -1085,9 +1480,14 @@ __all__ = [
     "dataset_entries",
     "dataset_modality",
     "delete_model_target",
+    "endpoint_auth_profile_id",
+    "endpoint_host",
+    "endpoint_request_block",
     "find_bundled_registration",
     "is_deleted",
+    "is_endpoint_target",
     "last_run_ids",
+    "load_endpoint_auth_profile",
     "read_asset_manifest",
     "register_bundled_model",
     "resolve_dataset_binding",

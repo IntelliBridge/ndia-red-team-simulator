@@ -20,8 +20,9 @@ pnpm install
 
 `--native-tls` is required behind the corporate TLS proxy. Extras:
 `api`, `worker`, `test`, `dev`, `security`, `docs`, `ml`, `llm` (optional
-private `pythia-sdk`), `garak` (Phase B). `pydantic>=2.7` and `PyYAML` are
-the only base dependencies. Never call `.venv/bin/pip`, and do not install
+private `pythia-sdk`), `garak` (Phase B LLM domain, pinned `garak>=0.16,<0.17`,
+installed by the `garak offline` CI lane and by nobody else yet). `pydantic>=2.7`
+and `PyYAML` are the only base dependencies. Never call `.venv/bin/pip`, and do not install
 packages into a venv that other agents or worktrees share.
 
 The web side is one pnpm 10 workspace rooted at the repo (`web/` and
@@ -60,11 +61,18 @@ system conventions.
 ## Run the test suite
 
 ```bash
-.venv/bin/python -m pytest -q                       # 900 passed, 30 skipped on main 4320740, about 19 s
-.venv/bin/python -m pytest -q -m ml                 # only the tests that need the ml extra
-.venv/bin/python -m pytest -q -m integration        # sqlite-backed integration tests
+.venv/bin/python -m pytest -q -p no:cacheprovider                 # default tier: 2081 passed, 35 skipped, 1 deselected at main 29db42c (106 s with the ml extra)
+.venv/bin/python -m pytest -q -p no:cacheprovider -m ml           # only the tests that need the ml extra
+.venv/bin/python -m pytest -q -p no:cacheprovider -m integration  # sqlite-backed integration tests
+REDSIM_E2E=1 .venv/bin/python -m pytest -q -p no:cacheprovider -m e2e tests/e2e   # 22 passed at 29db42c (136 s)
+.venv/bin/python -m pytest -q -p no:cacheprovider -m garak tests  # exit 5 (nothing collected) until a garak-marked test exists
 .venv/bin/python -m pytest -q --cov=redsim --cov-report=term | tail -5
 ```
+
+The counts are the wave B0 integration run at `29db42c` (2026-09-09), local,
+not CI; they move with every wave, so re-run before quoting them. The four
+tiers (default, `ml`, `e2e`, `garak`) are described in
+[`docs/dev/testing.md`](docs/dev/testing.md).
 
 Markers (defined in `pyproject.toml`):
 
@@ -74,7 +82,8 @@ Markers (defined in `pyproject.toml`):
 | `integration` | May hit Postgres / Redis. Runs by default on the sqlite harness in `tests/conftest.py`, runs against real services in CI. |
 | `ml` | Needs the `ml` extra (torch, ART, SHAP). Deselected on the Python 3.13 CI lane. Guard heavy imports with `pytest.importorskip` so collection survives without the extra. |
 | `docker` | Needs Docker. Opt-in. |
-| `e2e` | Live stack. Opt-in via `REDSIM_E2E=1`. |
+| `e2e` | `tests/e2e/`: the real API, admission, eager Celery, the real sandbox child and the CLI over sqlite on a synthetic asset tree. Opt-in via `REDSIM_E2E=1`; `REDSIM_E2E_POSTGRES_URL` (a migrated database) turns the RLS lane on. Runs in CI on every PR since wave B0 (`E2E tier (python, eager Celery)`). |
+| `garak` | Needs the `garak` extra; skipped when absent (wave B0). Deselected by `addopts` and by every other lane, so `garak`-marked tests run only in the `garak offline` job. Stamp it, and `importorskip("garak")`, on every test that imports garak. |
 | `slow` | Long-running. Excluded by default. |
 | `auth_required` | Needs the Keycloak cookie flow. Skipped by default. |
 
@@ -118,6 +127,15 @@ full description is [`docs/dev/ci.md`](docs/dev/ci.md).
   `Dependency CVEs (pip-audit + trivy)`, `Helm chart lints + templates`,
   `OTel Collector config is valid`, `Secret scan (trufflehog)`,
   `redsim_output is not committed`.
+- `E2E tier (python, eager Celery)` (job `e2e-python`, wave B0 of the Phase B
+  plan): `REDSIM_E2E=1 pytest -m e2e tests/e2e` against a migrated service
+  Postgres so the RLS lane runs, 20 minute timeout, harness directory
+  uploaded on failure.
+- `garak offline` (job `garak-offline`, wave B0): installs the `garak` extra
+  on CPU torch, imports garak, runs `pytest -m garak tests` with no gateway
+  variable in the environment. Exit 5 (nothing collected) counts as success
+  until the LLM tracks land their `garak`-marked tests; any other non-zero
+  exit fails the job.
 - `Next.js build (pnpm, frozen lockfile)`: `pnpm install --frozen-lockfile`,
   design-system and web typecheck, vitest, `next build`. When you change a
   `package.json`, regenerate the root `pnpm-lock.yaml` in the same commit.
@@ -127,8 +145,9 @@ full description is [`docs/dev/ci.md`](docs/dev/ci.md).
   `docs/` belongs in the `nav`. GitHub Pages publishing is off.
 
 `deploy-aws.yml` builds images under GitHub OIDC and rolls ECS services. It
-does not run the gates and currently fails at the AssumeRole step
-(account-side).
+does not run the gates. Since the `58461cc` push the AssumeRole step succeeds
+and the three images are built and pushed; the deploy job is skipped while the
+repo variable `ECS_CLUSTER` is unset.
 
 ## Spec-first workflow
 
@@ -151,7 +170,10 @@ workstreams cannot break each other. Treat these as locked:
 - every field name and type in `redsim/ml/schema.py`, old and new
   (`CampaignConfig`, `MRIRecord`, `MLModelManifest` and `MLFindingDetail`
   are the shared contracts),
-- the migration head `0010_ml_vertical` and the `ml_campaigns` column set,
+- the migration head and the `ml_campaigns` column set. The head moved once
+  under the protocol, from `0010_ml_vertical` to `0011_phase_b_platform`
+  (wave B0 of the Phase B plan, additive, announced in master plan section 5;
+  `ml_campaigns` gained only the nullable `batch_id`),
 - the `Action` values in `redsim/api/policy.py` and their minimum roles, and
   the `viewer` rank,
 - the `GET /v1/runs/{id}/campaign` response shape encoded by
@@ -172,12 +194,26 @@ The change protocol (section 8 of
 A schema change ships with its Alembic migration, its test update and the
 master-plan note in the same PR.
 
+Wave B0 of [`docs/plans/12-phase-b-plan.md`](docs/plans/12-phase-b-plan.md)
+exercised the protocol once (2026-09-09): every Phase B field of its section 3
+landed in `redsim/ml/schema.py` additive and default-valued, announced in
+master plan sections 0 and 5, with the frozen fixture validating
+byte-identical. `tests/ml/test_schema_compat.py` is the tripwire that keeps it
+so: it pins the fixture's sha256, requires every property added since P0 to
+have a default, and refuses a removed or retyped P0 property or a narrowed
+vocabulary. Any further change to `redsim/ml/schema.py` has to keep that test
+green, and the docs writer for the wave records it in master plan section 0.
+
 ## Service-layer contract
 
 API write routes call admission services only (`services.scans`,
-`services.verify`, `services.targets`, `services.auth_profiles`, and the
-planned `services.ml_models`, `services.ml_campaigns`, `services.ml_findings`),
-and Celery tasks call execution services only. See
+`services.verify`, `services.targets`, `services.auth_profiles`,
+`services.ml_models`, `services.ml_campaigns`, `services.ml_findings`, and
+in Phase B waves B2 and B3 the planned `services.ml_llm`,
+`services.finding_review`, `services.ml_batches`, `services.ml_datasets`,
+`services.ml_capacity`), and Celery tasks call execution services only. The
+Phase B routes that wave B0 mounted are `501 not_implemented` stubs that call
+no service and write nothing until their wave replaces them. See
 [`docs/architecture/overview.md`](docs/architecture/overview.md) under
 "Layered service architecture".
 
@@ -189,9 +225,12 @@ without a matching chain event.
 
 Two more rules for the ML vertical:
 
-- The API process never imports torch, ART, onnxruntime or SHAP.
+- The API process never imports torch, ART, onnxruntime, SHAP, scikit-learn,
+  garak, openai, litellm, reportlab, pyarrow or mlcroissant.
   `tests/test_api_process_has_no_ml.py` builds the app with those modules
-  blocked. Model bytes are opened only on the worker inside the sandbox child.
+  blocked. Model bytes, inference calls and dataset parsing happen only on the
+  worker: inside the sandbox child, or in the worker parent for the endpoint
+  predict broker, which is the only outbound HTTP of the vertical.
 - Measurements, observations, interpretation and candidate recommendations
   stay separate fields and separate panels. The `Literal` labels in
   `redsim/ml/schema.py` are part of the contract.

@@ -21,6 +21,7 @@ nearest cent, so a sub-cent call records ``0``.
 from __future__ import annotations
 
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,15 @@ def _static_rate(model: str) -> tuple[float, float] | None:
 def _litellm_usd(model: str, prompt_tokens: int, completion_tokens: int) -> float | None:
     """Authoritative cost via litellm's price map, when importable."""
     try:
-        from litellm import cost_per_token
+        # litellm runs ``dotenv.load_dotenv()`` at import, seeding the process environment from
+        # whatever ``.env`` sits above its install directory. A cost lookup must never turn into an
+        # ambient credential source (D5), so the environment is restored after the import.
+        saved = dict(os.environ)
+        try:
+            from litellm import cost_per_token
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
         prompt_cost, completion_cost = cost_per_token(
             model=model,
             prompt_tokens=prompt_tokens,

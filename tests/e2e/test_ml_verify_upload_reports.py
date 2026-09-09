@@ -1113,7 +1113,6 @@ def _assert_markdown_report(md: str, campaign: dict[str, Any]) -> None:
 
 def _assert_report_routes(e2e_app: E2EApp, e2e_org: E2EOrg, run_id: str) -> tuple[str, dict[str, Any]]:
     """Download md/json/html for ``run_id`` and check headers, digests, JSON identity; return (md, campaign)."""
-    from redsim.api.errors import NOT_IMPLEMENTED
     from redsim.api.security_headers import REPORT_CSP
     from redsim.ml.schema import CampaignRecord, MRIRecord
 
@@ -1150,7 +1149,10 @@ def _assert_report_routes(e2e_app: E2EApp, e2e_org: E2EOrg, run_id: str) -> tupl
         assert report_json["score"] is None and report_json["score_status"] is not None
     for key, value in report_json.items():
         assert campaign[key] == value, key
-    assert set(campaign) - set(report_json) <= {"findings", "project_id", "reviewer_notes"}
+    # The campaign projection adds the finding rows, the project, reviewer notes and (wave B2) the
+    # scoring weights it was scored with; the record itself is the report.
+    assert set(campaign) - set(report_json) <= {"findings", "project_id", "reviewer_notes", "weights",
+                                                "non_default_weights"}
     assert "config" in report_json and "provenance" in report_json and "limitations" in report_json
 
     html_response = _report(scanner, run_id, "html")
@@ -1170,11 +1172,11 @@ def _assert_report_routes(e2e_app: E2EApp, e2e_org: E2EOrg, run_id: str) -> tupl
         # URL strings are data: rendered as inert (escaped) text and never linked.
         assert url in unescape(html), url
 
+    # Wave B2: report.pdf is a worker-written artifact; the completion path renders md/json/html only, so
+    # before a POST report.render the PDF is 404 (never a filesystem fallback).
     pdf = _report(scanner, run_id, "pdf")
-    assert pdf.status_code == 501, pdf.text
-    detail = pdf.json()["detail"]
-    assert detail["code"] == NOT_IMPLEMENTED and detail["phase"] == "B" and detail["field"] == "ext"
-    assert detail["message"], "the refusal carries a reason"
+    assert pdf.status_code == 404, pdf.text
+    assert pdf.json()["detail"] == "report not yet rendered"
 
     # The export gate (spec 7.3, 17.1): membership alone does not export; the other project sees nothing.
     assert _report(viewer, run_id, "md").status_code == 403
@@ -1191,7 +1193,7 @@ def _assert_report_routes(e2e_app: E2EApp, e2e_org: E2EOrg, run_id: str) -> tupl
     return md, campaign
 
 
-def test_reports_sections_and_pdf_501(
+def test_reports_sections_and_pdf_404(
     e2e_app: E2EApp, e2e_org: E2EOrg, e2e_bundled: dict[str, str], finding_campaign: h.CampaignRun,
     named_verify: VerifyRun,
 ) -> None:

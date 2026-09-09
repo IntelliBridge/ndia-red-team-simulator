@@ -1,11 +1,21 @@
 """Attack adapter protocol (design spec section 2.3, product spec 12.1).
 
 The protocol is the contract the campaign runner calls: ``info()``, ``resolve_params()``
-and ``run(target, x, y, params, seed)``. Adapters may additionally carry three optional
-class attributes the runner and the registry read with ``getattr`` defaults, so they are
-not protocol members: ``domains`` (``frozenset`` of ``Domain`` values the adapter applies
-to), ``takes_eps`` (``False`` for minimal-norm attacks whose grid is an evaluation grid),
-and ``capabilities`` (tags from ``registry.KNOWN_ATTACK_CAPABILITIES``).
+and ``run(target, x, y, params, seed)``. Adapters may additionally carry optional class
+attributes the runner and the registry read with ``getattr`` defaults, so they are not
+protocol members:
+
+- ``domains``: ``frozenset`` of ``Domain`` values the adapter applies to.
+- ``takes_eps``: ``False`` for minimal-norm attacks whose grid is an evaluation grid (spec
+  12.3): the attack runs once, unconstrained but with bounded iterations, and the campaign
+  thresholds the achieved per-sample norm against every grid eps.
+- ``capabilities``: tags from ``registry.KNOWN_ATTACK_CAPABILITIES``.
+- ``norms``: ``frozenset`` of campaign norms (``"linf"``, ``"l2"``, ``"edit"``,
+  ``"patch_area"``) the adapter may be evaluated under. Absent, the registry derives
+  ``{"linf", "l2"}`` from a ``norm_l2`` parameter and ``{"linf"}`` otherwise
+  (``registry.attack_norms`` / ``attack_supports_norm``).
+- ``domain_defaults``: ``{domain: {param: value}}`` per-modality cost defaults applied to
+  keys the caller omitted (``registry.apply_domain_defaults``); explicit values always win.
 """
 
 from __future__ import annotations

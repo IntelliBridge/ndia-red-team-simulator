@@ -362,6 +362,9 @@ class _NoopMetric:
 _NoopCounter = _NoopMetric
 
 #: Product metric names (all registered by :func:`get_metrics`).
+#: ``redsim_jobs_active`` and the two ``redsim_ml_*`` gauges after it are set from
+#: one sample of the jobs table by ``redsim.services.ml_capacity.sample_gauges``
+#: (the continuation dispatcher and the 60 s beat backstop; register BULK-22).
 METRIC_NAMES: tuple[str, ...] = (
     "redsim_scans_total",
     "redsim_fix_success_total",
@@ -370,6 +373,8 @@ METRIC_NAMES: tuple[str, ...] = (
     "redsim_rate_limited_total",
     "redsim_ml_campaigns_total",
     "redsim_ml_stage_seconds",
+    "redsim_ml_deferred_runs",
+    "redsim_ml_daily_budget_used",
 )
 
 #: Histogram buckets for ``redsim_ml_stage_seconds``: sub-second sample/clean
@@ -409,7 +414,40 @@ def _make_counters() -> dict[str, Any]:
             ["stage"],
             buckets=_STAGE_SECONDS_BUCKETS,
         ),
+        "redsim_ml_deferred_runs": Gauge(
+            "redsim_ml_deferred_runs",
+            "ML campaign jobs admitted but waiting for a project concurrency slot",
+            ["project"],
+        ),
+        "redsim_ml_daily_budget_used": Gauge(
+            "redsim_ml_daily_budget_used",
+            "ML run admissions (attack.run + verify.replay) since 00:00 UTC per project",
+            ["project"],
+        ),
     }
+
+
+def set_capacity_gauges(
+    *,
+    jobs_active: int,
+    deferred_by_project: MutableMapping[str, int] | dict[str, int],
+    budget_used_by_project: MutableMapping[str, int] | dict[str, int],
+) -> None:
+    """Set ``redsim_jobs_active`` and the per-project capacity gauges from one sample (never raises).
+
+    The sample comes from the jobs table (``redsim.services.ml_capacity.sample_gauges``),
+    never from broker inspection. Per-project labels are unbounded in a large
+    tenancy; acceptable for the deployment sizes this tool targets (BULK-22 risk note).
+    """
+    try:
+        metrics = get_metrics()
+        metrics["redsim_jobs_active"].set(int(jobs_active))
+        for project, value in deferred_by_project.items():
+            metrics["redsim_ml_deferred_runs"].labels(project=str(project)).set(int(value))
+        for project, value in budget_used_by_project.items():
+            metrics["redsim_ml_daily_budget_used"].labels(project=str(project)).set(int(value))
+    except Exception:  # noqa: BLE001, S110 - metrics never break the caller
+        pass
 
 
 _METRICS: dict | None = None
@@ -675,6 +713,7 @@ __all__ = [
     "metrics_handler",
     "record_campaign_outcome",
     "request_id_middleware",
+    "set_capacity_gauges",
     "set_request_id",
     "span",
     "stage_span",

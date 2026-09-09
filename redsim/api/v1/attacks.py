@@ -117,10 +117,15 @@ def list_attack_catalog(
         plugins = _attack_plugins()
     except Exception as exc:  # noqa: BLE001 - reported to the caller with its reason, never swallowed
         raise _plugins_unavailable(exc) from exc
-    attacks = [row.model_dump(mode="json", exclude_none=True) for row in list_attacks()]
+    # Spec 27.2 / 27.4 (INTEROP-20): the ATLAS technique per row is route-level enrichment from the
+    # registry mapping (``redsim.ml.atlas``); the frozen ``AttackInfo`` gains no field.
+    from redsim.ml.atlas import attack_atlas_row, release_citation
+
+    attacks = [{**row.model_dump(mode="json", exclude_none=True), **attack_atlas_row(row.id)}
+               for row in list_attacks()]
     if modality:
         attacks = [row for row in attacks if row.get("domain") == modality]
-    return {"attacks": attacks, "count": len(attacks), "plugins": plugins}
+    return {"attacks": attacks, "count": len(attacks), "plugins": plugins, "atlas": release_citation()}
 
 
 @router.post("/models/{model_id}/attacks", status_code=status.HTTP_202_ACCEPTED)

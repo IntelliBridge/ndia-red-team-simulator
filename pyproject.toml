@@ -17,6 +17,8 @@ test = [
     "pytest>=8.0",
     "pytest-cov>=4.1",
     "moto>=5.0",
+    # Text extraction from the campaign report PDF (redsim/ml/pdf.py) in tests.
+    "pypdf>=4",
 ]
 dev = [
     "ruff>=0.5",
@@ -65,6 +67,14 @@ worker = [
     "structlog>=24.1",
     "opentelemetry-sdk>=1.24",
     "opentelemetry-exporter-otlp-proto-http>=1.24",
+    # Phase B report.pdf (spec 14.8, 17.4; REVIEW_REPORTS-15): pure-Python PDF
+    # renderer with the DejaVu faces bundled under redsim/ml/pdf_fonts/, imported by
+    # redsim.ml.pdf on the worker's report.render path only. Declared here once: the
+    # worker image installs .[worker,ml] and every CI lane installs the worker extra;
+    # the offline CLI (redsim ml attack) writes the three text formats and needs no
+    # PDF renderer. The API process never imports it (tests/test_api_process_has_no_ml.py).
+    "reportlab>=4.2",
+    "pillow>=10",
 ]
 docs = [
     "mkdocs>=1.6",
@@ -110,6 +120,10 @@ redsim = "redsim.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["redsim*"]
+
+[tool.setuptools.package-data]
+# The subset DejaVu faces and their licence the PDF renderer registers (redsim/ml/pdf.py).
+"redsim.ml.pdf_fonts" = ["*.ttf", "LICENSE", "README.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -18,6 +18,11 @@ the same table with the same rules. One of them, ``capacity_deferred``, is a
 ``202`` marker: it rides in the body of an accepted response to say the run
 was admitted but not yet dispatched, so it is never raised as a refusal and
 :data:`MARKER_CODES` names it (:class:`ApiError` and :func:`api_error` refuse it).
+The addendum's second table (wave B2, ``codes-b2`` track, same date) adds the
+codes the register named and wave B0 left out: endpoint credentials and query
+budgets, the LLM probe key, batch and bulk admission, idempotency keys, dataset
+export of fixture runs, and the review and snapshot conflicts. Every one is a
+refusal (4xx) with the structured envelope; none joins the string-detail set.
 
 Nothing here imports FastAPI at module import time: services raise
 :class:`ApiError` and the route converts it, so the worker and CLI can share the
@@ -94,6 +99,36 @@ DAILY_BUDGET_EXCEEDED: Final = "daily_budget_exceeded"
 INTEGRATION_DISABLED: Final = "integration_disabled"
 ENDPOINT_UNREACHABLE: Final = "endpoint_unreachable"
 
+# --- Codes (spec 17.3 addendum, second table: wave B2 ``codes-b2``, 2026-09-09) --
+# In table order (by HTTP status). Register ids name the rows that need them.
+
+# The structured spelling of the review independence refusal (REVIEW_REPORTS-12);
+# the Phase A dismissal alias keeps its string-detail ``forbidden``.
+REVIEWER_NOT_INDEPENDENT: Final = "reviewer_not_independent"
+# Endpoint credentials (ENDPOINT-18): a live target still references the profile.
+AUTH_PROFILE_IN_USE: Final = "auth_profile_in_use"
+# ``Idempotency-Key`` (REVIEW_REPORTS-32, BULK-11): same key, different request;
+# same key, original still reserved (the register's ``idempotency_in_flight``).
+IDEMPOTENCY_KEY_REUSED: Final = "idempotency_key_reused"
+IDEMPOTENCY_CONFLICT: Final = "idempotency_conflict"
+# Review compare-and-set loser (REVIEW_REPORTS-06); archived snapshot (REVIEW_REPORTS-22).
+REVIEW_STATE_CONFLICT: Final = "review_state_conflict"
+SNAPSHOT_ARCHIVED: Final = "snapshot_archived"
+# Bulk upload caps (BULK-13): total bytes, then file count.
+BULK_TOO_LARGE: Final = "bulk_too_large"
+# Endpoint registration without a credential reference (ENDPOINT-06); LLM target
+# or probe run without a probe-key profile (LLM-03, LLM-04, LLM-26).
+AUTH_PROFILE_REQUIRED: Final = "auth_profile_required"
+PROBE_KEY_REQUIRED: Final = "probe_key_required"
+# Batch pre-pass refusal (BULK-03): the whole batch is refused, nothing admitted.
+BATCH_MEMBER_REFUSED: Final = "batch_member_refused"
+BULK_TOO_MANY_FILES: Final = "bulk_too_many_files"
+# Dataset export of a CI-fixture run (INTEROP-10; D3).
+FIXTURE_NOT_EXPORTABLE: Final = "fixture_not_exportable"
+# Worst-case endpoint query estimate above the per-job caps (ENDPOINT-08). The
+# broker enforcing the cap at run time is a job failure, never this HTTP code.
+QUERY_BUDGET_EXCEEDED: Final = "query_budget_exceeded"
+
 # --- HTTP status per code -----------------------------------------------------
 
 HTTP_STATUS: Final = MappingProxyType({
@@ -150,6 +185,20 @@ HTTP_STATUS: Final = MappingProxyType({
     DAILY_BUDGET_EXCEEDED: 429,
     INTEGRATION_DISABLED: 501,
     ENDPOINT_UNREACHABLE: 502,
+    # Phase B addendum, second table (wave B2 codes-b2, 2026-09-09).
+    REVIEWER_NOT_INDEPENDENT: 403,
+    AUTH_PROFILE_IN_USE: 409,
+    IDEMPOTENCY_KEY_REUSED: 409,
+    IDEMPOTENCY_CONFLICT: 409,
+    REVIEW_STATE_CONFLICT: 409,
+    SNAPSHOT_ARCHIVED: 409,
+    BULK_TOO_LARGE: 413,
+    AUTH_PROFILE_REQUIRED: 422,
+    PROBE_KEY_REQUIRED: 422,
+    BATCH_MEMBER_REFUSED: 422,
+    BULK_TOO_MANY_FILES: 422,
+    FIXTURE_NOT_EXPORTABLE: 422,
+    QUERY_BUDGET_EXCEEDED: 429,
 })
 
 #: Every code of the section 17.3 table, in table order.
@@ -222,6 +271,20 @@ _DEFAULT_MESSAGE: Final = MappingProxyType({
     DAILY_BUDGET_EXCEEDED: "the project's daily run budget is spent",
     INTEGRATION_DISABLED: "this integration is not enabled in this deployment",
     ENDPOINT_UNREACHABLE: "endpoint did not answer",
+    # Phase B addendum, second table (wave B2 codes-b2, 2026-09-09).
+    REVIEWER_NOT_INDEPENDENT: "the reviewer is not independent of this finding",
+    AUTH_PROFILE_IN_USE: "auth profile is referenced by a live endpoint target",
+    IDEMPOTENCY_KEY_REUSED: "Idempotency-Key was already used for a different request",
+    IDEMPOTENCY_CONFLICT: "a request with this Idempotency-Key is still in flight",
+    REVIEW_STATE_CONFLICT: "the finding's review state changed since it was read",
+    SNAPSHOT_ARCHIVED: "the report snapshot is archived",
+    BULK_TOO_LARGE: "bulk upload exceeds the total size cap",
+    AUTH_PROFILE_REQUIRED: "endpoint registration needs an auth_profile_id",
+    PROBE_KEY_REQUIRED: "LLM targets need an auth profile that carries the probe key",
+    BATCH_MEMBER_REFUSED: "a batch member failed admission; the batch was refused whole",
+    BULK_TOO_MANY_FILES: "bulk upload exceeds the file-count cap",
+    FIXTURE_NOT_EXPORTABLE: "runs on a CI fixture target are never exported",
+    QUERY_BUDGET_EXCEEDED: "estimated endpoint query volume exceeds the per-job budget",
 })
 
 
@@ -306,9 +369,14 @@ __all__ = [
     "ARCHITECTURE_REQUIRED",
     "ATTACK_MODALITY_MISMATCH",
     "ATTACK_REQUIRES_GRADIENTS",
+    "AUTH_PROFILE_IN_USE",
     "AUTH_PROFILE_KIND_UNSUPPORTED",
+    "AUTH_PROFILE_REQUIRED",
+    "BATCH_MEMBER_REFUSED",
     "BATCH_MODALITY_MISMATCH",
     "BATCH_TOO_LARGE",
+    "BULK_TOO_LARGE",
+    "BULK_TOO_MANY_FILES",
     "CAMPAIGN_IN_FLIGHT",
     "CAMPAIGN_NOT_TERMINAL",
     "CAPACITY_DEFERRED",
@@ -326,8 +394,11 @@ __all__ = [
     "EPS_GRID_INVALID",
     "EXPORT_IN_FLIGHT",
     "EXPORT_UNAVAILABLE",
+    "FIXTURE_NOT_EXPORTABLE",
     "FORBIDDEN",
     "HTTP_STATUS",
+    "IDEMPOTENCY_CONFLICT",
+    "IDEMPOTENCY_KEY_REUSED",
     "INCOMPATIBLE_CAMPAIGNS",
     "INTEGRATION_DISABLED",
     "JOB_IN_FLIGHT",
@@ -341,16 +412,21 @@ __all__ = [
     "PARAMS_OUT_OF_RANGE",
     "PHASE_REQUIRED_CODES",
     "PICKLE_REFUSED",
+    "PROBE_KEY_REQUIRED",
     "PROBE_SET_UNKNOWN",
+    "QUERY_BUDGET_EXCEEDED",
     "QUEUE_UNAVAILABLE",
     "RATE_LIMITED",
     "REFERENCE_EPS_NOT_IN_GRID",
     "REMOTE_REFERENCE_REFUSED",
     "RESOLUTION_BLOCKED",
+    "REVIEWER_NOT_INDEPENDENT",
+    "REVIEW_STATE_CONFLICT",
     "REVIEW_TRANSITION_INVALID",
     "RUN_TERMINAL",
     "SCHEMA_UNDECLARED",
     "SCORE_UNAVAILABLE",
+    "SNAPSHOT_ARCHIVED",
     "SNAPSHOT_NOT_FOUND",
     "STRING_DETAIL_CODES",
     "UNKNOWN_ATTACK",

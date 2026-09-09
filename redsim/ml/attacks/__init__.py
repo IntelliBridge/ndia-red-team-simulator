@@ -1,10 +1,24 @@
 """ART-backed attack adapters (spec section 12).
 
-Importing this package registers the Phase A adapters into ``ATTACKS``
-(``redsim.ml.attacks.registry``): ``fgsm``, ``pgd``, ``hopskipjump`` and the
-benign ``noise_control``. The helpers below are shared by the adapter modules
-and are defined BEFORE the registration imports at the bottom of this file so
-the submodules can import them while the package is still initialising.
+Importing this package registers the bundled adapters into ``ATTACKS``
+(``redsim.ml.attacks.registry``): the Phase A set ``fgsm``, ``pgd``,
+``hopskipjump`` and the benign ``noise_control``; the Phase B minimal-norm
+set ``cw_l2`` and ``deepfool`` (image, white-box, evaluated on the L2 grid) and
+the score-based black-box ``zoo`` (tabular); the text attack ``word_substitution``
+(edit budget; its control ``text_noise_control`` is run by the text runner directly
+and is not registered); and the detection pair ``dpatch`` / ``patch_noise_control``
+(patch-area budget). ``ATTACKS.ids()`` is therefore exactly ``REGISTERED_IDS``.
+``adv_patch`` (MODALITIES-32) is not built: it is listed in ``UNBUILT_ADAPTERS`` with
+the reason so the catalog says so instead of a module quietly not existing. The
+helpers below are shared by the adapter modules and are defined BEFORE the
+registration imports at the bottom of this file so the submodules can import
+them while the package is still initialising.
+
+Minimal-norm attacks (spec 12.3, 15.1) take no eps: they run once with bounded
+iterations and the campaign compares the achieved per-sample norm against each
+grid eps (``takes_eps = False``; ``redsim.ml.campaign`` owns that thresholding).
+Their ``norms`` declaration says which campaign norm that comparison is
+meaningful in (``registry.attack_supports_norm``).
 
 Tabular specifics (spec 12.9) live in one place, ``TabularScaling``: eps is a
 fraction of each declared feature's training-split range, frozen features are
@@ -28,15 +42,20 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 import numpy as np
 
+from redsim.ml.attacks.base import AttackAdapter
 from redsim.ml.eval import perturbation_norms
 from redsim.ml.schema import AtlasTechnique, ParamSpec
+
+_LOG = logging.getLogger(__name__)
 
 # Canonical nondeterminism strings (spec 14.4). The worker folds AttackOutput.notes
 # that start with NONDETERMINISM_PREFIX into Provenance.nondeterminism.
@@ -55,14 +74,34 @@ INTEGER_DTYPES: frozenset[str] = frozenset({"int", "integer", "bool", "boolean"}
 # Finding is created and pins the exact ATLAS release it re-verified the names against.
 # The ids and names are the ones written in spec section 27.2; the version string marks
 # the major release those names were read from, not a claim about a specific point
-# release. A control demonstrates no adversarial technique and has no entry.
+# release. Every registered evasion adapter has exactly one entry; the convention is
+# AML.T0043 for an attack that crafts the input with model gradients (white-box) and
+# AML.T0040 for one that works through query access to the model's outputs (black-box).
+# A control demonstrates no adversarial technique and has no entry.
 ATLAS_VERSION = "4.x"
 ATLAS_TECHNIQUES: dict[str, AtlasTechnique] = {
     "fgsm": AtlasTechnique(id="AML.T0043", name="Craft Adversarial Data", atlas_version=ATLAS_VERSION),
     "pgd": AtlasTechnique(id="AML.T0043", name="Craft Adversarial Data", atlas_version=ATLAS_VERSION),
+    "cw_l2": AtlasTechnique(id="AML.T0043", name="Craft Adversarial Data", atlas_version=ATLAS_VERSION),
+    "deepfool": AtlasTechnique(id="AML.T0043", name="Craft Adversarial Data", atlas_version=ATLAS_VERSION),
+    "dpatch": AtlasTechnique(id="AML.T0043", name="Craft Adversarial Data", atlas_version=ATLAS_VERSION),
     "hopskipjump": AtlasTechnique(id="AML.T0040", name="ML Model Inference API Access",
                                   atlas_version=ATLAS_VERSION),
+    "zoo": AtlasTechnique(id="AML.T0040", name="ML Model Inference API Access", atlas_version=ATLAS_VERSION),
+    "word_substitution": AtlasTechnique(id="AML.T0040", name="ML Model Inference API Access",
+                                        atlas_version=ATLAS_VERSION),
 }
+
+# Spec 12.5 ``queries(a)`` denominator, settled once for every query-counted adapter: predict rows
+# spent divided by the number of samples whose prediction the attack flipped away from the model's
+# clean prediction (the query cost of one successful boundary crossing). ``None`` when nothing
+# flipped; the spent total is always in the notes so neither reading is invented.
+QUERIES_DENOMINATOR_NOTE = ("queries_mean denominator = samples flipped from the model's clean prediction (the "
+                            "query cost of one successful decision-boundary crossing); the rate over all "
+                            "attacked samples is recorded beside it")
+# Spec 12.3 / 15.1 wording shared by every minimal-norm adapter.
+MINIMAL_NORM_NOTE = ("minimal-norm attack: success at eps is defined by thresholding the achieved perturbation "
+                     "norm against each grid eps (spec 15.1)")
 
 
 def _pkg_version(dist: str, module: str | None = None) -> str | None:
@@ -102,6 +141,62 @@ def seed_all(seed: int) -> None:
     except Exception:  # noqa: BLE001 - torch is optional for tabular targets
         return
     torch.manual_seed(int(seed))
+
+
+def queries_summary(rows: int, calls: int, n: int, n_flipped: int) -> tuple[float | None, str]:
+    """``(queries_mean, note)`` for a query-counted adapter (spec 12.5 ``queries(a)``).
+
+    ``rows`` predict rows in ``calls`` predict calls were spent on ``n`` attacked samples of which
+    ``n_flipped`` left the model's clean prediction. The mean is per flipped sample; with no flip it is
+    ``None`` and the note carries the spent total and the per-attacked-sample rate instead.
+    """
+    per_attacked = rows / n if n else 0.0
+    if n_flipped > 0:
+        mean = rows / n_flipped
+        return mean, (f"queries_mean = {mean:.1f} predict rows per flipped sample ({rows} rows in {calls} predict "
+                      f"calls; {n_flipped}/{n} samples flipped from the model's clean prediction; "
+                      f"{per_attacked:.1f} rows per attacked sample)")
+    return None, (f"queries_mean not computed (denominator 0: 0/{n} samples flipped from the model's clean "
+                  f"prediction); {rows} predict rows in {calls} predict calls were spent ({per_attacked:.1f} rows "
+                  "per attacked sample)")
+
+
+def achieved_norm_note(x: np.ndarray, x_adv: np.ndarray, *, l2: bool, grid: Sequence[float] | None = None) -> str:
+    """One row note with the per-sample achieved norm of a minimal-norm attack (spec 12.5 ``pert``).
+
+    Reports how many of the ``n`` samples were changed at all, the min / median / max achieved norm over
+    the changed samples, and, when ``grid`` is given, ``k/n`` within budget at each grid eps. It is the
+    adapter-side record; the campaign performs the thresholding itself.
+    """
+    d = (np.asarray(x_adv, dtype=np.float64) - np.asarray(x, dtype=np.float64)).reshape(x.shape[0], -1)
+    norms = np.sqrt((d * d).sum(axis=1)) if l2 else np.abs(d).max(axis=1)
+    n = int(norms.shape[0])
+    changed = norms > 0
+    k = int(changed.sum())
+    label = "L2" if l2 else "Linf"
+    parts = [f"achieved {label} norm per sample: {k}/{n} samples changed"]
+    if k:
+        c = norms[changed]
+        parts.append(f"min {c.min():.4g}, median {float(np.median(c)):.4g}, max {c.max():.4g} over the changed samples")
+    if grid:
+        within = "; ".join(f"eps={float(e):g}: {int((changed & (norms <= float(e) + 1e-9)).sum())}/{n}" for e in grid)
+        parts.append(f"changed and within budget at {within}")
+    return "; ".join(parts)
+
+
+def require_class_gradients(clf: Any, attack_id: str) -> None:
+    """Raise ``AttackNotApplicable`` unless the estimator exposes class and loss gradients.
+
+    ART's ``CarliniL2Method`` and ``DeepFool`` need ``ClassGradientsMixin`` (``class_gradient``) on top of
+    ``loss_gradient``; a tree ensemble or a predict-only endpoint has neither, and the run is then recorded
+    ``not_run`` by the campaign rather than faked.
+    """
+    from redsim.ml.errors import AttackNotApplicable
+
+    if not (hasattr(clf, "class_gradient") and hasattr(clf, "loss_gradient")):
+        raise AttackNotApplicable(
+            f"{attack_id} needs a differentiable estimator with class gradients (ART ClassGradientsMixin); the "
+            "target's art_classifier() exposes no class_gradient / loss_gradient; recorded as not run")
 
 
 def resolve_from_schema(schema: list[ParamSpec], params: dict[str, Any] | None) -> dict[str, float | int | bool]:
@@ -378,11 +473,26 @@ def surrogate_estimator(target: Any) -> tuple[Any, str | None]:
 
 # --- registration --------------------------------------------------------------------------
 # Imported last so the adapter modules can use the helpers above.
-from redsim.ml.attacks import fgsm, hopskipjump, noise_control, pgd  # noqa: E402  (late import: registration)
+from redsim.ml.attacks import (  # noqa: E402  (late import: registration)
+    cw_l2,
+    deepfool,
+    dpatch,
+    fgsm,
+    hopskipjump,
+    noise_control,
+    pgd,
+    word_substitution,
+    zoo,
+)
 from redsim.ml.attacks.registry import (  # noqa: E402  (late import: registration)
     ATTACKS,
     KNOWN_ATTACK_CAPABILITIES,
+    KNOWN_NORMS,
+    apply_domain_defaults,
     attack_capabilities,
+    attack_domain_defaults,
+    attack_norms,
+    attack_supports_norm,
     attacks_with_capability,
     get_attack,
     list_attack_capabilities,
@@ -390,10 +500,40 @@ from redsim.ml.attacks.registry import (  # noqa: E402  (late import: registrati
     register_attack,
 )
 
-for _adapter in (fgsm.ADAPTER, pgd.ADAPTER, hopskipjump.ADAPTER, noise_control.ADAPTER):
+#: Every adapter this package registers, sorted: the attack catalog (``ATTACKS.ids()``) is exactly this list.
+REGISTERED_IDS: tuple[str, ...] = (
+    "cw_l2", "deepfool", "dpatch", "fgsm", "hopskipjump", "noise_control", "patch_noise_control", "pgd",
+    "word_substitution", "zoo",
+)
+#: Register items whose adapter is not built, with the reason: listed so the catalog states it (spec 14.7).
+UNBUILT_ADAPTERS: dict[str, str] = {
+    "adv_patch": "MODALITIES-32 (AdversarialPatchPyTorch on detectors) is not built; dpatch is the detection attack",
+}
+
+_BUNDLED_ADAPTERS: tuple[AttackAdapter, ...] = (
+    fgsm.ADAPTER, pgd.ADAPTER, hopskipjump.ADAPTER, noise_control.ADAPTER,
+    cw_l2.ADAPTER, deepfool.ADAPTER, zoo.ADAPTER,
+    word_substitution.ADAPTER, dpatch.ADAPTER, dpatch.CONTROL,
+)
+for _adapter in _BUNDLED_ADAPTERS:
     if ATTACKS.maybe_get(_adapter.id) is None:
         register_attack(_adapter)
 del _adapter
+
+
+def _check_catalog() -> None:
+    """The catalog, its declared contents and the ATLAS map can never drift apart (checked once at import)."""
+    if tuple(ATTACKS.ids()) != REGISTERED_IDS:
+        raise RuntimeError(f"attack registry {ATTACKS.ids()} does not match REGISTERED_IDS {list(REGISTERED_IDS)}")
+    families = {adapter.id: adapter.info().family for adapter in ATTACKS}
+    missing = sorted(aid for aid, family in families.items() if family == "evasion" and aid not in ATLAS_TECHNIQUES)
+    mapped_controls = sorted(aid for aid in ATLAS_TECHNIQUES if families.get(aid) != "evasion")
+    if missing or mapped_controls:
+        raise RuntimeError("ATLAS_TECHNIQUES must map every evasion adapter and nothing else "
+                           f"(unmapped evasion: {missing}; mapped non-evasion: {mapped_controls})")
+
+
+_check_catalog()
 
 __all__ = [
     "ATLAS_TECHNIQUES",
@@ -402,12 +542,22 @@ __all__ = [
     "CPU_FLOAT32_NOTE",
     "INTEGER_DTYPES",
     "KNOWN_ATTACK_CAPABILITIES",
+    "KNOWN_NORMS",
+    "MINIMAL_NORM_NOTE",
     "NONDETERMINISM_PREFIX",
+    "QUERIES_DENOMINATOR_NOTE",
+    "REGISTERED_IDS",
     "SURROGATE_NONDETERMINISM_NOTE",
     "SURROGATE_TRANSFER_NOTE_PREFIX",
+    "UNBUILT_ADAPTERS",
     "TabularScaling",
+    "achieved_norm_note",
+    "apply_domain_defaults",
     "apply_mask",
     "attack_capabilities",
+    "attack_domain_defaults",
+    "attack_norms",
+    "attack_supports_norm",
     "attacks_with_capability",
     "clip_range",
     "get_attack",
@@ -415,7 +565,9 @@ __all__ = [
     "list_attack_capabilities",
     "list_attacks",
     "perturbable_mask",
+    "queries_summary",
     "register_attack",
+    "require_class_gradients",
     "resolve_from_schema",
     "seed_all",
     "surrogate_estimator",

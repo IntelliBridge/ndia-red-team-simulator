@@ -393,8 +393,12 @@ def test_bundled_register_two_projects_and_409(api: SimpleNamespace) -> None:
     assert unbuilt.json()["detail"]["code"] == "model_load_refused"
     assert unbuilt.json()["detail"]["refusal_reason"] == "bundled_assets_missing"
 
+    # Phase B (ENDPOINT-23): source=endpoint is admitted field by field; an empty body is a
+    # 422 refusal on its first missing field, audited like the other refusals.
     endpoint = api.client.post("/v1/models", json={"source": "endpoint", "project_id": PROJECT})
-    assert endpoint.status_code == 501 and endpoint.json()["detail"]["phase"] == "B"
+    assert endpoint.status_code == 422, endpoint.text
+    assert endpoint.json()["detail"]["code"] == "endpoint_url_invalid"
+    assert endpoint.json()["detail"]["field"] == "url"
     assert all(not e.success for e in _events(api, "model.register")[-4:]), "every refusal wrote a success=False row"
     with api.Session() as sess:
         assert sess.query(Target).count() == 2

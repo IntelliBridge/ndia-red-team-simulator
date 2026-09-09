@@ -1,11 +1,337 @@
 # redsim/ml — Master Implementation Plan (reconciled)
 
-Status: v2.4, 2026-09-09. Supersedes v1, amends v2, v2.1, v2.2 and v2.3. This
-version is rebased on the **redsim platform** (the aegis platform kept whole
-under D1 and renamed to the `redsim` namespace in commit `b39d933`) after the
-`main` restructure of 2026-09-08, and records the tree at `58461cc`.
+Status: v2.7, 2026-09-09. Supersedes v1, amends v2 to v2.6. This version is
+rebased on the **redsim platform** (the aegis platform kept whole under D1
+and renamed to the `redsim` namespace in commit `b39d933`) after the `main`
+restructure of 2026-09-08, and records the tree at `1439f92` (Phase A
+complete through wave 4, Phase B waves B0 and B1) plus Phase B waves B2 and
+B3, pushed with this revision.
 
 ## 0. What changed since v1 (read this first)
+
+### v2.7 (2026-09-09): change note, Phase B wave B3
+
+Phase B wave B3, interoperability and bulk operations, is pushed to `main`
+with this revision: five track commits and the integration commit, written
+in the worktree `wt/waveb3` on the B2 integration commit and rebased onto it.
+By subject:
+
+- `feat(interop): Croissant/Parquet dataset export of a campaign run`
+  (`interop-contribute`): `redsim/ml/interop/{parquet,croissant,card}.py`
+  (one deterministic Parquet shard per (attack, ε) plus the control family
+  and the clean slice when persisted, on one fixed nullable schema; the
+  MLCommons Croissant 1.0 manifest with a `redsim:provenance` block whose own
+  sha256 is the dataset version; `check_projection`, the projection-equality
+  guard against `ml.flip_matrix`; `croissant_validate` refusing model file
+  names, `reviewer_notes`, credential names and any bare MRI; the
+  template-only card), `redsim/services/ml_datasets_export.py`
+  (`admit_export`: the `dataset.export` row, a follow-up `Run` with scanner
+  `ml.dataset_export`, `409 export_unavailable` / `export_in_flight`, `422
+  fixture_not_exportable`, one export per run) and
+  `redsim/workers/tasks/dataset_export.py` (`redsim.dataset_export` on
+  `scans`, the `ml.dataset.manifest` / `parquet` / `card` rows on the source
+  run, `dataset.export.execute`). INTEROP-33: the first export built with
+  these modules is in the public data repository at `0dababc`
+  (`data/exports/url_trees_sample/`).
+- `interop(consume): POST /v1/datasets static admission, sandboxed Parquet
+  parse, binding hook` (`interop-consume`): `redsim/api/v1/datasets.py` (the
+  consume route, the consumed rows on `GET /v1/datasets`, the manifest read
+  and the export route over the contribute service),
+  `redsim/services/ml_datasets.py` (stdlib-only static checks: length cap,
+  Parquet magic, no pickle-shaped name, the Croissant shape, bare-file-name
+  `contentUrl`s, licence, declared schema; `413`, `415`, `422
+  remote_reference_refused` / `license_required` / `schema_undeclared`, `501`
+  for `text` and `detection`; every refusal a `success=False`
+  `dataset.register` row; the `ml_datasets` row, an `ml.dataset_ingest` `Run`
+  and a `dataset.validate` `Job`; the binding helpers),
+  `redsim/ml/interop/consume.py` (the parse child) and
+  `redsim/workers/tasks/dataset_validate.py` (`redsim.ml_dataset_validate`
+  on `scans`: re-hash in the parent, the credential-free child, the
+  `dataset.validate` row and the `ml.dataset_validation_report`).
+- `bulk: batch campaigns, roll-up, cancel, compare groups, bulk verify`
+  (`bulk-service-routes`): `redsim/services/ml_batches.py`
+  (`create_campaign_batch` through the unchanged single-run boundary per
+  member with `batch_id` stamped after admission, write-free pre-checks, one
+  `batch.create` row, collected per-member refusals, `422
+  batch_member_refused` only when nothing was admitted, the capacity seam
+  per member; `rollup_status`; `batch_view` with no MRI number;
+  `cancel_batch`; `create_verify_batch` per owner decision BULK-16, one
+  defended run per `(defense, params)` with one `verify.replay` row per
+  additional finding), `redsim/api/v1/batches.py` (the six routes),
+  `redsim/ml/compare.py::comparability_groups` (no aggregate) and the
+  `batch_id` mirror in the e2e harness and the campaign-route tests.
+- `feat(ml): bulk upload, per-project capacity/deferral, CLI attack matrix`
+  (`bulk-upload-capacity-cli`): `redsim/api/v1/models_bulk.py`
+  (`POST /v1/models/bulk`: `411` / `413 bulk_too_large`, `422
+  bulk_too_many_files`, one `bulk.upload` row, the single-upload admission
+  per file, `201` / `207` / `422 batch_member_refused`; `GET /v1/ml/capacity`),
+  `redsim/services/ml_capacity.py` (`admit_or_defer` over
+  `projects.ml_max_concurrent_runs` and `ml_daily_run_budget`, deferral with
+  the `capacity_deferred` marker, the audited `429 daily_budget_exceeded`,
+  counts from the jobs table, `dispatch_deferred`),
+  `redsim/workers/tasks/capacity.py` (`continue_deferred` and the beat task
+  `redsim.ml_dispatch_deferred` every 60 s), `redsim/observability.py` (the
+  filled `redsim_jobs_active`, `redsim_ml_deferred_runs`,
+  `redsim_ml_daily_budget_used`), `redsim/workers/celery_app.py` (the
+  `capacity` include) and `redsim/cli/ml.py` (`redsim ml attack` with
+  several ids or `--matrix FILE.yaml`: one offline run and one verified
+  chain per cell, a summary table and `summary.json`, `--fail-fast`, exit 1
+  on any refused or failed cell, no aggregate).
+- `interop(atlas,foundry): ATLAS stamp and coverage, Foundry push, roster`
+  (`atlas-foundry`): `redsim/ml/atlas.py` (`STAMP_TECHNIQUE_IDS` checked at
+  import against `atlas_data`: `AML.T0043` for the gradient, text and patch
+  attacks, `AML.T0040` for `hopskipjump` and `zoo`, `AML.T0020` reserved for
+  the poisoning ids, `None` for controls; `technique_for_attack`,
+  `attack_atlas_row`, the number-free `coverage` view),
+  `redsim/services/ml_findings.py` (the stamp on every new finding, one
+  line), `redsim/api/v1/attacks.py` (the ATLAS block per row and the release
+  citation), `redsim/integrations/foundry.py` (settings from the process
+  environment with the B0 egress rules and the
+  `REDSIM_INTEGRATION_FOUNDRY_NON_OPERATIONAL=1` attestation, no token
+  variable; the roster block; `build_scorecard_payload`; the D9 guard
+  `validate_push_payload` / `assert_push_payload`; `scrub_detail`; the
+  Datasets v2 client), `redsim/integrations/__init__.py`
+  (`create_foundry_push`: the typed refusals, the `integration.push` row on
+  the follow-up run's chain, `501 integration_disabled` while unset or
+  misconfigured; `LATTICE_STATUS` text only by D3),
+  `redsim/workers/tasks/integration_push.py` (`redsim.integration_push` on
+  `default`, `max_retries=0`: the record digest check, the guard, the
+  payload and rows stored before the push, the token decrypted only then,
+  `ml.integration.receipt`, `integration.push.execute`),
+  `redsim/api/v1/integrations.py` (coverage, roster, push) and
+  `tests/ml/fake_foundry_server.py`. The push is proven against that fake
+  server only (INTEROP-26).
+- `fix: integrate Phase B wave B3 tracks`: the three B3 task modules added to
+  the Celery `include` list (`task_routes` unchanged so the worker-hardening
+  pin holds), the B0 `POST /v1/runs/{id}/dataset` stub removed from
+  `integrations.py` (the datasets router serves the path, no duplicate
+  operation id), and `tests/ml/test_phase_b_stubs.py` rewritten as the Phase
+  B surface pin (every B0 path gated and answering with a real handler, never
+  `501 not_implemented`; 61 cases).
+
+Checks (the B3 assembler's worktree, head `a780d88` before the atlas-foundry
+and integration commits and the rebase): `ruff check --select E4,E7,E9,F,I
+redsim tests` clean, `mypy redsim` clean (253 source files), the six
+writers' test files together 140 passed and 1 skipped, the surface pin 61
+passed, the e2e smoke file 8 passed through the real child. Final counts at
+the B3 integration on the rebased tree (the reconcile pass, run from the repository root): `ruff check --select E4,E7,E9,F,I redsim tests` clean, `mypy redsim` clean (253 source files), the default tier `pytest -q -p no:cacheprovider --ignore=tests/e2e` 2634 passed, 35 skipped, 13 deselected (the `test_campaign_golden` artifact pin now excludes the Phase B export slices, `test_cli_ml` pins the `l2` default `pgd`; the `test_campaign` harden-hook and `test_datasets` synonyms failures of the B2 tree are not present), the `ml` tier 433 passed and 1 skipped, the `garak` tier 12 passed, the `e2e` tier against the compose Postgres 22 passed, `mkdocs build --strict` exit 0. No
+full-tier, `ml`, `garak` or `e2e` count exists for the rebased B3 tree. 69
+routes under `/v1` as before: the 14 B0 stubs replaced one for one, no path
+added. No frozen contract changed: `redsim/ml/schema.py`, the migration
+head, the `Action` set, the error-code table and the three policy files are
+as B2 left them.
+
+What is still open is the README list: the web UI (the plan's one deferral),
+wave B4 (no e2e evidence for what B2 and B3 built, no gate, no
+docs-consistency test, the plan-07 rewrite), the wave B3 follow-ups read
+from the tree (the text and detection runners' self-describing slices;
+regenerate-in-child; the upload and worker-loader consumed-slice binding
+calls; the JWT redaction pattern; the finding-list
+ATLAS key; the capabilities interop block and the `.env.example` and compose
+pass-through of the B3 variables; the single-run admissions under the caps;
+the bulk-verify worker projection; the
+`batch_id` overlay; the dataset push; a real Foundry push), the wave B2
+follow-ups, the owner decisions with their defaults (INTEROP-26, INTEROP-27
+and BULK-16 applied by B3; one new choice, the Foundry attestation variable,
+droppable if the owner prefers the bare URL switch), the brief's packages,
+the recorded non-builds. The CI
+runs for `29db42c` and `1439f92` had not been read when this revision was
+written and the B2 and B3 pushes had not happened; nothing is claimed green.
+
+Divergences recorded in this revision under the plan-01 section 8 protocol,
+all in `docs/architecture/ml-vertical.md` "Accepted divergences": the Foundry
+switch as the URL plus the attestation variable (spec 27.3's last sentence
+made checkable); a text or detection export carrying the adversarial family
+only until those runners persist self-describing slices (register INTEROP-04,
+closed for the classification runner in the reconcile pass); bulk verify as
+one defended run per `(defense, params)` with the worker projection pending
+(BULK-16); bulk upload answering per file (`201` / `207` / `422`) rather
+than refusing whole (BULK-13); the manifest built and validated in pure
+Python with `mlcroissant` blocked in the API tripwire (INTEROP-05). Nothing
+in D1 to D14 changes.
+
+### v2.6 (2026-09-09): change note, Phase B wave B2
+
+Phase B wave B2, the services, workers and routes over the B1 library, is
+pushed to `main` with this revision: eight track commits and the integration
+commit, written in a worktree whose base (`b404eb8`) predates the B1
+integration and rebased onto `1439f92`. By subject:
+
+- `api: add thirteen Phase B error codes; dataset.export to remediator`
+  (`codes-b2`): the 13 codes the register named and B0 left out, in a second
+  dated spec 17.3 addendum (`reviewer_not_independent` 403;
+  `auth_profile_in_use`, `idempotency_key_reused`, `idempotency_conflict`,
+  `review_state_conflict`, `snapshot_archived` 409; `bulk_too_large` 413;
+  `auth_profile_required`, `probe_key_required`, `batch_member_refused`,
+  `bulk_too_many_files`, `fixture_not_exportable` 422;
+  `query_budget_exceeded` 429), and `dataset.export` moved to `remediator`
+  in `redsim/api/policy.py`, the Rego and the Cedar bundle together (spec
+  17.4 and 27.4), closing the B0 divergence.
+- `feat(ml): endpoint registration, validate via broker, projections`
+  (`endpoint-admission`): `POST /v1/models` with `source: endpoint` at
+  `target.manage`, `EndpointRegistration` plus the static egress check, the
+  `model.register` row with the allowlist verdict, a `Target` of kind
+  `ml_model_endpoint` in `validating`, the endpoint variant of
+  `redsim.ml_model_validate` through the broker with the credential resolved
+  at pickup, credential-free projections and delete; `endpoint_kind: llm`
+  handed to the LLM registration.
+- `worker: endpoint broker lifecycle, derived-target registration, retests
+  (Phase B B2)` (`worker-campaign-phase-b`): the broker started in the worker
+  parent around an endpoint campaign with the tally on the record and the
+  audit rows, the derived weights of a training verify registered as a new
+  `Target` with `derived_from` lineage through validate, every verify
+  appended to `MLFindingDetail.retests`, the `ml.clean_slice` and
+  `ml.control_slice` kinds.
+- `admission(ml): modality table, norm checks, endpoint budget, project
+  scoring` (`admission-phase-b`): `SUPPORTED_MODALITIES` over `image`,
+  `tabular`, `text` and `detection` with per-modality norms, default grids
+  and caps (detection `n_samples` cap 200, `mri=False`), `llm` as
+  `not_implemented` pointing at the probe route, the adapter norm check
+  (`422 params_out_of_range` on `norm`), endpoint targets admitted with a
+  worst-case query budget (`429 query_budget_exceeded`), the project scoring
+  override frozen at admission, and the training defenses admitted on verify
+  (`ALL_DEFENSES`).
+- `ml(llm): garak through Pythia core: catalog, generator, probe child,
+  scorecard` (`llm-core`): `redsim/ml/llm/` with the committed catalog (103
+  probes, `redsim-core` 76, `redsim-extended` 85 opt-in, 18 excluded with
+  reasons, `fitd.FITD` for HarmBench under LLM-08), `PythiaGenerator`, the
+  credential-minimised probe child and runner, the k/n `LLMProbeScorecard`
+  whose validator refuses every MRI, grade and subscore key, the rules and
+  the report section.
+- `feat(llm): probe routes, admission, worker, scorecard and findings`
+  (`llm-api`): LLM target registration (`endpoint_kind: llm`, a canonical
+  Pythia model id, a persona, a `guardrail_mode` and a bearer `AuthProfile`
+  probe key, LLM-26), `GET /v1/llm/probes`, `POST /v1/models/{id}/probes`,
+  `GET /v1/runs/{id}/llm-scorecard`, the task `redsim.ml_llm_probe_run` on
+  the `default` queue with the entitlement check, findings with hit-rate
+  severity labelled as such, `/campaign` and `/compare` refusing probe runs.
+- `review: transition table, resolve gates, retest links, analyst drafts`
+  (`review-workflow`): one transition table over the widened review states,
+  independence by identity (`reviewer_not_independent`), compare-and-set
+  (`review_state_conflict`), `resolve` gated on `poc_passed`, `fixed`,
+  `confirmed` and a compatible retest (`resolution_blocked`), retest links,
+  analyst drafts and revisions; the Phase A dismissal route byte for byte.
+- `reports: PDF projection, snapshots, N-run compare, weights API,
+  idempotency` (`reports-compare-weights`): `report.pdf` through reportlab
+  with bundled DejaVu subsets, `report.render` as an audit-first job writing
+  one immutable `report_snapshots` row per render, the snapshot routes,
+  `GET /v1/runs/compare?ids=` with no mean or rank, `GET`/`PUT
+  /v1/projects/{slug}/ml-scoring` never renormalising, the `Idempotency-Key`
+  middleware over `idempotency_keys`.
+- `fix: integrate Phase B wave B2 tracks`: six test pins moved to the B2
+  behaviour, the worker's `_endpoint_request_block` reading the URL from
+  `Target.value`, and the environment snapshotted around the `litellm`
+  import in `redsim/llm/pricing.py`.
+
+Checks before the rebase (the B2 assembler's worktree): ruff and `mypy
+redsim` (236 files) clean, 251 passed and 1 xfailed in the writers' ten test
+files, the full default tier 2431 passed, 36 skipped, 12 deselected,
+1 xfailed and 17 failed, every failure present at the base and fixed on
+`main` by the B1 integration, the 11 `garak`-marked tests green with garak
+0.16.0 against the fake gateway. The B2 integration pass (`fix: integrate Phase B wave B2`, pushed with the B2 commits) re-ran every tier on the rebased tree from the venv: ruff (CI selection) and `mypy redsim` (236 files) clean, the default tier 2480 passed, 35 skipped, 13 deselected, the `ml` tier 420 passed, 1 skipped, the 12 `garak`-marked tests green against the fake gateway, the e2e tier 22 passed against Postgres with the sandbox child, `mkdocs build --strict` exit 0. Counts on `main` are the B1
+integration's at `1439f92`: default 2257 passed, 35 skipped, 1 deselected;
+`ml` 418 passed, 1 skipped; e2e 22 passed; mypy 220 files. No frozen contract
+changed: `redsim/ml/schema.py`, the migration head and the `Action` set are
+as B0 left them, and the one policy change (`dataset.export`) edited the
+three policy files together.
+
+What is still open is the README list: the web UI (the plan's one deferral),
+waves B3 and B4 (the 14 remaining `501` stubs, no e2e evidence for what B2
+built, no gate), the wave B2 follow-ups read from the tree (the capabilities
+roster, the attacks filter and the defenses `phase` stamp not updated, the
+campaign completion path writing three formats and no snapshot, the two e2e
+`report.pdf` pins, the codes still off the 17.3 table, `FindingType` without
+the LLM and manual literals, `auth_profile_in_use` not emitted, ENDPOINT-30,
+the CLI items), the owner decisions with their defaults, the brief's
+packages, and the recorded non-builds. The CI runs for `29db42c` and
+`1439f92` had not been read when this revision was written and the B2 push
+had not happened; nothing is claimed green.
+
+Divergences recorded in this revision under the plan-01 section 8 protocol,
+all in `docs/architecture/ml-vertical.md` "Accepted divergences":
+`query_budget_exceeded` at 429 (register 422), `idempotency_key_reused` at
+409 (register 422) with `idempotency_in_flight` spelled
+`idempotency_conflict`, `fixture_not_exportable` at 422 (register 409), the
+Phase A dismissal route keeping its plain-string `forbidden` beside the
+structured `reviewer_not_independent` of the new decisions, the codes the
+routes resolve by `getattr` with documented fallbacks until their rows land,
+and `adversarial_ml` with a `finding_kind` marker for LLM and manual
+findings. The `dataset.export` divergence of v2.5 is closed. Nothing in D1 to
+D14 changes.
+
+### v2.5 (2026-09-09): change note, Phase B waves B0 and B1
+
+Phase A is complete through wave 4 and Phase B has started. In order:
+
+- **Wave 4** landed (`3dda572..e73dea0`, integration commit `e73dea0`): the
+  three end-to-end completion-criteria files (22 e2e cases with the smoke
+  file), the CI fixes (`python-multipart` in the `api` extra, the `Sample`
+  move that breaks the `datasets` / `targets` import cycle, the `.trivyignore`
+  baseline, the lazy torch imports behind `redsim ml build-assets`), the
+  admission follow-ups (`8eb8870`) and the v2.4 documentation pass
+  (`ae8d77c`). PR #23 (the Fargate runtime) merged as `10650da`; PR #24
+  (tRPC and env management, `b93d9a9`) and PR #25 (design reference,
+  `6cbb661`) landed on the web side. The Phase B register and plan were
+  written (`7706950`: `docs/plans/11-phase-b-register-2026-09-09.md`, 309
+  items, and `docs/plans/12-phase-b-plan.md`, five waves) and the
+  remaining-work brief (`docs/plans/10-remaining-work-brief.md`, packages A
+  to F with section H as the coordination contract) carries what runs outside
+  the waves.
+- **Phase B wave B0** landed on `main` as `934838e..29db42c` (seven track
+  commits and the integration commit `29db42c`, pushed 2026-09-09): every
+  frozen-contract change once (the schema additions of the note below,
+  migration `0011_phase_b_platform`, seven `Action` members and 23 spec 17.3
+  codes with their OPA and Cedar mirrors and spec addenda), the schema-compat
+  tripwire and the `garak` marker with the `e2e-python` and `garak-offline`
+  CI jobs, the 19 Phase B routes as gated `501` stubs, the `endpoint-v1`
+  predict contract and egress policy, and the datasets (SMS Spam Collection
+  published verbatim under owner default MODALITIES-12, WordNet 3.0 cached,
+  the military-assets subset published pending MODALITIES-27, the
+  `vehicles_cnn` training slice, ATLAS `v2026.08` vendored, the garak
+  reference entry; public repository head `4048a209`). Checks at `29db42c`:
+  2081 passed, 35 skipped, 1 deselected in the default tier, 22 e2e passed
+  with the Postgres lane, ruff and mypy (197 files) clean, `mkdocs build
+  --strict` clean. Section 4.1 has the row, section 5 the contract changes.
+- **Phase B wave B1**, the library layer, was written in an isolated
+  worktree in parallel with B0 (seven tracks: `runner-refactor`,
+  `text-modality`, `detection-modality`, `attacks`, `explain-blackbox`,
+  `endpoint-target`, `hardening`, one commit each plus the integration
+  commit `fix: integrate Phase B wave B1 tracks`), rebased onto `29db42c`
+  and pushed to `main` with this revision. It changed no route and no frozen
+  contract: `run_campaign` is now a frame plus one `ModalityRunner` per
+  `Modality` literal (golden-tested against the frozen pre-refactor copy),
+  the `text` and `detection` modalities exist end to end in the library
+  (`sms_tfidf_lr` and `word_substitution` under an `edit` budget with SHAP
+  text; `assets_frcnn_mnv3` and `dpatch` under a `patch_area` budget with a
+  detection scorecard and never an MRI), `cw_l2`, `deepfool` and `zoo` are
+  registered with declared norms and measured CPU budgets, KernelSHAP serves
+  predict-only tabular targets with endpoint query caps, `EndpointTarget`
+  reaches an endpoint only through the worker-parent `PredictBroker` over a
+  unix socket, and `adversarial_training` and `defensive_distillation` run
+  as the `defense_apply` stage with the tabular tree ensemble a typed
+  refusal. Its own checks before the rebase: ruff and mypy (213 files)
+  clean, 206 passed in the writers' test files. `adv_patch` (MODALITIES-32)
+  is recorded as not built.
+- **What is still open** is the README list: the web UI (the plan's one
+  deferral), waves B2 to B4 (every Phase B route is still a `501` stub and
+  the API admits no Phase B modality, norm, training defense or endpoint
+  target), the owner decisions of plan 12 section 2 with their defaults, the
+  brief's packages, and the recorded non-builds. The CI run for `29db42c`
+  had not been read when this revision was written; nothing is claimed green.
+
+Divergences recorded in this revision under the plan-01 section 8 protocol,
+all in `docs/architecture/ml-vertical.md` "Accepted divergences": the
+`defense_apply` position (after `load_target`, not appended), the
+`endpoint-v1` contract name and body (not the register's
+`redsim-predict-proba/1` with an `encoding` key), `dataset.export` at
+`scanner` (the brief) rather than `remediator` (register INTEROP-02, spec
+17.4), five stub paths per the brief rather than the register, the
+`DetectionMetrics` field names, image HopSkipJump served by the Phase A
+adapter (spec 12.2), KernelSHAP for images not built (spec 13.2), native
+torch distillation with ART's class cited (spec 16.5), no connection IP
+pinning in the broker (ENDPOINT-07 risk note), and no DNS-TXT ownership check
+for endpoints (spec 21.7, owner default ENDPOINT-26). Nothing in D1 to D13
+changes; D14 (the data-poisoning module) is the brief's package F.
 
 ### v2.4 (2026-09-09): change note
 
@@ -80,8 +406,30 @@ holds. One line per addition, in `redsim/ml/schema.py`:
   []` (LLM-24).
 - `STAGES` gains `defense_apply` directly after `load_target`, where spec 6.5
   places it; the Phase A stages keep their relative order and `report` stays
-  last. The worker's `expected_stages` emits it only for a verify run with a
-  training defense, in wave B1 (ATTACKS_HARDEN-15).
+  last (ATTACKS_HARDEN-15).
+
+Wave B1 built against these additions (no further schema change):
+
+- `redsim/ml/runners/base.py` keys `MODALITY_RUNNERS` by the `Modality`
+  literals (`image`, `tabular`, `text`, `detection`) and checks at import that
+  every literal has a runner; a runner module that fails to import is the
+  typed `ModalityRunnerUnavailable` (`modality_runner_unavailable`) before any
+  stage runs.
+- The campaign frame emits `defense_apply` directly after `load_target` only
+  when a `kind: training` defense was applied (`redsim.ml.harden.apply`), and
+  the worker's `expected_stages` mirrors the rule (B1 integration): a
+  preprocessing defense adds no stage, a training defense the hook refused
+  (no torch module, no training slice) writes no stage and is recorded
+  unavailable with the score withheld.
+- The text runner fills `Measurement.edit_fraction_mean` and
+  `Observation.text`, the detection runner `Measurement.detection` and
+  `Observation.detection` beside scalar `det_*` params, the text and
+  detection builds write `MLModelManifest.text` and `.detection`, the
+  endpoint target writes `MLModelManifest.endpoint` with exactly the
+  `EndpointSpec` names, and the training record's `derived_from()` matches
+  `DerivedFrom`. `redsim/ml/assets/manifest.py`'s `DatasetSource` gains
+  `uci` and `github` and `ModelEntry` a build-record `train_slice_split`,
+  both outside the frozen projection.
 - Not added, by design: `CampaignConfig.explainer` (ATTACKS_HARDEN-15 item 3)
   and the artifact-kind names of MODALITIES-44 are outside plan 12 section 3
   and wait for their owning tracks; the LLM records live in
@@ -361,12 +709,12 @@ F001 (auth) and F008 (audit) are largely **reused platform foundation**
 on the existing chain and wiring Keycloak on Fargate. These are the two features
 v1 missed entirely.
 
-### 4.1 Workstream status (2026-09-09, `main` at `58461cc`)
+### 4.1 Workstream status (2026-09-09, `main` at `1439f92` plus waves B2 and B3)
 
 Pull requests and direct commits on `IntelliBridge/ndia-red-team-simulator` as
 of this revision. No names are invented for unassigned work (D007 stays open).
 The rows are in merge order. The wave rows at the end are the completion
-passes that followed PR #22.
+passes that followed PR #22 and the Phase B waves.
 
 | WS | Branch / PR | State | Notes |
 |---|---|---|---|
@@ -386,9 +734,16 @@ passes that followed PR #22.
 | Completion wave 1 (libraries and contracts) | `f8693c2..a99d9cc`, seven commits (direct) | on `main` | WS1: manifest-shaped loaders, onnx2torch agreement, `--fixture` and the committed CIFAR-10 slice, `resnet18` behind `--arch`, `url_trees`. WS2: surrogate PGD with per-feature ε and the ART mask, capability tags, scoring constants, the binomial control predicate, `FamilyDelta`, typed delta refusal, `not_run` attacks, curve PNG, caveats, `TinyTabularTarget`. WS3: PartitionExplainer fallback, explanation cache, spec artifact names. WS6: the six-section report renderer. WS4: typed sandbox config and envelope, `redsim/api/errors.py`. |
 | Completion wave 2 (worker, audit, admission) | `055bdee..bb43bd7`, eight commits (direct) | on `main` | Spec 10.5 audit vocabulary and 6.5 stage table, parent-side Pythia narrative with router, budget and `LLMUsage`, typed validate envelope with parent digest check and `job.complete`, worker observability init with the `job.run` span and cancel-safe `task_context`, spec 17.3 codes on every ML route, per-project bundled ids and `register_bundled_model`, audited soft delete, refusal audit rows, spec 5.7 finding projection and dismissal rules, compare incompatibility and `verify_delta`, report routes with `report.pdf` as `501`, `GET /v1/audit/verify?all=1`, dataset caveats and `subject_centered` in the manifest. `bb43bd7` is the integration commit. |
 | Completion wave 3 (CLI, config, seeding, e2e harness) | `7556b22..58461cc`, ten commits (direct) | on `main` since 2026-09-09, integrated by `58461cc` | `7556b22`: `redsim doctor` rewritten around Pythia (informational Pythia block with the key redacted, `ml` extra, sandbox child and assets manifest checks required in worker mode, the `ml-campaign` roster check, no provider key), `redsim.yaml` and `redsim init` without a provider-style `model` (`task_models: {}`), `.env.example` Pythia-only with every spec 20.3 ML variable. `39126ce`: the `resnet18` fine-tune recipe (lr 3e-4 with cosine decay, random flip and reflect-pad crop, best epoch on a per-class 10 percent validation slice held out of the training split, recorded in the manifest `training` block). `3ab9de7`: `redsim ml attack <target_id>` (an offline campaign for a bundled target writing `<out>/<run_id>/{run_record.json, report.md, report.json, report.html, artifacts/curve/robustness_curve.png, audit.jsonl}` with the `attack.run` row first on a `JsonlAuditWriter` chain, `narrative_source = "rules"`, `endpoint_stub` and fixture-only targets refused before anything is written), `redsim ml seed [--project] [--only]`, `CampaignScannerAdapter` (`ml-campaign`, capabilities `adversarial_ml` and `explainability`) registered at `import redsim.scanners`, opt-in `redsim.ml.attacks` entry-point discovery (`REDSIM_PLUGINS=1`, `REDSIM_PLUGINS_ALLOW`, Ed25519). `35e71c7`: `tests/e2e/{conftest,harness}.py` gated by `REDSIM_E2E`, `REDSIM_E2E_POSTGRES_URL` for the RLS lane, `REDSIM_E2E_SANDBOX`. `aa9674e`: audit chain `ts` canonicalised to the UTC isoformat on write and read (`canonical_ts`, no migration, old rows still verify), `redsim audit verify --run` falling back to `<output_dir>/<run_id>/audit.jsonl` and the new `--run-dir PATH`. `c3868e5`: the sandbox child pins `REDSIM_ENV_FILE` to the absent `<work_dir>/no-env` and sets `REDSIM_DISABLE_LLM=1`, `GET /v1/attacks` loads the plugins once per process and answers with a `plugins` block (`503 ml_plugins_unavailable` on a loader failure), `redsim doctor --worker-mode`. `dd2bbd4`: admission strips the grid-owned `eps` and `norm_l2` and freezes caller keys only, applicability by `modality:<domain>` capability tag. `98a8733`: `redsim ml seed` reconciled with the real `register_bundled_model` (keyword extras, `Target` return, `already_registered`, one commit per model, route-parity refusal rows). `a45a787`: the harness reconciled with the tree (per-project bundled ids, the tz shim now a guarded no-op, parent-side Pythia mock, propagate-off eager Celery, one autocommit sqlite connection) plus `tests/e2e/test_harness_smoke.py`, 8 cases through the real sandbox child. `58461cc`: integration, admission admits a white-box attack on a gradient-free model when the adapter declares `surrogate_transfer` and the target declares a surrogate (PGD on `url_trees`, the defect the smoke test had reported), and the tests other tracks flagged aligned. |
-| Completion wave 4 (end-to-end completion criteria, CI fixes, documentation) | parallel writers on `redsim-implementation` | in progress, landing after `58461cc` | `tests/e2e/test_ml_campaigns.py`, `tests/e2e/test_ml_verify_upload_reports.py` and `tests/e2e/test_ml_governance.py` (added in wave 4) on the wave-3 harness, the CI fixes (`python-multipart` in the `api` extra, the `redsim.ml.datasets.sampling` / `redsim.ml.targets` import cycle, a `.trivyignore` entry for the `next` advisory with its reason, and the asset builder's torch imports made lazy at integration so the 3.13 lane's two `tests/ml/test_cli_ml.py` cases pass without the `ml` extra, `docs/dev/ci.md`), admission follow-ups and this documentation pass (v2.4). Nothing here is claimed until it is on `main` and a CI run proves it. |
-| WS7 Fargate runtime | #23 `feat/p7-fargate-runtime` (William) | **open PR #23**, applied by its author | `deploy/bootstrap/` and `deploy/runtime/`: a dedicated VPC and state bootstrap and a private Fargate runtime behind public HTTPS at https://redsim.ndia.agiledefense.xyz with ACM and DNS, Keycloak, separate migration tasks, service-scoped secrets and immutable images. The PR body reports it applied to account `140381642432` in `us-east-1`, migrated through `0010_ml_vertical`, with public health, login and OIDC discovery answering 200 and unauthenticated API access 401. Workers stay at zero until a pinned asset bundle is supplied, demo users and project memberships and real model assets are outstanding, and automatic ECS rollout stays disabled until CI can advance pinned task definitions and run migrations. `deploy/runtime/README.md` on the branch is the deployment sequence (with a rough 200 dollars a month core estimate). Its CI shows the same three red jobs as `main`. Not in `58461cc`, and no campaign has been run on it. |
-| Cross-cutting: CI on `main` | Redsim CI | red at `58461cc` (run 34307513075), fixes landing in wave 4 | Red from `1725728` through `7240220` at the mypy step (`no-any-return` in `redsim/ml/datasets/image_hub.py` with `truststore` typed `Any`, and on 3.13 `redsim/ml/assets/train_cnn.py` without the `ml` extra), both since typed. At `bb43bd7` and again at `58461cc` three jobs fail and the rest pass: the Coverage gate (23 upload-route tests in `tests/ml/test_models_routes.py` and `tests/test_review22_models.py` fail with "The `python-multipart` library must be installed to use form parsing", 1668 pass, coverage 88.89 percent over the 81 percent floor), Unit tests (py3.13) (at `bb43bd7` a collection error from the `redsim.ml.datasets.sampling` / `redsim.ml.targets` import cycle, at `58461cc` two `tests/ml/test_cli_ml.py` cases reaching `redsim.ml.assets.build` and `torch` without the `ml` extra) and Dependency CVEs (trivy: `next` 14.2.35, CVE-2026-75604 / GHSA-2xp9-vwfh-vxw4, fixed in 15.5.24 and 16.3.3). Unit tests (py3.12) passes at both. The Next.js build, API integration and image builds are skipped behind the unit lane. `Deploy to AWS` built and pushed the three images under OIDC on the `58461cc` push (the AssumeRole step that failed on the `bb43bd7` push now succeeds) and skipped its deploy job (`ECS_CLUSTER` unset). Wave 4 lands `python-multipart` in the `api` extra, breaks the import cycle and baselines the `next` advisory in `.trivyignore`, and makes the asset builder's torch imports lazy (`redsim/ml/assets/build.py`) so the 3.13 lane's two `tests/ml/test_cli_ml.py` cases pass without the `ml` extra (`docs/dev/ci.md`). Nothing is claimed green until a run on `main` proves it. The last fully green run was `ea39f97` (#21). Local checks at `58461cc` with the venv interpreter and the `ml` extra: `pytest -q tests --ignore=tests/e2e` 1663 passed and 30 skipped, `REDSIM_E2E=1 pytest -q -m e2e tests/e2e` 8 passed, `ruff check --select E4,E7,E9,F,I redsim tests` clean, `mypy redsim` clean (190 files). |
+| Completion wave 4 (end-to-end completion criteria, CI fixes, documentation) | `3dda572..e73dea0`, seven commits (direct) | on `main`, integrated by `e73dea0` (2026-09-09) | `3dda572` `tests/e2e/test_ml_campaigns.py`, `35662e4` `tests/e2e/test_ml_verify_upload_reports.py`, `6a8a534` `tests/e2e/test_ml_governance.py` on the wave-3 harness (22 e2e cases with the smoke file, 22 passed at `29db42c` with the Postgres lane), `d8a9f15` the CI fixes (`python-multipart` in the `api` extra, the `redsim.ml.datasets.sampling` / `redsim.ml.targets` import cycle, a `.trivyignore` entry for the `next` advisory with its reason, the asset builder's torch imports made lazy so the 3.13 lane's `tests/ml/test_cli_ml.py` cases pass without the `ml` extra), `8eb8870` admission refuses a control or `fgsm` on the L2 grid at admission and plugin loading is idempotent, `ae8d77c` the v2.4 documentation pass, `e73dea0` integration. Whether the fixes turn CI green is proven by a run on `main`, which this revision has not read. |
+| Phase B register, plan and brief | `938bbe4`, `8ef7a88`, `7706950` (direct) | on `main` | `docs/plans/10-remaining-work-brief.md` (packages A to F, section H coordination with the waves), `docs/plans/11-phase-b-register-2026-09-09.md` (309 items audited against `10650da`) and `docs/plans/12-phase-b-plan.md` (five waves; a dated status line per wave since this revision). |
+| Web: tRPC and env management, design reference | #24 (`b93d9a9`), #25 (`6cbb661`) | **merged** | Web-side only; no Python file changed. The web UI stays the Phase B plan's one deferral. |
+| Phase B wave B0 (contracts, tripwires, stubs, datasets) | `934838e..29db42c`, eight commits (direct, pushed `6cbb661..29db42c`) | on `main` at `29db42c` (2026-09-09) | `934838e` schema-additive (every plan 12 section 3 field, section 0 note), `a625583` tripwires and CI (`tests/ml/test_schema_compat.py` pinning the frozen fixture's sha256, the extended API-process import block and child-env credential check, the `garak` marker and `garak>=0.16,<0.17` pin, the `e2e-python` and `garak-offline` jobs, `docs/dev/ci.md`), `7b1f2fa` migration `0011_phase_b_platform` with ORM models and RLS parity tests, `3cd3362` seven Phase B `Action` members and 23 codes with the rego and Cedar mirrors and the spec 7.4 and 17.3 addenda, `0b0981b` the 19 route stubs behind their real gates (`docs/api/v1.md` "Phase B routes"), `ff9e658` datasets (SMS Spam Collection, WordNet 3.0, the military-assets subset, the `vehicles_cnn` training slice, `redsim/ml/atlas_data.py` at ATLAS `v2026.08`, the garak reference entry, public repository commits `a9ba6ba3` and `4048a209`), `622d741` the `endpoint-v1` contract and egress policy, `29db42c` integration (three test-side edits for `exclude_unset` and `defense_apply`; no production code). Checks: default tier 2081 passed, 35 skipped, 1 deselected; e2e 22 passed; ruff and mypy (197 files) clean; `mkdocs build --strict` clean; the frozen fixture unchanged. Open items carried forward: `tenant_reconcile` scope, `DatasetSource` literals, the `build.py` slice wiring, the `expected_stages` emission and the artifact kinds (all closed by the B1 integration), the B2 and B3 items listed in the plan's status lines, and the two owner decisions MODALITIES-27 and the `dataset.export` role. |
+| Phase B wave B1 (library layer) | eight commits, rebased onto `29db42c`, pushed `29db42c..1439f92` | on `main` at `1439f92` (2026-09-09; default tier 2257 passed, 35 skipped, 1 deselected; `ml` tier 418 passed, 1 skipped; e2e 22 passed; mypy 220 files; the counts every later document quotes) | `refactor(ml): split run_campaign into a frame plus modality runners` (`redsim/ml/campaign.py`, `redsim/ml/runners/{base,classification}.py`, the golden test with the frozen pre-refactor copy), `feat(ml): text modality target, attack, SHAP text and runner` (`datasets/sms_spam.py`, `assets/train_text_classifier.py`, `targets/text.py`, `attacks/word_substitution.py`, `explain/shap_text.py`, `runners/text.py`), `feat(ml): detection modality with DPatch, patch control and scorecard` (`datasets/military_assets.py`, `targets/detection.py`, `attacks/dpatch.py`, `assets/train_detector.py`, `runners/detection.py`), `feat(ml/attacks): CW-L2, DeepFool, ZOO adapters, norms tags, HSJ image defaults` (`attacks/{cw_l2,deepfool,zoo,hopskipjump,registry,__init__,base}.py`, measured CPU budgets), `feat(ml/explain): KernelSHAP for predict-only tabular targets, endpoint caps` (`explain/base.py`, `explain/shap_tabular.py`), `ml: EndpointTarget, worker-parent PredictBroker, sandbox socket plumbing` (`endpoint_broker.py`, `targets/endpoint.py`, `sandbox.py`, `sandbox_worker.py`, the tiny endpoint server), `ml(harden): training defenses catalog, defense_apply trainers, tests` (`defenses.py`, `harden/{apply,adversarial_training,distillation}.py`), and the integration commit (stale registry and catalog pins in `tests/ml/test_attacks.py` and `tests/ml/test_defenses.py` updated to filter and superset semantics, then the B0 reconciliation: schema literals read directly, the contract and egress modules imported, the endpoint error classes re-exported from `redsim/ml/errors.py`, `targets/__init__` and `attacks/__init__` registration, `expected_stages` and the artifact kinds in the worker, `tenant_reconcile` over the `0010` and `0011` tables, `DatasetSource` `uci` / `github`, `build-assets --dataset text` / `detection` and the training slice). Library only: no route, no admission change. Checks before the rebase: ruff and mypy (213 files) clean, 206 passed in the writers' files, default tier 1840 passed and 31 skipped in a worktree without B0's tests. |
+| Phase B wave B2 (services, workers and routes over the B1 library) | eight track commits plus `fix: integrate Phase B wave B2 tracks`, written in a worktree on `b404eb8`, rebased onto `1439f92`, pushed with this revision | landing on `main` with v2.6 | By subject (section 0, v2.6): `api: add thirteen Phase B error codes; dataset.export to remediator` (`redsim/api/errors.py`, the spec 17.3 second addendum, `redsim/api/policy.py`, the Rego and Cedar bundles), `feat(ml): endpoint registration, validate via broker, projections` (`redsim/api/v1/models.py`, `redsim/services/ml_models.py`, `redsim/workers/tasks/ml_model.py`), `worker: endpoint broker lifecycle, derived-target registration, retests (Phase B B2)` (`redsim/workers/tasks/ml_campaign.py`), `admission(ml): modality table, norm checks, endpoint budget, project scoring` (`redsim/services/ml_campaigns.py`), `ml(llm): garak through Pythia core: catalog, generator, probe child, scorecard` (`redsim/ml/llm/`, eleven files with `catalog.json`, `tests/ml/fake_openai_server.py`), `feat(llm): probe routes, admission, worker, scorecard and findings` (`redsim/api/v1/llm.py`, `redsim/services/ml_llm.py`, `redsim/workers/tasks/ml_llm.py`, `redsim/workers/celery_app.py`, `redsim/services/ml_findings.py`), `review: transition table, resolve gates, retest links, analyst drafts` (`redsim/services/finding_review.py`, `redsim/api/v1/ml_findings.py`), `reports: PDF projection, snapshots, N-run compare, weights API, idempotency` (`redsim/ml/pdf.py`, `redsim/ml/pdf_fonts/`, `redsim/ml/compare.py`, `redsim/ml/reporting.py`, `redsim/services/reports.py`, `redsim/api/v1/{reports,compare,projects,batches}.py`, `redsim/api/middleware/idempotency.py`, `redsim/api/app.py`, `pyproject.toml`), and the integration commit (six test pins, the `Target.value` URL fallback in the worker, the environment-preserving `litellm` import). 69 routes under `/v1` afterwards: 39 Phase A, 16 built by B2 (five former stubs, eleven new paths), 14 stubs left for B3. Checks before the rebase: ruff and mypy (236 files) clean, 251 passed and 1 xfailed in the writers' ten files, the default tier 2431 passed with 17 base failures the B1 integration fixed on `main`, 11 `garak`-marked tests green; The B2 integration pass re-ran every tier on the rebased tree (default 2480 passed, 35 skipped; `ml` 420 passed, 1 skipped; garak 12; e2e 22; mypy 236 files; ruff clean). Open after B2: the README's "Wave B2 follow-ups". |
+| Phase B wave B3 (interoperability and bulk operations) | five track commits plus `fix: integrate Phase B wave B3 tracks`, written in the worktree `wt/waveb3` on the B2 integration, rebased onto it, pushed with this revision | landing on `main` with v2.7 | By subject (section 0, v2.7): `feat(interop): Croissant/Parquet dataset export of a campaign run` (`interop-contribute`: `redsim/ml/interop/{__init__,parquet,croissant,card}.py`, `redsim/services/ml_datasets_export.py`, `redsim/workers/tasks/dataset_export.py`), `interop(consume): POST /v1/datasets static admission, sandboxed Parquet parse, binding hook` (`interop-consume`: `redsim/api/v1/datasets.py`, `redsim/services/ml_datasets.py`, `redsim/ml/interop/consume.py`, `redsim/workers/tasks/dataset_validate.py`), `bulk: batch campaigns, roll-up, cancel, compare groups, bulk verify` (`bulk-service-routes`: `redsim/services/ml_batches.py`, `redsim/api/v1/batches.py`, `redsim/ml/compare.py`, the `batch_id` mirror in `tests/e2e/harness.py` and `tests/ml/test_campaign_routes.py`), `feat(ml): bulk upload, per-project capacity/deferral, CLI attack matrix` (`bulk-upload-capacity-cli`: `redsim/api/v1/models_bulk.py`, `redsim/api/app.py`, `redsim/services/ml_capacity.py`, `redsim/workers/tasks/capacity.py`, `redsim/workers/celery_app.py`, `redsim/cli/ml.py`, `redsim/observability.py`), `interop(atlas,foundry): ATLAS stamp and coverage, Foundry push, roster` (`atlas-foundry`: `redsim/ml/atlas.py`, `redsim/integrations/{__init__,foundry}.py`, `redsim/workers/tasks/integration_push.py`, `redsim/api/v1/integrations.py`, `redsim/services/ml_findings.py`, `redsim/api/v1/attacks.py`, `tests/ml/fake_foundry_server.py`), and the integration commit (the Celery `include` list, the B0 export stub removed, `tests/ml/test_phase_b_stubs.py` as the surface pin). 69 routes under `/v1` afterwards, the 14 B0 stubs replaced one for one; thirteen Celery tasks. Checks (the assembler's worktree at `a780d88`): ruff and mypy (253 files) clean, the six writers' test files 140 passed and 1 skipped, the surface pin 61 passed, the e2e smoke file 8 passed; the default tier with `-x` stopped on three pre-existing failures from the B2 tree; no full-tier count for the rebased tree. The public data repository is at `0dababc` with the first export sample. Open after B3: the README's "Wave B3 follow-ups" (the runner-side slices, the binding hooks, the capacity continuation call, the bulk-verify worker projection, the redaction pattern, the capabilities and env pass-through, the dataset push, a real Foundry push). |
+| Phase B wave B4 (e2e evidence, gate, docs) | not started | | It owes the e2e files for everything B2 and B3 built, `make check-phase-b` with the docs-consistency test and the documentation rewrite (plan 07, `EXECUTION-CONTEXT.md`, the spec addenda, the garak supply-chain paragraph); the documentation items B3 made true are in v2.7 and `docs/interop.md`. `docs/plans/12-phase-b-plan.md` carries a status line per wave. |
+| WS7 Fargate runtime | #23 `feat/p7-fargate-runtime` (William) | **merged** into `main` as `10650da` (2026-09-09), applied by its author | `deploy/bootstrap/` and `deploy/runtime/`: a dedicated VPC and state bootstrap and a private Fargate runtime behind public HTTPS at https://redsim.ndia.agiledefense.xyz with ACM and DNS, Keycloak, separate migration tasks, service-scoped secrets and immutable images. The PR body reports it applied to account `140381642432` in `us-east-1`, migrated through `0010_ml_vertical` (the runtime has to migrate to `0011` with the next rollout), with public health, login and OIDC discovery answering 200 and unauthenticated API access 401. Workers stay at zero until a pinned asset bundle is supplied, demo users and project memberships and real model assets are outstanding, and automatic ECS rollout stays disabled until CI can advance pinned task definitions and run migrations. `deploy/runtime/README.md` is the deployment sequence (with a rough 200 dollars a month core estimate). Its completion is package E of `docs/plans/10-remaining-work-brief.md`, outside the Phase B waves. No campaign has been run on it. |
+| Cross-cutting: CI on `main` | Redsim CI | red at `58461cc` (run 34307513075); wave 4 landed the fixes; the runs for `e73dea0`, `7706950`, `6cbb661`, `29db42c` (the first with the `e2e-python` and `garak-offline` jobs) and `1439f92` (wave B1) had not been read when v2.6 was written and the B2 push had not happened, so no state after `58461cc` is recorded here and nothing is claimed green. The B2 integration commit moved the two `tests/e2e` pins B2 made stale (`report.pdf` `404 report not yet rendered`, endpoint registration `422 auth_profile_required`) and the e2e tier is 22 passed locally on the integrated tree | Red from `1725728` through `7240220` at the mypy step (`no-any-return` in `redsim/ml/datasets/image_hub.py` with `truststore` typed `Any`, and on 3.13 `redsim/ml/assets/train_cnn.py` without the `ml` extra), both since typed. At `bb43bd7` and again at `58461cc` three jobs fail and the rest pass: the Coverage gate (23 upload-route tests in `tests/ml/test_models_routes.py` and `tests/test_review22_models.py` fail with "The `python-multipart` library must be installed to use form parsing", 1668 pass, coverage 88.89 percent over the 81 percent floor), Unit tests (py3.13) (at `bb43bd7` a collection error from the `redsim.ml.datasets.sampling` / `redsim.ml.targets` import cycle, at `58461cc` two `tests/ml/test_cli_ml.py` cases reaching `redsim.ml.assets.build` and `torch` without the `ml` extra) and Dependency CVEs (trivy: `next` 14.2.35, CVE-2026-75604 / GHSA-2xp9-vwfh-vxw4, fixed in 15.5.24 and 16.3.3). Unit tests (py3.12) passes at both. The Next.js build, API integration and image builds are skipped behind the unit lane. `Deploy to AWS` built and pushed the three images under OIDC on the `58461cc` push (the AssumeRole step that failed on the `bb43bd7` push now succeeds) and skipped its deploy job (`ECS_CLUSTER` unset). Wave 4 lands `python-multipart` in the `api` extra, breaks the import cycle and baselines the `next` advisory in `.trivyignore`, and makes the asset builder's torch imports lazy (`redsim/ml/assets/build.py`) so the 3.13 lane's two `tests/ml/test_cli_ml.py` cases pass without the `ml` extra (`docs/dev/ci.md`). Nothing is claimed green until a run on `main` proves it. The last fully green run was `ea39f97` (#21). Local checks at `58461cc` with the venv interpreter and the `ml` extra: `pytest -q tests --ignore=tests/e2e` 1663 passed and 30 skipped, `REDSIM_E2E=1 pytest -q -m e2e tests/e2e` 8 passed, `ruff check --select E4,E7,E9,F,I redsim tests` clean, `mypy redsim` clean (190 files). |
 
 ## 5. Corrected shared contracts
 
@@ -490,6 +845,39 @@ passes that followed PR #22.
   `Registry[AttackAdapter]`). Concrete targets and adapters call
   `register(...)` at import. This is distinct from the name-keyed
   `redsim.registry.Registry` that does entry-point discovery for the platform.
+  Phase B wave B1 adds two more tables that are not registries: the modality
+  runner map `MODALITY_RUNNERS` (`redsim/ml/runners/base.py`, one
+  `"module:attribute"` per `Modality` literal, resolved lazily) and the
+  defense catalog split `DEFENSES` (preprocessing, the set the Phase A verify
+  admission treats as runnable) / `TRAINING_DEFENSES` / `ALL_DEFENSES`
+  (`redsim/ml/defenses.py`, every row with `kind` and `phase`). Since B1 the
+  attack registry holds `cw_l2`, `deepfool`, `dpatch`, `fgsm`,
+  `hopskipjump`, `noise_control`, `patch_noise_control`, `pgd`,
+  `word_substitution`, `zoo`, checked at import against the declared list.
+  Since B2 the admission service carries `SUPPORTED_MODALITIES`
+  (`redsim/services/ml_campaigns.py`, one `ModalitySpec` per `Modality`
+  literal: norms, default grids, `n_samples` default and cap, endpoint and
+  `mri` flags) and the LLM track a committed probe catalog
+  (`redsim/ml/llm/catalog.json`, read with json and pydantic only).
+- **Actions** (`redsim/api/policy.py`): the seven ML members frozen by P0
+  (`model.register` remediator, `attack.run` scanner, `explain.run` scanner,
+  `harden.recommend` remediator, `finding.review` approver,
+  `finding.annotate` remediator, `report.export` scanner) plus, since Phase B
+  wave B0 (`3cd3362`, spec 7.4 addendum), `llm.probe.run` remediator,
+  `dataset.register` remediator, `dataset.export` remediator (scanner at B0
+  from the brief's wording; wave B2 `codes-b2` aligned the three policy
+  files to spec 17.4 and 27.4), `integration.push` admin, `batch.run`
+  scanner, `report.render` scanner, `finding.author` remediator. Mirrored
+  verbatim in `deploy/opa/redsim-authz.rego` and
+  `deploy/cedar/redsim-policy.cedar`; `tests/test_policy_ml_actions.py`
+  parses both mirrors and asserts equality with the Python table. The gate is
+  checked before the handler runs, so an under-ranked caller gets `403` and
+  learns nothing about the route; since wave B3 every Phase B member gates a
+  real handler (`dataset.register` the consume route, `dataset.export` the
+  export route, `integration.push` the Foundry push, `batch.run` the batch
+  admission). Endpoint and LLM registration (wave B2) gate on
+  `target.manage`, not `model.register`; the bulk upload (wave B3) gates on
+  `model.register` like the single upload.
 - **Artifact sink** (`redsim/ml/artifacts.py`): `ArtifactSink` protocol
   (`put(name, data, content_type) -> run-relative path`, `sha256(name)`) and a
   `FilesystemSink` for tests. The Celery task adapts the blob store and
@@ -500,40 +888,108 @@ passes that followed PR #22.
   `cc781ad`: `ModelLoadRefused` and `ArtifactDigestMismatch` (both under
   `UnsupportedArtifact`), `SandboxTimeout`, `SandboxKilled`,
   `EnvelopeInvalid`, `DatasetUnavailable`, `MlExtraUnavailable` and
-  `ExplainerUnavailable` (under `ExplainUnavailable`). These are run and
-  infrastructure states, never model outcomes. The HTTP side is
-  `redsim/api/errors.py`: the spec 17.3 code table, `ApiError`, and the
-  `{"detail": {"code", "message", ...}}` envelope every ML route returns.
-- **Migration**: exactly one — `0010_ml_vertical` — adding `targets.detail`
-  (JSONB) and `ml_campaigns` (1:1 with `runs`, full RLS parity). Additive and
-  reversible. Owned by WS0.
+  `ExplainerUnavailable` (under `ExplainUnavailable`). Phase B adds the
+  typed library states `ModalityRunnerUnavailable`
+  (`modality_runner_unavailable`, `redsim/ml/runners/base.py`),
+  `TrainingDefenseUnavailable` (`training_defense_unavailable`,
+  `redsim/ml/harden/apply.py`), `LexiconUnavailable` (`lexicon_unavailable`,
+  an `AttackNotApplicable`), and the endpoint classes `EndpointError`,
+  `EndpointUnreachable`, `EndpointAuthFailed`, `QueryBudgetExceeded` in
+  `redsim/ml/errors.py` with `EndpointSchemaMismatch`, `EgressRefused`,
+  `EndpointUrlInvalid` and `EndpointNotAllowlisted` re-exported from the
+  contract and egress modules, all rebuilt by name from the child's envelope.
+  Wave B2 adds the probe child's `probe_child_failed`,
+  `probe_child_timeout` and `probe_child_cancelled`
+  (`redsim/ml/llm/runner.py`) and the LLM job refusals of `LLMProbeRefused`.
+  These are run and infrastructure states, never model outcomes. The HTTP
+  side is `redsim/api/errors.py`: the spec 17.3 code table, the dated Phase
+  B addendum of 23 codes (wave B0, `3cd3362`), the second dated addendum of
+  13 codes (wave B2, `api: add thirteen Phase B error codes; dataset.export
+  to remediator`), `ApiError`, and the `{"detail": {"code", "message", ...}}`
+  envelope every ML route returns. Codes the B2 routes need that have no row
+  yet (`attestation_required`, `scoring_weights_invalid`, the LLM-12 set)
+  are resolved by `getattr` with documented fallbacks; one `errors.py` row
+  plus one addendum row land together when a wave adds them.
+- **Migration**: `0010_ml_vertical` adds `targets.detail` (JSONB) and
+  `ml_campaigns` (1:1 with `runs`, full RLS parity). Additive and reversible.
+  Owned by WS0. The frozen head moved once, under the plan-01 section 8
+  protocol, on 2026-09-09 (Phase B wave B0, `7b1f2fa`, REVIEW_REPORTS-44):
+  `0010_ml_vertical` to `0011_phase_b_platform`, one additive reversible
+  revision with six DDL groups, `report_snapshots`, `idempotency_keys`
+  (primary key `(project_id, key)`), `projects.ml_scoring` /
+  `ml_max_concurrent_runs` / `ml_daily_run_budget`, `ml_campaigns.batch_id`
+  (nullable, indexed, no FK), `ml_batches` and `ml_datasets`, every new table
+  with `0010`'s RLS parity token for token. `ml_campaigns` stays
+  migration-owned (no ORM model); the four new tables have ORM models.
 - **API** (all under `/v1`, on the redsim app, auth + RLS enforced): a campaign
   starts with `POST /v1/models/{id}/attacks`, **not** a generic `POST /v1/runs`.
   Read the campaign at `GET /v1/runs/{id}/campaign`; stream a blob at
   `GET /v1/artifacts/{id}`; act on findings via `POST /v1/findings/{id}/{explain,harden,verify}`;
-  compare with `GET /v1/runs/{id}/compare?with=`. Read a report at
-  `GET /v1/runs/{id}/report.{md,json,html}` (`report.pdf` answers `501`) and
-  verify the chain at `GET /v1/audit/verify?run=` or `?all=1` (the
-  `{"chains": [...]}` shape the audit page renders). All of these are mounted
-  on `main` since PR #22 and wave 2. `POST /v1/scans` was unmounted by P0
-  (`4350d38`) and `POST /v1/targets` refuses ML kinds with `400
-  use_models_route`. Phase B2 routes (`POST /v1/runs/{id}/dataset`,
-  `GET /v1/datasets/{id}`, `POST /v1/datasets`) return `501 not_implemented`
-  until B2 (section 6).
+  compare with `GET /v1/runs/{id}/compare?with=` (pairwise) or
+  `GET /v1/runs/compare?ids=` (2 to 10 runs, wave B2). Read a report at
+  `GET /v1/runs/{id}/report.{md,json,html,pdf}` (`pdf` since wave B2, a
+  `404` until `POST /v1/runs/{id}/report.render` produced it) and verify the
+  chain at `GET /v1/audit/verify?run=` or `?all=1` (the `{"chains": [...]}`
+  shape the audit page renders). All of these are mounted on `main` since PR
+  #22 and wave 2. `POST /v1/scans` was unmounted by P0 (`4350d38`) and
+  `POST /v1/targets` refuses ML kinds with `400 use_models_route`. Since
+  Phase B wave B0 (`0b0981b`) every Phase B route is mounted behind its real
+  gate; wave B2 replaced five stubs with real handlers (`GET /v1/llm/probes`,
+  `POST /v1/models/{id}/probes`, `GET /v1/runs/{id}/llm-scorecard`,
+  `POST /v1/runs/{id}/report.render`, `GET /v1/runs/{id}/snapshots`), added
+  eleven paths (`GET /v1/runs/compare?ids=`, the snapshot detail, archive and
+  restore routes, `GET`/`PUT /v1/projects/{slug}/ml-scoring`,
+  `POST /v1/findings/{id}/review[/{transition}]`, `GET /v1/findings/{id}/retests`,
+  `POST /v1/findings`, `PATCH /v1/findings/{id}/draft`), and made
+  `POST /v1/models` with `source: endpoint` real (predict endpoints and, with
+  `endpoint_kind: llm`, LLM targets). Wave B3 replaced the 14 routes that
+  remained with their handlers and added no path: `POST /v1/runs/{id}/dataset`
+  and `GET /v1/datasets/{id}` (the Croissant export and its manifest),
+  `POST /v1/datasets` (a consumed Parquet slice), `GET
+  /v1/runs/{id}/atlas-coverage`, `GET /v1/integrations` and `POST
+  /v1/runs/{id}/integrations/foundry` (the roster and the push, off by
+  default), `POST`/`GET /v1/campaigns/batch`, `GET .../{id}`, `GET
+  .../{id}/compare`, `POST .../{id}/cancel`, `POST /v1/models/bulk`, `POST
+  /v1/findings/{id}/verify/bulk` and `GET /v1/ml/capacity` (`docs/api/v1.md`
+  "Phase B routes", `docs/interop.md`). No route is a `501` stub; the `501`s
+  that remain are documented non-builds with a reason. The mutating ML
+  routes honour `Idempotency-Key` since B2, the B3 routes included. The
+  `endpoint-v1` predict contract for `source: endpoint` registrations is
+  `docs/api/endpoint-contract.md`.
 - **Jobs** (as shipped, section 0 v2.3 divergences 1 and 2): two ML Celery
   tasks, `redsim.ml_campaign_run` and `redsim.ml_model_validate`, both on
   the `scans` queue (`redsim/workers/celery_app.py`), plus the ML branch of
-  `redsim.report_render` on `default`. One `ml_campaign_run` job runs a whole
-  attack campaign (`Job.type = attack.run`). The follow-on jobs
-  `explain.run` and `harden.recommend` (from `POST /v1/findings/{id}/explain`
-  and `/harden`) and `verify.replay` (from `POST /v1/findings/{id}/verify`)
-  are separate jobs on the same task. There is no per-attack chain. Admission
-  is audit-first: the audit event is appended before any Run/Job row and
-  before `task.delay`, and a failed enqueue removes the rows and answers
-  `503 queue_unavailable`. The worker emits the spec 10.5 vocabulary
+  `redsim.report_render` on `default` and, since wave B2,
+  `redsim.ml_llm_probe_run` on `default` (the only pool with Pythia egress;
+  `Job.type = llm.probe`, `Run.scanner = ml.llm_probe`, no `ml_campaigns`
+  row), and since wave B3 `redsim.dataset_export` (`Job.type =
+  dataset.export`, `Run.scanner = ml.dataset_export`, a follow-up run) and
+  `redsim.ml_dataset_validate` (`Job.type = dataset.validate`, `Run.scanner
+  = ml.dataset_ingest`, no target) on `scans`, `redsim.integration_push`
+  (`Job.type = integration.push`, `Run.scanner = ml.integration_push`, a
+  follow-up run) on `default`, the pool with egress, and the beat task
+  `redsim.ml_dispatch_deferred` every 60 s on `default` (thirteen tasks;
+  `task_routes` unchanged, the B3 modules registered through `include`). A
+  batch campaign is N `attack.run` jobs with `batch_id` stamped, a bulk
+  verify one `verify.replay` job per `(defense, params)` and a bulk upload N
+  `model.validate` jobs with `bulk_id`. One `ml_campaign_run` job runs a whole attack campaign
+  (`Job.type = attack.run`). The follow-on jobs `explain.run` and
+  `harden.recommend` (from `POST /v1/findings/{id}/explain` and `/harden`)
+  and `verify.replay` (from `POST /v1/findings/{id}/verify`) are separate
+  jobs on the same task. `report.render` jobs (from
+  `POST /v1/runs/{id}/report.render`, wave B2) run on `redsim.report_render`
+  and write one `report_snapshots` row each. There is no per-attack chain.
+  Admission is audit-first: the audit event is appended before any Run/Job
+  row and before `task.delay`, and a failed enqueue removes the rows and
+  answers `503 queue_unavailable`. The worker emits the spec 10.5 vocabulary
   (`model.load`, `attack.execute.<id>`, `explain.execute`, `campaign.score`,
-  `harden.execute`, `verify.execute`, `report.render`, `job.complete`) as
-  `worker:<job.type>` with `requested_by` in the detail.
+  `harden.execute`, `verify.execute`, `report.render`, `job.complete`, and
+  since B2 `llm.probe.entitlement`, `llm.probe.execute.<probe>`,
+  `llm.probe.score`, plus `model.register` when it registers a derived
+  model) as `worker:<job.type>` with `requested_by` in the detail. Since B2
+  `ml_model_validate` dispatches on `Target.kind`: uploads load in the
+  sandbox child, endpoints are probed through the worker-parent broker with
+  the `AuthProfile` credential resolved at pickup.
 - **MRI** (unchanged formula): `round(0.35·S_acc + 0.25·S_asr + 0.20·S_eps +
   0.10·S_conf + 0.10·S_expl)`, computed **only when all five subscores exist**,
   **weights never renormalized** over the available dimensions (spec 15.4: the
@@ -652,22 +1108,36 @@ Where the slices stand at `58461cc` (2026-09-09):
   and compare (the six-section renderer, the report routes, `verify_delta`
   and `side_by_side` compare).
 - The completion passes then ran as the four waves of
-  `docs/plans/09-gap-register-2026-09-08.md`: waves 1 to 3 are on `main`
-  (`58461cc`), wave 4 (the three end-to-end completion-criteria files, the
-  CI fixes and this documentation refresh) is in progress.
+  `docs/plans/09-gap-register-2026-09-08.md`: all four are on `main` (wave 4
+  integrated by `e73dea0`).
+- Phase B runs as the five waves of `docs/plans/12-phase-b-plan.md`. B0
+  (contracts, tripwires, stubs, datasets) is on `main` at `29db42c`; B1 (the
+  library layer) is on `main` at `1439f92`; B2 (services, workers and routes
+  for B1: the endpoint connector, Phase B admission, the worker wiring, LLM
+  probes through Pythia, the review workflow, reports with PDF, snapshots,
+  N-run compare, weights and idempotency, the 13 codes) and B3
+  (interoperability and bulk: the Croissant export and the consumed-slice
+  admission, ATLAS stamping and coverage, the Foundry push off by default,
+  batch campaigns, bulk upload, bulk verify, per-project capacity, the CLI
+  matrix) are pushed with this revision; B4 (end-to-end evidence, the `make
+  check-phase-b` gate, documentation) has not started. No Phase B route is a
+  `501` stub any more; the plan carries a status line per wave.
 
 Demo-critical path (D8, spec 3.4): image path end to end → MRI scorecard →
 verify-after-harden → tabular path → ONNX upload → Fargate deploy. **M5a (the
-image UI slice) is the cut line for a demo.** Everything in Phase B waits behind
-Fargate, and B2 waits behind B1+. Against that path at `58461cc`: the image
-and tabular paths, the scorecard, the verify loop and the ONNX upload exist in
-code, are covered by the unit suite, and the image and tabular campaigns run
-through the real sandbox child in the wave-3 e2e smoke file on synthetic
-assets. No campaign has been run on a deployed stack: the Fargate services in
-this tree are not applied, and the runtime of open PR #23 has no workers and
-no assets yet. The wave-4 files `tests/e2e/test_ml_campaigns.py`,
-`test_ml_verify_upload_reports.py` and `test_ml_governance.py` are how the
-path is exercised end to end before any live claim is made.
+image UI slice) is the cut line for a demo.** Against that path at `1439f92`
+plus waves B2 and B3: the image and tabular paths, the scorecard, the verify
+loop and the ONNX upload exist in code, are covered by the unit suite, and
+run end to end through the real sandbox child in the 22 e2e cases of
+`tests/e2e/` on synthetic assets (22 passed at `29db42c`, at `1439f92` and on
+the integrated B2 tree, and on every PR in the `e2e-python` CI job since
+wave B0; after wave B3 only the 8-case smoke file was re-run, and the text,
+detection, endpoint, LLM, review, report, interop and bulk paths are covered
+by `tests/ml/` until the wave B4 e2e files exist). No campaign has been run on a
+deployed stack: the runtime of #23 (`10650da`) has no workers and no assets
+yet (brief package E). Phase B was planned to wait behind Fargate; the plan of
+2026-09-09 runs its waves in parallel with the brief's packages, with
+section H of the brief as the coordination contract.
 
 ## 8. Definition of done (canonical section 26) and where it stands
 
@@ -759,10 +1229,14 @@ v2.3:
   contract alignment on `main` and the rest open. `08` (infra) has the #19
   Terraform foundation on `main` and nothing applied. Neither was refreshed
   in this pass.
-- `07` keeps its v1 body under a reconciliation banner. It maps to spec
-  section 27 / milestone B2 (section 6 above). Use it for the
-  parallel-execution shape only, not for the literal paths, signatures or
-  mechanisms.
+- `07` keeps its v1 body under two banners: the dated status banner of v2.7
+  (the section 27 interoperability is built in Phase B wave B3, the body is
+  not rewritten yet, `docs/interop.md` and the tree are the source) and the
+  reconciliation banner. It maps to spec section 27 / milestone B2 (section 6
+  above). Its rewrite onto the section 27 vocabulary is the wave B4 docs
+  track; until then use it for the parallel-execution shape only, not for
+  the literal paths, signatures or mechanisms (the tree has
+  `redsim/ml/interop/`, not `redsim/interop/`, and no `mlcroissant`).
 - `09-gap-register-2026-09-08.md` is the spec-vs-tree register audited at
   `a864da6`. Its rows are kept as found at audit time and a header paragraph
   records the status after waves 1 to 3 at `58461cc` and names the wave-4
@@ -770,7 +1244,19 @@ v2.3:
 - `EXECUTION-CONTEXT.md` was refreshed in v2.3 (modules on `main`, the CLI
   surface, the spec 20.3 environment variables, the local assets and the
   portable TLS options replace the one-operator certificate path) and again
-  in v2.4 (wave 3 landed with shas, the e2e tier, the CI state, PR #23).
+  in v2.4 (wave 3 landed with shas, the e2e tier, the CI state, PR #23). It
+  was not refreshed for Phase B in v2.5; the Phase B state is in
+  `12-phase-b-plan.md`, `docs/architecture/ml-vertical.md` and `CLAUDE.md`.
+- `10-remaining-work-brief.md` (packages A to F and the section H
+  coordination contract), `11-phase-b-register-2026-09-09.md` (the 309-item
+  Phase B register audited against `10650da`, rows kept as found) and
+  `12-phase-b-plan.md` (the five waves) were written on 2026-09-09. Since
+  v2.5 the plan carries a dated "Status" line under each wave: B0 landed at
+  `29db42c`, B1 landed at `1439f92`, B2 landed with v2.6, B3 landed with this
+  revision (v2.7), B4 not started. The register's rows are not edited as
+  items close; the plan's status lines and section 4.1 of this file are where
+  closure is recorded. `docs/interop.md` (new in v2.7) is the narrative of
+  the wave B3 interoperability as built.
 
 Use the phase files for the parallel-execution shape, not for the literal
 contracts. The canonical spec, `specs/F00#` and the tree win over any body.

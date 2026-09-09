@@ -26,6 +26,7 @@ from redsim.api.v1 import (
     ml_capabilities,
     ml_findings,
     models,
+    models_bulk,
     org_cost,
     projects,
     reports,
@@ -69,6 +70,11 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     # it ends up *inner* (Starlette runs the last-added middleware outermost):
     # the scope is set just around route handling and reset right after, and a
     # rejected CSRF / rate-limit request never opens a tenant-scoped session.
+    # Phase B (wave B2, reports-compare-weights): ``Idempotency-Key`` on the mutating
+    # ML routes. Added first so it runs innermost, inside the tenant scope.
+    from redsim.api.middleware.idempotency import IdempotencyMiddleware
+    app.add_middleware(IdempotencyMiddleware, settings=settings)
+
     from redsim.api.middleware.tenant import tenant_middleware
     app.middleware("http")(tenant_middleware(settings))
 
@@ -106,6 +112,9 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(datasets.router, prefix="/v1")
     app.include_router(defenses.router, prefix="/v1")
     app.include_router(models.router, prefix="/v1")
+    # Phase B wave B3 (bulk-upload-capacity-cli): POST /v1/models/bulk and GET /v1/ml/capacity, the
+    # only router serving those two paths (the B0 stubs left batches.py with the B3 integration).
+    app.include_router(models_bulk.router, prefix="/v1")
     app.include_router(artifacts.router, prefix="/v1")
     app.include_router(compare.router, prefix="/v1")
     app.include_router(ml_findings.router, prefix="/v1")
@@ -121,7 +130,9 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(projects.router, prefix="/v1")
     app.include_router(logs.router, prefix="/v1")
     app.include_router(org_cost.router, prefix="/v1")
-    # Phase B routes, mounted as truthful 501 stubs since wave B0 (docs/plans/12-phase-b-plan.md).
+    # Phase B routes (docs/plans/12-phase-b-plan.md): mounted as truthful 501 stubs in wave B0, real
+    # handlers since waves B2 and B3 (batch campaigns and bulk verify; ATLAS coverage, the roster and
+    # the Foundry push; the LLM probes). tests/ml/test_phase_b_stubs.py pins the surface.
     app.include_router(batches.router, prefix="/v1")
     app.include_router(integrations.router, prefix="/v1")
     app.include_router(llm.router, prefix="/v1")

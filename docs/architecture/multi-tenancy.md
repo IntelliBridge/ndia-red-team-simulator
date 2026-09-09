@@ -30,7 +30,7 @@ flowchart TD
   org["Organization<br/>(the tenant)"]
   org --> projA["Project A"]
   org --> projB["Project B"]
-  projA --> runsA["runs · jobs · findings<br/>targets · llm_usage · artifacts<br/>remediation_attempts · application_logs<br/>ml_campaigns"]
+  projA --> runsA["runs · jobs · findings<br/>targets · llm_usage · artifacts<br/>remediation_attempts · application_logs<br/>ml_campaigns<br/>report_snapshots · idempotency_keys<br/>ml_batches · ml_datasets"]
   projB --> runsB["runs · jobs · findings<br/>…"]
 ```
 
@@ -49,7 +49,10 @@ Migration `0006` makes the database enforce the org boundary. It touches
 tables: `targets`, `runs`, `jobs`, `findings`, `llm_usage`, `artifacts`,
 `remediation_attempts`, `application_logs`. Migration `0010_ml_vertical`
 adds a ninth scoped table, `ml_campaigns`, with the same column, triggers
-and policy (section 4 below).
+and policy (section 4 below), and migration `0011_phase_b_platform` (Phase B
+wave B0) adds four more, `report_snapshots`, `idempotency_keys`,
+`ml_batches` and `ml_datasets`, again with the same rails (section 5). The
+Alembic chain is `0001` to `0011`; `0011` is the single head.
 
 ### 1. Denormalized `org_id` + a backfill trigger
 
@@ -138,8 +141,48 @@ and `0009` with only the table name substituted. ML code never sets
 `org_id` (spec 7.6). The same migration adds the nullable `targets.detail`
 JSONB column that holds the `MLModelManifest` for `ml_model_artifact` and
 `ml_model_endpoint` targets. It is `NULL` for every other kind, so no
-existing row changes meaning. On `main` the ORM does not yet map either
-the column or the table. Only the migration exists.
+existing row changes meaning. `ml_campaigns` stays migration-owned by
+design: it has no ORM model, the services reflect the table, and the e2e
+harness and the campaign-route tests keep hand-written sqlite mirrors of
+it (which need the `0011` column `batch_id` added before anything writes
+it, a wave B3 item).
+
+### 5. Phase B platform tables (migration `0011_phase_b_platform`, wave B0)
+
+One additive, reversible revision above `0010`, landed on `main` at
+`29db42c` (commit `7b1f2fa`, register rows INTEROP-14, BULK-01, BULK-20,
+REVIEW_REPORTS-44). Six DDL groups, each guarded so a database built by
+`0001`'s `create_all` and one upgraded step by step end identical:
+
+| Group | What it adds | Who fills it |
+|---|---|---|
+| `report_snapshots` | `id`, `run_id` FK, `project_id` FK, `org_id`, `artifact_ids` JSONB (`[]`), `record_sha256`, `rendered_at`, `archived`, `created_by`; indexes on `run_id`, `project_id`, `org_id` | wave B2 `reports-compare-weights` (immutable report snapshots over content-addressed artifacts) |
+| `idempotency_keys` | primary key `(project_id, key)` (`pk_idempotency_keys`), `org_id`, `route`, `request_sha256`, `response_status`, `response_body` JSONB, `created_at` | wave B2 (`Idempotency-Key` on mutating routes) |
+| `projects` columns | `ml_scoring` JSONB, `ml_max_concurrent_runs` int, `ml_daily_run_budget` int, all nullable | B2 per-project scoring weights, B3 capacity and daily budget |
+| `ml_campaigns.batch_id` | `String(64)` nullable plus `ix_ml_campaigns_batch_id`, no FK | wave B3 `bulk-service-routes` |
+| `ml_batches` | `id`, `project_id`, `org_id`, `kind` (`campaign`, `verify`, `upload`), `config` JSONB, `status` (`accepted`, then `cancelled`; the member roll-up derives from the runs), `created_by`, `created_at`, `cancelled_at`, `idempotency_key`, `request_sha256` | wave B3 |
+| `ml_datasets` | `id`, `project_id`, `org_id`, `status` (`validating`, `available`, `refused`), `refusal_reason`, `license`, `modality`, `class_names` JSONB, `manifest_sha256` (indexed), `blob_location`, `detail` JSONB, `created_by`, `created_at` | wave B3 `interop-consume` |
+
+RLS parity on all four new tables is the `0010` recipe with only the table
+name substituted: the `BEFORE INSERT` backfill trigger, the `BEFORE UPDATE`
+drift guard, `ENABLE` plus `FORCE ROW LEVEL SECURITY` and the
+`redsim_tenant_isolation` policy over the same GUC.
+`tests/test_migration_0011.py` proves that token for token against `0010`'s
+offline SQL, round-trips upgrade and downgrade on sqlite, and (Postgres-gated
+on `REDSIM_DB_URL`) upgrades, downgrades one step and upgrades again on a live
+database; `tests/test_tenant_rls.py` adds the cross-org negatives per table.
+The ORM models are `ReportSnapshot`, `IdempotencyKey` (composite primary
+key), `MlBatch` and `MlDataset`, plus `Project.ml_scoring`,
+`Project.ml_max_concurrent_runs` and `Project.ml_daily_run_budget`, with server
+defaults mirroring the migration. Two nullable columns go beyond the plan's
+minimum lists and are flagged for review: `report_snapshots.created_by` (audit
+attribution) and `ml_datasets.detail` (the register row's declared schema,
+per-file digests and per-class counts without touching the frozen schema).
+
+Each new table also receives the guarded `redsim_app` GRANT of `0004` /
+`0005`. `0010` never granted `ml_campaigns` to `redsim_app`, a gap for a
+role-separated compose deployment; the Fargate path is unaffected because
+`deploy/runtime/scripts/migrate.py` grants every `pg_tables` row.
 
 ---
 
@@ -191,7 +234,11 @@ A detective control backs the triggers: the
 `redsim.verify_tenant_integrity` beat task (hourly) re-derives each
 scoped row's expected `org_id` from its project, logs any mismatch, and
 records one `tenant.integrity_check` event on the system audit chain. It
-never repairs. `redsim tenants verify` runs the same scan on demand, and
+never repairs. Since the wave B1 integration its scanned set is every
+scoped table: the eight of `0006`, `ml_campaigns` (keyed by `run_id` in the
+report and the repair) and the four `0011` tables (`idempotency_keys` keyed
+by `key` within its `project_id`); before that it scanned the `0006` eight
+only. `redsim tenants verify` runs the same scan on demand, and
 `--repair` backfills drifted rows from the project once the drift is
 understood.
 

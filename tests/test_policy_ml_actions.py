@@ -2,6 +2,10 @@
 the seven Phase B members (spec 7.4 addendum of 2026-09-09) and the OPA / Cedar mirrors
 (spec section 7.4).
 
+Wave B2 (``codes-b2``) moved ``dataset.export`` from scanner to remediator, the tier the
+spec 17.4 route table and 27.4 always named (wave B0 had taken scanner from the plan's
+brief wording); the three policy files and the 7.4 addendum row changed together.
+
 The two mirror tests parse the policy files rather than substring-matching them, so a
 member whose minimum role differs between Python, Rego and Cedar fails here, not in a
 deployment that runs ``REDSIM_POLICY_ENGINE=opa`` or ``cedar``.
@@ -44,7 +48,8 @@ EXPECTED = {
 EXPECTED_PHASE_B = {
     Action.LLM_PROBE_RUN: ("llm.probe.run", "remediator"),
     Action.DATASET_REGISTER: ("dataset.register", "remediator"),
-    Action.DATASET_EXPORT: ("dataset.export", "scanner"),
+    # Spec 17.4 and 27.4: an export writes a slice other teams read (wave B2 alignment).
+    Action.DATASET_EXPORT: ("dataset.export", "remediator"),
     Action.INTEGRATION_PUSH: ("integration.push", "admin"),
     Action.BATCH_RUN: ("batch.run", "scanner"),
     Action.REPORT_RENDER: ("report.render", "scanner"),
@@ -181,12 +186,19 @@ def test_phase_b_register_scenarios():
     with pytest.raises(HTTPException):
         check(_user("scanner"), Action.DATASET_REGISTER, "p1")
     check(_user("remediator"), Action.DATASET_REGISTER, "p1")
-    # Plan 12 brief: dataset.export, batch.run and report.render sit at the scanner tier
-    # with attack.run and report.export.
-    for action in (Action.DATASET_EXPORT, Action.BATCH_RUN, Action.REPORT_RENDER):
+    # Plan 12 brief: batch.run and report.render sit at the scanner tier with attack.run
+    # and report.export.
+    for action in (Action.BATCH_RUN, Action.REPORT_RENDER):
         check(_user("scanner"), action, "p1")
         with pytest.raises(HTTPException):
             check(_user("viewer"), action, "p1")
+    # INTEROP-02 / -10 and spec 17.4: dataset.export is remediator, one tier above the
+    # read-side report.export it was once paired with.
+    check(_user("remediator"), Action.DATASET_EXPORT, "p1")
+    with pytest.raises(HTTPException):
+        check(_user("scanner"), Action.DATASET_EXPORT, "p1")
+    assert _ACTION_MIN_ROLE[Action.DATASET_EXPORT] == _ACTION_MIN_ROLE[Action.DATASET_REGISTER]
+    assert _ROLE_RANK[_ACTION_MIN_ROLE[Action.DATASET_EXPORT]] > _ROLE_RANK[_ACTION_MIN_ROLE[Action.REPORT_EXPORT]]
     # REVIEW_REPORTS-05: analyst drafts are remediator; the verdict stays approver.
     check(_user("remediator"), Action.FINDING_AUTHOR, "p1")
     with pytest.raises(HTTPException):
@@ -259,3 +271,17 @@ def test_three_policy_files_agree_on_the_phase_b_actions():
         assert _ACTION_MIN_ROLE[action] == role, value
         assert rego[value] == role, f"rego disagrees on {value}"
         assert cedar[value] == role, f"cedar disagrees on {value}"
+
+
+def test_dataset_export_is_remediator_in_all_three_files_and_the_spec():
+    """Wave B2 alignment: the spec 17.4 table, 27.4 and the 7.4 addendum row all say remediator."""
+    assert _ACTION_MIN_ROLE[Action.DATASET_EXPORT] == "remediator"
+    assert _rego_table(REGO.read_text())["dataset.export"] == "remediator"
+    assert _cedar_table(CEDAR.read_text())["dataset.export"] == "remediator"
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-08-adversarial-ml-redteam-spec.md").read_text()
+    row = next(line for line in spec.splitlines() if line.startswith("| `DATASET_EXPORT` |"))
+    assert "| `remediator` |" in row, row
+    assert "`scanner` |" not in row.split("|")[3], row
+    # The 17.4 route row and the 27.4 vocabulary row never said anything else.
+    assert "`DATASET_EXPORT` (remediator; section 27.4)" in spec
+    assert "`DATASET_EXPORT` (`remediator`)" in spec

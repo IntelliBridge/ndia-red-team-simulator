@@ -726,7 +726,18 @@ def test_capabilities_and_unsupported_paths(
         assert row["status"] == "not_implemented" and row["phase"] == "B" and row["reason"], row
     assert body["endpoint_connector"]["status"] == "not_implemented"
     assert body["endpoint_connector"]["phase"] == "B" and body["endpoint_connector"]["reason"]
-    assert {row["id"] for row in body["bundled_models"]} == set(h.BUNDLED_IDS), "fixtures are never listed"
+    # Phase A bundled models are listed; the fixture-only cifar10_smallcnn never is. Since wave B1 the registry also
+    # serves the Phase B bundled targets (assets_frcnn_mnv3 registers with the dpatch adapter, sms_tfidf_lr when
+    # redsim.ml.targets.text is imported); each is listed with its own status and, until built, a reason.
+    bundled_rows = {row["id"]: row for row in body["bundled_models"]}
+    assert set(h.BUNDLED_IDS) <= set(bundled_rows), "the Phase A bundled models are listed"
+    assert "cifar10_smallcnn" not in bundled_rows, "fixtures are never listed"
+    for bundled_id, row in bundled_rows.items():
+        if bundled_id in h.BUNDLED_IDS:
+            continue
+        assert row["modality"] in ("text", "detection"), row
+        assert row["status"] in ("available", "not_implemented"), row
+        assert row["status"] == "available" or row["reason"], row
     assert body["defenses"], "the defense roster comes from the registry, never an empty list"
 
     # -- gateway not configured (mock off): configured=False with the reason, still nothing secret ---
@@ -734,34 +745,35 @@ def test_capabilities_and_unsupported_paths(
     assert body["llm_narrative"]["configured"] is False and body["llm_narrative"]["model"] is None
     assert body["llm_narrative"]["reason"]
 
-    # -- endpoint targets: 501 not_implemented with a reason and a phase, refusal on the chain ---------
+    # -- endpoint targets (wave B2): admitted through the endpoint contract; a body without the credential
+    #    profile is the typed 422 auth_profile_required, refused on the chain (host and reason, never a URL) --
     endpoint_body = {"source": "endpoint", "project_id": e2e_org.project_id, "name": "e2e-endpoint",
                      "url": "https://endpoint.e2e.invalid/predict"}
     refused_before = len([ev for ev in e2e_app.read_chain(project_chain)
                           if ev["action"] == "model.register" and not ev["success"]])
     endpoint = admin.post("/v1/models", json=endpoint_body)
-    assert endpoint.status_code == 501, endpoint.text
+    assert endpoint.status_code == 422, endpoint.text
     detail = endpoint.json()["detail"]
-    assert detail["code"] == NOT_IMPLEMENTED and detail["phase"] == "B" and detail["message"]
+    assert detail["code"] == "auth_profile_required" and detail["field"] == "auth_profile_id" and detail["message"]
     refused = [ev for ev in e2e_app.read_chain(project_chain) if ev["action"] == "model.register" and not ev["success"]]
     assert len(refused) == refused_before + 1
-    assert refused[-1]["detail"]["reason"] == NOT_IMPLEMENTED and refused[-1]["detail"]["source"] == "endpoint"
-    assert refused[-1]["detail"]["phase"] == "B" and refused[-1]["actor"] == e2e_org.actor("admin")
-    # Spec 17.2 gates endpoint registration at TARGET_MANAGE (admin). The route answers the remediator
-    # with the same 501 (the MODEL_REGISTER gate passes before the source is read); either way nothing
-    # is registered and the viewer is refused before the source is looked at.
+    assert refused[-1]["detail"]["reason"] == "auth_profile_required" and refused[-1]["detail"]["source"] == "endpoint"
+    assert refused[-1]["detail"]["host"] == "endpoint.e2e.invalid" and refused[-1]["actor"] == e2e_org.actor("admin")
+    assert "endpoint.e2e.invalid/predict" not in json.dumps(refused[-1]), "the audit row carries the host only"
+    # Spec 17.2 gates endpoint registration at TARGET_MANAGE (admin), before any field is read: the
+    # remediator and the viewer are refused by the policy layer and nothing is registered.
     remediator_endpoint = remediator.post("/v1/models", json=endpoint_body)
-    assert remediator_endpoint.status_code in (403, 501), remediator_endpoint.text
+    assert remediator_endpoint.status_code == 403, remediator_endpoint.text
     assert viewer.post("/v1/models", json=endpoint_body).status_code == 403
     listing = admin.get("/v1/models", params={"project": e2e_org.project_id}).json()["models"]
     assert not [row for row in listing if row.get("name") == "e2e-endpoint"], "no endpoint target was created"
 
-    # -- report.pdf: 501 with the phase, behind the same gate as the other formats ----------------------
+    # -- report.pdf (wave B2): a worker-written artifact only; the completion path renders md/json/html, so
+    #    before a POST report.render it is 404 (never a filesystem fallback), behind the same export gate ----
     run_id = campaigns.scanner.run_id
     pdf = scanner.get(f"/v1/runs/{run_id}/report.pdf")
-    assert pdf.status_code == 501, pdf.text
-    assert pdf.json()["detail"]["code"] == NOT_IMPLEMENTED and pdf.json()["detail"]["phase"] == "B"
-    assert pdf.json()["detail"]["field"] == "ext"
+    assert pdf.status_code == 404, pdf.text
+    assert pdf.json()["detail"] == "report not yet rendered"
     assert viewer.get(f"/v1/runs/{run_id}/report.pdf").status_code == 403, "the export gate precedes the format"
 
     # -- an attack id outside the registry is a typed refusal (422 unknown_attack, or 501 for a named

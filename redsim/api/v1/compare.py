@@ -1,25 +1,29 @@
 """Authoritative ML campaign reads, comparisons, and reviewer annotations.
 
-``GET /v1/runs/{id}/compare?with=`` implements spec 17.2 under D9(i) (F007):
+``GET /v1/runs/{id}/compare?with=`` implements spec 17.2 under D9(i) (F007) and
+``GET /v1/runs/compare?ids=a,b,c`` the N-run table of F007 US3 (REVIEW_REPORTS-26).
+Both are thin over the pure ``redsim.ml.compare`` module, which owns the rules:
 
 * compatibility is decided variable by variable on the frozen campaign config
   (the fields the settings hash of spec 5.6 covers, except the model identity)
   plus ``sample_indices_sha256``; every mismatched variable is named in the
   ``409 incompatible_campaigns`` envelope so the UI can say "not comparable:
-  seed, n_samples";
+  seed, n_samples"; a differing weight vector is named ``scoring.weights``;
 * a run whose score is absent or partial (``mri`` is ``None``) is refused with
   ``409 score_unavailable``, never compared on the subscores that do exist;
 * a verify pairing (same ``model_sha256``, one run's ``baseline_run_id`` is the
   other) answers ``mode: "verify_delta"`` with the measured ΔMRI: the delta the
   worker persisted on the verify run, or, when it did not persist one, the same
-  ``redsim.ml.scoring.delta`` computation over the two stored records (its
-  ``IncompatibleCampaigns`` is the 409 above);
+  ``redsim.ml.scoring.delta`` computation over the two stored records;
 * the same settings on a different model answers ``mode: "side_by_side"`` with
   two full scorecards and ``delta: null`` (spec 15.6): two scorecards, never one
-  delta.
+  delta;
+* the N-run table lists rows in request order, carries a delta only on verify
+  rows whose own baseline is in the set, and has no mean, rank or aggregate.
 
-Both runs are membership-gated before either record is read, so a non-member
-learns nothing about the other campaign.
+Every run is membership-gated before any record is read, so a non-member
+learns nothing about the other campaigns. ``/campaign`` carries
+``non_default_weights`` (spec 15.3 badge; REVIEW_REPORTS-30).
 """
 
 from __future__ import annotations
@@ -31,23 +35,25 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from redsim.api.auth import CurrentUser, get_current_user
-from redsim.api.errors import INCOMPATIBLE_CAMPAIGNS, SCORE_UNAVAILABLE, api_error
+from redsim.api.errors import INCOMPATIBLE_CAMPAIGNS, PARAMS_OUT_OF_RANGE, SCORE_UNAVAILABLE, api_error
 from redsim.api.policy import Action, check, ensure_run_access
+from redsim.ml import compare as cmp
+from redsim.ml.compare import (
+    IGNORED_CONFIG_FIELDS as _IGNORED_CONFIG_FIELDS,
+)
+from redsim.ml.compare import (
+    IGNORED_VARIABLES,
+    MAX_TABLE_RUNS,
+    MIN_TABLE_RUNS,
+    MODEL_VARIABLE,
+    SAMPLE_VARIABLE,
+)
 
 router = APIRouter(tags=["ml-campaigns"])
 
-# Config fields outside the comparison. ``target_id`` is the Target row, whose model
-# identity is compared through ``provenance.model_sha256`` instead (a side-by-side
-# comparison is exactly "same settings, different model"); ``defense`` is the variable
-# a verify run changes; the rest do not affect a measurement.
-_IGNORED_CONFIG_FIELDS: tuple[str, ...] = (
-    "target_id", "defense", "llm_narrative", "auto_recommend", "target_snapshot", "attacks",
-)
-IGNORED_VARIABLES: tuple[str, ...] = (
-    "llm_narrative", "auto_recommend", "target_snapshot", "attacks", "reviewer_notes",
-)
-SAMPLE_VARIABLE = "sample_indices_sha256"
-MODEL_VARIABLE = "model_sha256"
+__all__ = [
+    "IGNORED_VARIABLES", "MODEL_VARIABLE", "SAMPLE_VARIABLE", "_IGNORED_CONFIG_FIELDS", "router",
+]
 
 
 def _error(
@@ -125,171 +131,82 @@ def _load_campaign(run_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
     return payload, dict(campaign)
 
 
-def _provenance(record: dict[str, Any]) -> dict[str, Any]:
-    value = record.get("provenance")
-    return value if isinstance(value, dict) else {}
-
-
-def _config(record: dict[str, Any]) -> dict[str, Any]:
-    value = record.get("config")
-    return value if isinstance(value, dict) else {}
-
-
-def _sample_hash(record: dict[str, Any]) -> Any:
-    return _provenance(record).get(SAMPLE_VARIABLE)
-
-
-def _model_hash(record: dict[str, Any]) -> Any:
-    return _provenance(record).get(MODEL_VARIABLE)
-
-
-def _settings_hash(record: dict[str, Any]) -> Any:
-    # CampaignRecord owns this at top level; score/provenance fallbacks retain
-    # compatibility with records written by earlier workers.
-    score = record.get("score")
-    provenance = record.get("provenance")
-    return (record.get("settings_hash")
-            or (score.get("settings_hash") if isinstance(score, dict) else None)
-            or (provenance.get("settings_hash") if isinstance(provenance, dict) else None))
-
-
-def _score(record: dict[str, Any]) -> dict[str, Any] | None:
-    value = record.get("score")
-    return value if isinstance(value, dict) else None
-
-
-def _compared_config(record: dict[str, Any]) -> dict[str, Any]:
-    return {k: v for k, v in _config(record).items() if k not in _IGNORED_CONFIG_FIELDS}
-
-
-def _compatibility(left: dict[str, Any], right: dict[str, Any]) -> tuple[list[str], list[str]]:
-    """``(mismatched, unchanged)`` variable names, config field by config field plus the
-    sampled-input digest. The model digest is reported separately: a different model
-    with equal settings is the side-by-side case, not an incompatibility."""
-    lc, rc = _compared_config(left), _compared_config(right)
-    mismatched = [k for k in sorted(set(lc) | set(rc)) if lc.get(k) != rc.get(k)]
-    unchanged = [k for k in sorted(lc) if k in rc and lc[k] == rc[k]]
-    left_sample, right_sample = _sample_hash(left), _sample_hash(right)
-    if not left_sample or not right_sample:
-        mismatched.append(f"{SAMPLE_VARIABLE} (not recorded on both runs)")
-    elif left_sample != right_sample:
-        mismatched.append(SAMPLE_VARIABLE)
-    else:
-        unchanged.append(SAMPLE_VARIABLE)
-    left_settings, right_settings = _settings_hash(left), _settings_hash(right)
-    same_model = _model_hash(left) is not None and _model_hash(left) == _model_hash(right)
-    if same_model and not mismatched and left_settings and right_settings and left_settings != right_settings:
-        # Same model, same compared config, different hash: the records disagree with
-        # themselves, which is a refusal, not something to paper over.
-        mismatched.append("settings_hash")
-    if same_model:
-        unchanged.append(MODEL_VARIABLE)
-        if left_settings and left_settings == right_settings:
-            unchanged.append("settings_hash")
-    return mismatched, unchanged
-
-
-def _require_complete_score(run_id: str, record: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """The score record of ``record`` when it is complete, else the reasons it is not."""
-    score = _score(record)
-    if score is None:
-        status = record.get("score_status")
-        reason = status.get("reason") if isinstance(status, dict) else None
-        return {}, [f"{run_id}: no score" + (f" ({reason})" if reason else "")]
-    if score.get("mri") is None:
-        missing = score.get("missing") or []
-        detail = "; ".join(str(m) for m in missing) if isinstance(missing, list) and missing else "partial score"
-        return score, [f"{run_id}: MRI not computed ({detail})"]
-    return score, []
-
-
-def _changed_variables(left: dict[str, Any], right: dict[str, Any]) -> list[str]:
-    changed: list[str] = []
-    if _model_hash(left) != _model_hash(right):
-        changed.append("model")
-    if _config(left).get("target_id") != _config(right).get("target_id"):
-        changed.append("target")
-    if _config(left).get("defense") != _config(right).get("defense"):
-        changed.append("defense")
-    if not changed and (
-        left.get("parent_run_id") == right.get("run_id")
-        or right.get("parent_run_id") == left.get("run_id")
-    ):
-        changed.append("rerun")
-    return changed
-
-
-def _scorecard(record: dict[str, Any], score: dict[str, Any]) -> dict[str, Any]:
-    """A full MRIRecord with the tables it must never be shown without (spec 15.7, 15.8)."""
-    target = record.get("target")
-    return {
-        **score,
-        "run_id": record.get("run_id"),
-        "model_sha256": _model_hash(record),
-        "target": target if isinstance(target, dict) else None,
-        "measurements": record.get("measurements", []),
-        "curve": record.get("curve", []),
-        "limitations": record.get("limitations", []),
-    }
-
-
-def _comparison_families(delta: dict[str, Any]) -> list[dict[str, Any]]:
-    flattened: list[dict[str, Any]] = []
-    for item in delta.get("delta_families", []):
-        if not isinstance(item, dict):
-            continue
-        before_value = item.get("before")
-        after_value = item.get("after")
-        before: dict[str, Any] = (
-            before_value if isinstance(before_value, dict) else {}
-        )
-        after: dict[str, Any] = (
-            after_value if isinstance(after_value, dict) else {}
-        )
-        flattened.append({
-            "family": item.get("measurement_id"),
-            "before": before.get("accuracy"),
-            "after": after.get("accuracy"),
-            "n_before": before.get("n"),
-            "n_after": after.get("n"),
-            "delta": item.get("delta"),
-        })
-    return flattened
+# Thin aliases kept for the tests and modules that imported the pairwise helpers
+# from this module before the pure module existed.
+_config = cmp.config
+_model_hash = cmp.model_hash
+_compatibility = cmp.compatibility
+_require_complete_score = cmp.require_complete_score
+_changed_variables = cmp.changed_variables
+_scorecard = cmp.scorecard_projection
+_comparison_families = cmp.comparison_families
 
 
 def _measured_delta(
     *, verify: dict[str, Any], verify_score: dict[str, Any], baseline: dict[str, Any],
     baseline_score: dict[str, Any],
 ) -> tuple[dict[str, Any], str]:
-    """The verify run's ΔMRI as a JSON dict and where it came from.
-
-    Prefers the delta the worker persisted on the verify run's score record. Without
-    one, the same ``redsim.ml.scoring.delta`` runs over the two stored records: it is a
-    deterministic function of measured rows, so the result is still a measured delta,
-    and its typed refusals map onto the 17.3 codes.
-    """
-    persisted = verify_score.get("delta")
-    if isinstance(persisted, dict):
-        return persisted, "persisted"
-    from redsim.ml.schema import Measurement, MRIRecord
-    from redsim.ml.scoring import IncompatibleCampaigns, delta
-
+    """The pure module's measured delta with its refusals mapped onto the 17.3 codes."""
     try:
-        before = MRIRecord.model_validate(baseline_score)
-        after = MRIRecord.model_validate(verify_score)
-        measured = delta(
-            before, after, baseline_run_id=str(baseline.get("run_id")),
-            measurements_before=[Measurement.model_validate(m) for m in baseline.get("measurements", [])],
-            measurements_after=[Measurement.model_validate(m) for m in verify.get("measurements", [])],
-            modality_before=_config(baseline).get("modality"),
-            modality_after=_config(verify).get("modality"),
-        )
-    except IncompatibleCampaigns as exc:
+        return cmp.measured_delta(verify=verify, verify_score=verify_score, baseline=baseline,
+                                  baseline_score=baseline_score)
+    except cmp.Incompatible as exc:
         raise api_error(INCOMPATIBLE_CAMPAIGNS, str(exc), reasons=list(exc.reasons)) from exc
+    except cmp.ScoreUnavailable as exc:
+        raise api_error(SCORE_UNAVAILABLE, "; ".join(exc.reasons), reasons=list(exc.reasons)) from exc
+
+
+# --------------------------------------------------------------------------- N-run table
+# Declared before ``/runs/{run_id}/...`` so ``compare`` is never captured as a run id;
+# this router is also mounted before ``runs.router`` in ``redsim.api.app``.
+
+
+def _parse_ids(ids: str) -> list[str]:
+    values = [part.strip() for part in ids.split(",")]
+    values = [v for v in values if v]
+    if len(values) < MIN_TABLE_RUNS or len(values) > MAX_TABLE_RUNS:
+        raise api_error(PARAMS_OUT_OF_RANGE,
+                        f"ids must name between {MIN_TABLE_RUNS} and {MAX_TABLE_RUNS} runs", field="ids",
+                        reasons=[f"{len(values)} ids given"])
+    if len(set(values)) != len(values):
+        raise api_error(PARAMS_OUT_OF_RANGE, "ids must not repeat a run", field="ids")
+    return values
+
+
+@router.get("/runs/compare")
+def compare_many(
+    ids: str = Query(..., description="comma-separated run ids, 2 to 10, in the order the rows should appear"),
+    user: CurrentUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """The N-run comparison table (REVIEW_REPORTS-26): request order, no mean or rank, deltas only on verify rows."""
+    run_ids = _parse_ids(ids)
+    # Membership on every run before any record is read.
+    for run_id in run_ids:
+        ensure_run_access(user, run_id)
+    runs: list[tuple[str, dict[str, Any], dict[str, Any] | None]] = []
+    for run_id in run_ids:
+        record, campaign = _load_campaign(run_id)
+        runs.append((run_id, record, campaign))
+    try:
+        table = cmp.comparison_table(runs)
+    except cmp.Incompatible as exc:
+        raise api_error(
+            INCOMPATIBLE_CAMPAIGNS,
+            "campaigns differ in " + ", ".join(exc.reasons) + "; scores are not compared across settings",
+            reasons=list(exc.reasons), pairs=list(exc.pairs),
+        ) from exc
+    except cmp.ScoreUnavailable as exc:
+        raise api_error(
+            SCORE_UNAVAILABLE,
+            "every compared campaign needs a complete score (MRI computed)",
+            reasons=list(exc.reasons),
+        ) from exc
     except ValueError as exc:
-        raise api_error(SCORE_UNAVAILABLE, f"the verify delta could not be measured: {exc}",
-                        reasons=[str(exc)]) from exc
-    return measured.model_dump(mode="json"), "computed"
+        raise api_error(PARAMS_OUT_OF_RANGE, str(exc), field="ids") from exc
+    return table
+
+
+# --------------------------------------------------------------------------- single run reads
 
 
 @router.get("/runs/{run_id}/campaign")
@@ -317,6 +234,9 @@ def get_campaign(
         _finding_to_dict(row, source_tool=True, dedup_key=True)
         for row in findings
     ]
+    # Spec 15.3 badge (REVIEW_REPORTS-30): the vector that scored the run is not the default one.
+    record["non_default_weights"] = cmp.non_default_weights(record)
+    record["weights"] = cmp.record_weights(record)
     return record
 
 
@@ -332,14 +252,9 @@ def compare_campaigns(
     left, left_campaign = _load_campaign(run_id)
     right, right_campaign = _load_campaign(with_)
 
-    left_baseline = left.get("baseline_run_id") or left_campaign.get("baseline_run_id")
-    right_baseline = right.get("baseline_run_id") or right_campaign.get("baseline_run_id")
-    is_pairing = left_baseline == with_ or right_baseline == run_id
-    same_model = _model_hash(left) is not None and _model_hash(left) == _model_hash(right)
-
-    mismatched, unchanged = _compatibility(left, right)
-    if is_pairing and not same_model:
-        mismatched.append(f"{MODEL_VARIABLE} (a verify run and its baseline must share the model)")
+    left_baseline = cmp.baseline_of(left, left_campaign)
+    is_pairing = cmp.is_verify_pairing(run_id, left, left_campaign, with_, right, right_campaign)
+    mismatched, unchanged = cmp.pair_reasons(run_id, left, left_campaign, with_, right, right_campaign)
     if mismatched:
         raise api_error(
             INCOMPATIBLE_CAMPAIGNS,
@@ -347,8 +262,8 @@ def compare_campaigns(
             reasons=mismatched,
         )
 
-    left_score, left_reasons = _require_complete_score(run_id, left)
-    right_score, right_reasons = _require_complete_score(with_, right)
+    left_score, left_reasons = cmp.require_complete_score(run_id, left)
+    right_score, right_reasons = cmp.require_complete_score(with_, right)
     if left_reasons or right_reasons:
         raise api_error(
             SCORE_UNAVAILABLE,
@@ -362,7 +277,7 @@ def compare_campaigns(
         delta, source = _measured_delta(
             verify=verify, verify_score=verify_score, baseline=baseline, baseline_score=baseline_score,
         )
-        defense = _config(verify).get("defense")
+        defense = cmp.config(verify).get("defense")
         return {
             "compatible": True, "mode": "verify_delta",
             "verify_run_id": verify.get("run_id"), "baseline_run_id": baseline.get("run_id"),
@@ -372,16 +287,17 @@ def compare_campaigns(
             "delta_mri": delta.get("delta"),
             "delta_dimensions": delta.get("delta_subscores"),
             "delta_acc_clean": delta.get("delta_acc_clean"),
-            "delta_families": _comparison_families(delta),
+            "delta_families": cmp.comparison_families(delta),
             "changed_variables": ["defense"],
             "unchanged_variables": unchanged,
             "ignored_variables": list(IGNORED_VARIABLES),
+            "non_default_weights": cmp.non_default_weights(verify),
             "caveats": list(verify.get("limitations", [])),
         }
     return {
         "compatible": True, "mode": "side_by_side", "delta": None,
-        "scorecards": [_scorecard(left, left_score), _scorecard(right, right_score)],
-        "changed_variables": _changed_variables(left, right),
+        "scorecards": [cmp.scorecard_projection(left, left_score), cmp.scorecard_projection(right, right_score)],
+        "changed_variables": cmp.changed_variables(left, right),
         "unchanged_variables": unchanged,
         "ignored_variables": list(IGNORED_VARIABLES),
         "caveats": sorted(set(left.get("limitations", []) + right.get("limitations", []))),

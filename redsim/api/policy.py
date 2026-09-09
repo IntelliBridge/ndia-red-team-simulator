@@ -90,9 +90,12 @@ _ACTION_MIN_ROLE: dict[Action, str] = {
     # Consuming another team's dataset admits untrusted bytes to the sandbox
     # child: parity with MODEL_REGISTER.
     Action.DATASET_REGISTER: "remediator",
-    # Exporting a run's adversarial slice is a projection of evidence the
-    # caller can already read: parity with REPORT_EXPORT.
-    Action.DATASET_EXPORT: "scanner",
+    # Exporting a run's adversarial slice enqueues a worker job that writes
+    # the slice into a bucket other teams read: a mutation with an egress
+    # footprint, not a read projection. Remediator per the spec 17.4 table
+    # and 27.4 (wave B0 had scanner from the plan's brief wording; wave B2
+    # aligned the three policy files to the spec).
+    Action.DATASET_EXPORT: "remediator",
     # A push sends data outside the deployment boundary: admin only.
     Action.INTEGRATION_PUSH: "admin",
     # A batch is N single-run admissions under one id: same bar as ATTACK_RUN.

@@ -23,13 +23,13 @@
 
 // --- scanner-min actions: scan.start, attack.run, explain.run,
 //     report.export; Phase B (spec 7.4 addendum, 2026-09-09):
-//     dataset.export, batch.run, report.render ---------------------------
+//     batch.run, report.render -------------------------------------------
 permit (
   principal,
   action in [
     Action::"scan.start", Action::"attack.run", Action::"explain.run",
     Action::"report.export",
-    Action::"dataset.export", Action::"batch.run", Action::"report.render"
+    Action::"batch.run", Action::"report.render"
   ],
   resource
 ) when {
@@ -39,13 +39,16 @@ permit (
 
 // --- remediator-min actions: verify.replay, run.cancel, model.register,
 //     harden.recommend, finding.annotate; Phase B (spec 7.4 addendum,
-//     2026-09-09): llm.probe.run, dataset.register, finding.author --------
+//     2026-09-09): llm.probe.run, dataset.register, dataset.export
+//     (spec 17.4 and 27.4: an export writes a slice other teams read),
+//     finding.author -----------------------------------------------------
 permit (
   principal,
   action in [
     Action::"verify.replay", Action::"run.cancel", Action::"model.register",
     Action::"harden.recommend", Action::"finding.annotate",
-    Action::"llm.probe.run", Action::"dataset.register", Action::"finding.author"
+    Action::"llm.probe.run", Action::"dataset.register", Action::"dataset.export",
+    Action::"finding.author"
   ],
   resource
 ) when {

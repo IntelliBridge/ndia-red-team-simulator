@@ -177,6 +177,11 @@ nav:
           - "P7 Infra + CD": plans/08-p7-infra-cd.md
           - Execution context: plans/EXECUTION-CONTEXT.md
       - "Gap register (2026-09-08)": plans/09-gap-register-2026-09-08.md
+      - Phase B:
+          - "Remaining-work brief": plans/10-remaining-work-brief.md
+          - "Phase B register (2026-09-09)": plans/11-phase-b-register-2026-09-09.md
+          - "Phase B plan": plans/12-phase-b-plan.md
+          - "LLM live-gateway brief": plans/13-llm-live-gateway-brief.md
       - Workstreams:
           - ML core: workstreams/ml-core.md
           - ML assets: workstreams/ml-assets.md
@@ -194,8 +199,11 @@ nav:
       - Multi-tenancy: architecture/multi-tenancy.md
       - Observability: architecture/observability.md
       - ML vertical: architecture/ml-vertical.md
+      - "Interoperability (Croissant, ATLAS, Foundry)": interop.md
       - Diagrams: architecture/diagrams/README.md
-  - API reference: api/v1.md
+  - API reference:
+      - "HTTP API (/v1)": api/v1.md
+      - "Endpoint predict contract (endpoint-v1)": api/endpoint-contract.md
   - Operations:
       - Production deployment: ops/deploy.md
       - Kubernetes (Helm): ops/kubernetes.md

@@ -19,6 +19,23 @@ artifacts:
   dataset names, notes) is escaped exactly once, at the HTML boundary. The
   Markdown itself carries the raw strings; no user string ever starts a
   Markdown line, so none can open a heading, table row or code fence.
+* ``report.pdf`` (Phase B, REVIEW_REPORTS-16; opt-in through ``formats``) — the
+  same Markdown projection typeset by ``redsim.ml.pdf`` with reportlab and the
+  bundled DejaVu faces. It is a third projection of the record, never a
+  recomputation, and the renderer is imported only when the format is asked for
+  so the API process never loads reportlab.
+
+Phase B additions (REVIEW_REPORTS-18, -30; ATTACKS_HARDEN-13; MODALITIES-43):
+section 1 prints ``schema_version`` and labels the budget axis from the norm
+literal; the scorecard carries a "non-default weights" line whenever the vector
+differs from ``MRIWeights()``; the ΔMRI block prints the derived-model lineage a
+training defense recorded in provenance; section 2 adds the text edit-budget
+table (``Measurement.edit_fraction_mean``) and the detection scorecard
+(``Measurement.detection``, every rate with its box denominator) when a record
+carries them, and section 3 the per-modality observation evidence
+(``Observation.text`` word positions, ``Observation.detection`` box counts); an
+LLM probe record gets its own sub-block through a lazy hook on
+``redsim.ml.llm.report_section`` (the fragment's headings nested under it).
 
 Nothing is invented: a value that was not measured renders as ``—``, "no
 evidence recorded" or "not computed (denominator 0)"; a rate never appears
@@ -33,6 +50,7 @@ from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
+from redsim.ml.compare import is_default_weights
 from redsim.ml.schema import (
     GRADE_STATEMENT,
     AccuracyPoint,
@@ -43,6 +61,15 @@ from redsim.ml.schema import (
     RobustnessCurve,
 )
 from redsim.report import _HTML_CSS, _md_to_html_min, html_escape
+
+#: The report formats a render produces without asking for the PDF (the Phase A
+#: set; ``report.json`` stays exactly the record dump).
+REPORT_FORMATS_TEXT: tuple[str, ...] = ("md", "json", "html")
+#: Every format ``render_campaign_reports`` can produce (Phase B adds ``pdf``).
+REPORT_FORMATS_ALL: tuple[str, ...] = ("md", "json", "html", "pdf")
+REPORT_CONTENT_TYPES: dict[str, str] = {
+    "md": "text/markdown", "json": "application/json", "html": "text/html", "pdf": "application/pdf",
+}
 
 REPORT_TITLE = "# Redsim adversarial-ML campaign report"
 
@@ -58,6 +85,33 @@ SECTION_HEADINGS: tuple[str, ...] = (
 SCORECARD_HEADING = "### MRI scorecard (derived summary)"
 DELTA_HEADING = "### ΔMRI (verify run against its baseline)"
 REVIEWER_NOTES_HEADING = "### Reviewer notes"
+LLM_HEADING = "### LLM probe results"
+LLM_EMBED_NOTE = ("The block below is the LLM track's probe scorecard fragment (`redsim.ml.llm.report_section`), "
+                  "embedded as rendered with its headings nested under this sub-section: k/n per probe row, "
+                  "never an MRI.")
+#: Phase B modality blocks (MODALITIES-43): text and detection rows carry their own budget and counts.
+TEXT_BUDGET_HEADING = "**Text edit budget** (realised share of words substituted per row; the `edit` norm)"
+DETECTION_SCORECARD_HEADING = ("**Detection scorecard** (box-level counts per row, every rate with its denominator; "
+                               "a detection run carries this scorecard, never an MRI)")
+TEXT_EVIDENCE_HEADING = ("**Text evidence** (word positions of the clean input; the message text is an artifact, "
+                         "never printed here)")
+DETECTION_EVIDENCE_HEADING = ("**Detection evidence** (boxes matched per image; the per-box tables are the "
+                              "`ml.detection.boxes` artifact)")
+#: What the budget axis of each ``Norm`` literal measures; the report labels ε from the literal, never guesses.
+BUDGET_LABELS: dict[str, str] = {
+    "linf": "L-inf perturbation (fraction of the [0, 1] input range)",
+    "l2": "L2 perturbation radius",
+    "edit": "edit budget (share of words substituted)",
+    "patch_area": "patch area (share of the image area)",
+}
+#: Spec 15.3: the badge text when the weight vector is not the default one.
+NON_DEFAULT_WEIGHTS_BADGE = "**Non-default weights**"
+DEFAULT_WEIGHTS_NOTE = "Weights: the default vector"
+DERIVED_MODEL_HEADING = "**Derived model** (training defense; the verify run measures it)"
+#: F007 FR-005 while decision D006 is open (REVIEW_REPORTS-19): said in every rendered format.
+EXPORT_REDACTION_NOTE = ("No export-redaction policy was applied to this report (decision D006 is open); "
+                         "it carries the record as measured.")
+LICENCE_UNRECORDED = "not recorded in the model or dataset manifest"
 
 # Spec 16.4 (3): the only wording for a gain that has not been measured.
 NOT_MEASURED = "Expected gain: not measured — run Verify"
@@ -170,6 +224,27 @@ def _is_verify(record: CampaignRecord) -> bool:
     return record.kind == "verify" or record.baseline_run_id is not None
 
 
+def _budget_label(norm: Any) -> str:
+    return BUDGET_LABELS.get(str(norm), f"budget in norm {_text(norm)}")
+
+
+def _nest_heading(line: str) -> str:
+    """A line of an embedded fragment, its headings nested under an H3 sub-block of this report.
+
+    The fragment's own top and section headings (``#``, ``##``) become ``####`` so the
+    report keeps exactly six ``##`` sections; its deeper headings (``###`` and below,
+    the converters stop at four levels) become bold lines. Everything else is verbatim.
+    """
+    stripped = line.lstrip("#")
+    level = len(line) - len(stripped)
+    if level == 0 or not stripped.startswith(" "):
+        return line
+    text = stripped.strip()
+    if level <= 2:
+        return f"#### {text}"
+    return f"**{text.replace('**', '')}**"
+
+
 # ---------------------------------------------------------------------------
 # 1. Configuration and provenance
 # ---------------------------------------------------------------------------
@@ -183,6 +258,7 @@ def _section_configuration(record: CampaignRecord, generated_at: datetime) -> li
         status = f"{record.status} (**{record.completeness}**)"
     lines += [
         f"- **Run ID:** {_code(record.run_id)}",
+        f"- **Schema version:** {_code(record.schema_version)}",
         f"- **Kind:** {record.kind}",
         f"- **Status:** {status}",
         f"- **Stage:** {_text(record.stage) if record.stage else UNAVAILABLE}",
@@ -225,7 +301,7 @@ def _section_configuration(record: CampaignRecord, generated_at: datetime) -> li
         f"- **Modality:** {config.modality}",
         "- **Attack set:**",
         *attack_lines,
-        f"- **Norm:** {config.norm}",
+        f"- **Norm:** {config.norm}; budget axis: {_budget_label(config.norm)}",
         f"- **ε grid:** {', '.join(f'{e:g}' for e in config.eps_grid)}",
         f"- **Reference ε:** {config.reference_eps:g}",
         f"- **Finding ASR threshold:** {config.finding_asr_threshold:g}",
@@ -235,8 +311,10 @@ def _section_configuration(record: CampaignRecord, generated_at: datetime) -> li
         (f"- **Dataset:** {_text(config.dataset_id)} (revision "
          f"{_text(config.dataset_revision) if config.dataset_revision else 'unrecorded'}, "
          f"split {_text(config.dataset_split)})"),
+        f"- **Licence (model and dataset manifests):** {_licence_of(record) or LICENCE_UNRECORDED}",
         (f"- **Scoring:** version {_text(config.scoring.version)}; weights "
          + ", ".join(f"{k} = {v:g}" for k, v in weights.items())
+         + (" (default vector)" if is_default_weights(config.scoring.weights) else " (**non-default weights**)")
          + f"; severity thresholds asr_high = {config.scoring.severity.asr_high:g}, "
            f"asr_mid = {config.scoring.severity.asr_mid:g}; confidence n_high = "
            f"{config.scoring.confidence.n_high}, n_medium = {config.scoring.confidence.n_medium}"),
@@ -388,6 +466,103 @@ def _per_class_block(measurements: Sequence[Measurement]) -> list[str]:
     return lines
 
 
+def _text_budget_block(measurements: Sequence[Measurement], clean: Measurement | None) -> list[str]:
+    """MODALITIES-43: the realised edit share per text row (``Measurement.edit_fraction_mean``), or nothing."""
+    rows = [m for m in measurements if m.edit_fraction_mean is not None]
+    if not rows:
+        return []
+    lines = ["", TEXT_BUDGET_HEADING, ""]
+    lines.extend(_table(
+        ["Measurement", "Attack", "Edit budget ε", "Edit fraction mean (realised)", "Correct / N (accuracy)",
+         "Flipped / clean correct (ASR)"],
+        [[m.id, m.attack_id or m.family, _g(_eps_of(m)), _fmt(m.edit_fraction_mean),
+          _fraction(m.n_correct, m.n, m.accuracy), _asr_text(m, clean)] for m in rows],
+    ))
+    lines += ["", "The edit fraction is the share of words the attack actually replaced, averaged over the "
+                  "messages with a defined fraction; the budget ε is the share it was allowed."]
+    return lines
+
+
+def _detection_scorecard_block(measurements: Sequence[Measurement]) -> list[str]:
+    """MODALITIES-43: the box-level scorecard of a detection record (``Measurement.detection``), or nothing.
+
+    On a detection row ``n`` counts ground-truth boxes and ``n_correct`` the boxes matched
+    at the manifest's IoU threshold; recall is ``n_matched / n_boxes`` and the suppression
+    rate ``n_flipped_from_clean / n_clean_correct`` (clean-matched boxes lost under the
+    patch). No MRI is derived from these counts.
+    """
+    rows = [m for m in measurements if m.detection is not None]
+    if not rows:
+        return []
+    table: list[list[Any]] = []
+    for m in rows:
+        det = m.detection
+        assert det is not None
+        if m.family == "clean":
+            suppression = "n/a (clean row)"
+        elif m.n_flipped_from_clean is None:
+            suppression = NO_EVIDENCE
+        else:
+            suppression = _fraction(m.n_flipped_from_clean, m.n_clean_correct, det.suppression_rate)
+        table.append([
+            m.id, m.attack_id or m.family, _g(_eps_of(m)), _fraction(det.n_matched, det.n_boxes, det.recall),
+            _fmt(det.map50), suppression, f"{m.wall_time_s:g}",
+        ])
+    lines = ["", DETECTION_SCORECARD_HEADING, ""]
+    lines.extend(_table(
+        ["Measurement", "Attack", "Patch area ε", "Matched / boxes (recall)", "mAP@0.5",
+         "Suppressed / clean matched (suppression rate)", "Wall time (s)"],
+        table,
+    ))
+    return lines
+
+
+def _text_evidence_block(observations: Sequence[Any]) -> list[str]:
+    """MODALITIES-43: ``Observation.text`` per explained message, positions only, or nothing."""
+    rows: list[list[Any]] = []
+    for o in observations:
+        block = o.text
+        if block is None:
+            continue
+        changed = ", ".join(str(p) for p in block.changed_positions[:8])
+        if len(block.changed_positions) > 8:
+            changed += f", … ({len(block.changed_positions)} in all)"
+        top = ((", ".join(str(p) for p in block.top_tokens_clean[:5]) or UNAVAILABLE) + " → "
+               + (", ".join(str(p) for p in block.top_tokens_adv[:5]) or UNAVAILABLE))
+        attributions = "; ".join(f"{_text(k)}: {_text(v)}" for k, v in block.attribution_artifacts.items())
+        rows.append([o.id, _fraction(block.n_changed, block.n_tokens, block.edit_fraction), changed or UNAVAILABLE,
+                     top, attributions or UNAVAILABLE])
+    if not rows:
+        return []
+    lines = ["", TEXT_EVIDENCE_HEADING, ""]
+    lines.extend(_table(
+        ["Observation", "Words changed / words (edit fraction)", "Changed positions",
+         "Top tokens by |attribution| clean → adv (positions)", "Attribution artifacts"],
+        rows,
+    ))
+    return lines
+
+
+def _detection_evidence_block(observations: Sequence[Any]) -> list[str]:
+    """MODALITIES-43: ``Observation.detection`` per explained image, counts and the patch box, or nothing."""
+    rows: list[list[Any]] = []
+    for o in observations:
+        block = o.detection
+        if block is None:
+            continue
+        bbox = ("[" + ", ".join(f"{v:g}" for v in block.patch_bbox) + "] (x_min, y_min, x_max, y_max px)"
+                if block.patch_bbox else "none (control row, or no patch recorded)")
+        rows.append([o.id, _fraction(block.n_matched_clean, block.n_gt), _fraction(block.n_matched_adv, block.n_gt),
+                     bbox])
+    if not rows:
+        return []
+    lines = ["", DETECTION_EVIDENCE_HEADING, ""]
+    lines.extend(_table(
+        ["Observation", "Matched clean / ground truth", "Matched adversarial / ground truth", "Patch box"], rows,
+    ))
+    return lines
+
+
 def _curve_block(curves: Sequence[RobustnessCurve]) -> list[str]:
     lines = ["**Robustness curve** (evasion and benign-noise control per attack; every point with its denominator)",
              ""]
@@ -396,8 +571,8 @@ def _curve_block(curves: Sequence[RobustnessCurve]) -> list[str]:
         return lines
     for curve in curves:
         lines.append(
-            f"Attack {_code(curve.attack_id)} ({curve.norm}); clean accuracy {_point(curve.clean)}; "
-            f"reference ε = {curve.reference_eps:g}."
+            f"Attack {_code(curve.attack_id)} (norm {curve.norm}; budget axis: {_budget_label(curve.norm)}); "
+            f"clean accuracy {_point(curve.clean)}; reference ε = {curve.reference_eps:g}."
         )
         lines.append("")
         eps_values: list[float] = []
@@ -446,6 +621,148 @@ def _subscore_rows(score: MRIRecord) -> list[list[Any]]:
     return rows
 
 
+def _weights_line(weights: dict[str, float]) -> str:
+    """Spec 15.3: the scorecard says which vector scored it; a non-default one gets the badge."""
+    vector = ", ".join(f"{k} = {v:g}" for k, v in weights.items())
+    if is_default_weights(weights):
+        return f"{DEFAULT_WEIGHTS_NOTE} ({vector}); a run scored with a different vector is not comparable to this one."
+    return (f"{NON_DEFAULT_WEIGHTS_BADGE} — this run was scored with {vector} (sum 1, never renormalised); "
+            "it is comparable only to runs scored with the same vector.")
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _derived_model_lines(record: CampaignRecord) -> list[str]:
+    """ATTACKS_HARDEN-13: the lineage a training defense recorded on the verify run.
+
+    Read from ``provenance.defense`` (``kind: training`` with the parent and derived
+    digests and the training report the worker recorded) and from
+    ``provenance.model_manifest["derived_from"]`` (the ``DerivedFrom`` block of the
+    registered derived target). Nothing is inferred: a key that was not recorded
+    renders as unrecorded.
+    """
+    provenance = record.provenance
+    if provenance is None:
+        return []
+    defense = _mapping(provenance.defense)
+    derived_from = _mapping(provenance.model_manifest.get("derived_from"))
+    if defense.get("kind") != "training" and not derived_from:
+        return []
+    lines = ["", DERIVED_MODEL_HEADING, ""]
+    if defense.get("kind") == "training":
+        lines.append(
+            f"- Parent weights sha256: {_code(defense.get('parent_sha256') or 'unrecorded')}; derived weights sha256: "
+            f"{_code(defense.get('derived_sha256') or 'unrecorded')}; defense {_code(defense.get('id') or 'unrecorded')}."
+        )
+        report = _mapping(defense.get("training_report"))
+        if report:
+            epochs = f"{_g(report.get('epochs_run'))} of {_g(report.get('epochs_requested'))} epochs"
+            wall = f"wall time {_g(report.get('wall_time_s'))} s of a {_g(report.get('wall_budget_s'))} s budget"
+            changed = report.get("weights_changed")
+            changed_text = "unrecorded" if changed is None else ("yes" if changed else "no")
+            frozen = report.get("backbone_frozen")
+            frozen_text = "unrecorded" if frozen is None else ("yes" if frozen else "no")
+            lines.append(
+                f"- Training budget as run: {epochs}; {wall}; budget exhausted: "
+                f"{'yes' if report.get('budget_exhausted') else 'no'}; weights changed: {changed_text}; "
+                f"backbone frozen: {frozen_text}; n_train = {_g(report.get('n_train'))}."
+            )
+    if derived_from:
+        budget = _mapping(derived_from.get("training_budget"))
+        lines.append(
+            f"- Lineage (derived_from): parent target {_code(derived_from.get('parent_target_id') or 'unrecorded')}, "
+            f"parent sha256 {_code(derived_from.get('parent_sha256') or 'unrecorded')}, defense "
+            f"{_code(derived_from.get('defense_id') or 'unrecorded')}, training budget "
+            f"{_code(_json_text(budget)) if budget else 'unrecorded'}."
+        )
+    lines.append("- The derived model is a separate Target; its own campaigns measure it. This block records "
+                 "lineage and the budget the defense ran under, not a claim about the result.")
+    return lines
+
+
+def is_llm_probe_record(record: CampaignRecord) -> bool:
+    """``True`` when the record is an LLM probe run (spec 11.6; LLM-24, LLM-28).
+
+    The frozen ``CampaignKind`` has no probe member, so the signal is duck-typed
+    on what the LLM tracks record: a ``kind`` of ``llm_probe`` (a widened record),
+    a target whose metadata names ``endpoint_kind`` or ``modality`` ``llm``, or a
+    manifest endpoint block of kind ``llm``. Such a record never carries an MRI.
+    """
+    if getattr(record, "kind", None) == "llm_probe":
+        return True
+    metadata = record.target.metadata if record.target is not None else {}
+    if metadata.get("endpoint_kind") == "llm" or metadata.get("modality") == "llm":
+        return True
+    manifest = record.provenance.model_manifest if record.provenance is not None else {}
+    endpoint = _mapping(manifest.get("endpoint"))
+    return endpoint.get("kind") == "llm" or endpoint.get("endpoint_kind") == "llm"
+
+
+def _llm_scorecard_of(record: CampaignRecord) -> dict[str, Any] | None:
+    """The ``LLMProbeScorecard`` dump a probe record carries, when the worker embedded one.
+
+    Looked up tolerantly under ``provenance.model_manifest["llm_scorecard"]`` and
+    ``target.metadata["llm_scorecard"]``; ``None`` when the run keeps its scorecard
+    only behind ``GET /v1/runs/{id}/llm-scorecard``.
+    """
+    sources: list[dict[str, Any]] = []
+    if record.provenance is not None:
+        sources.append(record.provenance.model_manifest)
+    if record.target is not None:
+        sources.append(record.target.metadata)
+    for source in sources:
+        card = source.get("llm_scorecard")
+        if isinstance(card, dict) and card:
+            return card
+    return None
+
+
+def _llm_section(record: CampaignRecord, generated_at: datetime) -> list[str]:
+    """The LLM probe scorecard block, rendered by the LLM track's module when present.
+
+    Imported inside the function (the module is Phase B and worker-side); when it
+    is absent the block says so rather than inventing a scorecard. The fragment
+    ``render_llm_section`` returns (its own heading, k/n per probe family, never an
+    MRI) is embedded line for line under :data:`LLM_HEADING`, its headings nested
+    through :func:`_nest_heading` so the report keeps its six ``##`` sections.
+    """
+    try:
+        from redsim.ml.llm.report_section import render_llm_section
+    except ImportError:
+        return [LLM_HEADING, "",
+                "LLM probe results were recorded for this run but the LLM report renderer "
+                "(`redsim.ml.llm.report_section`) is not available in this build; no scorecard is shown. "
+                "Use `GET /v1/runs/{id}/llm-scorecard` for the k/n table."]
+    card = _llm_scorecard_of(record)
+    if card is None:
+        return [LLM_HEADING, "",
+                "This run is an LLM probe run. Its k/n probe scorecard is not embedded in this record; "
+                "`GET /v1/runs/{id}/llm-scorecard` serves it. Probe results never enter an MRI."]
+    fragments: Any = render_llm_section(card, generated_at=generated_at)
+    markdown: Any = getattr(fragments, "markdown", fragments)
+    fragment_lines = markdown.splitlines() if isinstance(markdown, str) else [str(line) for line in list(markdown)]
+    return [LLM_HEADING, "", LLM_EMBED_NOTE, "", *(_nest_heading(line) for line in fragment_lines)]
+
+
+def _licence_of(record: CampaignRecord) -> str | None:
+    """The licence string the manifests recorded (spec 21.5), read tolerantly from the snapshot and provenance."""
+    snapshot = _mapping(record.config.target_snapshot)
+    candidates: list[Any] = [
+        snapshot.get("license"), _mapping(snapshot.get("manifest")).get("license"),
+        _mapping(snapshot.get("detail")).get("license"),
+        _mapping(_mapping(snapshot.get("detail")).get("manifest")).get("license"),
+    ]
+    if record.provenance is not None:
+        manifest = record.provenance.model_manifest
+        candidates += [manifest.get("license"), _mapping(manifest.get("dataset")).get("license")]
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return _text(value)
+    return None
+
+
 def _scorecard(record: CampaignRecord) -> list[str]:
     lines = [SCORECARD_HEADING, ""]
     score = record.score
@@ -456,6 +773,8 @@ def _scorecard(record: CampaignRecord) -> list[str]:
         reason = _text(status.reason) if status is not None and status.reason else "no reason recorded"
         lines += [
             f"**MRI not computed** — score {state}: {reason}.",
+            "",
+            _weights_line(config.scoring.weights.as_dict()),
             "",
             "The MRI is never shown without its five subscores, their denominators and the ε curve; "
             "no score record exists for this run, so no number, grade or subscore is reported.",
@@ -480,6 +799,7 @@ def _scorecard(record: CampaignRecord) -> list[str]:
         else:
             missing = "; ".join(_text(m) for m in score.missing) or "not stated"
             lines.append(f"**MRI not computed** (partial score record). Missing: {missing}.")
+        lines += ["", _weights_line(score.weights.as_dict())]
         lines += ["", "**Subscores** (0–100; weights as configured, never renormalised; per-attack value with its n)",
                   ""]
         attack_ids = [*score.attack_ids, *(a for a in score.per_attack if a not in score.attack_ids)]
@@ -525,6 +845,7 @@ def _delta_block(record: CampaignRecord) -> list[str]:
         lines.append(f"Changed variable: defense {_code(_json_text(provenance_defense))} (from provenance).")
     else:
         lines.append("Changed variable: no defense is recorded on this verify run.")
+    lines.extend(_derived_model_lines(record))
     lines.append("")
     score = record.score
     delta = score.delta if score is not None else None
@@ -598,6 +919,8 @@ def _section_measurements(record: CampaignRecord) -> list[str]:
             lines.append(f"No reference-budget aggregates were recorded ({NO_EVIDENCE}).")
         lines.append("")
         lines.extend(_per_class_block(record.measurements))
+        lines.extend(_text_budget_block(record.measurements, clean))
+        lines.extend(_detection_scorecard_block(record.measurements))
     lines += ["", *_scorecard(record)]
     if _is_verify(record):
         lines += ["", *_delta_block(record)]
@@ -643,6 +966,8 @@ def _section_observations(record: CampaignRecord) -> list[str]:
          "Flipped", "Centre-mass ratio clean → adv (heuristic)", "Explanation shift", "Top features clean → adv"],
         rows,
     ))
+    lines.extend(_text_evidence_block(observations))
+    lines.extend(_detection_evidence_block(observations))
     lines += ["", "**Artifacts** (ids and sha256 digests as recorded)", ""]
     artifact_rows: list[list[Any]] = []
     for o in observations:
@@ -758,6 +1083,8 @@ def _section_limitations(record: CampaignRecord) -> list[str]:
         lines.extend(f"- {_text(item)}" for item in record.limitations)
     else:
         lines.append(f"No limitations were recorded (run status: {record.status}).")
+    if not any("export-redaction" in item for item in record.limitations):
+        lines.append(f"- {EXPORT_REDACTION_NOTE}")
     if record.reviewer_notes:
         lines += ["", REVIEWER_NOTES_HEADING, "", *_quoted(record.reviewer_notes)]
     return lines
@@ -772,9 +1099,14 @@ def render_markdown(record: CampaignRecord, *, generated_at: datetime | None = N
     """The Markdown report: spec 14.8's six sections in order, user strings unescaped."""
     stamp = generated_at if generated_at is not None else datetime.now(UTC)
     parts: list[str] = [REPORT_TITLE, ""]
+    measurements = _section_measurements(record)
+    if is_llm_probe_record(record):
+        # LLM probe results live beside the measurements as their own block (spec 11.6):
+        # k/n per probe family, never an MRI, and only when the record is a probe record.
+        measurements = [*measurements, "", *_llm_section(record, stamp)]
     for section in (
         _section_configuration(record, stamp),
-        _section_measurements(record),
+        measurements,
         _section_observations(record),
         _section_interpretation(record),
         _section_recommendations(record),
@@ -799,36 +1131,70 @@ def render_campaign_reports(
     record: CampaignRecord,
     *,
     generated_at: datetime | None = None,
+    formats: Sequence[str] | None = None,
 ) -> list[tuple[str, bytes, str]]:
-    """Return Markdown, canonical JSON, and escaped HTML report artifacts.
+    """Return Markdown, canonical JSON, escaped HTML and (on request) PDF report artifacts.
 
-    ``report.json`` is exactly ``record.model_dump(mode="json")`` — the RunRecord dump with the
-    campaign projections and the ``MRIRecord`` under ``score`` — so it round-trips to the record
-    and carries everything needed to rerun (spec 14.4).
+    ``formats`` defaults to :data:`REPORT_FORMATS_TEXT`; pass :data:`REPORT_FORMATS_ALL`
+    (or any subset naming ``pdf``) to add ``report.pdf``, typeset from the same
+    Markdown by ``redsim.ml.pdf`` (imported only then). The output order is the
+    order of :data:`REPORT_FORMATS_ALL`. ``report.json`` is exactly
+    ``record.model_dump(mode="json")`` — the RunRecord dump with the campaign
+    projections and the ``MRIRecord`` under ``score`` — so it round-trips to the
+    record and carries everything needed to rerun (spec 14.4).
     """
-    markdown = render_markdown(record, generated_at=generated_at)
-    json_bytes = (
-        json.dumps(
-            record.model_dump(mode="json"),
-            sort_keys=True,
-            indent=2,
-            separators=(",", ": "),
-        )
-        + "\n"
-    ).encode()
-    return [
-        ("report.md", markdown.encode(), "text/markdown"),
-        ("report.json", json_bytes, "application/json"),
-        ("report.html", render_html(markdown, record).encode(), "text/html"),
-    ]
+    wanted = set(REPORT_FORMATS_TEXT if formats is None else formats)
+    unknown = sorted(wanted - set(REPORT_FORMATS_ALL))
+    if unknown:
+        raise ValueError(f"unknown report formats: {unknown}; choose from {list(REPORT_FORMATS_ALL)}")
+    stamp = generated_at if generated_at is not None else datetime.now(UTC)
+    markdown = render_markdown(record, generated_at=stamp)
+    out: list[tuple[str, bytes, str]] = []
+    if "md" in wanted:
+        out.append(("report.md", markdown.encode(), REPORT_CONTENT_TYPES["md"]))
+    if "json" in wanted:
+        json_bytes = (
+            json.dumps(
+                record.model_dump(mode="json"),
+                sort_keys=True,
+                indent=2,
+                separators=(",", ": "),
+            )
+            + "\n"
+        ).encode()
+        out.append(("report.json", json_bytes, REPORT_CONTENT_TYPES["json"]))
+    if "html" in wanted:
+        out.append(("report.html", render_html(markdown, record).encode(), REPORT_CONTENT_TYPES["html"]))
+    if "pdf" in wanted:
+        from redsim.ml.pdf import render_pdf
+
+        out.append(("report.pdf", render_pdf(record, generated_at=stamp, markdown=markdown),
+                    REPORT_CONTENT_TYPES["pdf"]))
+    return out
 
 
 __all__ = [
+    "BUDGET_LABELS",
+    "DEFAULT_WEIGHTS_NOTE",
     "DELTA_HEADING",
+    "DERIVED_MODEL_HEADING",
+    "DETECTION_EVIDENCE_HEADING",
+    "DETECTION_SCORECARD_HEADING",
+    "EXPORT_REDACTION_NOTE",
+    "LICENCE_UNRECORDED",
+    "LLM_EMBED_NOTE",
+    "LLM_HEADING",
+    "NON_DEFAULT_WEIGHTS_BADGE",
     "NOT_MEASURED",
+    "REPORT_CONTENT_TYPES",
+    "REPORT_FORMATS_ALL",
+    "REPORT_FORMATS_TEXT",
     "REVIEWER_NOTES_HEADING",
     "SCORECARD_HEADING",
     "SECTION_HEADINGS",
+    "TEXT_BUDGET_HEADING",
+    "TEXT_EVIDENCE_HEADING",
+    "is_llm_probe_record",
     "render_campaign_reports",
     "render_html",
     "render_markdown",

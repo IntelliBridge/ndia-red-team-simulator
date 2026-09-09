@@ -1,7 +1,12 @@
 """``redsim.ml.campaign.run_campaign`` on the TinyTarget double against the frozen M0 contract (``ml`` tier).
 
-The explain, recommend, summary, narrative and defenses modules are injected or removed through
-``sys.modules`` so these tests hold whether or not the concurrent builders' modules are present.
+The explain, recommend, summary, narrative, defenses and hardening modules are injected or removed through
+``sys.modules`` so these tests hold whether or not the concurrent builders' modules are present. The
+Phase B frame (``redsim.ml.runners``): runners are dispatched by modality from ``MODALITY_RUNNERS`` and a
+missing runner refuses before any stage; a ``kind: training`` defense goes through
+``redsim.ml.harden.apply.apply_training_defense`` and a missing module records the defense unavailable
+with the score withheld; ``defense_apply`` is emitted only for an applied training defense; the run
+pins ``NLTK_DATA`` and ``TORCH_HOME`` offline for its duration.
 
 Pins: ``CampaignConfig`` in, ``CampaignRecord`` (a ``RunRecord``) out with the ``score`` stage;
 ``RunRecord.score`` is an ``MRIRecord`` that is PARTIAL (no ``mri``, no ``grade``) whenever the explain
@@ -14,12 +19,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import types
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 pytest.importorskip("torch")
 pytest.importorskip("art")
@@ -32,15 +38,26 @@ from redsim.ml.attacks.base import AttackOutput
 from redsim.ml.campaign import (
     CURVE_PNG_NAME,
     D3_BOUNDS_LIMITATION,
+    DEFENSE_LIMITATION,
     REALIZABILITY_CAVEAT,
     SHAP_SUMMARY_TEXT_NAME,
     SUBJECT_CENTERED_CAVEAT,
     TABULAR_LIMITATION,
+    TRAINING_DEFENSE_LIMITATION,
+    TRAINING_DEFENSE_MODULE,
     run_campaign,
 )
 from redsim.ml.errors import AttackNotApplicable, ExplainUnavailable, MLError, TargetUnavailable
-from redsim.ml.eval import perturbation_norms
+from redsim.ml.eval import eps_tag, per_sample_norm, perturbation_norms
 from redsim.ml.explain.base import ExplainOutput
+from redsim.ml.runners import base as runners_base
+from redsim.ml.runners.base import (
+    MODALITY_RUNNERS,
+    CampaignFrame,
+    ModalityResult,
+    ModalityRunnerUnavailable,
+    resolve_runner,
+)
 from redsim.ml.schema import (
     STAGES,
     AttackInfo,
@@ -579,6 +596,37 @@ def test_hopskipjump_rows_are_thresholded_against_the_grid(no_optional_modules, 
     assert all(r.queries is not None for r in rec.score.inputs)
     assert any("black-box attack hopskipjump" in lim for lim in rec.limitations)
     assert any(n_.startswith("HopSkipJump random initial adversarial point") for n_ in rec.provenance.nondeterminism)
+    assert_pert_first_success_is_mean_first_flip_norm(rec, Path(sink.root) / "artifacts", "hopskipjump",
+                                                      TinyTarget().sample(10, 0).x)
+
+
+def assert_pert_first_success_is_mean_first_flip_norm(rec: CampaignRecord, art: Path, attack_id: str,
+                                                      x_clean: np.ndarray) -> None:
+    """ATTACKS_HARDEN-06 (spec 15.1): on a minimal-norm or black-box attack the grid is an evaluation grid, so
+    ``pert_first_success_mean`` on the reference row is the mean achieved norm at the smallest grid eps at which
+    each sample flips, over exactly the flipped samples (``pert_first_success_n``); recomputed here from the
+    written slices and ``flip_matrix.json``. Importable by the adapter tests of the CW-L2, DeepFool and ZOO
+    tracks, which inherit the mechanism through ``takes_eps=False``."""
+    flips = json.loads((art / "flip_matrix.json").read_text())["flipped"][attack_id]
+    grid = sorted(float(e) for e in rec.config.eps_grid)
+    l2 = rec.config.norm == "l2"
+    norms = {e: per_sample_norm(x_clean, np.load(art / "adv_slice" / f"{attack_id}_{eps_tag(e)}.npz")["x_adv"], l2=l2)
+             for e in grid}
+    first: list[float] = []
+    for i in range(len(x_clean)):
+        for e in grid:
+            if flips[eps_tag(e)][i]:
+                first.append(float(norms[e][i]))
+                break
+    ref_row = next(m for m in rec.measurements if m.id == f"m.evasion.{attack_id}.{eps_tag(rec.config.reference_eps)}")
+    assert ref_row.pert_first_success_n == len(first)
+    if first:
+        assert ref_row.pert_first_success_mean == pytest.approx(sum(first) / len(first), rel=1e-5)
+        assert all(v <= max(grid) + 1e-6 for v in first)          # the evaluation grid bounds every first success
+    else:
+        assert ref_row.pert_first_success_mean is None
+    others = [m for m in rec.measurements if m.family == "evasion" and m.attack_id == attack_id and m is not ref_row]
+    assert all(m.pert_first_success_mean is None and m.pert_first_success_n is None for m in others)
 
 
 # --- configuration errors and options ------------------------------------------------------------------
@@ -1020,3 +1068,340 @@ def test_campaign_hands_the_declared_surrogate_to_an_adapter_that_cannot_find_it
                         target_override=TinyTabularTarget(seed=0, surrogate=False), explain=False)
     assert rec2.attacks == [] and rec2.score is None and "gradient_only" in json.loads(
         (Path(sink.root).parent / "no_surrogate" / "artifacts" / "flip_matrix.json").read_text())["not_run"]
+
+
+# --- Phase B frame: modality runner dispatch (MODALITIES-09) ------------------------------------------------
+
+def test_modality_runner_registry_names_the_sibling_hooks():
+    """The frame dispatches by modality; text and detection are registered by name for the sibling tracks and
+    resolved lazily, so this tree needs neither module to import the frame."""
+    assert MODALITY_RUNNERS["image"] == MODALITY_RUNNERS["tabular"] == "redsim.ml.runners.classification:run_classification"
+    assert MODALITY_RUNNERS["text"] == "redsim.ml.runners.text:run_text"
+    assert MODALITY_RUNNERS["detection"] == "redsim.ml.runners.detection:run_detection"
+    from redsim.ml.runners.classification import run_classification
+    assert resolve_runner("image") is run_classification and resolve_runner("tabular") is run_classification
+    with pytest.raises(ModalityRunnerUnavailable, match="no modality runner is registered"):
+        resolve_runner("audio")
+
+
+def test_missing_runner_module_refuses_before_any_stage(monkeypatch, sink):
+    monkeypatch.setitem(sys.modules, "redsim.ml.runners.text", None)
+    with pytest.raises(ModalityRunnerUnavailable, match="not importable"):
+        resolve_runner("text")
+    hookless = types.ModuleType("redsim.ml.runners.detection")
+    monkeypatch.setitem(sys.modules, "redsim.ml.runners.detection", hookless)
+    with pytest.raises(ModalityRunnerUnavailable, match="no callable 'run_detection'"):
+        resolve_runner("detection")
+    # the frame refuses before load_target: no stage callback, no artifact, the same MLError family as a
+    # missing target or attack, so the sandbox child turns it into a failed partial record
+    monkeypatch.setitem(runners_base.MODALITY_RUNNERS, "image", "redsim.ml.runners.text:run_text")
+    stages: list[str] = []
+    with pytest.raises(ModalityRunnerUnavailable) as excinfo:
+        run_campaign(base_config(), sink, explain=False, on_stage=stages.append)
+    assert isinstance(excinfo.value, MLError) and excinfo.value.code == "modality_runner_unavailable"
+    assert stages == [] and not list(Path(sink.root).rglob("*.json"))
+
+
+def _fake_runner_module(name: str, hook: str, *, mri: bool, curves: bool, explain: bool):
+    """A runner that honours the frame contract on TinyTarget with argmax rows, so the frame's generic paths
+    (a modality without an explainer, without an MRI) are exercised without a text or detection target."""
+    from redsim.ml.eval import measure
+
+    mod = types.ModuleType(name)
+    seen: dict = {}
+
+    def run(config, target, *, frame: CampaignFrame) -> ModalityResult:
+        seen["frame"] = frame
+        sample = target.sample(config.n_samples, config.seed)
+        x = np.asarray(sample.x, dtype=np.float32)
+        y = np.asarray(sample.y).astype(int)
+        names = list(sample.class_names)
+        frame.stage_done("sample")
+        proba = np.asarray(target.predict_proba(x), dtype=np.float64)
+        y_clean = proba.argmax(axis=1)
+        frame.measurements.append(measure("m.clean", "clean", y, y_clean, names))
+        frame.stage_done("clean_eval")
+        flip_matrix: dict[str, dict[str, list[bool]]] = {}
+        for adapter in frame.adapters:
+            flip_matrix[adapter.id] = {}
+            for e in frame.grid:
+                x_adv = np.clip(x + e, 0.0, 1.0).astype(np.float32)          # a fixed shift, deterministic
+                pa = np.asarray(target.predict_proba(x_adv), dtype=np.float64)
+                y_adv = pa.argmax(axis=1)
+                frame.measurements.append(measure(f"m.evasion.{adapter.id}.{eps_tag(e)}", "evasion", y, y_adv, names,
+                                                  attack_id=adapter.id, params={"eps": e, "norm": config.norm},
+                                                  x_ref=x, x_adv=x_adv, y_pred_clean=y_clean, proba=pa))
+                flip_matrix[adapter.id][eps_tag(e)] = [bool(v) for v in (y_clean == y) & (y_adv != y)]
+            frame.stage_done(f"attack:{adapter.id}")
+        frame.close_attack_set()
+        for e in frame.grid:
+            frame.measurements.append(measure(f"m.control.noise.{eps_tag(e)}", "control", y, y_clean, names,
+                                              attack_id="noise_control", params={"eps": e, "norm": config.norm},
+                                              x_ref=x, x_adv=x, y_pred_clean=y_clean, proba=proba))
+        frame.stage_done("control")
+
+        def explain_stage() -> None:
+            seen["explained"] = True
+            frame.explain_meta["fgsm"] = {"expl_shift_mean": 0.1}
+
+        return ModalityResult(n=len(y), indices=sample.indices, flip_matrix=flip_matrix,
+                              explain=explain_stage if explain else None, curves=curves, mri=mri,
+                              score_unavailable_reason=None if mri else "MRI not computed: this modality declares no MRI "
+                              "by construction (detection scorecard instead)",
+                              trailing_limitations=["fake modality caveat"], flip_matrix_extra={"boxes": 0})
+
+    setattr(mod, hook, run)
+    mod.seen = seen
+    return mod
+
+
+def test_frame_dispatches_an_injected_runner_and_records_no_explainer_and_no_mri(monkeypatch, sink):
+    """A runner without an explainer and without an MRI (the detection shape): the frame still writes the
+    curve and flip-matrix artifacts, records the missing explainer per attack, withholds the score with the
+    runner's reason and keeps the stage vocabulary."""
+    fake = _fake_runner_module("redsim.ml.runners.fake_detection", "run_fake", mri=False, curves=False, explain=False)
+    monkeypatch.setitem(sys.modules, "redsim.ml.runners.fake_detection", fake)
+    monkeypatch.setitem(runners_base.MODALITY_RUNNERS, "image", "redsim.ml.runners.fake_detection:run_fake")
+    monkeypatch.setitem(sys.modules, RULES_MOD, None)
+    stages: list[str] = []
+    rec = run_campaign(base_config(), sink, explain=True, on_stage=stages.append)
+    assert rec.status == "succeeded" and rec.stages_done == stages
+    assert rec.stages_done == ["load_target", "sample", "clean_eval", "attack:fgsm", "attack:pgd", "control", "explain",
+                               "score", "interpret", "recommend", "report"]
+    assert all(s.split(":")[0] in STAGES for s in rec.stages_done)
+    assert isinstance(fake.seen["frame"], CampaignFrame) and fake.seen["frame"].in_scope_ids == ["fgsm", "pgd"]
+    assert "explained" not in fake.seen
+    for a in ("fgsm", "pgd"):
+        i = next(i for i in rec.interpretation if i.id == f"i.explain.unavailable.{a}")
+        assert "no explainer is implemented for the 'image' domain" in i.statement
+        assert i.basis == [f"m.evasion.{a}.eps0.03"]
+    assert rec.score is None and rec.score_status is not None and rec.score_status.state == "unavailable"
+    assert "declares no MRI" in rec.score_status.reason and rec.missing == [rec.score_status.reason]
+    assert rec.curve == [] and "fake modality caveat" in rec.limitations
+    assert [a.id for a in rec.attacks] == ["fgsm", "pgd"]
+    art = Path(sink.root) / "artifacts"
+    assert not (art / CURVE_PNG_NAME).exists() and not (art / "curve").exists()
+    flips = json.loads((art / "flip_matrix.json").read_text())
+    assert flips["boxes"] == 0 and set(flips["flipped"]) == {"fgsm", "pgd"} and flips["n"] == 16
+    assert rec.provenance.sample_indices_sha256 == hashlib.sha256(np.arange(16, dtype=np.int64).tobytes()).hexdigest()
+    RunRecord.model_validate(rec.model_dump())
+
+
+def test_frame_runs_the_runner_explain_closure_after_the_curve_artifacts(monkeypatch, sink):
+    fake = _fake_runner_module("redsim.ml.runners.fake_cls", "run_fake", mri=True, curves=True, explain=True)
+    monkeypatch.setitem(sys.modules, "redsim.ml.runners.fake_cls", fake)
+    monkeypatch.setitem(runners_base.MODALITY_RUNNERS, "image", "redsim.ml.runners.fake_cls:run_fake")
+    monkeypatch.setitem(sys.modules, RULES_MOD, None)
+    rec = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}), sink)
+    assert fake.seen["explained"] is True and "explain" in rec.stages_done
+    assert rec.score is not None and rec.score.attack_ids == ["fgsm"]           # scored over the in-scope set
+    assert [c.attack_id for c in rec.curve] == ["fgsm"] and (Path(sink.root) / "artifacts" / CURVE_PNG_NAME).exists()
+    assert not any(i.id.startswith("i.explain.unavailable") for i in rec.interpretation)
+
+
+# --- Phase B frame: the training-defense hook (ATTACKS_HARDEN-06) ---------------------------------------------
+
+HARDEN_MOD = TRAINING_DEFENSE_MODULE
+
+
+def make_fake_defenses_catalog(kind: str = "training"):
+    """A defenses catalog whose ``adv_train`` entry carries ``kind`` and whose preprocessing hook must not run."""
+    defenses = types.ModuleType(DEFENSES_MOD)
+    seen: dict = {}
+
+    def get_defense(defense_id):
+        if defense_id == "adv_train":
+            return {"id": "adv_train", "kind": kind, "art_class": "art.defences.trainer.AdversarialTrainer"}
+        raise ValueError(f"unknown defense: {defense_id!r}")
+
+    def apply_defense(target, defense_id, params):
+        seen["preprocessing_args"] = (target.id, defense_id, params)
+        return target
+
+    defenses.get_defense = get_defense
+    defenses.apply_defense = apply_defense
+    defenses.seen = seen
+    return defenses
+
+
+class _HardenedView:
+    """What apply_training_defense hands back: the derived model, describing itself for the provenance."""
+
+    def __init__(self, target, defense):
+        self._target = target
+        self._defense = defense
+        self.id = target.id
+
+    def describe(self):
+        return {"id": self._defense.id, "kind": "training", "params": dict(self._defense.params),
+                "epochs_run": 1, "derived_sha256": "0" * 64}
+
+    def __getattr__(self, name):
+        return getattr(self._target, name)
+
+
+def make_fake_harden():
+    harden = types.ModuleType(HARDEN_MOD)
+    seen: dict = {}
+
+    def apply_training_defense(target, defense, *, config, sink, seed):
+        seen["args"] = {"target": target.id, "defense": defense, "config": config, "sink": sink, "seed": seed}
+        return _HardenedView(target, defense)
+
+    harden.apply_training_defense = apply_training_defense
+    harden.seen = seen
+    return harden
+
+
+def test_training_defense_is_applied_through_the_harden_hook(no_optional_modules, monkeypatch, sink):
+    defenses = make_fake_defenses_catalog()
+    harden = make_fake_harden()
+    monkeypatch.setitem(sys.modules, DEFENSES_MOD, defenses)
+    monkeypatch.setitem(sys.modules, HARDEN_MOD, harden)
+    defense = DefenseConfig(id="adv_train", params={"epochs": 1})
+    cfg = base_config(attack_ids=["fgsm"], attack_params={}, defense=defense)
+    rec = run_campaign(cfg, sink, explain=False, baseline_run_id="baseline-1")
+    args = harden.seen["args"]
+    assert args["target"] == "tiny" and args["defense"] == defense and args["config"] == cfg
+    assert args["sink"] is sink and args["seed"] == 0
+    assert "preprocessing_args" not in defenses.seen                    # kind: training never goes through apply_defense
+    assert rec.kind == "verify" and rec.baseline_run_id == "baseline-1"
+    assert rec.provenance.defense == {"id": "adv_train", "kind": "training", "params": {"epochs": 1}, "epochs_run": 1,
+                                      "derived_sha256": "0" * 64}
+    assert rec.score is not None                                         # measured on the derived model, scored
+    assert TRAINING_DEFENSE_LIMITATION in rec.limitations and DEFENSE_LIMITATION not in rec.limitations
+    assert rec.stages_done[:3] == ["load_target", "defense_apply", "sample"]   # spec 6.5: right after load_target
+
+
+def test_training_defense_without_harden_module_is_recorded_unavailable_and_unscored(no_optional_modules, monkeypatch,
+                                                                                    sink):
+    """The hook module is absent: the run completes with real rows on the undefended model, the defense is recorded
+    unavailable in the provenance and the limitations, and the score is withheld so no delta can be read."""
+    monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses_catalog())
+    monkeypatch.setitem(sys.modules, HARDEN_MOD, None)
+    rec = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="adv_train")), sink,
+                       explain=False)
+    assert rec.status == "succeeded" and rec.kind == "verify"
+    prov = rec.provenance.defense
+    assert prov["status"] == "unavailable" and prov["kind"] == "training" and prov["id"] == "adv_train"
+    assert HARDEN_MOD in prov["reason"] and prov["requested"] == {"id": "adv_train", "art_class": None, "params": {}}
+    assert rec.score is None and rec.score_status is not None and rec.score_status.state == "unavailable"
+    assert "was not applied" in rec.score_status.reason and "fake a delta" in rec.score_status.reason
+    assert any(lim.startswith("Defense 'adv_train' (kind training) was not applied") for lim in rec.limitations)
+    assert DEFENSE_LIMITATION not in rec.limitations and TRAINING_DEFENSE_LIMITATION not in rec.limitations
+    assert [m.family for m in rec.measurements] == ["clean", "evasion", "evasion", "evasion", "control", "control", "control"]
+    assert not (Path(sink.root) / "artifacts" / "score.json").exists()
+    assert "defense_apply" not in rec.stages_done                       # nothing was applied, so no such stage
+    RunRecord.model_validate(rec.model_dump())
+
+
+class _TrainingUnavailableRecord(BaseModel):
+    """The shape of ``redsim.ml.harden.apply.TrainingUnavailable`` the hook attaches to its typed refusal."""
+
+    defense_id: str
+    target_id: str
+    code: str = "training_defense_unavailable"
+    reason: str
+    infeasible: bool
+    register_item: str | None = None
+
+
+class _FakeTrainingDefenseUnavailable(MLError):
+    code = "training_defense_unavailable"
+
+    def __init__(self, unavailable: _TrainingUnavailableRecord) -> None:
+        super().__init__(f"{unavailable.defense_id} on {unavailable.target_id!r}: {unavailable.reason}")
+        self.unavailable = unavailable
+
+
+def test_training_defense_refused_by_the_hook_is_recorded_unavailable_and_unscored(no_optional_modules, monkeypatch,
+                                                                                   sink):
+    """The hook raises its typed ``training_defense_unavailable`` (no training slice, a tree ensemble): the run measures
+    the undefended model, records the typed reason in the provenance and withholds the score; any other MLError from
+    the hook still fails the run."""
+    monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses_catalog())
+    harden = make_fake_harden()
+
+    def refuse(target, defense, *, config, sink, seed):
+        raise _FakeTrainingDefenseUnavailable(_TrainingUnavailableRecord(
+            defense_id=defense.id, target_id=target.id, reason="no training slice is bundled for this target",
+            infeasible=False, register_item="ATTACKS_HARDEN-11"))
+
+    harden.apply_training_defense = refuse
+    monkeypatch.setitem(sys.modules, HARDEN_MOD, harden)
+    rec = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="adv_train")), sink,
+                       explain=False)
+    assert rec.status == "succeeded" and rec.kind == "verify"
+    prov = rec.provenance.defense
+    assert prov["status"] == "unavailable" and prov["code"] == "training_defense_unavailable"
+    assert prov["reason"] == "no training slice is bundled for this target" and prov["infeasible"] is False
+    assert prov["register_item"] == "ATTACKS_HARDEN-11" and prov["target_id"] == "tiny" and prov["id"] == "adv_train"
+    assert rec.score is None and rec.score_status is not None and rec.score_status.state == "unavailable"
+    assert any(lim.startswith("Defense 'adv_train' (kind training) was not applied") for lim in rec.limitations)
+    assert "defense_apply" not in rec.stages_done and [m.family for m in rec.measurements][0] == "clean"
+
+    def crash(target, defense, *, config, sink, seed):
+        raise MLError("the trainer fell over")
+
+    harden.apply_training_defense = crash
+    with pytest.raises(MLError, match="fell over"):
+        run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="adv_train")),
+                     FilesystemSink(Path(sink.root).parent / "crash"), explain=False)
+
+
+def test_defense_apply_stage_follows_load_target_on_a_training_verify_run_only(no_optional_modules, monkeypatch,
+                                                                              sink, tmp_path):
+    """Spec 6.5 / ATTACKS_HARDEN-15: a verify campaign whose defense trains records ``defense_apply`` directly after
+    ``load_target`` (the ``schema.STAGES`` order, read at run time); a preprocessing defense wraps the target inside
+    ``load_target`` and writes no such stage (the worker's ``expected_stages`` mirrors this); an attack run never
+    writes it and is otherwise stage-for-stage identical."""
+    assert STAGES.index("defense_apply") == STAGES.index("load_target") + 1 and STAGES[-1] == "report"
+    monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses_catalog())
+    monkeypatch.setitem(sys.modules, HARDEN_MOD, make_fake_harden())
+    verify = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="adv_train")),
+                          sink, explain=False)
+    assert verify.stages_done[:3] == ["load_target", "defense_apply", "sample"]
+    assert all(s.split(":")[0] in STAGES for s in verify.stages_done)
+    attack = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}), FilesystemSink(tmp_path / "attack"),
+                          explain=False)
+    assert "defense_apply" not in attack.stages_done
+    assert verify.stages_done[2:] == attack.stages_done[1:]
+    monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses())
+    squeezed = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="feature_squeezing")),
+                            FilesystemSink(tmp_path / "squeezed"), explain=False)
+    assert squeezed.kind == "verify" and "defense_apply" not in squeezed.stages_done
+    assert squeezed.stages_done == attack.stages_done
+
+
+# --- Phase B frame: offline pins for the child (MODALITIES-10) ----------------------------------------------
+
+class _EnvCapturingTarget(TinyTarget):
+    """Records the offline pins as the runner sees them during prediction."""
+
+    captured: dict[str, str | None] = {}
+
+    def predict_proba(self, x):
+        type(self).captured = {k: os.environ.get(k) for k in ("NLTK_DATA", "TORCH_HOME")}
+        return super().predict_proba(x)
+
+
+def test_run_pins_nltk_data_and_torch_home_offline_for_its_duration(no_optional_modules, monkeypatch, sink, tmp_path):
+    for key in ("NLTK_DATA", "TORCH_HOME"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("REDSIM_ML_ASSETS_DIR", str(tmp_path / "assets"))
+    cfg = base_config(attack_ids=["fgsm"], attack_params={})
+    run_campaign(cfg, sink, explain=False, target_override=_EnvCapturingTarget())
+    captured = _EnvCapturingTarget.captured
+    assert captured["TORCH_HOME"] == str(Path(sink.root) / "torch")                  # an empty cache under the work dir
+    assert captured["NLTK_DATA"] == str(tmp_path / "assets" / "lexicons" / "nltk_data")
+    assert os.environ.get("NLTK_DATA") is None and os.environ.get("TORCH_HOME") is None  # restored afterwards
+    # an explicit setting is never overridden, and without an assets dir the lexicon path stays under the work dir
+    monkeypatch.setenv("TORCH_HOME", str(tmp_path / "hub"))
+    monkeypatch.delenv("REDSIM_ML_ASSETS_DIR", raising=False)
+    run_campaign(cfg, FilesystemSink(tmp_path / "second"), explain=False, target_override=_EnvCapturingTarget())
+    captured = _EnvCapturingTarget.captured
+    assert captured["TORCH_HOME"] == str(tmp_path / "hub")
+    assert captured["NLTK_DATA"] == str(tmp_path / "second" / "nltk_data")
+    assert os.environ["TORCH_HOME"] == str(tmp_path / "hub")
+    pins = runners_base.offline_env_pins(None)
+    assert set(pins) == {"NLTK_DATA", "TORCH_HOME"} and all(pins.values())

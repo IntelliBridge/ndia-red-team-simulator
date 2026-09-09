@@ -1,7 +1,9 @@
 """redsim.verify_tenant_integrity — periodic tenant-isolation reconciliation.
 
 Migration 0006 denormalizes ``org_id`` onto the eight project-scoped tables and
-0009 adds a ``BEFORE UPDATE`` trigger that rejects ``org_id`` drift. This task
+0009 adds a ``BEFORE UPDATE`` trigger that rejects ``org_id`` drift; 0010
+(``ml_campaigns``) and 0011 (``report_snapshots``, ``idempotency_keys``,
+``ml_batches``, ``ml_datasets``) give their tables the same rails. This task
 is the complementary *detective* control: a Celery-beat scan that re-derives
 each scoped row's expected ``org_id`` from ``projects.org_id`` and flags any row
 whose stored ``org_id`` disagrees (or is NULL). The trigger keeps drift from
@@ -32,9 +34,11 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-# The eight project-scoped tables carrying a denormalized ``org_id`` (kept in
-# lockstep with ``_SCOPED_TABLES`` in migration 0006/0009). Each has a NOT NULL
-# ``project_id`` FK to ``projects`` and a nullable ``org_id`` the trigger fills.
+# Every project-scoped table carrying a denormalized ``org_id``: the eight of
+# migration 0006/0009 (kept in lockstep with ``_SCOPED_TABLES`` there), the
+# migration-owned ``ml_campaigns`` of 0010 and the four Phase B tables of 0011.
+# Each has a NOT NULL ``project_id`` FK to ``projects`` and a nullable ``org_id``
+# the insert trigger fills.
 _SCOPED_TABLES: tuple[str, ...] = (
     "targets",
     "runs",
@@ -44,7 +48,26 @@ _SCOPED_TABLES: tuple[str, ...] = (
     "artifacts",
     "remediation_attempts",
     "application_logs",
+    "ml_campaigns",
+    "report_snapshots",
+    "idempotency_keys",
+    "ml_batches",
+    "ml_datasets",
 )
+
+# The column that identifies a row in the report and in the repair UPDATE.
+# ``id`` everywhere except ``ml_campaigns`` (keyed by ``run_id``) and
+# ``idempotency_keys`` (primary key ``(project_id, key)``; the repair statement
+# always adds ``project_id`` so ``key`` alone never addresses another project's row).
+_ROW_ID_COLUMNS: dict[str, str] = {
+    "ml_campaigns": "run_id",
+    "idempotency_keys": "key",
+}
+
+
+def row_id_column(table: str) -> str:
+    """The identifying column the scan reports for ``table`` (``id`` unless the table is keyed otherwise)."""
+    return _ROW_ID_COLUMNS.get(table, "id")
 
 
 @dataclass
@@ -109,14 +132,16 @@ def verify_tenant_integrity_in_session(
     """
     report = ReconcileReport()
     for table in _SCOPED_TABLES:
-        # ``id`` is the PK on every scoped table except ``application_logs``
-        # (integer ``id``); both stringify cleanly for reporting. project_id is
+        # The identifying column is ``id`` on every scoped table except the two
+        # named in ``_ROW_ID_COLUMNS`` (``application_logs`` has an integer
+        # ``id``; every value stringifies cleanly for reporting). project_id is
         # NOT NULL on all of them, but LEFT JOIN keeps a row with a dangling
         # project visible as expected_org_id = NULL drift rather than dropping
-        # it. Identifiers are static (from the module constant), never user
+        # it. Identifiers are static (from the module constants), never user
         # input, so the f-string interpolation is safe.
+        id_col = row_id_column(table)
         rows = sess.execute(text(  # nosemgrep
-            f"SELECT x.id, x.project_id, x.org_id, p.org_id AS expected "
+            f"SELECT x.{id_col}, x.project_id, x.org_id, p.org_id AS expected "
             f"FROM {table} x "
             f"LEFT JOIN projects p ON p.id = x.project_id "
             f"WHERE x.org_id IS DISTINCT FROM p.org_id"
@@ -131,16 +156,21 @@ def verify_tenant_integrity_in_session(
                 expected_org_id=expected,
             ))
             logger.warning(
-                "tenant integrity drift: %s id=%s project=%s org_id=%r "
+                "tenant integrity drift: %s %s=%s project=%s org_id=%r "
                 "expected=%r",
-                table, row_id, project_id, stored, expected,
+                table, id_col, row_id, project_id, stored, expected,
             )
             if repair and expected is not None:
+                # ``project_id`` in the predicate: for ``idempotency_keys`` the
+                # identifying column is only unique within a project, and for
+                # the others it costs nothing and pins the row to the project
+                # whose org the repair writes.
                 sess.execute(
                     text(  # nosemgrep
-                        f"UPDATE {table} SET org_id = :org WHERE id = :id"
+                        f"UPDATE {table} SET org_id = :org "
+                        f"WHERE {id_col} = :id AND project_id = :project"
                     ),
-                    {"org": expected, "id": row_id},
+                    {"org": expected, "id": row_id, "project": project_id},
                 )
     if report.ok:
         logger.info("tenant integrity check clean: no org_id drift")

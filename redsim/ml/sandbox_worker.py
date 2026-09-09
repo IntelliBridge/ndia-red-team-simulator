@@ -5,13 +5,18 @@ The child writes one typed envelope to ``<work_dir>/result.json`` (spec 9.4)::
     {"ok": true,  "result": {"manifest": {...}}}            # validate
     {"ok": true,  "result": {"record": <CampaignRecord>}}   # campaign
     {"ok": false, "error_class": "<redsim.ml.errors name>",
-                  "error": "<operator-safe message>", "code": "<errors.<cls>.code>"}
+                  "error": "<operator-safe message>", "code": "<errors.<cls>.code>",
+                  "detail": {...}}                          # only for classes with structured fields
 
 Exit status 0 means "an envelope was written" (success *or* a structured
 refusal); 2 means the request itself was unreadable; any other non-zero status
 means the process died before writing, which the parent reports as
 ``SandboxKilled``. Refusals therefore never travel as stderr text: the parent
-rebuilds the typed class from ``error_class`` (``redsim.ml.sandbox``).
+rebuilds the typed class from ``error_class`` (``redsim.ml.sandbox``). The
+endpoint classes (``EgressRefused`` and its subclasses, ``EndpointSchemaMismatch``,
+``EndpointUnreachable``, ``EndpointAuthFailed``, ``QueryBudgetExceeded``) travel
+the same way; ``detail`` carries the egress rule / host / address or the contract
+field (``redsim.ml.errors.error_detail``), never a credential or a URL.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from redsim.ml.errors import error_detail
 from redsim.ml.schema import CampaignConfig
 
 # Same name ``redsim.ml.targets.bundled.assets_dir`` reads; kept as a literal so
@@ -41,6 +47,21 @@ EXIT_BAD_REQUEST = 2
 
 #: Cap on the envelope the parent will read (spec 9.4: large arrays go to files).
 ENVELOPE_MAX_BYTES = 16 * 1024 * 1024
+
+#: Request key naming a remote predict endpoint (mirrors ``redsim.ml.sandbox.TARGET_ENDPOINT_KEY``).
+#: The block carries the parent's unix-socket path and a credential-free descriptor; this process
+#: never sees the URL's credential and never opens an HTTP connection (spec 9.4, 20.3).
+TARGET_ENDPOINT_KEY = "target_endpoint"
+
+
+def _endpoint_target(target_id: str, request: dict[str, Any]) -> Any | None:
+    """The ``EndpointTarget`` for a request that names one, else ``None`` (socket client only, no HTTP)."""
+    spec = request.get(TARGET_ENDPOINT_KEY)
+    if not isinstance(spec, dict):
+        return None
+    from redsim.ml.targets.endpoint import endpoint_target_from_request
+
+    return endpoint_target_from_request(target_id, spec)
 
 
 def scrub_llm_env(environ: dict[str, str] | None = None) -> list[str]:
@@ -167,20 +188,28 @@ def _ok_envelope(result: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "result": result}
 
 
-def _error_envelope(error_class: str, error: str, *, code: str | None = None) -> dict[str, Any]:
+def _error_envelope(error_class: str, error: str, *, code: str | None = None,
+                    detail: dict[str, Any] | None = None) -> dict[str, Any]:
     envelope: dict[str, Any] = {"ok": False, "error_class": error_class, "error": error[:4000]}
     if code:
         envelope["code"] = code
+    if detail:
+        envelope["detail"] = detail
     return envelope
 
 
 def _envelope_for_exception(exc: BaseException) -> dict[str, Any]:
-    """Structured refusal for ``exc``: class name, operator-safe text, spec 10.6 code when any."""
+    """Structured refusal for ``exc``: class name, operator-safe text, spec 10.6 code and structured detail.
+
+    The parent rebuilds the class by name (``redsim.ml.sandbox._typed_error``); the endpoint classes
+    need their ``detail`` (egress rule and host, contract field) to be rebuilt as the same class.
+    """
     code = getattr(exc, "code", None)
     return _error_envelope(
         type(exc).__name__,
         str(exc) or type(exc).__name__,
         code=code if isinstance(code, str) else None,
+        detail=error_detail(exc) or None,
     )
 
 
@@ -207,9 +236,9 @@ def _campaign(request: dict[str, Any], work_dir: Path) -> None:
         # Building the uploaded target performs the sniff/digest/architecture
         # checks, so a refused model is campaign failure evidence (a partial
         # record naming ``ModelLoadRefused``/``UnsupportedArtifact``), not a crash.
-        target = None
+        target = _endpoint_target(config.target_id, request)
         target_file = request.get("target_file")
-        if isinstance(target_file, str) and target_file:
+        if target is None and isinstance(target_file, str) and target_file:
             target = artifact_target_from_path(
                 config.target_id,
                 Path(target_file),
@@ -238,15 +267,17 @@ def _campaign(request: dict[str, Any], work_dir: Path) -> None:
 
 
 def _validate(request: dict[str, Any], work_dir: Path) -> None:
-    """Load and probe the uploaded bytes; every outcome is a typed envelope."""
+    """Load and probe the uploaded bytes (or probe a remote endpoint); every outcome is a typed envelope."""
     try:
         from redsim.services.ml_models import artifact_target_from_path
 
-        target = artifact_target_from_path(
-            str(request["target_id"]),
-            Path(str(request["target_file"])),
-            dict(request.get("target_detail") or {}),
-        )
+        target: Any = _endpoint_target(str(request["target_id"]), request)
+        if target is None:
+            target = artifact_target_from_path(
+                str(request["target_id"]),
+                Path(str(request["target_file"])),
+                dict(request.get("target_detail") or {}),
+            )
         target.load()
         manifest = target.manifest()
     except Exception as exc:  # noqa: BLE001 - refusals travel as data, never as stderr text
