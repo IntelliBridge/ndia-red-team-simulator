@@ -257,6 +257,36 @@ Docker base-image bump as a runtime change, not a routine one: it moves the
 interpreter the `ml` extra is validated on, and the 2026-09-08 bump to
 `node:26` broke the web image until #21 installed pnpm explicitly.
 
+## State of `main` at `1439f92` and the wave B3 push (2026-09-09)
+
+Written together with the wave B3 push, which follows the B2 push below.
+Facts, in order:
+
+- Wave B3 (five track commits plus `fix: integrate Phase B wave B3 tracks`)
+  was written in the worktree `wt/waveb3` on the B2 integration commit and
+  rebased onto it. The B3 assembler's checks in that worktree (head
+  `a780d88`, before the atlas-foundry and integration commits and the
+  rebase): `ruff check --select E4,E7,E9,F,I redsim tests` clean, `mypy
+  redsim` clean (253 source files), the six writers' test files together 140
+  passed and 1 skipped, the rewritten `tests/ml/test_phase_b_stubs.py` 61
+  passed, the e2e smoke file 8 passed through the real child. Final counts
+  at the B3 integration on the rebased tree (the reconcile pass, run from the repository root): `ruff check --select E4,E7,E9,F,I redsim tests` clean, `mypy redsim` clean (253 source files), the default tier `pytest -q -p no:cacheprovider --ignore=tests/e2e` 2634 passed, 35 skipped, 13 deselected (the `test_campaign_golden` artifact pin now excludes the Phase B export slices, `test_cli_ml` pins the `l2` default `pgd`; the `test_campaign` harden-hook and `test_datasets` synonyms failures of the B2 tree are not present), the `ml` tier 433 passed and 1 skipped, the `garak` tier 12 passed, the `e2e` tier against the compose Postgres 22 passed, `mkdocs build --strict` exit 0. The Coverage gate and the `Unit tests (py3.12)` lane
+  have nothing known-red to expect from this push.
+- The wave B3 tests need `pyarrow` (ml extra) for the export and consume
+  cases, which are `ml`-marked and skip on the 3.13 lane, and PyYAML (a core
+  dependency) for the CLI matrix. No new extra was declared. The B3 task
+  modules are registered through the Celery `include` list, so the
+  `tests/test_worker_hardening.py` routed-set pin is unchanged.
+- The Aikido pre-commit hook passed every B3 commit; the JWT-shaped fake
+  token of `tests/ml/fake_foundry_server.py` is assembled from three segments
+  at import so no JWT literal sits in the source. The trufflehog job scans
+  verified secrets only and has nothing to find there.
+- `mkdocs build --strict` passed for this documentation pass with the new
+  `docs/interop.md` in the nav.
+- The Redsim CI runs for `29db42c` and `1439f92` had not been read when this
+  page was written, and the B2 and B3 pushes had not happened. Nothing is
+  claimed green.
+
 ## State of `main` at `1439f92` and the wave B2 push (2026-09-09)
 
 Written after the wave B1 push (`29db42c..1439f92`, twelve commits) and
@@ -420,9 +450,9 @@ green without editing content for the build:
 Every page under `docs/` should appear in the `nav` in `mkdocs.yml`. A page
 that exists but is not in the nav is only an INFO message, but readers cannot
 find it. As of this commit the gap register, the ops Pythia page, the three
-workstream pages, the remaining-work brief, the Phase B register and plan and
-the endpoint predict contract page (`docs/api/endpoint-contract.md`) are in
-the nav.
+workstream pages, the remaining-work brief, the Phase B register and plan,
+the endpoint predict contract page (`docs/api/endpoint-contract.md`) and the
+wave B3 interoperability page (`docs/interop.md`) are in the nav.
 
 ## Reproduce locally
 
