@@ -592,3 +592,116 @@ class TestSandboxEnvPolicy(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# redsim.ml.attacks entry-point group (G-PLUGINS)
+# ---------------------------------------------------------------------------
+
+def test_ml_attacks_entry_point_discovery():
+    """Attack plugins pass the same allowlist / conformance / signature gates and register into ATTACKS."""
+    import pytest
+
+    pytest.importorskip("numpy")
+    from redsim.ml.attacks.registry import ATTACKS
+    from redsim.ml.schema import AttackInfo
+
+    class FakeAttack:
+        id = "fake-plugin-attack"
+        domains = frozenset({"image"})
+        takes_eps = True
+        capabilities = frozenset({"adversarial_ml", "white_box", "takes_eps", "family:evasion", "modality:image"})
+
+        def info(self):
+            return AttackInfo(id=self.id, name="Fake plugin attack", domain="image", family="evasion",
+                              access="white-box", requires_gradients=True)
+
+        def resolve_params(self, params):
+            return {}
+
+        def run(self, target, x, y, params, seed):  # pragma: no cover - never invoked
+            raise NotImplementedError
+
+    class BadAttack:
+        """Non-conformant: no ``run``."""
+
+        id = "bad-plugin-attack"
+
+        def info(self):
+            return AttackInfo(id=self.id, name="bad", domain="image", family="evasion")
+
+        def resolve_params(self, params):
+            return {}
+
+    class ClashAttack(FakeAttack):
+        id = "fgsm"      # collides with the built-in
+
+    eps = [
+        _fake_ep("fake", lambda: FakeAttack(), dist_name="fake-attacks", version="1.0"),
+        _fake_ep("bad", lambda: BadAttack(), dist_name="fake-attacks", version="1.0"),
+        _fake_ep("clash", lambda: ClashAttack(), dist_name="fake-attacks", version="1.0"),
+    ]
+
+    def entry_points(group):
+        return eps if group == "redsim.ml.attacks" else []
+
+    try:
+        # Off by default: nothing is scanned, nothing registered.
+        with patch.dict(os.environ, _env_without_plugins(), clear=True), \
+                patch("importlib.metadata.entry_points", side_effect=entry_points) as ep_mock:
+            assert plugins.discover_all() == []
+            assert plugins.load_ml_attack_plugins() == []
+        ep_mock.assert_not_called()
+        assert "fake-plugin-attack" not in ATTACKS
+
+        # The report walks the group without registering.
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
+                patch("importlib.metadata.entry_points", side_effect=entry_points):
+            report = plugins.discover_all()
+        rows = {r.name: r for r in report if r.group == "redsim.ml.attacks"}
+        assert set(rows) == {"fake-plugin-attack", "bad", "fgsm"}
+        assert rows["fake-plugin-attack"].status == "loaded" and rows["fake-plugin-attack"].kind == "attack"
+        assert rows["fake-plugin-attack"].distribution == "fake-attacks"
+        assert rows["fake-plugin-attack"].version == "1.0" and rows["fake-plugin-attack"].detail == ""
+        assert rows["bad"].status == "rejected" and "AttackAdapter" in rows["bad"].detail
+        assert rows["fgsm"].status == "rejected" and "already registered" in rows["fgsm"].detail
+        assert "fake-plugin-attack" not in ATTACKS
+
+        # The eager loader registers the conformant plugin only; the built-in is never replaced.
+        builtin_fgsm = ATTACKS.get("fgsm")
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
+                patch("importlib.metadata.entry_points", side_effect=entry_points):
+            loaded = plugins.load_ml_attack_plugins()
+        assert {r.name: r.status for r in loaded} == {"fake-plugin-attack": "loaded", "bad": "rejected",
+                                                      "fgsm": "rejected"}
+        assert ATTACKS.get("fake-plugin-attack").info().name == "Fake plugin attack"
+        assert ATTACKS.get("fgsm") is builtin_fgsm
+        assert "bad-plugin-attack" not in ATTACKS
+
+        # A second load reports the plugin as already registered rather than duplicating it.
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
+                patch("importlib.metadata.entry_points", side_effect=entry_points):
+            again = {r.name: r for r in plugins.load_ml_attack_plugins()}
+        assert again["fake-plugin-attack"].status == "rejected" and "already registered" in again["fake-plugin-attack"].detail
+
+        # The distribution allowlist applies to attack plugins as it does to scanners.
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1", "REDSIM_PLUGINS_ALLOW": "some-other-dist"}), \
+                patch("importlib.metadata.entry_points", side_effect=entry_points):
+            skipped = [r for r in plugins.discover_all() if r.group == "redsim.ml.attacks"]
+        assert skipped and all(r.status == "skipped" and "REDSIM_PLUGINS_ALLOW" in r.detail for r in skipped)
+
+        # `redsim plugins list --json` shows the attack rows with kind "attack".
+        from redsim.cli.main import main
+
+        buf = io.StringIO()
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
+                patch("redsim.config.load_config"), \
+                patch("importlib.metadata.entry_points", side_effect=entry_points), \
+                redirect_stdout(buf):
+            main(["plugins", "list", "--json"])
+        payload = json.loads(buf.getvalue())
+        attack_rows = [r for r in payload if r["group"] == "redsim.ml.attacks"]
+        assert {r["name"] for r in attack_rows} == {"fake-plugin-attack", "bad", "fgsm"}
+        assert all(r["kind"] == "attack" for r in attack_rows)
+    finally:
+        ATTACKS._items.pop("fake-plugin-attack", None)

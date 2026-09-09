@@ -1,9 +1,10 @@
 """``redsim plugins list`` — inspect the community adapter marketplace.
 
-Surfaces :func:`redsim.plugins.discover_all` (the read-only discovery report) as
-either a human-readable table or a ``--json`` array. Discovery is gated by
-``REDSIM_PLUGINS=1``; when it's off this command prints a clear hint and exits 0
-rather than silently returning nothing.
+Surfaces :func:`redsim.plugins.discover_all` (the read-only discovery report over
+the ``redsim.scanners`` and ``redsim.ml.attacks`` entry-point groups) as either a
+human-readable table (``KIND`` is ``scanner`` or ``attack``) or a ``--json``
+array. Discovery is gated by ``REDSIM_PLUGINS=1``; when it's off this command
+prints a clear hint and exits 0 rather than silently returning nothing.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ def _cmd_plugins_list(args: argparse.Namespace, config: RedsimConfig) -> None:
     if not discovery_on:
         _console._warn(
             "plugin discovery is disabled; set REDSIM_PLUGINS=1 to enable "
-            "third-party adapter discovery"
+            "third-party adapter discovery (redsim.scanners and redsim.ml.attacks entry points)"
         )
         return
 
