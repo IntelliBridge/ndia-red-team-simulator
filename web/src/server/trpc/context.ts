@@ -1,6 +1,17 @@
 import "server-only";
 
-import { DEV_ENVS, env } from "@/env";
+import { env } from "@/env";
+import { devEnvironment } from "@/server/gate";
+
+/**
+ * Whether this deployment may honour a dev token or answer from fixtures.
+ *
+ * The middleware gate's own check under this module's name, not a second copy
+ * of it. Middleware and the tRPC context have to agree on which deployments
+ * accept a dev token, and one of them drifting from the other is a credential
+ * bug rather than a cosmetic one (KTD7, KTD13).
+ */
+export { devEnvironment as isDevEnvironment };
 
 /**
  * What the tRPC layer forwards upstream on behalf of one caller.
@@ -120,11 +131,6 @@ export function newRequestId(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Whether this deployment may honour a dev token or answer from fixtures. */
-export function isDevEnvironment(): boolean {
-  return DEV_ENVS.includes(env.REDSIM_ENV);
-}
-
 /**
  * Build the per-request context.
  *
@@ -158,7 +164,7 @@ export function createContext(parts: RequestParts): TrpcContext {
       cookieHeader: pairs.join("; "),
       csrfHeader: headers.get(env.NEXT_PUBLIC_REDSIM_CSRF_HEADER.toLowerCase()),
     };
-  } else if (devToken !== undefined && isDevEnvironment()) {
+  } else if (devToken !== undefined && devEnvironment()) {
     credential = { kind: "bearer", token: devToken };
   }
 
@@ -168,7 +174,7 @@ export function createContext(parts: RequestParts): TrpcContext {
     secFetchSite: headers.get("sec-fetch-site"),
     origin: headers.get("origin"),
     contentType: headers.get("content-type"),
-    fixtures: env.REDSIM_DEV_FIXTURES && isDevEnvironment(),
+    fixtures: env.REDSIM_DEV_FIXTURES && devEnvironment(),
   };
 }
 
