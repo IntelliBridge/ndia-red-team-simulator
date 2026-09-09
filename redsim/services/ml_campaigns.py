@@ -34,6 +34,15 @@ child. Attack applicability is read from the registry capability tags
 (``modality:<domain>``), the same declaration the runner honours, so an attack
 that lists several modalities (PGD by surrogate transfer on tabular targets,
 spec 12.9) is admitted while a true mismatch stays ``attack_modality_mismatch``.
+
+Two more checks the runner (``redsim.ml.campaign._resolve_attacks``) performs
+are mirrored here so a campaign the sandbox child would refuse is never
+admitted, never enqueued and never becomes a failed ``Run``: ``attack_ids`` may
+name evasion adapters only (the benign ``noise_control`` runs automatically at
+every grid member when ``include_control`` is true, spec 12.4, and is not an
+attack), and a campaign with ``norm="l2"`` may name only adapters that declare a
+``norm_l2`` parameter (FGSM is L-inf only, spec 12.2). Both are
+``422 params_out_of_range`` with the field that has to change.
 """
 
 from __future__ import annotations
@@ -98,6 +107,12 @@ _GRID_OWNED_PARAMS = frozenset({"eps", "norm_l2"})
 #: Spec 16.5 default for ``POST /v1/findings/{id}/verify`` when the body names no defense: feature
 #: squeezing is the one Phase A preprocessor that applies to both image and tabular targets.
 DEFAULT_VERIFY_DEFENSE_ID = "feature_squeezing"
+#: The one attack family ``attack_ids`` may name (spec 12.2 catalog). ``control`` adapters run
+#: automatically (``redsim.ml.campaign.CONTROL_ATTACK_ID``) and the runner refuses them in the set.
+_ATTACK_FAMILY = "evasion"
+#: The adapter parameter that switches an attack to the L2 norm; an adapter without it is L-inf only
+#: and the runner refuses it under ``norm="l2"`` (``redsim.ml.campaign._resolve_attacks``).
+_L2_PARAM = "norm_l2"
 
 
 @dataclass(frozen=True)
@@ -342,9 +357,11 @@ def create_attack_campaign(
     attacks), ``model_load_refused`` (status not ``available``, with ``status``
     and ``refusal_reason``), ``unknown_attack``, ``attack_modality_mismatch``,
     ``attack_requires_gradients``, ``eps_grid_invalid``,
-    ``reference_eps_not_in_grid``, ``params_out_of_range``,
-    ``dataset_incompatible``, ``campaign_not_terminal`` (rerun of a live parent)
-    and ``queue_unavailable`` (enqueue failed; rows rolled back).
+    ``reference_eps_not_in_grid``, ``params_out_of_range`` (also for a
+    non-evasion adapter such as ``noise_control`` in ``attack_ids``, and for an
+    L-inf-only attack under ``norm="l2"``), ``dataset_incompatible``,
+    ``campaign_not_terminal`` (rerun of a live parent) and ``queue_unavailable``
+    (enqueue failed; rows rolled back).
 
     ``attack_params`` is frozen as the caller's overrides per attack (values as
     the adapter resolves them), never the adapter defaults, and never the
@@ -456,7 +473,7 @@ def create_attack_campaign(
                            f"attack_params names attacks outside attack_ids: {unknown_param_owners}",
                            field="attack_params")
 
-        from redsim.ml.attacks import attack_capabilities, get_attack
+        from redsim.ml.attacks import ATTACKS, attack_capabilities, get_attack
 
         attack_infos = []
         frozen_params: dict[str, dict[str, float | int | bool]] = {}
@@ -470,6 +487,30 @@ def create_attack_campaign(
                 raise ApiError(NOT_IMPLEMENTED, f"attack {attack_id!r} is not implemented"
                                + (f": {info.reason}" if info.reason else ""),
                                phase="B", field="attack_ids")
+            # The runner refuses a non-evasion adapter in the attack set (``_resolve_attacks``); the benign
+            # control is not an attack and runs automatically at every eps when ``include_control`` is true.
+            if info.family != _ATTACK_FAMILY:
+                raise ApiError(
+                    PARAMS_OUT_OF_RANGE,
+                    f"attack_ids names {attack_id!r}, a {info.family} adapter, not an attack: the benign "
+                    f"noise control runs automatically at every eps of the grid (include_control, spec 12.4) "
+                    f"and is never part of the attack set",
+                    field="attack_ids", reasons=[f"{attack_id} is family {info.family}, not {_ATTACK_FAMILY}"],
+                )
+            # The runner refuses an L-inf-only adapter under the L2 norm; the norm is a campaign-wide choice, so
+            # the field that has to change is ``norm`` (or the attack set). The alternatives are listed.
+            if norm == "l2" and not any(spec.name == _L2_PARAM for spec in info.params_schema):
+                l2_capable = sorted(
+                    a.id for a in ATTACKS
+                    if a.info().family == _ATTACK_FAMILY
+                    and any(spec.name == _L2_PARAM for spec in a.info().params_schema)
+                )
+                raise ApiError(
+                    PARAMS_OUT_OF_RANGE,
+                    f"attack {attack_id!r} supports the L-inf norm only and the campaign norm is 'l2'; "
+                    f"attacks that take norm_l2: {l2_capable}",
+                    field="norm", reasons=[f"{attack_id} declares no {_L2_PARAM} parameter"],
+                )
             # Applicability comes from the registry capability tags (``modality:<domain>`` for every
             # domain the adapter declares), the same declaration ``redsim.ml.campaign._resolve_attacks``
             # honours; ``AttackInfo.domain`` is the primary domain only and would refuse PGD by surrogate

@@ -344,8 +344,12 @@ def test_start_campaign_fills_spec_defaults_and_audits_before_rows(api: Harness)
 
 
 def test_start_campaign_l2_norm_uses_the_l2_default_grid(api: Harness) -> None:
+    # PGD declares ``norm_l2``. This test used to launch ``fgsm`` under ``norm: l2`` and expect 202, which
+    # the runner then refused in the sandbox child (FGSM is L-inf only); admission now refuses that pairing
+    # with ``params_out_of_range`` (tests/ml/test_admission_followups.py), so the L2 default grid is
+    # exercised here with an attack that can run under L2.
     seed_model(api)
-    response = launch(api, {"attack_ids": ["fgsm"], "norm": "l2"})
+    response = launch(api, {"attack_ids": ["pgd"], "norm": "l2"})
     assert response.status_code == 202, response.text
     with api.Session() as session:
         job = session.get(Job, response.json()["job_ids"][0])

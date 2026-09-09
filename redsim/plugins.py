@@ -18,8 +18,18 @@ allowlist, structural conformance (``AttackAdapter`` protocol, a non-empty
 ``id``, capability tags inside ``KNOWN_ATTACK_CAPABILITIES``), and the optional
 Ed25519 signature gate (``load_plugin_verifier``). :func:`discover_all` reports
 that group too (``kind="attack"``); :func:`load_ml_attack_plugins` is the eager
-loader the offline CLI and ``redsim.scanners`` call, and it never replaces a
-built-in attack id.
+loader the offline CLI, ``redsim.scanners`` and ``GET /v1/attacks`` call, and it
+never replaces a built-in attack id.
+
+The loader is idempotent per process. Several callers run it (``redsim.scanners``
+at import, the attack catalog route on its first request, the offline CLI), so
+an entry point this process already registered is remembered
+(:data:`_LOADED_ATTACK_PLUGINS`, keyed by entry-point name, distribution and
+version) and a later scan reports the same ``loaded`` row without instantiating
+the factory again or refusing the adapter as "already registered". The memory
+is checked against the registry: when the adapter is no longer registered (a
+test popped it, the registry was cleared) the entry point is scanned afresh.
+:func:`reset_ml_attack_plugin_memory` forgets everything, for tests.
 
 Discovery is gated by ``REDSIM_PLUGINS=1`` and (optionally) the
 ``REDSIM_PLUGINS_ALLOW`` distribution allowlist; see the README/docs for the
@@ -31,8 +41,8 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Iterator
-from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING
+from dataclasses import asdict, dataclass, replace
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from redsim.supply_chain.signing import PluginVerifier
@@ -42,6 +52,12 @@ logger = logging.getLogger(__name__)
 SCANNERS_GROUP = "redsim.scanners"
 ML_ATTACKS_GROUP = "redsim.ml.attacks"
 PLUGINS_ENV = "REDSIM_PLUGINS"
+
+#: ``redsim.ml.attacks`` entry points this process registered: identity ``(entry-point name,
+#: distribution, version)`` to the ``loaded`` row that was reported and the adapter instance that
+#: was registered. Consulted after the allowlist gate, so a re-load with the same environment is a
+#: no-op that yields the same rows; see :func:`scan_ml_attack_entry_points`.
+_LOADED_ATTACK_PLUGINS: dict[tuple[str, str | None, str | None], tuple[PluginInfo, Any]] = {}
 
 
 @dataclass
@@ -125,6 +141,14 @@ def scan_ml_attack_entry_points(
     (a built-in or an earlier plugin) is rejected, never substituted. Every
     per-plugin failure is a ``rejected`` row, so one bad plugin cannot break the
     others. The caller owns the ``REDSIM_PLUGINS=1`` gate.
+
+    Idempotent over the entry points this process already registered: after the
+    allowlist gate, an entry point remembered in :data:`_LOADED_ATTACK_PLUGINS`
+    whose adapter is still the registered one yields its remembered ``loaded``
+    row (factory not called again, nothing re-registered, no duplicate refusal),
+    whether ``register`` is true (a re-load) or false (the report, which then
+    says what is true: the plugin is loaded). An entry point whose adapter is
+    gone from the registry is scanned afresh.
     """
     from redsim.registry import _allowlist, _dist_meta
 
@@ -152,6 +176,14 @@ def scan_ml_attack_entry_points(
         if allow is not None and (dist_name is None or dist_name not in allow):
             yield _info(ep.name, "skipped", "distribution not in REDSIM_PLUGINS_ALLOW")
             continue
+        key = (str(ep.name), dist_name, version)
+        remembered = _LOADED_ATTACK_PLUGINS.get(key)
+        if remembered is not None:
+            row, adapter = remembered
+            if ATTACKS.maybe_get(row.name) is adapter:
+                yield replace(row)      # a copy: callers may mutate their rows
+                continue
+            del _LOADED_ATTACK_PLUGINS[key]     # the registry lost it (cleared or popped): scan afresh
         try:
             factory = ep.load()
             item = factory()
@@ -181,13 +213,15 @@ def scan_ml_attack_entry_points(
             yield _info(item_id, "rejected", f"attack id {item_id!r} is already registered; plugins never "
                                              "replace a registered attack")
             continue
+        row = _info(item_id, "loaded", "", signature=signature)
         if register:
             try:
                 register_attack(item)
             except Exception as exc:  # noqa: BLE001 - registration refusal is reported, not raised
                 yield _info(item_id, "rejected", f"registration failed: {exc}")
                 continue
-        yield _info(item_id, "loaded", "", signature=signature)
+            _LOADED_ATTACK_PLUGINS[key] = (replace(row), item)
+        yield row
 
 
 def load_ml_attack_plugins() -> list[PluginInfo]:
@@ -195,7 +229,10 @@ def load_ml_attack_plugins() -> list[PluginInfo]:
 
     Returns the discovery rows (empty when the flag is off, and then imports
     nothing from the ML packages). Rejected rows are logged at WARNING, as the
-    scanner loader does.
+    scanner loader does. Idempotent: a second call in the same process (the
+    attack catalog route after ``redsim.scanners`` registered the group at
+    import, say) is a no-op for the entry points already registered and returns
+    the same ``loaded`` rows for them, never a duplicate refusal.
     """
     if not plugins_enabled():
         return []
@@ -208,6 +245,16 @@ def load_ml_attack_plugins() -> list[PluginInfo]:
     return rows
 
 
+def reset_ml_attack_plugin_memory() -> None:
+    """Forget every entry point :func:`load_ml_attack_plugins` remembered (test hook).
+
+    Does not touch the attack registry itself; a test that pops a plugin from
+    ``ATTACKS`` needs no call here because the loader rescans an entry point whose
+    adapter is no longer registered.
+    """
+    _LOADED_ATTACK_PLUGINS.clear()
+
+
 __all__ = [
     "ML_ATTACKS_GROUP",
     "PLUGINS_ENV",
@@ -216,5 +263,6 @@ __all__ = [
     "discover_all",
     "load_ml_attack_plugins",
     "plugins_enabled",
+    "reset_ml_attack_plugin_memory",
     "scan_ml_attack_entry_points",
 ]
