@@ -93,7 +93,9 @@ export async function api<T>(
 
   // Bearer wins when explicitly supplied or available in localStorage;
   // otherwise the cookie rides via credentials: "include".
-  const bearer = init.token ?? _bearerFromStorage();
+  // An explicit empty token means "cookie only": the retry below uses it so a
+  // just-removed stale token is not read back from storage.
+  const bearer = init.token === "" ? undefined : (init.token ?? _bearerFromStorage());
   if (bearer) {
     headers["Authorization"] = `Bearer ${bearer}`;
   }
@@ -115,6 +117,20 @@ export async function api<T>(
     credentials: bearer ? "omit" : "include",
     headers,
   });
+  if (resp.status === 401 && bearer && init.token === undefined) {
+    // The bearer came from localStorage and the API refused it: a stale
+    // redsim_token left behind by an earlier session. It would otherwise
+    // shadow a valid session cookie on every call (seen live on 2026-09-09
+    // as "invalid token: Invalid input segments length" on the login page).
+    // Drop it and retry once on the cookie path.
+    try {
+      localStorage.removeItem("redsim_token");
+    } catch {
+      // storage unavailable: nothing to clear
+    }
+    const { token: _ignored, ...rest } = init;
+    return api<T>(path, { ...rest, token: "" } as RequestInit & { token?: string });
+  }
   if (!resp.ok) {
     throw new ApiError(resp.status, await resp.text());
   }
