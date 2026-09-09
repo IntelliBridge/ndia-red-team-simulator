@@ -4,12 +4,20 @@
 // the status table in redsim/api/errors.py at 29db42c.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { z } from "zod";
+
 import { upstreamError } from "@/lib/api";
 
 import { beginCall, createContext, requestPartsFromRequest, type ProcedureContext } from "./context";
 import { trpcCodeForStatus, upstreamFetch } from "./upstream";
 
 const API_HOST = "api.internal.invalid";
+
+/** For the cases whose subject is the refusal, not the body. */
+const anyBody = z.unknown();
+
+/** The runs.list shape, for the two cases that assert on what came back. */
+const runsListBody = z.looseObject({ runs: z.array(z.unknown()), count: z.number() });
 
 const fetchMock = vi.fn();
 
@@ -95,7 +103,7 @@ describe("credential forwarding", () => {
       { redsim_api_session: "s", redsim_csrf: "c", redsim_dev_token: "dev:a@b.test" },
       { "x-redsim-csrf": "c", "x-something-else": "nope" },
     );
-    await upstreamFetch(ctx, { method: "POST", segments: ["v1", "runs", "r1", "cancel"] });
+    await upstreamFetch(ctx, { method: "POST", segments: ["v1", "runs", "r1", "cancel"] }, anyBody);
 
     expect(headerOf("Cookie")).toBe("redsim_api_session=s; redsim_csrf=c");
     expect(headerOf("X-Redsim-CSRF")).toBe("c");
@@ -107,7 +115,7 @@ describe("credential forwarding", () => {
   it("sends a bearer and no cookie on the dev-token path", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, {}));
     const ctx = ctxWith({ redsim_dev_token: "dev:a@b.test" }, { "x-redsim-csrf": "c" });
-    await upstreamFetch(ctx, { method: "POST", segments: ["v1", "runs"] });
+    await upstreamFetch(ctx, { method: "POST", segments: ["v1", "runs"] }, anyBody);
 
     expect(headerOf("Authorization")).toBe("Bearer dev:a@b.test");
     expect(headerOf("Cookie")).toBeUndefined();
@@ -116,7 +124,7 @@ describe("credential forwarding", () => {
 
   it("refuses before any upstream call when no credential is present", async () => {
     const ctx = ctxWith({});
-    const error = await upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs"] }).catch(
+    const error = await upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs"] }, anyBody).catch(
       (e: unknown) => e,
     );
     expect(upstreamError(error)).toMatchObject({ status: 401, code: "unauthenticated" });
@@ -127,7 +135,7 @@ describe("credential forwarding", () => {
     const ctx = ctxWith({});
     await Promise.all(
       Array.from({ length: 20 }, () =>
-        upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs"] }).catch(() => undefined),
+        upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs"] }, anyBody).catch(() => undefined),
       ),
     );
     expect(fetchMock).not.toHaveBeenCalled();
@@ -141,10 +149,11 @@ describe("credential forwarding", () => {
       }),
     );
     const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });
-    const result = await upstreamFetch<Record<string, unknown>>(ctx, {
-      method: "GET",
-      segments: ["v1", "runs"],
-    });
+    const result = await upstreamFetch(
+      ctx,
+      { method: "GET", segments: ["v1", "runs"] },
+      runsListBody,
+    );
     expect(result).toEqual({ runs: [], count: 0 });
     expect(JSON.stringify(result)).not.toContain("evil");
   });
@@ -154,7 +163,7 @@ describe("path and query encoding", () => {
   it("encodes each segment once and never into a second path segment", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, {}));
     const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });
-    await upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs", "r%201"] });
+    await upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs", "r%201"] }, anyBody);
 
     const url = String(fetchMock.mock.calls.at(-1)?.[0]);
     expect(url).toBe("http://localhost:8000/v1/runs/r%25201");
@@ -168,7 +177,7 @@ describe("path and query encoding", () => {
       method: "GET",
       segments: ["v1", "runs"],
       query: { project: "p 1", limit: 25, severity: undefined },
-    });
+    }, anyBody);
     const url = String(fetchMock.mock.calls.at(-1)?.[0]);
     expect(url).toBe("http://localhost:8000/v1/runs?project=p+1&limit=25");
   });
@@ -189,7 +198,7 @@ describe("the API envelope becomes typed error data", () => {
     const error = (await upstreamFetch(ctx, {
       method: "GET",
       segments: ["v1", "runs", "r1", "compare"],
-    }).catch((e: unknown) => e)) as { code: string; data: Record<string, unknown> };
+    }, anyBody).catch((e: unknown) => e)) as { code: string; data: Record<string, unknown> };
 
     expect(error.code).toBe("CONFLICT");
     expect(error.data).toMatchObject({
@@ -225,7 +234,7 @@ describe("the API envelope becomes typed error data", () => {
     const error = await upstreamFetch(ctx, {
       method: "POST",
       segments: ["v1", "runs", "run-1", "cancel"],
-    }).catch((e: unknown) => e);
+    }, anyBody).catch((e: unknown) => e);
 
     expect(upstreamError(error)).toMatchObject({
       status: 409,
@@ -240,7 +249,7 @@ describe("the API envelope becomes typed error data", () => {
       jsonResponse(422, { detail: { code: "eps_grid_invalid", message: "bad grid" } }),
     );
     const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });
-    const error = await upstreamFetch(ctx, { method: "POST", segments: ["v1", "runs"] }).catch(
+    const error = await upstreamFetch(ctx, { method: "POST", segments: ["v1", "runs"] }, anyBody).catch(
       (e: unknown) => e,
     );
 
@@ -255,7 +264,7 @@ describe("the API envelope becomes typed error data", () => {
     const error = (await upstreamFetch(ctx, {
       method: "GET",
       segments: ["v1", "runs", "nope"],
-    }).catch((e: unknown) => e)) as { code: string };
+    }, anyBody).catch((e: unknown) => e)) as { code: string };
 
     expect(error.code).toBe("NOT_FOUND");
     expect(upstreamError(error)).toMatchObject({
@@ -275,7 +284,7 @@ describe("the API envelope becomes typed error data", () => {
     for (const [status, code] of cases) {
       fetchMock.mockResolvedValue(jsonResponse(status, { detail: "refused" }));
       const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });
-      const error = await upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs"] }).catch(
+      const error = await upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs"] }, anyBody).catch(
         (e: unknown) => e,
       );
       expect(upstreamError(error)).toMatchObject({ status, code });
@@ -285,10 +294,85 @@ describe("the API envelope becomes typed error data", () => {
   it("synthesizes unauthenticated for a 401, a web-side name with no row in the API table", async () => {
     fetchMock.mockResolvedValue(jsonResponse(401, { detail: "not authenticated" }));
     const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });
-    const error = await upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs"] }).catch(
+    const error = await upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs"] }, anyBody).catch(
       (e: unknown) => e,
     );
     expect(upstreamError(error)).toMatchObject({ status: 401, code: "unauthenticated" });
+  });
+});
+
+describe("the body is validated, never cast", () => {
+  it("refuses a 200 whose shape is not what the procedure declared", async () => {
+    // The seam every procedure inherits. A cast would have handed the page a
+    // value typed as a runs list that was nothing of the kind, and the first
+    // sign of it would have been a crash in a component.
+    fetchMock.mockResolvedValue(jsonResponse(200, { runs: "not an array", count: 0 }));
+    const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });
+    const error = await upstreamFetch(
+      ctx,
+      { method: "GET", segments: ["v1", "runs"] },
+      runsListBody,
+    ).catch((e: unknown) => e);
+
+    expect(upstreamError(error)).toMatchObject({ status: 502, code: "upstream_error" });
+  });
+
+  it("names no part of the offending body, because that body is response data", async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { runs: [{ id: "run-1", secret: "session-secret-value" }], count: "one" }),
+    );
+    const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });
+    const error = (await upstreamFetch(
+      ctx,
+      { method: "GET", segments: ["v1", "runs"] },
+      runsListBody,
+    ).catch((e: unknown) => e)) as Error;
+
+    const text = `${error.message} ${JSON.stringify(upstreamError(error))}`;
+    expect(text).not.toContain("session-secret-value");
+    expect(text).not.toContain("run-1");
+  });
+
+  it("keeps the not-JSON refusal distinct from the wrong-shape one", async () => {
+    fetchMock.mockResolvedValue(
+      new Response("<html>gateway</html>", {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+    const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });
+    const error = await upstreamFetch(
+      ctx,
+      { method: "GET", segments: ["v1", "runs"] },
+      runsListBody,
+    ).catch((e: unknown) => e);
+
+    expect(upstreamError(error)).toMatchObject({
+      status: 502,
+      message: "the API returned a body that is not JSON",
+    });
+  });
+
+  it("hands an empty body to the schema as undefined, rather than an invented {}", async () => {
+    // A route that answers 204 declares that in its schema. Nothing here
+    // decides on its behalf that an empty body means an empty object.
+    fetchMock.mockResolvedValue(new Response("", { status: 200 }));
+    const ctx = ctxWith({ redsim_api_session: "s", redsim_csrf: "c" });
+
+    const allowsEmpty = await upstreamFetch(
+      ctx,
+      { method: "DELETE", segments: ["v1", "models", "m1"] },
+      z.undefined(),
+    );
+    expect(allowsEmpty).toBeUndefined();
+
+    fetchMock.mockResolvedValue(new Response("", { status: 200 }));
+    const refusesEmpty = await upstreamFetch(
+      ctx,
+      { method: "GET", segments: ["v1", "runs"] },
+      runsListBody,
+    ).catch((e: unknown) => e);
+    expect(upstreamError(refusesEmpty)).toMatchObject({ status: 502, code: "upstream_error" });
   });
 });
 
@@ -303,7 +387,7 @@ describe("network failure hygiene", () => {
     const error = (await upstreamFetch(ctx, {
       method: "GET",
       segments: ["v1", "runs"],
-    }).catch((e: unknown) => e)) as Error & { code: string; cause?: unknown };
+    }, anyBody).catch((e: unknown) => e)) as Error & { code: string; cause?: unknown };
 
     expect(error.code).toBe("SERVICE_UNAVAILABLE");
     expect(upstreamError(error)).toMatchObject({ status: 503, code: "service_unavailable" });
@@ -327,7 +411,7 @@ describe("network failure hygiene", () => {
     const error = (await upstreamFetch(ctx, {
       method: "GET",
       segments: ["v1", "runs"],
-    }).catch((e: unknown) => e)) as Error & { code: string; cause?: unknown };
+    }, anyBody).catch((e: unknown) => e)) as Error & { code: string; cause?: unknown };
 
     expect(error.code).toBe("SERVICE_UNAVAILABLE");
     expect(upstreamError(error)).toMatchObject({ status: 503, code: "service_unavailable" });
@@ -344,7 +428,7 @@ describe("network failure hygiene", () => {
       { redsim_api_session: "session-secret-value", redsim_csrf: "csrf-secret-value" },
       { "x-redsim-csrf": "csrf-secret-value" },
     );
-    await upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs"] }).catch(() => undefined);
+    await upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs"] }, anyBody).catch(() => undefined);
 
     const text = logged.mock.calls.flat().map(String).join(" ");
     expect(logged).toHaveBeenCalled();
@@ -378,10 +462,11 @@ describe("fixture mode (KTD13)", () => {
     const fixtureCtx: ProcedureContext = { ...ctx, fixtures: true };
     process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES = "1";
     try {
-      const result = await upstreamFetch<{ runs: unknown[]; count: number }>(fixtureCtx, {
-        method: "GET",
-        segments: ["v1", "runs"],
-      });
+      const result = await upstreamFetch(
+        fixtureCtx,
+        { method: "GET", segments: ["v1", "runs"] },
+        runsListBody,
+      );
       expect(result.count).toBeGreaterThan(0);
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {
@@ -402,7 +487,7 @@ describe("fixture mode (KTD13)", () => {
       const error = await upstreamFetch({ ...ctx, fixtures: false }, {
         method: "GET",
         segments: ["v1", "runs"],
-      }).catch((e: unknown) => e);
+      }, anyBody).catch((e: unknown) => e);
 
       // Refused for want of a credential, which is the non-fixture path.
       expect(upstreamError(error)).toMatchObject({ status: 401, code: "unauthenticated" });
@@ -420,10 +505,33 @@ describe("fixture mode (KTD13)", () => {
     const error = await upstreamFetch({ ...ctx, fixtures: true }, {
       method: "GET",
       segments: ["v1", "runs"],
-    }).catch((e: unknown) => e);
+    }, anyBody).catch((e: unknown) => e);
 
     expect(upstreamError(error)).toMatchObject({ status: 401, code: "unauthenticated" });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses a fixture that does not match the procedure's contract", async () => {
+    // Fixtures are recorded evidence in a tool that reports measured
+    // robustness, so one that has drifted from the contract is refused rather
+    // than rendered as though the API had said it.
+    const ctx = ctxWith({});
+    process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES = "1";
+    try {
+      const error = await upstreamFetch(
+        { ...ctx, fixtures: true },
+        { method: "GET", segments: ["v1", "runs"] },
+        z.looseObject({ runs: z.array(z.unknown()), count: z.string() }),
+      ).catch((e: unknown) => e);
+
+      expect(upstreamError(error)).toMatchObject({
+        status: 502,
+        message: "the recorded fixture does not match this route's contract",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES;
+    }
   });
 
   it("refuses a route it has no fixture for rather than reaching upstream", async () => {
@@ -434,7 +542,7 @@ describe("fixture mode (KTD13)", () => {
       const error = await upstreamFetch(fixtureCtx, {
         method: "GET",
         segments: ["v1", "nothing-here"],
-      }).catch((e: unknown) => e);
+      }, anyBody).catch((e: unknown) => e);
       expect(upstreamError(error)).toMatchObject({ status: 404, code: "not_found" });
       expect(fetchMock).not.toHaveBeenCalled();
     } finally {

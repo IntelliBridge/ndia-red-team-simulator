@@ -21,29 +21,65 @@ export const idSchema = z
   .max(200)
   .refine((v) => !v.includes("/"), "an id cannot contain a slash");
 
+/**
+ * One run row, as `GET /v1/runs` and `GET /v1/runs/{id}` return it.
+ *
+ * `looseObject` rather than `object`: zod strips unknown keys, and the API
+ * adding a field it means a page to read is not a reason to hide that field
+ * from the page. Annotated `z.ZodType<Run>` so the type in `@/lib/api` stays
+ * the one `RouterOutputs` reports, and so a schema that drifts from it fails
+ * the typecheck rather than quietly narrowing what a component receives.
+ */
+const runSchema: z.ZodType<Run> = z.looseObject({
+  id: z.string(),
+  project_id: z.string(),
+  status: z.string(),
+  scanner: z.string().nullable(),
+  mode: z.string(),
+  created_at: z.string(),
+  created_by: z.string().nullable(),
+});
+
+const runsListSchema: z.ZodType<{ runs: Run[]; count: number }> = z.looseObject({
+  runs: z.array(runSchema),
+  count: z.number(),
+});
+
+const cancelSchema: z.ZodType<{ run_id: string; status: string; jobs_cancelled: number }> =
+  z.looseObject({
+    run_id: z.string(),
+    status: z.string(),
+    jobs_cancelled: z.number(),
+  });
+
 export const runsRouter = router({
   list: publicProcedure
     .input(z.object({ project: z.string().optional(), limit: z.number().int().positive().max(500).optional() }).optional())
     .query(({ ctx, input }) =>
-      upstreamFetch<{ runs: Run[]; count: number }>(ctx, {
-        method: "GET",
-        segments: ["v1", "runs"],
-        query: { project: input?.project, limit: input?.limit },
-      }),
+      upstreamFetch(
+        ctx,
+        {
+          method: "GET",
+          segments: ["v1", "runs"],
+          query: { project: input?.project, limit: input?.limit },
+        },
+        runsListSchema,
+      ),
     ),
 
   get: publicProcedure
     .input(z.object({ id: idSchema }))
     .query(({ ctx, input }) =>
-      upstreamFetch<Run>(ctx, { method: "GET", segments: ["v1", "runs", input.id] }),
+      upstreamFetch(ctx, { method: "GET", segments: ["v1", "runs", input.id] }, runSchema),
     ),
 
   cancel: mutationProcedure
     .input(z.object({ id: idSchema }))
     .mutation(({ ctx, input }) =>
-      upstreamFetch<{ run_id: string; status: string; jobs_cancelled: number }>(ctx, {
-        method: "POST",
-        segments: ["v1", "runs", input.id, "cancel"],
-      }),
+      upstreamFetch(
+        ctx,
+        { method: "POST", segments: ["v1", "runs", input.id, "cancel"] },
+        cancelSchema,
+      ),
     ),
 });

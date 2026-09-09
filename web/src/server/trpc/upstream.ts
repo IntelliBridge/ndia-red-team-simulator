@@ -95,6 +95,17 @@ function refuse(status: number, block: EnvelopeBlock, requestId: string) {
   return new UpstreamTRPCError(trpcCodeForStatus(status), { upstream, requestId });
 }
 
+/**
+ * What a procedure declares its upstream body is.
+ *
+ * Structural rather than a zod import, so this module stays free of the
+ * validator and a procedure may supply anything with a `parse`. Required
+ * rather than optional: it is what makes `T` a checked shape instead of an
+ * assertion, and a procedure added later cannot forget it without failing to
+ * compile.
+ */
+export type UpstreamSchema<T> = { parse(value: unknown): T };
+
 export type UpstreamRequest = {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   /** Path segments, each encoded once. No segment may contain a slash. */
@@ -149,8 +160,23 @@ function blockFromBody(text: string, status: number): EnvelopeBlock {
  * text of a fetch failure: the cause of a connection error names the host, so
  * a network failure is reported as a fixed string and the cause is dropped
  * before anything is logged (KTD2, R2).
+ *
+ * Nothing leaves here unchecked. `schema` is the procedure's declaration of
+ * what the body is, `T` comes from it rather than from a cast, and both the
+ * upstream body and a recorded fixture go through it. A body that does not
+ * match is a 502 refusal carrying no part of the offending value, the same way
+ * a body that is not JSON at all is.
+ *
+ * @param ctx - The call's context, for its credential and request id.
+ * @param init - The request to make.
+ * @param schema - Anything with a `parse`, usually a zod schema.
+ * @returns The parsed body, or `schema.parse(undefined)` for an empty one.
  */
-export async function upstreamFetch<T>(ctx: ProcedureContext, init: UpstreamRequest): Promise<T> {
+export async function upstreamFetch<T>(
+  ctx: ProcedureContext,
+  init: UpstreamRequest,
+  schema: UpstreamSchema<T>,
+): Promise<T> {
   const path = init.segments.map((s) => encodeURIComponent(s)).join("/");
 
   // The fixture branch runs before the credential check, so a fixture-mode
@@ -165,7 +191,20 @@ export async function upstreamFetch<T>(ctx: ProcedureContext, init: UpstreamRequ
   if (ctx.fixtures && process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES) {
     const { resolveFixture } = await import("./fixtures");
     const fixture = resolveFixture(init.method, `/${path}`);
-    if (fixture !== undefined) return fixture as T;
+    if (fixture !== undefined) {
+      try {
+        return schema.parse(fixture);
+      } catch {
+        throw refuse(
+          502,
+          {
+            code: "upstream_error",
+            message: "the recorded fixture does not match this route's contract",
+          },
+          ctx.requestId,
+        );
+      }
+    }
     throw refuse(
       404,
       { code: "not_found", message: "no fixture is recorded for this route" },
@@ -231,13 +270,28 @@ export async function upstreamFetch<T>(ctx: ProcedureContext, init: UpstreamRequ
   }
 
   if (!response.ok) throw refuse(response.status, blockFromBody(text, response.status), ctx.requestId);
-  if (!text) return {} as T;
+
+  let parsed: unknown;
   try {
-    return JSON.parse(text) as T;
+    parsed = text ? (JSON.parse(text) as unknown) : undefined;
   } catch {
     throw refuse(
       502,
       { code: "upstream_error", message: "the API returned a body that is not JSON" },
+      ctx.requestId,
+    );
+  }
+
+  try {
+    // An empty body reaches the schema as undefined, so a route that answers
+    // 204 declares that with its schema rather than being handed {} blind.
+    return schema.parse(parsed);
+  } catch {
+    // Deliberately not the validator's own message: it quotes the values that
+    // failed, and those are response data.
+    throw refuse(
+      502,
+      { code: "upstream_error", message: "the API returned a body this route cannot read" },
       ctx.requestId,
     );
   }
