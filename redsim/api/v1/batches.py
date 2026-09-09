@@ -29,11 +29,10 @@ bulk-service-routes):
   on the finding's project).
 * ``GET /v1/ml/capacity?project=`` (membership when a project is named).
 
-Report snapshots (wave B2, reports-compare-weights; hosted here until that
-track moves them into ``reports.py``):
-
-* ``POST /v1/runs/{run_id}/report.render`` (membership, gate ``report.export``).
-* ``GET /v1/runs/{run_id}/snapshots`` (membership).
+The two report-snapshot stubs wave B0 hosted here (``POST
+/v1/runs/{run_id}/report.render``, ``GET /v1/runs/{run_id}/snapshots``) moved
+to ``redsim/api/v1/reports.py`` when wave B2 (reports-compare-weights) built
+them.
 
 Nothing here imports an ML library.
 """
@@ -46,7 +45,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from redsim.api.auth import CurrentUser, get_current_user
 from redsim.api.errors import PARAMS_OUT_OF_RANGE, api_error
-from redsim.api.policy import Action, check, ensure_project_access, ensure_run_access
+from redsim.api.policy import Action, check, ensure_project_access
 from redsim.api.v1.integrations import not_built, phase_b_action
 
 router = APIRouter(tags=["ml-batches"])
@@ -180,22 +179,3 @@ def ml_capacity(project: str | None = None,
     if project is not None:
         ensure_project_access(user, project)
     raise not_built("the ML capacity view is not implemented", wave="B3", track="bulk-upload-capacity-cli")
-
-
-# --------------------------------------------------------------------------- report snapshots
-
-
-@router.post("/runs/{run_id}/report.render", status_code=status.HTTP_202_ACCEPTED)
-def render_report(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    """On-demand report re-render as a snapshot (REVIEW_REPORTS-21): membership, ``report.export``, then 501."""
-    project_id = ensure_run_access(user, run_id)
-    check(user, Action.REPORT_EXPORT, project_id)
-    raise not_built("report re-render through the API is not implemented", wave="B2",
-                    track="reports-compare-weights")
-
-
-@router.get("/runs/{run_id}/snapshots")
-def list_snapshots(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    """Immutable report snapshots of a run (REVIEW_REPORTS-22): membership, then 501."""
-    ensure_run_access(user, run_id)
-    raise not_built("report snapshots are not implemented", wave="B2", track="reports-compare-weights")
