@@ -26,29 +26,12 @@ import { useTRPC } from "@/lib/trpc/client";
 /** R10's poll fallback for a list page, in milliseconds. */
 export const RUNS_POLL_MS = 15_000;
 
-/**
- * A timestamp the server and the client format identically.
- *
- * The shipped page called `toLocaleString()` with no arguments, which reads
- * the host locale and time zone, so the server HTML and the first client
- * render disagreed and React replaced the cell. Pinning both to UTC and
- * en-US, with the zone visible so nobody reads it as local time, is what
- * makes the hydrated markup stable. U5 owns the shared helper; this is the
- * same pinned call, replaced when it lands.
- */
-export function formatDateTime(iso: string): string {
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return "not recorded";
-  return `${parsed.toLocaleString("en-US", {
-    timeZone: "UTC",
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  })} UTC`;
-}
+// The pinned UTC formatter lives in `@/lib/format-datetime` so every list page
+// renders the same markup on the server and the client; re-exported here for
+// the callers and tests that import it from this leaf.
+import { formatDateTime } from "@/lib/format-datetime";
+
+export { formatDateTime };
 
 export type RunsTableProps = {
   project?: string;

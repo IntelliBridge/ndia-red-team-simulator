@@ -30,6 +30,7 @@ const NAV_LINKS: { href: string; label: string }[] = [
   { href: "/runs", label: "Runs" },
   { href: "/tests", label: "Tests" },
   { href: "/findings", label: "Findings" },
+  { href: "/exports", label: "Exports" },
   { href: "/audit", label: "Audit" },
 ];
 
