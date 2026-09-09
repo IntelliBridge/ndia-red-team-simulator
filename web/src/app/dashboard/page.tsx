@@ -33,7 +33,7 @@ const SEVERITY_CHIP: Record<string, string> = {
 };
 
 /** Count rows by a key, in a fixed display order, unknown values last. */
-export function countBy<T>(rows: readonly T[], key: (row: T) => string, order: readonly string[]) {
+function countBy<T>(rows: readonly T[], key: (row: T) => string, order: readonly string[]) {
   const counts = new Map<string, number>();
   for (const row of rows) {
     const k = key(row) || "unknown";
@@ -45,7 +45,7 @@ export function countBy<T>(rows: readonly T[], key: (row: T) => string, order: r
 }
 
 /** Runs created per day over the last `days` days, oldest first, zero-filled. */
-export function runsPerDay(runs: readonly Run[], days = 14, now = new Date()): { day: string; count: number }[] {
+function runsPerDay(runs: readonly Run[], days = 14, now = new Date()): { day: string; count: number }[] {
   const buckets = new Map<string, number>();
   for (let i = days - 1; i >= 0; i -= 1) {
     const d = new Date(now);
@@ -61,7 +61,7 @@ export function runsPerDay(runs: readonly Run[], days = 14, now = new Date()): {
 }
 
 /** The plain-language lead of a description (before the measured block). */
-export function findingLead(description: string | undefined): string | null {
+function findingLead(description: string | undefined): string | null {
   if (!description) return null;
   const cut = description.indexOf(" Measured:");
   const lead = (cut > 0 ? description.slice(0, cut) : description).replace(/^What happened: /, "");
