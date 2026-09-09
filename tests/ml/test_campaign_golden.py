@@ -160,7 +160,14 @@ def capture(name: str, root: Path, run: Runner = run_campaign) -> dict[str, Any]
     with _modules(dict(scenario["modules"])):
         record = run(scenario["config"](), sink, **scenario["kwargs"]())
     art = Path(sink.root)
-    names = sorted(str(p.relative_to(art)).replace(os.sep, "/") for p in art.rglob("*") if p.is_file())
+    # Phase B export slices (INTEROP-04: clean_slice.npz, control_slice/<eps>.npz) are written by the
+    # classification runner only; the frozen pre-refactor function cannot write them, so they are
+    # excluded from the artifact pin on both sides. Record, stages_done and flip_matrix stay exact.
+    names = sorted(
+        rel for p in art.rglob("*") if p.is_file()
+        for rel in [str(p.relative_to(art)).replace(os.sep, "/")]
+        if not rel.startswith(("artifacts/clean_slice", "artifacts/control_slice"))
+    )
     flips = json.loads((art / "artifacts" / "flip_matrix.json").read_text(encoding="utf-8"))
     return {"record": normalize(record.model_dump(mode="json")), "artifacts": names, "flip_matrix": flips}
 

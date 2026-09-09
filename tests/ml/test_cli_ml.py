@@ -474,7 +474,7 @@ def test_ml_attack_sends_the_text_and_detection_defaults_to_the_adapter(tmp_path
     assert (detection.norm, detection.attack_ids, detection.eps_grid, detection.reference_eps) == (
         "patch_area", ("dpatch",), (0.01, 0.03, 0.05), 0.03)
     assert detection.n_samples == 20 and detection.target_id == "assets_frcnn_mnv3"
-    assert (l2.norm, l2.attack_ids, l2.eps_grid, l2.reference_eps) == ("l2", ("fgsm", "pgd"), (0.25, 0.5, 1.0), 0.5)
+    assert (l2.norm, l2.attack_ids, l2.eps_grid, l2.reference_eps) == ("l2", ("pgd",), (0.25, 0.5, 1.0), 0.5)
     assert (explicit.norm, explicit.eps_grid, explicit.reference_eps) == ("edit", (0.05, 0.1), None)
     assert (image.norm, image.attack_ids, image.eps_grid, image.reference_eps) == ("linf", ("fgsm", "pgd"),
                                                                                   (0.01, 0.03, 0.1), 0.03)
