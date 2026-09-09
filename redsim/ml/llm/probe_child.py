@@ -158,6 +158,7 @@ class ChildProbeResult(BaseModel):
     n_attempts_complete: int = 0
     n_outputs: int = 0
     n_outputs_none: int = 0
+    n_outputs_blocked: int = 0
     detectors: list[ChildDetectorCounts] = Field(default_factory=list)
 
 
@@ -557,8 +558,12 @@ def run(spec: LLMProbeChildSpec) -> int:
         assert_no_litellm()
         command.start_run()
         report_path = Path(str(_config.transient.report_filename))
-        if runnable:
-            command.probewise_run(generator, [f"probes.{pid}" for pid in runnable], ThresholdEvaluator(spec.eval_threshold), [])
+        for pid in runnable:
+            blocked_before = generator.ledger.gateway_blocked
+            try:
+                command.probewise_run(generator, [f"probes.{pid}"], ThresholdEvaluator(spec.eval_threshold), [])
+            finally:
+                rows[pid].n_outputs_blocked = generator.ledger.gateway_blocked - blocked_before
     except BaseException as exc:  # noqa: BLE001 - the whole run is reported, then re-raised as an exit code
         run_error = (type(exc).__name__, str(exc))
         if isinstance(exc, KeyboardInterrupt):

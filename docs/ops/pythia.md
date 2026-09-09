@@ -269,7 +269,13 @@ the traffic reaches Pythia, verified from `redsim/ml/llm/generator.py`,
   use exponential backoff. A requested wait beyond the cap terminates the run
   instead of retrying earlier than permitted. The ledger counts actual retries
   and `retry_after_honoured` waits. Exhausted tries abort; a 401 remains terminal.
-  Other retryable transport failures use the same bounded loop, and a body of exactly `model`, `messages`,
+  Other retryable transport failures use the same bounded loop.
+  A 403 with `error.code=persona_denied` or an error message beginning
+  `Blocked by` counts as `gateway_blocked` and returns an unevaluated output;
+  the probe continues. Ordinary 401/403 responses remain terminal authentication
+  failures. Each probe records `n_outputs_blocked`, and its detector denominator
+  excludes blocked outputs. The response body is never copied to logs by this
+  classification. The request uses and a body of exactly `model`, `messages`,
   `temperature`, `max_tokens`. The key is caller-supplied (an `api_key=` or a
   0600 `key_file=`), never read from the environment (`ENV_VAR` is `None`),
   never written into garak's `_config` (which garak dumps into

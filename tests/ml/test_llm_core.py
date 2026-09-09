@@ -835,3 +835,45 @@ def test_worker_passes_validated_retry_overrides(tmp_path, monkeypatch):
         _run_child(runner, detail={"probe_ids": ["dan.DanInTheWild"]},
                    gateway_url="https://gateway.invalid", model_id=MODEL_ID, persona="test",
                    api_key=FAKE_KEY, job_id="retry-job", is_cancelled=lambda: False)
+
+
+@pytest.mark.garak
+def test_content_filter_blocks_are_counted_without_aborting(tmp_path, garak_env):
+    body = {"error": {"code": "persona_denied", "type": "permission_error",
+                      "message": "Blocked by synthetic_filter"}}
+    with FakeOpenAIServer(fail_status=403, fail_body=body, fail_indices={2, 4}) as server:
+        spec = _spec(server, prepare_work_dir("blocked-child", root=tmp_path),
+                     ["dan.DanInTheWild"], max_prompts_per_probe=5)
+        outcome = run_probe_child(spec, api_key=FAKE_KEY)
+        result = outcome.result
+        assert result is not None and result.status == "succeeded"
+        row = result.probes[0]
+        assert row.n_attempts_complete == 5 and row.n_outputs_blocked == 2
+        assert result.usage["gateway_blocked"] == 2 and result.usage["retries"] == 0
+        assert sum(d.total_evaluated for d in row.detectors) == 3
+        card = build_scorecard(result, run_id="blocked-run", target_id="blocked-target",
+                               guardrail_mode="permission_gate_only")
+        assert card.probes()[0].n_outputs_blocked == 2
+        assert any("blocked 2 prompts" in line for line in card.limitations)
+        from redsim.workers.tasks.ml_llm import normalise_child_result, usage_block
+        normalized = normalise_child_result(result)
+        assert normalized.probes[0].n_outputs_blocked == 2
+        assert usage_block(normalized.usage, MODEL_ID)["gateway_blocked"] == 2
+
+
+@pytest.mark.garak
+@pytest.mark.parametrize("body", [{"detail": "Unknown or unauthorized persona"},
+                                  {"error": {"code": "permission_denied", "message": "Unauthorized persona"}}])
+def test_plain_permission_denial_stays_terminal(body, garak_env):
+    import garak.exception
+
+    from redsim.ml.llm.generator import PythiaGenerator, gateway_uri
+    with FakeOpenAIServer(fail_status=403, fail_body=body) as server:
+        gen = PythiaGenerator(name=MODEL_ID, api_key=FAKE_KEY, uri=gateway_uri(server.base_url))
+        try:
+            with pytest.raises(garak.exception.GarakException, match="authentication failed"):
+                gen._call_model([])
+            assert len(server.chat_requests) == 1
+            assert gen.ledger.gateway_blocked == 0 and gen.ledger.retries == 0
+        finally:
+            gen.close()

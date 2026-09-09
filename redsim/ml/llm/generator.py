@@ -91,6 +91,10 @@ _RETRYABLE: tuple[type[BaseException], ...] = (
 _UNDECORATED_CALL: Callable[..., Any] = getattr(OpenAICompatible._call_model, "__wrapped__", OpenAICompatible._call_model)
 
 
+class GatewayPromptBlocked(openai.OpenAIError):
+    """A content-filter refusal; carries no gateway body or prompt text."""
+
+
 class ProbeKeyUnavailable(MLError):
     """The probe key was not supplied, or the key file is missing or not private (mode not 0600)."""
 
@@ -162,6 +166,7 @@ class UsageLedger:
     transport_errors: dict[str, int] = field(default_factory=dict)
     retries: int = 0
     retry_after_honoured: int = 0
+    gateway_blocked: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -214,6 +219,7 @@ class UsageLedger:
             "transport_errors": dict(sorted(self.transport_errors.items())),
             "retries": self.retries,
             "retry_after_honoured": self.retry_after_honoured,
+            "gateway_blocked": self.gateway_blocked,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
@@ -337,6 +343,18 @@ class PythiaGenerator(OpenAICompatible):
         started = response.request.extensions.get("redsim_started")
         elapsed = (time.monotonic() - float(started)) if isinstance(started, (int, float)) else None
         self.ledger.record_response(response, elapsed_s=elapsed)
+        if response.status_code == 403:
+            try:
+                body = response.json()
+            except ValueError:
+                body = None
+            error = body.get("error") if isinstance(body, dict) else None
+            if isinstance(error, dict) and (
+                error.get("code") == "persona_denied" or str(error.get("message", "")).startswith("Blocked by")
+            ):
+                # garak wraps PermissionDeniedError before our bounded loop can see it.
+                # Intercept here, after counting the HTTP response, without logging its body.
+                raise GatewayPromptBlocked()
 
     def _call_model(self, prompt: Any, generations_this_call: int = 1) -> list[Any]:
         """garak's request logic with a bounded retry loop instead of its uncapped backoff."""
@@ -346,6 +364,9 @@ class PythiaGenerator(OpenAICompatible):
             try:
                 result: list[Any] = _UNDECORATED_CALL(self, prompt, generations_this_call)
                 return result
+            except GatewayPromptBlocked:
+                self.ledger.gateway_blocked += generations_this_call
+                return [None] * generations_this_call
             except _RETRYABLE as exc:
                 tries += 1
                 self.ledger.record_transport_error(type(exc).__name__)
