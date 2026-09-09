@@ -512,10 +512,12 @@ export default function ModelsPage() {
               {shown.map((m: ModelTarget) => (
                 <tr key={m.id} {...rowLink(`/models/${m.id}`)} className={`border-t border-border ${rowLink("").className}`}>
                   <td className="px-3 py-2 font-medium">
-                    <a className="text-primary underline" href={`/models/${m.id}`}>
-                      {modelDisplayName(m)}
-                    </a>
-                    {modelGateway(m) && <GatewayBadge host={modelGateway(m)!} />}
+                    <span className="inline-flex flex-wrap items-center gap-2">
+                      <a className="text-primary underline" href={`/models/${m.id}`}>
+                        {modelDisplayName(m)}
+                      </a>
+                      {modelGateway(m) && <GatewayBadge host={modelGateway(m)!} />}
+                    </span>
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{m.id}</td>
                   <td className="px-3 py-2">{isLlmTarget(m) ? "llm" : m.modality}</td>
