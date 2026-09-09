@@ -1,0 +1,20 @@
+{
+  "realm": "redsim",
+  "enabled": true,
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "sslRequired": "external",
+  "ssoSessionIdleTimeout": 1800,
+  "accessTokenLifespan": 600,
+  "roles": {"realm": [{"name":"viewer"},{"name":"scanner"},{"name":"remediator"},{"name":"approver"},{"name":"admin"}]},
+  "clients": [{
+    "clientId": "redsim-web",
+    "enabled": true,
+    "publicClient": false,
+    "secret": "${REDSIM_WEB_CLIENT_SECRET}",
+    "standardFlowEnabled": true,
+    "directAccessGrantsEnabled": false,
+    "redirectUris": ["${REDSIM_PUBLIC_ORIGIN}/api/auth/callback/keycloak"],
+    "webOrigins": ["${REDSIM_PUBLIC_ORIGIN}"]
+  }]
+}

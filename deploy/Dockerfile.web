@@ -40,9 +40,10 @@ RUN pnpm install --frozen-lockfile --filter @redsim/web...
 COPY web/ ./web/
 COPY packages/design-system/ ./packages/design-system/
 
-# NEXT_PUBLIC env values come from the runtime env; tolerate their
-# absence at build time.
-RUN pnpm --filter @redsim/web build || true
+# Next.js embeds browser configuration at build time.
+ARG NEXT_PUBLIC_REDSIM_API_URL=http://localhost:8000
+ENV NEXT_PUBLIC_REDSIM_API_URL=${NEXT_PUBLIC_REDSIM_API_URL}
+RUN pnpm --filter @redsim/web build
 
 # --------------------------------------------------------------------
 # Runtime

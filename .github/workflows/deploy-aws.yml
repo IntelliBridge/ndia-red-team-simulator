@@ -29,6 +29,7 @@ on:
       - "packages/**"
       - "deploy/Dockerfile.*"
       - "deploy/docker-compose.yml"
+      - "deploy/runtime/identity/**"
       - "pyproject.toml"
       - "pnpm-lock.yaml"
       - ".github/workflows/deploy-aws.yml"
@@ -55,6 +56,8 @@ jobs:
             dockerfile: deploy/Dockerfile.worker
           - name: web
             dockerfile: deploy/Dockerfile.web
+          - name: identity
+            dockerfile: deploy/Dockerfile.identity
     steps:
       - uses: actions/checkout@v7
 
@@ -76,6 +79,8 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
+          build-args: |
+            NEXT_PUBLIC_REDSIM_API_URL=${{ vars.NEXT_PUBLIC_REDSIM_API_URL || 'http://localhost:8000' }}
           tags: |
             ${{ vars.ECR_REGISTRY }}/ndia-red-team/${{ matrix.name }}:${{ github.sha }}
             ${{ vars.ECR_REGISTRY }}/ndia-red-team/${{ matrix.name }}:latest
