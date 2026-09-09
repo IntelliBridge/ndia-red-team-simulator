@@ -1,0 +1,17 @@
+[Unit]
+Description=redsim Celery worker (scans queue)
+After=network-online.target 
+Wants=network-online.target
+[Service]
+Type=simple
+User=redsim
+Group=redsim
+WorkingDirectory=/opt/redsim/src
+ExecStart=/usr/local/bin/redsim-run scans celery -A redsim.workers.celery_app worker -Q scans --concurrency=1 --loglevel=info
+Restart=always
+RestartSec=3
+KillMode=mixed
+TimeoutStopSec=60
+LimitNOFILE=65536
+[Install]
+WantedBy=multi-user.target
