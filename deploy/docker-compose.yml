@@ -37,6 +37,18 @@ services:
     ports: ["8080:8080"]
     volumes:
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/redsim-realm.json:ro
+    # redsim-web runs OIDC discovery at construction and drops the Keycloak
+    # provider on a failed fetch, logging a line and then serving no login
+    # provider at all. So the web service waits on this, and this needs a
+    # healthcheck to wait on. The image carries no curl; bash's /dev/tcp is
+    # what the Keycloak project's own examples use.
+    healthcheck:
+      test:
+        ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080; echo -e 'GET /realms/redsim HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3; grep -q '200 OK' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
 
   minio:
     image: quay.io/minio/minio:latest
@@ -74,6 +86,10 @@ services:
       REDSIM_CORS_ORIGINS: http://localhost:3300
       REDSIM_OIDC_ISSUER: http://keycloak:8080/realms/redsim
       REDSIM_OIDC_JWKS_URL: http://keycloak:8080/realms/redsim/protocol/openid-connect/certs
+      # The public half of the keypair redsim-web signs redsim_api_session
+      # with. Without it the api verifies no browser cookie and answers 401
+      # to every call the UI makes after a successful Keycloak login.
+      REDSIM_API_SESSION_PUBLIC_KEY: ${REDSIM_API_SESSION_PUBLIC_KEY:-}
       # Pythia gateway passthrough (docs/ops/pythia.md). Empty when the host
       # shell does not export them, so the LLM narrative simply stays off.
       PYTHIA_BASE_URL: ${PYTHIA_BASE_URL:-}
@@ -135,15 +151,32 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.web
-    depends_on: [redsim-api]
+    # The long form is required for the Keycloak condition, and Compose does
+    # not allow the short list beside it, so redsim-api is carried across
+    # explicitly rather than dropped.
+    depends_on:
+      redsim-api: { condition: service_started }
+      keycloak: { condition: service_healthy }
     # Host port :3300 avoids the macOS collision where another local dev
     # server commonly grabs :3000. Container-internal stays :3000 so the
     # Next.js process is unchanged.
     ports: ["3300:3000"]
     environment:
       NEXT_PUBLIC_REDSIM_API_URL: http://localhost:8000
-      NEXTAUTH_URL: http://localhost:3300
-      NEXTAUTH_SECRET: dev-secret-change-me
+      # Browser-facing origin, so the published port rather than the service
+      # name. BETTER_AUTH_SECRET must be at least 32 characters; this dev
+      # placeholder is not a secret and must be replaced outside local dev.
+      BETTER_AUTH_URL: http://localhost:3300
+      BETTER_AUTH_SECRET: dev-better-auth-secret-change-me-32chars
+      # The API's existing internal issuer. Discovery happens container to
+      # container; the browser reaches the realm on localhost:8080, which is
+      # the known hostname split recorded as deferred in the plan.
+      KEYCLOAK_ISSUER: http://keycloak:8080/realms/redsim
+      KEYCLOAK_CLIENT_ID: redsim-web
+      # Operator-supplied. No keypair is committed, so a stack without it
+      # completes the login and mints no redsim cookies, and API calls 401.
+      REDSIM_API_SESSION_PRIVATE_KEY: ${REDSIM_API_SESSION_PRIVATE_KEY:-}
+      REDSIM_ENV: dev
 
   # ----- Always-on Postgres log mirror (F20c) ------------------------------
   # The redsim-log-ingest sidecar receives OTLP/Logs (under the obs profile)

@@ -1,6 +1,12 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import LoginPage from "./page";
 
 const pushMock = vi.fn();
@@ -9,15 +15,16 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
-// The OIDC button drives NextAuth's Keycloak code flow.
-const signInMock = vi.hoisted(() => vi.fn());
-vi.mock("next-auth/react", () => ({
-  signIn: signInMock,
+// The OIDC button drives Better Auth's Keycloak code flow.
+const socialMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/auth-client", () => ({
+  signIn: { social: socialMock },
 }));
 
 beforeEach(() => {
   pushMock.mockReset();
-  signInMock.mockReset();
+  socialMock.mockReset();
+  socialMock.mockResolvedValue({ data: {}, error: null });
   localStorage.clear();
 });
 
@@ -38,17 +45,30 @@ describe("LoginPage", () => {
     ).toBeTruthy();
   });
 
-  it("clicking Continue with Keycloak calls signIn('keycloak') with the dashboard callbackUrl", () => {
+  it("clicking Continue with Keycloak starts the keycloak social sign-in for /dashboard", () => {
     render(React.createElement(LoginPage));
     fireEvent.click(
       screen.getByRole("button", { name: "Continue with Keycloak" })
     );
-    expect(signInMock).toHaveBeenCalledTimes(1);
-    expect(signInMock).toHaveBeenCalledWith("keycloak", {
-      callbackUrl: "/dashboard",
+    expect(socialMock).toHaveBeenCalledTimes(1);
+    expect(socialMock).toHaveBeenCalledWith({
+      provider: "keycloak",
+      callbackURL: "/dashboard",
     });
     // The OIDC flow does NOT mint a dev bearer token.
     expect(localStorage.getItem("redsim_token")).toBeNull();
+  });
+
+  it("re-enables the Keycloak button when sign-in comes back with an error", async () => {
+    socialMock.mockResolvedValue({ data: null, error: { message: "nope" } });
+    render(React.createElement(LoginPage));
+    const button = screen.getByRole("button", {
+      name: "Continue with Keycloak",
+    });
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect((button as HTMLButtonElement).disabled).toBe(false),
+    );
   });
 
   it("the Keycloak button becomes disabled after being clicked (busy state)", () => {
@@ -77,7 +97,7 @@ describe("LoginPage", () => {
     expect(pushMock).toHaveBeenCalledWith("/dashboard");
     expect(pushMock).toHaveBeenCalledTimes(1);
     // The dev path does NOT trigger the OIDC flow.
-    expect(signInMock).not.toHaveBeenCalled();
+    expect(socialMock).not.toHaveBeenCalled();
   });
 
   it("clicking Continue uses the updated email when the input was edited", () => {

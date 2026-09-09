@@ -26,8 +26,11 @@ ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
 # version used in dev so reproducible installs land on the same resolver behaviour.
 RUN npm install -g pnpm@10.33.2
 
-# Workspace manifest + lockfile first, for layer cache efficiency.
-COPY pnpm-workspace.yaml pnpm-lock.yaml ./
+# Workspace manifest + lockfile first, for layer cache efficiency. The root
+# package.json is a lockfile importer of its own (it carries the lint and
+# format toolchain), and --frozen-lockfile validates against every importer it
+# finds, so leaving it out fails the install as an outdated lockfile.
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY web/package.json ./web/
 COPY packages/design-system/package.json ./packages/design-system/
 
@@ -43,6 +46,15 @@ COPY packages/design-system/ ./packages/design-system/
 # Next.js embeds browser configuration at build time.
 ARG NEXT_PUBLIC_REDSIM_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_REDSIM_API_URL=${NEXT_PUBLIC_REDSIM_API_URL}
+
+# web/src/env.js validates at config load, and no runtime value exists yet at
+# image-build time, so the builder stage takes the documented escape hatch. It
+# relaxes only the required server names, so the client defaults above are
+# still validated and inlined. The runtime stage is a fresh FROM and does not
+# inherit it, so the schema is live when next start boots. The build itself
+# must succeed: `|| true` used to hide a failure as an image with no .next in
+# it.
+ENV SKIP_ENV_VALIDATION=1
 RUN pnpm --filter @redsim/web build
 
 # --------------------------------------------------------------------

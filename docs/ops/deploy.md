@@ -166,14 +166,15 @@ the Postgres CI jobs, so a regression fails CI.
 | `REDSIM_OIDC_ISSUER` | api | Keycloak realm URL |
 | `REDSIM_OIDC_AUDIENCE` | api | Default `redsim` |
 | `REDSIM_OIDC_JWKS_URL` | api | Keycloak realm's `/protocol/openid-connect/certs` |
-| `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, `KEYCLOAK_ISSUER` | web | NextAuth Keycloak provider (`KEYCLOAK_ISSUER` equals `REDSIM_OIDC_ISSUER`) |
-| `NEXTAUTH_SECRET` | web | NextAuth's own session JWT key, opaque to redsim |
-| `NEXTAUTH_URL` | web | Public web URL |
+| `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, `KEYCLOAK_ISSUER` | web | Better Auth Keycloak provider (`KEYCLOAK_ISSUER` equals `REDSIM_OIDC_ISSUER`). The realm's `redsim-web` is a public PKCE client, so `KEYCLOAK_CLIENT_SECRET` is empty |
+| `BETTER_AUTH_SECRET` | web | Better Auth's own session key, opaque to redsim. At least 32 characters. The web process refuses to boot without it |
+| `BETTER_AUTH_URL` | web | Public web URL. The web process refuses to boot without it |
 
 ### redsim-signed cookie
 
-The NextAuth callback signs with the private key, FastAPI verifies with the
-public key.
+The Better Auth after-hook on the Keycloak callback signs with the private
+key, FastAPI verifies with the public key. Both halves are required. Supply
+only the private half and the login completes, then every API call answers 401.
 
 | Var | Where set | Value |
 |---|---|---|
@@ -190,8 +191,10 @@ from redsim.api.session_cookie import generate_keypair
 private_pem, public_pem = generate_keypair()
 ```
 
-Store the private key in the web side's secret store. Ship the public key as
-plain config on the API side.
+Store both halves in the secret store: the private half for the web side, the
+public half for the API side. The Helm chart carries them as
+`config.secret.apiSessionPrivateKey` and `config.secret.apiSessionPublicKey`,
+and refuses to render a `config.env=prod` release while either is empty.
 
 ### Worker service account
 
@@ -503,7 +506,7 @@ Day 0:  generate new keypair (v2).
 Day 0:  on the API, set the new public key as REDSIM_API_SESSION_PUBLIC_KEY,
         move the old one to REDSIM_API_SESSION_PUBLIC_KEY_PREVIOUS, and
         bump REDSIM_API_SESSION_KEY_ID=redsim-api-session-v2.
-Day 0:  set the new private key on the web side. NextAuth now mints v2 cookies.
+Day 0:  set the new private key on the web side. Better Auth now mints v2 cookies.
 Day 0 + TTL window (15 min default): drop REDSIM_API_SESSION_PUBLIC_KEY_PREVIOUS.
 ```
 
@@ -524,7 +527,7 @@ See `redsim/api/auth.py::_verify_worker_token` and
 redsim fetches the JWKS from `REDSIM_OIDC_JWKS_URL` and caches it for
 `REDSIM_API_JWKS_CACHE_TTL_SECONDS` (default `300`). After a rotation or
 revocation the API and worker pick up the change within one TTL with no
-restart. NextAuth refreshes JWKS on demand.
+restart. Better Auth resolves the realm through OIDC discovery at startup.
 
 ### Auth-profile Fernet key
 
@@ -605,7 +608,7 @@ before the ML routes are used with this engine.
 | redsim-api | `/health` | `{"status":"ok","env":"…","db_configured":true}` |
 | redsim-worker | Celery ping | `celery -A redsim.workers.celery_app inspect ping` |
 | redsim-log-ingest | `/health` | `{"status":"ok","buffered":N,"inserted_total":N}` |
-| redsim-web | `/api/auth/session` | NextAuth surface |
+| redsim-web | `/` | Next.js app root, the path the chart probes |
 
 Compose health checks are configured in `deploy/docker-compose.yml` for
 `postgres` and `redis`. The Helm chart adds probes on every service.

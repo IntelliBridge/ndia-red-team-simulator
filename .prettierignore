@@ -1,0 +1,14 @@
+pnpm-lock.yaml
+**/.next/
+**/storybook-static/
+**/node_modules/
+
+# Python formatting belongs to ruff, not Prettier.
+redsim/
+tests/
+docs/
+site/
+
+# These freeze byte for byte against the FastAPI session-cookie contract.
+web/src/server/redsim-session.ts
+web/src/server/redsim-session.test.ts

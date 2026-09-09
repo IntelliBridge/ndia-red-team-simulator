@@ -90,7 +90,7 @@
           "status": "candidate",
           "validation": "not evaluated",
           "measured": null,
-          "references": [],
+          "references": ["JpegCompression"],
           "narrative_source": "rules"
         }
       ],
