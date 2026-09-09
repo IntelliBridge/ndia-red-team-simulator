@@ -10,11 +10,17 @@ and (by default) the dataset card, and writes them into the export prefix
 ``datasets/<source-run-id>/`` as ``Artifact`` rows on the **source** run with
 kinds ``ml.dataset.manifest`` / ``ml.dataset.parquet`` / ``ml.dataset.card``.
 
+Slices are labelled from the descriptor keys the classification runner embeds
+(``family`` / ``attack`` / ``eps``; INTEROP-04), falling back to the storage
+location for older slices; the filesystem store keeps a pure digest path, so the
+embedded descriptor is what makes a live export label anything.
+
 Audit: one ``dataset.export.execute`` row (manifest sha256, file count, byte
 total, prefix, digests and counts only — never a URL, key or model bytes) and a
-``job.complete`` row on the follow-up run chain. A projection mismatch or an
-invalid manifest is a ``success=False`` ``dataset.export.execute`` row and a
-failed job — the export refuses to ship labels that are not the record's. The
+``job.complete`` row on the follow-up run chain. Unlabelled or tampered slices,
+a projection mismatch or an invalid manifest are a ``success=False``
+``dataset.export.execute`` row and a failed job — the export refuses to ship
+labels that are not the record's. The
 shards are content-addressed, so a re-export of an unchanged run reuses the rows
 and yields the same manifest sha256 (one export per run).
 
@@ -73,11 +79,24 @@ def _load_flip_matrix(session: Session, blob_store: BlobStore, source_run_id: st
 
 
 def _load_slices(session: Session, blob_store: BlobStore, source_run_id: str) -> tuple[list[Any], list[str]]:
-    """Return ``(loaded_slices, caveats)`` from the source run's persisted slice artifacts."""
+    """Return ``(loaded_slices, caveats)`` from the source run's persisted slice artifacts.
+
+    A slice is labelled from the descriptor keys it carries (the classification runner writes
+    self-describing ``.npz`` slices, INTEROP-04) and, failing that, from its storage location
+    (slices written before the descriptor existed under a backend that keeps the name). A slice
+    that is not an ``.npz`` (the text runner's JSON-lines slices) or that carries no label is
+    skipped with a caveat, never guessed. A digest mismatch propagates: bytes that are not the
+    record's are refused, not exported.
+    """
     from sqlalchemy import select
 
     from redsim.db.models import Artifact
-    from redsim.ml.interop import LoadedSlice, parse_npz, slice_descriptor_from_location
+    from redsim.ml.interop import (
+        LoadedSlice,
+        parse_npz,
+        slice_descriptor_from_arrays,
+        slice_descriptor_from_location,
+    )
 
     rows = session.execute(
         select(Artifact).where(Artifact.run_id == source_run_id, Artifact.kind.in_(_SLICE_KINDS))
@@ -87,16 +106,22 @@ def _load_slices(session: Session, blob_store: BlobStore, source_run_id: str) ->
     caveats: list[str] = []
     seen: set[str] = set()
     for row in rows:
-        descriptor = slice_descriptor_from_location(str(row.location))
+        raw = _read_blob(blob_store, str(row.location), str(row.sha256))
+        try:
+            arrays = parse_npz(raw)
+        except Exception:  # noqa: BLE001 - not an npz slice (text runner JSON lines, or foreign bytes)
+            caveats.append(f"a {row.kind} artifact is not an npz slice and was skipped")
+            continue
+        descriptor = slice_descriptor_from_arrays(arrays) or slice_descriptor_from_location(str(row.location))
         if descriptor is None:
-            caveats.append(f"a {row.kind} artifact could not be labelled from its storage location and was skipped")
+            caveats.append(f"a {row.kind} artifact carries no slice descriptor and could not be labelled "
+                           "from its storage location; it was skipped")
             continue
         family, attack, eps = descriptor
         key = f"{family}|{attack}|{eps}"
         if key in seen:
             continue
         seen.add(key)
-        arrays = parse_npz(_read_blob(blob_store, str(row.location), str(row.sha256)))
         loaded.append(LoadedSlice(family=family, attack=attack, eps=eps, arrays=arrays))
     return loaded, caveats
 
@@ -189,15 +214,13 @@ def dataset_export(self: Task, job_id: str) -> dict[str, Any]:
 
         record_dict, record_sha = load_run_record(ctx.session, ctx.blob_store, source_run_id)
         record = CampaignRecord.model_validate(record_dict)
-        flip_matrix = _load_flip_matrix(ctx.session, ctx.blob_store, source_run_id)
-        loaded, caveats = _load_slices(ctx.session, ctx.blob_store, source_run_id)
-        if not loaded:
-            _refuse("no labelled slices were available to export")
-            raise RuntimeError(f"run {source_run_id} has no labelled slices to export")
-
         dataset_license = _dataset_license(ctx.session, source_run, record)
 
         try:
+            flip_matrix = _load_flip_matrix(ctx.session, ctx.blob_store, source_run_id)
+            loaded, caveats = _load_slices(ctx.session, ctx.blob_store, source_run_id)
+            if not loaded:
+                raise RuntimeError(f"run {source_run_id} has no labelled slices to export")
             shards = build_shards(record, loaded, flip_matrix=flip_matrix)
             if not shards:
                 raise RuntimeError("no shards were produced from the retained slices")
@@ -206,7 +229,8 @@ def dataset_export(self: Task, job_id: str) -> dict[str, Any]:
                 record, shards, dataset_license=dataset_license, regenerated=False,
                 checked_against=checked_against)
             croissant_validate(manifest)
-        except Exception as exc:  # noqa: BLE001 - a mismatch/invalid manifest is a refusal, not a crash
+        except Exception as exc:  # noqa: BLE001 - unlabelled/tampered slices, a mismatch or an invalid manifest
+            # are a refusal (success=False execute row, failed job, nothing written), not a crash
             _refuse(f"{type(exc).__name__}: {exc}")
             raise
 

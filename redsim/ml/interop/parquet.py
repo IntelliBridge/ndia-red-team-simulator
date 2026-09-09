@@ -17,6 +17,12 @@ confidences are carried when the slice retained them and left null otherwise;
 ``flipped`` is computed from the retained predictions when present and taken
 from the run's ``flip_matrix`` oracle otherwise (the projection guard in
 ``croissant.py`` checks either against that oracle).
+
+A slice the classification runner writes is **self-describing**: besides the
+arrays it carries the descriptor keys :data:`SLICE_META_KEYS` (``family``,
+``attack``, ``eps``) so the export can label it whatever the blob backend did
+with its name (the filesystem store keeps a pure digest path). The storage
+location is only a fallback for slices written before the descriptor existed.
 """
 
 from __future__ import annotations
@@ -52,6 +58,17 @@ COLUMN_DATATYPES: dict[str, str] = {
     "conf_clean": "sc:Float", "conf_adv": "sc:Float", "input": "sc:Float",
     "dataset_id": "sc:Text", "dataset_revision": "sc:Text", "run_id": "sc:Text",
 }
+
+
+#: Descriptor keys the runner embeds in every slice ``.npz`` (INTEROP-04): ``family`` is one of the
+#: three families above, ``attack`` the attack id (``""`` for the clean slice, ``"control"`` for the
+#: control), ``eps`` the grid budget (absent on the clean slice). Zero-dimensional arrays; the strings
+#: are unicode arrays, so ``allow_pickle=False`` loads them.
+SLICE_META_KEYS: tuple[str, ...] = ("family", "attack", "eps")
+#: Per-sample array keys of a slice, in the order the runner writes them.
+SLICE_ARRAY_KEYS: tuple[str, ...] = (
+    "x", "x_adv", "indices", "y", "y_pred_clean", "y_pred_adv", "conf_clean", "conf_adv",
+)
 
 
 def eps_tag(eps: float) -> str:
@@ -249,6 +266,45 @@ _SLICE_KINDS: dict[str, str] = {
 }
 
 
+def _scalar_str(value: Any) -> str | None:
+    import numpy as np
+
+    arr = np.asarray(value)
+    if arr.dtype.kind not in ("U", "S") or arr.size != 1:
+        return None
+    item = arr.reshape(-1)[0]
+    return item.decode("utf-8") if isinstance(item, bytes) else str(item)
+
+
+def slice_descriptor_from_arrays(arrays: dict[str, Any]) -> tuple[str, str, float | None] | None:
+    """``(family, attack, eps)`` from the descriptor keys a self-describing slice carries, or ``None``.
+
+    The runner writes ``family`` / ``attack`` as zero-dimensional unicode arrays and ``eps`` as a
+    float scalar (absent on the clean slice). A slice without a recognised ``family`` yields ``None``
+    so the caller falls back to :func:`slice_descriptor_from_location`.
+    """
+    import numpy as np
+
+    family = _scalar_str(arrays.get("family"))
+    if family not in _FAMILY_RANK:
+        return None
+    if family == FAMILY_CLEAN:
+        return (FAMILY_CLEAN, "", None)
+    eps: float | None = None
+    raw_eps = arrays.get("eps")
+    if raw_eps is not None:
+        eps_arr = np.asarray(raw_eps)
+        if eps_arr.size == 1 and eps_arr.dtype.kind in ("f", "i", "u"):
+            value = float(eps_arr.reshape(-1)[0])
+            eps = value if value == value else None   # NaN means "no budget"
+    if family == FAMILY_CONTROL:
+        return (FAMILY_CONTROL, CONTROL_ATTACK_LABEL, eps)
+    attack = _scalar_str(arrays.get("attack"))
+    if not attack or eps is None:
+        return None
+    return (FAMILY_ADVERSARIAL, attack, eps)
+
+
 def slice_descriptor_from_location(location: str) -> tuple[str, str, float | None] | None:
     """``(family, attack, eps)`` parsed from a content-addressed blob location, or ``None``.
 
@@ -286,6 +342,7 @@ def slice_descriptor_from_location(location: str) -> tuple[str, str, float | Non
 __all__ = [
     "COLUMNS", "COLUMN_DATATYPES", "CONTROL_ATTACK_LABEL",
     "FAMILY_ADVERSARIAL", "FAMILY_CLEAN", "FAMILY_CONTROL",
+    "SLICE_ARRAY_KEYS", "SLICE_META_KEYS",
     "LoadedSlice", "Shard", "build_shards", "eps_tag", "parse_npz",
-    "read_table", "slice_descriptor_from_location",
+    "read_table", "slice_descriptor_from_arrays", "slice_descriptor_from_location",
 ]

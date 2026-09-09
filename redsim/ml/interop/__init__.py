@@ -34,6 +34,7 @@ from redsim.ml.interop.parquet import (
     eps_tag,
     parse_npz,
     read_table,
+    slice_descriptor_from_arrays,
     slice_descriptor_from_location,
 )
 
@@ -57,5 +58,6 @@ __all__ = [
     "parse_npz",
     "read_table",
     "render_card",
+    "slice_descriptor_from_arrays",
     "slice_descriptor_from_location",
 ]

@@ -24,9 +24,13 @@ Pinned here:
 * the child environment carries no credential, proxy or ``REDSIM_*`` setting;
 * the catalog lists consumed rows per membership; the record route and the
   binding hook (``resolve_consumed_slice`` / ``consumed_dataset_binding``);
-* the export and manifest routes: the gate and the truthful ``501`` while the
-  interop-contribute service is absent, the ld+json round trip once it is
-  (skipped with the reason otherwise).
+* the export and manifest routes: the gates, the contribute service's typed refusal for a
+  run without slices, ``404`` until an export exists (the ld+json round trip with a real
+  export lives in ``tests/ml/test_interop_export.py``);
+* the campaign-admission binding hook (INTEROP-16): an available consumed slice of the
+  project can be named as ``dataset_id`` and its manifest digest becomes the revision; a
+  validating slice, another project's, another modality's, or a model bound to a bundled
+  dataset are refused ``dataset_incompatible``.
 """
 
 from __future__ import annotations
@@ -764,16 +768,7 @@ print(json.dumps({"loaded": loaded}))
 # ---------------------------------------------------------------------------
 
 
-def _export_service() -> Any | None:
-    try:
-        import importlib
-
-        return importlib.import_module("redsim.services.ml_datasets_export")
-    except ImportError:
-        return None
-
-
-def test_export_route_gates_then_delegates_or_answers_501(api: SimpleNamespace) -> None:
+def test_export_route_gates_then_refuses_a_run_without_slices(api: SimpleNamespace) -> None:
     api.user.as_role("viewer")
     resp = api.client.post(f"/v1/runs/{RUN}/dataset")
     assert resp.status_code == 403 and isinstance(resp.json()["detail"], str)
@@ -781,40 +776,104 @@ def test_export_route_gates_then_delegates_or_answers_501(api: SimpleNamespace) 
     assert api.client.post(f"/v1/runs/{RUN}/dataset").status_code == 403
     api.user.as_role("remediator")
     assert api.client.post("/v1/runs/no-such-run/dataset").status_code == 404
+    assert _events(api, "dataset.export") == [], "the gates refuse before the service is reached"
     resp = api.client.post(f"/v1/runs/{RUN}/dataset")
-    service = _export_service()
-    if service is None or not callable(getattr(service, "admit_export", None)):
-        assert resp.status_code == 501, resp.text
-        detail = resp.json()["detail"]
-        assert detail["code"] == "not_implemented" and detail["phase"] == "B" and "interop-contribute" in detail["reason"]
-        assert _counts(api) == (0, 0, 0), "nothing is faked while the export service is absent"
-    else:
-        # The contribute service owns the outcome (202 handle, or its own typed refusal for a run without slices).
-        assert resp.status_code != 501, resp.text
-        assert resp.status_code in {202, 409, 422}, resp.text
+    # The seeded run retained no slices: the service's typed refusal, audited success=False, nothing created.
+    assert resp.status_code == 409, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "export_unavailable" and detail["message"]
+    refusals = _events(api, "dataset.export")
+    assert len(refusals) == 1 and refusals[0].success is False
+    assert refusals[0].detail["code"] == "export_unavailable" and refusals[0].detail["source_run_id"] == RUN
+    assert_no_url_or_bytes(refusals[0].detail, [])
+    assert _counts(api) == (0, 0, 0) and api.queued == []
 
 
-def test_manifest_route_404s_for_unknown_ids_and_501s_without_the_export_service(api: SimpleNamespace) -> None:
+def test_manifest_route_404s_until_an_export_exists(api: SimpleNamespace) -> None:
     assert api.client.get("/v1/datasets/no-such-id").status_code == 404
     api.user.as_stranger()
     assert api.client.get(f"/v1/datasets/{RUN}").status_code == 403, "membership through the run"
     api.user.as_role("viewer")
     resp = api.client.get(f"/v1/datasets/{RUN}")
-    service = _export_service()
-    if service is None or not callable(getattr(service, "get_export_manifest", None)):
-        assert resp.status_code == 501, resp.text
-        assert "interop-contribute" in resp.json()["detail"]["reason"]
-    else:
-        assert resp.status_code == 404, "no export exists for this run yet"
+    assert resp.status_code == 404, "no export exists for this run yet"
+    assert "no dataset export exists" in resp.text
 
 
-def test_manifest_route_serves_ld_json_after_an_export(api: SimpleNamespace) -> None:
-    service = _export_service()
-    if service is None or not callable(getattr(service, "admit_export", None)):
-        pytest.skip("redsim.services.ml_datasets_export (interop-contribute track) is not on this tree; "
-                    "the ld+json round trip runs once it lands")
-    pytest.skip("the export round trip needs a campaign run with persisted ml.adv_slice / ml.clean_slice "
-                "artifacts; the e2e tier (tests/e2e/test_ml_interop.py, wave B4) exercises it end to end")
+# ---------------------------------------------------------------------------
+# Campaign admission binding hook (INTEROP-16)
+# ---------------------------------------------------------------------------
+
+
+def test_campaign_admission_binds_an_available_consumed_slice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``POST /v1/models/{id}/attacks`` with ``dataset_id`` = a consumed slice (routes harness of test_campaign_routes)."""
+    from redsim.services.ml_datasets import DeclaredSchema, is_dataset_id, new_dataset_id
+    from tests.ml.test_campaign_routes import DATASET, ORG, assert_refused, build_harness, launch, seed_model
+    from tests.ml.test_campaign_routes import PROJECT as ROUTES_PROJECT
+
+    harness = build_harness(tmp_path, monkeypatch)
+    seed_model(harness, dataset_id=None)                                  # manifest binds no dataset
+    seed_model(harness, "model-bound", dataset_id=DATASET)                # manifest binds a bundled dataset
+    with harness.Session.begin() as session:
+        session.add(Project(id="project-other", org_id=ORG, name="Other", slug="other-project"))
+
+    def add_slice(*, status: str, modality: str, project: str = ROUTES_PROJECT) -> tuple[str, str]:
+        dataset_id = new_dataset_id()
+        assert is_dataset_id(dataset_id)
+        revision = hashlib.sha256(dataset_id.encode()).hexdigest()
+        schema = DeclaredSchema(
+            modality=modality, class_names=("a", "b", "c"),
+            features=("f0", "f1") if modality == "tabular" else None,
+            input_shape=(3, 8, 8) if modality == "image" else None,
+            dtype="float32" if modality == "image" else None,
+            value_range=(0.0, 1.0) if modality == "image" else None,
+        )
+        with harness.Session.begin() as session:
+            session.add(MlDataset(
+                id=dataset_id, project_id=project, status=status, license="CC0-1.0 (test double)",
+                modality=modality, class_names=list(schema.class_names), manifest_sha256=revision,
+                blob_location=f"{project}/datasets/{dataset_id}",
+                detail={"schema": schema.to_mapping(),
+                        "files": [{"name": "slice.parquet", "role": "parquet", "sha256": "cd" * 32,
+                                   "location": f"/blobs/{dataset_id}", "size_bytes": 10}],
+                        "validation": {"parse": {"n_rows": 6}}},
+            ))
+        return dataset_id, revision
+
+    validating, _ = add_slice(status="validating", modality="image")
+    tabular, _ = add_slice(status="available", modality="tabular")
+    foreign, _ = add_slice(status="available", modality="image", project="project-other")
+    available, revision = add_slice(status="available", modality="image")
+
+    # refusals: not yet available, another project's, another modality's, unknown id, bound model
+    detail = assert_refused(harness, launch(harness, {"attack_ids": ["fgsm"], "dataset_id": validating}),
+                            "dataset_incompatible", audit_rows=1)
+    assert detail["field"] == "dataset_id" and detail["dataset_role"] == "consumed"
+    assert "not an available consumed slice" in detail["message"]
+    assert_refused(harness, launch(harness, {"attack_ids": ["fgsm"], "dataset_id": foreign}),
+                   "dataset_incompatible", audit_rows=2)
+    detail = assert_refused(harness, launch(harness, {"attack_ids": ["fgsm"], "dataset_id": tabular}),
+                            "dataset_incompatible", audit_rows=3)
+    assert "tabular slice" in detail["message"]
+    assert_refused(harness, launch(harness, {"attack_ids": ["fgsm"], "dataset_id": "ds-000000000000"}),
+                   "dataset_incompatible", audit_rows=4)
+    detail = assert_refused(harness, launch(harness, {"attack_ids": ["fgsm"], "dataset_id": available}, "model-bound"),
+                            "dataset_incompatible", audit_rows=5)
+    assert DATASET in detail["message"] and "bind the consumed slice at model upload" in detail["message"]
+    assert all(row.detail.get("dataset_id") in {validating, foreign, tabular, "ds-000000000000", available}
+               for row in harness.events("attack.run")), "refusal rows carry the dataset id, never its bytes"
+
+    # the available slice of this project binds: 202, revision = the slice's manifest digest, audited as consumed
+    resp = launch(harness, {"attack_ids": ["fgsm"], "dataset_id": available})
+    assert resp.status_code == 202, resp.text
+    run_id = resp.json()["run_id"]
+    row = harness.campaign_row(run_id)
+    assert row is not None
+    assert row["config"]["dataset_id"] == available and row["config"]["dataset_revision"] == revision
+    admitted = [e for e in harness.events("attack.run") if e.success]
+    assert len(admitted) == 1 and admitted[0].run_id == run_id
+    assert admitted[0].detail["dataset_id"] == available and admitted[0].detail["dataset_role"] == "consumed"
+    assert admitted[0].detail["dataset_revision"] == revision
+    assert harness.delay_calls == [resp.json()["job_ids"][0]]
 
 
 # ---------------------------------------------------------------------------
