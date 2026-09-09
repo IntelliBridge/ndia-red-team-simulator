@@ -1,14 +1,5 @@
 import type { Config } from "tailwindcss";
 
-/**
- * A token name resolved through its CSS variable.
- *
- * `<alpha-value>` is what lets an opacity modifier such as `bg-panel/40`
- * keep working: Tailwind substitutes the channel it computed, and a bare
- * `hsl(var(--x))` would swallow it silently.
- */
-const token = (name: string) => `hsl(var(--${name}) / <alpha-value>)`;
-
 const config: Config = {
   // One dark theme (labs.agiledefense.com). `<html class="dark">` is set in
   // app/layout.tsx so the vendored shadcn primitives' `dark:` variants apply.
@@ -36,18 +27,18 @@ const config: Config = {
         background: "hsl(var(--background))",
         foreground: "hsl(var(--foreground))",
         primary: {
-          DEFAULT: token("primary"),
-          foreground: token("primary-foreground"),
+          DEFAULT: "hsl(var(--primary))",
+          foreground: "hsl(var(--primary-foreground))",
         },
         secondary: {
-          DEFAULT: token("secondary"),
-          foreground: token("secondary-foreground"),
+          DEFAULT: "hsl(var(--secondary))",
+          foreground: "hsl(var(--secondary-foreground))",
         },
         // Amber-orange, not red: red is the brand accent and never means
         // danger in this UI.
         destructive: {
-          DEFAULT: token("destructive"),
-          foreground: token("destructive-foreground"),
+          DEFAULT: "hsl(var(--destructive))",
+          foreground: "hsl(var(--destructive-foreground))",
         },
         warning: {
           DEFAULT: "hsl(var(--warning))",
@@ -62,20 +53,20 @@ const config: Config = {
           foreground: "hsl(var(--info-foreground))",
         },
         muted: {
-          DEFAULT: token("muted"),
-          foreground: token("muted-foreground"),
+          DEFAULT: "hsl(var(--muted))",
+          foreground: "hsl(var(--muted-foreground))",
         },
         accent: {
-          DEFAULT: token("accent"),
-          foreground: token("accent-foreground"),
+          DEFAULT: "hsl(var(--accent))",
+          foreground: "hsl(var(--accent-foreground))",
         },
         popover: {
-          DEFAULT: token("popover"),
-          foreground: token("popover-foreground"),
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
         },
         card: {
-          DEFAULT: token("card"),
-          foreground: token("card-foreground"),
+          DEFAULT: "hsl(var(--card))",
+          foreground: "hsl(var(--card-foreground))",
         },
         // The raw Labs navy steps, for the rare place a token is too coarse.
         navy: {
