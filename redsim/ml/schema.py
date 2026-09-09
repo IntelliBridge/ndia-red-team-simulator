@@ -11,6 +11,16 @@ This module is the frozen M0 contract (spec sections 5.3 to 5.7, 12.5, 13.3,
 14, 15, 16.4). Later milestones add behaviour, not fields. A field change
 after the freeze follows the protocol in ``docs/plans/01-p0-contracts-api-skeleton.md``
 section 8.
+
+Phase B (2026-09-09, ``docs/plans/12-phase-b-plan.md`` section 3) added fields
+under that protocol, every one additive and default-valued and each announced in
+``docs/plans/00-master-plan.md`` sections 0 and 5: the ``text`` and ``detection``
+vocabularies, the ``edit`` and ``patch_area`` budgets, the per-modality blocks on
+``Measurement``, ``Observation`` and ``MLModelManifest``, the endpoint and lineage
+blocks on the manifest, the widened review vocabulary with its history and
+revisions, retest links, ``CampaignRecord.schema_version``, ``RunSummary.kind``
+and ``probe_ids``, and the ``defense_apply`` stage. A record written before
+Phase B validates unchanged and, viewed with ``exclude_unset``, dumps unchanged.
 """
 
 from __future__ import annotations
@@ -21,17 +31,34 @@ from datetime import datetime
 from itertools import pairwise
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
-Domain = Literal["image", "tabular", "llm"]
-Modality = Literal["image", "tabular"]
+# Phase B (MODALITIES-01): ``text`` and ``detection`` join both vocabularies
+# additively; no value is renamed or removed.
+Domain = Literal["image", "tabular", "llm", "text", "detection"]
+Modality = Literal["image", "tabular", "text", "detection"]
 TargetStatus = Literal["available", "not_implemented"]
 AttackFamily = Literal["evasion", "control"]
 # ``not_implemented`` is an admission-time 501 and is never persisted. The
 # other values are the ``Job`` vocabulary (spec section 6.2).
 RunStatus = Literal["queued", "running", "succeeded", "failed", "cancelled", "not_implemented"]
 MeasurementFamily = Literal["clean", "evasion", "control"]
-Norm = Literal["linf", "l2"]
+# ``linf`` and ``l2`` are perturbation norms (image, tabular). Phase B
+# (MODALITIES-02) adds two budgets that are not norms but share the ε grid in
+# (0, 1]: ``edit`` (text) is the maximum share of whitespace-delimited words an
+# attack may replace per input, at least one word, with the realised share
+# recorded per row as ``Measurement.edit_fraction_mean``; ``patch_area``
+# (detection) is the patch area as a fraction of the image area, one square
+# patch per image with side sqrt(ε·H·W). Scorecards label the axis from the
+# literal ("edit budget", "patch area"), never as a norm.
+Norm = Literal["linf", "l2", "edit", "patch_area"]
 CampaignKind = Literal["attack", "verify", "ingest"]
 Completeness = Literal["complete", "partial"]
 Grade = Literal["A", "B", "C", "D", "F"]
@@ -44,15 +71,29 @@ RefusalReason = Literal[
     "shape_mismatch", "size_limit", "timeout",
 ]
 VerifyOutcome = Literal["verified", "still_vulnerable", "inconclusive"]
-ReviewState = Literal["unreviewed", "dismissed"]
+# ``unreviewed`` and ``dismissed`` are Phase A. Phase B (REVIEW_REPORTS-01) adds
+# the analyst and reviewer workflow states; the transition table lives in the
+# review service and a stored row never changes state by schema default.
+ReviewState = Literal["unreviewed", "dismissed", "draft", "in_review", "confirmed", "resolved"]
+# Run kinds a run list may label (Phase B, LLM-24). An ``llm_probe`` run carries
+# ``probe_ids`` and an empty ``attack_ids``; its results never enter an MRI.
+RunKind = Literal["attack", "verify", "ingest", "llm_probe"]
 
 # Pipeline stages, in order. The worker writes ``stage`` as it progresses so
 # the UI timeline can render progress. ``attack`` is written per attack as
 # ``attack:<attack_id>``. ``score`` runs at the end of the explain stage.
+# ``defense_apply`` (Phase B, ATTACKS_HARDEN-15) sits after ``load_target`` where
+# spec 6.5 places it and is expected only on a verify run whose defense trains
+# or distils a derived model; every other run skips it, so the Phase A stages
+# keep their relative order and ``report`` stays last.
 STAGES: tuple[str, ...] = (
-    "load_target", "sample", "clean_eval", "attack", "control", "explain", "score",
+    "load_target", "defense_apply", "sample", "clean_eval", "attack", "control", "explain", "score",
     "interpret", "recommend", "report",
 )
+
+# ``CampaignRecord.schema_version`` (Phase B, REVIEW_REPORTS-18). Every report
+# format discloses it; bumping it is a contract event under plan 01 section 8.
+CAMPAIGN_RECORD_SCHEMA_VERSION = "campaign-record-1"
 
 # Words that never appear in grade text, badge text or generated narrative
 # (spec 15.8 iii). Matched as whole words, case-insensitive.
@@ -284,6 +325,24 @@ class Provenance(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class DetectionMetrics(BaseModel):
+    """Box-level counts for one detection measurement row (Phase B, MODALITIES-03).
+
+    Every rate travels with its denominator: ``recall`` is ``n_matched / n_boxes``
+    and ``suppression_rate`` is the share of boxes matched on the clean image that
+    the attacked image no longer matches (its denominator is the row's
+    ``n_clean_correct``). ``map50`` is mean average precision at IoU 0.5 over the
+    slice. Every field is optional so a row states exactly what was counted and
+    nothing else; a detection run carries a detection scorecard, never an MRI.
+    """
+
+    n_boxes: int | None = Field(None, ge=0)                       # ground-truth boxes in the slice
+    n_matched: int | None = Field(None, ge=0)                     # boxes matched at the IoU threshold
+    map50: float | None = Field(None, ge=0.0, le=1.0)
+    recall: float | None = Field(None, ge=0.0, le=1.0)            # n_matched / n_boxes
+    suppression_rate: float | None = Field(None, ge=0.0, le=1.0)   # boxes lost under attack / n_clean_correct
+
+
 class Measurement(BaseModel):
     """One row per test family at one setting. ``id`` is cited by interpretation and recommendations.
 
@@ -316,6 +375,53 @@ class Measurement(BaseModel):
     per_class: dict[str, dict[str, int]] = Field(default_factory=dict)   # class -> {"n":…, "n_correct":…}
     wall_time_s: float = 0.0
     notes: list[str] = Field(default_factory=list)
+    # Phase B (MODALITIES-03). Text rows: the realised share of words replaced,
+    # the ``edit`` budget actually spent. Detection rows: the box-level counts
+    # under ``detection``; on those rows ``n`` is the number of ground-truth
+    # boxes, ``n_correct`` the boxes matched at the manifest's IoU threshold,
+    # ``accuracy`` is that recall, ``n_clean_correct`` the boxes matched on the
+    # clean image and ``attack_success_rate`` the share of clean-matched boxes
+    # lost under attack; ``conf_gap_*`` stay None (undefined for detection).
+    edit_fraction_mean: float | None = None
+    detection: DetectionMetrics | None = None
+
+
+class TextObservation(BaseModel):
+    """Word-level evidence for one text observation (Phase B, MODALITIES-04).
+
+    Positions index the whitespace-delimited words of the clean input. The
+    message text never sits here: the word diff is the ``ml.text.diff`` artifact
+    and token attributions are the artifacts named in ``attribution_artifacts``,
+    both listed in ``Observation.artifacts``.
+    """
+
+    n_tokens: int = Field(ge=0)                                  # words in the clean input
+    n_changed: int = Field(ge=0)                                 # words the attack replaced
+    changed_positions: list[int] = Field(default_factory=list)
+    edit_fraction: float | None = None                           # n_changed / n_tokens; None if n_tokens is 0
+    top_tokens_clean: list[int] = Field(default_factory=list)    # positions ranked by |attribution|, clean
+    top_tokens_adv: list[int] = Field(default_factory=list)      # the same ranking, adversarial input
+    attribution_artifacts: dict[str, str] = Field(default_factory=dict)   # name -> Artifact.id
+
+    @model_validator(mode="after")
+    def _changed_within_tokens(self) -> TextObservation:
+        if self.n_changed > self.n_tokens:
+            raise ValueError("n_changed cannot exceed n_tokens")
+        return self
+
+
+class DetectionObservation(BaseModel):
+    """Box-table evidence for one detection observation (Phase B, MODALITIES-04).
+
+    ``patch_bbox`` is ``[x_min, y_min, x_max, y_max]`` in pixels of the attacked
+    image and is None on control rows. The per-box tables are the
+    ``ml.detection.boxes`` artifact named in ``Observation.artifacts``.
+    """
+
+    n_gt: int = Field(ge=0)                 # ground-truth boxes in the image
+    n_matched_clean: int = Field(ge=0)      # matched on the clean image
+    n_matched_adv: int = Field(ge=0)        # matched on the attacked image
+    patch_bbox: list[float] | None = Field(None, min_length=4, max_length=4)
 
 
 class Observation(BaseModel):
@@ -339,6 +445,12 @@ class Observation(BaseModel):
     metric_kind: Literal["heuristic"] = "heuristic"
     metric_note: str = ("center_mass_ratio = share of |SHAP| inside the central 50% of the image; "
                         "a proxy for attention on the subject, not a segmentation.")
+    # Phase B (MODALITIES-04): per-modality evidence blocks. The default
+    # ``metric_note`` describes the image heuristic; text and detection observers
+    # set their own note. Dataset text and image bytes never sit on the
+    # Observation: they are artifacts named in ``artifacts``.
+    text: TextObservation | None = None
+    detection: DetectionObservation | None = None
 
 
 class Interpretation(BaseModel):
@@ -534,6 +646,80 @@ class CleanAccuracy(BaseModel):
     split: str
 
 
+class TextModelSpec(BaseModel):
+    """How a text target tokenises its input (Phase B, MODALITIES-05).
+
+    The attack and the explainer read these so the ``edit`` budget counts the
+    same words the model sees. ``token_pattern`` is the vectoriser's token regex
+    (None for plain whitespace splitting); ``ngram_range`` is ``[min_n, max_n]``.
+    """
+
+    token_pattern: str | None = None
+    lowercase: bool = True
+    ngram_range: list[int] = Field(default_factory=lambda: [1, 1], min_length=2, max_length=2)
+    vocabulary_size: int | None = Field(None, ge=0)
+    max_words: int | None = Field(None, ge=1)     # inputs are truncated to this many words
+
+
+class DetectionModelSpec(BaseModel):
+    """What a detector reports and how its boxes are matched (Phase B, MODALITIES-05)."""
+
+    box_format: Literal["xyxy", "xywh", "cxcywh"] = "xyxy"
+    input_size: list[int] = Field(default_factory=list)          # [H, W] the detector consumes
+    iou_threshold: float = Field(0.5, gt=0.0, le=1.0)              # a box counts as matched at or above it
+    score_threshold: float = Field(0.5, ge=0.0, le=1.0)            # detections below it are ignored
+    classes: list[str] = Field(default_factory=list)              # detector classes in index order
+    excluded_classes: list[str] = Field(default_factory=list)     # in the dataset, not evaluated
+
+
+class EndpointSpec(BaseModel):
+    """A black-box inference endpoint registered as a model (Phase B, ENDPOINT-03).
+
+    No credential and no URL string lives here: ``auth_profile_id`` names the
+    AuthProfile the worker-side broker resolves, and ``url_host`` is the host
+    (with port) only, so a manifest, report or export never carries a URL (D3).
+    ``contract_version`` is the ``redsim.ml.targets.endpoint_contract.CONTRACT_VERSION``
+    value the endpoint was validated against. On an endpoint manifest ``format``
+    is ``"endpoint"``, ``sha256`` is the digest of the canonical descriptor
+    (host, auth profile, contract, modality, dataset binding, input shape, class
+    names) rather than of any file, ``size_bytes`` is 0 and ``gradients`` is False.
+    """
+
+    url_host: str
+    auth_profile_id: str
+    contract_version: str
+    input_shape: list[int] = Field(default_factory=list)
+    batch_rows: int = Field(32, ge=1)
+    timeout_s: float = Field(30.0, gt=0.0)
+
+    @field_validator("url_host")
+    @classmethod
+    def _host_only(cls, v: str) -> str:
+        if not v or any(ch in v for ch in "/?#@ ") or "://" in v:
+            raise ValueError("url_host is a host[:port], not a URL")
+        return v
+
+
+class DerivedFrom(BaseModel):
+    """Lineage of a model produced by a training defense (Phase B, ATTACKS_HARDEN-15).
+
+    A hardened model is registered as a new Target; this block ties it to the
+    parent it was trained from and to the defense that produced it.
+    ``training_budget`` records the bounds the defense ran under (epochs, wall
+    time, frozen backbone, ...) as resolved values, not a claim about the
+    result: the verify run measures that.
+    """
+
+    parent_target_id: str
+    parent_sha256: str
+    defense_id: str                                   # id from GET /v1/defenses, kind "training"
+    training_budget: dict[str, float | int | bool | str] = Field(default_factory=dict)
+
+
+# The Phase B blocks ``MLModelManifest`` omits from a dump while they are None.
+_MANIFEST_PHASE_B_BLOCKS: tuple[str, ...] = ("text", "detection", "endpoint", "derived_from")
+
+
 class MLModelManifest(BaseModel):
     name: str
     modality: Modality
@@ -557,6 +743,13 @@ class MLModelManifest(BaseModel):
     license: str | None = None
     source_url: str | None = None
     manifest_sha256: str | None = None
+    # Phase B (plan 12 section 3): per-modality, endpoint and lineage blocks, all
+    # optional. They are omitted from dumps while None (see the serializer below)
+    # so a manifest written before Phase B serialises, and digests, byte-identically.
+    text: TextModelSpec | None = None                 # MODALITIES-05
+    detection: DetectionModelSpec | None = None       # MODALITIES-05
+    endpoint: EndpointSpec | None = None              # ENDPOINT-03
+    derived_from: DerivedFrom | None = None           # ATTACKS_HARDEN-15
 
     @model_validator(mode="after")
     def _consistency(self) -> MLModelManifest:
@@ -568,12 +761,70 @@ class MLModelManifest(BaseModel):
             raise ValueError("a refused model must carry refusal_reason")
         if self.status != "refused" and self.refusal_reason is not None:
             raise ValueError("refusal_reason is only set on a refused model")
+        if self.format == "endpoint" and self.endpoint is None:
+            raise ValueError("format 'endpoint' requires an endpoint block")
+        if self.endpoint is not None:
+            if self.format != "endpoint":
+                raise ValueError("an endpoint block requires format 'endpoint'")
+            if self.gradients:
+                raise ValueError("an endpoint model has no gradients")
         return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_blocks(self, handler: SerializerFunctionWrapHandler):  # type: ignore[no-untyped-def]
+        """Drop ``text``, ``detection``, ``endpoint`` and ``derived_from`` while they are None.
+
+        ``manifest_sha256`` (``redsim.ml.assets.manifest.manifest_digest``) is the sha256 of this
+        dump, so built asset trees and stored ``targets.detail`` rows written before Phase B keep
+        their digests. No return annotation on purpose: pydantic would read one as the
+        serialization JSON schema and flatten the model to a bare object.
+        """
+        data: dict[str, Any] = handler(self)
+        for key in _MANIFEST_PHASE_B_BLOCKS:
+            if key in data and data[key] is None:
+                del data[key]
+        return data
 
 
 # ---------------------------------------------------------------------------
 # Finding detail (spec 5.7), stored in findings.schema_blob["ml"]
 # ---------------------------------------------------------------------------
+
+
+class ReviewEvent(BaseModel):
+    """One transition in a finding's review history (Phase B, REVIEW_REPORTS-01).
+
+    The transition table lives in the review service; the record only stores
+    what happened, in order. ``verify_run_id`` names the retest a ``resolved``
+    transition rests on; ``revision`` names the analyst revision that was judged.
+    """
+
+    action: str                          # dismiss, submit, confirm, request_changes, reopen, resolve, ...
+    to_state: ReviewState
+    actor: str
+    at: datetime
+    from_state: ReviewState | None = None
+    reason: str | None = None
+    revision: int | None = Field(None, ge=1)
+    verify_run_id: str | None = None
+
+
+class FindingRevision(BaseModel):
+    """One analyst revision of a finding's written evidence (Phase B, REVIEW_REPORTS-01).
+
+    Revisions are append-only. ``sha256`` freezes the three texts and the cited
+    evidence ids at submission, so a review decision names exactly what was read.
+    """
+
+    revision: int = Field(ge=1)
+    author: str
+    created_at: datetime
+    submitted_at: datetime | None = None
+    evidence_ids: list[str] = Field(default_factory=list)   # measurement / observation ids cited
+    observation: str | None = None
+    interpretation: str | None = None
+    candidate: str | None = None
+    sha256: str | None = None
 
 
 class FindingReview(BaseModel):
@@ -582,6 +833,10 @@ class FindingReview(BaseModel):
     reason: str | None = None
     at: datetime | None = None
     notes: str | None = None
+    # Phase B (REVIEW_REPORTS-01): the transitions that led to ``state`` and the
+    # analyst revisions they judged; both empty on a Phase A row.
+    history: list[ReviewEvent] = Field(default_factory=list)
+    revisions: list[FindingRevision] = Field(default_factory=list)
 
 
 class FindingVerify(BaseModel):
@@ -589,6 +844,10 @@ class FindingVerify(BaseModel):
     defense: DefenseConfig
     outcome: VerifyOutcome
     delta: MRIDelta | None = None
+    # Phase B (REVIEW_REPORTS-08): the verify run's settings hash and baseline, so
+    # a retest link says whether it was comparable without re-reading the campaign.
+    settings_hash: str | None = None
+    baseline_run_id: str | None = None
 
 
 class AtlasTechnique(BaseModel):
@@ -617,7 +876,9 @@ class MLFindingDetail(BaseModel):
     limitations: list[str] = Field(default_factory=list)
     artifacts: dict[str, str] = Field(default_factory=dict)   # name -> Artifact.id
     review: FindingReview = Field(default_factory=FindingReview)
-    verify: FindingVerify | None = None
+    verify: FindingVerify | None = None                        # the latest retest
+    # Phase B (REVIEW_REPORTS-08): every retest in order; ``verify`` stays the latest.
+    retests: list[FindingVerify] = Field(default_factory=list)
     atlas_technique: AtlasTechnique | None = None
 
 
@@ -703,6 +964,9 @@ class ScoreStatus(BaseModel):
 class CampaignRecord(RunRecord):
     """The ``GET /v1/runs/{id}/campaign`` response: the run record plus its queryable projections."""
 
+    # Phase B (REVIEW_REPORTS-18): every report format discloses the record schema
+    # version; ``report.json`` stays exactly this model's dump.
+    schema_version: str = CAMPAIGN_RECORD_SCHEMA_VERSION
     kind: CampaignKind = "attack"
     completed_at: datetime | None = None
     settings_hash: str | None = None
@@ -729,6 +993,9 @@ class RunSummary(BaseModel):
     target_id: str
     attack_ids: list[str]
     created_at: datetime
+    # Phase B (LLM-24): a run list labels probe runs without misusing ``attack_ids``.
+    kind: RunKind | None = None
+    probe_ids: list[str] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
