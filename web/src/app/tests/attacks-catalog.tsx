@@ -11,6 +11,7 @@ import {
   type ModelTarget,
 } from "@/lib/api";
 import { useModels } from "@/hooks/useModels";
+import { rowLink } from "@/lib/row-link";
 import { useRoles } from "@/hooks/useRoles";
 
 /**
@@ -380,7 +381,8 @@ export function AttacksCatalog() {
                       return (
                         <tr
                           key={a.id}
-                          className="border-b border-border align-top"
+                          {...rowLink(`/tests/attacks/${encodeURIComponent(a.id)}`)}
+                          className={`border-b border-border align-top ${rowLink("").className}`}
                         >
                           <td className="p-2">
                             <input
