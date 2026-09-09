@@ -18,6 +18,35 @@ reference-row ``Measurement`` fields (``expl_shift_mean`` with its ``n`` and
 exclusions, the benign-noise floor with its ``n``) for the campaign to write
 onto the evasion measurement (spec 13.5).
 
+Explainer choice (spec 13.2, register ATTACKS_HARDEN-07). ``explainer="auto"``
+takes ``TreeExplainer`` when a tree model is reachable and falls back to the
+KernelExplainer otherwise, recording every attempt in ``meta["explainers_tried"]``.
+An explicit ``"TreeExplainer"`` or ``"KernelExplainer"`` is honoured without a
+fallback: a tree request on a predict-only target raises ``ExplainerUnavailable``.
+The image explainer names are refused here. The KernelExplainer background is a
+seeded ``KERNEL_BACKGROUND_ROWS`` (100) row sample of the evaluation slice drawn
+outside the explained rows (spec 13.2); the effective size is recorded when the
+slice is smaller. The explainer that ran, its family (``explainer_kind``:
+``kernel | tree``), the requested choice, nsamples, the background and the seed
+are recorded in ``meta`` (``meta["explainer_provenance"]`` is the block the
+campaign lifts into ``Provenance``), in each ``feature_diff.json`` and on every
+``Observation.metric_note`` beside the ``metric_kind = "heuristic"`` label.
+
+Black-box endpoint targets (register ENDPOINT-14). When the target declares
+``metadata["access"] == "black-box-endpoint"`` (``explain.base.explain_caps_for``)
+or the caller passes ``query_caps``, the run is bounded by
+``explain.base.EXPLAIN_QUERY_CAPS`` (background <= 20 rows, nsamples <= 200,
+explain_k <= 8); the requested and effective values are both recorded and a
+limitation names the cap. Every ``predict_proba`` call the KernelExplainer makes
+is counted on the explainer side (``meta["queries"]``, purpose ``explain``) and
+the calls run inside ``target.purpose("explain")`` when the target offers that
+hook, so an endpoint broker can tally them separately from attack queries.
+
+KernelSHAP for black-box images (register ATTACKS_HARDEN-08) is recorded, not
+built: ``explain.base.KERNEL_IMAGE_INFEASIBLE_NOTE`` states why (about 100k
+predict calls per explained 3x128x128 sample) and ``shap_image`` keeps the spec
+13.2 ``PartitionExplainer`` path as the black-box image explainer.
+
 Only numeric feature vectors and the manifest's feature identifiers are ever
 written. No raw URL string, and no other source row text, enters an artifact,
 an observation, or the summary (spec 11.3.3 / 13.7). A feature identifier that
@@ -27,13 +56,14 @@ is itself URL-shaped is refused. When SHAP cannot run on the model,
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import logging
 import math
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -42,9 +72,15 @@ from redsim.ml.artifacts import ArtifactSink
 from redsim.ml.errors import ExplainerUnavailable, ExplainUnavailable
 from redsim.ml.explain.base import (
     FEATURE_DIFF_NAME,
+    KERNEL_BACKGROUND_ROWS,
     LEGACY_ARTIFACT_NAMES,
     SHAP_LIMITATION,
     ExplainOutput,
+    ExplainQueryCaps,
+    QueryCounter,
+    estimate_kernel_explain_rows,
+    explain_caps_for,
+    explainer_kind,
     force_plot_name,
 )
 from redsim.ml.explain.stability import aggregate, expl_shift, is_defined
@@ -60,6 +96,17 @@ TOP_K = 5
 TABULAR_METRIC_NOTE = ("tabular target: no centre-mass analogue (ratios are None). The per-sample evidence is the "
                        "ranking of feature identifiers by |SHAP| for the clean-predicted class, clean vs adversarial "
                        "(top_features_clean / top_features_adv), and the per-sample expl_shift.")
+#: The tabular explainer choices (spec 13.2 rows Tabular tree / non-tree / Black-box any).
+EXPLAINER_CHOICES: tuple[str, ...] = ("auto", "TreeExplainer", "KernelExplainer")
+#: Image explainer names (``shap_image.EXPLAINER_CHOICES``); refused here with a pointer, never silently mapped.
+IMAGE_ONLY_EXPLAINERS: tuple[str, ...] = ("GradientExplainer", "DeepExplainer", "PartitionExplainer")
+#: Spec 13.8: the explainer family travels on the observation itself, beside the ``heuristic`` label.
+TREE_METRIC_NOTE = (" Attributions on this observation come from shap.TreeExplainer (kind: tree, "
+                    "tree_path_dependent, exact and deterministic).")
+KERNEL_METRIC_NOTE = (" Attributions on this observation come from shap.KernelExplainer (kind: kernel), sampled over "
+                      "predict_proba against a seeded background; they are estimates whose nsamples and background "
+                      "size are recorded, not an exact tree traversal.")
+KERNEL_LIMITATION = "KernelExplainer attributions are sampled. The nsamples and background size are recorded."
 _URL_SHAPED = re.compile(r"(?i)(?:[a-z][a-z0-9+.-]*://|^www\.)")
 
 
@@ -105,18 +152,33 @@ def _select_vec(sv: Any, j: int, cls: int, n_classes: int) -> np.ndarray:
 
 def _attributions(shap: Any, model: Any, predict_proba: Callable[[np.ndarray], np.ndarray],
                   background: np.ndarray, batches: list[np.ndarray], nsamples: int,
-                  seed: int) -> tuple[str, list[Any], list[str]]:
+                  seed: int, *, requested: str = "auto") -> tuple[str, list[Any], list[str]]:
+    """Run the chosen explainer and return ``(name, per-batch shap values, attempts that failed)``.
+
+    ``requested`` is ``"auto"`` (TreeExplainer when a model is reachable, else KernelExplainer, with the
+    tree failure recorded), ``"TreeExplainer"`` (no fallback: a missing or unsupported model is a typed
+    refusal) or ``"KernelExplainer"`` (the tree model is never consulted).
+    """
     errors: list[str] = []
-    if model is not None:
-        try:
-            explainer = shap.TreeExplainer(model, feature_perturbation="tree_path_dependent")
-            outs = [explainer.shap_values(xb) for xb in batches]
-            return "TreeExplainer", outs, errors
-        except Exception as exc:  # noqa: BLE001 -- shap raises bare exceptions for unsupported models
-            errors.append(f"TreeExplainer: {type(exc).__name__}: {str(exc)[:160]}")
+    if requested in ("auto", "TreeExplainer"):
+        if model is None:
+            if requested == "TreeExplainer":
+                raise ExplainerUnavailable("TreeExplainer was requested but the target exposes no tree model "
+                                           "(no sklearn_model(), no .model and no ART-wrapped estimator); use "
+                                           "'KernelExplainer' or 'auto' for a predict-only target")
+        else:
+            try:
+                explainer = shap.TreeExplainer(model, feature_perturbation="tree_path_dependent")
+                outs = [explainer.shap_values(xb) for xb in batches]
+                return "TreeExplainer", outs, errors
+            except Exception as exc:  # noqa: BLE001 -- shap raises bare exceptions for unsupported models
+                errors.append(f"TreeExplainer: {type(exc).__name__}: {str(exc)[:160]}")
+                if requested == "TreeExplainer":
+                    raise ExplainerUnavailable("TreeExplainer was requested but shap could not build it on this "
+                                               "model (no fallback on an explicit choice): " + errors[-1]) from exc
     try:
         state = np.random.get_state()
-        np.random.seed(seed)
+        np.random.seed(seed)   # shap's KernelExplainer samples coalitions through the global np.random state
         try:
             explainer = shap.KernelExplainer(predict_proba, background)
             outs = [explainer.shap_values(xb, nsamples=nsamples, silent=True) for xb in batches]
@@ -126,6 +188,31 @@ def _attributions(shap: Any, model: Any, predict_proba: Callable[[np.ndarray], n
     except Exception as exc:  # noqa: BLE001
         errors.append(f"KernelExplainer: {type(exc).__name__}: {str(exc)[:160]}")
     raise ExplainerUnavailable("SHAP could not explain this tabular model: " + " | ".join(errors))
+
+
+def _resolve_caps(target: Target, query_caps: ExplainQueryCaps | Mapping[str, Any] | None
+                  ) -> tuple[ExplainQueryCaps | None, str]:
+    """The query caps in force and where they came from: the argument, the target's endpoint access, or none."""
+    if query_caps is not None:
+        given = query_caps if isinstance(query_caps, ExplainQueryCaps) else ExplainQueryCaps.from_mapping(query_caps)
+        return given, "argument"
+    detected = explain_caps_for(target)
+    return detected, ("target metadata access=black-box-endpoint" if detected is not None else "none")
+
+
+def _purpose_context(target: Target, purpose: str) -> contextlib.AbstractContextManager[Any]:
+    """``target.purpose(<purpose>)`` when the target offers that hook (an endpoint broker tallies queries by
+    purpose), else a no-op. Anything that is not a context manager is ignored, never an error."""
+    hook = getattr(target, "purpose", None)
+    if callable(hook):
+        try:
+            ctx = hook(purpose)
+        except Exception as exc:  # noqa: BLE001 -- the hook is bookkeeping, never evidence
+            logger.debug("target.purpose(%r) failed: %s", purpose, type(exc).__name__)
+            return contextlib.nullcontext()
+        if hasattr(ctx, "__enter__") and hasattr(ctx, "__exit__"):
+            return ctx  # type: ignore[no-any-return]
+    return contextlib.nullcontext()
 
 
 # --------------------------------------------------------------------------- plots (Figure + Agg, no pyplot state)
@@ -320,9 +407,10 @@ def _feature_diff_context(target: Target, names: list[str], feature_ranges: dict
 
 def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.ndarray,
             proba_adv: np.ndarray, sink: ArtifactSink, *, k: int, seed: int, feature_names: list[str] | None,
-            x_ctrl: np.ndarray | None = None, nsamples: int = 200, background_size: int = 100,
+            x_ctrl: np.ndarray | None = None, nsamples: int = 200, background_size: int = KERNEL_BACKGROUND_ROWS,
             eps: float | None = None, attack_id: str | None = None, feature_ranges: dict[str, Any] | None = None,
-            frozen_features: list[str] | None = None) -> ExplainOutput:
+            frozen_features: list[str] | None = None, explainer: str = "auto",
+            query_caps: ExplainQueryCaps | Mapping[str, Any] | None = None) -> ExplainOutput:
     """Explain the first ``k`` flipped and first ``k`` unflipped rows at the reference budget.
 
     ``feature_names`` are the manifest's feature identifiers. When ``None`` the target manifest's
@@ -331,9 +419,30 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
     per-sample ``feature_diff.json``; ``feature_ranges`` (name -> [min, max]) scale the per-feature delta
     and ``frozen_features`` mark the features the attack held fixed -- both fall back to the manifest
     and are reported as unavailable (``None``) when unknown.
+
+    ``explainer`` is ``"auto"`` (TreeExplainer when a tree model is reachable, else KernelExplainer over
+    ``predict_proba``) or one explicit name from ``EXPLAINER_CHOICES``; an explicit choice never falls back.
+    ``background_size`` is the KernelExplainer background drawn from the slice outside the explained rows
+    (spec 13.2: 100) and ``nsamples`` its coalition budget per explained input; both are ignored on the
+    TreeExplainer path and recorded as such. ``query_caps`` bounds ``k``, ``background_size`` and ``nsamples``
+    for a target whose every model call is a remote request; when ``None`` the caps apply exactly when the
+    target declares black-box endpoint access (``explain.base.explain_caps_for``).
     """
+    if explainer in IMAGE_ONLY_EXPLAINERS:
+        raise ExplainUnavailable(f"{explainer} is an image explainer (redsim.ml.explain.shap_image); the tabular "
+                                 f"explainer accepts one of {EXPLAINER_CHOICES}")
+    if explainer not in EXPLAINER_CHOICES:
+        raise ExplainUnavailable(f"unknown tabular explainer {explainer!r}; choose one of {EXPLAINER_CHOICES}")
     if k <= 0:
         raise ExplainUnavailable("explain_k = 0: no samples were requested for explanation, so S_expl has no input")
+
+    # Query caps (ENDPOINT-14): bound the cost for a black-box endpoint, record the requested and the effective.
+    caps, caps_source = _resolve_caps(target, query_caps)
+    k_requested, nsamples_requested, background_requested = int(k), int(nsamples), int(background_size)
+    if caps is not None:
+        k = min(k, caps.explain_k)
+        nsamples = min(nsamples, caps.nsamples)
+        background_size = min(background_size, caps.background_rows)
 
     import shap  # heavy import stays local
 
@@ -377,13 +486,30 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
             raise ExplainUnavailable(f"control input shape {xc.shape} differs from clean {x.shape}")
         batches.append(xc[explained])
 
-    model = _resolve_model(target)
-    explainer_name, outs, tried = _attributions(shap, model, target.predict_proba, x[bg_idx], batches, nsamples, seed)
+    # An explicit KernelExplainer never consults the model; "auto" and "TreeExplainer" look for a tree model.
+    model = None if explainer == "KernelExplainer" else _resolve_model(target)
+    counter = QueryCounter(target.predict_proba, purpose="explain")
+    with _purpose_context(target, "explain"):
+        explainer_name, outs, tried = _attributions(shap, model, counter, x[bg_idx], batches, nsamples, seed,
+                                                    requested=explainer)
     sv_clean, sv_adv = outs[0], outs[1]
     sv_ctrl = outs[2] if xc is not None else None
-    deterministic = explainer_name == "TreeExplainer"
+    kind = explainer_kind(explainer_name)
+    deterministic = kind == "tree"
     effective_nsamples: int | None = None if deterministic else nsamples
     effective_bg = 0 if deterministic else int(bg_idx.size)
+    metric_note = TABULAR_METRIC_NOTE + (TREE_METRIC_NOTE if deterministic else KERNEL_METRIC_NOTE)
+    caps_dict = None if caps is None else caps.as_dict()
+    queries: dict[str, Any] = {
+        **counter.as_dict(),
+        "rows_upper_bound": (0 if deterministic else
+                             estimate_kernel_explain_rows(k=k, background_rows=effective_bg, nsamples=nsamples,
+                                                          with_control=xc is not None)),
+        "purpose_hook": callable(getattr(target, "purpose", None)),
+        "note": ("TreeExplainer reads the tree structure and issues no predict call" if deterministic else
+                 "KernelExplainer rows issued through target.predict_proba, counted on the explainer side; an "
+                 "endpoint broker's own tally is recorded separately and the two are never summed"),
+    }
 
     m = explained.size
     v_clean_all = np.zeros((m, n_features))
@@ -438,12 +564,15 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
         top_json = {
             "observation_id": obs_id, "sample_index": i, "source_index": int(sample.indices[i]),
             "attack_id": attack_id, "eps": None if eps is None else float(eps),
-            "explainer": explainer_name, "shap_version": shap.__version__, "class_explained": name_c,
+            "explainer": explainer_name, "explainer_kind": kind, "explainer_requested": explainer,
+            "shap_version": shap.__version__, "class_explained": name_c,
             "class_explained_index": c, "adv_pred_class": name_a, "flipped": is_flipped,
             "top_features_clean": top_clean, "top_features_adv": top_adv, "top3_changed": top3_changed,
+            "metric_kind": "heuristic",
             "expl_shift": None if not is_defined(shift) else shift,
             "expl_shift_noise": None if not is_defined(noise) else noise,
             "nsamples": effective_nsamples, "background_size": effective_bg, "seed": seed,
+            "query_caps": caps_dict,
             "scaling": {"delta_scaled": "delta / (max - min) of the feature range", "ranges_source": context_sources["ranges"],
                         "frozen_source": context_sources["frozen"]},
             "features": feature_rows,
@@ -475,7 +604,7 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
             center_mass_ratio_clean=None, center_mass_ratio_adv=None,
             expl_shift=top_json["expl_shift"],
             top_features_clean=top_clean, top_features_adv=top_adv,   # feature identifiers only, never row text
-            metric_note=TABULAR_METRIC_NOTE,
+            metric_note=metric_note,   # the explainer family travels on the observation (spec 13.8)
         ))
         per_sample[obs_id] = {
             "flipped": is_flipped, "expl_shift": top_json["expl_shift"], "expl_shift_noise": top_json["expl_shift_noise"],
@@ -516,10 +645,43 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
     wall = time.perf_counter() - t0
     nondeterminism = (["TreeExplainer is deterministic"] if deterministic else
                       [f"SHAP KernelExplainer background sampling (background_size={effective_bg}, nsamples={nsamples})"])
+    cap_limitations: list[str] = []
+    if caps is not None:
+        capped = [f"explain_k {k_requested} -> {k}"] if k_requested > k else []
+        if not deterministic:
+            if background_requested > background_size:
+                capped.append(f"background_size {background_requested} -> {background_size}")
+            if nsamples_requested > nsamples:
+                capped.append(f"nsamples {nsamples_requested} -> {nsamples}")
+        cap_limitations.append(
+            f"Explanation queries were bounded by the black-box endpoint caps (source: {caps_source}; "
+            f"background <= {caps.background_rows} rows, nsamples <= {caps.nsamples}, explain_k <= {caps.explain_k})"
+            + (": " + ", ".join(capped) if capped else "; no requested value exceeded a cap")
+            + ". A 20-row background is a coarse estimate; see the noise floor and the nondeterminism entry.")
+    explainer_provenance: dict[str, Any] = {
+        "explainer": explainer_name, "explainer_kind": kind, "explainer_requested": explainer,
+        "explainers_tried": tried, "shap_version": shap.__version__, "deterministic": deterministic,
+        "nsamples": effective_nsamples, "nsamples_requested": None if deterministic else nsamples_requested,
+        "background_size": effective_bg, "background_size_requested": None if deterministic else background_requested,
+        "background_pool_size": None if deterministic else int(pool.size),
+        "background_indices": [] if deterministic else [int(i) for i in bg_idx],
+        "seed": seed, "explain_k": k, "explain_k_requested": k_requested,
+        "explain_k_cap": None if caps is None else caps.explain_k,
+        "query_caps": caps_dict, "query_caps_source": caps_source, "queries": queries,
+    }
     meta: dict[str, Any] = {
-        "modality": "tabular", "explainer": explainer_name, "explainers_tried": tried, "shap_version": shap.__version__,
+        "modality": "tabular", "explainer": explainer_name, "explainer_kind": kind, "explainer_requested": explainer,
+        "explainers_tried": tried, "shap_version": shap.__version__,
         "deterministic": deterministic, "nsamples": effective_nsamples, "background_size": effective_bg,
-        "seed": seed, "explain_k": k, "explain_k_requested": k, "attack_id": attack_id,
+        "nsamples_requested": explainer_provenance["nsamples_requested"],
+        "background_size_requested": explainer_provenance["background_size_requested"],
+        "background_pool_size": explainer_provenance["background_pool_size"],
+        "background_indices": explainer_provenance["background_indices"],
+        "seed": seed, "explain_k": k, "explain_k_requested": k_requested,
+        "explain_k_cap": explainer_provenance["explain_k_cap"],
+        "query_caps": caps_dict, "query_caps_source": caps_source, "queries": queries,
+        "explainer_provenance": explainer_provenance,
+        "attack_id": attack_id,
         "eps": None if eps is None else float(eps),
         "feature_names": names, "feature_names_source": names_source,
         "feature_ranges_source": context_sources["ranges"], "frozen_features_source": context_sources["frozen"],
@@ -542,8 +704,7 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
             (f"Explanations were computed on {int(m)} of {int(n)} rows (at most 2 x explain_k = {2 * k}) "
              "at the reference budget only."),
             "Tabular perturbations act in feature space. Feature identifiers are the only per-sample evidence recorded.",
-        ] + ([] if deterministic else
-             ["KernelExplainer attributions are sampled. The nsamples and background size are recorded."]),
+        ] + ([] if deterministic else [KERNEL_LIMITATION]) + cap_limitations,
     }
     summary_path = sink.put("shap_summary.json", json.dumps(_jsonable(meta), indent=1).encode(), "application/json")
     campaign_artifacts["shap_summary.json"] = summary_path
