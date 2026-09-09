@@ -1,92 +1,812 @@
-"""Pure report rendering for persisted adversarial-ML campaign records."""
+"""Report rendering for persisted adversarial-ML campaign records (spec 14.8).
+
+``render_campaign_reports`` turns a ``CampaignRecord`` into three inert
+artifacts:
+
+* ``report.md`` — six sections in the fixed order of spec 14.8: configuration
+  and provenance; measurements (the family table with denominators, the
+  reference-budget aggregates, the per-class table, and the MRI scorecard as a
+  derived-summary sub-block carrying the five subscores with denominators, the
+  scoring inputs, the robustness curve, the attack-scoped reading and the
+  standing grade statement, plus the ΔMRI block on verify runs); observations
+  labelled with their heuristic metric kind; interpretation labelled inferred
+  with its basis ids; candidate recommendations with their validation state;
+  and limitations followed by reviewer notes.
+* ``report.json`` — ``CampaignRecord.model_dump(mode="json")``: the RunRecord
+  dump plus its queryable projections, with the ``MRIRecord`` under ``score``.
+* ``report.html`` — built from the Markdown through the escaping helpers in
+  ``redsim.report`` so every user-derived string (class names, model names,
+  dataset names, notes) is escaped exactly once, at the HTML boundary. The
+  Markdown itself carries the raw strings; no user string ever starts a
+  Markdown line, so none can open a heading, table row or code fence.
+
+Nothing is invented: a value that was not measured renders as ``—``, "no
+evidence recorded" or "not computed (denominator 0)"; a rate never appears
+without its fraction; the MRI never renders without its subscores, inputs and
+curve; URL strings are inert text and never become anchors.
+"""
 
 from __future__ import annotations
 
-import html
 import json
+from collections.abc import Iterable, Sequence
+from datetime import UTC, datetime
+from typing import Any
 
-from redsim.ml.schema import CampaignRecord
+from redsim.ml.schema import (
+    GRADE_STATEMENT,
+    AccuracyPoint,
+    CampaignRecord,
+    CandidateRecommendation,
+    Measurement,
+    MRIRecord,
+    RobustnessCurve,
+)
+from redsim.report import _HTML_CSS, _md_to_html_min, html_escape
+
+REPORT_TITLE = "# Redsim adversarial-ML campaign report"
+
+# Spec 14.8: six sections, this order. ``tests/ml/test_report.py`` asserts it.
+SECTION_HEADINGS: tuple[str, ...] = (
+    "## 1. Configuration and provenance",
+    "## 2. Measurements",
+    "## 3. Observations",
+    "## 4. Interpretation",
+    "## 5. Candidate recommendations",
+    "## 6. Limitations",
+)
+SCORECARD_HEADING = "### MRI scorecard (derived summary)"
+DELTA_HEADING = "### ΔMRI (verify run against its baseline)"
+REVIEWER_NOTES_HEADING = "### Reviewer notes"
+
+# Spec 16.4 (3): the only wording for a gain that has not been measured.
+NOT_MEASURED = "Expected gain: not measured — run Verify"
+# Spec 14.2: never ``0%`` and never ``100%`` for a missing or zero denominator.
+NOT_COMPUTED_ZERO = "not computed (denominator 0)"
+NO_EVIDENCE = "no evidence recorded"
+UNAVAILABLE = "—"
+# Spec 14.4: what the reproducibility claim is and is not.
+REPRODUCIBILITY_NOTE = (
+    "Reproducibility: with the same settings hash, model sha256, dataset revision, sample-indices "
+    "sha256, library versions and seed, measurements are expected to match to within float "
+    "tolerance. Bit-for-bit repeatability is not promised; the nondeterminism sources are listed above."
+)
+
+SUBSCORE_KEYS: tuple[str, ...] = ("S_acc", "S_asr", "S_eps", "S_conf", "S_expl")
+_WEIGHT_FIELD: dict[str, str] = {
+    "S_acc": "acc", "S_asr": "asr", "S_eps": "eps", "S_conf": "conf", "S_expl": "expl",
+}
+_EPS_TOLERANCE = 1e-9
 
 
-def _markdown(record: CampaignRecord) -> str:
-    score = record.score
-    lines = [
-        "# Redsim Adversarial-ML Campaign Report",
+# ---------------------------------------------------------------------------
+# Inert text helpers
+# ---------------------------------------------------------------------------
+
+
+def _text(value: Any) -> str:
+    """One-line text: whitespace collapsed so a user string can never start a Markdown line."""
+    return " ".join(str(value).split())
+
+
+def _cell(value: Any) -> str:
+    """Table-cell text: one line, the column separator replaced so the table shape holds."""
+    if value is None:
+        return UNAVAILABLE
+    text = _text(value).replace("|", "¦")
+    return text or UNAVAILABLE
+
+
+def _code(value: Any) -> str:
+    """An inline code span; backticks inside the value are dropped so the span stays closed."""
+    return "`" + (_text(value).replace("`", "") or UNAVAILABLE) + "`"
+
+
+def _fmt(value: float | None, nd: int = 4) -> str:
+    return UNAVAILABLE if value is None else f"{value:.{nd}f}"
+
+
+def _g(value: float | int | None) -> str:
+    return UNAVAILABLE if value is None else f"{value:g}"
+
+
+def _signed(value: float | int | None, nd: int = 1) -> str:
+    if value is None:
+        return UNAVAILABLE
+    if isinstance(value, int):
+        return f"{value:+d}"
+    return f"{value:+.{nd}f}"
+
+
+def _when(value: datetime | None) -> str:
+    return UNAVAILABLE if value is None else value.isoformat()
+
+
+def _json_text(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, default=str)
+
+
+def _fraction(numerator: int | None, denominator: int | None, rate: float | None = None) -> str:
+    """``k/n (rate)`` — a rate never appears without its fraction (spec 14.2)."""
+    if numerator is None or denominator is None:
+        return NO_EVIDENCE
+    if denominator <= 0:
+        return f"{numerator}/{denominator} — {NOT_COMPUTED_ZERO}"
+    value = rate if rate is not None else numerator / denominator
+    return f"{numerator}/{denominator} ({value:.4f})"
+
+
+def _point(point: AccuracyPoint | None) -> str:
+    if point is None:
+        return NO_EVIDENCE
+    return _fraction(point.n_correct, point.n, point.accuracy)
+
+
+def _eps_of(measurement: Measurement) -> float | None:
+    eps = measurement.params.get("eps")
+    if isinstance(eps, bool) or not isinstance(eps, (int, float)):
+        return None
+    return float(eps)
+
+
+def _eps_close(a: float, b: float) -> bool:
+    return abs(a - b) <= _EPS_TOLERANCE
+
+
+def _table(header: Sequence[str], rows: Iterable[Sequence[Any]]) -> list[str]:
+    cells = [_cell(h) for h in header]
+    lines = ["| " + " | ".join(cells) + " |", "|" + "|".join("---" for _ in cells) + "|"]
+    lines.extend("| " + " | ".join(_cell(c) for c in row) + " |" for row in rows)
+    return lines
+
+
+def _quoted(text: str, indent: str = "") -> list[str]:
+    """Multi-line free text as a block quote; every line keeps a non-user prefix."""
+    lines = text.splitlines() or [""]
+    return [f"{indent}> {line.rstrip()}" for line in lines]
+
+
+def _is_verify(record: CampaignRecord) -> bool:
+    return record.kind == "verify" or record.baseline_run_id is not None
+
+
+# ---------------------------------------------------------------------------
+# 1. Configuration and provenance
+# ---------------------------------------------------------------------------
+
+
+def _section_configuration(record: CampaignRecord, generated_at: datetime) -> list[str]:
+    config = record.config
+    lines = [SECTION_HEADINGS[0], ""]
+    status: str = record.status
+    if record.completeness != "complete":
+        status = f"{record.status} (**{record.completeness}**)"
+    lines += [
+        f"- **Run ID:** {_code(record.run_id)}",
+        f"- **Kind:** {record.kind}",
+        f"- **Status:** {status}",
+        f"- **Stage:** {_text(record.stage) if record.stage else UNAVAILABLE}",
+        f"- **Stages done:** {', '.join(_text(s) for s in record.stages_done) or UNAVAILABLE}",
+        f"- **Error:** {_text(record.error) if record.error else 'none'}",
+        f"- **Created:** {_when(record.created_at)}",
+        f"- **Completed:** {_when(record.completed_at)}",
+        f"- **Generated at:** {generated_at.isoformat()}",
+        f"- **Settings hash:** {_code(record.settings_hash) if record.settings_hash else UNAVAILABLE}",
+        (f"- **Baseline run:** {_code(record.baseline_run_id)}" if record.baseline_run_id
+         else "- **Baseline run:** none (not a verify run)"),
+        (f"- **Parent run:** {_code(record.parent_run_id)}" if record.parent_run_id
+         else "- **Parent run:** none (not a rerun)"),
+    ]
+    if record.missing:
+        lines.append("- **Missing:** " + "; ".join(_text(m) for m in record.missing))
+    lines += ["", "**Target**", ""]
+    target = record.target
+    lines += [
+        f"- **Name:** {_text(target.name)}",
+        f"- **Id:** {_code(target.id)}",
+        f"- **Domain:** {target.domain}",
+        f"- **Status:** {target.status}" + (f" — {_text(target.reason)}" if target.reason else ""),
+    ]
+    if target.metadata:
+        lines.append(f"- **Metadata:** {_code(_json_text(target.metadata))}")
+    lines += ["", "**Configuration** (immutable after admission)", ""]
+    by_id = {a.id: a for a in [*config.attacks, *record.attacks]}
+    attack_lines: list[str] = []
+    for attack_id in config.attack_ids:
+        info = by_id.get(attack_id)
+        params = config.attack_params.get(attack_id, {})
+        describe = _code(attack_id)
+        if info is not None:
+            describe += f" — {_text(info.name)} ({info.family}, {info.access}, phase {info.phase})"
+        describe += f"; params {_code(_json_text(params))}" if params else "; params: defaults"
+        attack_lines.append(f"  - {describe}")
+    weights = config.scoring.weights.as_dict()
+    lines += [
+        f"- **Modality:** {config.modality}",
+        "- **Attack set:**",
+        *attack_lines,
+        f"- **Norm:** {config.norm}",
+        f"- **ε grid:** {', '.join(f'{e:g}' for e in config.eps_grid)}",
+        f"- **Reference ε:** {config.reference_eps:g}",
+        f"- **Finding ASR threshold:** {config.finding_asr_threshold:g}",
+        f"- **n_samples:** {config.n_samples}; **seed:** {config.seed}",
+        f"- **Benign-noise control:** {'yes' if config.include_control else 'no'}",
+        f"- **explain_k:** {config.explain_k}",
+        (f"- **Dataset:** {_text(config.dataset_id)} (revision "
+         f"{_text(config.dataset_revision) if config.dataset_revision else 'unrecorded'}, "
+         f"split {_text(config.dataset_split)})"),
+        (f"- **Scoring:** version {_text(config.scoring.version)}; weights "
+         + ", ".join(f"{k} = {v:g}" for k, v in weights.items())
+         + f"; severity thresholds asr_high = {config.scoring.severity.asr_high:g}, "
+           f"asr_mid = {config.scoring.severity.asr_mid:g}; confidence n_high = "
+           f"{config.scoring.confidence.n_high}, n_medium = {config.scoring.confidence.n_medium}"),
+    ]
+    if config.defense is not None:
+        lines.append(
+            "- **Defense (the changed variable of a verify run):** "
+            f"{_code(config.defense.id)} — {_code(config.defense.art_class or 'ART class unrecorded')}, "
+            f"params {_code(_json_text(config.defense.params))}"
+        )
+    else:
+        lines.append("- **Defense:** none")
+    lines += [
+        f"- **LLM narrative:** {'requested' if config.llm_narrative else 'off'}",
+        f"- **Auto-recommend:** {'on' if config.auto_recommend else 'off'}",
         "",
-        f"**Run ID:** {record.run_id}",
-        f"**Status:** {record.status}",
-        f"**Model:** {record.target.name} (`{record.target.id}`)",
-        f"**Dataset:** {record.config.dataset_id} / {record.config.dataset_split}",
-        f"**Settings hash:** `{record.settings_hash}`",
-        "",
-        "## Score",
+        "**Provenance**",
         "",
     ]
-    if score is None or score.mri is None:
-        lines.append("MRI is unavailable because the campaign evidence is partial.")
+    provenance = record.provenance
+    if provenance is None:
+        lines.append("- No provenance was recorded for this run.")
     else:
-        lines.extend([
-            f"- MRI: **{score.mri}**",
-            f"- Grade: **{score.grade}**",
-            f"- Completeness: {score.completeness}",
-        ])
-    lines.extend(["", "## Measurements", ""])
-    if not record.measurements:
-        lines.append("No measurements were recorded.")
-    else:
-        clean = next(
-            (item for item in record.measurements if item.id == "m.clean"),
-            None,
-        )
-        clean_accuracy = clean.accuracy if clean is not None else None
-        lines.extend([
-            (
-                "| Attack | Epsilon | N | Clean correct | Clean accuracy | "
-                "Row accuracy | Flipped | ASR |"
+        versions = {
+            "redsim": provenance.redsim_version, "python": provenance.python, "torch": provenance.torch,
+            "art": provenance.art, "shap": provenance.shap, "numpy": provenance.numpy,
+            "onnxruntime": provenance.onnxruntime, "sklearn": provenance.sklearn,
+            "xgboost": provenance.xgboost,
+        }
+        lines += [
+            "- **Versions:** " + ", ".join(
+                f"{name} {_text(version) if version else 'not used'}" for name, version in versions.items()
             ),
-            "|---|---:|---:|---:|---:|---:|---:|---:|",
+            f"- **Model sha256:** {_code(provenance.model_sha256) if provenance.model_sha256 else UNAVAILABLE}",
+            (f"- **Dataset:** {_text(provenance.dataset) if provenance.dataset else UNAVAILABLE} (revision "
+             f"{_text(provenance.dataset_revision) if provenance.dataset_revision else 'unrecorded'}, split "
+             f"{_text(provenance.dataset_split) if provenance.dataset_split else 'unrecorded'})"),
+            ("- **Sample indices sha256:** "
+             + (_code(provenance.sample_indices_sha256) if provenance.sample_indices_sha256 else UNAVAILABLE)),
+            f"- **Settings hash:** {_code(provenance.settings_hash) if provenance.settings_hash else UNAVAILABLE}",
+            f"- **Baseline run:** {_code(provenance.baseline_run_id) if provenance.baseline_run_id else 'none'}",
+            f"- **Parent run:** {_code(provenance.parent_run_id) if provenance.parent_run_id else 'none'}",
+            ("- **Defense (verify runs):** "
+             + (_code(_json_text(provenance.defense)) if provenance.defense is not None else "none")),
+            ("- **LLM (redacted settings and hashes, never the key):** "
+             + (_code(_json_text(provenance.llm)) if provenance.llm is not None else "no narrative generated")),
+            f"- **Thread environment:** {_code(_json_text(provenance.thread_env)) if provenance.thread_env else UNAVAILABLE}",
+            ("- **Model manifest:** "
+             + (_code(_json_text(provenance.model_manifest)) if provenance.model_manifest else UNAVAILABLE)),
+            f"- **Started:** {_when(provenance.started_at)}; **finished:** {_when(provenance.finished_at)}",
+            f"- **Host:** {_text(provenance.hostname)}; **device:** {_text(provenance.device)}",
+            "",
+            "**Nondeterminism sources**",
+            "",
+        ]
+        if provenance.nondeterminism:
+            lines.extend(f"- {_text(item)}" for item in provenance.nondeterminism)
+        else:
+            lines.append("- none recorded")
+    lines += ["", REPRODUCIBILITY_NOTE]
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# 2. Measurements (with the scorecard sub-block and the ΔMRI block)
+# ---------------------------------------------------------------------------
+
+
+def _asr_text(measurement: Measurement, clean: Measurement | None) -> str:
+    if measurement.family == "clean":
+        return "n/a (baseline row)"
+    if measurement.n_flipped_from_clean is None:
+        return NO_EVIDENCE
+    denominator = measurement.n_clean_correct
+    if denominator is None and clean is not None:
+        denominator = clean.n_correct
+    if denominator is None:
+        return f"{measurement.n_flipped_from_clean} flipped; ASR {NO_EVIDENCE} (denominator unknown)"
+    return _fraction(measurement.n_flipped_from_clean, denominator, measurement.attack_success_rate)
+
+
+def _family_row(measurement: Measurement, clean: Measurement | None) -> list[Any]:
+    clean_correct = measurement.n_clean_correct
+    if clean_correct is None and clean is not None:
+        clean_correct = clean.n_correct
+    return [
+        measurement.attack_id or measurement.family,
+        _g(_eps_of(measurement)),
+        measurement.n,
+        clean_correct,
+        _fraction(measurement.n_correct, measurement.n, measurement.accuracy),
+        _asr_text(measurement, clean),
+        _fmt(measurement.linf_norm_mean),
+        _fmt(measurement.l2_norm_mean),
+        f"{measurement.wall_time_s:g}",
+        measurement.family,
+        measurement.id,
+        _json_text(measurement.params) if measurement.params else UNAVAILABLE,
+        "; ".join(_text(n) for n in measurement.notes) or UNAVAILABLE,
+    ]
+
+
+def _with_n(value: float | None, n: int | None, nd: int = 4) -> str:
+    if value is None:
+        return UNAVAILABLE
+    return f"{value:.{nd}f} (n={n if n is not None else UNAVAILABLE})"
+
+
+def _aggregate_rows(measurements: Sequence[Measurement]) -> list[list[Any]]:
+    rows: list[list[Any]] = []
+    for m in measurements:
+        if all(v is None for v in (m.pert_first_success_mean, m.conf_gap_mean, m.expl_shift_mean,
+                                   m.expl_shift_noise_floor, m.queries_mean)):
+            continue
+        shift = _with_n(m.expl_shift_mean, m.expl_shift_n)
+        if m.expl_shift_mean is not None and m.expl_shift_n_excluded:
+            shift += f", {m.expl_shift_n_excluded} excluded"
+        rows.append([
+            m.id,
+            _with_n(m.pert_first_success_mean, m.pert_first_success_n),
+            _with_n(m.conf_gap_mean, m.conf_gap_n),
+            shift,
+            _with_n(m.expl_shift_noise_floor, m.expl_shift_noise_floor_n),
+            _g(m.queries_mean),
         ])
-        for item in record.measurements:
-            eps = item.params.get("eps")
-            eps_text = f"{float(eps):g}" if isinstance(eps, (int, float)) else "—"
-            attack = item.attack_id or item.family
-            clean_text = (
-                f"{clean_accuracy:.4f}" if clean_accuracy is not None else "—"
+    return rows
+
+
+def _per_class_block(measurements: Sequence[Measurement]) -> list[str]:
+    lines = ["**Per-class counts** (correct / n per class; wide uncertainty on a small slice)", ""]
+    with_classes = [m for m in measurements if m.per_class]
+    if not with_classes:
+        lines.append("No per-class counts were recorded.")
+        return lines
+    classes: list[str] = []
+    for m in with_classes:
+        for name in m.per_class:
+            if name not in classes:
+                classes.append(name)
+    rows = []
+    for m in with_classes:
+        row: list[Any] = [m.id]
+        for name in classes:
+            counts = m.per_class.get(name)
+            row.append(NO_EVIDENCE if counts is None
+                       else _fraction(counts.get("n_correct"), counts.get("n")))
+        rows.append(row)
+    lines.extend(_table(["Measurement", *classes], rows))
+    return lines
+
+
+def _curve_block(curves: Sequence[RobustnessCurve]) -> list[str]:
+    lines = ["**Robustness curve** (evasion and benign-noise control per attack; every point with its denominator)",
+             ""]
+    if not curves:
+        lines.append(f"No robustness curve was recorded ({NO_EVIDENCE}).")
+        return lines
+    for curve in curves:
+        lines.append(
+            f"Attack {_code(curve.attack_id)} ({curve.norm}); clean accuracy {_point(curve.clean)}; "
+            f"reference ε = {curve.reference_eps:g}."
+        )
+        lines.append("")
+        eps_values: list[float] = []
+        for point in [*curve.points, *curve.control]:
+            if not any(_eps_close(point.eps, e) for e in eps_values):
+                eps_values.append(point.eps)
+        rows: list[list[Any]] = []
+        for eps in sorted(eps_values):
+            evasion = next((p for p in curve.points if _eps_close(p.eps, eps)), None)
+            control = next((p for p in curve.control if _eps_close(p.eps, eps)), None)
+            evasion_text = _fraction(evasion.n_correct, evasion.n, evasion.accuracy) if evasion else NO_EVIDENCE
+            asr_text = (
+                _fraction(evasion.n_flipped_from_clean, evasion.n_clean_correct, evasion.asr)
+                if evasion is not None and evasion.n_flipped_from_clean is not None else NO_EVIDENCE
             )
-            flipped = (
-                str(item.n_flipped_from_clean)
-                if item.n_flipped_from_clean is not None else "—"
-            )
-            asr = (
-                f"{item.attack_success_rate:.4f}"
-                if item.attack_success_rate is not None else "—"
-            )
-            lines.append(
-                f"| {html.escape(attack)} | {eps_text} | {item.n} | "
-                f"{item.n_clean_correct if item.n_clean_correct is not None else '—'} | "
-                f"{clean_text} | {item.accuracy:.4f} | {flipped} | {asr} |"
-            )
-    lines.extend(["", "## Recommendations", ""])
-    if not record.recommendations:
-        lines.append("No recommendations were produced.")
+            control_text = _fraction(control.n_correct, control.n, control.accuracy) if control else NO_EVIDENCE
+            marker = " (reference)" if _eps_close(eps, curve.reference_eps) else ""
+            rows.append([f"{eps:g}{marker}", evasion_text, asr_text, control_text])
+        lines.extend(_table(
+            ["ε", "Evasion correct / n (accuracy)", "Flipped / clean correct (ASR)", "Control correct / n (accuracy)"],
+            rows,
+        ))
+        lines.append("")
+    return lines
+
+
+def _subscore_rows(score: MRIRecord) -> list[list[Any]]:
+    weights = score.weights.as_dict()
+    attack_ids = [*score.attack_ids, *(a for a in score.per_attack if a not in score.attack_ids)]
+    rows: list[list[Any]] = []
+    for key in SUBSCORE_KEYS:
+        value = getattr(score.subscores, key)
+        row: list[Any] = [key, f"{weights[_WEIGHT_FIELD[key]]:g}",
+                          "unavailable" if value is None else f"{float(value):.1f}"]
+        for attack_id in attack_ids:
+            per_attack = score.per_attack.get(attack_id)
+            if per_attack is None:
+                row.append(NO_EVIDENCE)
+                continue
+            scored = getattr(per_attack, key)
+            if scored.value is None:
+                row.append(f"unavailable ({_text(scored.reason) if scored.reason else 'no reason recorded'})")
+            else:
+                row.append(f"{float(scored.value):.1f} (n={scored.n if scored.n is not None else UNAVAILABLE})")
+        rows.append(row)
+    return rows
+
+
+def _scorecard(record: CampaignRecord) -> list[str]:
+    lines = [SCORECARD_HEADING, ""]
+    score = record.score
+    config = record.config
+    if score is None:
+        status = record.score_status
+        state = status.state if status is not None else "unavailable"
+        reason = _text(status.reason) if status is not None and status.reason else "no reason recorded"
+        lines += [
+            f"**MRI not computed** — score {state}: {reason}.",
+            "",
+            "The MRI is never shown without its five subscores, their denominators and the ε curve; "
+            "no score record exists for this run, so no number, grade or subscore is reported.",
+            "",
+            *_curve_block(record.curve),
+            "",
+            "Reading: none (no grade was assigned).",
+            "",
+            GRADE_STATEMENT,
+        ]
     else:
-        for recommendation in record.recommendations:
-            lines.append(
-                f"- **{html.escape(recommendation.title)}** — "
-                f"{html.escape(recommendation.rationale)}"
-            )
-    lines.extend(["", "## Limitations", ""])
-    lines.extend(
-        f"- {html.escape(item)}" for item in record.limitations
+        lines.append(
+            f"Scoring {_text(score.scoring_version)}; settings hash {_code(score.settings_hash)}; attacks "
+            f"{', '.join(_code(a) for a in score.attack_ids)}; norm {score.norm}; ε grid "
+            f"{', '.join(f'{e:g}' for e in score.eps_grid)}; reference ε {score.reference_eps:g}; finding ASR "
+            f"threshold {score.finding_asr_threshold:g}; computed at {_when(score.computed_at)}; "
+            f"completeness **{score.completeness}**."
+        )
+        lines.append("")
+        if score.mri is not None:
+            lines.append(f"**MRI {score.mri} — grade {score.grade}**")
+        else:
+            missing = "; ".join(_text(m) for m in score.missing) or "not stated"
+            lines.append(f"**MRI not computed** (partial score record). Missing: {missing}.")
+        lines += ["", "**Subscores** (0–100; weights as configured, never renormalised; per-attack value with its n)",
+                  ""]
+        attack_ids = [*score.attack_ids, *(a for a in score.per_attack if a not in score.attack_ids)]
+        lines.extend(_table(["Subscore", "Weight", "Value", *[f"{a} (value, n)" for a in attack_ids]],
+                            _subscore_rows(score)))
+        lines += ["", "**Scoring inputs** (one row per attack and ε, with denominators)", ""]
+        if score.inputs:
+            lines.extend(_table(
+                ["Attack", "ε", "acc_clean", "acc_adv", "ASR", "pert", "conf_gap", "expl_shift", "queries",
+                 "n", "n_correct_clean", "n_attacked", "n_explained"],
+                [[row.attack_id, _g(row.eps), _fmt(row.acc_clean), _fmt(row.acc_adv), _fmt(row.asr),
+                  _fmt(row.pert), _fmt(row.conf_gap), _fmt(row.expl_shift), _g(row.queries), row.n,
+                  row.n_correct_clean, row.n_attacked, row.n_explained] for row in score.inputs],
+            ))
+        else:
+            lines.append(f"No scoring inputs were recorded ({NO_EVIDENCE}).")
+        lines += ["", *_curve_block(record.curve), ""]
+        if score.reading:
+            lines.append(f"Reading (attack-scoped): {_text(score.reading)}")
+        else:
+            lines.append("Reading: none (no grade was assigned).")
+        lines += ["", GRADE_STATEMENT]
+    lines += [
+        "",
+        f"Scoring scope: up to {config.explain_k} flipped and {config.explain_k} unflipped samples explained; "
+        f"explanations computed at ε = {config.reference_eps:g} only; slice n = {config.n_samples}. "
+        "The full limitations are in section 6.",
+    ]
+    return lines
+
+
+def _delta_block(record: CampaignRecord) -> list[str]:
+    lines = [DELTA_HEADING, ""]
+    defense = record.config.defense
+    provenance_defense = record.provenance.defense if record.provenance is not None else None
+    if defense is not None:
+        lines.append(
+            f"Changed variable: defense {_code(defense.id)} ({_code(defense.art_class or 'ART class unrecorded')}), "
+            f"params {_code(_json_text(defense.params))}. The model, dataset revision, sample indices, attack set, "
+            "ε grid and scoring settings are those of the baseline run."
+        )
+    elif provenance_defense is not None:
+        lines.append(f"Changed variable: defense {_code(_json_text(provenance_defense))} (from provenance).")
+    else:
+        lines.append("Changed variable: no defense is recorded on this verify run.")
+    lines.append("")
+    score = record.score
+    delta = score.delta if score is not None else None
+    if score is None or delta is None:
+        reasons = [_text(lim) for lim in record.limitations if "MRI delta not computed" in lim]
+        lines.append("**ΔMRI not computed.** " + (" ".join(reasons) if reasons
+                                                  else "No delta was measured; see the limitations in section 6."))
+        return lines
+    lines += [
+        f"Baseline run {_code(delta.baseline_run_id)} → verify run {_code(record.run_id)}; settings hash "
+        f"{_code(score.settings_hash)} (a delta is only computed when both runs carry this same hash).",
+        "",
+        f"**ΔMRI {_signed(delta.delta)}** (MRI {delta.mri_before} → {delta.mri_after}).",
+        "",
+        f"Clean accuracy: {_point(delta.delta_acc_clean.before)} → {_point(delta.delta_acc_clean.after)} "
+        f"(Δ {_signed(delta.delta_acc_clean.delta, 4)}).",
+        "",
+        *_table(["Subscore", "Δ (points)"],
+                [[key, _signed(getattr(delta.delta_subscores, key))] for key in SUBSCORE_KEYS]),
+        "",
+    ]
+    if delta.delta_families:
+        lines.extend(_table(
+            ["Measurement", "Before (correct / n)", "After (correct / n)", "Δ accuracy"],
+            [[f.measurement_id, _point(f.before), _point(f.after), _signed(f.delta, 4)]
+             for f in delta.delta_families],
+        ))
+    else:
+        lines.append("No per-family deltas were recorded.")
+    return lines
+
+
+def _section_measurements(record: CampaignRecord) -> list[str]:
+    config = record.config
+    provenance = record.provenance
+    indices = provenance.sample_indices_sha256 if provenance is not None else None
+    lines = [SECTION_HEADINGS[1], ""]
+    lines.append(
+        f"Slice: dataset {_text(config.dataset_id)} (revision "
+        f"{_text(config.dataset_revision) if config.dataset_revision else 'unrecorded'}, split "
+        f"{_text(config.dataset_split)}); n_samples = {config.n_samples}, seed = {config.seed}; sample selection: "
+        f"the target's seeded sample of the split, indices sha256 "
+        f"{_code(indices) if indices else 'unrecorded'}. Every row of this run is computed on the same indices."
     )
-    return "\n".join(lines) + "\n"
+    completeness = (
+        "Completeness: complete." if record.completeness == "complete"
+        else "Completeness: **partial** — " + ("; ".join(_text(m) for m in record.missing) or "reason not stated")
+        + "."
+    )
+    lines += [completeness, "", "**Results by test family** (every rate with its fraction)", ""]
+    if not record.measurements:
+        lines.append(f"No measurements were recorded ({NO_EVIDENCE}).")
+    else:
+        clean = next((m for m in record.measurements if m.family == "clean"), None)
+        lines.extend(_table(
+            ["Attack", "Epsilon", "N", "Clean correct", "Correct / N (accuracy)",
+             "Flipped / clean correct (ASR)", "Mean L∞", "Mean L2", "Wall time (s)", "Family", "Id", "Params",
+             "Notes"],
+            [_family_row(m, clean) for m in record.measurements],
+        ))
+        lines.append("")
+        lines += ["**Reference-budget aggregates** (each mean with its denominator)", ""]
+        aggregate_rows = _aggregate_rows(record.measurements)
+        if aggregate_rows:
+            lines.extend(_table(
+                ["Measurement", "Perturbation at first success (mean, n)", "Confidence gap (mean, n)",
+                 "Explanation shift (mean, n)", "Explanation noise floor (mean, n)", "Queries (mean)"],
+                aggregate_rows,
+            ))
+        else:
+            lines.append(f"No reference-budget aggregates were recorded ({NO_EVIDENCE}).")
+        lines.append("")
+        lines.extend(_per_class_block(record.measurements))
+    lines += ["", *_scorecard(record)]
+    if _is_verify(record):
+        lines += ["", *_delta_block(record)]
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# 3. Observations
+# ---------------------------------------------------------------------------
+
+
+def _section_observations(record: CampaignRecord) -> list[str]:
+    lines = [SECTION_HEADINGS[2], ""]
+    observations = record.observations
+    if not observations:
+        lines.append(f"No observations were recorded ({NO_EVIDENCE}).")
+        return lines
+    flipped = sum(1 for o in observations if o.flipped)
+    first = observations[0]
+    lines += [
+        f"{len(observations)} explained samples ({flipped} flipped, {len(observations) - flipped} not flipped) "
+        f"out of n = {record.config.n_samples}. Metric kind: **{first.metric_kind}** — {_text(first.metric_note)}",
+        "",
+    ]
+    rows: list[list[Any]] = []
+    for o in observations:
+        centre_mass = UNAVAILABLE
+        if o.center_mass_ratio_clean is not None or o.center_mass_ratio_adv is not None:
+            centre_mass = f"{_fmt(o.center_mass_ratio_clean, 3)} → {_fmt(o.center_mass_ratio_adv, 3)} [{o.metric_kind}]"
+        features = UNAVAILABLE
+        if o.top_features_clean or o.top_features_adv:
+            features = (", ".join(_text(f) for f in o.top_features_clean[:5]) or UNAVAILABLE) + " → " + (
+                ", ".join(_text(f) for f in o.top_features_adv[:5]) or UNAVAILABLE)
+        rows.append([
+            o.id, o.sample_index, o.true_label,
+            f"{_text(o.pred_clean)} ({o.confidence_clean:.2f})",
+            f"{_text(o.pred_adv)} ({o.confidence_adv:.2f})",
+            "yes" if o.flipped else "no",
+            centre_mass, _fmt(o.expl_shift, 3), features,
+        ])
+    lines.extend(_table(
+        ["Id", "Sample", "True label", "Clean prediction (confidence)", "Adversarial prediction (confidence)",
+         "Flipped", "Centre-mass ratio clean → adv (heuristic)", "Explanation shift", "Top features clean → adv"],
+        rows,
+    ))
+    lines += ["", "**Artifacts** (ids and sha256 digests as recorded)", ""]
+    artifact_rows: list[list[Any]] = []
+    for o in observations:
+        for name, artifact_id in o.artifacts.items():
+            artifact_rows.append([o.id, name, artifact_id, o.artifact_sha256.get(name) or "unrecorded"])
+    if artifact_rows:
+        lines.extend(_table(["Observation", "Artifact", "Id", "sha256"], artifact_rows))
+    else:
+        lines.append("No artifacts were recorded for the observations.")
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# 4. Interpretation
+# ---------------------------------------------------------------------------
+
+
+def _section_interpretation(record: CampaignRecord) -> list[str]:
+    lines = [SECTION_HEADINGS[3], ""]
+    thresholds = record.config.scoring.interpretation.model_dump()
+    lines += [
+        "Thresholds used (config.scoring.interpretation): "
+        + ", ".join(f"{k} = {v:g}" for k, v in thresholds.items()) + ".",
+        "",
+    ]
+    if not record.interpretation:
+        lines.append("No interpretation statements were produced.")
+        return lines
+    lines.extend(
+        f"- **{_text(item.id)}** [{item.kind}] {_text(item.statement)} — basis: "
+        + ", ".join(_code(b) for b in item.basis)
+        for item in record.interpretation
+    )
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# 5. Candidate recommendations
+# ---------------------------------------------------------------------------
+
+
+def _measured_sentence(recommendation: CandidateRecommendation, record: CampaignRecord) -> list[str]:
+    """Spec 16.4 (5): the measured figure always reads as a delta at settings, never a bare number."""
+    measured = recommendation.measured
+    assert measured is not None  # the schema validator pairs ``validation == "measured"`` with a block
+    score = record.score
+    delta = score.delta if score is not None else None
+    if (
+        delta is not None
+        and record.run_id == measured.verify_run_id
+        and delta.baseline_run_id == measured.baseline_run_id
+        and delta.delta == measured.delta_mri
+    ):
+        before_after = f"MRI {delta.mri_before} → {delta.mri_after}"
+    else:
+        before_after = f"MRI before/after are recorded on verify run {_text(measured.verify_run_id)}"
+    defense = (
+        f"{_text(measured.defense.art_class or measured.defense.id)}({_json_text(measured.defense.params)})"
+    )
+    clean = f"{_point(measured.delta_acc_clean.before)} → {_point(measured.delta_acc_clean.after)}"
+    sentence = (
+        f"Measured ΔMRI {_signed(measured.delta_mri)} ({before_after}; clean accuracy {clean}; verify run "
+        f"{_text(measured.verify_run_id)}, settings {_text(measured.settings_hash)[:12]}, defense {defense})"
+    )
+    settings = (
+        f"Settings: baseline run {_code(measured.baseline_run_id)} and verify run {_code(measured.verify_run_id)} "
+        f"share settings hash {_code(measured.settings_hash)} (before = after); measured at "
+        f"{_when(measured.measured_at)}."
+    )
+    dimensions = ", ".join(
+        f"{key} {_signed(getattr(measured.delta_subscores, key))}" for key in SUBSCORE_KEYS
+    )
+    return [f"  - {sentence}", f"  - {settings}", f"  - Per-dimension Δ: {dimensions}"]
+
+
+def _section_recommendations(record: CampaignRecord) -> list[str]:
+    lines = [SECTION_HEADINGS[4], ""]
+    if not record.recommendations:
+        lines.append("No candidate recommendations were produced.")
+        return lines
+    for rec in record.recommendations:
+        lines += [
+            f"- **{_text(rec.id)}** [{rec.status}] {_text(rec.title)}",
+            f"  - Rationale: {_text(rec.rationale)}",
+            "  - Triggered by: " + ", ".join(_code(t) for t in rec.triggered_by),
+            f"  - Validation: {rec.validation}",
+        ]
+        if rec.measured is None:
+            lines.append(f"  - {NOT_MEASURED}")
+        else:
+            lines.extend(_measured_sentence(rec, record))
+        references = ", ".join(_code(r) for r in rec.references) or "none"
+        lines.append(f"  - References (inert text, not links): {references}")
+        if rec.narrative:
+            lines.append(f"  - Narrative (source: {rec.narrative_source}):")
+            lines.extend(_quoted(rec.narrative, indent="  "))
+        else:
+            lines.append(f"  - Narrative: none (narrative_source: {rec.narrative_source})")
+        lines.append("")
+    while lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# 6. Limitations and reviewer notes
+# ---------------------------------------------------------------------------
+
+
+def _section_limitations(record: CampaignRecord) -> list[str]:
+    lines = [SECTION_HEADINGS[5], ""]
+    if record.limitations:
+        lines.extend(f"- {_text(item)}" for item in record.limitations)
+    else:
+        lines.append(f"No limitations were recorded (run status: {record.status}).")
+    if record.reviewer_notes:
+        lines += ["", REVIEWER_NOTES_HEADING, "", *_quoted(record.reviewer_notes)]
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Renderers
+# ---------------------------------------------------------------------------
+
+
+def render_markdown(record: CampaignRecord, *, generated_at: datetime | None = None) -> str:
+    """The Markdown report: spec 14.8's six sections in order, user strings unescaped."""
+    stamp = generated_at if generated_at is not None else datetime.now(UTC)
+    parts: list[str] = [REPORT_TITLE, ""]
+    for section in (
+        _section_configuration(record, stamp),
+        _section_measurements(record),
+        _section_observations(record),
+        _section_interpretation(record),
+        _section_recommendations(record),
+        _section_limitations(record),
+    ):
+        parts.extend(section)
+        parts.append("")
+    return "\n".join(parts).rstrip("\n") + "\n"
+
+
+def render_html(markdown: str, record: CampaignRecord) -> str:
+    """HTML built from the Markdown through ``redsim.report``'s escaping helpers; no anchors."""
+    body = _md_to_html_min(markdown)
+    title = html_escape(f"Redsim ML campaign report — {record.run_id}")
+    return (
+        "<!doctype html><html><head><meta charset=\"utf-8\">"
+        f"<title>{title}</title><style>{_HTML_CSS}</style></head><body>{body}</body></html>"
+    )
 
 
 def render_campaign_reports(
     record: CampaignRecord,
+    *,
+    generated_at: datetime | None = None,
 ) -> list[tuple[str, bytes, str]]:
-    """Return Markdown, canonical JSON, and inert HTML report artifacts."""
-    markdown = _markdown(record)
+    """Return Markdown, canonical JSON, and escaped HTML report artifacts.
+
+    ``report.json`` is exactly ``record.model_dump(mode="json")`` — the RunRecord dump with the
+    campaign projections and the ``MRIRecord`` under ``score`` — so it round-trips to the record
+    and carries everything needed to rerun (spec 14.4).
+    """
+    markdown = render_markdown(record, generated_at=generated_at)
     json_bytes = (
         json.dumps(
             record.model_dump(mode="json"),
@@ -96,16 +816,20 @@ def render_campaign_reports(
         )
         + "\n"
     ).encode()
-    document = (
-        "<!doctype html><html><head><meta charset=\"utf-8\">"
-        "<title>Redsim ML campaign report</title></head><body><pre>"
-        f"{html.escape(markdown)}</pre></body></html>"
-    ).encode()
     return [
         ("report.md", markdown.encode(), "text/markdown"),
         ("report.json", json_bytes, "application/json"),
-        ("report.html", document, "text/html"),
+        ("report.html", render_html(markdown, record).encode(), "text/html"),
     ]
 
 
-__all__ = ["render_campaign_reports"]
+__all__ = [
+    "DELTA_HEADING",
+    "NOT_MEASURED",
+    "REVIEWER_NOTES_HEADING",
+    "SCORECARD_HEADING",
+    "SECTION_HEADINGS",
+    "render_campaign_reports",
+    "render_html",
+    "render_markdown",
+]
