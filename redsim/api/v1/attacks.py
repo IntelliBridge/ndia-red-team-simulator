@@ -1,25 +1,31 @@
-"""Attack catalog and campaign admission endpoint."""
+"""Attack catalog and campaign admission endpoint.
+
+``POST /v1/models/{id}/attacks`` is the spec 17.2 campaign launcher. The route
+only locates the model, runs the membership and ``ATTACK_RUN`` gates and hands
+the body to :func:`redsim.services.ml_campaigns.create_attack_campaign`; every
+refusal the service raises is a typed :class:`redsim.api.errors.ApiError` whose
+section 17.3 code and status become the ``{"detail": {"code", ...}}`` envelope
+here. Nothing is parsed out of exception text. An optional ``parent_run_id`` in
+the body admits a rerun of a failed or cancelled campaign with the parent's
+configuration (spec 10.6, lineage in ``ml_campaigns.parent_run_id``).
+"""
 
 from __future__ import annotations
 
-import inspect
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from redsim.api.auth import CurrentUser, get_current_user
+from redsim.api.errors import NOT_FOUND, ApiError, api_error
 from redsim.api.policy import Action, check, ensure_project_access
+from redsim.audit.chain import resolve_writer
+from redsim.config import load_config
+from redsim.safety import AuthorizationError
 
 router = APIRouter(tags=["ml-attacks"])
 
-
-def _error(code: str, message: str, *, phase: str | None = None, reason: str | None = None) -> dict[str, str]:
-    detail = {"code": code, "message": message}
-    if phase:
-        detail["phase"] = phase
-    if reason:
-        detail["reason"] = reason
-    return detail
+_ML_KINDS = frozenset({"ml_model_artifact", "ml_model_endpoint"})
 
 
 def _catalog_unavailable(exc: ImportError) -> HTTPException:
@@ -28,8 +34,11 @@ def _catalog_unavailable(exc: ImportError) -> HTTPException:
     Say so with a 503 and the ImportError text; an empty ``200`` would present a
     deployment that can neither list nor launch anything as a healthy one.
     """
-    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_error(
-        "ml_catalog_unavailable", "attack catalog is unavailable in this API process", reason=str(exc)))
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={
+        "code": "ml_catalog_unavailable",
+        "message": "attack catalog is unavailable in this API process",
+        "reason": str(exc),
+    })
 
 
 @router.get("/attacks")
@@ -54,74 +63,42 @@ def start_attack_campaign(
     body: dict[str, Any],
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
+    """Admit a campaign (``202`` JobHandle) or refuse it with a spec 17.3 envelope.
+
+    The admission service owns every deep check (target status, attack registry,
+    grid rules, dataset binding, rerun lineage) and writes the ``attack.run``
+    audit row, ``success=False`` on refusal, before any row or enqueue.
+    """
     from redsim.db.models import Target
     from redsim.db.session import get_session
 
     with get_session() as sess:
         target = sess.get(Target, model_id)
-        if target is None or target.kind not in {"ml_model_artifact", "ml_model_endpoint"}:
-            raise HTTPException(status_code=404, detail=_error("model_not_found", "model not found"))
+        if target is None or target.kind not in _ML_KINDS:
+            raise api_error(NOT_FOUND, "model not found")
         project_id = target.project_id
-        detail = getattr(target, "detail", None) or {}
-        kind = target.kind
     ensure_project_access(user, project_id)
     check(user, Action.ATTACK_RUN, project_id)
-    if kind == "ml_model_endpoint":
-        raise HTTPException(status_code=501, detail=_error(
-            "not_implemented", "black-box endpoint campaigns are not implemented", phase="B"))
-    if detail.get("status") not in {None, "available"}:
-        raise HTTPException(status_code=409, detail=_error(
-            "model_load_refused", f"model is {detail.get('status', 'not available')}"))
 
-    try:
-        from redsim.services.ml_campaigns import create_attack_campaign
-    except ImportError as exc:
-        raise HTTPException(status_code=501, detail=_error(
-            "campaign_not_implemented", "attack campaign admission service is unavailable")) from exc
-
-    # Keep this route compatible with the planned seam while allowing its
-    # admission service to own all deep validation and orchestration.
-    from redsim.audit.chain import resolve_writer
-    from redsim.config import load_config
+    # The service module reaches the attack registry (numpy) and is imported per
+    # request so the API process stays light at start-up.
+    from redsim.services.ml_campaigns import create_attack_campaign
 
     app_config = load_config()
-    campaign = {
-        **body,
-        "target_id": model_id,
-        "modality": body.get("modality") or detail.get("modality")
-        or (detail.get("manifest") or {}).get("modality"),
-        "target_snapshot": {
-            "id": model_id,
-            "kind": kind,
-            "value": str(target.value),
-            "detail": detail,
-        },
-    }
-    available = {
-        "target_id": model_id, "model_id": model_id, "project_id": project_id,
-        "body": campaign, "request": campaign, "campaign": campaign,
-        "campaign_config": campaign,
-        "actor": f"user:{user.sub}", "user": user,
-        "config": app_config, "app_config": app_config,
-        "audit_writer": resolve_writer(app_config),
-    }
-    parameters = inspect.signature(create_attack_campaign).parameters
-    kwargs: dict[str, Any] = {
-        name: available[name] for name in parameters if name in available
-    }
+    parent_run_id = body.get("parent_run_id")
+    campaign = {key: value for key, value in body.items() if key != "parent_run_id"}
+    campaign["target_id"] = model_id
     try:
-        result = create_attack_campaign(**kwargs)
-    except (LookupError, ValueError) as exc:
-        message = str(exc)
-        candidate = message.split(":", 1)[0]
-        code = candidate if candidate.replace("_", "").isalnum() else "campaign_invalid"
-        raise HTTPException(status_code=422, detail=_error(code, message)) from exc
-    if hasattr(result, "to_response"):
-        return result.to_response()
-    if isinstance(result, dict):
-        return result
-    return {
-        "run_id": result.run_id,
-        "job_ids": list(result.job_ids),
-        "status_url": getattr(result, "status_url", f"/v1/runs/{result.run_id}"),
-    }
+        handle = create_attack_campaign(
+            campaign=campaign,
+            project_id=project_id,
+            actor=f"user:{user.sub}",
+            config=app_config,
+            audit_writer=resolve_writer(app_config),
+            parent_run_id=parent_run_id,
+        )
+    except ApiError as exc:
+        raise exc.as_http_exception() from exc
+    except AuthorizationError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    return handle.to_response()

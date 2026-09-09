@@ -8,7 +8,11 @@ class for list membership, which never matched rule output and refused every
 verify-after-harden request with ``recommendation_defense_mismatch``. It now
 resolves the cited defense ids (``rules.defense_configs`` plus the bare-class
 shape) and compares them with the requested ``defense_id``, still refusing a
-defense the recommendation does not name.
+defense the recommendation does not name. Since the wave-2 error-table adoption
+the refusal is a typed ``redsim.api.errors.ApiError`` (``422
+params_out_of_range`` on ``field: "defense"``, spec 17.3) and, like every
+refused admission, it writes one ``success=False`` ``verify.replay`` audit row
+before raising; no ``Run`` / ``Job`` row and no enqueue follow.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ import pytest
 from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table, Text, create_engine
 from sqlalchemy.orm import sessionmaker
 
+from redsim.api.errors import ApiError
 from redsim.config import RedsimConfig
 from redsim.db.models import Artifact, Base, Finding, Job, Organization, Project, Run, Target
 from redsim.ml.recommend.rules import recommend
@@ -123,8 +128,9 @@ class _AuditWriter:
         self.events: list[dict[str, Any]] = []
 
     def append(self, **event: Any) -> None:
-        with self.sessions() as session:
-            assert session.get(Run, event["run_id"]) is None
+        if event.get("run_id") is not None:
+            with self.sessions() as session:
+                assert session.get(Run, event["run_id"]) is None
         self.events.append(event)
 
 
@@ -285,12 +291,20 @@ def test_verify_admission_still_rejects_a_defense_the_recommendation_does_not_na
     sessions = verify_db["sessions"]
     writer = _AuditWriter(sessions)
 
-    with pytest.raises(ValueError, match=r"^recommendation_defense_mismatch: ") as excinfo:
+    with pytest.raises(ApiError) as excinfo:
         _admit(verify_db, writer, recommendation_id, defense_id, {})
 
-    assert recommendation_id in str(excinfo.value) and repr(defense_id) in str(excinfo.value)
-    # The refusal is explicit and precedes the audit event, the Run/Job rows and the enqueue.
-    assert writer.events == []
+    exc = excinfo.value
+    assert exc.code == "params_out_of_range" and exc.status == 422
+    assert exc.detail["field"] == "defense"
+    assert recommendation_id in str(exc) and repr(defense_id) in str(exc)
+    # The refusal is explicit: one success=False verify.replay row (ids only, on the project chain),
+    # then no Run/Job rows and no enqueue.
+    assert [(e["action"], e["success"], e["run_id"]) for e in writer.events] == [("verify.replay", False, None)]
+    refused = writer.events[0]["detail"]
+    assert refused["code"] == "params_out_of_range" and refused["finding_id"] == verify_db["finding_id"]
+    assert refused["recommendation_id"] == recommendation_id and refused["defense_id"] == defense_id
+    assert "campaign_config" not in refused
     with sessions() as session:
         assert session.query(Run).count() == 1          # only the baseline
         assert session.query(Job).count() == 0
@@ -303,10 +317,11 @@ def test_a_matching_defense_is_not_confused_with_a_rejected_one(verify_db: dict[
     """An honest end-to-end pass: the mismatch is refused, then the matching defense is admitted."""
     sessions = verify_db["sessions"]
     writer = _AuditWriter(sessions)
-    with pytest.raises(ValueError, match=r"^recommendation_defense_mismatch: "):
+    with pytest.raises(ApiError) as excinfo:
         _admit(verify_db, writer, "r.R1", "feature_squeezing", {})
-    assert writer.events == []
+    assert excinfo.value.code == "params_out_of_range"
+    assert [(e["action"], e["success"]) for e in writer.events] == [("verify.replay", False)]
     handle = _admit(verify_db, writer, "r.R6", "jpeg_compression", {})
-    assert [e["action"] for e in writer.events] == ["verify.replay"]
+    assert [(e["action"], e["success"]) for e in writer.events] == [("verify.replay", False), ("verify.replay", True)]
     with sessions() as session:
         assert session.get(Run, handle.run_id) is not None
