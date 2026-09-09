@@ -6,6 +6,8 @@ import { RunStatusBadge } from "@redsim/design-system";
 import { api, type Finding, type ModelTarget, type Run } from "@/lib/api";
 import { getEmail, logout } from "@/lib/auth";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
+import { findingLead } from "@/lib/finding-description";
+import { rowLink } from "@/lib/row-link";
 
 // One fetcher per list. Each is optional on the page: a list that fails or is
 // still loading leaves its tiles at "—" and never blocks the others.
@@ -58,14 +60,6 @@ function runsPerDay(runs: readonly Run[], days = 14, now = new Date()): { day: s
     if (buckets.has(day)) buckets.set(day, (buckets.get(day) ?? 0) + 1);
   }
   return [...buckets.entries()].map(([day, count]) => ({ day, count }));
-}
-
-/** The plain-language lead of a description (before the measured block). */
-function findingLead(description: string | undefined): string | null {
-  if (!description) return null;
-  const cut = description.indexOf(" Measured:");
-  const lead = (cut > 0 ? description.slice(0, cut) : description).replace(/^What happened: /, "");
-  return lead.length > 200 ? `${lead.slice(0, 197).trimEnd()}...` : lead;
 }
 
 function StatTile({ label, value, sub, href }: { label: string; value: string; sub?: string; href: string }) {
@@ -235,7 +229,7 @@ export default function DashboardPage() {
         ) : (
           <ul className="divide-y divide-border">
             {severe.map((f) => (
-              <li key={f.id} className="flex flex-col gap-1 py-2 text-sm">
+              <li key={f.id} {...rowLink(`/findings/${f.id}`)} className={`flex flex-col gap-1 rounded-sm px-1 py-2 text-sm ${rowLink("").className}`}>
                 <div className="flex items-center gap-2">
                   <span className={`rounded-sm border px-1.5 py-0.5 font-mono text-[10px] uppercase ${SEVERITY_CHIP[f.severity] ?? ""}`}>
                     {f.severity}

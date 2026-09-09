@@ -23,6 +23,8 @@ import {
   TableRow,
 } from "@redsim/design-system";
 import { api, type Finding } from "@/lib/api";
+import { findingLead } from "@/lib/finding-description";
+import { rowLink } from "@/lib/row-link";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 
 const fetcher = (path: string) =>
@@ -30,16 +32,6 @@ const fetcher = (path: string) =>
 
 const SEVERITIES = ["critical", "high", "medium", "low", "info"] as const;
 
-/**
- * The layman's lead of a finding description: everything before the measured
- * block that starts with "Measured:" (redsim.services.ml_findings writes the
- * lead first), trimmed for the list.
- */
-function plainLanguage(description: string): string {
-  const cut = description.indexOf(" Measured:");
-  const lead = (cut > 0 ? description.slice(0, cut) : description).replace(/^What happened: /, "");
-  return lead.length > 320 ? `${lead.slice(0, 317).trimEnd()}...` : lead;
-}
 
 export default function FindingsPage() {
   const authed = useRequireAuth();
@@ -109,7 +101,7 @@ export default function FindingsPage() {
             </TableHeader>
             <TableBody>
               {findings.map((f: Finding) => (
-                <TableRow key={f.id}>
+                <TableRow key={f.id} {...rowLink(`/findings/${f.id}`)}>
                   <TableCell className="font-mono text-xs">
                     <a
                       className="text-primary underline"
@@ -128,7 +120,7 @@ export default function FindingsPage() {
                         className="mt-1 max-w-xl text-xs text-muted-foreground"
                         title={f.schema_blob.description}
                       >
-                        {plainLanguage(f.schema_blob.description)}
+                        {findingLead(f.schema_blob.description) ?? f.schema_blob.description}
                       </div>
                     )}
                   </TableCell>

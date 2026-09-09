@@ -37,6 +37,7 @@ import {
 import { useCampaign } from "@/hooks/useCampaign";
 import { useLlmScorecard } from "@/hooks/useLlm";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
+import { rowLink } from "@/lib/row-link";
 import { useRoles } from "@/hooks/useRoles";
 import { useRunEvents } from "@/hooks/useRunEvents";
 import { useDefenses } from "@/hooks/useMlCatalog";
@@ -338,7 +339,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
                 </thead>
                 <tbody>
                   {findings.map((finding) => (
-                    <tr key={finding.id} className="border-border border-t">
+                    <tr key={finding.id} {...rowLink(`/findings/${finding.id}`)} className={`border-border border-t ${rowLink("").className}`}>
                       <td>{finding.severity}</td>
                       <td>{finding.status}</td>
                       <td>
@@ -853,7 +854,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             </thead>
             <tbody>
               {campaign.findings?.map((finding) => (
-                <tr key={finding.id} className="border-border border-t">
+                <tr key={finding.id} {...rowLink(`/findings/${finding.id}`)} className={`border-border border-t ${rowLink("").className}`}>
                   <td>{finding.severity}</td>
                   <td>{finding.schema_blob.ml?.attack_id ?? "—"}</td>
                   <td>{finding.schema_blob.ml?.first_success_eps ?? "—"}</td>
