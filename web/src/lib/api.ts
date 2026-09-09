@@ -290,9 +290,26 @@ export type TargetMetadata = {
   manifest?: Record<string, unknown>;
   [key: string]: unknown;
 };
+/** Reading aid on the model card: means over the model's own scorecards (redsim.services.ml_scores). */
+export type ScoreSummary =
+  | {
+      kind: "mri";
+      n_campaigns: number;
+      mri_mean: number | null;
+      subscores_mean: Record<string, number | null>;
+      note: string;
+    }
+  | {
+      kind: "llm";
+      n_runs: number;
+      families: { family: string; n_hits: number; n_evaluated: number; hit_rate: number; n_probes: number }[];
+      note: string;
+    };
+
 export type ModelTarget = {
   id: string;
   project_id: string;
+  score_summary?: ScoreSummary | null;
   name: string;
   source: "bundled" | "upload" | "endpoint";
   modality: "image" | "tabular" | "llm";

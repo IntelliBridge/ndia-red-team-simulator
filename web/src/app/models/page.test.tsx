@@ -111,6 +111,31 @@ describe("/models", () => {
     expect(screen.getByText("0.599 (n=1621, test_coarse)")).toBeTruthy();
     expect(screen.getByText("0.82 (n=50)")).toBeTruthy();
   });
+  it("shows the average score by category when the model has scored campaigns", () => {
+    useModels.mockReturnValue({
+      data: [
+        { id: "m1", project_id: "default", name: "Model", source: "bundled", modality: "image", format: "onnx",
+          sha256: null, manifest: {}, status: "available",
+          score_summary: { kind: "mri", n_campaigns: 2, mri_mean: 55.5,
+            subscores_mean: { S_acc: 60, S_asr: 51, S_eps: null, S_conf: 70, S_expl: null }, note: "n" } },
+        { id: "m2", project_id: "default", name: "Chat", source: "endpoint", modality: "llm", format: "endpoint",
+          sha256: null, manifest: { endpoint_kind: "llm" }, status: "available",
+          score_summary: { kind: "llm", n_runs: 3, note: "n",
+            families: [{ family: "dan", n_hits: 6, n_evaluated: 20, hit_rate: 0.3, n_probes: 2 }] } },
+      ],
+      isLoading: false,
+      mutate: vi.fn(),
+    });
+    render(createElement(ModelsPage));
+    const blocks = screen.getAllByTestId("score-summary");
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]!.textContent).toContain("55.5");
+    expect(blocks[0]!.textContent).toContain("Accuracy under attack");
+    expect(blocks[0]!.textContent).not.toContain("Perturbation budget needed");
+    expect(blocks[1]!.textContent).toContain("dan");
+    expect(blocks[1]!.textContent).toContain("30%");
+  });
+
   it("switches to a list view and remembers the choice", () => {
     render(createElement(ModelsPage));
     expect(screen.queryByRole("table")).toBeNull();
