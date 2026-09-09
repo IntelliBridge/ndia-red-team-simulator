@@ -119,7 +119,7 @@ template); takes the root context.
 {{- $placeholders := list -}}
 {{- if eq (toString $s.s3AccessKeyId) "redsim" -}}{{- $placeholders = append $placeholders "config.secret.s3AccessKeyId" -}}{{- end -}}
 {{- if eq (toString $s.s3SecretAccessKey) "redsim-secret" -}}{{- $placeholders = append $placeholders "config.secret.s3SecretAccessKey" -}}{{- end -}}
-{{- if eq (toString $s.nextAuthSecret) "dev-secret-change-me" -}}{{- $placeholders = append $placeholders "config.secret.nextAuthSecret" -}}{{- end -}}
+{{- if eq (toString $s.betterAuthSecret) "dev-better-auth-secret-change-me-32chars" -}}{{- $placeholders = append $placeholders "config.secret.betterAuthSecret" -}}{{- end -}}
 {{- if $placeholders -}}
 {{- fail (printf "config.env=prod but these secret values are still the shipped DEV placeholders: %s. Refusing to deploy insecure secrets to production. Fix by either (a) overriding them with real values (--set or a sealed values file), (b) setting config.secret.existingSecret to a pre-provisioned Secret, or (c) setting config.secret.externalSecrets.enabled=true to source them from the External Secrets Operator." (join ", " $placeholders)) -}}
 {{- end -}}

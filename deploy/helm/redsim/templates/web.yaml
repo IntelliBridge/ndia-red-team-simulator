@@ -1,6 +1,11 @@
 {{/*
 redsim-web — Next.js 14 UI on :3000. Mirrors the redsim-web service in
-deploy/docker-compose.yml (NEXT_PUBLIC_REDSIM_API_URL / NEXTAUTH_*).
+deploy/docker-compose.yml (NEXT_PUBLIC_REDSIM_API_URL / BETTER_AUTH_* /
+KEYCLOAK_*).
+
+Recreate, not the default RollingUpdate, and one replica: Better Auth is
+stateless on the in-memory adapter, so a second web pod resolves no session
+past the cookie-cache window (KTD12, values.yaml web.replicaCount).
 */}}
 {{- $component := "web" -}}
 apiVersion: apps/v1
@@ -11,6 +16,8 @@ metadata:
     {{- include "redsim.componentLabels" (dict "ctx" . "component" $component) | nindent 4 }}
 spec:
   replicas: {{ .Values.web.replicaCount }}
+  strategy:
+    {{- toYaml .Values.web.strategy | nindent 4 }}
   selector:
     matchLabels:
       {{- include "redsim.componentSelectorLabels" (dict "ctx" . "component" $component) | nindent 6 }}
@@ -40,16 +47,42 @@ spec:
                 configMapKeyRef:
                   name: {{ include "redsim.configMapName" . }}
                   key: NEXT_PUBLIC_REDSIM_API_URL
-            - name: NEXTAUTH_URL
+            - name: BETTER_AUTH_URL
               valueFrom:
                 configMapKeyRef:
                   name: {{ include "redsim.configMapName" . }}
-                  key: NEXTAUTH_URL
-            - name: NEXTAUTH_SECRET
+                  key: BETTER_AUTH_URL
+            - name: BETTER_AUTH_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ include "redsim.secretName" . }}
-                  key: NEXTAUTH_SECRET
+                  key: BETTER_AUTH_SECRET
+            # Without this the web process never sees REDSIM_ENV, isProd is
+            # false on every Helm deploy including config.env=prod, and both
+            # redsim cookies ship without Secure (R19). The ConfigMap already
+            # defines the key for the api and worker pods.
+            - name: REDSIM_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "redsim.configMapName" . }}
+                  key: REDSIM_ENV
+            - name: KEYCLOAK_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "redsim.configMapName" . }}
+                  key: KEYCLOAK_CLIENT_ID
+            # Discovery runs container to container against the in-cluster
+            # realm, reusing the issuer the api already resolves.
+            - name: KEYCLOAK_ISSUER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "redsim.configMapName" . }}
+                  key: REDSIM_OIDC_ISSUER
+            - name: REDSIM_API_SESSION_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "redsim.secretName" . }}
+                  key: REDSIM_API_SESSION_PRIVATE_KEY
           # Next.js serves the app root once the server is listening.
           livenessProbe:
             httpGet:

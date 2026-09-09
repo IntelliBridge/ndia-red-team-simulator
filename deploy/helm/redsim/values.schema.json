@@ -21,7 +21,8 @@
             "existingSecret",
             "s3AccessKeyId",
             "s3SecretAccessKey",
-            "nextAuthSecret",
+            "betterAuthSecret",
+            "apiSessionPrivateKey",
             "externalSecrets"
           ],
           "properties": {
@@ -37,9 +38,14 @@
               "type": "string",
               "minLength": 1
             },
-            "nextAuthSecret": {
+            "betterAuthSecret": {
               "type": "string",
-              "minLength": 1
+              "minLength": 32,
+              "description": "Better Auth signing secret. At least 32 characters; rotating it invalidates every live browser session."
+            },
+            "apiSessionPrivateKey": {
+              "type": "string",
+              "description": "RS256 PKCS8 PEM whose public half FastAPI verifies redsim_api_session against. Operator-supplied; empty disables minting."
             },
             "externalSecrets": {
               "type": "object",
