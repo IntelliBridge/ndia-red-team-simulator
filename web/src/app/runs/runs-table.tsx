@@ -146,10 +146,12 @@ export function RunsTable({ project, limit }: RunsTableProps) {
                 </TableCell>
                 {/* The run row carries a scanner, not a model or an attack list.
                     Until the API grows a per-run campaign summary these read
-                    "not recorded" rather than inventing a value (KTD12). */}
-                <TableCell className="text-muted-foreground">
-                  {run.scanner ?? "not recorded"}
-                </TableCell>
+                    "not recorded" rather than inventing a value (KTD12).
+
+                    Not `run.scanner ?? "not recorded"`. Every campaign row
+                    carries `ml.campaign` or `ml.verify`, so the fallback never
+                    fired and the Model column printed a scanner id instead. */}
+                <TableCell className="text-muted-foreground">not recorded</TableCell>
                 <TableCell className="text-muted-foreground">not recorded</TableCell>
                 <TableCell>
                   <RunStatusBadge status={run.status} />

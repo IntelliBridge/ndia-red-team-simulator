@@ -216,16 +216,24 @@ describe("RunsTable states", () => {
   });
 
   it("renders the spec 18.1 columns, with Model and Attacks not recorded", async () => {
+    // A real campaign row, because redsim/services/ml_campaigns.py always sets
+    // scanner to ml.campaign or ml.verify. A null here would have exercised a
+    // fallback no live row ever reaches, and left the scanner id printing
+    // under a header reading Model.
     const dehydratedState = await dehydratedRunsList({
-      data: { runs: [run({ id: "run-7", scanner: null })], count: 1 },
+      data: { runs: [run({ id: "run-7", scanner: "ml.campaign" })], count: 1 },
     });
     renderWithProviders(<RunsTable />, { dehydratedState });
 
     const headers = screen.getAllByRole("columnheader").map((h) => h.textContent);
     expect(headers).toEqual(["Run", "Model", "Attacks", "Status", "Created"]);
-    // The run row carries no model and no attack list, so both read the same
-    // way rather than one inventing a value (KTD12).
-    expect(screen.getAllByText("not recorded")).toHaveLength(2);
+
+    // Read by column, since Model and Attacks now say the same thing.
+    const cells = screen.getAllByRole("row")[1]?.querySelectorAll("td");
+    expect(cells?.[1]?.textContent).toBe("not recorded");
+    expect(cells?.[2]?.textContent).toBe("not recorded");
+    // The scanner id is not a model, so it reaches no cell.
+    expect(screen.queryByText("ml.campaign")).toBeNull();
   });
 
   it("formats Created in UTC, so the server and client markup agree", async () => {
