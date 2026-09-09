@@ -71,6 +71,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_doctor = sub.add_parser("doctor", help="Validate the Redsim environment")
     p_doctor.add_argument("--api-mode", dest="api_mode", action="store_true",
                           help="Also probe DB, blob backend, OIDC issuer (Phase 3)")
+    p_doctor.add_argument("--worker-mode", dest="worker_mode", action="store_true",
+                          help="Require the adversarial-ML checks (ml extra, sandbox child, "
+                               "asset manifest) instead of reporting them; the worker image "
+                               "runs this. REDSIM_DOCTOR_WORKER_MODE=1 is the env equivalent.")
 
     # init
     sub.add_parser("init", help="Create a default redsim.yaml in the current directory")
