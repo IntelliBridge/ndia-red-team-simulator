@@ -18,7 +18,12 @@ import type { UpstreamErrorData } from "@/lib/trpc/types";
 import { makeQueryClient } from "@/lib/trpc/query-client";
 import { mintHopToken } from "@/server/gate";
 
-import { createContext, requestPartsFromNextHeaders } from "./context";
+import {
+  createContext,
+  requestPartsFromNextHeaders,
+  type CookieReader,
+  type RequestParts,
+} from "./context";
 import { badRequestEnvelope } from "./errors";
 import { appRouter } from "./root";
 
@@ -38,13 +43,19 @@ const memoize: <T>(fn: () => T) => () => T =
 export const getQueryClient = memoize<QueryClient>(() => makeQueryClient());
 
 /**
- * The context a server component calls procedures with.
+ * The one place this module reads Next's request APIs.
  *
- * `cookies()` and `headers()` are synchronous on Next 14.2. `requestParts…` is
- * the seam that changes when they become async.
+ * `cookies()` and `headers()` are synchronous on Next 14.2 and become async in
+ * Next 15. Everything here goes through `requestPartsFromNextHeaders`, so that
+ * function and this one are the whole surface the six-major bump touches.
  */
+function serverRequestParts(): RequestParts {
+  return requestPartsFromNextHeaders(headers(), cookies());
+}
+
+/** The context a server component calls procedures with. */
 export function createServerContext() {
-  return createContext(requestPartsFromNextHeaders(headers(), cookies()));
+  return createContext(serverRequestParts());
 }
 
 /** The options proxy server components prefetch through. */
@@ -92,12 +103,17 @@ export function toBrowserSafeError(error: unknown): { data: UpstreamErrorData } 
   };
 }
 
-/** The credential the prefetch forwarded, so the hop token can bind to it. */
-function rejectedCredential(): string | undefined {
-  const jar = cookies();
-  return (
-    jar.get(env.REDSIM_API_SESSION_COOKIE)?.value ?? jar.get(env.REDSIM_DEV_TOKEN_COOKIE)?.value
-  );
+/**
+ * The credential the prefetch forwarded, so the hop token can bind to it.
+ *
+ * Takes the reader rather than calling `cookies()` itself, so this module has
+ * exactly one site that touches Next's request APIs.
+ *
+ * @param cookie - The request's cookie lookup, from `serverRequestParts`.
+ * @returns The session cookie, else the dev token, else undefined.
+ */
+function rejectedCredential(cookie: CookieReader): string | undefined {
+  return cookie(env.REDSIM_API_SESSION_COOKIE) ?? cookie(env.REDSIM_DEV_TOKEN_COOKIE);
 }
 
 /**
@@ -111,7 +127,7 @@ function rejectedCredential(): string | undefined {
  * the prefetch with an empty cookie jar.
  */
 export async function unauthorizedRedirectTarget(): Promise<string> {
-  const credential = rejectedCredential();
+  const credential = rejectedCredential(serverRequestParts().cookie);
   if (credential === undefined) return "/login";
   const token = await mintHopToken(env.BETTER_AUTH_SECRET ?? "", credential);
   return `/api/auth/signout-redsim?hop=${encodeURIComponent(token)}`;
