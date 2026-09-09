@@ -7,8 +7,9 @@ diagrams under `docs/architecture/diagrams/`. For production deployment, see
 [`docs/ops/deploy.md`](../ops/deploy.md). For the Python-only path (API and
 web without Docker, tests, lint) see the root `Makefile` and
 [`CONTRIBUTING.md`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CONTRIBUTING.md).
-State described here is `main` at `bb43bd7` (2026-09-08). Items from wave 3
-of the completion plan are marked "(wave 3, landing 2026-09-09)".
+State described here is `main` at `58461cc` (2026-09-09, waves 1 to 3 of the
+completion plan merged). The three e2e files of wave 4 are marked "added in
+wave 4".
 
 ## Prerequisites
 
@@ -82,7 +83,7 @@ cd deploy && make seed   # default-org, project `default`, user `admin` with the
 `.[worker,ml]`, so it is the slowest image to build. The API image installs
 `.[api,worker]` only and never carries torch, ART, onnxruntime or SHAP.
 
-Two things the compose file does not do for you at `bb43bd7`:
+Two things the compose file does not do for you at `58461cc`:
 
 - **Assets.** No service mounts `assets/` and none sets
   `REDSIM_ML_ASSETS_DIR`, so a compose worker has no bundled models until you
@@ -162,23 +163,26 @@ Follow-ups on a finding: `POST /v1/findings/{id}/explain`,
 when Pythia is configured on the worker), `POST /v1/findings/{id}/verify`
 (`{"defense": "feature_squeezing"}`), then
 `GET /v1/runs/{verify_run}/compare?with={baseline_run}`. The tabular path is
-the same with `bundled_id: "url_trees"` and `attack_ids: ["hopskipjump"]`
-(`pgd` on `url_trees` by surrogate transfer is admitted from wave 3, landing
-2026-09-09, while at `bb43bd7` admission refuses it with
-`attack_modality_mismatch`). Every route and code is in the
-[API reference](../api/v1.md).
+the same with `bundled_id: "url_trees"` and `attack_ids: ["pgd",
+"hopskipjump"]`: `pgd` runs by surrogate transfer and is admitted since
+`dd2bbd4` (applicability by capability tag) and `58461cc` (the gradients
+check waived for a `surrogate_transfer` adapter on a target with a declared
+surrogate). Every route and code is in the [API reference](../api/v1.md).
 
 A small `n_samples` and `explain_k` keep a laptop run short. On a small
 slice the MRI may legitimately be partial (`score` absent, `score_status`
 present) and a campaign may produce no finding. That is the honest state per
 spec 15.4, not an error.
 
-`redsim ml seed [--project default] [--only <bundled_id>]` registers every
-non-fixture bundled model through the same service from the CLI, and
-`redsim ml attack <target_id> --out <dir>` runs a campaign offline with no
-database, writing `<out>/<run_id>/{run_record.json, report.md, report.json,
-report.html, curve, audit.jsonl}` with `narrative_source=rules` (both wave 3,
-landing 2026-09-09).
+`redsim ml seed [--project default] [--only <bundled_id>]` (`3ab9de7`,
+`98a8733`) registers every non-fixture bundled model through the same service
+from the CLI, audit-first and one commit per model, and `redsim ml attack
+<target_id> --out <dir>` (`3ab9de7`) runs a campaign offline with no database,
+writing `<out>/<run_id>/{run_record.json, report.md, report.json,
+report.html, artifacts/curve/robustness_curve.png, audit.jsonl}` with
+`narrative_source=rules`. `redsim audit verify --run <run_id>` walks that
+chain through the `<output_dir>/<run_id>/audit.jsonl` fallback, or
+`--run-dir <out>/<run_id>` names it (`aa9674e`).
 
 ## Pythia in compose
 
@@ -209,7 +213,7 @@ then `set -a; source .env; set +a`) in the shell that runs them.
 ## Tests, including the e2e tier
 
 ```bash
-.venv/bin/python -m pytest -q                                   # default suite: 1594 passed, 30 skipped at bb43bd7 (about 80 s with the ml extra)
+.venv/bin/python -m pytest -q                                   # default suite: 1663 passed, 30 skipped at 58461cc (with the ml extra)
 .venv/bin/python -m pytest -q -m ml                             # only the tests that need the ml extra
 .venv/bin/ruff check --select E4,E7,E9,F,I redsim tests         # lint, exactly as CI
 .venv/bin/mypy redsim
@@ -225,27 +229,44 @@ every ML test from a developer's `.env`. The route and task tests
 `test_audit_campaign.py`, `test_model_validate.py`, `test_compare.py`,
 `test_cancel_terminal.py`) run on the shared sqlite harness with eager Celery.
 
-The e2e tier (wave 3, landing 2026-09-09) lives under `tests/e2e/`. Its
+The e2e tier (`35e71c7`, `a45a787`) lives under `tests/e2e/`. Its
 `conftest.py` stamps every item there `e2e` and skips it unless `REDSIM_E2E`
 is set, so `pytest -q` never runs it by accident. The harness builds a tiny
-synthetic asset tree with the real builders, runs the FastAPI app over a
-sqlite database in WAL mode with a filesystem blob store and eager Celery,
-launches the real sandbox child by default (`REDSIM_E2E_SANDBOX` selects the
-in-process mode), provides one dev-token client per role, a mocked Pythia
-transport, and runs the real `redsim audit verify --all` as a subprocess.
+synthetic asset tree with the real builders, runs the FastAPI app over one
+autocommit sqlite connection in WAL mode with a filesystem blob store and
+eager Celery, launches the real sandbox child by default
+(`REDSIM_E2E_SANDBOX=inprocess` selects the in-process mode for debugging),
+provides one dev-token client per role, a mocked Pythia transport in the
+worker parent, and runs the real `redsim audit verify --all` as a
+subprocess. Every number it produces is a harness measurement on a test
+double, never a demo result.
 
 ```bash
-REDSIM_E2E=1 .venv/bin/python -m pytest -q -m e2e tests/e2e                       # sqlite lane
-REDSIM_E2E=1 REDSIM_E2E_POSTGRES_URL=postgresql+psycopg://redsim:redsim@localhost:5432/redsim \
+REDSIM_E2E=1 .venv/bin/python -m pytest -q -m e2e tests/e2e                       # sqlite lane (8 passed at 58461cc)
+REDSIM_E2E=1 REDSIM_E2E_POSTGRES_URL=postgresql+psycopg://redsim:redsim@localhost:5432/redsim_e2e \
   .venv/bin/python -m pytest -q -m e2e tests/e2e                                  # adds the RLS lane
+REDSIM_E2E=1 REDSIM_E2E_SANDBOX=inprocess .venv/bin/python -m pytest -q -m e2e tests/e2e   # debugging only
 ```
 
+The files: `tests/e2e/test_harness_smoke.py` (wave 3, 8 cases through the
+real child) and, added in wave 4 as the completion-criteria evidence,
+`tests/e2e/test_ml_campaigns.py` (an image and a tabular campaign to
+`succeeded` with scorecard, findings, limitations and the narrative on and
+off), `tests/e2e/test_ml_verify_upload_reports.py` (verify-after-harden with
+a measured ΔMRI through `compare`, an ONNX upload accepted and a pickle
+refused, the report sections and `report.pdf` as 501) and
+`tests/e2e/test_ml_governance.py` (the RBAC negative matrix, the RLS
+negatives on the Postgres lane, `audit verify --all` clean then broken, no
+Pythia secret in `/v1/ml/capabilities`).
+
 The Postgres lane runs the tenant-isolation cases that sqlite cannot (RLS,
-`FORCE ROW LEVEL SECURITY`, the drift guards). It skips when
+`FORCE ROW LEVEL SECURITY`, the append-only audit trigger). It skips when
 `REDSIM_E2E_POSTGRES_URL` is unset and fails when the database is not
-migrated. The compose Postgres from `make up` works as its target after
-`alembic upgrade head`. The Playwright browser e2e behind `workflow_dispatch`
-in CI is excluded from this completion pass.
+migrated (`REDSIM_DB_URL="$REDSIM_E2E_POSTGRES_URL" alembic upgrade head`
+first). The compose Postgres from `make up` works as its target after that.
+A Postgres superuser bypasses RLS, so the policy is observable only through a
+non-superuser, non-owner role. The Playwright browser e2e behind
+`workflow_dispatch` in CI is excluded from this completion pass.
 
 ## Inspect
 
@@ -291,16 +312,16 @@ production you supply your own (see [`docs/ops/deploy.md`](../ops/deploy.md)).
 
 ## Doctor
 
-`redsim doctor` checks the environment. At `bb43bd7` it still derives a
-provider key requirement from the `model` field of `redsim.yaml`. The wave 3
-rewrite (landing 2026-09-09) drops that, prints an informational Pythia block
-(key redacted to its prefix and length, the routed model, a note when the
-model came from a deprecated alias), checks the `ml` extra, launches the
-sandbox child with `--help` under the real child environment and verifies the
-asset manifest (all three required with `--worker-mode` or
+`redsim doctor` (`7556b22`, `c3868e5`) checks the environment. It prints the
+mode (dev, api or worker), an informational Pythia block (key redacted to its
+prefix and length, the routed model, a note when the model came from a
+deprecated alias, never a failure), checks the `ml` extra with versions,
+launches the sandbox child with `--help` under the real child environment and
+rlimits, verifies the asset manifest under `REDSIM_ML_ASSETS_DIR` or
+`./assets` (all three required with `--worker-mode` or
 `REDSIM_DOCTOR_WORKER_MODE=1`, informational otherwise), and reports whether
 the `ml-campaign` adapter is on the roster. `--api-mode` keeps the Postgres,
-blob and OIDC probes.
+blob and OIDC probes. No provider key is derived from `redsim.yaml` any more.
 
 ## Troubleshooting
 

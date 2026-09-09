@@ -2,9 +2,10 @@
 
 Status: merged. PR #9 `feat/ml-assets` landed on 2026-09-08 as `1725728`,
 extended by wave 1 (`f8693c2`: loaders read the builder manifest, onnx2torch,
-`--fixture`, `resnet18`) and wave 2 (`e49f160`: dataset caveats and
-`subject_centered`). State described here is `main` at `bb43bd7`, and the
-`redsim ml seed` command is wave 3 (landing 2026-09-09).
+`--fixture`, `resnet18`), wave 2 (`e49f160`: dataset caveats and
+`subject_centered`) and wave 3 (`39126ce`: the `resnet18` fine-tune recipe,
+`3ab9de7` and `98a8733`: `redsim ml seed`). State described here is `main`
+at `58461cc`.
 
 Implements `redsim ml build-assets` per spec sections 11 and 20: fetch the
 military-vehicle image dataset (`leibnitz-lab/military_vehicles`) and the
@@ -43,10 +44,12 @@ source digests and row indices, `synthetic: false`).
 
 Local build on 2026-09-09 (gitignored, illustrative figures read from that
 manifest, not results): `url_trees` clean accuracy 0.9087 on `n = 128224`
-with surrogate agreement 0.7891, `vehicles_cnn` as `resnet18` (ImageNet
-initialisation from the local torch hub cache, fine-tune lr 3e-4 cosine, flip
-and crop augmentation, best epoch by a 10 percent validation slice held out of
-the training split) 0.7687 on `n = 1621` (`test_coarse`), where the earlier
+with surrogate agreement 0.7891, `vehicles_cnn` as `resnet18` (the `39126ce`
+recipe: ImageNet initialisation from the local torch hub cache, fine-tune lr
+3e-4 cosine, random flip and reflect-pad crop augmentation, best epoch by a
+per-class 10 percent validation slice held out of the training split, so the
+evaluation split is never used for selection, every choice recorded in the
+manifest `training` block) 0.7687 on `n = 1621` (`test_coarse`), where the earlier
 `small_cnn` recipe reached 0.5151, and `cifar10_smallcnn` 0.6872, fixture only.
 
 Serving the assets: `GET /v1/datasets` and `GET /v1/models` read the manifest
@@ -55,8 +58,10 @@ from `REDSIM_ML_ASSETS_DIR` (default `./assets`), and
 bundled_id, actor)` verifies weights and split digests, writes the
 `model.register` audit row, copies the weights into the blob store under
 `bundled/<id>/…` and creates the per-project `Target` (`<bundled_id>-<8 hex>`,
-`value = bundled:<id>`, `status = available`). `redsim ml seed` calls the same
-function for every non-fixture model (wave 3, landing 2026-09-09). The compose
+`value = bundled:<id>`, `status = available`). `redsim ml seed` (`3ab9de7`, `98a8733`) calls the same
+function for every non-fixture model, audit-first and one commit per model,
+reporting `already present` for a live duplicate and exiting 1 on any other
+refusal. The compose
 file does not mount `assets/` for the containers, see
 [`docs/dev/local-stack.md`](../dev/local-stack.md).
 

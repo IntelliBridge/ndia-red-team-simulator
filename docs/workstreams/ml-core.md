@@ -3,7 +3,11 @@
 Status: merged. PR #8 `feat/ml-core` landed on 2026-09-08 as `ce33d21`. The
 pure modules were then completed by wave 1 of the completion plan
 (`f8693c2..a99d9cc`) and wired to the worker and the API by PR #22 and wave 2
-(`055bdee..bb43bd7`). State described here is `main` at `bb43bd7`.
+(`055bdee..bb43bd7`). Wave 3 (`7556b22..58461cc`) added the offline
+`redsim ml attack` path, the `ml-campaign` adapter and the opt-in attack
+plugin discovery around these modules, and `58461cc` admits PGD by surrogate
+transfer on a tabular target at the API. State described here is `main` at
+`58461cc`.
 
 Implements the pure-Python ML vertical under `redsim/ml/` per spec sections 9,
 12, 13, 14, 15 and 16:

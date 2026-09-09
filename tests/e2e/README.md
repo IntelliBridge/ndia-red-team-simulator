@@ -15,7 +15,10 @@ The fixtures live in `conftest.py`; the builders and plain helpers live in
 the tree (asset build, bundled registration, one role gate, an image campaign
 through the real child, tabular campaigns, `audit verify --all` clean then
 broken, the mocked narrative flipping `narrative_source`). Wave 4 adds the
-demo-path `test_*.py` files here and should not need to edit the fixtures.
+completion-criteria files `test_ml_campaigns.py`,
+`test_ml_verify_upload_reports.py` and `test_ml_governance.py` here (see
+"State at `58461cc` and the wave-4 files" below) and should not need to edit
+the fixtures.
 
 ## Running
 
@@ -27,7 +30,7 @@ REDSIM_E2E=1 pytest -q -p no:cacheprovider -m e2e tests/e2e/test_harness_smoke.p
 REDSIM_E2E=1 pytest -q -m e2e tests/e2e
 
 # one file, verbose, keep the sandbox work directories for inspection
-REDSIM_E2E=1 REDSIM_ML_KEEP_WORK_DIR=1 pytest -q -m e2e tests/e2e/test_demo_path.py -vv
+REDSIM_E2E=1 REDSIM_ML_KEEP_WORK_DIR=1 pytest -q -m e2e tests/e2e/test_ml_campaigns.py -vv
 
 # run the campaign sandbox in-process instead of as a child (a traceback instead of
 # a child envelope when debugging; the child-process boundary is then not exercised)
@@ -48,6 +51,30 @@ by `conftest.py`, so:
 `-m e2e` on the command line overrides the `-m` in `addopts`. Collection needs
 neither the `api` nor the `ml` extra: `conftest.py` and `harness.py` import
 only the standard library and pytest at module level.
+
+## State at `58461cc` and the wave-4 files
+
+At `58461cc` (2026-09-09, the wave-3 integration commit)
+`REDSIM_E2E=1 pytest -q -m e2e tests/e2e` is 8 passed: the smoke file runs
+the asset build, bundled registration, the role gate, an image campaign and
+two tabular campaigns (PGD by surrogate transfer plus HopSkipJump plus the
+control, and HopSkipJump plus the control) through the real sandbox child,
+`audit verify --all` clean then broken, and the four narrative states.
+Without `REDSIM_E2E` the same command is 8 skipped, and `pytest -q tests/e2e`
+is 8 deselected.
+
+The completion-criteria evidence of spec 26 is added in wave 4 as three files
+on this harness, written in parallel with this page:
+
+| File (added in wave 4) | What it asserts | Spec 26 items |
+|---|---|---|
+| `test_ml_campaigns.py` | an image campaign on `vehicles_cnn` (FGSM, PGD, the control, the default grid, `explain_k > 0`) reaches `succeeded` and the campaign body carries clean, evasion and control measurements with denominators, SHAP observations, a five-subscore scorecard with grade and per-family table, interpretation, recommendations and non-empty limitations. The tabular campaign on `url_trees` (PGD by surrogate, HopSkipJump, the control) has its own MRI, never compared with the image one, with the realizability caveat on every row. Each runs with the Pythia mock on and off and `narrative_source` flips between `llm` and `rules` | 4 to 9, 12 to 15 |
+| `test_ml_verify_upload_reports.py` | verify-after-harden with `feature_squeezing` re-runs the frozen slice and `GET /v1/runs/{verify}/compare?with={baseline}` answers `verify_delta` with a measured ΔMRI and per-dimension deltas, and no bare gain appears before it. An ONNX export uploads to `available` with gradients and a pickled `.pt` is `415 pickle_refused` with a `success=False` `model.register` row. `report.md`, `report.json` and `report.html` carry the six sections and the scorecard sub-block, and `report.pdf` is `501` phase B | 2, 15, 17, 24 |
+| `test_ml_governance.py` | the RBAC negative matrix per mutating ML route (viewer, scanner and the campaign creator refused where the spec requires), the RLS negatives on the Postgres lane (a cross-organisation read of an `ml_campaigns` score returns nothing), `redsim audit verify --all` passing over a completed campaign chain and failing after one event is mutated, and `GET /v1/ml/capabilities` carrying neither the Pythia key nor the base URL | 20 to 22 |
+
+A partial score in any of these is the honest state (`score` absent,
+`score_status` present, `mri` null with the missing dimension named as a
+limitation), never a number to assert on.
 
 ## What the fixtures give you
 
@@ -203,33 +230,32 @@ that refusal is the property to assert there.
 
 ## Notes and caveats
 
-* **Known product defect the smoke test fails on (by design, not patched
-  around).** `test_tabular_campaign_runs_pgd_hopskipjump_and_control` posts the
-  spec's PGD + HopSkipJump set against `url_trees` and is refused
-  `422 attack_requires_gradients` ("attack 'pgd' needs loss gradients the model
-  does not expose (manifest gradients: false)") by
-  `redsim/services/ml_campaigns.py:489-492`. That check reads only
-  `manifest.gradients`; it ignores the declared surrogate the registered row
-  carries (`Target.detail.surrogate`, `detail.manifest.surrogate`, the frozen
-  `MLModelManifest.surrogate`) and the PGD adapter's `surrogate_transfer` +
-  `modality:tabular` capabilities (`redsim/ml/attacks/pgd.py:59-61`), although
-  the runner would run PGD by surrogate transfer and record it as such
-  (`redsim/ml/campaign.py:727-757`, spec 12.9, demo step 6) and the service's
-  own module docstring (lines 27-36) says the attack is admitted. The test fails
-  with that attribution (`pytest.fail`, no traceback) until admission exempts
-  surrogate-capable adapters when a surrogate is declared.
-  `test_tabular_hopskipjump_and_control_run_in_the_real_sandbox_child` proves
-  the rest of the tabular path (load, sample, HopSkipJump, control at every
-  eps, score, report, audit rows) through the real child meanwhile.
-* **Two earlier cross-track defects are fixed on this tree**: admission now
-  strips the grid-owned `eps` / `norm_l2` before freezing `attack_params`
-  (`_GRID_OWNED_PARAMS`), and applicability is decided from the adapter's
-  `modality:<domain>` capability tags rather than `AttackInfo.domain`. The
-  smoke test asserts both (`"eps" not in config.attack_params.pgd`; the
-  tabular launch is no longer `attack_modality_mismatch`).
+* **The PGD-by-surrogate admission defect this file once reported is fixed
+  at `58461cc`.** `test_tabular_campaign_runs_pgd_hopskipjump_and_control`
+  had been refused `422 attack_requires_gradients` ("attack 'pgd' needs loss
+  gradients the model does not expose (manifest gradients: false)") because
+  `redsim/services/ml_campaigns.py` read only `manifest.gradients` and
+  ignored the declared surrogate and the PGD adapter's `surrogate_transfer` +
+  `modality:tabular` capabilities. The integration commit admits a white-box
+  attack on a gradient-free model when the adapter declares
+  `surrogate_transfer` and the target declares a surrogate, the runner then
+  runs PGD by surrogate transfer and records it (spec 12.9, demo step 6), and
+  the test passes through the real child. `fgsm` on a gradient-free model
+  without a surrogate is still refused.
+  `test_tabular_hopskipjump_and_control_run_in_the_real_sandbox_child` stays
+  as the independent proof of the tabular path (load, sample, HopSkipJump,
+  control at every eps, score, report, audit rows).
+* **Two earlier cross-track defects are fixed on this tree** (`dd2bbd4`):
+  admission strips the grid-owned `eps` / `norm_l2` before freezing
+  `attack_params` (`_GRID_OWNED_PARAMS`), and applicability is decided from
+  the adapter's `modality:<domain>` capability tags rather than
+  `AttackInfo.domain`. The smoke test asserts both (`"eps" not in
+  config.attack_params.pgd`; the tabular launch is no longer
+  `attack_modality_mismatch`).
 * **sqlite timestamps.** SQLAlchemy's sqlite `DateTime` storage format has no
-  offset, so `AuditEvent.created_at` comes back naive. The audit module now
-  renders and re-derives `ts` through `redsim.audit.chain.canonical_ts`, so
+  offset, so `AuditEvent.created_at` comes back naive. The audit module
+  (`aa9674e`) renders and re-derives `ts` through
+  `redsim.audit.chain.canonical_ts`, so
   the production `PostgresAuditWriter` round-trips and verifies on plain
   sqlite. The harness still guards against a regression:
   `harness.install_sqlite_tz_datetime_if_needed()` first writes and verifies a

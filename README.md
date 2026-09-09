@@ -29,9 +29,11 @@ identifier renamed to redsim (see Provenance).
 
 ## Status
 
-As of 2026-09-08, `main` at `bb43bd7` (waves 1 and 2 of the completion plan
-merged). Wave 3 is landing on `main` in parallel and is marked "(wave 3,
-landing 2026-09-09)" below. The decisions behind this table are in
+As of 2026-09-09, `main` at `58461cc` (waves 1 to 3 of the completion plan
+merged, `7556b22..58461cc` being wave 3). Wave 4, the end-to-end
+completion-criteria tests under `tests/e2e/` and this documentation pass, is
+landing in parallel and is marked "added in wave 4" below. The decisions
+behind this table are in
 [`docs/project-brief.md`](docs/project-brief.md) under "Decisions taken", the
 target design is the
 [product spec](docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md),
@@ -42,15 +44,15 @@ and not implemented", never simulated in the UI.
 
 | Area | State on `main` |
 |---|---|
-| redsim platform (inherited from aegis): FastAPI `/v1` API, Celery workers, Postgres with Alembic migrations `0001` to `0010`, Redis, S3/MinIO blob store, Keycloak/NextAuth auth, RBAC and Postgres RLS, hash-chained audit log with WORM export, per-task LLM routing and budgets, OTel observability and `redsim-log-ingest` | Restored. `create_app()` mounts 39 HTTP routes under `/v1` plus `/health`, `/metrics` and the run-events WebSocket. The default suite is 1594 passed, 30 skipped from this tree. Ruff (CI selection) and mypy are clean from the venv. CI on `main` is red at the time of writing and under investigation (see [`CLAUDE.md`](CLAUDE.md)). |
-| Pentest domain (14 scanner adapters, Kali, CAI agents, GitHub remediation, ticketing, CI gate) | Deleted for good. The seams fail explicitly: `POST /v1/scans` is unmounted (404), `redsim scan --scanner X` exits 1 when no adapter of that name is registered, the web Start scan button is disabled behind a notice, and target ownership verification answers 501. At `bb43bd7` `GET /v1/scanners` returns an empty roster. Wave 3 registers the `ml-campaign` adapter there (wave 3, landing 2026-09-09). |
+| redsim platform (inherited from aegis): FastAPI `/v1` API, Celery workers, Postgres with Alembic migrations `0001` to `0010`, Redis, S3/MinIO blob store, Keycloak/NextAuth auth, RBAC and Postgres RLS, hash-chained audit log with WORM export, per-task LLM routing and budgets, OTel observability and `redsim-log-ingest` | Restored. `create_app()` mounts 39 HTTP routes under `/v1` plus `/health`, `/metrics` and the run-events WebSocket. The default suite is 1663 passed, 30 skipped from this tree, and the e2e smoke file is 8 passed through the real sandbox child. Ruff (CI selection) and mypy are clean from the venv. CI on `main` is red at `58461cc` on the same three jobs as at `bb43bd7` (see Open items and [`CLAUDE.md`](CLAUDE.md)). |
+| Pentest domain (14 scanner adapters, Kali, CAI agents, GitHub remediation, ticketing, CI gate) | Deleted for good. The seams fail explicitly: `POST /v1/scans` is unmounted (404), `redsim scan --scanner X` exits 1 when no adapter of that name is registered, the web Start scan button is disabled behind a notice, and target ownership verification answers 501. `GET /v1/scanners` lists the one adapter that exists, `ml-campaign` (`3ab9de7`), whose health check probes the `ml` extra and the sandbox child and never a model. |
 | ML contracts (P0) | `redsim/ml/schema.py` frozen, the `Target` and `AttackAdapter` protocols, migration `0010_ml_vertical` (`targets.detail`, `ml_campaigns` with RLS parity), the seven ML `Action` members and the `viewer` role, the spec 17.3 error-code table in `redsim/api/errors.py`, the spec 10.6 failure classes in `redsim/ml/errors.py`, and a test that the API process imports no ML library. |
 | ML libraries (waves 1 and 2): loaders, sandbox child, attacks, scoring, explain, recommend, reports | On main. Loaders read the `build-assets` manifest, onnx2torch conversion with argmax agreement, `small_cnn` and `resnet18` architectures, tabular target `url_trees` (alias `url_classifier`), surrogate-transfer PGD with per-feature eps and ART mask, HopSkipJump, the noise control, the binomial `control_preserves_accuracy` predicate, `FamilyDelta`, typed delta refusal, `not_run` handling, curve PNG, dataset caveats and `subject_centered`, the `PartitionExplainer` fallback and explanation cache, the six-section report renderer, the typed `MlSandboxConfig` and envelopes. Registered: targets `vehicles_cnn`, `url_trees`, `cifar10_smallcnn` (fixture only), `endpoint_stub` (not implemented). Attacks `fgsm`, `pgd`, `hopskipjump`, `noise_control`. Defenses `feature_squeezing`, `spatial_smoothing`, `jpeg_compression`. |
 | ML orchestration and API (PR #22 plus wave 2) | On main. Tasks `redsim.ml_campaign_run` (one job per campaign) and `redsim.ml_model_validate` on the `scans` queue. The spec 10.5 audit vocabulary and 6.5 stage table. The Pythia narrative in the worker parent through `route("ml.harden_narrative")` with `DbBudgetChecker` and `LLMUsage` rows. Routes `/v1/ml/capabilities`, `/v1/attacks`, `/v1/datasets`, `/v1/defenses`, `/v1/models` (per-project bundled ids, upload refusal codes with audited refusals, audited soft delete), `POST /v1/models/{id}/attacks` (with reruns), `/v1/runs/{id}/campaign`, `/v1/runs/{id}/compare` (variable-level incompatibility, `verify_delta`), `/v1/runs/{id}/artifacts`, `/v1/artifacts/{id}`, `/v1/runs/{id}/report.{md,json,html}` (`report.pdf` answers 501), finding explain / harden / verify / status (dismissal rules), `GET /v1/audit/verify?all=1`. The full list is in [`CLAUDE.md`](CLAUDE.md). |
-| Offline CLI, seeding, adapter, e2e harness, doctor and config | Wave 3: `redsim ml attack`, `redsim ml seed`, the `ml-campaign` scanner adapter, opt-in `redsim.ml.attacks` plugin discovery, the `tests/e2e` harness (`REDSIM_E2E`), `redsim doctor --worker-mode` rewritten around Pythia, Pythia-only `redsim.yaml` and `.env.example`, `redsim audit verify --run-dir`, and six defect fixes (eps frozen into `attack_params`, PGD admission on tabular, canonical audit `ts`, sandbox child env pins, the verify fallback, attack plugins on `GET /v1/attacks`). (wave 3, landing 2026-09-09) |
+| Offline CLI, seeding, adapter, e2e harness, doctor and config (wave 3, `7556b22..58461cc`) | On main. `redsim ml attack` (`3ab9de7`), `redsim ml seed` (`3ab9de7`, `98a8733`), the `ml-campaign` scanner adapter and opt-in `redsim.ml.attacks` plugin discovery (`3ab9de7`), the `tests/e2e` harness and its 8-case smoke file (`35e71c7`, `a45a787`), `redsim doctor --worker-mode` rewritten around Pythia with Pythia-only `redsim.yaml` and `.env.example` (`7556b22`, `c3868e5`), `redsim audit verify --run-dir` with canonical audit timestamps (`aa9674e`), the `resnet18` fine-tune recipe (`39126ce`), and the defect fixes: `eps` and `norm_l2` no longer frozen into `attack_params` and applicability by capability tag (`dd2bbd4`), PGD by surrogate transfer admitted on `url_trees` (`58461cc`), the sandbox child pinned to an absent `.env` with `REDSIM_DISABLE_LLM=1` and attack plugins on `GET /v1/attacks` (`c3868e5`). |
 | Pythia LLM transport (`redsim/llm/pythia.py`, `python -m redsim.llm.pythia_check`) | Merged (#11) and reached from behind the corporate proxy on 2026-09-08. Reads `REDSIM_ML_LLM_MODEL`. The narrative is optional and degrades to rule text with `narrative_source = "rules"`. See [`docs/ops/pythia.md`](docs/ops/pythia.md). |
 | Web app `@redsim/web` (Next.js 14) and `@redsim/design-system` | Pages `/`, `/login`, `/dashboard`, `/runs`, `/runs/[id]`, `/findings`, `/findings/[id]`, `/projects`, `/projects/[slug]/settings`, `/targets`, `/auth-profiles`, `/logs`, `/audit`, `/cost`, `/models`, `/models/[id]`, with the MRI scorecard and evidence panels. PR #22 aligned the web contract with the mounted routes. Wiring beyond that alignment has not been exercised in a browser against a running stack (open item). |
-| Deployment: `deploy/docker-compose.yml`, `deploy/helm/redsim`, `deploy/Dockerfile.*`, `deploy/terraform/`, `deploy-aws.yml` | Compose (postgres, redis, keycloak, minio, redsim-api, redsim-worker, redsim-worker-default, redsim-beat, redsim-web, redsim-log-ingest, optional opa / otel-collector / loki / jaeger / elasticsearch / kibana) and the Helm chart are named `redsim-*`. `Dockerfile.api` installs `.[api,worker]` and runs `alembic upgrade head`, `Dockerfile.worker` installs CPU torch then `.[worker,ml]`. `deploy/terraform/` (#19) is the code-only Fargate foundation with mocked-plan tests. Nothing has been applied and the compose stack was not brought up as part of the completion pass (open items). `deploy-aws.yml` fails at the OIDC AssumeRole step (account-side). |
+| Deployment: `deploy/docker-compose.yml`, `deploy/helm/redsim`, `deploy/Dockerfile.*`, `deploy/terraform/`, `deploy-aws.yml` | Compose (postgres, redis, keycloak, minio, redsim-api, redsim-worker, redsim-worker-default, redsim-beat, redsim-web, redsim-log-ingest, optional opa / otel-collector / loki / jaeger / elasticsearch / kibana) and the Helm chart are named `redsim-*`. `Dockerfile.api` installs `.[api,worker]` and runs `alembic upgrade head`, `Dockerfile.worker` installs CPU torch then `.[worker,ml]`. `deploy/terraform/` (#19) is the code-only Fargate foundation with mocked-plan tests. Nothing in this tree has been applied and the compose stack was not brought up as part of the completion pass (open items). Open PR #23 (`feat/p7-fargate-runtime`) adds a public HTTPS Fargate demo runtime at https://redsim.ndia.agiledefense.xyz that its author reports applied to the AWS account, with follow-ups still open (see Open items). `deploy-aws.yml` built and pushed the three images under OIDC on the `58461cc` push and skips its deploy job while `ECS_CLUSTER` is unset. |
 | Demo data | Decided and buildable. `redsim ml build-assets --dataset all` fetches the datasets by pinned revision and trains the bundled models on CPU. Everything it writes under `assets/` is gitignored, so a fresh clone has none until it runs the build. Clean accuracy per model is recorded in the asset manifest (see Datasets for the illustrative local numbers). |
 | Docs site (`mkdocs.yml`, `make docs-*`) | `mkdocs build --strict` passes locally. GitHub Pages publishing is off (the plan has no private Pages). |
 
@@ -137,12 +139,17 @@ Check the environment:
 
 ```bash
 .venv/bin/redsim doctor                   # dev laptop
-.venv/bin/redsim doctor --worker-mode     # requires the ml extra, the sandbox child and the asset manifest (wave 3, landing 2026-09-09)
+.venv/bin/redsim doctor --worker-mode     # requires the ml extra, the sandbox child and the asset manifest
 ```
 
-At `bb43bd7` `redsim doctor` still derives a provider key from `redsim.yaml`.
-The Pythia-aware rewrite (informational Pythia block with a redacted key, no
-provider key anywhere, `--worker-mode`) is wave 3 (landing 2026-09-09).
+`redsim doctor` (`7556b22`, `c3868e5`) prints the mode, an informational
+Pythia block (key redacted to prefix and length, the routed model, a note when
+the model came from a deprecated alias), the `ml` extra with versions, a
+launch of the sandbox child with `--help` under the real child environment,
+the asset manifest verification and whether the `ml-campaign` adapter is on
+the roster. The three ML checks are required with `--worker-mode` (or
+`REDSIM_DOCTOR_WORKER_MODE=1`) and informational otherwise. `--api-mode` adds
+the Postgres, blob and OIDC probes. No provider key is checked anywhere.
 
 ### 2. Build the bundled ML assets
 
@@ -168,7 +175,7 @@ happens only in this command, never in the worker or the tests. Clean accuracy
 per model is recorded in the manifest and read from there by the UI and the
 reports.
 
-### 3. Run one campaign offline (wave 3, landing 2026-09-09)
+### 3. Run one campaign offline
 
 ```bash
 .venv/bin/redsim ml attack vehicles_cnn --out ./redsim_output
@@ -209,7 +216,7 @@ register the bundled models and launch a campaign:
 
 ```bash
 cd deploy && make seed && cd ..                        # default-org, project default, user admin (compose stack)
-.venv/bin/redsim ml seed --project default             # bundled models into the project (wave 3, landing 2026-09-09)
+.venv/bin/redsim ml seed --project default             # bundled models into the project (audit-first, one commit per model)
 TOKEN="Bearer dev:admin@redsim.local"
 curl -s -H "Authorization: $TOKEN" localhost:8000/v1/models | jq '.models[] | {id, status, modality}'
 curl -s -X POST -H "Authorization: $TOKEN" -H "Content-Type: application/json" \
@@ -247,9 +254,11 @@ not part of the completion pass (see Open items).
 ### 5. Run the tests
 
 ```bash
-.venv/bin/python -m pytest -q                                   # 1594 passed, 30 skipped at bb43bd7
+.venv/bin/python -m pytest -q                                   # 1663 passed, 30 skipped at 58461cc
 .venv/bin/python -m pytest -q -m ml                             # only the tests that need the ml extra
-REDSIM_E2E=1 .venv/bin/python -m pytest -q -m e2e tests/e2e     # end-to-end tier (wave 3, landing 2026-09-09)
+REDSIM_E2E=1 .venv/bin/python -m pytest -q -m e2e tests/e2e     # end-to-end tier, sqlite lane (8 passed at 58461cc)
+REDSIM_E2E=1 REDSIM_E2E_POSTGRES_URL=postgresql+psycopg://redsim:redsim@localhost:5432/redsim_e2e \
+  .venv/bin/python -m pytest -q -m e2e tests/e2e                # adds the Postgres RLS lane (migrated database)
 .venv/bin/ruff check --select E4,E7,E9,F,I redsim tests         # lint, exactly as CI
 .venv/bin/mypy redsim                                           # types
 pnpm --filter @redsim/web typecheck                             # tsc --noEmit
@@ -259,17 +268,32 @@ pnpm --filter @redsim/web test                                  # vitest
 Markers are declared in `pyproject.toml`. `unit` and `integration` run by
 default. The `integration` tests use the shared sqlite harness in
 `tests/conftest.py` and need no running services. `docker`, `e2e`, `slow` and
-`auth_required` are opt-in with `-m`. The e2e tier (wave 3, landing
-2026-09-09) stamps every item under `tests/e2e` as `e2e` and skips it unless
-`REDSIM_E2E` is set. It drives the real API, admission services, eager Celery
-task bodies, the real sandbox child and the real CLI over sqlite against a
-tiny synthetic asset tree, needs the `api`, `worker` and `ml` extras, no
-network and no Docker. `REDSIM_E2E_SANDBOX=inprocess` runs the campaign in
-process for debugging, `REDSIM_E2E_POSTGRES_URL=postgresql+psycopg://...` (a
-migrated database) enables the RLS lane. Every number an e2e run produces is a
-harness measurement on a test double, never a demo result. The web vitest
-suite was last recorded at 274 passed (`7240220`) and was not re-run for this
-revision.
+`auth_required` are opt-in with `-m`. The e2e tier (`35e71c7`, `a45a787`)
+stamps every item under `tests/e2e` as `e2e` and skips it unless `REDSIM_E2E`
+is set. It drives the real API, admission services, eager Celery task bodies,
+the real sandbox child and the real CLI over sqlite against a tiny synthetic
+asset tree, needs the `api`, `worker` and `ml` extras, no network and no
+Docker. `REDSIM_E2E_SANDBOX=inprocess` runs the campaign in process for
+debugging (the default `child` exercises the process boundary),
+`REDSIM_E2E_POSTGRES_URL=postgresql+psycopg://...` (a migrated database)
+enables the RLS lane, which skips when unset and fails when the database is
+not migrated. The files are `tests/e2e/test_harness_smoke.py` (wave 3, 8
+cases: asset build, bundled registration, role gates, an image campaign and
+two tabular campaigns through the real child, `audit verify --all` clean then
+broken, the mocked narrative) and the completion-criteria evidence added in
+wave 4: `tests/e2e/test_ml_campaigns.py` (spec 26.4 to 26.9 and 26.12 to
+26.15, an image and a tabular campaign each with its own scorecard, the
+narrative on and off), `tests/e2e/test_ml_verify_upload_reports.py` (26.15
+measured ΔMRI through `compare`, 26.17 ONNX accepted and pickle refused with
+the audit row, the six report sections and `report.pdf` as 501) and
+`tests/e2e/test_ml_governance.py` (26.21 and 26.22: the RBAC negative
+matrix, the RLS negatives on the Postgres lane, `audit verify --all` passing
+then failing after a mutation, no Pythia secret in the capabilities body).
+Every number an e2e run produces is a harness measurement on a test double,
+never a demo result. See
+[`tests/e2e/README.md`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/tests/e2e/README.md).
+The web vitest suite was last recorded at 274 passed (`7240220`) and was not
+re-run for this revision.
 
 ### Pythia
 
@@ -291,13 +315,13 @@ and the UI says so. The narrative runs in the worker parent after the sandbox
 child returns, through `redsim.llm.router.route("ml.harden_narrative")` with
 the database budget checker. The prompt and completion are stored as
 artifacts with their digests on the `harden.execute` audit row, and one
-`LLMUsage` row is written per call. The child holds no Pythia variables. Do
-not set provider keys: at `bb43bd7` `.env.example` still lists
-`OPENAI_API_KEY`-style entries from aegis that nothing reads, and wave 3
-removes them and documents every spec 20.3 ML variable instead (wave 3,
-landing 2026-09-09). The values live in `.env` at the repo root, which is
-gitignored and dockerignored, and the Aikido pre-commit hook scans staged
-files for secrets.
+`LLMUsage` row is written per call. The child holds no Pythia variables: the
+sandbox parent points it at an absent `.env` (`REDSIM_ENV_FILE`) and sets
+`REDSIM_DISABLE_LLM=1` (`c3868e5`). There are no provider keys: since
+`7556b22` `.env.example` names `PYTHIA_API_KEY` as the only LLM credential
+and documents every spec 20.3 ML variable with empty values. The values live
+in `.env` at the repo root, which is gitignored and dockerignored, and the
+Aikido pre-commit hook scans staged files for secrets.
 
 Behind the corporate TLS proxy the client verifies against the OS trust store
 by default (`REDSIM_TLS_TRUSTSTORE=1` through the `truststore` package), or
@@ -384,7 +408,7 @@ stack up and the bundled models registered:
    score and the limitations.
 
 The offline equivalent for a laptop without the stack is step 3 of the
-Quickstart (wave 3, landing 2026-09-09).
+Quickstart (`redsim ml attack`, `3ab9de7`).
 
 ## Make targets
 
@@ -412,7 +436,7 @@ The CI contract is in [`docs/dev/ci.md`](docs/dev/ci.md).
 redsim/                 Python package (renamed from aegis on 2026-09-08)
   api/                  FastAPI app factory, /v1 routers, middleware, auth, policy, errors.py (spec 17.3 codes)
   audit/                hash-chained audit log: chain, writers, forensic export, redaction
-  cli/                  `redsim` console script: doctor, audit verify/export, plugins, ml build-assets (attack and seed in wave 3), ...
+  cli/                  `redsim` console script: doctor, audit verify/export, plugins, ml build-assets / attack / seed, ...
   db/                   SQLAlchemy models, session, Alembic migrations 0001-0010
   llm/                  per-task routing, budgets, pricing, guardrails, Pythia transport and check
   log_ingest/           OTLP logs to Postgres mirror service
@@ -428,7 +452,7 @@ redsim/                 Python package (renamed from aegis on 2026-09-08)
   workers/              Celery app, job state machine, tasks/ (ml_campaign, ml_model, reaper, report, ...)
 web/                    Next.js 14 app (@redsim/web): app router pages, NextAuth, api() client
 packages/design-system/ @redsim/design-system: curated components over shadcn primitives
-tests/                  pytest suite (unit and integration markers), tests/ml/ for the vertical, tests/e2e/ (wave 3)
+tests/                  pytest suite (unit and integration markers), tests/ml/ for the vertical, tests/e2e/ the end-to-end tier (harness, smoke file, three wave-4 files)
 assets/                 bundled models, datasets and MANIFEST.json written by `redsim ml build-assets` (gitignored)
 deploy/                 docker-compose.yml, Dockerfile.{api,worker,web,postgres,log_ingest}, helm, terraform, keycloak, opa, cedar, otel, loki, certs
 docs/                   product spec, project brief, plans and gap register, architecture docs and diagrams, ADRs, ops and dev guides
@@ -477,21 +501,34 @@ nothing in the UI, the CLI or the reports pretends otherwise.
   mounted routes and the pages render `not_implemented` states honestly, but
   the pages have not been exercised in a browser against a running stack with
   real campaign data as part of this pass, and the upload dialog stays
-  disabled (see spec 26.18 below). The web CI lanes have not run on `main`
-  since `ea39f97`.
+  disabled (see spec 26.18 below). The web CI lane (Next.js build, vitest)
+  is skipped on `main` behind the failed unit lane and has not run since
+  `ea39f97`.
 - **Browser end-to-end tests.** The Playwright stack E2E in
   `.github/workflows/redsim-ci.yml` (`workflow_dispatch` with `run_e2e=true`)
   has not been run, and the browser campaign test that spec 22.5 names
   (`web/tests/ml_campaign.spec.ts`) has not been written: `web/tests/` holds
-  only the pentest-era `scan_to_pr.spec.ts`. The `tests/e2e` tier (wave 3,
-  landing 2026-09-09) covers the API, worker, sandbox and CLI, not a browser.
+  only the pentest-era `scan_to_pr.spec.ts`. The `tests/e2e` tier covers the
+  API, worker, sandbox and CLI, not a browser.
 - **Fargate, Terraform and Helm apply, compose operations.**
-  `deploy/terraform/` is a code-only foundation with mocked-plan tests: no
-  task definitions, no services, nothing applied. `deploy-aws.yml` fails at
-  the OIDC AssumeRole step (account-side). The Helm chart has not been
-  installed anywhere and the compose stack was not brought up end to end as
-  part of the completion pass. Spec 26.1's measured clone-to-first-run time
-  has not been recorded.
+  `deploy/terraform/` on `main` is a code-only foundation with mocked-plan
+  tests: no task definitions, no services, nothing applied from this tree.
+  Open PR #23 (`feat/p7-fargate-runtime`,
+  https://github.com/IntelliBridge/ndia-red-team-simulator/pull/23) adds
+  `deploy/bootstrap/` and `deploy/runtime/`, and its author reports the
+  public HTTPS demo runtime at https://redsim.ndia.agiledefense.xyz applied
+  to the AWS account, migrated through `0010`, with `/health`, the login
+  page and OIDC discovery answering 200 and unauthenticated API calls 401.
+  Still open on that runtime, by the PR's own account: the workers stay at
+  zero tasks until a pinned asset bundle is supplied, demo users and project
+  memberships and real model assets are outstanding, and automatic ECS
+  rollout is disabled until CI can advance pinned task definitions and run
+  migrations. `deploy/runtime/README.md` on that branch is the sequence. No
+  campaign has been run on it. `deploy-aws.yml` builds and pushes the images
+  under OIDC and skips its deploy job while `ECS_CLUSTER` is unset. The Helm
+  chart has not been installed anywhere and the compose stack was not
+  brought up end to end as part of the completion pass. Spec 26.1's measured
+  clone-to-first-run time has not been recorded.
 - **Phase B.** garak / LLM-domain red-teaming through Pythia, the endpoint
   connector (`source: endpoint` and `endpoint_stub` answer `501
   not_implemented` with `phase: B`), Phase B attacks and modalities,
@@ -515,14 +552,26 @@ nothing in the UI, the CLI or the reports pretends otherwise.
   - 26.27: "Done" recorded separately from approval, with passing CI jobs
     (unit, integration, ml, web), acceptance evidence stored next to each
     feature, accessibility and error-state checks for the new pages, and a
-    reviewed behavior-to-spec comparison. Open. CI on `main` is red at the
-    time of writing.
-- **CI on `main`** is red at the time of writing and under investigation. The
-  counts in this README are local runs from `bb43bd7`, not CI results.
-- **Wave 3** items are marked above and land on `main` on 2026-09-09. Until
-  they do, `redsim ml attack`, `redsim ml seed`, the `ml-campaign` adapter,
-  the e2e harness, `redsim doctor --worker-mode` and `redsim audit verify
-  --run-dir` are not on `main`.
+    reviewed behavior-to-spec comparison. Open. CI on `main` is red at
+    `58461cc`.
+- **CI on `main`** is red at `58461cc` (and was at `bb43bd7`) on three jobs:
+  the Coverage gate (23 upload-route tests fail because `python-multipart`
+  is not installed by the `api` extra, the other 1668 pass), Unit tests
+  (py3.13) (a `redsim.ml.datasets.sampling` / `redsim.ml.targets` import
+  cycle at `bb43bd7`, two `tests/ml/test_cli_ml.py` cases that reach
+  `redsim.ml.assets.build` and `torch` on the lane without the `ml` extra at
+  `58461cc`) and Dependency CVEs (trivy on `next` 14.2.35, CVE-2026-75604 /
+  GHSA-2xp9-vwfh-vxw4). Unit tests (py3.12) passes. Wave 4 lands the
+  `python-multipart` dependency, breaks the import cycle and baselines the
+  `next` advisory, and `docs/dev/ci.md` records the 3.13 lane's eager torch
+  import as not fixed in that pass. Green is not claimed until a run on
+  `main` proves it. The counts in this README are local runs from
+  `58461cc`, not CI results.
+- **Wave 4** is landing in parallel: the three `tests/e2e` files named above
+  (`test_ml_campaigns.py`, `test_ml_verify_upload_reports.py`,
+  `test_ml_governance.py`), the CI fixes, admission follow-ups and this
+  documentation pass. Until it is on `main`, the completion-criteria
+  evidence is the wave-3 smoke file alone.
 
 ## Team conventions
 

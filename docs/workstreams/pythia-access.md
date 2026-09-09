@@ -2,8 +2,8 @@
 
 Status: merged. PR #11 `feat/pythia-access` landed on 2026-09-08, the worker
 side moved to the parent process in wave 2 (`055bdee`), and the doctor and
-configuration cleanup is wave 3 (landing 2026-09-09). State described here is
-`main` at `bb43bd7`.
+configuration cleanup landed in wave 3 (`7556b22`, `c3868e5`). State
+described here is `main` at `58461cc`.
 
 Delivered:
 
@@ -37,7 +37,7 @@ Delivered:
   `scans` pool) for a compose stack to narrate.
 - `docs/ops/pythia.md`: operator guide, including the Zscaler note, the
   entitled model list observed on 2026-09-08 and the worker call path.
-- Wave 3 (landing 2026-09-09): `redsim doctor` drops the provider-key check
+- Wave 3 (`7556b22`, `c3868e5`, on `main`): `redsim doctor` drops the provider-key check
   for an informational Pythia block (redacted key, model, deprecated-alias
   note) plus `ml` extra, sandbox child and asset manifest checks,
   `redsim.yaml` and `redsim init` stop writing a provider-style `model`,
