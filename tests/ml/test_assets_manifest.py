@@ -403,3 +403,121 @@ def test_same_seed_reproduces_identical_weights(tmp_path: Path):
     _, other = build_cnn_asset(data, model_id="cnn", root=tmp_path / "c", epochs=1, seed=8, log=_quiet)
     assert other.file.sha256 != first.file.sha256
     assert other.manifest_sha256 != first.manifest_sha256
+
+
+# ---------------------------------------------------------------------------
+# Dataset caveats and subject_centered (G-CAVEAT, G-EXP2; spec 11.3, 13.4, 14.5)
+# ---------------------------------------------------------------------------
+
+def test_caveat_fields_default_on_a_legacy_manifest_and_stay_outside_the_digest(tmp_path: Path):
+    """A manifest written before the fields existed reads back with [] / None and still verifies; adding the
+    fields to an entry leaves manifest_sha256 unchanged (they are build record, not projection)."""
+    from redsim.ml.assets.manifest import with_dataset_caveats
+
+    root = tmp_path / "assets"
+    weights = root / "bundled/x/weights.pt"
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"weights")
+    fake = FileEntry(path="bundled/x/weights.pt", sha256=sha256_file(weights), size_bytes=7)
+    manifest = AssetManifest.new()
+    manifest.datasets["hf:example/ds"] = DatasetEntry(id="hf:example/ds", source="huggingface", revision="abc123",
+                                                       class_names=["a", "b"])
+    manifest.models["x"] = stamp_manifest_sha256(_entry(fake))
+    write_manifest(manifest, root / MANIFEST_NAME)
+    raw = json.loads((root / MANIFEST_NAME).read_text())
+    # Simulate the legacy shape: strip the new keys entirely.
+    for key in ("caveats", "subject_centered"):
+        raw["datasets"]["hf:example/ds"].pop(key, None)
+    for key in ("dataset_caveats", "subject_centered"):
+        raw["models"]["x"].pop(key, None)
+    (root / MANIFEST_NAME).write_text(json.dumps(raw))
+    legacy = load_manifest(root / MANIFEST_NAME)
+    assert legacy.datasets["hf:example/ds"].caveats == [] and legacy.datasets["hf:example/ds"].subject_centered is None
+    assert legacy.models["x"].dataset_caveats == [] and legacy.models["x"].subject_centered is None
+    assert verify_manifest(legacy, root) == [] and verify_entries(legacy) == []
+
+    # Adding the fields changes neither the projection nor the digest.
+    ds_entry = legacy.datasets["hf:example/ds"].model_copy(update={
+        "caveats": ["Subjects are web-thumbnail framed."], "subject_centered": False})
+    with_caveats = with_dataset_caveats(legacy.models["x"], ds_entry)
+    assert with_caveats.dataset_caveats == ["Subjects are web-thumbnail framed."] and with_caveats.subject_centered is False
+    assert manifest_digest(with_caveats) == legacy.models["x"].manifest_sha256 == with_caveats.manifest_sha256
+    assert model_manifest(with_caveats) == model_manifest(legacy.models["x"])
+    projected = MLModelManifest.model_validate(with_caveats.model_dump(mode="json"))
+    assert not hasattr(projected, "dataset_caveats") and not hasattr(projected, "subject_centered")
+    legacy.datasets["hf:example/ds"] = ds_entry
+    legacy.models["x"] = with_caveats
+    assert verify_manifest(legacy, root) == []
+    write_manifest(legacy, root / MANIFEST_NAME)
+    reloaded = load_manifest(root / MANIFEST_NAME)
+    assert reloaded == legacy
+    on_disk = json.loads((root / MANIFEST_NAME).read_text())
+    assert on_disk["datasets"]["hf:example/ds"]["caveats"] == ["Subjects are web-thumbnail framed."]
+    assert on_disk["datasets"]["hf:example/ds"]["subject_centered"] is False
+    assert on_disk["models"]["x"]["dataset_caveats"] == ["Subjects are web-thumbnail framed."]
+    assert on_disk["models"]["x"]["subject_centered"] is False
+
+    # The copy is bound to the model's dataset: a mismatched dataset entry is refused, never silently attached.
+    other = DatasetEntry(id="hf:other/ds", source="huggingface", caveats=["x"])
+    with pytest.raises(ValueError, match="bound to dataset"):
+        with_dataset_caveats(with_caveats, other)
+
+
+def test_cnn_build_records_the_vehicle_caveats_and_subject_centered_false(tmp_path: Path):
+    """A build on the vehicles dataset id writes the spec 11.3.1 caveats (D3 framing first) and subject_centered=false;
+    a CIFAR-10-id build writes the fixture-only statement and subject_centered=true; an unlisted local dataset gets only
+    the fixture-only statement when it is fixture-only and no subject_centered claim."""
+    from redsim.ml.assets.build import (
+        CIFAR10_CAVEATS,
+        FIXTURE_ONLY_CAVEAT,
+        VEHICLES_CAVEATS,
+        VEHICLES_DATASET_ID,
+        dataset_caveats,
+        subject_centered_for,
+    )
+    from redsim.ml.datasets import cifar10
+    from redsim.ml.schema import contains_banned_score_word
+
+    data = _synthetic_images(n=16, image_size=8)
+    # Synthetic pixels under the vehicles id: a build-path test of what the manifest says, not vehicle data.
+    vehicles = data.dataset.model_copy(update={"id": VEHICLES_DATASET_ID, "fixture_only": False, "notes": []})
+    vdata = ds.ImageDataset(dataset=vehicles, train=data.train, eval=data.eval)
+    entry, model = build_cnn_asset(vdata, model_id="vehicles_cnn", root=tmp_path / "v", epochs=1, seed=0, log=_quiet)
+    assert entry.caveats == list(VEHICLES_CAVEATS) and entry.subject_centered is False
+    assert model.dataset_caveats == entry.caveats and model.subject_centered is False
+    assert entry.caveats[0].startswith("leibnitz-lab/military_vehicles is an open, unclassified, publicly available")
+    assert "never trains, optimises or deploys a targeting or weapons model" in entry.caveats[0]
+    assert any("Ground-level photographs, not aerial or overhead imagery" in c for c in entry.caveats)
+    assert any("not reliably centred" in c and "heuristic" in c for c in entry.caveats)
+    for text in (*VEHICLES_CAVEATS, *CIFAR10_CAVEATS, FIXTURE_ONLY_CAVEAT):
+        assert not contains_banned_score_word(text), text
+        assert "readiness" not in text.lower() and "certif" not in text.lower(), text
+    # The digest is the projection's: the same weights with no caveats stamp the same manifest_sha256.
+    assert manifest_digest(model.model_copy(update={"dataset_caveats": [], "subject_centered": None})) == model.manifest_sha256
+    # The manifest round-trips the fields and verifies.
+    manifest = AssetManifest.new()
+    manifest.datasets[entry.id] = entry
+    manifest.models[model.id] = model
+    write_manifest(manifest, tmp_path / "v" / MANIFEST_NAME)
+    loaded = load_manifest(tmp_path / "v" / MANIFEST_NAME)
+    assert verify_manifest(loaded, tmp_path / "v") == []
+    assert loaded.models["vehicles_cnn"].dataset_caveats == list(VEHICLES_CAVEATS)
+    assert loaded.datasets[VEHICLES_DATASET_ID].subject_centered is False
+    # Explicit arguments extend the table and override the flag; duplicates collapse.
+    entry2, model2 = build_cnn_asset(vdata, model_id="vehicles_cnn", root=tmp_path / "v2", epochs=1, seed=0,
+                                     caveats=["Smoke build.", VEHICLES_CAVEATS[1]], subject_centered=True, log=_quiet)
+    assert entry2.caveats == [*VEHICLES_CAVEATS, "Smoke build."] and entry2.subject_centered is True
+    assert model2.subject_centered is True
+
+    cifar = data.dataset.model_copy(update={"id": cifar10.DATASET_ID, "fixture_only": True})
+    centry, cmodel = build_cnn_asset(ds.ImageDataset(dataset=cifar, train=data.train, eval=data.eval),
+                                     model_id="cifar10_smallcnn", root=tmp_path / "c", epochs=1, seed=0, log=_quiet)
+    assert centry.caveats == [*CIFAR10_CAVEATS, FIXTURE_ONLY_CAVEAT] and centry.subject_centered is True
+    assert cmodel.dataset_caveats == centry.caveats and cmodel.subject_centered is True
+    assert "never a demo target" in centry.caveats[0]
+
+    lentry, lmodel = build_cnn_asset(data, model_id="synthetic_cnn", root=tmp_path / "l", epochs=1, seed=0, log=_quiet)
+    assert lentry.caveats == [FIXTURE_ONLY_CAVEAT] and lentry.subject_centered is None and lmodel.subject_centered is None
+    plain = DatasetEntry(id="local:unlisted", source="local")
+    assert dataset_caveats(plain) == [] and subject_centered_for(plain) is None
+    assert subject_centered_for(DatasetEntry(id="local:unlisted", source="local", subject_centered=False)) is False

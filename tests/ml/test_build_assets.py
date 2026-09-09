@@ -258,3 +258,132 @@ def test_build_assets_replaces_the_legacy_tabular_entry_and_writes_the_fixture(t
     build_assets(BuildOptions(out=root, build_models=False, fixture=True, fixture_out=fixture_out), log=logs.append)
     assert (root / MANIFEST_NAME).read_bytes() == before
     assert any("no model selected" in line for line in logs) and any("bundled test split" in line for line in logs)
+
+
+# ---------------------------------------------------------------------------
+# Dataset caveats in the build and in a campaign on the built target (G-CAVEAT, G-EXP2)
+# ---------------------------------------------------------------------------
+
+def test_url_build_writes_the_lexical_feature_caveats(tmp_path: Path, no_kaggle: Path):
+    from redsim.ml.assets.build import (
+        FIXTURE_ONLY_CAVEAT,
+        KAGGLE_URL_CAVEATS,
+        URL_PIPELINE_CAVEATS,
+        dataset_caveats,
+    )
+    from redsim.ml.schema import contains_banned_score_word
+
+    entry, model = build_url_asset(ds.sample_url_table(SAMPLE), model_id="url_trees", root=tmp_path / "assets", seed=0,
+                                   log=_quiet)
+    assert entry.caveats == [*URL_PIPELINE_CAVEATS, FIXTURE_ONLY_CAVEAT]
+    assert entry.caveats[0].startswith("URL strings are inert data") and "never fetches, resolves" in entry.caveats[0]
+    assert entry.caveats[1].startswith("Realizability gap") and "lexical URL features" in entry.caveats[1]
+    assert "no tabular row is presented as demonstrated URL evasion" in entry.caveats[1]
+    assert entry.subject_centered is None and model.subject_centered is None       # no tabular meaning
+    assert model.dataset_caveats == entry.caveats
+    for text in (*URL_PIPELINE_CAVEATS, *KAGGLE_URL_CAVEATS):
+        assert not contains_banned_score_word(text) and "readiness" not in text.lower(), text
+    # The Kaggle file adds its own rows (label noise, age, imbalance, access) after the pipeline caveats.
+    kaggle = DatasetEntry(id=f"kaggle:{ds.MALICIOUS_URLS_SLUG}", source="kaggle", revision="d" * 64,
+                          class_names=list(ds.URL_CLASS_NAMES))
+    full = dataset_caveats(kaggle, pipeline=URL_PIPELINE_CAVEATS)
+    assert full == [*URL_PIPELINE_CAVEATS, *KAGGLE_URL_CAVEATS] and FIXTURE_ONLY_CAVEAT not in full
+    # Written to disk, read back, and the model entry still verifies (the copy is outside the digest).
+    manifest = AssetManifest.new()
+    manifest.datasets[entry.id] = entry
+    manifest.models[model.id] = model
+    write_manifest(manifest, tmp_path / "assets" / MANIFEST_NAME)
+    loaded = load_manifest(tmp_path / "assets" / MANIFEST_NAME)
+    assert loaded.models["url_trees"].dataset_caveats == entry.caveats
+    assert loaded.datasets[entry.id].caveats == entry.caveats
+    from redsim.ml.assets.manifest import verify_manifest
+
+    assert verify_manifest(loaded, tmp_path / "assets") == []
+    assert "3 dataset caveat(s)" in summarize(loaded)
+
+
+def test_build_assets_run_records_the_caveats_in_the_written_manifest(tmp_path: Path, no_kaggle: Path, monkeypatch):
+    from redsim.ml.assets.build import FIXTURE_ONLY_CAVEAT, URL_PIPELINE_CAVEATS
+
+    monkeypatch.setattr("redsim.ml.assets.build.inject_truststore", lambda: False)
+    root = tmp_path / "assets"
+    result = build_assets(BuildOptions(dataset="tabular", out=root), log=_quiet, warn=_quiet)
+    raw = json.loads((root / MANIFEST_NAME).read_text())
+    sample_id = "local:tests/ml/fixtures/malicious_urls_sample.csv"
+    assert raw["datasets"][sample_id]["caveats"] == [*URL_PIPELINE_CAVEATS, FIXTURE_ONLY_CAVEAT]
+    assert raw["datasets"][sample_id]["subject_centered"] is None
+    assert raw["models"]["url_trees"]["dataset_caveats"] == raw["datasets"][sample_id]["caveats"]
+    assert result.models["url_trees"].dataset_caveats == list(raw["models"]["url_trees"]["dataset_caveats"])
+
+
+def _synthetic_images(n: int = 48, image_size: int = 8, seed: int = 0) -> ds.ImageDataset:
+    class_names = ["class_0", "class_1", "class_2"]
+    rng = np.random.default_rng(seed)
+    x = rng.integers(0, 256, size=(n, 3, image_size, image_size), dtype=np.uint8)
+    y = (np.arange(n) % len(class_names)).astype(np.int64)
+    entry = DatasetEntry(id="local:synthetic-images", source="local", revision="synthetic-v1", license="n/a",
+                         class_names=class_names, fixture_only=True, notes=["unit-test double"])
+    train = ds.ImageSplit(name="train", x=x, y=y, indices=np.arange(n, dtype=np.int64), class_names=class_names)
+    n_eval = n // 2
+    evaluation = ds.ImageSplit(name="test", x=x[:n_eval], y=y[:n_eval], indices=np.arange(n_eval, dtype=np.int64),
+                               class_names=class_names)
+    return ds.ImageDataset(dataset=entry, train=train, eval=evaluation)
+
+
+def test_campaign_on_a_built_target_carries_the_dataset_caveats(tmp_path: Path, no_kaggle: Path, monkeypatch):
+    """The round trip that closes G-CAVEAT / G-EXP2: build tiny assets with the real builder, load them through the
+    registered targets and run a campaign; the limitations carry each build-time caveat as
+    "Dataset caveat (<dataset id>): <text>" and the provenance manifest carries the subject_centered flag."""
+    import sys
+
+    pytest.importorskip("art")
+    from redsim.ml.artifacts import FilesystemSink
+    from redsim.ml.assets.build import FIXTURE_ONLY_CAVEAT, URL_PIPELINE_CAVEATS, build_cnn_asset
+    from redsim.ml.campaign import D3_BOUNDS_LIMITATION, run_campaign
+    from redsim.ml.schema import CampaignConfig
+    from redsim.ml.targets import bundled
+    from redsim.ml.targets.registry import get_target
+
+    root = tmp_path / "assets"
+    img_ds, img_model = build_cnn_asset(_synthetic_images(), model_id="vehicles_cnn", root=root, epochs=1, seed=0,
+                                        subject_centered=False, log=_quiet)
+    url_ds, url_model = build_url_asset(ds.sample_url_table(SAMPLE), model_id="url_trees", root=root, seed=0,
+                                        log=_quiet)
+    manifest = AssetManifest.new()
+    manifest.datasets[img_ds.id] = img_ds
+    manifest.datasets[url_ds.id] = url_ds
+    manifest.models[img_model.id] = img_model
+    manifest.models[url_model.id] = url_model
+    write_manifest(manifest, root / MANIFEST_NAME)
+
+    monkeypatch.setenv(bundled.ASSETS_DIR_ENV, str(root))
+    monkeypatch.setitem(sys.modules, "redsim.ml.recommend.rules", None)      # the rule layer is not under test
+    for target_id in ("vehicles_cnn", "url_trees"):
+        get_target(target_id).unload()
+    try:
+        image_cfg = CampaignConfig(target_id="vehicles_cnn", modality="image", attack_ids=["fgsm"], eps_grid=[0.03],
+                                   reference_eps=0.03, n_samples=12, seed=0, explain_k=0,
+                                   dataset_id="local:synthetic-images")
+        rec = run_campaign(image_cfg, FilesystemSink(tmp_path / "run-image"), explain=False)
+        assert rec.status == "succeeded" and rec.target.id == "vehicles_cnn"
+        assert f"Dataset caveat (local:synthetic-images): {FIXTURE_ONLY_CAVEAT}" in rec.limitations
+        assert D3_BOUNDS_LIMITATION in rec.limitations
+        assert rec.provenance.model_manifest["subject_centered"] is False
+        assert rec.provenance.model_manifest["dataset_caveats"] == [FIXTURE_ONLY_CAVEAT]
+        assert rec.provenance.dataset == "local:synthetic-images" and rec.provenance.dataset_revision == "synthetic-v1"
+
+        tabular_cfg = CampaignConfig(target_id="url_trees", modality="tabular", attack_ids=["pgd"],
+                                     attack_params={"pgd": {"max_iter": 2}}, eps_grid=[0.03], reference_eps=0.03,
+                                     n_samples=12, seed=0, explain_k=0, dataset_split="eval",
+                                     dataset_id="local:tests/ml/fixtures/malicious_urls_sample.csv")
+        trec = run_campaign(tabular_cfg, FilesystemSink(tmp_path / "run-tabular"), explain=False)
+        assert trec.status == "succeeded" and trec.target.domain == "tabular"
+        prefix = "Dataset caveat (local:tests/ml/fixtures/malicious_urls_sample.csv): "
+        for text in (*URL_PIPELINE_CAVEATS, FIXTURE_ONLY_CAVEAT):
+            assert f"{prefix}{text}" in trec.limitations
+        assert trec.provenance.model_manifest["subject_centered"] is None
+        assert trec.provenance.model_manifest["dataset_caveats"] == [*URL_PIPELINE_CAVEATS, FIXTURE_ONLY_CAVEAT]
+        assert not any(lim.startswith("Dataset caveat (local:synthetic-images)") for lim in trec.limitations)
+    finally:
+        for target_id in ("vehicles_cnn", "url_trees"):
+            get_target(target_id).unload()
