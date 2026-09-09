@@ -26,6 +26,7 @@ from redsim.api.v1 import (
     ml_capabilities,
     ml_findings,
     models,
+    models_bulk,
     org_cost,
     projects,
     reports,
@@ -111,6 +112,9 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(datasets.router, prefix="/v1")
     app.include_router(defenses.router, prefix="/v1")
     app.include_router(models.router, prefix="/v1")
+    # Phase B wave B3 (bulk-upload-capacity-cli): POST /v1/models/bulk and GET /v1/ml/capacity.
+    # Mounted before batches.router so these real handlers win over the B0 stubs of the same paths.
+    app.include_router(models_bulk.router, prefix="/v1")
     app.include_router(artifacts.router, prefix="/v1")
     app.include_router(compare.router, prefix="/v1")
     app.include_router(ml_findings.router, prefix="/v1")

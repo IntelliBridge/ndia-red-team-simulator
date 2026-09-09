@@ -24,6 +24,8 @@ app = Celery(
         "redsim.workers.tasks.ml_campaign",
         "redsim.workers.tasks.ml_model",
         "redsim.workers.tasks.ml_llm",
+        # Phase B wave B3 (bulk-upload-capacity-cli): the deferred-run dispatcher backstop.
+        "redsim.workers.tasks.capacity",
     ],
 )
 
@@ -62,6 +64,10 @@ app.conf.task_time_limit = 2100
 # that pool is the only one with Pythia egress (spec 10.8), the probe child
 # talks to the gateway and never loads model bytes, so it does not belong on
 # the credential-free ``scans`` pool.
+# Phase B wave B3 tasks declare their queue on the ``@app.task`` decorator
+# (``redsim.ml_dispatch_deferred`` -> default in redsim/workers/tasks/capacity.py;
+# the interop export and integration push tasks likewise), so this table keeps
+# the pre-B3 set and ``tests/test_worker_hardening.py`` keeps pinning it.
 app.conf.task_default_queue = "default"
 app.conf.task_routes = {
     "redsim.scan_start": {"queue": "scans"},
@@ -98,5 +104,15 @@ app.conf.beat_schedule = {
     "export-chains-to-worm": {
         "task": "redsim.export_chains_to_worm",
         "schedule": float(worm_export_interval()),
+    },
+    # Phase B (BULK-09/-22): the deferred-run dispatcher backstop. A project over
+    # its concurrency cap has admissions parked as queued jobs with
+    # ``detail.deferred``; the finishing campaign task dispatches the next one
+    # (continuation hook) and this sweep catches whatever a crash, broker outage
+    # or cancel left behind, refreshing the capacity gauges from the same rows.
+    "ml-dispatch-deferred": {
+        "task": "redsim.ml_dispatch_deferred",
+        "schedule": 60.0,
+        "options": {"queue": "default"},
     },
 }
