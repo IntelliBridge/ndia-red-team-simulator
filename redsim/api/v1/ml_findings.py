@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from redsim.api.auth import CurrentUser, get_current_user
+from redsim.api.errors import ApiError
 from redsim.api.policy import Action, check
 from redsim.audit.chain import resolve_writer
 from redsim.config import load_config
@@ -88,20 +89,30 @@ def harden(finding_id: str, body: HardenBody, user: CurrentUser = Depends(get_cu
 
 @router.patch("/{finding_id}/status")
 def dismiss(finding_id: str, body: ReviewBody,
-            user: CurrentUser = Depends(get_current_user)) -> dict[str, str]:
+            user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    """Reviewer dismissal (spec 6.4, 7.7, 17.1).
+
+    ``FINDING_REVIEW`` (approver) gate, then the independence rule in the
+    service: the campaign creator and system principals are refused with 403,
+    a stale ``expected_status`` or a source status outside ``open | failed``
+    with ``409 run_terminal``. The ``finding.review`` audit row is written
+    before the status changes; refusals write a ``success=False`` row.
+    """
     project_id = _finding_project(finding_id)
     check(user, Action.FINDING_REVIEW, project_id)
     config = load_config()
     try:
-        review_finding(finding_id=finding_id, expected_status=body.expected_status,
-                       reason=body.reason, actor=f"user:{user.sub}", config=config,
-                       audit_writer=resolve_writer(config))
+        return review_finding(finding_id=finding_id, expected_status=body.expected_status,
+                              reason=body.reason, actor=f"user:{user.sub}", config=config,
+                              audit_writer=resolve_writer(config),
+                              reviewer_is_system=bool(user.is_system))
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="finding not found") from exc
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ApiError as exc:
+        raise exc.as_http_exception() from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except MLFindingAdmissionError as exc:
         raise _error(exc) from exc
-    return {"id": finding_id, "status": "false_positive"}
