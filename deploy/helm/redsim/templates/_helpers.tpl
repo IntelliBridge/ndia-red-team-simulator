@@ -112,6 +112,11 @@ of the following holds:
 Otherwise, if any secret value still equals its shipped dev placeholder, the
 render aborts with actionable guidance. Self-contained (callable from any
 template); takes the root context.
+
+The API session keypair is checked for emptiness rather than for a placeholder
+value, because the chart ships no default for it. An empty half is the quieter
+failure of the two: the install completes, the Keycloak login completes, and
+then every API call answers 401 with nothing red anywhere.
 */}}
 {{- define "redsim.validateProdSecret" -}}
 {{- $s := .Values.config.secret -}}
@@ -120,8 +125,10 @@ template); takes the root context.
 {{- if eq (toString $s.s3AccessKeyId) "redsim" -}}{{- $placeholders = append $placeholders "config.secret.s3AccessKeyId" -}}{{- end -}}
 {{- if eq (toString $s.s3SecretAccessKey) "redsim-secret" -}}{{- $placeholders = append $placeholders "config.secret.s3SecretAccessKey" -}}{{- end -}}
 {{- if eq (toString $s.betterAuthSecret) "dev-better-auth-secret-change-me-32chars" -}}{{- $placeholders = append $placeholders "config.secret.betterAuthSecret" -}}{{- end -}}
+{{- if not $s.apiSessionPrivateKey -}}{{- $placeholders = append $placeholders "config.secret.apiSessionPrivateKey (empty: the web tier mints no API cookie)" -}}{{- end -}}
+{{- if not $s.apiSessionPublicKey -}}{{- $placeholders = append $placeholders "config.secret.apiSessionPublicKey (empty: the api verifies no API cookie)" -}}{{- end -}}
 {{- if $placeholders -}}
-{{- fail (printf "config.env=prod but these secret values are still the shipped DEV placeholders: %s. Refusing to deploy insecure secrets to production. Fix by either (a) overriding them with real values (--set or a sealed values file), (b) setting config.secret.existingSecret to a pre-provisioned Secret, or (c) setting config.secret.externalSecrets.enabled=true to source them from the External Secrets Operator." (join ", " $placeholders)) -}}
+{{- fail (printf "config.env=prod but these secret values are still the shipped DEV placeholders or empty: %s. Refusing to deploy insecure secrets to production. Fix by either (a) overriding them with real values (--set or a sealed values file), (b) setting config.secret.existingSecret to a pre-provisioned Secret, or (c) setting config.secret.externalSecrets.enabled=true to source them from the External Secrets Operator." (join ", " $placeholders)) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

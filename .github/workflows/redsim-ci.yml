@@ -208,6 +208,24 @@ jobs:
           echo "$out" | grep -q "kind: ExternalSecret" || {
             echo "::error::ExternalSecret was not rendered when externalSecrets.enabled=true"; exit 1; }
           echo "ExternalSecret rendered as expected"
+      # The same guard rejects a prod deployment that supplied every other
+      # secret but left the API session keypair empty. That one renders and
+      # installs today, then answers 401 to every call after a successful
+      # login, so the render is the only place it can be caught.
+      - name: helm template (prod + empty api session keys) fails the guard
+        run: |
+          out="$(helm template redsim deploy/helm/redsim \
+            -f deploy/helm/redsim/ci/prod-api-session-keys-values.yaml 2>&1)" && rc=0 || rc=$?
+          echo "$out"
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::prod-secret guard did NOT fire: render succeeded with an empty API session keypair"
+            exit 1
+          fi
+          for half in apiSessionPrivateKey apiSessionPublicKey; do
+            echo "$out" | grep -q "config.secret.$half" || {
+              echo "::error::render failed but did not name config.secret.$half (unexpected error)"; exit 1; }
+          done
+          echo "prod-secret guard fired as expected"
       # A prod deployment with secrets overridden by real values renders cleanly.
       - name: helm template (prod + real secrets) succeeds
         run: |
@@ -215,7 +233,9 @@ jobs:
             --set config.env=prod \
             --set config.secret.s3AccessKeyId=ci-real-access-key \
             --set config.secret.s3SecretAccessKey=ci-real-secret-key \
-            --set config.secret.betterAuthSecret=ci-real-better-auth-secret-0123456789 > /dev/null
+            --set config.secret.betterAuthSecret=ci-real-better-auth-secret-0123456789 \
+            --set-string config.secret.apiSessionPrivateKey=ci-not-a-real-key \
+            --set-string config.secret.apiSessionPublicKey=ci-not-a-real-key > /dev/null
 
   sast:
     name: SAST (semgrep + bandit)

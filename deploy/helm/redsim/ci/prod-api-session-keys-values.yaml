@@ -1,0 +1,21 @@
+# CI fixture: a prod deployment whose S3 and Better Auth secrets are real but
+# whose API session keypair was never supplied. `helm template` with this file
+# MUST fail via the redsim.validateProdSecret guard (see templates/secret.yaml
+# / _helpers.tpl), naming both halves.
+#
+# This is the quiet failure the guard exists to catch. Without it the render
+# succeeds, the install comes up, the Keycloak login completes, and then every
+# API call answers 401 because the web tier minted no redsim_api_session cookie
+# and the api verified none. Exercised by the helm-lint job in
+# .github/workflows/redsim-ci.yml.
+config:
+  env: prod
+  secret:
+    existingSecret: ""
+    s3AccessKeyId: ci-real-access-key
+    s3SecretAccessKey: ci-real-secret-key
+    betterAuthSecret: ci-real-better-auth-secret-0123456789
+    apiSessionPrivateKey: ""
+    apiSessionPublicKey: ""
+    externalSecrets:
+      enabled: false
