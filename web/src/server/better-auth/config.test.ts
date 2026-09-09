@@ -336,7 +336,10 @@ describe("Better Auth Keycloak login mints the FastAPI cookie", () => {
     }
   });
 
-  it("serves no Keycloak provider when discovery cannot reach the issuer", async () => {
+  it("keeps the Keycloak provider when discovery cannot reach the issuer", async () => {
+    // Keycloak restarts with no overlap on every release. A web task that
+    // booted in that window used to lose its provider for good; the endpoints
+    // are now set from the issuer, so sign-in still redirects.
     const idp = await mockIdp(KEYCLOAK_CLAIMS, { reachable: false });
     vi.stubGlobal("fetch", idp.fetchImpl);
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -349,11 +352,28 @@ describe("Better Auth Keycloak login mints the FastAPI cookie", () => {
         body: JSON.stringify({ provider: "keycloak", callbackURL: "/dashboard" }),
       }),
     );
-    // Asserted on the provider's absence rather than on the log line, because
-    // discovery is asynchronous and the line is not deterministic. This is the
-    // failure the compose Keycloak healthcheck and the chart's readiness gate
-    // exist to prevent.
-    expect(signIn.status).toBeGreaterThanOrEqual(400);
+    expect(signIn.status).toBe(200);
+    const { url } = (await signIn.json()) as { url: string };
+    expect(url.startsWith(`${ISSUER}/protocol/openid-connect/auth?`)).toBe(true);
+  });
+
+  it("redirects the browser to the public issuer and exchanges on the internal one", async () => {
+    process.env.KEYCLOAK_PUBLIC_ISSUER = "http://public-idp.test/auth/realms/redsim";
+    const idp = await mockIdp(KEYCLOAK_CLAIMS);
+    vi.stubGlobal("fetch", idp.fetchImpl);
+
+    const auth = await buildAuth();
+    const signIn = await auth.handler(
+      new Request(`${BASE_URL}/api/auth/sign-in/social`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: BASE_URL },
+        body: JSON.stringify({ provider: "keycloak", callbackURL: "/dashboard" }),
+      }),
+    );
+    expect(signIn.status).toBe(200);
+    const { url } = (await signIn.json()) as { url: string };
+    expect(url.startsWith("http://public-idp.test/auth/realms/redsim/protocol/openid-connect/auth?")).toBe(true);
+    expect(url).toContain(`redirect_uri=${encodeURIComponent(`${BASE_URL}/api/auth/callback/keycloak`)}`);
   });
 
   it("serves no Keycloak provider when KEYCLOAK_ISSUER is unset", async () => {
