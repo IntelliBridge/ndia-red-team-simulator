@@ -13,6 +13,12 @@ are listed in the spec with a plain string ``detail`` because the retained aegis
 routes already emit them that way; they are in the table so the vocabulary is
 complete, and :data:`STRING_DETAIL_CODES` names them.
 
+The Phase B codes (spec 17.3 addendum of 2026-09-09; plan 12 wave B0) sit in
+the same table with the same rules. One of them, ``capacity_deferred``, is a
+``202`` marker: it rides in the body of an accepted response to say the run
+was admitted but not yet dispatched, so it is never raised as a refusal and
+:data:`MARKER_CODES` names it (:class:`ApiError` and :func:`api_error` refuse it).
+
 Nothing here imports FastAPI at module import time: services raise
 :class:`ApiError` and the route converts it, so the worker and CLI can share the
 same typed refusals without pulling the web stack.
@@ -58,6 +64,36 @@ NOT_IMPLEMENTED: Final = "not_implemented"
 QUEUE_UNAVAILABLE: Final = "queue_unavailable"
 DB_UNAVAILABLE: Final = "db_unavailable"
 
+# --- Codes (spec 17.3 addendum, Phase B, 2026-09-09; in addendum table order) --
+
+# Accepted-but-deferred marker (202 body, never a refusal): BULK capacity caps.
+CAPACITY_DEFERRED: Final = "capacity_deferred"
+# Endpoint (black-box) targets and LLM probe runs.
+ENDPOINT_NOT_ALLOWLISTED: Final = "endpoint_not_allowlisted"
+EGRESS_REFUSED: Final = "egress_refused"
+SNAPSHOT_NOT_FOUND: Final = "snapshot_not_found"
+LLM_TARGET_REQUIRED: Final = "llm_target_required"
+EXPORT_IN_FLIGHT: Final = "export_in_flight"
+EXPORT_UNAVAILABLE: Final = "export_unavailable"
+RESOLUTION_BLOCKED: Final = "resolution_blocked"
+REVIEW_TRANSITION_INVALID: Final = "review_transition_invalid"
+DATASET_TOO_LARGE: Final = "dataset_too_large"
+UNSUPPORTED_DATASET_FORMAT: Final = "unsupported_dataset_format"
+ENDPOINT_URL_INVALID: Final = "endpoint_url_invalid"
+AUTH_PROFILE_KIND_UNSUPPORTED: Final = "auth_profile_kind_unsupported"
+ENDPOINT_SCHEMA_MISMATCH: Final = "endpoint_schema_mismatch"
+PROBE_SET_UNKNOWN: Final = "probe_set_unknown"
+# ``license_required`` was spelled inline in ``redsim/api/v1/models.py`` before
+# the addendum gave it a table row; the value is unchanged.
+LICENSE_REQUIRED: Final = "license_required"
+REMOTE_REFERENCE_REFUSED: Final = "remote_reference_refused"
+SCHEMA_UNDECLARED: Final = "schema_undeclared"
+BATCH_MODALITY_MISMATCH: Final = "batch_modality_mismatch"
+BATCH_TOO_LARGE: Final = "batch_too_large"
+DAILY_BUDGET_EXCEEDED: Final = "daily_budget_exceeded"
+INTEGRATION_DISABLED: Final = "integration_disabled"
+ENDPOINT_UNREACHABLE: Final = "endpoint_unreachable"
+
 # --- HTTP status per code -----------------------------------------------------
 
 HTTP_STATUS: Final = MappingProxyType({
@@ -90,6 +126,30 @@ HTTP_STATUS: Final = MappingProxyType({
     NOT_IMPLEMENTED: 501,
     QUEUE_UNAVAILABLE: 503,
     DB_UNAVAILABLE: 503,
+    # Phase B addendum (2026-09-09).
+    CAPACITY_DEFERRED: 202,
+    ENDPOINT_NOT_ALLOWLISTED: 403,
+    EGRESS_REFUSED: 403,
+    SNAPSHOT_NOT_FOUND: 404,
+    LLM_TARGET_REQUIRED: 409,
+    EXPORT_IN_FLIGHT: 409,
+    EXPORT_UNAVAILABLE: 409,
+    RESOLUTION_BLOCKED: 409,
+    REVIEW_TRANSITION_INVALID: 409,
+    DATASET_TOO_LARGE: 413,
+    UNSUPPORTED_DATASET_FORMAT: 415,
+    ENDPOINT_URL_INVALID: 422,
+    AUTH_PROFILE_KIND_UNSUPPORTED: 422,
+    ENDPOINT_SCHEMA_MISMATCH: 422,
+    PROBE_SET_UNKNOWN: 422,
+    LICENSE_REQUIRED: 422,
+    REMOTE_REFERENCE_REFUSED: 422,
+    SCHEMA_UNDECLARED: 422,
+    BATCH_MODALITY_MISMATCH: 422,
+    BATCH_TOO_LARGE: 422,
+    DAILY_BUDGET_EXCEEDED: 429,
+    INTEGRATION_DISABLED: 501,
+    ENDPOINT_UNREACHABLE: 502,
 })
 
 #: Every code of the section 17.3 table, in table order.
@@ -100,6 +160,9 @@ STRING_DETAIL_CODES: Final = frozenset({FORBIDDEN, NOT_FOUND, RATE_LIMITED, DB_U
 
 #: Codes whose envelope must carry ``phase`` (spec: ``not_implemented`` "always carries phase").
 PHASE_REQUIRED_CODES: Final = frozenset({NOT_IMPLEMENTED})
+
+#: 2xx marker codes: embedded in an accepted response body, never raised as a refusal.
+MARKER_CODES: Final = frozenset({CAPACITY_DEFERRED})
 
 #: The only phase a Phase A build names for work it does not do.
 DEFAULT_PHASE: Final = "B"
@@ -135,6 +198,30 @@ _DEFAULT_MESSAGE: Final = MappingProxyType({
     NOT_IMPLEMENTED: "not implemented in this phase",
     QUEUE_UNAVAILABLE: "job queue is unavailable",
     DB_UNAVAILABLE: "database is unavailable",
+    # Phase B addendum (2026-09-09).
+    CAPACITY_DEFERRED: "run admitted; dispatch is deferred until project capacity frees",
+    ENDPOINT_NOT_ALLOWLISTED: "endpoint host is not in the egress allowlist",
+    EGRESS_REFUSED: "outbound request refused by the egress policy",
+    SNAPSHOT_NOT_FOUND: "report snapshot not found",
+    LLM_TARGET_REQUIRED: "this route needs an LLM endpoint target",
+    EXPORT_IN_FLIGHT: "a dataset export for this run is queued or running",
+    EXPORT_UNAVAILABLE: "the run has no export that can be served",
+    RESOLUTION_BLOCKED: "the finding does not meet every resolution condition",
+    REVIEW_TRANSITION_INVALID: "the review decision is not valid from the current state",
+    DATASET_TOO_LARGE: "uploaded dataset exceeds the size cap",
+    UNSUPPORTED_DATASET_FORMAT: "dataset format is not accepted",
+    ENDPOINT_URL_INVALID: "endpoint URL is not an https URL without userinfo or query",
+    AUTH_PROFILE_KIND_UNSUPPORTED: "auth profile kind is not usable for this endpoint",
+    ENDPOINT_SCHEMA_MISMATCH: "endpoint response does not match the declared schema",
+    PROBE_SET_UNKNOWN: "probe set id is not in the catalog",
+    LICENSE_REQUIRED: "license_statement is required: only licensed models and datasets are registered",
+    REMOTE_REFERENCE_REFUSED: "manifest references content outside the upload",
+    SCHEMA_UNDECLARED: "dataset feature or image schema is not declared",
+    BATCH_MODALITY_MISMATCH: "a batch is one modality; the selected targets span several",
+    BATCH_TOO_LARGE: "batch exceeds the member cap",
+    DAILY_BUDGET_EXCEEDED: "the project's daily run budget is spent",
+    INTEGRATION_DISABLED: "this integration is not enabled in this deployment",
+    ENDPOINT_UNREACHABLE: "endpoint did not answer",
 })
 
 
@@ -165,6 +252,15 @@ def error_detail(code: str, message: str | None = None, **fields: Any) -> dict[s
     return detail
 
 
+def _refuse_marker(code: str) -> None:
+    """``ValueError`` for a 2xx marker code: it is a response body, not a refusal."""
+    if code in MARKER_CODES:
+        raise ValueError(
+            f"{code!r} is a {HTTP_STATUS[code]} marker, not a refusal; "
+            "embed error_detail(code, ...) in the accepted response body instead"
+        )
+
+
 class ApiError(Exception):
     """A typed refusal a service raises; the route turns it into the 17.3 envelope.
 
@@ -174,6 +270,7 @@ class ApiError(Exception):
     """
 
     def __init__(self, code: str, message: str | None = None, **fields: Any) -> None:
+        _refuse_marker(code)
         self.detail = error_detail(code, message, **fields)
         self.code: str = code
         self.status: int = HTTP_STATUS[code]
@@ -195,6 +292,7 @@ def api_error(code: str, message: str | None = None, **fields: Any) -> HTTPExcep
     """
     from fastapi import HTTPException
 
+    _refuse_marker(code)
     detail = error_detail(code, message, **fields)
     if code in STRING_DETAIL_CODES and not fields:
         return HTTPException(status_code=HTTP_STATUS[code], detail=str(detail["message"]))
@@ -208,17 +306,34 @@ __all__ = [
     "ARCHITECTURE_REQUIRED",
     "ATTACK_MODALITY_MISMATCH",
     "ATTACK_REQUIRES_GRADIENTS",
+    "AUTH_PROFILE_KIND_UNSUPPORTED",
+    "BATCH_MODALITY_MISMATCH",
+    "BATCH_TOO_LARGE",
     "CAMPAIGN_IN_FLIGHT",
     "CAMPAIGN_NOT_TERMINAL",
+    "CAPACITY_DEFERRED",
+    "DAILY_BUDGET_EXCEEDED",
     "DATASET_INCOMPATIBLE",
+    "DATASET_TOO_LARGE",
     "DB_UNAVAILABLE",
     "DEFAULT_PHASE",
     "DEFENSE_MODALITY_MISMATCH",
+    "EGRESS_REFUSED",
+    "ENDPOINT_NOT_ALLOWLISTED",
+    "ENDPOINT_SCHEMA_MISMATCH",
+    "ENDPOINT_UNREACHABLE",
+    "ENDPOINT_URL_INVALID",
     "EPS_GRID_INVALID",
+    "EXPORT_IN_FLIGHT",
+    "EXPORT_UNAVAILABLE",
     "FORBIDDEN",
     "HTTP_STATUS",
     "INCOMPATIBLE_CAMPAIGNS",
+    "INTEGRATION_DISABLED",
     "JOB_IN_FLIGHT",
+    "LICENSE_REQUIRED",
+    "LLM_TARGET_REQUIRED",
+    "MARKER_CODES",
     "MODEL_LOAD_REFUSED",
     "MODEL_TOO_LARGE",
     "NOT_FOUND",
@@ -226,14 +341,21 @@ __all__ = [
     "PARAMS_OUT_OF_RANGE",
     "PHASE_REQUIRED_CODES",
     "PICKLE_REFUSED",
+    "PROBE_SET_UNKNOWN",
     "QUEUE_UNAVAILABLE",
     "RATE_LIMITED",
     "REFERENCE_EPS_NOT_IN_GRID",
+    "REMOTE_REFERENCE_REFUSED",
+    "RESOLUTION_BLOCKED",
+    "REVIEW_TRANSITION_INVALID",
     "RUN_TERMINAL",
+    "SCHEMA_UNDECLARED",
     "SCORE_UNAVAILABLE",
+    "SNAPSHOT_NOT_FOUND",
     "STRING_DETAIL_CODES",
     "UNKNOWN_ATTACK",
     "UNKNOWN_DEFENSE",
+    "UNSUPPORTED_DATASET_FORMAT",
     "UNSUPPORTED_MODEL_FORMAT",
     "USE_MODELS_ROUTE",
     "ApiError",

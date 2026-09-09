@@ -124,6 +124,59 @@ class TestStaticPolicyEngineMatrix:
 
 
 # ----------------------------------------------------------------------------
+# Phase B actions (plan 12 wave B0; spec 7.4 addendum 2026-09-09)
+# ----------------------------------------------------------------------------
+
+
+class TestStaticPolicyEnginePhaseBActions:
+    """The seven Phase B members go through the same seam with no special case.
+
+    The matrix test above already covers them because it iterates ``Action``;
+    these pin the register's acceptance rows so a table edit that moves one
+    member's bar fails with its name.
+    """
+
+    # (action, highest denied role, lowest allowed role)
+    BARS = [
+        (Action.LLM_PROBE_RUN, "scanner", "remediator"),
+        (Action.DATASET_REGISTER, "scanner", "remediator"),
+        (Action.DATASET_EXPORT, "viewer", "scanner"),
+        (Action.INTEGRATION_PUSH, "approver", "admin"),
+        (Action.BATCH_RUN, "viewer", "scanner"),
+        (Action.REPORT_RENDER, "viewer", "scanner"),
+        (Action.FINDING_AUTHOR, "scanner", "remediator"),
+    ]
+
+    @pytest.mark.parametrize("action,denied,allowed", BARS,
+                             ids=[a.value for a, _, _ in BARS])
+    def test_bar_sits_between_the_two_roles(self, action, denied, allowed):
+        engine = StaticPolicyEngine()
+        assert _ROLE_RANK[allowed] == _ROLE_RANK[denied] + 1
+        assert _ACTION_MIN_ROLE[action] == allowed
+        deny = engine.evaluate(build_request(
+            _user(memberships={"p1": denied}), action.value, "p1"))
+        assert deny.allowed is False
+        assert denied in deny.reason and action.value in deny.reason
+        allow = engine.evaluate(build_request(
+            _user(memberships={"p1": allowed}), action.value, "p1"))
+        assert allow.allowed is True
+        assert not allow.reason
+
+    def test_phase_b_actions_are_strings_the_external_engines_receive(self):
+        """OPA / Cedar get ``action`` as the enum value; the request carries exactly that."""
+        for action, _, _ in self.BARS:
+            req = build_request(_user(memberships={"p1": "admin"}), action.value, "p1")
+            assert req.action == action.value
+            assert req.to_input()["action"] == action.value
+
+    def test_system_principal_bypasses_phase_b_gates(self):
+        engine = StaticPolicyEngine()
+        for action, _, _ in self.BARS:
+            req = build_request(_user(memberships={}, is_system=True), action.value, "p1")
+            assert engine.evaluate(req).allowed is True
+
+
+# ----------------------------------------------------------------------------
 # build_request routing
 # ----------------------------------------------------------------------------
 

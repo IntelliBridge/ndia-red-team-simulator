@@ -55,6 +55,14 @@ action_min_role := {
 	"finding.review": "approver",
 	"finding.annotate": "remediator",
 	"report.export": "scanner",
+	# Phase B (spec 7.4 addendum, 2026-09-09).
+	"llm.probe.run": "remediator",
+	"dataset.register": "remediator",
+	"dataset.export": "scanner",
+	"integration.push": "admin",
+	"batch.run": "scanner",
+	"report.render": "scanner",
+	"finding.author": "remediator",
 }
 
 default allow := false

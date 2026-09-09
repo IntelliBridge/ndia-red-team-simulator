@@ -22,12 +22,14 @@
 // minimum, so each action lists every role at or above its bar.
 
 // --- scanner-min actions: scan.start, attack.run, explain.run,
-//     report.export -------------------------------------------------------
+//     report.export; Phase B (spec 7.4 addendum, 2026-09-09):
+//     dataset.export, batch.run, report.render ---------------------------
 permit (
   principal,
   action in [
     Action::"scan.start", Action::"attack.run", Action::"explain.run",
-    Action::"report.export"
+    Action::"report.export",
+    Action::"dataset.export", Action::"batch.run", Action::"report.render"
   ],
   resource
 ) when {
@@ -36,12 +38,14 @@ permit (
 };
 
 // --- remediator-min actions: verify.replay, run.cancel, model.register,
-//     harden.recommend, finding.annotate --------------------------------
+//     harden.recommend, finding.annotate; Phase B (spec 7.4 addendum,
+//     2026-09-09): llm.probe.run, dataset.register, finding.author --------
 permit (
   principal,
   action in [
     Action::"verify.replay", Action::"run.cancel", Action::"model.register",
-    Action::"harden.recommend", Action::"finding.annotate"
+    Action::"harden.recommend", Action::"finding.annotate",
+    Action::"llm.probe.run", Action::"dataset.register", Action::"finding.author"
   ],
   resource
 ) when {
@@ -60,11 +64,14 @@ permit (
   principal.role == "approver" || principal.role == "admin"
 };
 
-// --- admin-only actions: target.manage, auth_profile.manage, audit.verify --
+// --- admin-only actions: target.manage, auth_profile.manage, audit.verify;
+//     Phase B (spec 7.4 addendum, 2026-09-09): integration.push, because a
+//     push sends data outside the deployment boundary ---------------------
 permit (
   principal,
   action in [
-    Action::"target.manage", Action::"auth_profile.manage", Action::"audit.verify"
+    Action::"target.manage", Action::"auth_profile.manage", Action::"audit.verify",
+    Action::"integration.push"
   ],
   resource
 ) when {
