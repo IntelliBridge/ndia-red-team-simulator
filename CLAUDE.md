@@ -625,9 +625,10 @@ commit. Re-run them before quoting them.
   the failed unit lane. Wave 4 lands `python-multipart` in the `api`
   extra, breaks the import cycle and baselines the `next` advisory in
   `.trivyignore` with its reason. The 3.13 lane's other cause, the eager
-  torch import behind `redsim/cli/ml.py` (`redsim.ml.assets.build` imports
-  `train_cnn` at module level), is recorded in `docs/dev/ci.md` as not fixed
-  in that pass, so that lane can stay red. Nothing is claimed green until a
+  torch import behind `redsim/cli/ml.py` (`redsim.ml.assets.build` imported
+  `train_cnn` at module level), is fixed at integration by importing the
+  torch-backed modules inside the functions that train (`docs/dev/ci.md`).
+  Nothing is claimed green until a
   run on `main` proves it. The last fully green run was `ea39f97` (#21).
 - `Deploy to AWS` on the `58461cc` push built and pushed the api, worker
   and web images to ECR under GitHub OIDC (the "Configure AWS credentials"

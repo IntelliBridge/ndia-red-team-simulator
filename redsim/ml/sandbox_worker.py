@@ -114,16 +114,28 @@ class DirectoryArtifactSink:
         if self.root != path and self.root not in path.parents:
             raise ValueError(f"artifact escaped sandbox directory: {name!r}")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
         digest = hashlib.sha256(data).hexdigest()
         reference = f"sandbox:{name}:{digest}"
+        # The same name may be written twice with different bytes (one explainer per attack reuses
+        # ``obs_<i>/adv.png``); every distinct reference must survive for the parent to persist, so the
+        # earlier version moves to a digest-qualified path and its manifest entry records where it went.
+        for item in self.manifest:
+            if item["name"] == name and item["sha256"] != digest and item.get("path", name) == name:
+                kept = path.with_name(f"{path.stem}.{item['sha256'][:16]}{path.suffix}")
+                os.replace(path, kept)
+                item["path"] = str(PurePosixPath(*relative.parts[:-1], kept.name))
+        path.write_bytes(data)
+        # Key by both the bare name and the returned reference: the explainers digest through the value
+        # put() returned, exactly as they do against the filesystem and database sinks (ArtifactSink protocol).
         self.hashes[name] = digest
-        self.manifest = [item for item in self.manifest if item["name"] != name]
+        self.hashes[reference] = digest
+        self.manifest = [item for item in self.manifest if item["reference"] != reference]
         self.manifest.append({
             "name": name,
             "content_type": content_type,
             "sha256": digest,
             "reference": reference,
+            "path": name,
         })
         # Write-then-rename so a kill mid-write never leaves a truncated manifest
         # for the parent's partial-evidence pass to misread.

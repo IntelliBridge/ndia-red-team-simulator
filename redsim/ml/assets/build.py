@@ -63,13 +63,14 @@ from redsim.ml.assets.manifest import (
     with_dataset_caveats,
     write_manifest,
 )
-from redsim.ml.assets.train_cnn import save_state_dict, train_cnn
-from redsim.ml.assets.train_url_classifier import SURROGATE_KIND, save_url_classifier, train_url_classifier
 from redsim.ml.datasets import DatasetUnavailable as SliceUnavailable
 from redsim.ml.datasets import cifar10
 from redsim.ml.datasets.url_features import EXTRACTOR_VERSION, FEATURE_NAMES, N_FEATURES, featurize_array
 from redsim.ml.schema import AccuracyPoint, CleanAccuracy
-from redsim.ml.targets.architectures import canonical_architecture_id
+
+# torch-backed modules (train_cnn, train_url_classifier via classification_metrics, targets.architectures) are
+# imported inside the functions that train, so ``redsim ml build-assets`` parses and refuses bad options without
+# the ``ml`` extra (tests/ml/test_cli_ml.py runs on the py3.13 lane).
 
 Log = Callable[[str], None]
 
@@ -257,7 +258,12 @@ class BuildOptions:
             raise ValueError(f"unknown model id(s) {unknown}; known: {sorted(ASSET_IDS)}")
         if self.epochs < 1:
             raise ValueError("epochs must be >= 1")
-        self.arch = canonical_architecture_id(self.arch)
+        try:
+            from redsim.ml.targets.architectures import canonical_architecture_id
+        except ImportError:  # no ``ml`` extra: aliases cannot be resolved, canonical ids still validate below
+            pass
+        else:
+            self.arch = canonical_architecture_id(self.arch)
         if self.arch not in ARCH_CHOICES:
             raise ValueError(f"arch must be one of {ARCH_CHOICES}, got {self.arch!r}")
         self.out = Path(self.out)
@@ -311,6 +317,9 @@ def build_cnn_asset(data: ds.ImageDataset, *, model_id: str, root: Path, epochs:
     statement, then ``caveats``) and its ``subject_centered`` flag (``subject_centered`` when given, else the table
     value, else ``None``); both are copied onto the model entry (spec 13.4, 14.5).
     """
+    from redsim.ml.assets.train_cnn import save_state_dict, train_cnn
+    from redsim.ml.targets.architectures import canonical_architecture_id
+
     root = Path(root).resolve()
     arch = canonical_architecture_id(arch)
     class_names = list(data.train.class_names)
@@ -396,6 +405,12 @@ def build_url_asset(table: ds.UrlTable, *, model_id: str, root: Path, seed: int,
     it is fixture-only, then ``caveats``; the model entry carries a copy (spec 11.3.3, 12.9, 14.5).
     ``subject_centered`` has no tabular meaning and stays ``None``.
     """
+    from redsim.ml.assets.train_url_classifier import (
+        SURROGATE_KIND,
+        save_url_classifier,
+        train_url_classifier,
+    )
+
     root = Path(root).resolve()
     class_names = list(table.dataset.class_names)
     result = train_url_classifier(table.urls, table.labels, seed=seed, holdout=holdout,

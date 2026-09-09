@@ -402,7 +402,9 @@ def _persist_child_artifacts(
     persisted: dict[str, str] = {}
     for item in entries:
         name = str(item.get("name") or "")
-        path = _artifact_path(work_dir, name)
+        # ``path`` is where the child left the bytes (an earlier version of a re-written name sits at a
+        # digest-qualified path); it is never the artifact's name.
+        path = _artifact_path(work_dir, str(item.get("path") or name))
         try:
             data = path.read_bytes()
         except OSError as exc:
@@ -441,7 +443,7 @@ def _persist_partial_files(work_dir: Path, sink: ArtifactSink | None) -> dict[st
     for item in entries:
         name = str(item.get("name") or "")
         try:
-            path = _artifact_path(work_dir, name)
+            path = _artifact_path(work_dir, str(item.get("path") or name))
             data = path.read_bytes()
         except (EnvelopeInvalid, OSError) as exc:
             logger.info("ML sandbox partial evidence skipped %r: %s", name, exc)

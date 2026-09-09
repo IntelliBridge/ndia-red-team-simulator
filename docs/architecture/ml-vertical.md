@@ -533,7 +533,7 @@ datasets, and every spec 26 criterion that needs a named human reviewer
 (26.18 upload sign-off, 26.25 to 26.27 checklists and approvals, and
 decisions D006 and D007 stay open). CI on `main` is red at `58461cc` on three
 jobs (wave 4 fixes the `python-multipart`, import-cycle and advisory causes
-and records the 3.13 lane's eager torch import as still open), and the three
+and the 3.13 lane's eager torch import behind the asset builder), and the three
 wave-4 e2e files are the completion-criteria evidence once they are on
 `main`.
 

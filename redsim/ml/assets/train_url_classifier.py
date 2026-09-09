@@ -22,7 +22,6 @@ import numpy as np
 
 from redsim.ml.assets.datasets import URL_CLASS_NAMES, dedupe_urls, stratified_split
 from redsim.ml.assets.manifest import FileEntry, sha256_file
-from redsim.ml.assets.train_cnn import classification_metrics
 from redsim.ml.datasets.url_features import EXTRACTOR_VERSION, FEATURE_NAMES, FEATURE_SPECS, featurize_array
 from redsim.ml.schema import FeatureSpec
 
@@ -123,6 +122,8 @@ def train_url_classifier(urls: Sequence[str], labels: Sequence[str], *, seed: in
     model.fit(x_train, y_train)
     fit_s = time.perf_counter() - t0
     pred_eval = np.asarray(model.predict(x_eval), dtype=np.int64)
+    from redsim.ml.assets.train_cnn import classification_metrics  # torch-backed module; keep the import lazy
+
     metrics = classification_metrics(y_eval, pred_eval, names)
     log(f"url classifier ({library}): clean accuracy {metrics['clean_accuracy']:.4f} on n={metrics['n']}")
 

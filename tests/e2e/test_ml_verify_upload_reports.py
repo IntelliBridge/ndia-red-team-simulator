@@ -1040,6 +1040,7 @@ def test_api_process_admits_uploads_without_importing_ml(
 def _assert_markdown_report(md: str, campaign: dict[str, Any]) -> None:
     """Spec 14.8 / 15.7 / 16.4 on one rendered Markdown report."""
     from redsim.ml.reporting import (
+        DELTA_HEADING,
         NOT_MEASURED,
         SCORECARD_HEADING,
         SECTION_HEADINGS,
@@ -1058,8 +1059,13 @@ def _assert_markdown_report(md: str, campaign: dict[str, Any]) -> None:
     score = campaign.get("score")
     if score is not None and score.get("mri") is not None:
         assert f"**MRI {score['mri']} — grade {score['grade']}**" in measurements
+        # The subscore rows live in the scorecard sub-block; a verify run's ΔMRI block (same section, after
+        # the scorecard) repeats the subscore names with per-subscore deltas and is asserted separately.
+        scorecard = measurements[measurements.index(SCORECARD_HEADING):]
+        if DELTA_HEADING in scorecard:
+            scorecard = scorecard[:scorecard.index(DELTA_HEADING)]
         for key in ("S_acc", "S_asr", "S_eps", "S_conf", "S_expl"):
-            rows = [line for line in measurements.splitlines() if line.startswith(f"| {key} |")]
+            rows = [line for line in scorecard.splitlines() if line.startswith(f"| {key} |")]
             assert len(rows) == 1 and "(n=" in rows[0], f"{key}: {rows}"
         assert score["reading"] and "Reading (attack-scoped):" in measurements
     else:
@@ -1082,8 +1088,17 @@ def _assert_markdown_report(md: str, campaign: dict[str, Any]) -> None:
         assert "No candidate recommendations were produced." in candidates
     for match in re.finditer(r"Expected gain:[^\n]*", candidates):
         assert match.group(0).startswith(NOT_MEASURED), match.group(0)
+    # Every row of a verify run's ΔMRI block is a measured delta (its tables carry the Δ in the header, not
+    # on each row), so the bare-gain scan skips that block and covers everything else in the report.
+    delta_block = ""
+    if DELTA_HEADING in md:
+        delta_block = md[md.index(DELTA_HEADING):]
+        next_section = delta_block.find("\n## ")
+        if next_section != -1:
+            delta_block = delta_block[:next_section]
+    delta_lines = set(delta_block.splitlines())
     for line in md.splitlines():
-        if _BARE_GAIN.search(line):
+        if _BARE_GAIN.search(line) and line not in delta_lines:
             assert "ΔMRI" in line or "Δ" in line or line.startswith("| S_"), f"bare gain outside a measured delta: {line}"
 
     limitations = _section(md, 5)

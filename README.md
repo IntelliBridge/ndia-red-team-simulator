@@ -563,8 +563,8 @@ nothing in the UI, the CLI or the reports pretends otherwise.
   `58461cc`) and Dependency CVEs (trivy on `next` 14.2.35, CVE-2026-75604 /
   GHSA-2xp9-vwfh-vxw4). Unit tests (py3.12) passes. Wave 4 lands the
   `python-multipart` dependency, breaks the import cycle and baselines the
-  `next` advisory, and `docs/dev/ci.md` records the 3.13 lane's eager torch
-  import as not fixed in that pass. Green is not claimed until a run on
+  `next` advisory, and makes the asset builder's torch imports lazy so the
+  3.13 lane's two `test_cli_ml.py` cases pass without the `ml` extra. Green is not claimed until a run on
   `main` proves it. The counts in this README are local runs from
   `58461cc`, not CI results.
 - **Wave 4** is landing in parallel: the three `tests/e2e` files named above
