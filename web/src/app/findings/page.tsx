@@ -30,6 +30,17 @@ const fetcher = (path: string) =>
 
 const SEVERITIES = ["critical", "high", "medium", "low", "info"] as const;
 
+/**
+ * The layman's lead of a finding description: everything before the measured
+ * block that starts with "Measured:" (redsim.services.ml_findings writes the
+ * lead first), trimmed for the list.
+ */
+export function plainLanguage(description: string): string {
+  const cut = description.indexOf(" Measured:");
+  const lead = (cut > 0 ? description.slice(0, cut) : description).replace(/^What happened: /, "");
+  return lead.length > 320 ? `${lead.slice(0, 317).trimEnd()}...` : lead;
+}
+
 export default function FindingsPage() {
   const authed = useRequireAuth();
   const [severity, setSeverity] = useState<string>("");
@@ -110,7 +121,17 @@ export default function FindingsPage() {
                   <TableCell>
                     <SeverityChip level={f.severity} />
                   </TableCell>
-                  <TableCell>{f.schema_blob.title ?? "—"}</TableCell>
+                  <TableCell>
+                    <div>{f.schema_blob.title ?? "—"}</div>
+                    {f.schema_blob.description && (
+                      <div
+                        className="mt-1 max-w-xl text-xs text-muted-foreground"
+                        title={f.schema_blob.description}
+                      >
+                        {plainLanguage(f.schema_blob.description)}
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell>{f.validation_state}</TableCell>
                   <TableCell>{f.schema_blob.ml?.attack_id ?? "—"}</TableCell>
                   <TableCell>
