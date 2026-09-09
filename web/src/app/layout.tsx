@@ -2,6 +2,7 @@ import "@/styles/globals.css";
 
 import { CommandPalette } from "@/components/command-palette";
 import { NavLinks } from "@/components/nav-links";
+import { SessionKeepalive } from "@/components/session-keepalive";
 import { env } from "@/env";
 import { TRPCReactProvider } from "@/lib/trpc/client";
 
@@ -115,6 +116,7 @@ export default function RootLayout({
             </footer>
           </main>
           <CommandPalette links={NAV_LINKS} />
+          <SessionKeepalive />
         </TRPCReactProvider>
       </body>
     </html>

@@ -131,6 +131,20 @@ export async function api<T>(
     const { token: _ignored, ...rest } = init;
     return api<T>(path, { ...rest, token: "" } as RequestInit & { token?: string });
   }
+  const retried = ((init.headers as Record<string, string> | undefined) ?? {})["X-Redsim-Retry"] === "1";
+  if (resp.status === 401 && !bearer && !retried) {
+    // Cookie path and the API session cookie has expired (its TTL is short and
+    // the keepalive may have missed a beat while the laptop slept). Re-mint it
+    // from the still-valid Better Auth session and retry once; only when that
+    // fails does the caller see the 401 and requireAuth send the user to /login.
+    const { refreshApiSession } = await import("@/components/session-keepalive");
+    if (await refreshApiSession()) {
+      return api<T>(path, {
+        ...init,
+        headers: { ...((init.headers as Record<string, string> | undefined) ?? {}), "X-Redsim-Retry": "1" },
+      });
+    }
+  }
   if (!resp.ok) {
     throw new ApiError(resp.status, await resp.text());
   }

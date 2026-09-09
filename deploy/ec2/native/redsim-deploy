@@ -84,7 +84,22 @@ fi
 # runs on every deploy; a database hiccup is a warning, not a failed deploy.
 /usr/local/bin/redsim-run api "$VENV/bin/python" "$SRC/deploy/runtime/scripts/seed_project.py" org-default default Default \
   || echo "WARNING: seed_project.py (org-default/default) failed; audited writes will 500 until the rows exist" >&2
-systemctl restart redsim-api redsim-scans redsim-default redsim-beat
+# Restart only what the diff touched. A web-only change must not kill probe runs
+# in flight on the workers (each restart aborts the garak children), and a
+# Python-only change need not rebuild or bounce the web. Shared inputs
+# (redsim-run, host.env, the unit files, or --build) restart everything.
+restart_python=0
+if [ "$BUILD" = 1 ] || [ "$before" = "$target" ] || grep -qE '^(redsim/|pyproject\.toml|alembic|deploy/ec2/native/(redsim-run|host\.env|systemd/))' <<<"$changed"; then
+  restart_python=1
+fi
+if grep -qE '^deploy/ec2/native/(redsim-run|host\.env|systemd/)' <<<"$changed"; then
+  restart_web=1
+fi
+if [ "$restart_python" = 1 ]; then
+  systemctl restart redsim-api redsim-scans redsim-default redsim-beat
+else
+  echo "python services unchanged: not restarting the api and workers (probe runs keep going)"
+fi
 [ "$restart_web" = 1 ] && systemctl restart redsim-web
 systemctl --no-pager --plain list-units 'redsim-*' caddy | awk 'NR>1 && $1 ~ /service/ {print $1, $3, $4}'
 
