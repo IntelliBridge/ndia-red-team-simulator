@@ -250,5 +250,10 @@ No key material, no prompt text, no completion text, no readiness wording.
   outputs with per-probe blocked counts and a scorecard limitation. Plain
   authentication/permission refusals remain terminal. Offline tests verify
   five completed attempts, two blocked outputs and a denominator of three.
-- L2, L4, L6 and packages R/A/D remain open. No live gateway traffic or runtime
+- **L4 implemented:** a structured unavailable-provider response aborts on
+  the first request, with no retries, `not_run` rows and the typed reason in
+  worker job detail, run summary, scorecard and execute audit rows. This uses
+  the brief's permitted first-request abort path, rather than sending further
+  prompts to an upstream already declared unavailable.
+- L2, L6 and packages R/A/D remain open. No live gateway traffic or runtime
   changes were made for this test-helper increment.

@@ -502,7 +502,7 @@ def run(spec: LLMProbeChildSpec) -> int:
     from garak._spec import parse_spec_file
     from garak.evaluators import ThresholdEvaluator
 
-    from redsim.ml.llm.generator import PythiaGenerator, assert_no_litellm
+    from redsim.ml.llm.generator import GatewayProviderUnavailable, PythiaGenerator, assert_no_litellm
 
     config_path = work_dir / GARAK_CONFIG_FILE
     config_path.write_text(yaml.safe_dump(garak_run_config(spec, work_dir), sort_keys=False), encoding="utf-8")
@@ -565,7 +565,7 @@ def run(spec: LLMProbeChildSpec) -> int:
             finally:
                 rows[pid].n_outputs_blocked = generator.ledger.gateway_blocked - blocked_before
     except BaseException as exc:  # noqa: BLE001 - the whole run is reported, then re-raised as an exit code
-        run_error = (type(exc).__name__, str(exc))
+        run_error = ("provider_unavailable" if isinstance(exc, GatewayProviderUnavailable) else type(exc).__name__, str(exc))
         if isinstance(exc, KeyboardInterrupt):
             run_error = ("interrupted", "run interrupted")
     finally:
@@ -588,8 +588,10 @@ def run(spec: LLMProbeChildSpec) -> int:
         row.n_outputs_none = int(tally.get("outputs_none", 0))
         row.detectors = evals.get(pid, [])
         if run_error is not None and not row.detectors:
-            row.status = "failed"
-            row.reason = _scrub(f"run aborted: {run_error[0]}", secret_for_scrub)
+            row.status = "not_run" if run_error[0] == "provider_unavailable" else "failed"
+            row.reason = "provider_unavailable" if run_error[0] == "provider_unavailable" else _scrub(
+                f"run aborted: {run_error[0]}", secret_for_scrub
+            )
     result.probes = [rows[pid] for pid in spec.probe_ids]
     result.probes_run = [pid for pid in runnable if rows[pid].status == "run"]
     result.usage = generator.ledger.to_dict() if generator is not None else {}

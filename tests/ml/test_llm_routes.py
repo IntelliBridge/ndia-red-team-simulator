@@ -1321,3 +1321,24 @@ def test_probe_run_against_the_fake_gateway_end_to_end(tmp_path: Path, monkeypat
     # The work directory is gone: garak.log and the xdg cache never survive the run.
     work_root = tmp_path / "work"
     assert not work_root.exists() or not any(p.name.startswith("llm-") for p in work_root.iterdir())
+
+
+def test_provider_unavailable_survives_worker_projection(harness: WorkerHarness):
+    target_id = harness.register()
+    run_id, job_id = harness.admit(target_id)
+    harness.install_entitlement([MODEL_ID])
+    raw = harness.child_outcome(status="failed", error="gateway upstream unavailable",
+                                probes=[{"probe_id": pid, "status": "not_run", "reason": "provider_unavailable",
+                                         "detectors": []} for pid in CORE_PROBES])
+    raw.result["error_type"] = "provider_unavailable"
+    harness.install_child(raw)
+    with pytest.raises(worker.LLMProbeRefused) as excinfo:
+        harness.run_job(job_id)
+    assert excinfo.value.code == "provider_unavailable"
+    assert harness.row(Job, job_id).detail["error_code"] == "provider_unavailable"
+    assert harness.row(Run, run_id).stage_table["error_code"] == "provider_unavailable"
+    events = harness.events(f"run:{run_id}")
+    execute = [event for event in events if event["action"].startswith("llm.probe.execute.")]
+    assert execute and all(e["detail"]["error_code"] == "provider_unavailable" for e in execute)
+    card = json.loads(harness.blob(harness.artifacts(run_id)[SCORECARD_KIND]))
+    assert card["error_code"] == "provider_unavailable"

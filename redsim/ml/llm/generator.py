@@ -91,6 +91,10 @@ _RETRYABLE: tuple[type[BaseException], ...] = (
 _UNDECORATED_CALL: Callable[..., Any] = getattr(OpenAICompatible._call_model, "__wrapped__", OpenAICompatible._call_model)
 
 
+class GatewayProviderUnavailable(openai.OpenAIError):
+    """The gateway reports that all upstream providers failed; no retry."""
+
+
 class GatewayPromptBlocked(openai.OpenAIError):
     """A content-filter refusal; carries no gateway body or prompt text."""
 
@@ -343,13 +347,15 @@ class PythiaGenerator(OpenAICompatible):
         started = response.request.extensions.get("redsim_started")
         elapsed = (time.monotonic() - float(started)) if isinstance(started, (int, float)) else None
         self.ledger.record_response(response, elapsed_s=elapsed)
-        if response.status_code == 403:
+        if response.status_code == 403 or response.status_code >= 500:
             try:
                 body = response.json()
             except ValueError:
                 body = None
             error = body.get("error") if isinstance(body, dict) else None
-            if isinstance(error, dict) and (
+            if response.status_code >= 500 and isinstance(error, dict) and error.get("code") == "provider_unavailable":
+                raise GatewayProviderUnavailable("provider_unavailable: gateway upstream unavailable")
+            if response.status_code == 403 and isinstance(error, dict) and (
                 error.get("code") == "persona_denied" or str(error.get("message", "")).startswith("Blocked by")
             ):
                 # garak wraps PermissionDeniedError before our bounded loop can see it.

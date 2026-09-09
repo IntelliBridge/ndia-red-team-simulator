@@ -877,3 +877,20 @@ def test_plain_permission_denial_stays_terminal(body, garak_env):
             assert gen.ledger.gateway_blocked == 0 and gen.ledger.retries == 0
         finally:
             gen.close()
+
+
+@pytest.mark.garak
+def test_provider_unavailable_stops_child_without_retries(tmp_path, garak_env):
+    body = {"error": {"code": "provider_unavailable", "type": "api_error",
+                      "message": "all upstream providers failed"}}
+    with FakeOpenAIServer(fail_status=502, fail_body=body) as server:
+        spec = _spec(server, prepare_work_dir("provider-child", root=tmp_path),
+                     ["dan.DanInTheWild"], max_prompts_per_probe=5)
+        outcome = run_probe_child(spec, api_key=FAKE_KEY)
+        result = outcome.result
+        assert result is not None and result.status == "failed"
+        assert result.error_type == "provider_unavailable"
+        assert result.probes[0].status == "not_run"
+        assert result.probes[0].reason == "provider_unavailable"
+        assert result.usage["requests"] == 1 and result.usage["retries"] == 0
+        assert len(server.chat_requests) == 1

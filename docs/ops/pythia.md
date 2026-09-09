@@ -269,6 +269,11 @@ the traffic reaches Pythia, verified from `redsim/ml/llm/generator.py`,
   use exponential backoff. A requested wait beyond the cap terminates the run
   instead of retrying earlier than permitted. The ledger counts actual retries
   and `retry_after_honoured` waits. Exhausted tries abort; a 401 remains terminal.
+  A 5xx carrying `error.code=provider_unavailable` stops the child immediately,
+  with zero retries; remaining unevaluated probe rows are `not_run` with that
+  reason. The worker records `provider_unavailable` in job detail, run summary,
+  scorecard and execute audit rows. It is a job failure code; API error-table
+  codes remain unchanged (`score_unavailable` where no scorecard exists).
   Other retryable transport failures use the same bounded loop.
   A 403 with `error.code=persona_denied` or an error message beginning
   `Blocked by` counts as `gateway_blocked` and returns an unevaluated output;

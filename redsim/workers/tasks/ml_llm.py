@@ -730,6 +730,7 @@ def build_scorecard(
         "completeness": outcome.completeness,
         "child_status": outcome.status,
         "error": outcome.error,
+        "error_code": outcome.error_type,
         "counts": {
             "n_probes": len(probes), "n_probes_run": n_run, "n_probes_not_run": len(probes) - n_run,
             "n_families": len(families), "n_detectors_not_run": n_not_run_detectors,
@@ -1161,6 +1162,7 @@ def ml_llm_probe_run(self: Task, job_id: str) -> dict[str, Any]:
             emitter.emit(probe_audit_action(probe.probe_id, short_ids.get(probe.probe_id)), {
                 "probe_id": probe.probe_id, "short_id": short_ids.get(probe.probe_id), "status": probe.status,
                 "reason": probe.reason, "n_prompts_sent": probe.n_prompts_sent, "wall_time_s": probe.wall_time_s,
+                "error_code": outcome.error_type if probe.status != "run" else None,
                 "detectors": [{"detector": d.detector, "status": d.status, "n_evaluated": d.n_evaluated,
                                "n_hits": d.n_hits, "n_none": d.n_none} for d in probe.detectors],
             }, success=probe.status == "run")
@@ -1203,10 +1205,13 @@ def ml_llm_probe_run(self: Task, job_id: str) -> dict[str, Any]:
 
         if outcome.status != "succeeded" or outcome.error:
             # The child timed out or failed: evidence is kept, nothing is projected, the job fails.
-            code = "probe_child_timeout" if outcome.status == "timed_out" else "probe_child_failed"
+            code = ("provider_unavailable" if outcome.error_type == "provider_unavailable" else
+                    "probe_child_timeout" if outcome.status == "timed_out" else "probe_child_failed")
             reason = outcome.error or outcome.error_type or f"probe child {outcome.status}"
             complete("failed", success=False, error_class=code)
             stages.aborted("timed_out" if outcome.status == "timed_out" else "failed", f"{code}: {reason}")
+            job.detail = {**dict(job.detail or {}), "error_code": code}
+            run.stage_table = {**dict(run.stage_table or {}), "error_code": code}
             ctx.session.commit()
             raise LLMProbeRefused(code, str(reason)[:500])
 
