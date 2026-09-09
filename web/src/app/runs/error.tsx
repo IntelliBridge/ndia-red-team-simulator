@@ -15,10 +15,10 @@ export default function RunsError({
 }) {
   return (
     <div className="space-y-4">
-      <h1>Runs</h1>
+      <h1 className="text-2xl font-semibold">Runs</h1>
       <div
         role="alert"
-        className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+        className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
       >
         <p>The runs page could not be rendered.</p>
         {error.digest ? <p className="mt-1 font-mono text-xs">Digest: {error.digest}</p> : null}

@@ -1,8 +1,8 @@
 import type { Config } from "tailwindcss";
 
 const config: Config = {
-  // One dark theme. `<html class="dark">` is set in app/layout.tsx so the
-  // vendored shadcn primitives' `dark:` variants apply.
+  // One dark theme (labs.agiledefense.com). `<html class="dark">` is set in
+  // app/layout.tsx so the vendored shadcn primitives' `dark:` variants apply.
   darkMode: "class",
   content: [
     "./src/**/*.{ts,tsx}",
@@ -11,13 +11,11 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        // Public Sans for interface and measurement, Source Serif 4 for the
-        // written interpretation, JetBrains Mono for identifiers. The same
-        // stacks are exposed as --sans / --serif / --mono in globals.css for
-        // CSS-only callers.
-        sans: ['"Public Sans"', "system-ui", "-apple-system", '"Segoe UI"', "Roboto", "sans-serif"],
-        serif: ['"Source Serif 4"', "Georgia", '"Times New Roman"', "serif"],
-        mono: ['"JetBrains Mono"', "ui-monospace", '"SF Mono"', "Menlo", "monospace"],
+        // The Labs pairing: Helvetica Neue for prose, JetBrains Mono for
+        // labels. Both stacks are also exposed as --sans / --mono in
+        // globals.css for CSS-only callers.
+        sans: ['"Helvetica Neue"', "Helvetica", "Arial", "sans-serif"],
+        mono: ['"JetBrains Mono"', '"Courier New"', "monospace"],
       },
       colors: {
         // Semantic tokens backed by CSS variables defined in globals.css.
@@ -70,41 +68,17 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        // The ink surfaces and rules by name, for the place a semantic token
-        // is too coarse.
-        ground: "var(--ground)",
-        surface: {
-          1: "var(--surface-1)",
-          2: "var(--surface-2)",
-          3: "var(--surface-3)",
-        },
-        ink: {
-          1: "var(--ink-1)",
-          2: "var(--ink-2)",
-          3: "var(--ink-3)",
-          4: "var(--ink-4)",
-        },
-        line: {
-          DEFAULT: "var(--line)",
-          strong: "var(--line-strong)",
-        },
-        // Data marks: adversarial, control, clean. Every chart uses these.
-        data: {
-          adv: "var(--data-adv)",
-          control: "var(--data-control)",
-          clean: "var(--data-clean)",
-        },
-        // The Labs navy steps, kept so existing `navy-*` utilities resolve.
+        // The raw Labs navy steps, for the rare place a token is too coarse.
         navy: {
-          deepest: "var(--navy-deepest)",
-          deep: "var(--navy-deep)",
-          mid: "var(--navy-mid)",
-          surface: "var(--navy-surface)",
-          elevated: "var(--navy-elevated)",
+          deepest: "#04060f",
+          deep: "#060c1a",
+          mid: "#0a1628",
+          surface: "#0f1f36",
+          elevated: "#142640",
         },
         brand: {
           DEFAULT: "#ff5a58",
-          muted: "#c93f3d",
+          muted: "#d23c3a",
         },
       },
     },
