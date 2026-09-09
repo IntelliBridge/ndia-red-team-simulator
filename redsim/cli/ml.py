@@ -16,8 +16,15 @@ written, and the process exits non-zero on a refusal or a failed campaign.
 
 ``redsim ml seed`` registers the bundled, non-fixture models of the manifest
 into a project through ``redsim.services.ml_models.register_bundled_model``
-(the audit-first admission half). When that function is absent in this build
-the command says so and exits non-zero instead of pretending.
+(the audit-first admission boundary ``POST /v1/models`` with ``source=bundled``
+uses): the service verifies the bundled files against the manifest, writes the
+``model.register`` audit row, copies the weights into the blob store and adds a
+per-project ``Target`` (id ``<bundled_id>-<8 hex>``, value
+``bundled:<bundled_id>``), which the CLI commits per model. A model the project
+already holds is reported as already present from the service's
+``already_registered`` refusal; every refusal is written to the project chain
+as a ``success=False`` row, as the route does. When the service is absent in
+this build the command says so and exits non-zero instead of pretending.
 
 ``build-assets --fixture`` writes the committed CIFAR-10 test slice
 (``tests/ml/fixtures/cifar10_test_500.npz`` and its sidecar entry) from a local
@@ -33,7 +40,6 @@ pays for them and a test can assert the parser stays light.
 from __future__ import annotations
 
 import argparse
-import inspect
 import os
 import sys
 from collections.abc import Iterator
@@ -54,8 +60,9 @@ BUILD_ASSETS_REASON = ""
 # Spec 20.3: the dataset cache shared by build-assets and the loaders. ``--cache-dir`` wins over it.
 DATASET_CACHE_ENV = "REDSIM_ML_DATASET_CACHE"
 
-# Wave-2 contract this CLI codes against by name (spec 8 table, G-ASSET4):
-# ``redsim.services.ml_models.register_bundled_model(session, project_id, bundled_id, actor)``.
+# The wave-2 admission service this CLI calls (spec 8 table, G-ASSET4), looked up by name so a build
+# without it gets a clear refusal: ``register_bundled_model(session, project_id, bundled_id, actor, *,
+# audit_writer, config, blob_store, assets_root) -> Target``; ``ApiError(already_registered)`` for a duplicate.
 SEED_SERVICE_MODULE = "redsim.services.ml_models"
 SEED_SERVICE_FUNCTION = "register_bundled_model"
 DB_URL_ENV = "REDSIM_DB_URL"
@@ -173,10 +180,14 @@ def add_ml_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
         help="Register the bundled, non-fixture models of the asset manifest into a project (audit-first)",
         description=(
             "Open the configured database (REDSIM_DB_URL) and call "
-            f"{SEED_SERVICE_MODULE}.{SEED_SERVICE_FUNCTION}(session, project_id, bundled_id, actor) for each "
-            "bundled model in <assets>/MANIFEST.json that is not fixture-only. The service writes the "
-            "model.register audit row first, puts the weights blob and creates the ml_model_artifact Target as "
-            "available. Models already present in the project are reported, not re-registered. When the "
+            f"{SEED_SERVICE_MODULE}.{SEED_SERVICE_FUNCTION}(session, project_id, bundled_id, actor, ...) for each "
+            "bundled model in <assets>/MANIFEST.json that is not fixture-only: the service verifies the bundled "
+            "files against the manifest, writes the model.register audit row first, puts the weights blob and "
+            "creates the ml_model_artifact Target (id <bundled_id>-<8 hex>, value bundled:<bundled_id>) as "
+            "available; each registration is committed before the next model. A model the project already holds "
+            "is reported as already present (the service's already_registered) and never re-registered; every "
+            "refusal is recorded on the project chain as a success=False model.register row and any refusal other "
+            "than already_registered makes the command exit 1 after the remaining models were tried. When the "
             "service is absent in this build the command says so and exits non-zero."
         ),
     )
@@ -335,7 +346,7 @@ class SeedUnavailable(RuntimeError):
 
 
 def _seed_service() -> Any:
-    """The wave-2 ``register_bundled_model`` service, or ``None`` when this build lacks it."""
+    """``redsim.services.ml_models.register_bundled_model``, or ``None`` when this build lacks it."""
     import importlib
 
     try:
@@ -346,16 +357,25 @@ def _seed_service() -> Any:
     return fn if callable(fn) else None
 
 
-@contextmanager
-def _seed_session() -> Iterator[Any]:
-    """The configured DB session (``REDSIM_DB_URL``); a test seam."""
+def _require_db_url() -> str:
     url = os.environ.get(DB_URL_ENV, "").strip()
     if not url:
         raise SeedUnavailable(f"{DB_URL_ENV} is not set; redsim ml seed writes Target rows and needs the "
                               "platform database")
-    from redsim.db.session import get_session, init_engine
+    return url
 
-    init_engine(url)
+
+@contextmanager
+def _seed_session() -> Iterator[Any]:
+    """The configured DB session (``REDSIM_DB_URL``).
+
+    ``redsim.db.session.get_session`` initialises the engine from that variable
+    on first use; ``resolve_writer`` has usually done so already, so the audit
+    writer and the Target rows share one engine.
+    """
+    _require_db_url()
+    from redsim.db.session import get_session
+
     with get_session() as sess:
         yield sess
 
@@ -410,94 +430,61 @@ def _seed_candidates(manifest: dict[str, Any], only: list[str]) -> tuple[list[st
     return [mid for mid in wanted if mid not in fixture_ids], skipped
 
 
-def _existing_bundled_target(sess: Any, project_id: str, bundled_id: str) -> Any | None:
-    from sqlalchemy import select
-
-    from redsim.db.models import Target
-
-    return sess.execute(select(Target).where(
-        Target.project_id == project_id, Target.value == f"bundled:{bundled_id}",
-    )).scalar_one_or_none()
+def _describe_target(target: Any) -> str:
+    """``(target <id>, status <detail.status>)`` for the ``Target`` row the service returns."""
+    detail = getattr(target, "detail", None)
+    status = detail.get("status") if isinstance(detail, dict) else None
+    parts = [f"target {target.id}", f"status {status}" if status else ""]
+    return " (" + ", ".join(p for p in parts if p) + ")"
 
 
-def _call_register(fn: Any, sess: Any, project_id: str, bundled_id: str, actor: str,
-                   extras: dict[str, Any]) -> Any:
-    """Call ``register_bundled_model(session, project_id, bundled_id, actor)`` however wave 2 spelled it.
-
-    The four required values go by position; ``audit_writer`` / ``blob_store`` /
-    ``config`` are passed only when the signature names them.
-    """
-    positional = [sess, project_id, bundled_id, actor]
-    kwargs: dict[str, Any] = {}
-    try:
-        params = inspect.signature(fn).parameters
-    except (TypeError, ValueError):
-        return fn(*positional)
-    ordered = [p for p in params.values() if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
-    if len(ordered) < len(positional):
-        # Some of the four are keyword-only in this build: match the rest by name.
-        names = ("session", "project_id", "bundled_id", "actor")
-        aliases = {"session": ("session", "sess", "db"), "bundled_id": ("bundled_id", "model_id", "target_id")}
-        positional = positional[: len(ordered)]
-        for name, value in zip(names[len(ordered):], [sess, project_id, bundled_id, actor][len(ordered):],
-                               strict=True):
-            for candidate in aliases.get(name, (name,)):
-                if candidate in params:
-                    kwargs[candidate] = value
-                    break
-    for key, value in extras.items():
-        if key in params and key not in kwargs:
-            kwargs[key] = value
-    return fn(*positional, **kwargs)
-
-
-def _service_extras(fn: Any, config: RedsimConfig) -> dict[str, Any]:
-    """Optional keyword arguments, built only when the service names them (audit_writer, blob_store, config)."""
-    try:
-        names = set(inspect.signature(fn).parameters)
-    except (TypeError, ValueError):
-        return {}
-    extras: dict[str, Any] = {}
-    if "config" in names:
-        extras["config"] = config
-    if "audit_writer" in names:
-        from redsim.audit.chain import resolve_writer
-
-        extras["audit_writer"] = resolve_writer(config)
-    if "blob_store" in names:
-        from redsim.storage import open_blob_store
-
-        extras["blob_store"] = open_blob_store(config)
-    return extras
-
-
-def _describe_outcome(outcome: Any) -> str:
-    if outcome is None:
+def _describe_refusal(exc: Any) -> str:
+    """The 17.3 fields worth showing on the console: ``target_id``, ``refusal_reason`` and ``reasons``."""
+    detail = getattr(exc, "detail", None)
+    if not isinstance(detail, dict):
         return ""
-    if isinstance(outcome, dict):
-        target_id = outcome.get("id") or outcome.get("target_id")
-        status = outcome.get("status")
-    else:
-        target_id = getattr(outcome, "id", None)
-        detail = getattr(outcome, "detail", None)
-        status = detail.get("status") if isinstance(detail, dict) else getattr(outcome, "status", None)
-    parts = [f"target {target_id}" if target_id else "", f"status {status}" if status else ""]
-    text = ", ".join(p for p in parts if p)
-    return f" ({text})" if text else ""
+    parts: list[str] = []
+    if detail.get("target_id"):
+        parts.append(f"target {detail['target_id']}")
+    if detail.get("refusal_reason"):
+        parts.append(f"refusal_reason {detail['refusal_reason']}")
+    reasons = detail.get("reasons")
+    if isinstance(reasons, list) and reasons:
+        parts.append("; ".join(str(r) for r in reasons))
+    return f" ({', '.join(parts)})" if parts else ""
 
 
 def cmd_ml_seed(args: argparse.Namespace, config: RedsimConfig) -> None:
-    """Register every bundled, non-fixture model of the manifest into one project."""
-    from redsim.api.errors import ALREADY_REGISTERED, ApiError
-    from redsim.ml.campaign_adapter import resolve_assets_dir
-    from redsim.services.ml_models import DatasetBindingError, read_asset_manifest
+    """Register every bundled, non-fixture model of the manifest into one project.
 
+    Per model: ``register_bundled_model`` verifies the bundled files against the
+    manifest, writes the ``model.register`` audit row, copies the weights into
+    the blob store and adds the ``Target`` row; the CLI then commits that row so
+    a refusal further down the list leaves the models before it registered. A
+    refusal (``ApiError``) is written to the project chain as a ``success=False``
+    ``model.register`` row through ``audit_refused_admission``, exactly as
+    ``POST /v1/models`` does; ``already_registered`` is reported as already
+    present and is not a failure, every other code makes the command exit 1
+    after the remaining models were tried.
+    """
     fn = _seed_service()
     if fn is None:
         _console._err(f"redsim ml seed needs {SEED_SERVICE_MODULE}.{SEED_SERVICE_FUNCTION}, which this build "
                       "does not provide (the wave-2 admission service is not merged); nothing was registered")
         sys.exit(EXIT_REFUSED)
+    # After the presence check: ``redsim.api.errors`` resolves the ``redsim.api`` package, whose routers import
+    # the service by name, so a build without it must be refused above rather than fail here.
+    from redsim.api.errors import ALREADY_REGISTERED, ApiError
+    from redsim.ml.campaign_adapter import resolve_assets_dir
+    from redsim.services.ml_models import (
+        DatasetBindingError,
+        MlCatalogUnavailable,
+        audit_refused_admission,
+        read_asset_manifest,
+    )
+
     assets_dir = resolve_assets_dir(getattr(args, "assets_dir", None))
+    # The target registry reads the manifest through this variable; keep it in step with --assets-dir.
     os.environ[ASSETS_DIR_ENV] = str(assets_dir)
     actor = str(getattr(args, "actor", None) or DEFAULT_ACTOR)
     try:
@@ -515,30 +502,51 @@ def cmd_ml_seed(args: argparse.Namespace, config: RedsimConfig) -> None:
         _console._warn("nothing to seed: every selected model is fixture-only")
         return
 
+    registered = 0
+    present = 0
     failures = 0
     try:
+        _require_db_url()
+        # The writer first: with REDSIM_DB_URL set it initialises the engine the session below reuses.
+        from redsim.audit.chain import resolve_writer
+        from redsim.storage.blobs import open_blob_store
+
+        writer = resolve_writer(config)
+        blob_store = open_blob_store(config)
         with _seed_session() as sess:
             project_id = _seed_project_id(sess, getattr(args, "project", None))
-            extras = _service_extras(fn, config)
             _console._info(f"seeding {bundled_ids} into project {project_id} from {assets_dir}")
             for bundled_id in bundled_ids:
-                existing = _existing_bundled_target(sess, project_id, bundled_id)
-                if existing is not None:
-                    _console._info(f"already present: {bundled_id}{_describe_outcome(existing)}")
-                    continue
                 try:
-                    outcome = _call_register(fn, sess, project_id, bundled_id, actor, extras)
+                    target = fn(sess, project_id, bundled_id, actor, audit_writer=writer, config=config,
+                                blob_store=blob_store, assets_root=assets_dir)
                 except ApiError as exc:
+                    sess.rollback()
+                    audit_refused_admission(
+                        writer, action="model.register", actor=actor, project_id=project_id,
+                        detail={"kind": "ml_model_artifact", "source": "bundled", "bundled_id": bundled_id,
+                                "reason": exc.code, **{k: v for k, v in exc.detail.items()
+                                                       if k in {"reason", "refusal_reason", "status", "target_id"}}},
+                    )
                     if exc.code == ALREADY_REGISTERED:
-                        _console._info(f"already present: {bundled_id} ({exc})")
+                        present += 1
+                        _console._info(f"already present: {bundled_id}{_describe_refusal(exc)}")
                         continue
                     failures += 1
-                    _console._err(f"{bundled_id}: refused ({exc.code}): {exc}")
+                    _console._err(f"{bundled_id}: refused ({exc.code}): {exc}{_describe_refusal(exc)}")
                     continue
-                _console._info(f"registered: {bundled_id}{_describe_outcome(outcome)}")
+                # The audit row and the blob are durable already; commit the Target row now so a refusal on a
+                # later model never rolls this registration back.
+                sess.commit()
+                registered += 1
+                _console._info(f"registered: {bundled_id}{_describe_target(target)}")
     except SeedUnavailable as exc:
         _console._err(str(exc))
         sys.exit(EXIT_REFUSED)
+    except MlCatalogUnavailable as exc:
+        _console._err(f"{exc}; nothing was registered")
+        sys.exit(EXIT_REFUSED)
+    _console._info(f"seed finished: {registered} registered, {present} already present, {failures} refused")
     if failures:
         sys.exit(EXIT_REFUSED)
 
