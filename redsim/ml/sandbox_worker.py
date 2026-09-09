@@ -42,6 +42,21 @@ EXIT_BAD_REQUEST = 2
 #: Cap on the envelope the parent will read (spec 9.4: large arrays go to files).
 ENVELOPE_MAX_BYTES = 16 * 1024 * 1024
 
+#: Request key naming a remote predict endpoint (mirrors ``redsim.ml.sandbox.TARGET_ENDPOINT_KEY``).
+#: The block carries the parent's unix-socket path and a credential-free descriptor; this process
+#: never sees the URL's credential and never opens an HTTP connection (spec 9.4, 20.3).
+TARGET_ENDPOINT_KEY = "target_endpoint"
+
+
+def _endpoint_target(target_id: str, request: dict[str, Any]) -> Any | None:
+    """The ``EndpointTarget`` for a request that names one, else ``None`` (socket client only, no HTTP)."""
+    spec = request.get(TARGET_ENDPOINT_KEY)
+    if not isinstance(spec, dict):
+        return None
+    from redsim.ml.targets.endpoint import endpoint_target_from_request
+
+    return endpoint_target_from_request(target_id, spec)
+
 
 def scrub_llm_env(environ: dict[str, str] | None = None) -> list[str]:
     """Drop every Pythia / LLM-model variable from ``environ`` (default ``os.environ``).
@@ -207,9 +222,9 @@ def _campaign(request: dict[str, Any], work_dir: Path) -> None:
         # Building the uploaded target performs the sniff/digest/architecture
         # checks, so a refused model is campaign failure evidence (a partial
         # record naming ``ModelLoadRefused``/``UnsupportedArtifact``), not a crash.
-        target = None
+        target = _endpoint_target(config.target_id, request)
         target_file = request.get("target_file")
-        if isinstance(target_file, str) and target_file:
+        if target is None and isinstance(target_file, str) and target_file:
             target = artifact_target_from_path(
                 config.target_id,
                 Path(target_file),
@@ -238,15 +253,17 @@ def _campaign(request: dict[str, Any], work_dir: Path) -> None:
 
 
 def _validate(request: dict[str, Any], work_dir: Path) -> None:
-    """Load and probe the uploaded bytes; every outcome is a typed envelope."""
+    """Load and probe the uploaded bytes (or probe a remote endpoint); every outcome is a typed envelope."""
     try:
         from redsim.services.ml_models import artifact_target_from_path
 
-        target = artifact_target_from_path(
-            str(request["target_id"]),
-            Path(str(request["target_file"])),
-            dict(request.get("target_detail") or {}),
-        )
+        target: Any = _endpoint_target(str(request["target_id"]), request)
+        if target is None:
+            target = artifact_target_from_path(
+                str(request["target_id"]),
+                Path(str(request["target_file"])),
+                dict(request.get("target_detail") or {}),
+            )
         target.load()
         manifest = target.manifest()
     except Exception as exc:  # noqa: BLE001 - refusals travel as data, never as stderr text
