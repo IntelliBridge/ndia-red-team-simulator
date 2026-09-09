@@ -167,13 +167,21 @@ def _pin_assets_dir(assets_dir: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _parse_grid(request: OfflineCampaignRequest) -> tuple[list[float], float]:
-    from redsim.ml.scoring import default_eps_grid, default_reference_eps
+def _norm_defaults(norm: str) -> tuple[tuple[float, ...], float]:
+    """The spec 12.3 default grid and reference for ``norm`` from the modality table (any modality that
+    serves the norm; the classifier modalities share one table, text and detection own theirs)."""
+    from redsim.services.ml_campaigns import KNOWN_NORMS, SUPPORTED_MODALITIES
 
+    if norm not in KNOWN_NORMS:
+        raise OfflineCampaignRefused(REASON_EPS_GRID, f"norm must be one of {sorted(KNOWN_NORMS)}, got {norm!r}")
+    spec = next(s for s in SUPPORTED_MODALITIES.values() if norm in s.norms)
+    return tuple(spec.eps_grids[norm]), float(spec.reference_eps[norm])
+
+
+def _parse_grid(request: OfflineCampaignRequest) -> tuple[list[float], float]:
     norm = request.norm
-    if norm not in {"linf", "l2"}:
-        raise OfflineCampaignRefused(REASON_EPS_GRID, f"norm must be linf or l2, got {norm!r}")
-    grid = [float(e) for e in request.eps_grid] if request.eps_grid else default_eps_grid(norm)
+    default_grid, default_reference = _norm_defaults(norm)
+    grid = [float(e) for e in request.eps_grid] if request.eps_grid else list(default_grid)
     if not grid:
         raise OfflineCampaignRefused(REASON_EPS_GRID, "eps grid is empty")
     if any(not (0.0 < e <= 1.0) for e in grid):
@@ -186,7 +194,6 @@ def _parse_grid(request: OfflineCampaignRequest) -> tuple[list[float], float]:
             raise OfflineCampaignRefused(
                 REASON_REFERENCE_EPS, f"reference eps {reference:g} is not a member of the grid {grid}")
         return grid, reference
-    default_reference = default_reference_eps(norm)
     if default_reference in grid:
         return grid, default_reference
     return grid, grid[len(grid) // 2]
@@ -220,6 +227,13 @@ def build_offline_config(request: OfflineCampaignRequest) -> tuple[CampaignConfi
             reason, info.reason or f"target {request.target_id!r} is {info.status}")
 
     modality = info.domain
+    from redsim.services.ml_campaigns import SUPPORTED_MODALITIES
+
+    modality_spec = SUPPORTED_MODALITIES.get(modality)
+    if modality_spec is not None and request.norm not in modality_spec.norms:
+        raise OfflineCampaignRefused(
+            REASON_EPS_GRID,
+            f"norm {request.norm!r} does not apply to {modality!r} targets (accepted: {list(modality_spec.norms)})")
     attack_ids = [a for a in dict.fromkeys(request.attack_ids) if a]
     if not attack_ids:
         raise OfflineCampaignRefused(REASON_UNKNOWN_ATTACK, "no attack ids given")
