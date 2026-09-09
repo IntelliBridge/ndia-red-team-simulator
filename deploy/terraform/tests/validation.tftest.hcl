@@ -313,3 +313,21 @@ run "reject_insufficient_storage_autoscaling_headroom" {
 
   expect_failures = [var.database_max_allocated_storage_gib]
 }
+
+run "reject_public_https_without_opt_in" {
+  command = plan
+  variables { reviewer_ipv4_cidrs = ["0.0.0.0/0"] }
+  expect_failures = [var.reviewer_ipv4_cidrs]
+}
+
+run "allow_explicit_public_https" {
+  command = plan
+  variables {
+    reviewer_ipv4_cidrs = ["0.0.0.0/0"]
+    allow_public_https  = true
+  }
+  assert {
+    condition     = aws_vpc_security_group_ingress_rule.reviewer_https["0.0.0.0/0"].from_port == 443 && aws_vpc_security_group_ingress_rule.reviewer_https["0.0.0.0/0"].to_port == 443 && !aws_db_instance.foundation.publicly_accessible
+    error_message = "Public demo access is HTTPS-only; the database must stay private."
+  }
+}
