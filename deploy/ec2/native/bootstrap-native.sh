@@ -121,7 +121,7 @@ echo "== web dependencies"
 (cd $SRC && CI=true pnpm install --frozen-lockfile)   # CI=true: no TTY prompt when node_modules is replaced
 # Production build of the web app; the unit runs `next start` on it. Needs the env
 # files written above (env.js validates NEXT_PUBLIC_REDSIM_API_URL and Better Auth).
-(cd $SRC && sudo -u redsim -H env CI=true /usr/local/bin/redsim-run web pnpm --filter @redsim/web build)
+(cd $SRC && sudo -u redsim env HOME=/var/lib/redsim COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true /usr/local/bin/redsim-run web pnpm --filter @redsim/web build)
 
 echo "== keycloak ${KC_VERSION}"
 if [ ! -x /opt/keycloak/bin/kc.sh ]; then
