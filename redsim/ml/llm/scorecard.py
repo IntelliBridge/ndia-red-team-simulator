@@ -221,6 +221,7 @@ class UsageSummary(BaseModel):
     retries: int = 0
     retry_after_honoured: int = 0
     gateway_blocked: int = 0
+    edge_blocked: int = 0
     http_errors: dict[str, int] = Field(default_factory=dict)
     transport_errors: dict[str, int] = Field(default_factory=dict)
     models_seen: dict[str, int] = Field(default_factory=dict)

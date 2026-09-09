@@ -92,7 +92,18 @@ _UNDECORATED_CALL: Callable[..., Any] = getattr(OpenAICompatible._call_model, "_
 
 
 class GatewayPromptBlocked(openai.OpenAIError):
-    """A content-filter refusal; carries no gateway body or prompt text."""
+    """A content-filter refusal; carries no gateway body or prompt text.
+
+    ``source`` is ``"gateway"`` for Pythia's own JSON refusal (``persona_denied`` /
+    "Blocked by ...") and ``"edge"`` for a 403 whose body is not JSON: a proxy or
+    web application firewall in front of the gateway refused that one request.
+    Either way the attempt records ``None`` outputs and the run continues; one
+    blocked prompt must not abort the other probes (run-f795aa7b7d46, 2026-09-09).
+    """
+
+    def __init__(self, source: str = "gateway") -> None:
+        super().__init__(f"prompt blocked by {source}")
+        self.source = source
 
 
 class ProbeKeyUnavailable(MLError):
@@ -167,6 +178,7 @@ class UsageLedger:
     retries: int = 0
     retry_after_honoured: int = 0
     gateway_blocked: int = 0
+    edge_blocked: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
@@ -220,6 +232,7 @@ class UsageLedger:
             "retries": self.retries,
             "retry_after_honoured": self.retry_after_honoured,
             "gateway_blocked": self.gateway_blocked,
+            "edge_blocked": self.edge_blocked,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
             "total_tokens": self.total_tokens,
@@ -354,7 +367,17 @@ class PythiaGenerator(OpenAICompatible):
             ):
                 # garak wraps PermissionDeniedError before our bounded loop can see it.
                 # Intercept here, after counting the HTTP response, without logging its body.
-                raise GatewayPromptBlocked()
+                raise GatewayPromptBlocked("gateway")
+            if not isinstance(body, dict):
+                # An HTML or empty 403 never comes from Pythia's auth layer (that answers JSON);
+                # it is a proxy / WAF in front of the gateway refusing this one request body.
+                # garak would map it to "authentication failed" and abort the whole run.
+                logger.warning(
+                    "gateway edge returned a non-JSON 403 (content-type %s); recording the prompt as "
+                    "blocked and continuing",
+                    response.headers.get("content-type", "?"),
+                )
+                raise GatewayPromptBlocked("edge")
 
     def _call_model(self, prompt: Any, generations_this_call: int = 1) -> list[Any]:
         """garak's request logic with a bounded retry loop instead of its uncapped backoff."""
@@ -364,8 +387,10 @@ class PythiaGenerator(OpenAICompatible):
             try:
                 result: list[Any] = _UNDECORATED_CALL(self, prompt, generations_this_call)
                 return result
-            except GatewayPromptBlocked:
+            except GatewayPromptBlocked as blocked:
                 self.ledger.gateway_blocked += generations_this_call
+                if blocked.source == "edge":
+                    self.ledger.edge_blocked += generations_this_call
                 return [None] * generations_this_call
             except _RETRYABLE as exc:
                 tries += 1
