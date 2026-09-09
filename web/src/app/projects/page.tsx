@@ -8,7 +8,7 @@ export default function ProjectsPage() {
   const { projects, isLoading, error } = useRoles();
 
   if (!authed)
-    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
+    return <p className="text-muted-foreground">Signing in…</p>;
   if (isLoading) return <p className="text-muted-foreground">Loading…</p>;
   if (error)
     return (

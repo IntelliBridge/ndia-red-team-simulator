@@ -24,7 +24,7 @@ export default function DashboardPage() {
   );
 
   if (!authed)
-    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
+    return <p className="text-muted-foreground">Signing in…</p>;
 
   // Awaited, so the redirect follows both the Better Auth sign-out and the
   // redsim cookie clear rather than racing them.

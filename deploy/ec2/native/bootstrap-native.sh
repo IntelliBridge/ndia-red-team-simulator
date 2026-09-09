@@ -114,7 +114,7 @@ echo "== python venv"
 [ -x $VENV/bin/python ] || python3.12 -m venv $VENV
 $VENV/bin/pip install --quiet --upgrade pip
 $VENV/bin/pip install --quiet --index-url https://download.pytorch.org/whl/cpu "torch>=2.3" "torchvision>=0.18"
-(cd $SRC && $VENV/bin/pip install --quiet -e ".[api,worker,ml]")
+(cd $SRC && $VENV/bin/pip install --quiet -e ".[api,worker,ml,garak]")
 $VENV/bin/python -c "import redsim, torch, art; print('venv ok', torch.__version__)"
 
 echo "== web dependencies"

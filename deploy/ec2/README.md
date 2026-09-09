@@ -13,7 +13,7 @@ IAM roles, the VPC) stays and is what the host uses.
 | Security groups | `redsim-ec2` (443 and 80 public, 22 from the operator IP) plus the foundation's `api` and `identity` groups, which RDS and Redis admit |
 | Instance role | `redsim-ec2`: SSM core, ECR read, `secretsmanager:GetSecretValue` on `ndia-red-team/demo/*`, the artifacts bucket |
 | Checkout | `/opt/redsim/src` (a clone of this repository, detached at the deployed commit) |
-| Python | `/opt/redsim/venv` (3.12, `.[api,worker,ml]` with CPU torch, editable install of the checkout) |
+| Python | `/opt/redsim/venv` (3.12, `.[api,worker,ml,garak]` with CPU torch, editable install of the checkout) |
 | Node | Node 20, pnpm 10 through corepack, `node_modules` in the checkout |
 | Keycloak | `/opt/keycloak` (26.7.3, Java 21), realm import from `deploy/runtime/identity/realm.json` |
 | TLS | Caddy from the apt package, Let's Encrypt on the hostname (`/etc/caddy/Caddyfile`) |

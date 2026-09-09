@@ -40,7 +40,7 @@ export default function FindingsPage() {
   const { data, error, isLoading } = useSWR(authed ? query : null, fetcher);
 
   if (!authed)
-    return <p className="text-muted-foreground">Redirecting to sign in…</p>;
+    return <p className="text-muted-foreground">Signing in…</p>;
 
   const findings = data?.findings ?? [];
 
