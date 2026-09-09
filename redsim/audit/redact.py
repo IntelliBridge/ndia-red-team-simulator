@@ -17,11 +17,16 @@ _SENSITIVE_KEYS = {
     # Legacy Kaggle basic-auth pair (``KAGGLE_USERNAME`` / ``KAGGLE_KEY``);
     # ``KAGGLE_API_TOKEN`` and ``PYTHIA_API_KEY`` already match on substring.
     "kaggle_key",
+    # Foundry push credential names (spec 27.3, INTEROP-28); ``token`` already matches on
+    # substring, spelled here so the intent survives a rename of the substring rule.
+    "foundry_token", "x_foundry_token",
 }
 
 _SENSITIVE_HEADER_NAMES = {
     "authorization", "cookie", "set-cookie", "proxy-authorization",
     "x-api-key",
+    # Foundry bearer header (INTEROP-28).
+    "x-foundry-token",
 }
 
 # Common token / key signatures. Conservative: prefer false positives.
@@ -41,6 +46,11 @@ _TOKEN_PATTERNS = [
     re.compile(r"\bKGAT_[A-Za-z0-9_\-]{8,}\b"),
     # Legacy Kaggle key written inline (``KAGGLE_KEY=<hex>`` / kaggle.json shape).
     re.compile(r"(?i)\bkaggle_key\b[\"']?\s*[=:]\s*[\"']?[A-Za-z0-9]{16,}[\"']?"),
+    # JWT-shaped token (INTEROP-28): three base64url segments, the first a ``{"`` header (``eyJ``).
+    # Foundry and other bearer tokens are JWTs; ``\b`` would miss a segment ending in ``-``, so the
+    # boundaries are spelled as look-arounds over the base64url alphabet.
+    re.compile(r"(?<![A-Za-z0-9_\-])eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"
+               r"(?![A-Za-z0-9_\-])"),
 ]
 
 

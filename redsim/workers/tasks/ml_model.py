@@ -326,7 +326,7 @@ def _validate_upload(
         registered_manifest.get("sha256") or original.get("sha256") or ""
     ).strip().lower()
     try:
-        with uploaded_model_file(target, ctx.blob_store) as (
+        with uploaded_model_file(target, ctx.blob_store, session=ctx.session) as (
             materialized_path,
             materialized_detail,
         ):
@@ -368,6 +368,7 @@ def _validate_upload(
             "library_versions": None,
             "refusal_reason": refusal,
             "ingest_job_id": job_id,
+            "ingest_run_id": _as_dict(original.get("validation")).get("ingest_run_id"),
         }
         target.detail = {
             **original,
@@ -408,10 +409,23 @@ def _validate_upload(
         "library_versions": library_versions,
         "refusal_reason": None,
         "ingest_job_id": job_id,
+        # The registration named the validate Run (spec 9.3); the block keeps naming it after the verdict, as
+        # the endpoint path does, so the row points at the chain that carries model.validate + job.complete.
+        "ingest_run_id": _as_dict(original.get("validation")).get("ingest_run_id"),
     }
+    # The loader describes the bytes it loaded (``source: uploaded``, a manifest built from the loaded model);
+    # the row's provenance is registration-time information the child cannot know. A derived model
+    # (ATTACKS_HARDEN-13, ``_register_derived_target``) keeps ``source: derived`` and its ``derived_from``
+    # lineage on the manifest so the parent -> derived link stays discoverable after validation.
+    row_source = original.get("source")
+    if row_source == "derived" and manifest.get("derived_from") is None:
+        lineage = registered_manifest.get("derived_from") or original.get("derived_from")
+        if lineage is not None:
+            manifest = {**manifest, "derived_from": lineage}
     target.detail = {
         **original,
         **manifest,
+        **({"source": row_source} if row_source == "derived" else {}),
         "status": "available",
         "refusal_reason": None,
         "manifest": manifest,

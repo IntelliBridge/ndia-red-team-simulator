@@ -12,6 +12,17 @@ were just written are removed again and the caller receives ``503
 queue_unavailable`` (spec 17.2), with a second ``success=False`` row recording
 the roll-back.
 
+Capacity (BULK-20, -21; ``redsim.services.ml_capacity``): after the request has
+been validated and before the admission row, both boundaries call
+``admit_or_defer``. A spent daily budget is ``429 daily_budget_exceeded`` (the
+capacity service writes the ``success=False`` row); over the project's
+concurrency cap the admission is *deferred*: the rows are written as usual, the
+job stays ``queued`` with ``detail.deferred = true`` and no broker message, the
+handle carries ``deferred`` and the ``capacity_deferred`` 202 marker, and the
+dispatcher (the finishing worker's continuation hook or the beat backstop) hands
+it to the broker when a slot frees. The batch service decides capacity per member
+itself and passes ``capacity_check=False``.
+
 Modalities (plan 12 wave B2, register MODALITIES-06..08): :data:`SUPPORTED_MODALITIES`
 is the one table of what a campaign may evaluate (``image``, ``tabular``, ``text``,
 ``detection``) with, per modality, the budgets it can be measured under, the
@@ -410,6 +421,10 @@ class CampaignJobHandle:
     scoring_source: str | None = None
     non_default_weights: bool | None = None
     scoring_weights: dict[str, float] | None = None
+    #: Capacity (BULK-21): ``True`` when the admission was deferred (queued, not enqueued) and the
+    #: ``capacity_deferred`` marker for the 202 body; ``None`` / empty when the caller skipped the check.
+    deferred: bool | None = None
+    capacity: dict[str, Any] | None = None
 
     def to_response(self) -> dict[str, Any]:
         response: dict[str, Any] = {
@@ -423,6 +438,11 @@ class CampaignJobHandle:
             response["non_default_weights"] = self.non_default_weights
         if self.scoring_weights is not None:
             response["scoring_weights"] = dict(self.scoring_weights)
+        # Additive and only on a deferral: the body of an admission dispatched at once is unchanged.
+        if self.deferred:
+            response["deferred"] = True
+            if self.capacity:
+                response["capacity"] = dict(self.capacity)
         return response
 
 
@@ -575,6 +595,33 @@ def _stamp_task_id(job_id: str, task_id: str | None) -> None:
             job.celery_task_id = task_id
 
 
+def _capacity_admission(*, project_id: str, kind: str, actor: str, audit_writer: AuditWriter,
+                        **context: Any) -> Any:
+    """``redsim.services.ml_capacity.admit_or_defer`` for one admission of ``kind`` (BULK-20, -21).
+
+    Returns the ``CapacityDecision``. A spent daily budget raises the service's ``429 daily_budget_exceeded``
+    :class:`ApiError` after it wrote the ``success=False`` row on the project chain (``context`` carries ids
+    only); concurrency never refuses, it defers.
+    """
+    from redsim.db.models import Project
+    from redsim.db.session import get_session
+    from redsim.services.ml_capacity import admit_or_defer
+
+    with get_session() as sess:
+        project = sess.get(Project, project_id)
+        return admit_or_defer(sess, project if project is not None else project_id, kind, actor=actor,
+                              audit_writer=audit_writer, action=kind, **context)
+
+
+def _mark_deferred(*, run_id: str, job_id: str, decision: Any) -> None:
+    """Stamp a deferred admission (``Job.detail.deferred``, ``Run.stage_table.deferred`` plus the counts)."""
+    from redsim.db.session import get_session
+    from redsim.services.ml_capacity import mark_deferred
+
+    with get_session() as sess:
+        mark_deferred(sess, run_id=run_id, job_id=job_id, decision=decision)
+
+
 # ---------------------------------------------------------------------------
 # Scoring (REVIEW_REPORTS-29)
 # ---------------------------------------------------------------------------
@@ -693,8 +740,17 @@ def create_attack_campaign(
     parent_run_id: str | None = None,
     max_eps_grid_members: int = DEFAULT_MAX_EPS_GRID_MEMBERS,
     max_n_samples: Mapping[str, int] | None = None,
+    capacity_check: bool = True,
+    before_enqueue: Callable[[str, list[str]], None] | None = None,
 ) -> CampaignJobHandle:
     """Audit first, then atomically admit one whole-campaign ``attack.run`` job.
+
+    ``capacity_check`` (default on) consults the project's capacity before the admission row (module
+    docstring): ``429 daily_budget_exceeded`` refuses, an over-cap admission is written deferred and not
+    enqueued (the handle says so). The batch service decides per member and passes ``False``.
+    ``before_enqueue(run_id, job_ids)`` runs once the Run / Job / campaign rows exist and before the broker
+    message (the platform's rows-before-enqueue order): the batch service stamps ``batch_id`` there, so a
+    worker (eager or not) never reads a member job the batch has not finished describing.
 
     Raises :class:`ApiError` with the spec 17.3 code for every refusal (each
     refusal also writes a ``success=False`` ``attack.run`` audit row):
@@ -1111,6 +1167,13 @@ def create_attack_campaign(
     except ApiError as exc:
         refuse(exc)
 
+    # BULK-20/-21: the capacity decision precedes the admission row; a budget refusal wrote its own row.
+    capacity = (_capacity_admission(project_id=project_id, kind="attack.run", actor=actor, audit_writer=audit_writer,
+                                    target_id=frozen.target_id, parent_run_id=parent_run_id)
+                if capacity_check else None)
+    deferred = bool(capacity is not None and capacity.deferred)
+    enqueue = enqueue and not deferred
+
     from redsim.ml.scoring import settings_hash
 
     run_id = run_id or f"run-{uuid4().hex[:12]}"
@@ -1180,6 +1243,10 @@ def create_attack_campaign(
             limitations=[],
         ))
 
+    if deferred:
+        _mark_deferred(run_id=run_id, job_id=job_id, decision=capacity)
+    if before_enqueue is not None:
+        before_enqueue(run_id, [job_id])
     if enqueue:
         try:
             task_id = _enqueue_campaign(job_id)
@@ -1192,7 +1259,9 @@ def create_attack_campaign(
                    rolled_back_run_id=run_id, rolled_back_job_ids=[job_id])
         _stamp_task_id(job_id, task_id)
     return CampaignJobHandle(run_id=run_id, job_ids=[job_id], scoring_source=scoring_source,
-                             non_default_weights=non_default_weights, scoring_weights=scoring_weights)
+                             non_default_weights=non_default_weights, scoring_weights=scoring_weights,
+                             deferred=deferred if capacity is not None else None,
+                             capacity=capacity.marker() if capacity is not None and deferred else None)
 
 
 def recommendation_defense_ids(recommendation: CandidateRecommendation) -> set[str]:
@@ -1341,8 +1410,17 @@ def create_verify_campaign(
     config: RedsimConfig,
     audit_writer: AuditWriter,
     enqueue: bool = True,
+    capacity_check: bool = True,
+    before_enqueue: Callable[[str, list[str]], None] | None = None,
 ) -> CampaignJobHandle:
     """Audit and admit a defense evaluation as a separate ML campaign (spec 16.5, 17.2).
+
+    ``capacity_check`` as in :func:`create_attack_campaign`: the project's capacity is consulted before the
+    admission row (``429 daily_budget_exceeded`` refuses; over the concurrency cap the verify is written
+    deferred and not enqueued, the finding still flips to ``fixing`` since the verify is admitted).
+    ``before_enqueue(run_id, job_ids)`` runs after the rows exist and before the broker message: a bulk
+    verify (owner decision BULK-16) binds ``Job.detail.finding_ids`` and writes its per-finding
+    ``verify.replay`` rows there, so the worker projects onto every selected finding whenever it runs.
 
     ``recommendation_id`` is optional: when given, the defense must be one the
     recommendation names (through the ``defense:<id>`` references of
@@ -1466,6 +1544,15 @@ def create_verify_campaign(
     except ApiError as exc:
         refuse(exc)
 
+    # BULK-20/-21: the capacity decision precedes the admission row; a budget refusal wrote its own row.
+    assert project_id is not None
+    capacity = (_capacity_admission(project_id=project_id, kind="verify.replay", actor=actor,
+                                    audit_writer=audit_writer, finding_id=finding_id, baseline_run_id=baseline_id,
+                                    defense_id=resolved_defense_id)
+                if capacity_check else None)
+    deferred = bool(capacity is not None and capacity.deferred)
+    enqueue = enqueue and not deferred
+
     frozen_json = frozen.model_dump(mode="json")
     run_id = f"run-{uuid4().hex[:12]}"
     job_id = f"job-{uuid4().hex[:12]}"
@@ -1546,6 +1633,10 @@ def create_verify_campaign(
             config=frozen_json,
             limitations=[],
         ))
+    if deferred:
+        _mark_deferred(run_id=run_id, job_id=job_id, decision=capacity)
+    if before_enqueue is not None:
+        before_enqueue(run_id, [job_id])
     if enqueue:
         try:
             task_id = _enqueue_campaign(job_id)
@@ -1562,8 +1653,11 @@ def create_verify_campaign(
                    rolled_back_run_id=run_id, rolled_back_job_ids=[job_id])
         _stamp_task_id(job_id, task_id)
     # The verify handle keeps the Phase A response shape (run_id, job_ids, status_url): the frozen block is
-    # the baseline's and the audit row above discloses it; the attack handle carries the scoring keys.
-    return CampaignJobHandle(run_id=run_id, job_ids=[job_id])
+    # the baseline's and the audit row above discloses it; the attack handle carries the scoring keys. Only a
+    # deferral adds ``deferred`` and the capacity marker.
+    return CampaignJobHandle(run_id=run_id, job_ids=[job_id],
+                             deferred=deferred if capacity is not None else None,
+                             capacity=capacity.marker() if capacity is not None and deferred else None)
 
 
 __all__ = [

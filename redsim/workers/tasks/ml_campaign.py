@@ -42,7 +42,18 @@ returned envelope into durable evidence:
   ``verify.replay`` attaches the ``MeasuredDelta`` to the recommendation naming
   the defense, maps the outcome through ``verify._STATE_MAP`` and spec 6.4
   (``inconclusive`` -> ``open``), writes the ``RemediationAttempt`` row and the
-  ``verify.execute`` audit row.
+  ``verify.execute`` audit row. A bulk verify (owner decision BULK-16) is one
+  defended run whose ``Job.detail.finding_ids`` lists every selected finding of
+  the baseline: the same record is projected onto each of them from that
+  finding's own attack rows (``_verify_outcome(record, attack_id)``), one
+  ``verify.execute`` row per finding, the primary (``Job.detail.finding_id``)
+  first; a child failure leaves every listed finding ``inconclusive`` / ``open``.
+* **Reports** (REVIEW_REPORTS-16/-20): the completion path renders every report
+  format (``md``, ``json``, ``html``, ``pdf``; :data:`REPORT_FORMATS`), lists
+  them on the ``report.render`` row and then records the run's first
+  ``report_snapshots`` row over the artifact rows it wrote
+  (``redsim.services.reports.record_report_snapshot``); ``POST report.render``
+  adds further snapshots.
 
 ``SandboxTimeout`` / ``SandboxKilled`` / ``EnvelopeInvalid`` from the child are
 Job failures with the stage marked ``timed_out`` / ``failed``, completeness
@@ -57,6 +68,7 @@ import hashlib
 import json
 import logging
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -86,8 +98,12 @@ DELTA_UNAVAILABLE_LIMITATION = (
 
 #: Router task of the hardening narrative (spec 5.12, 10.8); mirrors ``redsim.llm.router``.
 NARRATIVE_TASK = "ml.harden_narrative"
-#: Report formats ``render_campaign_reports`` writes; the ``report.render`` audit row lists them.
-REPORT_FORMATS: tuple[str, ...] = ("md", "json", "html")
+#: Report formats the completion path renders; the ``report.render`` audit row lists what it wrote.
+#: Mirrors ``redsim.ml.reporting.REPORT_FORMATS_ALL`` and ``redsim.services.reports.REPORT_FORMATS``
+#: (declared here so the API process, which imports this module to enqueue, never loads the renderer).
+REPORT_FORMATS: tuple[str, ...] = ("md", "json", "html", "pdf")
+#: The formats that need no optional dependency; the fallback when the PDF renderer is not importable.
+REPORT_FORMATS_TEXT: tuple[str, ...] = ("md", "json", "html")
 #: Prefix of files a killed / timed-out child had written (mirrors ``redsim.ml.sandbox.PARTIAL_PREFIX``).
 PARTIAL_PREFIX = "ml/partial/"
 #: Spec 6.5 per-stage status vocabulary.
@@ -567,11 +583,16 @@ class _StageTracker:
         if run is None:
             return
         table, stages, jobs = self._table(run)
+        # The record's order is authoritative; a live frame the parent never saw keeps its place in it.
+        self.done = [*record.stages_done, *[stage for stage in self.done if stage not in record.stages_done]]
         for stage in record.stages_done:
-            if stage not in self.done:
-                self.done.append(stage)
-            if stage not in stages:
-                stages[stage] = {"status": "succeeded", "started_at": None, "finished_at": now, "job_id": self.job_id}
+            existing = stages.get(stage)
+            if not isinstance(existing, dict) or existing.get("status") != "succeeded":
+                # The returned record is authoritative: a stage it lists as done completed, even when its
+                # live frame never reached the parent (or a later frame had marked it skipped meanwhile).
+                previous: dict[str, Any] = existing if isinstance(existing, dict) else {}
+                stages[stage] = {"status": "succeeded", "started_at": previous.get("started_at"),
+                                 "finished_at": previous.get("finished_at") or now, "job_id": self.job_id}
         for name, entry in list(stages.items()):
             if isinstance(entry, dict) and entry.get("status") in {"running", "queued"}:
                 stages[name] = {**entry, "status": "skipped", "finished_at": now}
@@ -987,38 +1008,98 @@ def _verify_outcome(record: CampaignRecord, attack_id: str) -> tuple[str, str | 
     return ("still_vulnerable" if inputs.crosses_threshold else "verified"), None
 
 
+def verify_finding_ids(detail: Mapping[str, Any]) -> list[str]:
+    """The findings a verify job projects onto, the primary (``detail.finding_id``) first.
+
+    A single verify carries ``finding_id`` only; a bulk verify (owner decision BULK-16) adds
+    ``finding_ids`` listing every selected finding of the baseline run, the primary among them. Ids are
+    deduplicated in admission order; an empty result means the job names no finding at all.
+    """
+    primary = detail.get("finding_id")
+    ordered: list[str] = [str(primary)] if primary else []
+    for raw in detail.get("finding_ids") or []:
+        fid = str(raw) if raw else ""
+        if fid and fid not in ordered:
+            ordered.append(fid)
+    return ordered
+
+
 def _project_verify(
     ctx: Any, *, job: Any, record: CampaignRecord, baseline_run_id: str | None, emitter: _AuditEmitter,
     sink: DatabaseArtifactSink,
 ) -> dict[str, Any]:
-    """Write the verify outcome onto the baseline finding (spec 6.4, 16.4, 16.5) and emit ``verify.execute``.
+    """Write the verify outcome onto every finding the job names (spec 6.4, 16.4, 16.5) and emit ``verify.execute``.
+
+    A single verify names one finding (``Job.detail.finding_id``); a bulk verify (owner decision BULK-16)
+    names every selected finding of the baseline run in ``Job.detail.finding_ids`` and the one defended
+    record is projected onto each from that finding's own attack rows (``_verify_outcome(record,
+    attack_id)``), with one ``verify.execute`` row per finding, the primary first. The ``recommendation_id``
+    filter applies to the primary only (it is the primary's recommendation); the other findings attach the
+    ``MeasuredDelta`` to every candidate naming the defense.
 
     A verify whose defense had kind ``training`` also registers the derived model the child produced as a
     new Target (``ml_model_artifact``, source ``derived``, ``MLModelManifest.derived_from`` lineage) through
     the register-then-validate path (ATTACKS_HARDEN-13); the derived digest and the training budget are named
     on the ``verify.execute`` row, in the remediation summary and beside the ``MeasuredDelta`` (ATTACKS_HARDEN-18).
     Every verify appends a :class:`FindingVerify` (with ``settings_hash`` and ``baseline_run_id``) to
-    ``retests``, keeping ``verify`` the latest (REVIEW_REPORTS-08).
+    ``retests``, keeping ``verify`` the latest (REVIEW_REPORTS-08). Returns the primary finding's summary
+    plus ``finding_ids`` and the per-finding ``outcomes``.
     """
-    from redsim.db.models import Finding, RemediationAttempt
+    from redsim.db.models import Finding
+
+    detail = dict(job.detail or {})
+    finding_ids = verify_finding_ids(detail)
+    if not finding_ids:
+        raise RuntimeError("verify job names no finding")
+    primary_id = finding_ids[0]
+    primary = ctx.session.get(Finding, primary_id)
+    if primary is None:
+        raise RuntimeError("verify finding is missing")
+    defense = record.config.defense
+    if defense is None:
+        raise RuntimeError("verify campaign carries no defense")
+    # ATTACKS_HARDEN-13: register the derived model a training defense produced (a no-op for a
+    # preprocessing defense or when the child left no derived weights). Once per run, not per finding.
+    derived = _register_derived_target(ctx, record=record, sink=sink, emitter=emitter)
+    shared = len(finding_ids) > 1
+    summary: dict[str, Any] | None = None
+    outcomes: dict[str, str] = {}
+    projected: list[str] = []
+    for fid in finding_ids:
+        finding = primary if fid == primary_id else ctx.session.get(Finding, fid)
+        if finding is None:
+            logger.warning("verify run %s: finding %s named in finding_ids is missing; not projected", ctx.run_id, fid)
+            continue
+        one = _project_verify_onto(
+            ctx, finding=finding, record=record, baseline_run_id=baseline_run_id, emitter=emitter,
+            derived=derived, recommendation_id=detail.get("recommendation_id") if fid == primary_id else None,
+            shared_projection=({"primary_finding_id": primary_id, "finding_ids": list(finding_ids)}
+                               if shared else None),
+        )
+        outcomes[fid] = str(one["outcome"])
+        projected.append(fid)
+        if fid == primary_id:
+            summary = one
+    assert summary is not None
+    return {**summary, "finding_ids": projected, "outcomes": outcomes}
+
+
+def _project_verify_onto(
+    ctx: Any, *, finding: Any, record: CampaignRecord, baseline_run_id: str | None, emitter: _AuditEmitter,
+    derived: dict[str, Any] | None, recommendation_id: Any, shared_projection: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Project the defended ``record`` onto one finding from its own attack rows; returns its summary."""
+    from redsim.db.models import RemediationAttempt
     from redsim.ml.schema import FindingVerify, MeasuredDelta, MLFindingDetail
     from redsim.services.ml_campaigns import recommendation_defense_ids
     from redsim.workers.tasks.verify import _STATE_MAP
 
-    detail = dict(job.detail or {})
-    finding = ctx.session.get(Finding, detail.get("finding_id"))
-    if finding is None:
-        raise RuntimeError("verify finding is missing")
     schema_blob = dict(finding.schema_blob or {})
     ml_detail = MLFindingDetail.model_validate(schema_blob.get("ml") or {})
     defense = record.config.defense
-    if defense is None:
-        raise RuntimeError("verify campaign carries no defense")
+    assert defense is not None
     outcome, reason = _verify_outcome(record, ml_detail.attack_id)
     score_delta = record.score.delta if record.score is not None else None
-    # ATTACKS_HARDEN-13: register the derived model a training defense produced (a no-op for a
-    # preprocessing defense or when the child left no derived weights).
-    derived = _register_derived_target(ctx, record=record, sink=sink, emitter=emitter)
     # REVIEW_REPORTS-08: verify is the latest retest and every verify is appended to the history.
     ml_detail.verify = FindingVerify(run_id=ctx.run_id, defense=defense, outcome=outcome, delta=score_delta,
                                      settings_hash=record.settings_hash, baseline_run_id=baseline_run_id)
@@ -1037,7 +1118,7 @@ def _project_verify(
             delta_acc_clean=score_delta.delta_acc_clean, settings_hash=record.settings_hash,
             measured_at=_now(),
         )
-        named = str(detail.get("recommendation_id") or "") or None
+        named = str(recommendation_id or "") or None
         updated = []
         for recommendation in ml_detail.recommendations:
             names_defense = defense.id in recommendation_defense_ids(recommendation)
@@ -1081,6 +1162,7 @@ def _project_verify(
         "delta_mri": score_delta.delta if score_delta is not None else None,
         "inconclusive_reason": reason, "measured_for": measured_for,
         **({"derived": derived_detail} if derived_detail else {}),
+        **({"shared_run_projection": shared_projection} if shared_projection else {}),
     }
     # Spec 10.2: append_remediation_log(finding_id, action="ml.verify.<defense>", result=<json>, success=<bool>).
     # The finding belongs to the baseline run, so the row is written directly rather than through the
@@ -1103,45 +1185,48 @@ def _project_verify(
         "inconclusive_reason": reason,
         "baseline_run_id": baseline_run_id,
         **derived_detail,
+        # BULK-16: a shared defended run says which finding this row projects onto and which others it serves.
+        **({"shared_run_projection": True, **shared_projection} if shared_projection else {}),
     }, success=outcome != "inconclusive")
     return summary
 
 
 def _verify_inconclusive_on_failure(ctx: Any, *, job: Any, error: str) -> None:
-    """A verify job that did not return a record leaves its finding ``inconclusive`` / ``open`` (spec 6.4)."""
+    """A verify job that did not return a record leaves every finding it names ``inconclusive`` / ``open`` (spec 6.4)."""
     from redsim.db.models import Finding
     from redsim.ml.schema import FindingVerify, MLFindingDetail
     from redsim.workers.tasks.verify import _STATE_MAP
 
     detail = dict(job.detail or {})
-    finding = ctx.session.get(Finding, detail.get("finding_id"))
-    if finding is None:
-        return
-    schema_blob = dict(finding.schema_blob or {})
-    try:
-        ml_detail = MLFindingDetail.model_validate(schema_blob.get("ml") or {})
-        config = dict(detail.get("campaign_config") or {})
-        defense = config.get("defense")
-        if isinstance(defense, dict) and defense.get("id"):
-            from redsim.ml.schema import DefenseConfig
+    for fid in verify_finding_ids(detail):
+        finding = ctx.session.get(Finding, fid)
+        if finding is None:
+            continue
+        schema_blob = dict(finding.schema_blob or {})
+        try:
+            ml_detail = MLFindingDetail.model_validate(schema_blob.get("ml") or {})
+            config = dict(detail.get("campaign_config") or {})
+            defense = config.get("defense")
+            if isinstance(defense, dict) and defense.get("id"):
+                from redsim.ml.schema import DefenseConfig
 
-            # REVIEW_REPORTS-08: a failed retest is still a retest; append it and keep it the latest.
-            ml_detail.verify = FindingVerify(
-                run_id=ctx.run_id, defense=DefenseConfig.model_validate(defense), outcome="inconclusive",
-                baseline_run_id=detail.get("baseline_run_id"),
-            )
-            ml_detail.retests = [*ml_detail.retests, ml_detail.verify]
-            schema_blob["ml"] = ml_detail.model_dump(mode="json")
-    except Exception:  # noqa: BLE001 - the state write below is what matters
-        logger.debug("verify failure: could not stamp FindingVerify", exc_info=True)
-    schema_blob["updated_at"] = _now().isoformat()
-    schema_blob["status"] = VERIFY_STATUS_MAP["inconclusive"]
-    finding.schema_blob = schema_blob
-    finding.validation_state = _STATE_MAP["inconclusive"]
-    finding.status = VERIFY_STATUS_MAP["inconclusive"]
-    finding.validated_at = _now()
-    finding.updated_at = _now()
-    logger.warning("verify run %s failed (%s); finding %s left inconclusive/open", ctx.run_id, error, finding.id)
+                # REVIEW_REPORTS-08: a failed retest is still a retest; append it and keep it the latest.
+                ml_detail.verify = FindingVerify(
+                    run_id=ctx.run_id, defense=DefenseConfig.model_validate(defense), outcome="inconclusive",
+                    baseline_run_id=detail.get("baseline_run_id"),
+                )
+                ml_detail.retests = [*ml_detail.retests, ml_detail.verify]
+                schema_blob["ml"] = ml_detail.model_dump(mode="json")
+        except Exception:  # noqa: BLE001 - the state write below is what matters
+            logger.debug("verify failure: could not stamp FindingVerify", exc_info=True)
+        schema_blob["updated_at"] = _now().isoformat()
+        schema_blob["status"] = VERIFY_STATUS_MAP["inconclusive"]
+        finding.schema_blob = schema_blob
+        finding.validation_state = _STATE_MAP["inconclusive"]
+        finding.status = VERIFY_STATUS_MAP["inconclusive"]
+        finding.validated_at = _now()
+        finding.updated_at = _now()
+        logger.warning("verify run %s failed (%s); finding %s left inconclusive/open", ctx.run_id, error, finding.id)
 
 
 # ---------------------------------------------------------------------------
@@ -1300,7 +1385,10 @@ def _register_derived_target(
     blob_sha = str(getattr(weights_row, "sha256", "") or "")
     size_bytes = int(getattr(weights_row, "size_bytes", 0) or 0)
     location = str(getattr(weights_row, "location", "") or "")
-    parent_target_id = str(report.get("target_id") or record.config.target_id)
+    # The lineage names the admitted Target row (``config.target_id``, checked against the Run at task start);
+    # the training report's ``target_id`` is the child's in-process id (a bundled asset id such as
+    # ``vehicles_cnn``), kept only as the fallback for a record without a config target.
+    parent_target_id = str(record.config.target_id or report.get("target_id"))
     parent_sha256 = str(defense_prov.get("parent_sha256") or report.get("parent_manifest_sha256")
                         or report.get("parent_weights_sha256") or "")
     defense_id = str(defense_prov.get("id") or (record.config.defense.id if record.config.defense else "") or "")
@@ -1531,6 +1619,50 @@ def _emit_record_audit(
         emitter.emit("harden.execute", dict(harden_audit))
 
 
+def _render_reports(record: CampaignRecord, sink: DatabaseArtifactSink) -> tuple[tuple[str, ...], str | None]:
+    """Render every report format into the sink; ``(formats written, why the PDF was not)``.
+
+    The PDF is a projection of the record, never evidence: when its renderer is unavailable (``reportlab``
+    not installed) or fails to typeset the record (a ``LayoutError`` on a wide measurement table), the run
+    still gets the text formats, the ``report.render`` row lists exactly what was written and names the
+    failure under ``pdf_unavailable``, and the job completes. Nothing is faked: no empty ``report.pdf`` row
+    is created and the record itself is untouched.
+    """
+    from redsim.ml.reporting import render_campaign_reports
+
+    generated_at = _now()
+    try:
+        outputs = render_campaign_reports(record, generated_at=generated_at, formats=REPORT_FORMATS)
+        pdf_unavailable: str | None = None
+    except Exception as exc:  # noqa: BLE001 - a report projection never fails the evidence job
+        logger.warning("report.pdf not rendered for run %s: %s: %s", record.run_id, type(exc).__name__, exc,
+                       exc_info=True)
+        outputs = render_campaign_reports(record, generated_at=generated_at, formats=REPORT_FORMATS_TEXT)
+        pdf_unavailable = f"{type(exc).__name__}: {exc}"[:500]
+    written: list[str] = []
+    for name, data, content_type in outputs:
+        sink.put(name, data, content_type)
+        written.append(name.rsplit(".", 1)[-1])
+    return tuple(written), pdf_unavailable
+
+
+def _record_completion_snapshot(ctx: Any, *, job: Any, sink: DatabaseArtifactSink,
+                                formats: tuple[str, ...]) -> str | None:
+    """The run's first ``report_snapshots`` row over the report artifacts the sink wrote (REVIEW_REPORTS-20)."""
+    from redsim.services.reports import record_report_snapshot
+
+    artifact_ids = [sink.ids[f"report.{ext}"] for ext in formats if sink.ids.get(f"report.{ext}")]
+    record_sha256 = sink._hashes.get("run_record.json")
+    if not artifact_ids or not record_sha256:
+        logger.info("run %s: no report artifact rows to snapshot", ctx.run_id)
+        return None
+    snapshot = record_report_snapshot(
+        ctx.session, run_id=ctx.run_id, project_id=ctx.project_id, artifact_ids=artifact_ids,
+        record_sha256=str(record_sha256), created_by=job.created_by, rendered_at=_now(),
+    )
+    return str(snapshot.id)
+
+
 @app.task(name="redsim.ml_campaign_run", bind=True, max_retries=2)
 def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
     """Validate frozen input, run the pure campaign in the sandbox, and persist projections."""
@@ -1690,7 +1822,7 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
             else:
                 from redsim.services.ml_models import uploaded_model_file
 
-                with uploaded_model_file(target, ctx.blob_store) as (
+                with uploaded_model_file(target, ctx.blob_store, session=ctx.session) as (
                     materialized_path,
                     materialized_detail,
                 ):
@@ -1758,10 +1890,7 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
             if is_verify:
                 harden_audit = None
 
-        from redsim.ml.reporting import render_campaign_reports
-
-        for name, data, content_type in render_campaign_reports(record):
-            sink.put(name, data, content_type)
+        rendered_formats, pdf_unavailable = _render_reports(record, sink)
         record_json = record.model_dump_json(indent=2).encode("utf-8")
         sink.finalizing_run_record = True
         sink.put("run_record.json", record_json, "application/json")
@@ -1783,10 +1912,15 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
             )
             n_findings = 1
         emitter.emit("report.render", {
-            "formats": list(REPORT_FORMATS),
-            "artifact_ids": {f"report.{ext}": sink.ids.get(f"report.{ext}") for ext in REPORT_FORMATS},
-            "sha256": {f"report.{ext}": sink._hashes.get(f"report.{ext}") for ext in REPORT_FORMATS},
+            "formats": list(rendered_formats),
+            "artifact_ids": {f"report.{ext}": sink.ids.get(f"report.{ext}") for ext in rendered_formats},
+            "sha256": {f"report.{ext}": sink._hashes.get(f"report.{ext}") for ext in rendered_formats},
+            "source": "completion",
+            **({"pdf_unavailable": pdf_unavailable} if pdf_unavailable else {}),
         })
+        # REVIEW_REPORTS-20: the run's first immutable snapshot, written once the artifact rows and the
+        # report.render row exist (POST report.render adds further snapshots through the same helper).
+        snapshot_id = _record_completion_snapshot(ctx, job=job, sink=sink, formats=rendered_formats)
 
         if record.status == "failed":
             failed_class = _error_class(record.error)
@@ -1804,6 +1938,11 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
         }
         if verify_summary is not None:
             result["verify"] = {k: verify_summary[k] for k in ("outcome", "validation_state", "status")}
+            if len(verify_summary.get("finding_ids") or []) > 1:
+                # BULK-16: a shared defended run names every finding it was projected onto.
+                result["verify"]["finding_ids"] = list(verify_summary["finding_ids"])
+        if snapshot_id is not None:
+            result["snapshot_id"] = snapshot_id
         return result
 
 
@@ -1815,10 +1954,12 @@ __all__ = [
     "NARRATIVE_TASK",
     "PARTIAL_PREFIX",
     "REPORT_FORMATS",
+    "REPORT_FORMATS_TEXT",
     "STAGE_STATUSES",
     "VERIFY_STATUS_MAP",
     "DatabaseArtifactSink",
     "artifact_kind",
     "expected_stages",
     "ml_campaign_run",
+    "verify_finding_ids",
 ]

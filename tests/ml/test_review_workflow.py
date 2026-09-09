@@ -693,6 +693,10 @@ def test_analyst_draft_lifecycle(review_api: dict[str, Any]) -> None:
                                             "observations": ["o.000"]}
     detail = MLFindingDetail.model_validate(blob["ml"])
     assert detail.attack_id == "fgsm" and detail.attack_name == "FGSM" and detail.norm == "linf"
+    # INTEROP-18: an analyst draft is stamped from the registry mapping like a worker-projected finding.
+    assert detail.atlas_technique is not None and detail.atlas_technique.id == "AML.T0043"
+    assert detail.atlas_technique.name and detail.atlas_technique.atlas_version
+    assert body["finding_type"] == "adversarial_ml_manual", "the platform FindingType carries the manual literal"
     assert {m.id for m in detail.measurements} == {"m.clean", "m.evasion.fgsm.eps0.03"}
     assert [o.id for o in detail.observations] == ["o.000"]
     assert detail.review.state == "draft" and detail.review.notes and "not derived" in detail.review.notes

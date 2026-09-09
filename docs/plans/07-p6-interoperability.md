@@ -1,389 +1,310 @@
-> **STATUS (2026-09-09): built in Phase B wave B3.** The interoperability of spec section 27 is on the tree: the Croissant/Parquet export (`POST /v1/runs/{id}/dataset`, `redsim/ml/interop/`, `redsim/services/ml_datasets_export.py`, `redsim/workers/tasks/dataset_export.py`), the consume side (`POST /v1/datasets`, `redsim/services/ml_datasets.py`, the parse child `redsim/ml/interop/consume.py`, `redsim/workers/tasks/dataset_validate.py`), ATLAS stamping and the coverage route (`redsim/ml/atlas.py`, `GET /v1/runs/{id}/atlas-coverage`), the integrations roster and the Foundry push (`redsim/integrations/`, `redsim/workers/tasks/integration_push.py`, off by default, proven against a fake server only) and Lattice as text. The routes no longer return `501` stubs. What is built, what a live export contains today and what wave B4 still owes (the e2e round trip, the runner-side slices, the binding hooks) is recorded in `docs/interop.md`, `docs/api/v1.md` and `docs/architecture/ml-vertical.md`. **This file's body below is the v1 plan and is not rewritten yet**: the paths, signatures and mechanisms it names differ from the tree (for example the export lives in `redsim/ml/interop/`, not `redsim/interop/`, and the manifest is built without `mlcroissant`). Its rewrite onto the section 27 vocabulary is the wave B4 docs track. Read the tree and `docs/interop.md`, not the body, for what exists.
->
-> **RECONCILED (2026-09-08 spec update).** Interoperability is now **Phase B2** in the canonical spec (section 27) and milestone B2 (section 23): specified, off by default, and not built for the Phase A demo. Routes return `501` until B2 (section 17.4). The MITRE ATLAS tag lives at `Finding.schema_blob.ml.atlas_technique` (section 5.7); export is F007's B2 addition and the consume side is F002's. This file predates that section; build against canonical section 27 when B2 is scheduled. It is **not** on the Phase A critical path.
->
-> Substrate corrections (see `00-master-plan.md` §2 and §6 and canonical section 27): **this whole phase is out of scope for Phase A.** The decision to re-propose interop was taken on 2026-09-08 and it is adopted as Phase B2 (spec section 27, milestone B2 behind B1+), so it no longer needs a proposal. It does need scheduling: do not build it before the Phase A demo path (D8) is done, and build it against canonical section 27, not this v1 body. In Phase A the only seams are the `AttackInfo.atlas_technique_id` / `atlas_technique_name` fields and `RunRecord.atlas_coverage` frozen on PR #8, which stay `None` / empty until B2.
->
-> Use this file for the parallel-execution shape only, not the literal paths, signatures, or mechanisms below.
+# P6 / Phase B2 · Interoperability (spec section 27, as built)
 
-# P6 — Interoperability (Croissant + ONNX ingest)
+Status: v2, 2026-09-09. Rewritten by the Phase B wave B4 documentation pass
+onto the vocabulary of spec section 27 and onto the tree at `main` `703f8f6`
+plus wave B4. It replaces the v1 body of 2026-09-08, which planned this phase
+against the deleted standalone `redsim/` substrate (`redsim/interop/`,
+`RunStore`, `mlcroissant`, `boto3`); none of those paths, signatures or
+mechanisms exists. The narrative of the same work is `docs/interop.md`, the
+route contracts are `docs/api/v1.md` under "Interoperability (wave B3)" and
+"Batch and bulk operations (wave B3)", and the tree is the source where this
+file and the tree disagree.
 
-Status: v1, 2026-09-08. Owner: rotates in after P4 (suggested Dev A, since ONNX
-ingest is a target). Wave 2. Not on the critical path.
-
-Read `00-master-plan.md` first, then this file. This phase makes redsim a good
-citizen in a data exchange. It publishes a run's adversarial examples as a
-Croissant dataset another team can pull, and it accepts another team's ONNX
-model as an attackable target. It closes the interoperability loop the hackathon
-spec section 14.1 and 14.2 ask for.
+Read `docs/plans/00-master-plan.md` section 6 (the decision that adopted
+interoperability as Phase B2) and spec section 27 first. This phase was built
+as Phase B wave B3 (`docs/plans/12-phase-b-plan.md`, tracks
+`interop-contribute`, `interop-consume`, `atlas-foundry`), proven end to end
+in wave B4 (`tests/e2e/test_ml_interop.py`) and closed out by the wave B4 fix
+pass. It was not on the Phase A critical path and it changed nothing in
+D1 to D14.
 
 ---
 
 ## 1. Objective
 
-Give redsim two-way interoperability around a completed run.
+Make redsim a good citizen in a data exchange without weakening any Phase A
+rule. Four capabilities, every one opt-in and off by default (spec 27 rule 1),
+data and REST only with no LLM call (rule 2), no standing credential (rule 3):
 
-1. **Contribute.** Turn a finished run's adversarial examples into an open,
-   content-addressed dataset. The payload is Parquet. The metadata is a
-   Croissant (MLCommons JSON-LD) manifest that describes the payload and cites
-   it by `sha256`. A partner team pulls the dataset and loads it with the
-   `datasets` or `mlcroissant` loader, then adversarially trains on it or adds
-   it to a regression suite.
-2. **Consume.** Load an arbitrary uploaded ONNX model as a `Target`, wrap it for
-   ART, and let redsim attack it like any built-in target.
-3. **Surface ATLAS.** Carry the per-attack MITRE ATLAS technique (produced in
-   P3) into the dataset manifest as an `atlas_coverage` block, and document an
-   optional ATLAS case-study export format.
+1. **Contribute.** Turn a terminal campaign or verify run's adversarial
+   examples into an open, content-addressed dataset: Parquet shards described
+   by an MLCommons Croissant 1.0 JSON-LD manifest whose own sha256 is the
+   dataset version. Another team pulls it and loads it with a Croissant-aware
+   loader.
+2. **Consume.** Accept another team's evaluation slice (Parquet with an
+   optional Croissant manifest) as an `ml_datasets` row a model upload and a
+   campaign can bind to, and another team's model as an ONNX upload through the
+   existing `POST /v1/models` path (section 9 rules unchanged).
+3. **Surface ATLAS.** Stamp the MITRE ATLAS technique on every new finding,
+   expose it on the attack catalog and give each campaign a number-free
+   coverage view.
+4. **Push.** An operator-configured Palantir Foundry instance receives a
+   scorecard (always with its subscores, denominators, eps grid,
+   `settings_hash` and the grade sentence). Anduril Lattice stays text only
+   under the D3 bound.
 
-Everything here is opt-in and off by default. A run does not build a dataset
-until `POST /v1/runs/{id}/dataset` is called. An ONNX target does not exist
-until a model is uploaded.
+## 2. Scope as built
 
-## 2. Scope
+### In scope (on the tree)
 
-### In scope
+| Capability | Modules | Routes | Tasks |
+|---|---|---|---|
+| Contribute | `redsim/ml/interop/{parquet,croissant,card}.py`, `redsim/services/ml_datasets_export.py` | `POST /v1/runs/{run_id}/dataset` (membership, `dataset.export`, remediator), `GET /v1/datasets/{id}` (the manifest as `application/ld+json`) | `redsim.dataset_export` (`scans` queue, `max_retries=2`) |
+| Consume | `redsim/services/ml_datasets.py` (stdlib static checks and the binding helpers), `redsim/ml/interop/consume.py` (the parse child, `load_consumed_slice`), the binding hooks in `redsim/services/ml_models.py` (`check_upload_dataset` falling back to `consumed_upload_binding`, `materialize_consumed_slice`) and `redsim/ml/targets/artifact.py` (`consumed_eval_slice`), the campaign hook in `redsim/services/ml_campaigns.py` | `POST /v1/datasets` (multipart; membership, `dataset.register`, remediator), the consumed rows on `GET /v1/datasets`, the record on `GET /v1/datasets/{id}` | `redsim.ml_dataset_validate` (`scans`, `max_retries=2`) |
+| ATLAS | `redsim/ml/atlas_data.py` (release `v2026.08` vendored with digests), `redsim/ml/atlas.py` (`STAMP_TECHNIQUE_IDS`, `technique_for_attack`, `attack_atlas_row`, `coverage`), the one-line stamp in `redsim/services/ml_findings.py` (campaign findings and, since wave B4, analyst drafts through `redsim/services/finding_review.py`), the block on `GET /v1/attacks` | `GET /v1/runs/{run_id}/atlas-coverage` (membership) | none |
+| Push | `redsim/integrations/foundry.py` (settings from the process environment, roster block, `build_scorecard_payload`, the D9 guard `validate_push_payload` / `assert_push_payload`, `scrub_detail`, the Datasets v2 client), `redsim/integrations/__init__.py` (`create_foundry_push`, `LATTICE_STATUS`), `tests/ml/fake_foundry_server.py` | `GET /v1/integrations` (authenticated roster), `POST /v1/runs/{run_id}/integrations/foundry` (membership, `integration.push`, admin) | `redsim.integration_push` (`default` queue, the pool with egress, `max_retries=0`) |
 
-- `redsim/interop/croissant.py`: `build_dataset()` builds a Parquet payload plus
-  a Croissant JSON-LD manifest from a completed `RunRecord` and its persisted
-  adversarial tensors.
-- Content addressing: the Parquet payload is hashed with `sha256`, and the
-  manifest references it by that hash.
-- Local storage under `REDSIM_OUTPUT_DIR/runs/<id>/dataset/`, plus optional
-  upload to `s3://REDSIM_S3_BUCKET/datasets/<run-id>/` with `boto3` when the
-  bucket is configured.
-- Two API routes added to `redsim/api/routes.py` (coordinate with P4):
-  `POST /v1/runs/{id}/dataset` and `GET /v1/datasets/{id}`.
-- `redsim/targets/onnx_target.py`: an ONNX `Target` loaded with `onnxruntime`
-  and wrapped for ART, plus its registration so an uploaded model appears in
-  `GET /v1/targets`.
-- ATLAS surfacing: the dataset manifest carries `atlas_coverage`, consumed from
-  P3's mapping. An optional ATLAS case-study export format is documented, not
-  built.
+The API process imports none of `pyarrow`, `mlcroissant` or an ML library for
+any of this (`tests/test_api_process_has_no_ml.py`); Parquet is opened only in
+the sandbox child and the worker. `redsim/ml/interop/parquet.py` imports
+`pyarrow` inside functions.
 
-### Out of scope
+### Out of scope (by decision, recorded)
 
-- **Palantir Foundry integration (spec 14.3).** Explicitly out. Do not build the
-  Foundry REST push.
-- **Anduril Lattice integration (spec 14.3).** Explicitly out. Do not build the
-  Lattice attestation.
-- The ATLAS `attack_id -> technique` mapping table itself. That is P3's. P6
-  consumes it, never duplicates it.
-- MRI scoring. That is P2. P6 reads `RunRecord.scoring` if present and copies its
-  summary into the manifest, but it does not compute it.
-- A Hugging Face `datasets` dataset card as a distinct artifact. The Parquet plus
-  Croissant manifest is the deliverable. The `datasets` loader reads Croissant
-  directly, so a separate card is a later nicety, not P6.
-- The SHAP explanation, recommendations, and report builders. Those are P3 and
-  P4. P6 only reads their outputs.
+- **Anduril Lattice.** Text only. The roster entry answers `not_implemented`
+  with the D3 reason; no setting, route, task or client exists (owner decision
+  INTEROP-27 / TESTS_DOCS-41; constitution Principle II).
+- **The dataset push to Foundry.** `PUSH_PAYLOADS` is `("scorecard",)`; the
+  second half of INTEROP-23 is not built.
+- **A push against a real Foundry instance.** Proven against
+  `tests/ml/fake_foundry_server.py` only (owner default INTEROP-26); a real push
+  needs an operator-configured non-operational instance and the owner's
+  confirmation.
+- **Imagery exports outside the artifacts bucket.** They stay in the team
+  bucket while D006 (export redaction) is open (owner default INTEROP-34);
+  tabular exports only are published to the public data repository.
+- **Regenerating a slice inside the sandbox child** for a run whose slices
+  were not retained (spec 12.8 / 17.4 wording). The export answers
+  `409 export_unavailable` instead and never fabricates a row (INTEROP-07).
+- **`mlcroissant` as the manifest library.** The manifest is built and
+  validated in pure Python (`croissant.py`); the package stays blocked in the
+  API-process tripwire (INTEROP-05 divergence, recorded).
+- **An ATLAS case-study export.** Documented in the appendix, not built.
 
-## 3. Prerequisites and dependencies
+## 3. Prerequisites the tree provides
 
-P6 is a Wave 2 phase. It builds on completed run outputs, so it starts after P4
-wires the pipeline.
+Every seam the v1 plan had to negotiate exists:
 
-| Needs | From | What exactly |
+| Needs | Provided by | What exactly |
 |---|---|---|
-| Completed run outputs | **P4** | A `RunRecord` written to `run.json`, `status == "succeeded"`, with `provenance`, `measurements`, `observations`, and (if scored) `scoring` and `atlas_coverage`. |
-| Persisted adversarial tensors | **P4 / P2** | The attack stage must persist the clean and adversarial tensor arrays for every attacked sample, plus per-sample predicted label and the applied eps. See the coordination note below. |
-| `Target` Protocol | **P1** | `redsim/targets/base.py` — the `Target` Protocol and `Sample` dataclass the ONNX target must satisfy. |
-| Targets registry | **P1** | `redsim/targets/registry.py` (`TARGETS`) so an uploaded ONNX model registers as a target. |
-| ATLAS mapping | **P3** | `attack_id -> (atlas_technique_id, atlas_technique_name)`, already stamped onto `AttackInfo.atlas_technique_id` / `atlas_technique_name` and aggregated on `RunRecord.atlas_coverage`. Consume it. |
-| S3 bucket + credentials | **P7** | `REDSIM_S3_BUCKET` env var and the ECS task role that grants `s3:PutObject` / `s3:GetObject` on `datasets/*`. |
-| API router | **P4 / P0** | `redsim/api/routes.py` and the `create_app()` factory in `redsim/api/app.py`. |
+| Per-sample slices of a terminal run | the modality runners (`redsim/ml/runners/{classification,text,detection}.py`, `runners/base.py::slice_bytes`) | self-describing `.npz` slices: `clean_slice.npz` after `clean_eval`, `adv_slice/<attack>_<eps>.npz` per attack row, `control_slice/<eps>.npz` per control row, each with the input tensor (or the message strings for text), `indices`, `y`, the clean and adversarial predictions and confidences where the runner has them, and the descriptor keys `family` / `attack` / `eps`, so the exporter labels a slice from its bytes whatever the blob backend did with its name (INTEROP-04, closed for every runner in wave B4). A slice over `REDSIM_ML_MAX_ADV_ARTIFACT_MB` is not retained and the row says so |
+| The flip matrix to check against | the campaign frame | `ml.flip_matrix`; `croissant.check_projection` refuses an export whose rows disagree with it (`ExportMismatch`) |
+| The record and its digest | `ml.run_record` artifact, `ml_campaigns` row | one export per run, keyed by the source run id |
+| The `Target` protocol and registry for uploads | `redsim/ml/targets/base.py`, `registry.py` (P0) | an ONNX upload is a `Target` of kind `ml_model_artifact` (wave 1), the consume side of section 27 |
+| The ATLAS mapping | `redsim/ml/atlas.py` over `atlas_data.py` | checked at import against the vendored release; `AML.T0043` for the gradient, text and patch attacks, `AML.T0040` for `hopskipjump` and `zoo`, `AML.T0020` reserved for the poisoning ids, `None` for controls |
+| Blob store and audit chain | the platform | `Artifact` rows under `datasets/<source-run-id>/`, the `dataset.export` / `dataset.register` / `integration.push` actions (spec 27.4) |
 
-### Coordination note — where the adversarial tensors come from
+## 4. Interfaces as built
 
-`RunRecord` does not persist full tensor arrays. `Observation` rows exist only
-for the `explain_k` sampled examples, and they hold PNG artifact paths, not raw
-tensors. A dataset that covers every attacked sample needs the arrays.
+### 4.1 Routes (spec 27.4; details in `docs/api/v1.md`)
 
-Agree this seam with P4 and P2 before P6 starts:
+| Method | Path | Gate | Answers |
+|---|---|---|---|
+| `POST` | `/v1/runs/{run_id}/dataset` | membership, `dataset.export` (remediator since wave B2; B0 had scanner) | `202 {dataset_id, status, type, run_id, job_id, job_ids, status_url, dataset_url}` (a follow-up `Run` with scanner `ml.dataset_export`); the existing manifest with `status: exists` on a second call; `404`; `409 export_unavailable` (non-campaign, non-terminal or slice-less run); `409 export_in_flight`; `422 fixture_not_exportable`; `503 queue_unavailable` with the rows rolled back |
+| `GET` | `/v1/datasets/{id}` | membership on the run's or the slice's project | the run's Croissant manifest as `application/ld+json`, digest-checked, `404` until exported; or the consumed record for a `ds-…` id |
+| `POST` | `/v1/datasets` | membership, `dataset.register` (remediator) | `201` record in `validating` with `ingest_run_id`, `ingest_job_id`; `411`; `413 dataset_too_large` (over `REDSIM_ML_DATASET_UPLOAD_MAX_MB`, 256); `415 unsupported_dataset_format`; `422 remote_reference_refused` / `license_required` / `schema_undeclared`; `501` for `text` and `detection` slices (loaders not built) |
+| `GET` | `/v1/datasets` | authenticated | the bundled manifest rows plus the consumed `ds-…` rows of the caller's memberships (`consumed_count`) |
+| `GET` | `/v1/runs/{run_id}/atlas-coverage` | membership | `exercised`, `declared_not_run`, `catalog_outside_declared`, `controls`, `techniques_exercised`, the release citation and the statement; no numeric field; `404` without a record, `409 llm_target_required`, `409 score_unavailable` on a digest mismatch |
+| `GET` | `/v1/attacks` | authenticated | each row with `atlas_technique`, `atlas_techniques`, `atlas_reason` and the response with an `atlas` release citation; `?modality=` filters on the capability tags since wave B4 |
+| `GET` | `/v1/integrations` | authenticated | `foundry` `disabled` (default) / `misconfigured` (with the rule) / `configured`, booleans only, never a host or token; `lattice` `not_implemented` with the D3 reason |
+| `POST` | `/v1/runs/{run_id}/integrations/foundry` | membership, `integration.push` (admin) | `202 {run_id, job_ids, status_url, integration, campaign_run_id, target_ref, kind}`; `501 integration_disabled` (`reason` `disabled` or `misconfigured`) while `REDSIM_INTEGRATION_FOUNDRY_URL` is unset, fails the egress rules or lacks the `REDSIM_INTEGRATION_FOUNDRY_NON_OPERATIONAL=1` attestation; `409 llm_target_required` / `campaign_not_terminal` / `score_unavailable` / `job_in_flight`; `422 fixture_not_exportable` / `params_out_of_range` / `auth_profile_kind_unsupported`; `404`; `503 queue_unavailable` |
 
-- The attack stage writes, per run, a compact artifact holding the clean tensor
-  `x`, the adversarial tensor `x_adv`, the source-slice `indices` (from
-  `Sample.indices`), the true labels `y`, the clean predicted labels, the
-  adversarial predicted labels, and the applied eps per sample. A single
-  `.npz` under `artifacts/attack/` is enough (for example
-  `artifacts/attack/adversarial.npz`).
-- P6 reads that artifact through `RunStore.resolve(...)`. If it is absent, P6
-  degrades to the `explain_k` observations only and marks the dataset partial in
-  the manifest and in the `POST` response.
+Five paths follow the orchestrator brief rather than the register
+(`atlas-coverage` not `atlas`, `integrations/foundry` not
+`integrations/{integration}/push`, and the three report and bulk paths listed
+in `docs/api/v1.md` "Phase B routes").
 
-This is the one contract P6 cannot invent alone. Raise it in master section 6
-if the array names or the artifact path change.
+### 4.2 What an export contains
 
-## 4. Interfaces consumed and exposed
+- **Shards.** One deterministic Parquet shard per `(attack, eps)` of the
+  adversarial family, one per control eps and one clean shard, on one fixed
+  nullable schema: `sample_index`, `family`, `attack`, `eps`, `norm`, `y`,
+  `y_pred_clean`, `y_pred_adv`, `conf_clean`, `conf_adv`, `flipped`, `input`
+  (a numeric feature vector or flattened tensor, never a string) and, since
+  wave B4, a nullable `text` column that only a text-modality slice fills (a
+  text model has no numeric input tensor). Tabular exports carry feature
+  vectors only, never URL strings (spec 11.5, D9). The `flipped` column comes
+  from the run's flip matrix, so a detection export, whose model predicts
+  boxes rather than one label, still carries it.
+- **Manifest.** `croissant.json` (Croissant 1.0 JSON-LD): a `FileObject` per
+  shard with its sha256, the `RecordSet` fields, and a `redsim:provenance`
+  block with the model sha256 and manifest, dataset id, revision and split,
+  library versions, `settings_hash`, the limitations and the ATLAS techniques
+  exercised. The manifest's own sha256 is the dataset version.
+  `croissant_validate` refuses model file names, `reviewer_notes`, credential
+  names and any bare MRI number before the manifest is written.
+- **Card.** A template-only `README.md` naming the families the source run
+  retained and the realizability caveat.
+- **Rows on the source run.** `ml.dataset.manifest`, `ml.dataset.parquet` and
+  `ml.dataset.card` artifacts under `datasets/<source-run-id>/`; the
+  `dataset.export.execute` and `job.complete` rows on the follow-up run's
+  chain (manifest sha256, file count, bytes, prefix). A mismatch or an
+  invalid manifest is a `success=False` execute row and a failed job with
+  nothing written.
 
-### 4.1 HTTP routes exposed (master section 6.7)
+The first export built with these modules is in the public data repository
+at `0dababc` (`data/exports/url_trees_sample/`, INTEROP-33): three PGD shards
+from an offline `url_trees` campaign, 600 rows of 16 lexical features, the
+adversarial family only because the source run predated the clean and control
+slices.
 
-| Method | Path | Returns |
-|---|---|---|
-| `POST` | `/v1/runs/{id}/dataset` | `202`/`200` `{dataset_id}`. Builds the Parquet payload and the Croissant manifest, writes them locally, uploads to S3 when configured, and registers the dataset. `404` if the run is unknown. `409` if the run is not `succeeded`. Idempotent: a second call returns the same `dataset_id`. |
-| `GET` | `/v1/datasets/{id}` | The Croissant JSON-LD manifest, `content-type: application/ld+json`. `404` if unknown. |
+### 4.3 What the consume side does
 
-`dataset_id` is the run id. The dataset is one-to-one with a run, so reusing the
-run id keeps the mapping trivial and the `POST` idempotent.
+Static checks in the API (`redsim/services/ml_datasets.py`, stdlib only):
+length cap, Parquet magic `PAR1`, no pickle-shaped part name, the Croissant
+shape when a manifest is given, bare-file-name `contentUrl`s only, a licence
+statement, a declared schema (`modality`, `class_names`, the feature or image
+shape and value range). Every refusal is a `success=False` `dataset.register`
+row and nothing is persisted. Success writes the row, the blobs, the
+`ml_datasets` row in `validating`, an `ml.dataset_ingest` `Run` with no target
+and a `dataset.validate` `Job`, then enqueues `redsim.ml_dataset_validate`.
+The worker materialises the blobs into the job work directory, re-hashes them
+in the parent (a substituted blob is `artifact_digest_mismatch` with no child
+spawned), spawns `python -m redsim.ml.interop.consume` under the ML sandbox's
+credential-free environment and rlimits, and marks the row `available` or
+`refused` with the child's code (`manifest_digest_mismatch`,
+`dataset_too_large`, `schema_mismatch`, `class_names_mismatch`, `parse_failed`,
+`sandbox_timeout`, `sandbox_killed`).
 
-### 4.2 Function shape consumed and exposed
+Binding (INTEROP-16): a `dataset_id` of the form `ds-…` that names an
+`available` consumed slice of the project binds at upload
+(`check_upload_dataset` falls back to `consumed_upload_binding`), at campaign
+admission (`services/ml_campaigns.py`, modality and project checked,
+`422 dataset_incompatible` otherwise) and in the target loader
+(`ml/targets/artifact.py::consumed_eval_slice` reads a slice the worker parent
+materialised with `materialize_consumed_slice`, re-checks its digest and reads
+it with the same `load_consumed_slice` the parse child used). **Open at the
+B4 push:** the worker parent (`redsim/workers/tasks/ml_model.py` and
+`ml_campaign.py`) does not yet call `materialize_consumed_slice` when it builds
+the target detail, so a campaign on a consumed-bound model does not run end to
+end; `tests/e2e/test_ml_interop.py::test_consumed_slice_binds_a_model_and_a_campaign`
+fails with that attribution.
 
-```python
-# redsim/interop/croissant.py
+### 4.4 The Foundry payload guard (D9)
 
-@dataclass
-class DatasetResult:
-    dataset_id: str
-    manifest_path: str          # run-relative, e.g. "dataset/croissant.jsonld"
-    payload_path: str           # run-relative, e.g. "dataset/adversarial.parquet"
-    payload_sha256: str
-    n_rows: int
-    partial: bool               # True when only explain_k rows were available
-    s3_uri: str | None          # set when REDSIM_S3_BUCKET is configured
+`assert_push_payload` refuses anything that would leave without its evidence
+or with something that must not leave: a bare MRI or a grade without the MRI,
+a missing subscore, a URL string, a JWT-shaped or `pk_` value, a `token` key,
+a model file name, raw bytes, a base64 blob, a readiness word,
+`expected_gain`, `reviewer_notes`, `requested_by`, empty rows or limitations.
+The exact bytes that leave are stored first (`ml.integration.payload`,
+`ml.integration.rows`), the bearer token is resolved through
+`resolve_auth_for_scan` only then and dropped after the push, the receipt is
+stored (`ml.integration.receipt`) and `integration.push.execute` records host,
+rids, digests, statuses and counts, or `step`, `http_status`, `error_class`
+and `transaction_aborted` with `success=False` and no retry.
 
-def build_dataset(record: RunRecord, store: RunStore) -> DatasetResult:
-    """Build the Parquet payload and the Croissant manifest for a completed run.
+## 5. Order in which it was built
 
-    Reads the persisted adversarial tensors through ``store``. Writes both files
-    under ``store.run_path / "dataset"``. Content-addresses the payload with
-    sha256 and cites that hash from the manifest. Uploads to S3 when
-    ``REDSIM_S3_BUCKET`` is set. Pure with respect to the RunRecord: it never
-    mutates it.
-    """
-```
+1. Wave B0 (`3cd3362`, `0b0981b`, `ff9e658`, `7b1f2fa`): the actions
+   `dataset.register`, `dataset.export`, `integration.push` with their OPA and
+   Cedar mirrors, the codes `export_in_flight`, `export_unavailable`,
+   `dataset_too_large`, `unsupported_dataset_format`, `license_required`,
+   `remote_reference_refused`, `schema_undeclared`, `integration_disabled`
+   (first addendum) and `fixture_not_exportable` (second addendum, wave B2),
+   the gated `501` stubs, migration `0011` (`ml_datasets`), the vendored ATLAS
+   release.
+2. Wave B3 (`1f1b52b`, `595a89b`, `bfde5e1`, `005e666`, then the reconcile
+   commits `f718f10` and `5f02ac6`, integration `703f8f6`): the three tracks
+   above, the export routes on their final signatures, the classification
+   runner's self-describing slices, the campaign-side consumed binding.
+3. Wave B4 (`6484f2c` and the fix pass): `tests/e2e/test_ml_interop.py`, the
+   text and detection runners' slices and the nullable `text` export column,
+   the upload binding and the loader for consumed slices, the JWT pattern in
+   `redsim/audit/redact.py`, the ATLAS stamp on analyst drafts, the
+   `interop` block on `GET /v1/ml/capabilities`, the `.env.example` and
+   compose pass-through of the Foundry and capacity variables scoped to the
+   default worker pool, `docs/interop.md` and this rewrite.
 
-The route layer loads `run.json` through `RunStore.open(run_id)`, validates it
-into a `RunRecord`, calls `build_dataset`, and returns `{dataset_id}`.
+## 6. Files (as they exist)
 
-**Parquet columns** (one row per attacked sample):
+- `redsim/ml/interop/__init__.py`, `parquet.py`, `croissant.py`, `card.py`,
+  `consume.py`
+- `redsim/services/ml_datasets_export.py`, `redsim/services/ml_datasets.py`
+- `redsim/workers/tasks/dataset_export.py`, `dataset_validate.py`,
+  `integration_push.py`
+- `redsim/api/v1/datasets.py`, `redsim/api/v1/integrations.py`, the ATLAS
+  block in `redsim/api/v1/attacks.py`
+- `redsim/ml/atlas.py`, `redsim/ml/atlas_data.py`
+- `redsim/integrations/__init__.py`, `redsim/integrations/foundry.py`
+- `tests/ml/test_interop_export.py`, `test_interop_consume.py`,
+  `test_atlas_foundry.py`, `tests/ml/fake_foundry_server.py`,
+  `tests/e2e/test_ml_interop.py`
 
-| Column | Source |
-|---|---|
-| `sample_index` | `Sample.indices` (persisted array), same as `Observation.sample_index`. |
-| `x_clean` | clean tensor, flattened, plus a `shape` column. |
-| `x_adv` | adversarial tensor, flattened. |
-| `true_label` | int and string form. Mirrors `Observation.true_label`. |
-| `pred_clean` | clean prediction. Mirrors `Observation.pred_clean`. |
-| `pred_adv` | adversarial prediction. Mirrors `Observation.pred_adv`. |
-| `flipped` | `pred_clean != pred_adv`. Mirrors `Observation.flipped`. |
-| `attack_id` | `RunRecord.config.attack_id`. |
-| `eps` | applied budget per sample, from the persisted array or `config.params`. |
+## 7. Testing and validation (as it stands)
 
-**Croissant manifest** references the Parquet file as a `FileObject` with its
-`sha256`, describes each column as a `Field` under a `RecordSet`, and carries a
-`redsim` metadata block:
+- `tests/ml/test_interop_export.py` (`ml` tier): a valid manifest whose
+  `FileObject` digests and shard columns check out, rows equal to the flip
+  matrix, a mutated row refused with a failed job and no artifacts, an
+  idempotent re-export, every refusal, a fixture never exported, the
+  template-only card, the nullable `text` column for a text slice.
+- `tests/ml/test_interop_consume.py`: 25 static refusals audited and
+  persisting nothing, the size cap, the child's digest, class, range and
+  row-cap refusals, a substituted blob refused in the parent, the child
+  spawned credential-free, the API and worker modules importing with
+  `pyarrow` blocked, the parent never opening a Parquet file.
+- `tests/ml/test_atlas_foundry.py`: the stamp table against the vendored data,
+  the number-free coverage view, the roster with no value leaking, the payload
+  guard, admission order and the broker rollback, the happy-path push and the
+  503-on-commit abort against the fake server with no token, JWT or URL in
+  any row, the sandbox child dropping every `REDSIM_INTEGRATION_FOUNDRY_*`
+  name.
+- `tests/e2e/test_ml_interop.py` (wave B4, `e2e` tier): the Croissant export
+  and its shards, a consumed slice registered and validated through the real
+  child, the ATLAS tags and coverage, the Foundry push against the fake
+  server, and `redsim audit verify --all` over the lot (tolerating the chain
+  `test_harness_smoke.py` tampers with on purpose). At the B4 push 5 of its 6
+  cases hold; `test_consumed_slice_binds_a_model_and_a_campaign` fails with
+  the attribution in 4.3.
 
-- `model_provenance`: the whole `RunRecord.provenance` object. Names the model by
-  `provenance.model_sha256`, the data by `provenance.dataset` and
-  `provenance.dataset_split`, and copies `provenance.model_manifest`.
-- `library_versions`: `provenance.redsim_version`, `provenance.python`,
-  `provenance.torch`, `provenance.art`, `provenance.shap`, `provenance.numpy`.
-- `atlas_coverage`: `RunRecord.atlas_coverage` plus, per attack, the
-  `AttackInfo.atlas_technique_id` and `AttackInfo.atlas_technique_name` from
-  `RunRecord.attack`.
-- `scoring_summary`: `RunRecord.scoring.mri` and `RunRecord.scoring.grade` when
-  `RunRecord.scoring` is present, else omitted.
-- `limitations`: `RunRecord.limitations`, so a consumer reads the honesty labels
-  with the data.
+## 8. Acceptance criteria (definition of done) and where each stands
 
-### 4.3 ONNX target registration
+1. `POST /v1/runs/{id}/dataset` on a terminal run writes the shards, the
+   manifest and the card under `datasets/<run-id>/` as `Artifact` rows and
+   answers a 202 handle; a second call answers the existing manifest. **Holds**
+   (`tests/ml/test_interop_export.py`, `tests/e2e/test_ml_interop.py`).
+2. `GET /v1/datasets/{id}` returns the manifest as `application/ld+json`,
+   digest-checked. **Holds.**
+3. The manifest cites every shard by sha256, its own sha256 is the version,
+   and it carries provenance, library versions, limitations and the ATLAS
+   techniques exercised; a projection that disagrees with the flip matrix is
+   refused. **Holds.**
+4. A partner team's Parquet slice registers with static checks in the API and
+   the parse in the sandbox child, is refused without a licence, and binds to
+   an upload and a campaign. **Holds at admission; open in the worker parent**
+   (4.3).
+5. Every new finding carries its ATLAS technique, the attack catalog exposes
+   it, and a campaign has a number-free coverage view. **Holds.**
+6. The Foundry push is opt-in, off by default, admin-gated, holds no standing
+   credential, and nothing leaves without its subscores, denominators, eps
+   grid, `settings_hash` and grade sentence. **Holds against the fake server**;
+   a real non-operational instance is the owner's call (INTEROP-26).
+7. Lattice is text only. **Holds** (D3).
+8. The default and `ml` tiers pass on the interop files and `mkdocs build
+   --strict` is clean. **Holds at `703f8f6`** (`tests/ml/` counts in
+   `docs/dev/testing.md`).
 
-```python
-# redsim/targets/onnx_target.py
+## 9. Divergences recorded (plan 01 section 8 protocol)
 
-class OnnxTarget:            # satisfies redsim.targets.base.Target
-    id: str                  # e.g. "onnx.<sha256[:12]>"
-    def info(self) -> TargetInfo: ...        # status "available"
-    def load(self) -> None: ...              # onnxruntime.InferenceSession
-    def sample(self, n: int, seed: int) -> Sample: ...
-    def predict_proba(self, x: np.ndarray) -> np.ndarray: ...
-    def art_classifier(self) -> Any: ...     # ART estimator over the ONNX model
-    def torch_model(self) -> Any: ...        # raises NotImplementedError; SHAP path documented below
-    def manifest(self) -> dict[str, Any]: ...
-```
+Listed with the others in `docs/architecture/ml-vertical.md` "Accepted
+divergences": the Foundry switch is the URL plus the attestation variable
+(spec 27.3's last sentence made checkable); `fixture_not_exportable` at 422
+(register INTEROP-03 wrote 409); no `export_blocked_pending_d006` code because
+imagery exports stay in the artifacts bucket (INTEROP-34); no `include_card`
+flag (the card is always written); `export_unavailable` instead of
+regenerate-in-child (INTEROP-07); the manifest built without `mlcroissant`
+(INTEROP-05); the `batch_id` overlay on `GET /v1/runs/{id}/campaign` rather
+than a schema field (BULK-02); a text or detection export carried the
+adversarial family only between the B3 push and the B4 fix pass (INTEROP-04,
+closed).
 
-- `art_classifier()` wraps the session. Preferred is ART's ONNX-aware estimator
-  path, `art.estimators.classification.BlackBoxClassifierNeuralNetwork` fed by a
-  predict callable over the `onnxruntime` session, so gradient-free attacks run.
-  Where a white-box gradient attack is needed, note that ONNX gives no autograd,
-  so `torch_model()` raises `NotImplementedError` and SHAP uses the black-box
-  `KernelExplainer` path already anticipated in the spec, or is skipped. State
-  this limitation on the target `info().reason` field when SHAP is unavailable.
-- The uploaded model plus its eval slice is the ingest. The eval slice comes in
-  as Croissant or Parquet from the partner team, mirroring the contribute side.
-  For P6 the slice may reuse a bundled slice keyed by declared input shape, and
-  a Croissant/Parquet slice loader is a documented follow-on if time is short.
-- Registration: add the ONNX target to `TARGETS` at upload time so it lists in
-  `GET /v1/targets`. Model files are untrusted. ONNX loads no arbitrary code, so
-  it is the safe format, but still validate the file signature and never load it
-  in the API process path that serves other tenants.
+## Appendix: optional ATLAS case-study export (documented, not built)
 
-## 5. Ordered implementation steps
-
-1. **Confirm the tensor seam.** Agree the `artifacts/attack/adversarial.npz`
-   contents and path with P4/P2. Record it in master section 6 if it moves.
-2. **Add dependencies.** Add `onnxruntime` and `boto3` to `pyproject.toml`
-   dependencies. `pyarrow` is already present. Pin versions. Note that
-   `onnxruntime` is CPU-only for the demo.
-3. **Create `redsim/interop/__init__.py`** and `redsim/interop/croissant.py`.
-   Implement `build_dataset`:
-   1. Read the persisted arrays through `store.resolve(...)`. Fall back to
-      `record.observations` when the arrays are absent and set `partial=True`.
-   2. Build the Arrow table and write `dataset/adversarial.parquet` with
-      `pyarrow.parquet.write_table`.
-   3. Compute the payload `sha256` over the written bytes.
-   4. Build the Croissant JSON-LD dict, cite the payload by `sha256`, embed the
-      `redsim` metadata block from section 4.2.
-   5. Write `dataset/croissant.jsonld`.
-   6. Upload both files to S3 when `REDSIM_S3_BUCKET` is set (step 6).
-   7. Return `DatasetResult`.
-4. **Add the S3 helper.** A small `redsim/interop/s3.py` (or a function inside
-   `croissant.py`) that uploads a local file to
-   `s3://REDSIM_S3_BUCKET/datasets/<run-id>/<name>`. When `REDSIM_S3_BUCKET` is
-   unset or empty, it is a no-op and returns `None`. Use `boto3` default credential
-   resolution (the ECS task role), never static keys.
-5. **Wire the routes** into `redsim/api/routes.py` (coordinate with P4). Add
-   `POST /v1/runs/{id}/dataset` and `GET /v1/datasets/{id}`. The `GET` reads the
-   stored `dataset/croissant.jsonld` from local disk first, then S3 if configured
-   and missing locally.
-6. **Create `redsim/targets/onnx_target.py`.** Implement `OnnxTarget` against the
-   `Target` Protocol. Add a registration hook that inserts an uploaded model into
-   `TARGETS`. Provide the ART wrapper.
-7. **Document the ATLAS case-study export.** Add a short section to this file's
-   appendix or to the report docs describing the optional ATLAS case-study JSON
-   shape. Do not build an exporter.
-8. **Tests.** Write the pytest modules in section 7.
-9. **Round-trip check.** Load the built dataset with `mlcroissant` (or the
-   `datasets` loader) in a test or a manual check, and confirm labels round-trip.
-
-## 6. Files to create and modify
-
-### Create
-
-- `docs/plans/07-p6-interoperability.md` (this file).
-- `redsim/interop/__init__.py`
-- `redsim/interop/croissant.py`
-- `redsim/interop/s3.py` (S3 upload helper; may instead live inside `croissant.py`)
-- `redsim/targets/onnx_target.py`
-- `tests/test_interop_croissant.py`
-- `tests/test_onnx_target.py`
-
-### Modify
-
-- `pyproject.toml` — add `onnxruntime` and `boto3` to `dependencies`. `pyarrow`
-  is already declared.
-- `redsim/api/routes.py` — add the two dataset routes (coordinate with P4; P0
-  reserves the shapes in master section 6.7).
-- `redsim/targets/registry.py` — register uploaded ONNX targets (P1 owns this
-  file; coordinate the registration hook).
-- `docs/plans/00-master-plan.md` — only if the tensor-artifact seam names change
-  (section 6 note).
-
-## 7. Testing and validation
-
-All pytest. Keep models and slices tiny so tests run on CPU in seconds.
-
-1. **`build_dataset` writes valid Parquet.**
-   - Construct a small `RunRecord` and a `RunStore` with a synthetic
-     `artifacts/attack/adversarial.npz` (a handful of samples).
-   - Call `build_dataset`. Assert `dataset/adversarial.parquet` exists and reads
-     back with `pyarrow.parquet.read_table`, with the expected columns and row
-     count.
-2. **The Croissant manifest references the payload by sha256.**
-   - Assert `dataset/croissant.jsonld` parses as JSON-LD.
-   - Assert the manifest's `FileObject` `sha256` equals `DatasetResult.payload_sha256`
-     and equals the actual sha256 of the written Parquet bytes.
-   - Assert the `redsim` block carries `model_provenance` from
-     `record.provenance` and the `library_versions` keys.
-3. **Labels round-trip.**
-   - Read the Parquet back and assert `true_label`, `pred_clean`, and `pred_adv`
-     match the source `RunRecord`/npz values row for row.
-   - When `mlcroissant` is available, load through it and assert the same. Skip
-     with `pytest.importorskip("mlcroissant")` when it is not installed, since it
-     is a consumer-side dependency, not a redsim runtime dependency.
-4. **ONNX target loads and predicts.**
-   - Build a tiny ONNX model in the test (for example export a 2-layer torch net
-     with `torch.onnx.export`, or hand-write a minimal graph).
-   - Instantiate `OnnxTarget`, `load()`, and assert `predict_proba(x)` returns
-     shape `(n, n_classes)` that sums to about 1 per row.
-   - Assert `info().status == "available"` and the target registers into `TARGETS`.
-   - Assert `art_classifier()` returns an object an ART evasion attack accepts.
-5. **S3 upload is skipped cleanly when unconfigured.**
-   - With `REDSIM_S3_BUCKET` unset, assert `build_dataset` returns
-     `s3_uri is None`, writes the local files, and makes no `boto3` call.
-   - With the bucket set, assert the upload helper targets
-     `datasets/<run-id>/...` and passes no static credentials (mock `boto3`).
-6. **Partial fallback.** With the npz absent, assert `build_dataset` builds from
-   `record.observations`, sets `partial=True`, and the manifest marks the dataset
-   partial.
-7. **Route tests.** `POST /v1/runs/{id}/dataset` returns `{dataset_id}` and is
-   idempotent. `GET /v1/datasets/{id}` returns the manifest with
-   `application/ld+json`. Unknown ids return `404`. A non-succeeded run returns
-   `409`.
-
-## 8. Acceptance criteria (Definition of Done)
-
-1. `POST /v1/runs/{id}/dataset` on a succeeded run writes
-   `dataset/adversarial.parquet` and `dataset/croissant.jsonld` under the run
-   directory, and returns `{dataset_id}`.
-2. When `REDSIM_S3_BUCKET` is set, both files land at
-   `s3://REDSIM_S3_BUCKET/datasets/<run-id>/`, uploaded through the task role.
-   When it is unset, the build still succeeds locally and skips S3 cleanly.
-3. `GET /v1/datasets/{id}` returns the Croissant JSON-LD manifest.
-4. A partner team pulls the dataset and reads it with the `datasets` or
-   `mlcroissant` loader. The adversarial and clean tensors, the true and
-   predicted labels, the per-sample `attack_id` and `eps`, and the source-slice
-   indices all load, and the labels match the run.
-5. The manifest carries model provenance from `RunRecord.provenance`, the library
-   versions, and the `atlas_coverage` block from P3. It cites the Parquet payload
-   by `sha256`, and that hash verifies against the file.
-6. An uploaded ONNX model registers as a target, lists in `GET /v1/targets` with
-   `status == "available"`, and is attackable: a redsim run against it produces
-   `measurements` and, where the black-box SHAP path applies, `observations`.
-7. `pytest` passes for `tests/test_interop_croissant.py` and
-   `tests/test_onnx_target.py`, and `make check` stays green.
-
-## 9. Effort estimate and special considerations
-
-**Effort.** Roughly 1.5 to 2.5 developer-days. The Croissant manifest builder and
-the Parquet writer are half a day. The ONNX target and its ART wrapper are the
-larger and riskier half, because the black-box SHAP and gradient-free attack path
-needs care. S3 and the routes are a few hours each.
-
-**Special considerations.**
-
-- **Croissant schema conformance.** Croissant is a JSON-LD profile with a fixed
-  `@context` and required `RecordSet` / `Field` / `FileObject` shapes. Validate
-  the built manifest against the MLCommons Croissant validator (or by loading it
-  with `mlcroissant`) rather than by eye. A manifest that a human reads fine but
-  the loader rejects fails acceptance criterion 4. Pin the Croissant context
-  version you target and record it in the manifest.
-- **`onnxruntime` dependency.** It is not yet in `pyproject.toml`. Add it. It is
-  CPU-only for the demo, consistent with the no-GPU rule. It enlarges the worker
-  image, so keep it out of the web image.
-- **`boto3` dependency.** Also not yet declared. Add it. Its only job here is the
-  optional dataset upload.
-- **S3 credentials via the task role, not static keys.** Use `boto3` default
-  credential resolution so the ECS task role supplies credentials. Never read an
-  access key or secret from the environment or the code. The task role (P7)
-  grants `s3:PutObject` and `s3:GetObject` scoped to `datasets/*`.
-- **Untrusted model files.** ONNX runs no arbitrary code on load, which is why it
-  is the accepted format. Still validate the file signature, cap the file size,
-  and keep model loading off the API request path that serves other tenants.
-- **Partial datasets are honest.** When only `explain_k` observations are
-  available, the dataset is a small sample, not the full slice. Mark it `partial`
-  in the response and the manifest rather than shipping a full-looking dataset
-  that is not.
-- **Tensor size in Parquet.** Flattened image tensors are wide. For CIFAR-10 at
-  200 samples this is small, but store the `shape` alongside so a consumer
-  reshapes correctly, and consider a fixed-size list column rather than a Python
-  list per cell.
-
-### Appendix — optional ATLAS case-study export (documented, not built)
-
-A program may contribute a sanitized case study back to the MITRE ATLAS
-community. The export is a JSON document, one per run, holding: the technique ids
-from `RunRecord.atlas_coverage`, the attack name and family from
-`RunRecord.attack`, the summary metrics from `RunRecord.measurements` (accuracy
-drop and flip rate, no raw data), the MRI and grade from `RunRecord.scoring`
-when present, and the standing `RunRecord.limitations`. It carries no tensors and
-no dataset payload, only the technique-to-outcome narrative. Building an exporter
-is a follow-on, not P6.
+A program may contribute a sanitized case study to the MITRE ATLAS community.
+The export would be one JSON document per run holding the technique ids from
+the coverage view, the attack ids and families from the record, the summary
+measurements (accuracy drop and flip rate with denominators, no raw data), the
+MRI with its five subscores and the grade sentence when a score exists, and the
+standing limitations. It carries no tensors and no dataset payload, only the
+technique-to-outcome narrative. Building an exporter is a follow-on, not part
+of any Phase B wave.

@@ -23,7 +23,8 @@ Both are thin over the pure ``redsim.ml.compare`` module, which owns the rules:
 
 Every run is membership-gated before any record is read, so a non-member
 learns nothing about the other campaigns. ``/campaign`` carries
-``non_default_weights`` (spec 15.3 badge; REVIEW_REPORTS-30).
+``non_default_weights`` (spec 15.3 badge; REVIEW_REPORTS-30) and, since wave
+B4, ``batch_id`` overlaid from the ``ml_campaigns`` row (BULK-02).
 """
 
 from __future__ import annotations
@@ -237,6 +238,11 @@ def get_campaign(
     # Spec 15.3 badge (REVIEW_REPORTS-30): the vector that scored the run is not the default one.
     record["non_default_weights"] = cmp.non_default_weights(record)
     record["weights"] = cmp.record_weights(record)
+    # BULK-02 (owner default: no frozen-schema change): the batch a run was admitted in is an overlay from
+    # ``ml_campaigns.batch_id``, like ``reviewer_notes`` and ``project_id``; ``None`` for a single-run
+    # admission and on a tree whose campaign table predates migration 0011.
+    batch_id = campaign.get("batch_id")
+    record["batch_id"] = str(batch_id) if isinstance(batch_id, str) and batch_id else None
     return record
 
 

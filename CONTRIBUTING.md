@@ -21,7 +21,9 @@ pnpm install
 `--native-tls` is required behind the corporate TLS proxy. Extras:
 `api`, `worker`, `test`, `dev`, `security`, `docs`, `ml`, `llm` (optional
 private `pythia-sdk`), `garak` (Phase B LLM domain, pinned `garak>=0.16,<0.17`,
-installed by the `garak offline` CI lane and by nobody else yet). `pydantic>=2.7`
+installed by the `garak offline` and `e2e-python` CI lanes and by a venv that
+opts in; no deploy image installs it). Add `docs` and `garak` for a full
+`make check-phase-b`. `pydantic>=2.7`
 and `PyYAML` are the only base dependencies. Never call `.venv/bin/pip`, and do not install
 packages into a venv that other agents or worktrees share.
 
@@ -61,18 +63,23 @@ system conventions.
 ## Run the test suite
 
 ```bash
-.venv/bin/python -m pytest -q -p no:cacheprovider                 # default tier: 2081 passed, 35 skipped, 1 deselected at main 29db42c (106 s with the ml extra)
-.venv/bin/python -m pytest -q -p no:cacheprovider -m ml           # only the tests that need the ml extra
+.venv/bin/python -m pytest -q -p no:cacheprovider                 # default tier: 2634 passed, 35 skipped, 13 deselected at main 703f8f6
+.venv/bin/python -m pytest -q -p no:cacheprovider -m ml           # only the tests that need the ml extra: 433 passed, 1 skipped at 703f8f6
 .venv/bin/python -m pytest -q -p no:cacheprovider -m integration  # sqlite-backed integration tests
-REDSIM_E2E=1 .venv/bin/python -m pytest -q -p no:cacheprovider -m e2e tests/e2e   # 22 passed at 29db42c (136 s)
-.venv/bin/python -m pytest -q -p no:cacheprovider -m garak tests  # exit 5 (nothing collected) until a garak-marked test exists
+REDSIM_E2E=1 .venv/bin/python -m pytest -q -p no:cacheprovider -m e2e tests/e2e   # 22 passed at 703f8f6, before the seven wave B4 files
+.venv/bin/python -m pytest -q -p no:cacheprovider -m garak tests  # 12 passed at 703f8f6 (needs the garak extra; skipped without it)
+make check-phase-b                                                # the Phase B gate: ruff, mypy, every tier, mkdocs, the docs-consistency test, the stack probes
 .venv/bin/python -m pytest -q --cov=redsim --cov-report=term | tail -5
 ```
 
-The counts are the wave B0 integration run at `29db42c` (2026-09-09), local,
-not CI; they move with every wave, so re-run before quoting them. The four
-tiers (default, `ml`, `e2e`, `garak`) are described in
-[`docs/dev/testing.md`](docs/dev/testing.md).
+The counts are the wave B3 integration run at `703f8f6` (2026-09-09), local,
+not CI; they move with every wave, so re-run before quoting them. The wave B4
+tree's counts are the B4 assembler's to record; its e2e tier is not green (the
+B4 files report product defects by attribution, README "Open items and not
+implemented"). The four tiers (default, `ml`, `e2e`, `garak`) and the gate are
+described in [`docs/dev/testing.md`](docs/dev/testing.md). From a git worktree
+export `PYTHONPATH=<worktree>` before the e2e tier, or let the gate's e2e step
+do it.
 
 Markers (defined in `pyproject.toml`):
 
@@ -82,8 +89,8 @@ Markers (defined in `pyproject.toml`):
 | `integration` | May hit Postgres / Redis. Runs by default on the sqlite harness in `tests/conftest.py`, runs against real services in CI. |
 | `ml` | Needs the `ml` extra (torch, ART, SHAP). Deselected on the Python 3.13 CI lane. Guard heavy imports with `pytest.importorskip` so collection survives without the extra. |
 | `docker` | Needs Docker. Opt-in. |
-| `e2e` | `tests/e2e/`: the real API, admission, eager Celery, the real sandbox child and the CLI over sqlite on a synthetic asset tree. Opt-in via `REDSIM_E2E=1`; `REDSIM_E2E_POSTGRES_URL` (a migrated database) turns the RLS lane on. Runs in CI on every PR since wave B0 (`E2E tier (python, eager Celery)`). |
-| `garak` | Needs the `garak` extra; skipped when absent (wave B0). Deselected by `addopts` and by every other lane, so `garak`-marked tests run only in the `garak offline` job. Stamp it, and `importorskip("garak")`, on every test that imports garak. |
+| `e2e` | `tests/e2e/`: the real API, admission, eager Celery, the real sandbox child and the CLI over sqlite on a synthetic asset tree. Opt-in via `REDSIM_E2E=1`; `REDSIM_E2E_POSTGRES_URL` (a migrated database) turns the RLS lane on. Eleven files since wave B4 (the smoke file, the three wave-4 files and the seven Phase B files). Runs in CI on every PR since wave B0 (`E2E tier (python, eager Celery)`, through `scripts/phase_b_gate.sh --only e2e`). A test that meets a product defect fails with `pytest.fail(..., pytrace=False)` naming the module, never with a weaker assertion. |
+| `garak` | Needs the `garak` extra; skipped when absent (wave B0). Deselected by `addopts` and by every other lane except `e2e-python`, so `garak`-marked tests run in the `garak offline` job (`tests/ml`) and, when also `e2e`-gated, in `e2e-python` (`tests/e2e/test_ml_llm.py`). Stamp it, and `importorskip("garak")`, on every test that imports garak. Since wave B4 the gate's garak step fails when nothing was collected or every item was skipped. |
 | `slow` | Long-running. Excluded by default. |
 | `auth_required` | Needs the Keycloak cookie flow. Skipped by default. |
 
@@ -128,14 +135,23 @@ full description is [`docs/dev/ci.md`](docs/dev/ci.md).
   `OTel Collector config is valid`, `Secret scan (trufflehog)`,
   `redsim_output is not committed`.
 - `E2E tier (python, eager Celery)` (job `e2e-python`, wave B0 of the Phase B
-  plan): `REDSIM_E2E=1 pytest -m e2e tests/e2e` against a migrated service
-  Postgres so the RLS lane runs, 20 minute timeout, harness directory
-  uploaded on failure.
+  plan): `scripts/phase_b_gate.sh --only e2e` (`REDSIM_E2E=1 pytest -rs -m e2e
+  tests/e2e`) against a migrated service Postgres so the RLS lane runs and the
+  step fails if it still reports off, then `--only docs-consistency`; the
+  `garak` extra installed for `tests/e2e/test_ml_llm.py`; 30 minute timeout,
+  harness directory uploaded on failure.
 - `garak offline` (job `garak-offline`, wave B0): installs the `garak` extra
-  on CPU torch, imports garak, runs `pytest -m garak tests` with no gateway
-  variable in the environment. Exit 5 (nothing collected) counts as success
-  until the LLM tracks land their `garak`-marked tests; any other non-zero
-  exit fails the job.
+  on CPU torch, imports garak, runs `scripts/phase_b_gate.sh --only garak`
+  (`pytest -m garak tests`) with no gateway variable in the environment. Since
+  wave B4 the step fails on pytest exit 5 (nothing collected), on a run in
+  which no test passed and on a missing extra; the wave B0 rule that mapped
+  exit 5 to success is gone.
+- `make check-phase-b` (`scripts/phase_b_gate.sh`, wave B4) is the Phase B
+  definition of done: ruff, mypy, the default, `ml`, `garak` and `e2e` tiers,
+  `mkdocs build --strict`, `tests/test_docs_phase_b_consistency.py` and, with
+  `REDSIM_API_URL` and `REDSIM_API_TOKEN` set, the HTTP probes against a
+  running stack followed by `redsim audit verify --all`; the first failure
+  names its spec 26 criterion. `make check` keeps its Phase A meaning.
 - `Next.js build (pnpm, frozen lockfile)`: `pnpm install --frozen-lockfile`,
   design-system and web typecheck, vitest, `next build`. When you change a
   `package.json`, regenerate the root `pnpm-lock.yaml` in the same commit.
@@ -209,11 +225,14 @@ green, and the docs writer for the wave records it in master plan section 0.
 API write routes call admission services only (`services.scans`,
 `services.verify`, `services.targets`, `services.auth_profiles`,
 `services.ml_models`, `services.ml_campaigns`, `services.ml_findings`, and
-in Phase B waves B2 and B3 the planned `services.ml_llm`,
-`services.finding_review`, `services.ml_batches`, `services.ml_datasets`,
-`services.ml_capacity`), and Celery tasks call execution services only. The
-Phase B routes that wave B0 mounted are `501 not_implemented` stubs that call
-no service and write nothing until their wave replaces them. See
+since Phase B waves B2 and B3 `services.ml_llm`, `services.finding_review`,
+`services.reports`, `services.ml_batches`, `services.ml_datasets`,
+`services.ml_datasets_export`, `services.ml_capacity` and the
+`redsim.integrations` admission boundary), and Celery tasks call execution
+services only. Every Phase B route wave B0 mounted as a `501 not_implemented`
+stub was replaced by its handler in waves B2 and B3
+(`tests/ml/test_phase_b_stubs.py` pins the surface); the `501`s that remain
+are by decision with a reason (`docs/api/v1.md` "Phase B answers"). See
 [`docs/architecture/overview.md`](docs/architecture/overview.md) under
 "Layered service architecture".
 

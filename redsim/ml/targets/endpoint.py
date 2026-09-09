@@ -33,7 +33,12 @@ from typing import Any, Protocol, cast
 
 import numpy as np
 
-from redsim.ml.datasets.sampling import per_class_counts, stratified_indices, stratified_sample
+from redsim.ml.datasets.sampling import (
+    as_model_input,
+    per_class_counts,
+    stratified_indices,
+    stratified_sample,
+)
 from redsim.ml.endpoint_broker import (
     EndpointLimits,
     PredictResult,
@@ -222,7 +227,9 @@ class EndpointTarget:
             raise UnsupportedArtifact(f"shape_mismatch: declared input_shape {self._declared_input_shape} vs "
                                       f"evaluation data {sample_shape}")
         probe_idx = stratified_indices(y, min(self._probe_rows, int(x.shape[0])), 0)
-        result = self._call(np.asarray(x[probe_idx], dtype=np.float32), purpose="probe")
+        # The probe rows are scaled exactly as ``sample()`` scales campaign rows (uint8 -> [0, 1]); the
+        # endpoint-v1 contract refuses anything outside the unit interval (ENDPOINT-30).
+        result = self._call(as_model_input(x[probe_idx]), purpose="probe")
         if result.probabilities.shape[1] != len(self._class_names):
             raise EndpointSchemaMismatch(
                 f"probe response has {result.probabilities.shape[1]} columns; the target declares "
