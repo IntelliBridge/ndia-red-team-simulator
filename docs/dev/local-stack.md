@@ -1,30 +1,56 @@
 # Running the redsim stack locally
 
 For the architecture this stack instantiates, see
-[`docs/architecture/overview.md`](../architecture/overview.md) and the
+[`docs/architecture/overview.md`](../architecture/overview.md), the ML flow in
+[`docs/architecture/ml-vertical.md`](../architecture/ml-vertical.md) and the
 diagrams under `docs/architecture/diagrams/`. For production deployment, see
 [`docs/ops/deploy.md`](../ops/deploy.md). For the Python-only path (API and
 web without Docker, tests, lint) see the root `Makefile` and
 [`CONTRIBUTING.md`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CONTRIBUTING.md).
+State described here is `main` at `bb43bd7` (2026-09-08). Items from wave 3
+of the completion plan are marked "(wave 3, landing 2026-09-09)".
 
 ## Prerequisites
 
-- Docker 24+ running (Compose v2).
+- Docker 24+ running (Compose v2), for the full stack.
 - Free ports: `:8000` API, `:3300` web, `:8080` Keycloak, `:5432` Postgres,
   `:6379` Redis, `:9100` / `:9101` MinIO, `:4319` redsim-log-ingest.
-- Python 3.12 and the `.venv` (`make install`) if you want to run the CLI
-  from your host against the stack.
+- Python 3.12 and the `.venv` (`make install`, extras `api,worker,test,dev,ml`
+  by default). The venv is created with uv and has no `pip`, so run tools as
+  `.venv/bin/python -m …` and install with `uv pip install --native-tls`.
 - Behind the corporate TLS proxy: the Zscaler root exported into
   `deploy/certs/` as a `.pem` or `.crt` (see
   [`deploy/certs/README.md`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/deploy/certs/README.md)),
   so the images can reach PyPI, the torch index and Pythia.
 
+## Build the bundled assets first
+
+A fresh clone has no models to attack. `assets/` is gitignored except its
+README, so build the datasets and the bundled models once:
+
+```bash
+.venv/bin/redsim ml build-assets --dataset all              # fetch by pinned revision, train on CPU
+.venv/bin/redsim ml build-assets --dataset cifar10 --fixture # only the CI fixture slice (no token needed)
+.venv/bin/redsim ml build-assets --only vehicles_cnn --arch resnet18 --epochs 3
+```
+
+The Kaggle download reads `KAGGLE_API_TOKEN` from the environment or from
+`.env` (`REDSIM_ENV_FILE`), or the older `KAGGLE_USERNAME` / `KAGGLE_KEY`
+pair, and falls back to the committed CI sample when neither is set. The
+writer records dataset ids, revisions, splits, weight digests, clean
+accuracy with `n`, dataset caveats and `subject_centered` in
+`assets/MANIFEST.json`. `GET /v1/datasets` and `GET /v1/models` read that
+manifest from `REDSIM_ML_ASSETS_DIR` (default `./assets`), so the API and the
+worker must both see the same directory. Quote clean accuracy from the
+manifest of the build in hand, never as a product claim.
+
 ## Compose services and profiles
 
 `deploy/docker-compose.yml` brings up, in the default profile: `postgres`
 (postgres 16 with pgaudit), `redis`, `keycloak`, `minio`, `redsim-api`,
-`redsim-worker` (`-Q scans`), `redsim-worker-default` (`-Q default`),
-`redsim-beat`, `redsim-web` and `redsim-log-ingest`.
+`redsim-worker` (`-Q scans`: campaigns, model validation, verify),
+`redsim-worker-default` (`-Q default`: report rendering, the reaper, tenant
+integrity, WORM export), `redsim-beat`, `redsim-web` and `redsim-log-ingest`.
 
 ```bash
 make up                                                          # from the repo root
@@ -56,6 +82,20 @@ cd deploy && make seed   # default-org, project `default`, user `admin` with the
 `.[worker,ml]`, so it is the slowest image to build. The API image installs
 `.[api,worker]` only and never carries torch, ART, onnxruntime or SHAP.
 
+Two things the compose file does not do for you at `bb43bd7`:
+
+- **Assets.** No service mounts `assets/` and none sets
+  `REDSIM_ML_ASSETS_DIR`, so a compose worker has no bundled models until you
+  mount the built tree (a `docker-compose.override.yml` adding
+  `./../assets:/app/assets:ro` and `REDSIM_ML_ASSETS_DIR=/app/assets` to
+  `redsim-api` and the worker anchor is the least invasive way). Without it
+  `GET /v1/datasets` answers `assets.status: "missing"` and registering a
+  bundled model answers `409 model_load_refused` with
+  `refusal_reason: bundled_assets_missing`.
+- **Narrative.** The worker anchor sets `REDSIM_DISABLE_LLM: "1"`, so no
+  compose worker calls Pythia until that is unset (see
+  [Pythia in compose](#pythia-in-compose)).
+
 Because `make up` runs compose from the repo root, compose reads its own
 `.env` in `deploy/`, not the repo-root `.env`. Export the values first, or
 point compose at the file:
@@ -84,38 +124,128 @@ export REDSIM_TOKEN=dev:admin@redsim.local        # REDSIM_AUTH_MODE=dev only
 ```
 
 The dev token works only when `REDSIM_AUTH_MODE=dev` **and** `REDSIM_ENV` is
-not `prod`. The API refuses dev tokens in prod, so deploying the compose file
-unchanged to production is a footgun the runtime catches.
+not `prod`. The API refuses dev tokens in prod.
 
-## What you can do on `main`
+## Run a campaign against the stack
 
-The platform is up but the ML vertical is contracts only, so a fresh stack
-has nothing to attack:
+With the assets visible to the API and the worker, the whole demo path is
+four calls. `H` below is the bearer header. Add `X-Redsim-CSRF` only for
+cookie sessions.
 
-- `GET /v1/scanners` returns an empty roster and `POST /v1/scans` answers
-  404. The web Start scan control is disabled behind a notice.
-- `redsim ml build-assets` prints `not_implemented` with a reason and
-  writes nothing.
-- `/models` and the campaign routes do not exist yet
-  ([API reference](../api/v1.md), "Planned ML routes").
+```bash
+H='Authorization: Bearer dev:admin@redsim.local'
+API=http://localhost:8000
 
-What does work: sign-in, projects and memberships, `/audit` and
-`redsim audit verify`, `/logs` through `redsim-log-ingest`, `/cost`, the
-run-events WebSocket, the Helm-equivalent hardening of the API (CSRF, rate
-limit, RLS), and the Pythia connectivity check from the host
-(`.venv/bin/python -m redsim.llm.pythia_check`, see
-[`docs/ops/pythia.md`](../ops/pythia.md)).
+# 1. What this deployment can do, and which bundled models exist
+curl -s -H "$H" $API/v1/ml/capabilities | jq '.modalities, .bundled_models, .llm_narrative'
+curl -s -H "$H" "$API/v1/models?project=default" | jq '.models[] | {id, registered, status, modality}'
+
+# 2. Register a bundled model in the project (model.register, remediator+)
+curl -s -H "$H" -H 'Content-Type: application/json' -X POST $API/v1/models \
+  -d '{"source":"bundled","project_id":"default","bundled_id":"vehicles_cnn"}' | jq '{id, status}'
+# -> {"id": "vehicles_cnn-<8 hex>", "status": "available"}; a second call answers 409 already_registered
+
+# 3. Start a campaign (attack.run, scanner+); defaults fill norm, grid, reference eps and dataset
+curl -s -H "$H" -H 'Content-Type: application/json' -X POST $API/v1/models/<model_id>/attacks \
+  -d '{"attack_ids":["fgsm","pgd"],"n_samples":50,"explain_k":4}' | jq
+# -> 202 {"run_id": "run-…", "job_ids": ["job-…"], "status_url": "/v1/runs/run-…"}
+
+# 4. Watch the stage table, then read the record and the report
+curl -s -H "$H" $API/v1/runs/<run_id> | jq '.stage_table | {stage, stages_done, completeness}'
+curl -s -H "$H" $API/v1/runs/<run_id>/campaign | jq '{status, completeness, score: .score.mri, score_status, findings: (.findings|length)}'
+curl -s -H "$H" $API/v1/runs/<run_id>/report.md
+curl -s -H "$H" "$API/v1/audit/verify?run=<run_id>" | jq '{verified, count}'
+```
+
+Follow-ups on a finding: `POST /v1/findings/{id}/explain`,
+`POST /v1/findings/{id}/harden` (`{"llm_narrative": true}` only produces prose
+when Pythia is configured on the worker), `POST /v1/findings/{id}/verify`
+(`{"defense": "feature_squeezing"}`), then
+`GET /v1/runs/{verify_run}/compare?with={baseline_run}`. The tabular path is
+the same with `bundled_id: "url_trees"` and `attack_ids: ["hopskipjump"]`
+(`pgd` on `url_trees` by surrogate transfer is admitted from wave 3, landing
+2026-09-09, while at `bb43bd7` admission refuses it with
+`attack_modality_mismatch`). Every route and code is in the
+[API reference](../api/v1.md).
+
+A small `n_samples` and `explain_k` keep a laptop run short. On a small
+slice the MRI may legitimately be partial (`score` absent, `score_status`
+present) and a campaign may produce no finding. That is the honest state per
+spec 15.4, not an error.
+
+`redsim ml seed [--project default] [--only <bundled_id>]` registers every
+non-fixture bundled model through the same service from the CLI, and
+`redsim ml attack <target_id> --out <dir>` runs a campaign offline with no
+database, writing `<out>/<run_id>/{run_record.json, report.md, report.json,
+report.html, curve, audit.jsonl}` with `narrative_source=rules` (both wave 3,
+landing 2026-09-09).
 
 ## Pythia in compose
 
 The four Pythia variables (`PYTHIA_BASE_URL`, `PYTHIA_API_KEY`,
 `PYTHIA_PERSONA`, `REDSIM_ML_LLM_MODEL`) pass through to `redsim-api` and
 the worker pool as `${VAR:-}`. When they are not exported the container sees
-an empty string and the narrative stays off. The worker anchor also sets
-`REDSIM_DISABLE_LLM: "1"`, which has to be unset on `redsim-worker-default`
-(a `docker-compose.override.yml` is the least invasive way) before a compose
-stack can produce a narrative. Containers get the proxy CA from
-`deploy/certs/`, not from a keychain.
+an empty string and the narrative stays off (`GET /v1/ml/capabilities`
+reports `llm_narrative.configured: false`). The worker anchor also sets
+`REDSIM_DISABLE_LLM: "1"`. Since wave 2 the narrative runs in the parent of
+the `scans` worker (`redsim-worker`), so that is the service on which the
+variable has to be unset (a `docker-compose.override.yml` is the least
+invasive way) before a compose stack can produce a narrative. The sandbox
+child never receives the Pythia variables in either case. Containers get the
+proxy CA from `deploy/certs/`, not from a keychain. See
+[`docs/ops/pythia.md`](../ops/pythia.md).
+
+## Without Docker
+
+`make dev-api` (uvicorn on `:8000`) boots without Postgres or Redis, but only
+`/health`, `/docs`, `/metrics` and the catalog routes that read the asset
+manifest work until `REDSIM_DB_URL` and `REDSIM_BROKER_URL` point at running
+services. `make dev-worker` runs
+`celery -A redsim.workers.celery_app worker -Q scans,default` from the venv and
+needs Redis, Postgres and the `ml` extra. `make dev-web` serves the Next.js app
+on `:3000`. Export the variables from `.env.example` (`cp .env.example .env`,
+then `set -a; source .env; set +a`) in the shell that runs them.
+
+## Tests, including the e2e tier
+
+```bash
+.venv/bin/python -m pytest -q                                   # default suite: 1594 passed, 30 skipped at bb43bd7 (about 80 s with the ml extra)
+.venv/bin/python -m pytest -q -m ml                             # only the tests that need the ml extra
+.venv/bin/ruff check --select E4,E7,E9,F,I redsim tests         # lint, exactly as CI
+.venv/bin/mypy redsim
+```
+
+The default `-m` from `addopts` deselects `docker`, `e2e`, `slow` and
+`auth_required`. The ML tests never touch the network: `tests/ml/fakes.py`
+provides `TinyTarget` and `TinyTabularTarget`, `tests/ml/fixtures/` holds the
+CIFAR-10 slice, the URL sample, a `MANIFEST.json` and the frozen
+`run_record.json`, and an autouse fixture in `tests/ml/conftest.py` isolates
+every ML test from a developer's `.env`. The route and task tests
+(`tests/ml/test_*_routes.py`, `test_admission.py`, `test_tasks.py`,
+`test_audit_campaign.py`, `test_model_validate.py`, `test_compare.py`,
+`test_cancel_terminal.py`) run on the shared sqlite harness with eager Celery.
+
+The e2e tier (wave 3, landing 2026-09-09) lives under `tests/e2e/`. Its
+`conftest.py` stamps every item there `e2e` and skips it unless `REDSIM_E2E`
+is set, so `pytest -q` never runs it by accident. The harness builds a tiny
+synthetic asset tree with the real builders, runs the FastAPI app over a
+sqlite database in WAL mode with a filesystem blob store and eager Celery,
+launches the real sandbox child by default (`REDSIM_E2E_SANDBOX` selects the
+in-process mode), provides one dev-token client per role, a mocked Pythia
+transport, and runs the real `redsim audit verify --all` as a subprocess.
+
+```bash
+REDSIM_E2E=1 .venv/bin/python -m pytest -q -m e2e tests/e2e                       # sqlite lane
+REDSIM_E2E=1 REDSIM_E2E_POSTGRES_URL=postgresql+psycopg://redsim:redsim@localhost:5432/redsim \
+  .venv/bin/python -m pytest -q -m e2e tests/e2e                                  # adds the RLS lane
+```
+
+The Postgres lane runs the tenant-isolation cases that sqlite cannot (RLS,
+`FORCE ROW LEVEL SECURITY`, the drift guards). It skips when
+`REDSIM_E2E_POSTGRES_URL` is unset and fails when the database is not
+migrated. The compose Postgres from `make up` works as its target after
+`alembic upgrade head`. The Playwright browser e2e behind `workflow_dispatch`
+in CI is excluded from this completion pass.
 
 ## Inspect
 
@@ -124,15 +254,20 @@ stack can produce a narrative. Containers get the proxy CA from
 | Postgres | `cd deploy && make psql` (drops into the `redsim` DB) |
 | Application logs | `SELECT * FROM application_logs WHERE …`, or the web `/logs` page |
 | MinIO console | `http://localhost:9101` |
-| Audit chain | `redsim audit verify --all`, or the web `/audit` page |
+| Audit chain | `redsim audit verify --all`, `GET /v1/audit/verify?all=1`, or the web `/audit` page |
+| Campaign evidence | `GET /v1/runs/{id}/campaign`, `GET /v1/runs/{id}/artifacts`, `GET /v1/runs/{id}/report.md` |
 | Health | `curl -s http://localhost:8000/health` (`cd deploy && make whoami`) |
+| Metrics | `curl -s http://localhost:8000/metrics | grep redsim_ml_` |
 | Loki (obs) | `http://localhost:3100/loki/api/v1/query?query={service="redsim-api"}` |
-| Jaeger (obs) | `http://localhost:16686` |
+| Jaeger (obs) | `http://localhost:16686` (the worker opens a `job.run` span per job and one span per campaign stage) |
 | Kibana (obs-search) | `http://localhost:5601` |
 | Web Storybook | `pnpm --filter @redsim/web storybook` then `http://localhost:6006` |
 
 `cd deploy && make logs svc=redsim-worker` tails one service,
 `make rebuild svc=redsim-worker` rebuilds and restarts it.
+`REDSIM_ML_KEEP_WORK_DIR=1` on the worker keeps each job's sandbox work
+directory (`REDSIM_ML_WORK_DIR/<job_id>`, default under `$TMPDIR/redsim-ml`)
+for debugging.
 
 ## Tear down
 
@@ -154,21 +289,34 @@ The redsim API session cookie is keyed by `REDSIM_API_SESSION_PRIVATE_KEY`
 auto-generates a dev keypair on first boot under `deploy/certs/`. In
 production you supply your own (see [`docs/ops/deploy.md`](../ops/deploy.md)).
 
-## Common smoke checks
+## Doctor
 
-```bash
-make up
-.venv/bin/redsim --api status                # mode=api, api health = healthy
-.venv/bin/redsim --api audit verify --all    # every chain verifies
-docker compose -f deploy/docker-compose.yml exec postgres \
-  psql -U redsim -d redsim -c "SELECT count(*) FROM application_logs;"
-```
+`redsim doctor` checks the environment. At `bb43bd7` it still derives a
+provider key requirement from the `model` field of `redsim.yaml`. The wave 3
+rewrite (landing 2026-09-09) drops that, prints an informational Pythia block
+(key redacted to its prefix and length, the routed model, a note when the
+model came from a deprecated alias), checks the `ml` extra, launches the
+sandbox child with `--help` under the real child environment and verifies the
+asset manifest (all three required with `--worker-mode` or
+`REDSIM_DOCTOR_WORKER_MODE=1`, informational otherwise), and reports whether
+the `ml-campaign` adapter is on the roster. `--api-mode` keeps the Postgres,
+blob and OIDC probes.
 
 ## Troubleshooting
 
 - **API returns 401**: confirm `REDSIM_TOKEN` is set. If Keycloak is still
   booting, `make logs svc=keycloak` shows the realm import. Dev tokens work
   immediately, the OIDC path needs the realm fully loaded.
+- **`POST /v1/models` answers 409 `model_load_refused` with
+  `bundled_assets_missing`**: the API process cannot see a built
+  `MANIFEST.json` at `REDSIM_ML_ASSETS_DIR`. Build the assets and mount them.
+- **`POST /v1/models/{id}/attacks` answers 409 `model_load_refused`**: the
+  target is not `available` (an upload still `validating` or `refused`, or a
+  deleted target). `GET /v1/models/{id}` shows `status` and `refusal_reason`.
+- **Campaign fails with `SandboxTimeout`**: raise
+  `REDSIM_ML_SANDBOX_TIMEOUT_S` on the worker (default 1200, and it must stay
+  below the Celery soft limit) or lower `n_samples`. The partial files are
+  kept as `ml.partial.*` artifacts.
 - **Worker idle or restarting**: `make logs svc=redsim-worker`. Check
   `REDSIM_BROKER_URL` and that the `ml` extra built (the torch wheel download
   is the usual failure behind a proxy without `deploy/certs/`).

@@ -16,5 +16,8 @@ the build hook did not run. See
 
 Start with the
 [product spec](superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md),
-the [project brief](project-brief.md) and the
-[master plan](plans/00-master-plan.md).
+the [project brief](project-brief.md), the
+[master plan](plans/00-master-plan.md) and the
+[gap register](plans/09-gap-register-2026-09-08.md). The tree as it runs is
+described in the [ML vertical](architecture/ml-vertical.md) page and the
+[API reference](api/v1.md).
