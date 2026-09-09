@@ -201,6 +201,43 @@ def test_summary_table_has_one_row_per_cell_and_no_aggregate() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The matrix speaks the final attack ids and norms (B3 reconcile)
+# ---------------------------------------------------------------------------
+
+
+def test_matrix_norm_defaults_mirror_the_admission_table_and_the_registry() -> None:
+    """The CLI's per-norm literals equal the API admission table (``SUPPORTED_MODALITIES``), the norm
+    vocabulary is ``schema.Norm``, and every default attack id is a registered adapter that runs that norm
+    (``edit`` -> ``word_substitution``, ``patch_area`` -> ``dpatch``, ``linf``/``l2`` -> the Phase A pair)."""
+    from typing import get_args
+
+    from redsim.ml.attacks import registry as attack_registry
+    from redsim.ml.schema import Norm
+    from redsim.services.ml_campaigns import KNOWN_NORMS, SUPPORTED_MODALITIES
+
+    assert set(cli_ml.NORM_CHOICES) == set(get_args(Norm)) == set(KNOWN_NORMS)
+    assert set(cli_ml.MODALITY_DEFAULT_NORM) == set(SUPPORTED_MODALITIES)
+    for modality, spec in SUPPORTED_MODALITIES.items():
+        assert cli_ml.MODALITY_DEFAULT_NORM[modality] == spec.default_norm, modality
+        for norm in spec.norms:
+            assert tuple(cli_ml.NORM_DEFAULT_GRIDS[norm]) == tuple(spec.eps_grids[norm]), (modality, norm)
+            assert cli_ml.NORM_DEFAULT_REFERENCE[norm] == spec.reference_eps[norm], (modality, norm)
+    registered = {info.id for info in attack_registry.list_attacks()}
+    assert {"fgsm", "pgd", "word_substitution", "dpatch"} <= registered
+    for norm, attack_ids in cli_ml.NORM_DEFAULT_ATTACKS.items():
+        assert attack_ids, norm
+        for attack_id in attack_ids:
+            assert attack_id in registered, (norm, attack_id)
+            assert attack_registry.attack_supports_norm(attack_registry.get_attack(attack_id), norm), (norm, attack_id)
+    # And the resolver fills a text or detection cell from its modality, never from the pixel defaults.
+    text = cli_ml.resolve_attack_defaults(modality="text", norm=None, attacks=None, eps=None, reference_eps=None)
+    assert (text.norm, text.attack_ids, text.eps_grid) == ("edit", ("word_substitution",), (0.1, 0.2, 0.3))
+    det = cli_ml.resolve_attack_defaults(modality="detection", norm=None, attacks=None, eps=None, reference_eps=None)
+    assert (det.norm, det.attack_ids, det.reference_eps) == ("patch_area", ("dpatch",), 0.03)
+    assert set(text.filled) >= {"norm", "attacks", "eps"} and "reference_eps" in det.filled
+
+
+# ---------------------------------------------------------------------------
 # End to end through the CLI over two tiny bundled targets (ml extra)
 # ---------------------------------------------------------------------------
 

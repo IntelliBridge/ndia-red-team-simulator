@@ -616,6 +616,44 @@ def test_continuation_hook_and_backstop_task_body(api: SimpleNamespace, monkeypa
     assert entry["options"]["queue"] == "default"
 
 
+def test_deferred_continuation_wraps_every_exit_path(api: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The two-line hook for ``ml_campaign_run``: dispatch on return and on raise, project read from the job row."""
+    from redsim.workers.tasks import capacity as task_module
+
+    sent: list[str] = []
+    monkeypatch.setattr(capacity, "default_enqueue", lambda job_id: (sent.append(job_id), f"celery-{job_id}")[1])
+    with api.session_cm() as sess:
+        project = sess.get(Project, PROJECT)
+        project.ml_max_concurrent_runs = 1
+        _seed_job(sess, "job-finishing", status="running")
+        for job_id in ("job-w1", "job-w2"):
+            decision = capacity.admit_or_defer(sess, project, "attack")
+            _seed_job(sess, job_id)
+            capacity.mark_deferred(sess, run_id=f"run-{job_id}", job_id=job_id, decision=decision)
+    # A body that returns: the finishing job (still ``running`` in the row, as inside task_context) is excluded
+    # from the slot count, so the oldest deferred member goes out when the block exits, not before.
+    with task_module.deferred_continuation("job-finishing"):
+        assert sent == []
+    assert sent == ["job-w1"]
+    # A body that raises: the hook still runs and the exception propagates unchanged.
+    with api.session_cm() as sess:
+        sess.get(Job, "job-w1").status = "succeeded"
+    with pytest.raises(RuntimeError, match="sandbox died"), task_module.deferred_continuation("job-finishing"):
+        raise RuntimeError("sandbox died")
+    assert sent == ["job-w1", "job-w2"]
+    # The project may be given; a job nobody knows is a no-op; a broken lookup never raises out of the hook.
+    with task_module.deferred_continuation("job-finishing", project_id=PROJECT):
+        pass
+    with task_module.deferred_continuation("no-such-job"):
+        pass
+    assert task_module._job_project_id("no-such-job") is None
+    monkeypatch.setattr("redsim.db.session.get_session", lambda: (_ for _ in ()).throw(RuntimeError("db down")))
+    with task_module.deferred_continuation("job-finishing"):
+        pass
+    assert sent == ["job-w1", "job-w2"]
+    assert "deferred_continuation" in task_module.__all__
+
+
 def test_gauges_are_filled_from_the_jobs_table(api: SimpleNamespace) -> None:
     prometheus = pytest.importorskip("prometheus_client")
     from redsim.observability import METRIC_NAMES, get_metrics

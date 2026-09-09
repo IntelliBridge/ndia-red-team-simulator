@@ -8,8 +8,12 @@ the rest (interop-contribute / interop-consume: the dataset export and the
 consumed-slice admission; atlas-foundry: ATLAS coverage, the roster and the
 Foundry push; bulk-service-routes: batch campaigns and bulk verify;
 bulk-upload-capacity-cli: bulk upload and the capacity view). ``ROUTES`` is the
-B0 stub list kept as the surface pin; nothing here answers ``501
-not_implemented`` any more.
+B0 stub list kept as the surface pin; ``REMAINING_STUBS`` lists what still
+answers ``501 not_implemented`` on that surface after B3 (nothing), and the one
+``not_implemented`` left on the Phase B surface by design is the Lattice entry of
+the integrations roster (spec 27.3, D3; the wave B4 gate re-checks both against a
+running stack). The bulk upload and capacity paths are served by exactly one
+router (``redsim.api.v1.models_bulk``); the B0 stubs left ``batches.py``.
 
 Pinned here, offline over the shared sqlite harness with the real app in dev
 auth and the user dependency overridden (one project with a finished campaign
@@ -116,6 +120,16 @@ OPENAPI_PATHS: list[tuple[str, str]] = [
 #: Audit actions a refused call may write with ``success == True``: the batch admission row is written
 #: before its members are admitted one by one (spec 17.2), so it precedes the members' refusals.
 ADMISSION_ROWS_BEFORE_REFUSAL = {"batch.create"}
+
+#: Phase B routes that still answer ``501 not_implemented`` after wave B3, as ``(method, path)`` rows of
+#: ``ROUTES``. Empty: every B0 stub has a real handler. A wave that stubs a new route adds it here with
+#: the plan row that builds it, and the wave B4 gate (plan 12 section 5, ``make check-phase-b``) fails
+#: while the list is non-empty. ``test_remaining_stubs_are_exactly_the_routes_answering_501`` keeps
+#: the list truthful in both directions.
+REMAINING_STUBS: list[tuple[str, str]] = []
+
+#: Paths the B0 stubs shared with a sibling track and that must be served by exactly one router now.
+ONCE_MOUNTED: list[tuple[str, str]] = [("POST", "/v1/models/bulk"), ("GET", "/v1/ml/capacity")]
 
 
 def _ids(rows: list[tuple[str, str, Any, str, bool, Any]]) -> list[str]:
@@ -357,6 +371,77 @@ def test_openapi_lists_every_route(api: SimpleNamespace) -> None:
     for method, template in OPENAPI_PATHS:
         assert template in paths, template
         assert method in paths[template], f"{method.upper()} {template}"
+
+
+# --------------------------------------------------------------------------- what remains stubbed
+
+
+def test_remaining_stubs_are_exactly_the_routes_answering_501(api: SimpleNamespace) -> None:
+    """The pin is truthful both ways: a route answers 501 iff it is listed, and the list is empty after B3."""
+    answering_501: list[tuple[str, str]] = []
+    for method, path, body, *_ in ROUTES:
+        resp = api.call(ADMIN, method, path, body)
+        detail = resp.json().get("detail") if resp.status_code >= 400 else None
+        if resp.status_code == 501 or (isinstance(detail, dict) and detail.get("code") == "not_implemented"):
+            answering_501.append((method, path.split("?")[0]))
+    assert answering_501 == REMAINING_STUBS
+    assert REMAINING_STUBS == [], "a Phase B route is stubbed again; name the plan row that builds it"
+
+
+def test_lattice_is_the_one_not_implemented_control_on_the_surface(api: SimpleNamespace) -> None:
+    """The roster lists Lattice as ``not_implemented`` with the D3 reason and no code path (spec 27.3, B4 gate)."""
+    from redsim.integrations import LATTICE_REASON
+
+    body = api.call(VIEWER, "GET", "/v1/integrations").json()
+    lattice = body["integrations"]["lattice"]
+    assert lattice["status"] == "not_implemented" and lattice["phase"] == "B"
+    assert lattice["reason"] == LATTICE_REASON and "D3" in lattice["decision"]
+    # Text only: no route carries the name, and the status is a roster entry, never a 501 answer.
+    lattice_paths = [route.path for route in api.app.routes if "lattice" in getattr(route, "path", "").lower()]
+    assert lattice_paths == []
+    # Foundry is the only integration with code, off by default (no URL in this harness); no value leaves.
+    foundry = body["integrations"]["foundry"]
+    assert foundry["status"] == "disabled" and foundry["host_configured"] is False
+
+
+def _routers_serving(app: Any, method: str, path: str) -> list[str]:
+    """Module names of the mounted routers (or leaf routes) that fully match ``method path``."""
+    from starlette.routing import Match
+
+    from redsim.api.v1 import batches as _batches
+    from redsim.api.v1 import models_bulk as _models_bulk
+
+    scope = {"type": "http", "method": method, "path": path, "root_path": "", "headers": [], "query_string": b"",
+             "path_params": {}}
+    by_router = {id(_models_bulk.router): _models_bulk.__name__, id(_batches.router): _batches.__name__}
+    hits: list[str] = []
+    for route in app.routes:
+        match, _child = route.matches(scope)
+        if match is not Match.FULL:
+            continue
+        # FastAPI >= 0.141 wraps an included router; older versions list the APIRoute leaves directly.
+        original = getattr(route, "original_router", None)
+        if original is not None:
+            hits.append(by_router.get(id(original), f"router:{id(original)}"))
+        else:
+            hits.append(getattr(route, "endpoint").__module__)
+    return hits
+
+
+def test_bulk_upload_and_capacity_are_served_by_one_router(api: SimpleNamespace) -> None:
+    """The B0 stubs for the two shared paths are gone from ``batches.py``; ``models_bulk`` serves each once."""
+    from redsim.api.v1 import models_bulk
+
+    for method, path in ONCE_MOUNTED:
+        assert _routers_serving(api.app, method, path) == [models_bulk.__name__], (method, path)
+        # And the module itself declares the route exactly once.
+        declared = [r for r in models_bulk.router.routes
+                    if f"/v1{r.path}" == path and method in (getattr(r, "methods", None) or ())]
+        assert len(declared) == 1, (method, path)
+    batch_paths = {(m, f"/v1{r.path}") for r in batches.router.routes for m in (getattr(r, "methods", None) or ())}
+    assert not batch_paths & set(ONCE_MOUNTED)
+    assert not hasattr(batches, "_not_built") and not hasattr(batches, "_sibling_module_present")
+    assert "NOT_IMPLEMENTED" not in vars(batches)
 
 
 # --------------------------------------------------------------------------- gate vocabulary

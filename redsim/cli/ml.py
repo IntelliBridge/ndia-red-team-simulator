@@ -17,7 +17,8 @@ written, and the process exits non-zero on a refusal or a failed campaign.
 ``patch_area``); what the caller omits is filled per norm from the spec 12.3
 table (:func:`resolve_attack_defaults`): the norm itself from the target's
 modality in the asset manifest (``edit`` for a text target, ``patch_area`` for a
-detection target, ``linf`` otherwise), then the attack set (``fgsm,pgd``,
+detection target, ``linf`` otherwise), then the attack set (``fgsm,pgd`` under
+``linf``, ``pgd`` alone under ``l2`` because the FGSM adapter runs L-inf only,
 ``word_substitution`` or ``dpatch``), the budget grid and the reference budget.
 The adapter validates whatever is sent; a norm it cannot run yet is its refusal.
 
@@ -120,10 +121,13 @@ EXIT_USAGE = 2
 # (``redsim.ml.scoring`` for linf and l2, ``word_substitution.DEFAULT_EDIT_GRID``,
 # ``dpatch.DEFAULT_PATCH_AREA_GRID`` / ``DEFAULT_REFERENCE_PATCH_AREA``) so the two cannot drift.
 NORM_CHOICES: tuple[str, ...] = ("linf", "l2", "edit", "patch_area")
-#: Default attack set per norm: the Phase A pair for the pixel and feature norms, the text and detection
-#: adapters for their own norms. The modality's noise control runs automatically in every case.
+#: Default attack set per norm: the Phase A pair under L-inf; under L2 the members of that pair whose adapter
+#: declares the norm (``pgd`` only: ``FGSMAdapter.norms`` is ``{"linf"}`` and the admission refuses an attack
+#: under a norm it does not run, ATTACKS_HARDEN-03); the text and detection adapters for their own norms.
+#: The modality's noise control runs automatically in every case. tests/ml/test_cli_matrix.py pins every
+#: id here against the registry and the norm it declares.
 NORM_DEFAULT_ATTACKS: dict[str, tuple[str, ...]] = {
-    "linf": DEFAULT_ATTACK_IDS, "l2": DEFAULT_ATTACK_IDS, "edit": ("word_substitution",), "patch_area": ("dpatch",),
+    "linf": DEFAULT_ATTACK_IDS, "l2": ("pgd",), "edit": ("word_substitution",), "patch_area": ("dpatch",),
 }
 NORM_DEFAULT_GRIDS: dict[str, tuple[float, ...]] = {
     "linf": (0.01, 0.03, 0.1), "l2": (0.25, 0.5, 1.0), "edit": (0.1, 0.2, 0.3), "patch_area": (0.01, 0.03, 0.05),
@@ -303,9 +307,9 @@ def add_ml_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
     p_attack.add_argument("--fail-fast", dest="fail_fast", action="store_true", default=False,
                           help="Stop at the first refused or failed cell (default: run every cell, exit 1 at the end)")
     p_attack.add_argument("--attacks", default=None,
-                          help=(f"Comma-separated attack ids (default per norm: {','.join(DEFAULT_ATTACK_IDS)} for linf "
-                                f"and l2, {NORM_DEFAULT_ATTACKS['edit'][0]} for edit, "
-                                f"{NORM_DEFAULT_ATTACKS['patch_area'][0]} for patch_area); the modality's noise "
+                          help=(f"Comma-separated attack ids (default per norm: {','.join(DEFAULT_ATTACK_IDS)} for linf, "
+                                f"{','.join(NORM_DEFAULT_ATTACKS['l2'])} for l2, {NORM_DEFAULT_ATTACKS['edit'][0]} for "
+                                f"edit, {NORM_DEFAULT_ATTACKS['patch_area'][0]} for patch_area); the modality's noise "
                                 "control runs automatically"))
     p_attack.add_argument("--eps", default=None,
                           help=("Comma-separated budget grid, ascending, each in (0, 1] (default: the norm's spec 12.3 "

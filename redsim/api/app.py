@@ -112,8 +112,8 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(datasets.router, prefix="/v1")
     app.include_router(defenses.router, prefix="/v1")
     app.include_router(models.router, prefix="/v1")
-    # Phase B wave B3 (bulk-upload-capacity-cli): POST /v1/models/bulk and GET /v1/ml/capacity.
-    # Mounted before batches.router so these real handlers win over the B0 stubs of the same paths.
+    # Phase B wave B3 (bulk-upload-capacity-cli): POST /v1/models/bulk and GET /v1/ml/capacity, the
+    # only router serving those two paths (the B0 stubs left batches.py with the B3 integration).
     app.include_router(models_bulk.router, prefix="/v1")
     app.include_router(artifacts.router, prefix="/v1")
     app.include_router(compare.router, prefix="/v1")
@@ -130,7 +130,9 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(projects.router, prefix="/v1")
     app.include_router(logs.router, prefix="/v1")
     app.include_router(org_cost.router, prefix="/v1")
-    # Phase B routes, mounted as truthful 501 stubs since wave B0 (docs/plans/12-phase-b-plan.md).
+    # Phase B routes (docs/plans/12-phase-b-plan.md): mounted as truthful 501 stubs in wave B0, real
+    # handlers since waves B2 and B3 (batch campaigns and bulk verify; ATLAS coverage, the roster and
+    # the Foundry push; the LLM probes). tests/ml/test_phase_b_stubs.py pins the surface.
     app.include_router(batches.router, prefix="/v1")
     app.include_router(integrations.router, prefix="/v1")
     app.include_router(llm.router, prefix="/v1")

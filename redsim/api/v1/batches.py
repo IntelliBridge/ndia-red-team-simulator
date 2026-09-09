@@ -24,10 +24,12 @@
   decision BULK-16: one defended run per (defense, params) over every selected finding of
   the finding's run).
 
-The bulk upload (``POST /v1/models/bulk``) and capacity (``GET /v1/ml/capacity``) routes are
-the ``bulk-upload-capacity-cli`` track's (``redsim/api/v1/models_bulk.py``); this module keeps
-their wave B0 ``501`` stubs only while that module is absent from the tree, so the surface
-stays truthful either way.
+The bulk upload (``POST /v1/models/bulk``) and capacity (``GET /v1/ml/capacity``) routes
+live in ``redsim/api/v1/models_bulk.py`` (mounted once by ``redsim.api.app``); their wave B0
+``501`` stubs were removed from this module with the B3 integration, so no path on the Phase B
+surface is served twice and nothing here answers ``501 not_implemented``
+(``tests/ml/test_phase_b_stubs.py``). ``project_field`` / ``project_required`` stay exported
+for the bulk and dataset routes that share the body-or-query project resolution.
 
 Every service import is lazy and nothing here imports an ML library
 (``tests/test_api_process_has_no_ml.py``).
@@ -35,7 +37,6 @@ Every service import is lazy and nothing here imports an ML library
 
 from __future__ import annotations
 
-import importlib.util
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -43,7 +44,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from redsim.api.auth import CurrentUser, get_current_user
 from redsim.api.errors import (
     INCOMPATIBLE_CAMPAIGNS,
-    NOT_IMPLEMENTED,
     PARAMS_OUT_OF_RANGE,
     SCORE_UNAVAILABLE,
     ApiError,
@@ -59,13 +59,6 @@ BATCH_RUN: Action = Action.BATCH_RUN
 #: Request keys that are the batch envelope rather than campaign fields (flat-body form).
 _ENVELOPE_KEYS = frozenset({"project_id", "target_ids", "campaign", "max_parallel", "kind"})
 _MAX_LIST_LIMIT = 200
-
-
-def _sibling_module_present(name: str) -> bool:
-    try:
-        return importlib.util.find_spec(name) is not None
-    except (ImportError, ValueError):
-        return False
 
 
 async def project_field(request: Request, project: str | None) -> str | None:
@@ -93,11 +86,6 @@ async def project_field(request: Request, project: str | None) -> str | None:
 def project_required() -> HTTPException:
     """``422 params_out_of_range`` for a batch or bulk body that names no project."""
     return api_error(PARAMS_OUT_OF_RANGE, "project_id is required", field="project_id")
-
-
-def _not_built(message: str, *, track: str, **fields: Any) -> HTTPException:
-    return api_error(NOT_IMPLEMENTED, message, phase="B",
-                     reason=f"built in wave B3 ({track} track) of docs/plans/12-phase-b-plan.md", **fields)
 
 
 def _actor(user: CurrentUser) -> str:
@@ -301,30 +289,6 @@ async def bulk_verify(finding_id: str, request: Request,
     except AuthorizationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
     return handle.to_response()
-
-
-# --------------------------------------------------------------------------- sibling stubs (bulk-upload-capacity-cli)
-
-if not _sibling_module_present("redsim.api.v1.models_bulk"):
-
-    @router.post("/models/bulk", status_code=status.HTTP_201_CREATED)
-    async def bulk_upload(request: Request, project: str | None = None,
-                          user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-        """Several model files in one request (BULK-13): 422, membership, ``model.register``, then 501."""
-        project_id = await project_field(request, project)
-        if project_id is None:
-            raise project_required()
-        ensure_project_access(user, project_id)
-        check(user, Action.MODEL_REGISTER, project_id)
-        raise _not_built("bulk model upload is not implemented", track="bulk-upload-capacity-cli")
-
-    @router.get("/ml/capacity")
-    def ml_capacity(project: str | None = None,
-                    user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-        """Per-project capacity view (BULK-22): membership on ``?project=`` when named, then 501."""
-        if project is not None:
-            ensure_project_access(user, project)
-        raise _not_built("the ML capacity view is not implemented", track="bulk-upload-capacity-cli")
 
 
 __all__ = ["BATCH_RUN", "project_field", "project_required", "router"]
