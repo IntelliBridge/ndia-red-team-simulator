@@ -30,6 +30,17 @@ switches that fallback off) and ``REDSIM_DISABLE_LLM=1`` (the narrative is the
 worker parent's job, spec 10.8 / 16.1). No other ``REDSIM_*`` value, proxy setting or
 API token crosses the boundary, and the ML child never gets network
 configuration regardless of ``REDSIM_PLUGIN_SANDBOX_NETWORK``.
+
+Endpoint targets (spec 9.1 rule 4, ENDPOINT-05): when a job names a remote predict
+endpoint, the parent starts a ``redsim.ml.endpoint_broker.PredictBroker`` on a unix
+socket inside the 0700 work directory before spawning the child, writes only the
+socket path and the credential-free descriptor (``target_endpoint``: host, scheme,
+auth profile *id*, batch and timeout caps, dataset binding) into the request JSON,
+and stops the broker in a ``finally`` block whether the child exited, timed out or
+was killed. The AuthProfile secret is handed to the broker object in memory and is
+never serialised; the child's environment is unchanged. The broker's counters
+(rows, requests, bytes per purpose, rate-limit waits, the response fingerprint) are
+attached to the returned record's provenance under ``model_manifest.endpoint_broker``.
 """
 
 from __future__ import annotations
@@ -50,6 +61,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from redsim.ml import errors as ml_errors
 from redsim.ml.errors import (
@@ -72,8 +84,15 @@ from redsim.scanners.sandbox import (
 
 if TYPE_CHECKING:
     from redsim.ml.campaign import ArtifactSink
+    from redsim.ml.endpoint_broker import PredictBroker
 
 logger = logging.getLogger(__name__)
+
+#: Request key the child reads to build an ``EndpointTarget`` (``redsim.ml.targets.endpoint``).
+TARGET_ENDPOINT_KEY = "target_endpoint"
+# Keys a caller might put beside the URL that must never reach the request file; the credential
+# travels only as the separate ``endpoint_auth`` argument, straight into the broker.
+_ENDPOINT_SPEC_DROP = frozenset({"url", "auth", "secret", "credential", "token", "password", "allowlist"})
 
 # Mirrors ``redsim.ml.targets.bundled.ASSETS_DIR_ENV`` / ``DEFAULT_ASSETS_DIR``.
 # Declared here rather than imported so the Celery parent never pulls numpy or
@@ -520,9 +539,78 @@ def _typed_error(envelope: dict[str, Any], *, mode: str) -> MLError:
     cls = getattr(ml_errors, name, None)
     if isinstance(cls, type) and issubclass(cls, MLError):
         return cls(message)
+    endpoint_cls = _endpoint_error_class(name)
+    if endpoint_cls is not None:
+        return endpoint_cls(message)
     if mode == "validate":
         return ModelLoadRefused(f"load_failed: {name}: {message}")
     return EnvelopeInvalid(f"ML sandbox child rejected the {mode} request: {name}: {message}")
+
+
+def _endpoint_error_class(name: str) -> type[MLError] | None:
+    """The endpoint transport failure named ``name`` (``redsim.ml.endpoint_broker``), imported lazily."""
+    from redsim.ml.endpoint_broker import endpoint_error_class
+
+    return endpoint_error_class(name)
+
+
+def _child_endpoint_spec(endpoint: dict[str, Any], socket_path: Path, limits: dict[str, Any]) -> dict[str, Any]:
+    """The credential-free ``target_endpoint`` block the child reads: host, scheme, socket, caps, binding."""
+    url = str(endpoint.get("url") or "")
+    parts = urlsplit(url)
+    host = parts.hostname or ""
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    default_port = 443 if parts.scheme == "https" else 80
+    url_host = host if port in (None, default_port) else f"{host}:{port}"
+    spec = {k: v for k, v in endpoint.items() if k not in _ENDPOINT_SPEC_DROP}
+    spec.update({"url_host": url_host, "scheme": parts.scheme or "https", "socket": str(socket_path),
+                 "limits": dict(limits)})
+    return spec
+
+
+def _endpoint_manifest(endpoint: dict[str, Any]) -> dict[str, Any]:
+    raw = endpoint.get("manifest")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _endpoint_limits(endpoint: dict[str, Any]) -> Any:
+    from redsim.ml.endpoint_broker import EndpointLimits
+
+    manifest = _endpoint_manifest(endpoint)
+    modality = str(manifest.get("modality") or endpoint.get("modality") or "image")
+    raw_limits = endpoint.get("limits")
+    overrides = dict(raw_limits) if isinstance(raw_limits, dict) else None
+    return EndpointLimits.from_env(modality).merged(overrides)
+
+
+def _start_broker(
+    endpoint: dict[str, Any],
+    auth: dict[str, Any] | None,
+    *,
+    work_dir: Path,
+    socket_path: Path,
+    allowlist: list[str] | None,
+) -> PredictBroker:
+    """Construct (egress checks run here, before any child exists) and start the predict broker."""
+    from redsim.ml.endpoint_broker import PredictBroker
+
+    manifest = _endpoint_manifest(endpoint)
+    n_classes: int | None = None
+    raw_n = manifest.get("n_classes")
+    names = manifest.get("class_names")
+    if isinstance(raw_n, int) and raw_n > 0:
+        n_classes = raw_n
+    elif isinstance(names, list) and names:
+        n_classes = len(names)
+    broker = PredictBroker(
+        str(endpoint.get("url") or ""), auth, work_dir=work_dir, limits=_endpoint_limits(endpoint),
+        n_classes=n_classes, allowlist=allowlist, socket_path=socket_path,
+    )
+    broker.start()
+    return broker
 
 
 def _exit_description(returncode: int) -> str:
@@ -544,6 +632,7 @@ class _ChildOutcome:
     error: str | None = None
     exit_status: int | None = None
     partial_artifacts: dict[str, str] = field(default_factory=dict)
+    broker_stats: dict[str, Any] | None = None   # endpoint jobs: the parent-side counters (never a credential)
 
 
 def _run_child(
@@ -554,12 +643,28 @@ def _run_child(
     is_cancelled: Callable[[], bool] | None,
     job_id: str | None = None,
     hash_seed: int = 0,
+    endpoint: dict[str, Any] | None = None,
+    endpoint_auth: dict[str, Any] | None = None,
+    endpoint_allowlist: list[str] | None = None,
 ) -> _ChildOutcome:
     cfg = MlSandboxConfig.from_env()
     assets = str(_assets_dir())
     mode = str(request.get("mode") or "")
     work_dir = job_work_dir(job_id) if job_id else _anonymous_work_dir()
+    broker: PredictBroker | None = None
+    broker_stats: dict[str, Any] | None = None
+    socket_path: Path | None = None
     try:
+        if endpoint is not None:
+            from redsim.ml.endpoint_broker import choose_socket_path
+
+            # Decided before the request is serialised so a retry sees the same request JSON; the
+            # socket itself is bound only after the work directory is cleared.
+            socket_path = choose_socket_path(work_dir)
+            request = {
+                **request,
+                TARGET_ENDPOINT_KEY: _child_endpoint_spec(endpoint, socket_path, _endpoint_limits(endpoint).as_dict()),
+            }
         request_json = json.dumps({**request, "assets_dir": assets}, sort_keys=True)
         request_path = work_dir / "request.json"
         result_path = work_dir / "result.json"
@@ -576,6 +681,12 @@ def _run_child(
         else:
             _clear_dir(work_dir)
             request_path.write_text(request_json, encoding="utf-8")
+            if endpoint is not None and socket_path is not None:
+                # Egress checks and the TLS client are built here, in the parent, before the child exists;
+                # an EgressRefused / EndpointUnreachable propagates as the job's typed failure.
+                broker = _start_broker(
+                    endpoint, endpoint_auth, work_dir=work_dir, socket_path=socket_path, allowlist=endpoint_allowlist,
+                )
             env = _ml_child_env(cfg, assets=assets, hash_seed=hash_seed, work_dir=work_dir)
             argv = [
                 sys.executable,
@@ -621,6 +732,11 @@ def _run_child(
                 time.sleep(0.2)
             _, stderr = proc.communicate()
             returncode = proc.returncode
+            if broker is not None:
+                # The child is gone (exited or killed): nothing can connect any more, so the socket
+                # closes here and the counters are final.
+                broker_stats = broker.stop().as_dict()
+                broker = None
         stages = _events(work_dir / "events.jsonl")
         for stage in stages:
             if stage not in reported and on_stage is not None:
@@ -629,7 +745,7 @@ def _run_child(
             partial = _persist_partial_files(work_dir, sink)
             return _ChildOutcome(
                 status=forced_status, stages=stages, error=forced_error,
-                exit_status=returncode, partial_artifacts=partial,
+                exit_status=returncode, partial_artifacts=partial, broker_stats=broker_stats,
             )
         if returncode == _EXIT_BAD_REQUEST:
             detail = (stderr or "").strip()[-1000:]
@@ -642,7 +758,7 @@ def _run_child(
                 error = f"{error}: {detail}"
             return _ChildOutcome(
                 status="killed", stages=stages, error=error,
-                exit_status=returncode, partial_artifacts=partial,
+                exit_status=returncode, partial_artifacts=partial, broker_stats=broker_stats,
             )
         if not result_path.is_file():
             raise EnvelopeInvalid("ML sandbox child exited 0 without writing result.json")
@@ -653,8 +769,18 @@ def _run_child(
         result["artifact_ids"] = (
             _persist_child_artifacts(work_dir, sink) if sink is not None else {}
         )
-        return _ChildOutcome(status="ok", stages=stages, result=result, exit_status=returncode)
+        return _ChildOutcome(status="ok", stages=stages, result=result, exit_status=returncode,
+                             broker_stats=broker_stats)
     finally:
+        if broker is not None:
+            # Reached only when something raised between start and the normal stop: still time-bounded.
+            try:
+                broker.stop()
+            except Exception:  # noqa: BLE001 - the primary failure is already propagating
+                logger.warning("ML sandbox could not stop the predict broker cleanly", exc_info=True)
+        elif socket_path is not None and socket_path.parent != work_dir:
+            # A fallback socket directory chosen for a reused envelope was never bound; remove it.
+            shutil.rmtree(socket_path.parent, ignore_errors=True)
         if keep_work_dir():
             logger.info("ML sandbox keeping work directory %s (%s=1)", work_dir, KEEP_WORK_DIR_ENV)
         else:
@@ -696,6 +822,9 @@ def run_campaign_sandboxed(
     on_stage: Callable[[str], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
     job_id: str | None = None,
+    target_endpoint: dict[str, Any] | None = None,
+    endpoint_auth: dict[str, Any] | None = None,
+    endpoint_allowlist: list[str] | None = None,
 ) -> CampaignRecord:
     """Execute a campaign in a bounded, credential-free process group.
 
@@ -703,22 +832,43 @@ def run_campaign_sandboxed(
     :class:`SandboxTimeout` / :class:`SandboxKilled` after persisting what the
     child had written under ``ml/partial/`` plus a partial campaign record, and
     :class:`EnvelopeInvalid` when the child's output cannot be trusted.
+
+    ``target_endpoint`` (spec 9.1 rule 4) names a remote predict endpoint: ``url``
+    (parent-side only), ``auth_profile_id``, optional ``batch_rows`` / ``timeout_s`` /
+    ``limits`` and ``manifest`` (``modality``, ``dataset_id``, ``dataset_split``,
+    ``n_classes`` or ``class_names``, ``input_shape``, ``features``, ``name``). The
+    parent brokers every query; ``endpoint_auth`` is the ``resolve_auth_for_scan``
+    shape and reaches only the broker. An egress or transport refusal raised before
+    or by the broker is re-raised after a partial record is persisted.
     """
-    outcome = _run_child(
-        {
-            "mode": "campaign",
-            "config": config.model_dump(mode="json"),
-            "target_file": str(target_file) if target_file is not None else None,
-            "target_detail": target_detail,
-            "baseline_run_id": baseline_run_id,
-            "parent_run_id": parent_run_id,
-        },
-        sink=sink,
-        on_stage=on_stage,
-        is_cancelled=is_cancelled,
-        job_id=job_id,
-        hash_seed=config.seed,
-    )
+    try:
+        outcome = _run_child(
+            {
+                "mode": "campaign",
+                "config": config.model_dump(mode="json"),
+                "target_file": str(target_file) if target_file is not None else None,
+                "target_detail": target_detail,
+                "baseline_run_id": baseline_run_id,
+                "parent_run_id": parent_run_id,
+            },
+            sink=sink,
+            on_stage=on_stage,
+            is_cancelled=is_cancelled,
+            job_id=job_id,
+            hash_seed=config.seed,
+            endpoint=target_endpoint,
+            endpoint_auth=endpoint_auth,
+            endpoint_allowlist=endpoint_allowlist,
+        )
+    except MLError as exc:
+        if target_endpoint is not None and _endpoint_error_class(type(exc).__name__) is not None:
+            # Egress refused / unreachable / auth failed before the child ran: a job failure with the
+            # evidence that exists (the config and target snapshot), never a model outcome.
+            _persist_partial_record(
+                sink, config, _ChildOutcome(status="failed", stages=[]), error=f"{type(exc).__name__}: {exc}",
+                baseline_run_id=baseline_run_id, parent_run_id=parent_run_id,
+            )
+        raise
     if outcome.status == "cancelled":
         return partial_campaign_record(
             config,
@@ -733,6 +883,9 @@ def run_campaign_sandboxed(
         message = str(outcome.error or "ML sandbox failed")
         if outcome.partial_artifacts:
             message = f"{message}; {len(outcome.partial_artifacts)} partial file(s) kept under {PARTIAL_PREFIX}"
+        if outcome.broker_stats:
+            message = (f"{message}; endpoint broker served {outcome.broker_stats.get('rows', 0)} rows in "
+                       f"{outcome.broker_stats.get('requests', 0)} requests")
         _persist_partial_record(
             sink, config, outcome, error=f"{failure.__name__}: {message}",
             baseline_run_id=baseline_run_id, parent_run_id=parent_run_id,
@@ -757,12 +910,67 @@ def run_campaign_sandboxed(
                 )
             artifacts[name] = artifact_id
         observations.append(observation.model_copy(update={"artifacts": artifacts}))
-    return CampaignRecord.model_validate({
+    payload = {
         **record.model_dump(mode="json"),
         "observations": [
             item.model_dump(mode="json") for item in observations
         ],
-    })
+    }
+    if outcome.broker_stats is not None and isinstance(payload.get("provenance"), dict):
+        # The parent's counters are authoritative for what left the worker (ENDPOINT-05, -08); the child's
+        # own client-side counts stay under ``endpoint_queries``.
+        manifest = dict(payload["provenance"].get("model_manifest") or {})
+        manifest["endpoint_broker"] = outcome.broker_stats
+        payload["provenance"] = {**payload["provenance"], "model_manifest": manifest}
+    return CampaignRecord.model_validate(payload)
+
+
+def probe_endpoint_sandboxed(
+    target_id: str,
+    target_endpoint: dict[str, Any],
+    endpoint_auth: dict[str, Any] | None,
+    *,
+    endpoint_allowlist: list[str] | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
+    job_id: str | None = None,
+) -> dict[str, Any]:
+    """The endpoint variant of ``validate`` (ENDPOINT-09): probe the endpoint through the broker.
+
+    The child binds the bundled slice, sends a seeded 8-row probe, checks the response against the
+    contract and returns the manifest (``endpoint`` block, probe latency and status, fingerprint,
+    counters); the parent adds its broker counters under ``endpoint_broker``. Refusals come back as
+    the typed classes the child named (``EndpointSchemaMismatch``, ``EndpointAuthFailed``,
+    ``EndpointUnreachable``, ``EgressRefused``, ``UnsupportedArtifact`` for a binding problem);
+    the wall clock raises :class:`SandboxTimeout`, a dead child :class:`SandboxKilled`.
+    """
+    outcome = _run_child(
+        {
+            "mode": "validate",
+            "target_id": target_id,
+            "target_file": None,
+            "target_detail": dict(target_endpoint.get("manifest") or {}),
+        },
+        sink=None,
+        on_stage=None,
+        is_cancelled=is_cancelled,
+        job_id=job_id,
+        endpoint=target_endpoint,
+        endpoint_auth=endpoint_auth,
+        endpoint_allowlist=endpoint_allowlist,
+    )
+    if outcome.status == "cancelled":
+        raise RuntimeError(str(outcome.error or "campaign cancelled while sandbox child was running"))
+    if outcome.status == "timed_out":
+        raise SandboxTimeout(str(outcome.error or "ML sandbox timed out"))
+    if outcome.status == "killed":
+        raise SandboxKilled(str(outcome.error or "ML sandbox child died"))
+    assert outcome.result is not None
+    manifest = outcome.result.get("manifest")
+    if not isinstance(manifest, dict):
+        raise EnvelopeInvalid("ML sandbox endpoint probe did not return a manifest")
+    if outcome.broker_stats is not None:
+        manifest = {**manifest, "endpoint_broker": outcome.broker_stats}
+    return manifest
 
 
 def validate_model_sandboxed(
@@ -822,12 +1030,14 @@ __all__ = [
     "KEEP_WORK_DIR_ENV",
     "NO_ENV_FILE_NAME",
     "PARTIAL_PREFIX",
+    "TARGET_ENDPOINT_KEY",
     "WORK_DIR_ENV",
     "MlSandboxConfig",
     "job_work_dir",
     "keep_work_dir",
     "no_env_file",
     "partial_campaign_record",
+    "probe_endpoint_sandboxed",
     "run_campaign_sandboxed",
     "validate_model_sandboxed",
     "work_dir_root",
