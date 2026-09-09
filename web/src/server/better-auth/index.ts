@@ -3,4 +3,4 @@
 // check.
 
 export { createAuth } from "./config";
-export { auth, getSession } from "./server";
+export { getAuth, getSession, IdentityUnavailableError } from "./server";
