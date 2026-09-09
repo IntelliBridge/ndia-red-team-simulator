@@ -30,7 +30,6 @@ describe("RootLayout", () => {
     const expected: Record<string, string> = {
       Dashboard: "/dashboard",
       Findings: "/findings",
-      Logs: "/logs",
       Audit: "/audit",
     };
     for (const [label, href] of Object.entries(expected)) {
@@ -56,14 +55,16 @@ describe("RootLayout", () => {
       ["Models", "/models"],
       ["Runs", "/runs"],
       ["Tests", "/tests"],
-      ["Auth Profiles", "/auth-profiles"],
       ["Findings", "/findings"],
-      ["Logs", "/logs"],
       ["Audit", "/audit"],
       ["Cost", "/cost"],
     ]);
 
-    // Projects is reachable at /projects but hidden from the nav (owner request, 2026-09-09).
+    // Projects, Auth Profiles and Logs stay reachable at their paths but are
+    // hidden from the nav (owner requests, 2026-09-09).
+    for (const hidden of ["Projects", "Auth Profiles", "Logs"]) {
+      expect(screen.queryByText(hidden, { selector: "a" })).toBeNull();
+    }
     expect(screen.queryByText("Projects", { selector: "a" })).toBeNull();
     expect(screen.queryByText("Agents", { selector: "a" })).toBeNull();
     expect(screen.queryByText("Kali tools", { selector: "a" })).toBeNull();
@@ -125,7 +126,7 @@ describe("RootLayout", () => {
     expect(header?.className).toContain("border-border");
   });
 
-  it("renders the Cost and Auth Profiles nav links with the correct hrefs", () => {
+  it("renders the Cost and Audit nav links with the correct hrefs", () => {
     renderLayout();
 
     const dashboardLink = screen.getByText("Dashboard", { selector: "a" });
@@ -133,12 +134,6 @@ describe("RootLayout", () => {
 
     const costLink = screen.getByText("Cost", { selector: "a" });
     expect(costLink.getAttribute("href")).toBe("/cost");
-
-    const authProfilesLink = screen.getByText("Auth Profiles", { selector: "a" });
-    expect(authProfilesLink.getAttribute("href")).toBe("/auth-profiles");
-
-    const logsLink = screen.getByText("Logs", { selector: "a" });
-    expect(logsLink.getAttribute("href")).toBe("/logs");
 
     const auditLink = screen.getByText("Audit", { selector: "a" });
     expect(auditLink.getAttribute("href")).toBe("/audit");
