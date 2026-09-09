@@ -4,12 +4,14 @@ import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { env } from "@/env";
+
 // In prod the dev-token path is disabled server-side (the API rejects
 // `dev:*` bearers when REDSIM_ENV=prod), so we also hide it in the UI and
 // route everyone through Keycloak/OIDC. REDSIM_ENV is server-only; the
 // client reads the NEXT_PUBLIC_ mirror (see lib/api.ts for the same
 // convention). Anything other than "prod" keeps the dev path visible.
-const isProd = (process.env.NEXT_PUBLIC_REDSIM_ENV ?? "dev") === "prod";
+const isProd = env.NEXT_PUBLIC_REDSIM_ENV === "prod";
 
 export default function LoginPage() {
   const router = useRouter();

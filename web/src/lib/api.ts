@@ -11,16 +11,16 @@
 // X-Redsim-Request-ID is auto-generated per call so the API +
 // worker + scanner logs correlate.
 
-const BASE = process.env.NEXT_PUBLIC_REDSIM_API_URL ?? "http://localhost:8000";
+import { env } from "@/env";
+
+const BASE = env.NEXT_PUBLIC_REDSIM_API_URL;
 
 export const apiBase = BASE;
 export const apiWsBase = BASE.replace(/^http/, "ws");
 
-const SESSION_COOKIE =
-  process.env.NEXT_PUBLIC_REDSIM_API_SESSION_COOKIE ?? "redsim_api_session";
-const CSRF_COOKIE = process.env.NEXT_PUBLIC_REDSIM_CSRF_COOKIE ?? "redsim_csrf";
-const CSRF_HEADER =
-  process.env.NEXT_PUBLIC_REDSIM_CSRF_HEADER ?? "X-Redsim-CSRF";
+const SESSION_COOKIE = env.NEXT_PUBLIC_REDSIM_API_SESSION_COOKIE;
+const CSRF_COOKIE = env.NEXT_PUBLIC_REDSIM_CSRF_COOKIE;
+const CSRF_HEADER = env.NEXT_PUBLIC_REDSIM_CSRF_HEADER;
 
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 

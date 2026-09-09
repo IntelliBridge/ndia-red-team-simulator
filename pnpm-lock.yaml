@@ -63,6 +63,9 @@ importers:
       '@redsim/design-system':
         specifier: workspace:*
         version: link:../packages/design-system
+      '@t3-oss/env-nextjs':
+        specifier: ^0.13.11
+        version: 0.13.11(typescript@5.9.3)(zod@4.5.4)
       cmdk:
         specifier: ^1.1.1
         version: 1.1.1(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -84,6 +87,9 @@ importers:
       swr:
         specifier: ^2.2.5
         version: 2.5.1(react@18.3.1)
+      zod:
+        specifier: ^4.5.4
+        version: 4.5.4
     devDependencies:
       '@storybook/addon-a11y':
         specifier: ^8.0.0
@@ -138,10 +144,10 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.8
-        version: 4.1.11(@types/node@20.19.43)(jsdom@29.1.1)(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2))
+        version: 4.1.11(@types/node@20.19.43)(jsdom@29.1.1)(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@1.21.7)(terser@5.51.2))
       vitest-axe:
         specifier: ^0.1.0
-        version: 0.1.0(vitest@4.1.11(@types/node@20.19.43)(jsdom@29.1.1)(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2)))
+        version: 0.1.0(vitest@4.1.11(@types/node@20.19.43)(jsdom@29.1.1)(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@1.21.7)(terser@5.51.2)))
 
 packages:
 
@@ -2075,6 +2081,40 @@ packages:
 
   '@swc/types@0.1.28':
     resolution: {integrity: sha512-V6Mnml8v09QALx6K0elJ7o9K/MkVDtW3t6L+7Ou/JcWtb3xwId2AH4FeOceySd2JaO87IMw4+6vSZxLm34LPbw==}
+
+  '@t3-oss/env-core@0.13.11':
+    resolution: {integrity: sha512-sM7GYY+KL7H/Hl0BE0inWfk3nRHZOLhmVn7sHGxaZt9FAR6KqREXAE+6TqKfiavfXmpRxO/OZ2QgKRd+oiBYRQ==}
+    peerDependencies:
+      arktype: ^2.1.0
+      typescript: '>=5.0.0'
+      valibot: ^1.0.0-beta.7 || ^1.0.0
+      zod: ^3.24.0 || ^4.0.0
+    peerDependenciesMeta:
+      arktype:
+        optional: true
+      typescript:
+        optional: true
+      valibot:
+        optional: true
+      zod:
+        optional: true
+
+  '@t3-oss/env-nextjs@0.13.11':
+    resolution: {integrity: sha512-NC+3j7YWgpzdFu1t5y/8wqibTK0lm5RS4bjXA1n8uwik3wIR4iZM4Fa+U2BaMa5k3Qk8RZiYhoAIX0WogmGkzg==}
+    peerDependencies:
+      arktype: ^2.1.0
+      typescript: '>=5.0.0'
+      valibot: ^1.0.0-beta.7 || ^1.0.0
+      zod: ^3.24.0 || ^4.0.0
+    peerDependenciesMeta:
+      arktype:
+        optional: true
+      typescript:
+        optional: true
+      valibot:
+        optional: true
+      zod:
+        optional: true
 
   '@testing-library/dom@10.4.0':
     resolution: {integrity: sha512-pemlzrSESWbdAloYml3bAJMEfNh1Z7EduzqPKprCH5S341frlpYnUEW0H72dLxa6IsYr+mPno20GiSm+h9dEdQ==}
@@ -5625,6 +5665,9 @@ packages:
     resolution: {integrity: sha512-4LCcse/U2MHZ63HAJVE+v71o7yOdIe4cZ70Wpf8D/IyjDKYQLV5GD46B+hSTjJsvV5PztjvHoU580EftxjDZFQ==}
     engines: {node: '>=12.20'}
 
+  zod@4.5.4:
+    resolution: {integrity: sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA==}
+
 snapshots:
 
   '@adobe/css-tools@4.5.0': {}
@@ -7765,6 +7808,18 @@ snapshots:
     dependencies:
       '@swc/counter': 0.1.3
 
+  '@t3-oss/env-core@0.13.11(typescript@5.9.3)(zod@4.5.4)':
+    optionalDependencies:
+      typescript: 5.9.3
+      zod: 4.5.4
+
+  '@t3-oss/env-nextjs@0.13.11(typescript@5.9.3)(zod@4.5.4)':
+    dependencies:
+      '@t3-oss/env-core': 0.13.11(typescript@5.9.3)(zod@4.5.4)
+    optionalDependencies:
+      typescript: 5.9.3
+      zod: 4.5.4
+
   '@testing-library/dom@10.4.0':
     dependencies:
       '@babel/code-frame': 7.29.7
@@ -7916,13 +7971,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.1
 
-  '@vitest/mocker@4.1.11(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2))':
+  '@vitest/mocker@4.1.11(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@1.21.7)(terser@5.51.2))':
     dependencies:
       '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2)
+      vite: 8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@1.21.7)(terser@5.51.2)
 
   '@vitest/pretty-format@2.0.5':
     dependencies:
@@ -11393,7 +11448,7 @@ snapshots:
       '@types/istanbul-lib-coverage': 2.0.6
       convert-source-map: 2.0.0
 
-  vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2):
+  vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@1.21.7)(terser@5.51.2):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
@@ -11404,10 +11459,10 @@ snapshots:
       '@types/node': 20.19.43
       esbuild: 0.25.12
       fsevents: 2.3.3
-      jiti: 2.7.0
+      jiti: 1.21.7
       terser: 5.51.2
 
-  vitest-axe@0.1.0(vitest@4.1.11(@types/node@20.19.43)(jsdom@29.1.1)(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2))):
+  vitest-axe@0.1.0(vitest@4.1.11(@types/node@20.19.43)(jsdom@29.1.1)(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@1.21.7)(terser@5.51.2))):
     dependencies:
       aria-query: 5.3.2
       axe-core: 4.13.0
@@ -11415,12 +11470,12 @@ snapshots:
       dom-accessibility-api: 0.5.16
       lodash-es: 4.18.1
       redent: 3.0.0
-      vitest: 4.1.11(@types/node@20.19.43)(jsdom@29.1.1)(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2))
+      vitest: 4.1.11(@types/node@20.19.43)(jsdom@29.1.1)(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@1.21.7)(terser@5.51.2))
 
-  vitest@4.1.11(@types/node@20.19.43)(jsdom@29.1.1)(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2)):
+  vitest@4.1.11(@types/node@20.19.43)(jsdom@29.1.1)(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@1.21.7)(terser@5.51.2)):
     dependencies:
       '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2))
+      '@vitest/mocker': 4.1.11(vite@8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@1.21.7)(terser@5.51.2))
       '@vitest/pretty-format': 4.1.11
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
@@ -11437,7 +11492,7 @@ snapshots:
       tinyexec: 1.3.0
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@2.7.0)(terser@5.51.2)
+      vite: 8.2.2(@types/node@20.19.43)(esbuild@0.25.12)(jiti@1.21.7)(terser@5.51.2)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 20.19.43
@@ -11654,3 +11709,5 @@ snapshots:
   yocto-queue@0.1.0: {}
 
   yocto-queue@1.2.2: {}
+
+  zod@4.5.4: {}

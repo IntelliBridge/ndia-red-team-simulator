@@ -438,6 +438,10 @@ jobs:
       - name: Test web (vitest)
         run: pnpm --filter @redsim/web test
       - name: Build
+        # No runtime environment exists in CI, and web/src/env.js validates at
+        # config load. Same hatch the Docker builder stage takes.
+        env:
+          SKIP_ENV_VALIDATION: "1"
         run: pnpm --filter @redsim/web build
 
   docker-images:

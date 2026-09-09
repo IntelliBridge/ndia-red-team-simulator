@@ -40,9 +40,13 @@ RUN pnpm install --frozen-lockfile --filter @redsim/web...
 COPY web/ ./web/
 COPY packages/design-system/ ./packages/design-system/
 
-# NEXT_PUBLIC env values come from the runtime env; tolerate their
-# absence at build time.
-RUN pnpm --filter @redsim/web build || true
+# web/src/env.js validates at config load, and no runtime value exists yet at
+# image-build time, so the builder stage takes the documented escape hatch. The
+# runtime stage is a fresh FROM and does not inherit it, so the schema is live
+# when next start boots. The build itself must succeed: `|| true` used to hide
+# a failure as an image with no .next in it.
+ENV SKIP_ENV_VALIDATION=1
+RUN pnpm --filter @redsim/web build
 
 # --------------------------------------------------------------------
 # Runtime

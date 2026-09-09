@@ -83,6 +83,12 @@ require-install:
 # redis from it) and the variables above exported in the shell. Copy
 # .env.example to .env and `set -a; source .env; set +a` for a quick start.
 #
+# dev-web reads its own file: web/src/env.js validates at config load and
+# BETTER_AUTH_SECRET (32 characters or more) and BETTER_AUTH_URL are required,
+# so copy web/.env.example to web/.env before the first `make dev-web`. Without
+# it Next exits at startup naming the missing variable, which reads like a
+# broken machine and is not one.
+#
 # dev-worker is deliberately NOT on the default `dev` line: it needs Redis
 # (REDSIM_BROKER_URL, REDSIM_RESULT_BACKEND) and Postgres (REDSIM_DB_URL) up
 # front and the ml extra installed. Run it in a second terminal, or use

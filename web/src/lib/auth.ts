@@ -2,6 +2,8 @@
 
 "use client";
 
+import { env } from "@/env";
+
 import { hasCookie } from "./api";
 
 export function getToken(): string | undefined {
@@ -35,7 +37,7 @@ export function logout(): void {
 export function requireAuth(router: { push: (path: string) => void }): string | undefined {
   const token = getToken();
   if (token) return token;
-  if (hasCookie(process.env.NEXT_PUBLIC_REDSIM_CSRF_COOKIE ?? "redsim_csrf")) return "(cookie)";
+  if (hasCookie(env.NEXT_PUBLIC_REDSIM_CSRF_COOKIE)) return "(cookie)";
   if (typeof window !== "undefined") {
     router.push("/login");
   }

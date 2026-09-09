@@ -9,6 +9,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 
+import { env } from "@/env";
 import { authOptions } from "@/server/auth-options";
 import {
   csrfCookieName,
@@ -18,7 +19,7 @@ import {
   sessionTtlSeconds,
 } from "@/server/redsim-session";
 
-const isProd = (process.env.REDSIM_ENV ?? "dev") === "prod";
+const isProd = env.REDSIM_ENV === "prod";
 
 export async function POST() {
   const session = await getServerSession(authOptions);
