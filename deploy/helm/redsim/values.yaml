@@ -173,6 +173,24 @@ web:
   image:
     repository: redsim-web
     tag: dev
+  # Keycloak readiness gate. OIDC discovery runs once, in the generic-oauth
+  # plugin's init at module import, and a failed fetch is logged and the
+  # provider dropped rather than retried. A pod that starts before Keycloak
+  # answers therefore serves a login page with no working provider until
+  # something restarts it, while its own probes stay green. This init container
+  # is the chart's counterpart to the compose healthcheck and depends_on
+  # ordering. It polls the exact URL discovery will fetch and is skipped when
+  # config.oidcIssuer is empty, which is the supported no-realm dev mode.
+  keycloakGate:
+    enabled: true
+    # Any image carrying a POSIX shell and wget. busybox is the smallest.
+    image: busybox:1.37
+    # retries times intervalSeconds is the bound, 5 minutes by default.
+    retries: 60
+    intervalSeconds: 5
+    resources:
+      requests: { cpu: 10m, memory: 16Mi }
+      limits: { cpu: 100m, memory: 64Mi }
   service:
     type: ClusterIP
     port: 3000

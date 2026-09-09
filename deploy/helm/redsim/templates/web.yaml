@@ -32,6 +32,44 @@ spec:
       {{- end }}
       securityContext:
         {{- include "redsim.podSecurityContext" . | nindent 8 }}
+      {{- if and .Values.web.keycloakGate.enabled .Values.config.oidcIssuer }}
+      # Hold the pod until Keycloak serves discovery. The provider is resolved
+      # once at module import and never retried, so starting early is a
+      # permanent failure that no probe here would catch (see values.yaml
+      # web.keycloakGate). Polls the same URL the provider will fetch, read
+      # from the same ConfigMap key, so the two cannot drift.
+      initContainers:
+        - name: wait-for-keycloak
+          image: {{ .Values.web.keycloakGate.image }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          securityContext:
+            {{- include "redsim.containerSecurityContext" (dict "readOnlyRootFilesystem" true) | nindent 12 }}
+          env:
+            - name: KEYCLOAK_ISSUER
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "redsim.configMapName" . }}
+                  key: REDSIM_OIDC_ISSUER
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              url="$KEYCLOAK_ISSUER/.well-known/openid-configuration"
+              attempts={{ .Values.web.keycloakGate.retries }}
+              i=0
+              while [ "$i" -lt "$attempts" ]; do
+                if wget -q -T 5 -O /dev/null "$url"; then
+                  echo "keycloak discovery ready at $url"
+                  exit 0
+                fi
+                i=$((i + 1))
+                echo "waiting for keycloak discovery at $url ($i/$attempts)"
+                sleep {{ .Values.web.keycloakGate.intervalSeconds }}
+              done
+              echo "keycloak discovery unavailable at $url after $attempts attempts"
+              exit 1
+          resources:
+            {{- toYaml .Values.web.keycloakGate.resources | nindent 12 }}
+      {{- end }}
       containers:
         - name: web
           image: {{ include "redsim.image" (dict "ctx" . "image" .Values.web.image) }}
