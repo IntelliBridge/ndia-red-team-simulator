@@ -1006,8 +1006,8 @@ loader's pin.
   `/health`, `/docs` and `/metrics` work until they are up), `dev-web`,
   `dev-worker` (`celery -A redsim.workers.celery_app worker -Q scans,default`,
   needs Redis, Postgres and the `ml` extra, deliberately not on the `dev`
-  line), `test`, `test-cov`, `lint`, `lint-py` (bare `ruff check`, wider than
-  CI), `lint-web` (prints a skip line while `web/` has no ESLint config),
+  line), `test`, `test-cov`, `lint`, `lint-py` (`ruff check` with the CI
+  selection), `lint-web` (prints a skip line while `web/` has no ESLint config),
   `typecheck`, `typecheck-py`, `typecheck-web`, `check`, `up`, `down`,
   `docs-serve`, `docs-build`, `docs-build-strict`, `docs-clean` (call
   `mkdocs` from `PATH`, so activate the venv or pass

@@ -236,22 +236,29 @@ Account `140381642432`, region `us-east-1`:
   `ndia-red-team/{api,web,worker}`; repo variables `AWS_ACCOUNT_ID`,
   `AWS_REGION`, `AWS_DEPLOY_ROLE_ARN`, `ECR_REGISTRY`.
 - `.github/workflows/deploy-aws.yml` builds the api, worker and web images on
-  push to `main` via OIDC (the `58461cc` push built and pushed all three); its
-  deploy job is skipped until `ECS_CLUSTER` is set and fails loudly rather
-  than reporting a false green.
-- `deploy/terraform/` (#19, `b40f7e1`) is the code-only Fargate foundation.
-  PR #23 (`feat/p7-fargate-runtime`, merged as `10650da`) added
-  `deploy/bootstrap/` and `deploy/runtime/`, a public HTTPS demo runtime at
-  https://redsim.ndia.agiledefense.xyz that its author reports applied to this
-  account (migrations through `0010`, health, login and OIDC discovery 200,
-  unauthenticated API 401, workers at zero until a pinned asset bundle exists,
-  demo users and memberships and real assets outstanding, automatic rollout
-  disabled). Its completion is package E of the remaining-work brief; no
-  campaign has been run on it.
-- Redsim CI: the last run read is `58461cc` (red on three jobs whose causes
-  wave 4 fixed). The runs for `e73dea0`, `29db42c`, `1439f92`, `57da31f`,
-  `703f8f6` and the wave B4 push had not been read when this file was
-  refreshed. Nothing is claimed green.
+  push to `main` via OIDC. The `58461cc` push built and pushed all three (the
+  AssumeRole step had failed on the `bb43bd7` push). Its deploy job is
+  skipped until `ECS_CLUSTER` is set, and it fails loudly rather than
+  reporting a false green.
+- `deploy/terraform/` (#19, `b40f7e1`) is the code-only Fargate foundation: no
+  listeners, task definitions or services, nothing applied from this tree.
+  PR #23 (`feat/p7-fargate-runtime`, William, merged as `10650da` with two
+  review fixes) added `deploy/bootstrap/` and `deploy/runtime/`, a public HTTPS
+  demo runtime at https://redsim.ndia.agiledefense.xyz that its author reports
+  applied to this account (migrations through `0010`, health, login and OIDC
+  discovery 200, unauthenticated API 401, workers at zero until a pinned asset
+  bundle exists, demo users and memberships and real assets outstanding,
+  automatic rollout disabled). Its completion is package E of the remaining-work
+  brief (PR #29 reports the bundle, workers and demo users supplied);
+  `deploy/runtime/README.md` on `main` is the sequence. Fargate, Terraform and
+  Helm apply and compose operations stay outside the completion pass (master
+  plan section 8). No campaign has been run on the runtime from this tree.
+- Redsim CI: every run from the wave B0 push (`934838e`) to the B3 push
+  (`703f8f6`) failed at workflow parse (`runner.temp` in a job-level `env`,
+  fixed by #27). The first run that executed, #27's, is red on the Postgres
+  migration test, the SAST `use-defused-xml` finding in `redsim/ml/pdf.py`
+  and the coverage gate (which fails only on that migration test); every
+  other lane passed. The fixes are queued. Nothing is claimed green.
 - **Action: rotate the bootstrap AWS access keys.** Keys were pasted in
   plaintext during setup and must be treated as compromised. The pipeline uses
   OIDC, not static keys.
