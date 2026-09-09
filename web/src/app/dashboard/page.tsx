@@ -7,6 +7,7 @@ import { api, type Finding, type ModelTarget, type Run } from "@/lib/api";
 import { getEmail, logout } from "@/lib/auth";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { FindingSummaryCard } from "@/components/finding-summary-card";
+import { rowLink } from "@/lib/row-link";
 
 // One fetcher per list. Each is optional on the page: a list that fails or is
 // still loading leaves its tiles at "—" and never blocks the others.
@@ -257,7 +258,7 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {recent.map((r) => (
-                  <tr key={r.id} className="border-t border-border">
+                  <tr key={r.id} {...rowLink(`/runs/${r.id}`)} className={`border-t border-border ${rowLink("").className}`}>
                     <td className="px-3 py-2 font-mono text-xs">
                       <a className="text-primary underline" href={`/runs/${r.id}`}>
                         {r.id}
