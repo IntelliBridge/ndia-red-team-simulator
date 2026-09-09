@@ -57,12 +57,11 @@ describe("RootLayout", () => {
       ["Tests", "/tests"],
       ["Findings", "/findings"],
       ["Audit", "/audit"],
-      ["Cost", "/cost"],
     ]);
 
     // Projects, Auth Profiles and Logs stay reachable at their paths but are
     // hidden from the nav (owner requests, 2026-09-09).
-    for (const hidden of ["Projects", "Auth Profiles", "Logs"]) {
+    for (const hidden of ["Projects", "Auth Profiles", "Logs", "Cost"]) {
       expect(screen.queryByText(hidden, { selector: "a" })).toBeNull();
     }
     expect(screen.queryByText("Projects", { selector: "a" })).toBeNull();
@@ -126,14 +125,11 @@ describe("RootLayout", () => {
     expect(header?.className).toContain("border-border");
   });
 
-  it("renders the Cost and Audit nav links with the correct hrefs", () => {
+  it("renders the Dashboard and Audit nav links with the correct hrefs", () => {
     renderLayout();
 
     const dashboardLink = screen.getByText("Dashboard", { selector: "a" });
     expect(dashboardLink.getAttribute("href")).toBe("/dashboard");
-
-    const costLink = screen.getByText("Cost", { selector: "a" });
-    expect(costLink.getAttribute("href")).toBe("/cost");
 
     const auditLink = screen.getByText("Audit", { selector: "a" });
     expect(auditLink.getAttribute("href")).toBe("/audit");

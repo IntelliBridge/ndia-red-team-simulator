@@ -30,7 +30,6 @@ const NAV_LINKS: { href: string; label: string }[] = [
   { href: "/tests", label: "Tests" },
   { href: "/findings", label: "Findings" },
   { href: "/audit", label: "Audit" },
-  { href: "/cost", label: "Cost" },
 ];
 
 export default function RootLayout({

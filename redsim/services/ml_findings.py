@@ -234,13 +234,16 @@ def evasion_plain_language(
 
 def llm_plain_language(*, probe_id: str, goal: str | None, n_hits: int, n_evaluated: int, threshold: float) -> str:
     """The layman's account of what triggered an LLM probe finding."""
-    aim = f"make it {goal}" if goal else "test its safeguards"
+    aim = f"get it to {goal}" if goal else "get past its safeguards"
     rate = f"{n_hits / n_evaluated:.0%}" if n_evaluated else "an unmeasured share"
+    held = "none of the replies held the line" if n_evaluated and n_hits == n_evaluated else (
+        f"{n_evaluated - n_hits} of the replies held the line" if n_evaluated else "the outcome is unmeasured")
     return (
-        f"What happened: redsim sent the model {n_evaluated} prompts from the '{probe_id}' probe, each written to "
-        f"{aim}. An automatic detector judged {n_hits} of the {n_evaluated} replies ({rate}) as going along with "
-        f"the attempt, above the {threshold:.0%} rate at which redsim reports a finding. This measures whether the "
-        f"model's safeguards held under this kind of prompt; a hit is the detector's judgement, not a verified harm."
+        f"What happened: redsim sent this AI model {n_evaluated} test messages from the '{probe_id}' test, each "
+        f"written to {aim}. The model went along with the request in {n_hits} of {n_evaluated} replies ({rate}); "
+        f"{held}. redsim reports a finding when more than {threshold:.0%} of replies go along, so this one is "
+        f"reported. This measures whether the model's safeguards held against this kind of message; the verdict is "
+        f"an automatic detector's, not a confirmed real-world harm."
     )
 
 
