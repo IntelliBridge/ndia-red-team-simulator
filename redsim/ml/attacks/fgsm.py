@@ -1,7 +1,9 @@
 """FGSM adapter over ``art.attacks.evasion.FastGradientMethod`` (spec 12.2).
 
 One L-inf gradient step, untargeted, at the eps supplied from the campaign grid.
-White-box: needs ``Target.art_classifier()`` to expose loss gradients.
+White-box: needs ``Target.art_classifier()`` to expose loss gradients. Image domain
+only (spec 12.2 catalog). A manifest-declared frozen-feature mask, when a target has
+one, is passed to ART's ``generate`` so the step never touches those dimensions.
 """
 
 from __future__ import annotations
@@ -31,6 +33,8 @@ class FGSMAdapter:
     id = "fgsm"
     domains = frozenset({"image"})
     takes_eps = True
+    capabilities: ClassVar[frozenset[str]] = frozenset({"adversarial_ml", "white_box", "takes_eps",
+                                                        "family:evasion", "modality:image"})
 
     _schema: ClassVar[list[ParamSpec]] = [
         ParamSpec(name="eps", type="float", default=0.03, min=1e-6, max=1.0,
@@ -63,18 +67,23 @@ class FGSMAdapter:
         clf = target.art_classifier()
         if not hasattr(clf, "loss_gradient"):
             raise AttackNotApplicable("fgsm needs a differentiable estimator (no loss_gradient)")
+        mask = perturbable_mask(target, x)
+        kwargs: dict[str, Any] = {} if mask is None else {"mask": mask}
         seed_all(seed)
         t0 = time.perf_counter()
         attack = FastGradientMethod(estimator=clf, norm=np.inf, eps=eps, eps_step=eps, targeted=False,
                                     num_random_init=0, batch_size=int(p["batch_size"]), minimal=False)
-        x_adv = np.asarray(attack.generate(x=x, y=y), dtype=np.float32)
-        x_adv = apply_mask(x, x_adv, perturbable_mask(target, x))
+        x_adv = np.asarray(attack.generate(x=x, y=y, **kwargs), dtype=np.float32)
+        x_adv = apply_mask(x, x_adv, mask)
         wall = time.perf_counter() - t0
         linf, l2 = perturbation_norms(x, x_adv)
+        notes = ["norm=Linf; untargeted; single step"]
+        if mask is not None:
+            notes.append("frozen features held at their clean values via ART mask (mask= passed to generate)")
+        notes.append(f"{NONDETERMINISM_PREFIX}{CPU_FLOAT32_NOTE}")
         return AttackOutput(
             x_adv=x_adv, linf_norm_mean=linf, l2_norm_mean=l2, wall_time_s=wall, params=dict(p),
-            library_versions=library_versions(),
-            notes=["norm=Linf; untargeted; single step", f"{NONDETERMINISM_PREFIX}{CPU_FLOAT32_NOTE}"],
+            library_versions=library_versions(), notes=notes,
         )
 
 
