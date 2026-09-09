@@ -48,7 +48,7 @@ fi
 restart_web=0
 if grep -qE '^(pnpm-lock.yaml|web/package.json|packages/design-system/package.json)$' <<<"$changed"; then
   echo "web dependencies changed: pnpm install"
-  sudo -u redsim -H env CI=true pnpm install --frozen-lockfile
+  sudo -u redsim env HOME=/var/lib/redsim COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true pnpm install --frozen-lockfile
   restart_web=1
 fi
 # The web app runs as a production build (`next start`), not the dev server: the
@@ -60,7 +60,7 @@ fi
 # Auth values env.js validates) exactly as the running server sees it.
 if grep -qE '^(web/|packages/design-system/|pnpm-lock.yaml)' <<<"$changed" || [ ! -f "$SRC/web/.next/BUILD_ID" ]; then
   echo "web changed or no build present: next build"
-  sudo -u redsim -H env CI=true /usr/local/bin/redsim-run web pnpm --filter @redsim/web build
+  sudo -u redsim env HOME=/var/lib/redsim COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true /usr/local/bin/redsim-run web pnpm --filter @redsim/web build
   restart_web=1
 fi
 if grep -qE '^deploy/ec2/native/systemd/' <<<"$changed"; then
@@ -88,11 +88,16 @@ systemctl restart redsim-api redsim-scans redsim-default redsim-beat
 [ "$restart_web" = 1 ] && systemctl restart redsim-web
 systemctl --no-pager --plain list-units 'redsim-*' caddy | awk 'NR>1 && $1 ~ /service/ {print $1, $3, $4}'
 
-for _ in $(seq 1 30); do
-  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${ORIGIN}/health" || true)"
-  [ "$code" = "200" ] && { echo "deployed ${target:0:7}: ${ORIGIN}/health 200"; exit 0; }
-  sleep 3
+# Both the API and the web app must answer: a web that is building or crash-looping
+# behind a healthy API is still an outage. Generous window for a first production
+# build (the unit builds on start when no build exists).
+for _ in $(seq 1 120); do
+  api_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${ORIGIN}/health" || true)"
+  web_code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "${ORIGIN}/login" || true)"
+  [ "$api_code" = "200" ] && [ "$web_code" = "200" ] && { echo "deployed ${target:0:7}: ${ORIGIN}/health 200, /login 200"; exit 0; }
+  sleep 5
 done
-echo "health check failed after the deploy (last code: $code)" >&2
+echo "health check failed after the deploy (api: $api_code, web: $web_code)" >&2
 journalctl -u redsim-api -n 30 --no-pager
+journalctl -u redsim-web -n 60 --no-pager
 exit 1
