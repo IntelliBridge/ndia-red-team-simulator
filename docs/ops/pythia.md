@@ -8,19 +8,24 @@ Every LLM call in redsim goes through `redsim/llm/pythia.py` (decision D5 in
 the product spec). There is no litellm and there are no provider keys anywhere
 in the stack.
 
-Status at `main` `58461cc` (2026-09-09): the only consumer is the optional
-hardening narrative, one plain, non-streaming chat completion per campaign
-with candidate recommendations, fed the rule outputs, the measurements and a
-SHAP text summary. Since wave 2 it runs in the **worker parent** after the
-sandbox child returns (`redsim/workers/tasks/ml_campaign.py::_parent_narrative`),
-routed through `redsim.llm.router.route("ml.harden_narrative")` with the
-`DbBudgetChecker`, and metered as one `LLMUsage` row per call. The sandbox
-child never holds the key. When Pythia is not configured the narrative is
-skipped, never faked, and recommendations render from the rule layer alone
-with `narrative_source = "rules"`. Since `7556b22` `redsim doctor`,
-`redsim.yaml` and `.env.example` are Pythia-only: no provider key is listed,
-checked or written anywhere, and `PYTHIA_API_KEY` is the only LLM credential
-the tree names.
+Status at `main` `1439f92` plus Phase B wave B2 (2026-09-09): two consumers.
+The first is the optional hardening narrative, one plain, non-streaming chat
+completion per campaign with candidate recommendations, fed the rule outputs,
+the measurements and a SHAP text summary. Since wave 2 it runs in the
+**worker parent** after the sandbox child returns
+(`redsim/workers/tasks/ml_campaign.py::_parent_narrative`), routed through
+`redsim.llm.router.route("ml.harden_narrative")` with the `DbBudgetChecker`,
+and metered as one `LLMUsage` row per call. The sandbox child never holds the
+key. When Pythia is not configured the narrative is skipped, never faked, and
+recommendations render from the rule layer alone with
+`narrative_source = "rules"`. The second, since wave B2, is the garak probe
+traffic of `redsim.ml_llm_probe_run` described under
+[Probe traffic](#probe-traffic-wave-b2): it uses its own key from an
+`AuthProfile` and its own persona, never `PYTHIA_API_KEY` or the narrative
+writer's persona. Since `7556b22` `redsim doctor`, `redsim.yaml` and
+`.env.example` are Pythia-only: no provider key is listed, checked or written
+anywhere, and `PYTHIA_API_KEY` is the only LLM credential the tree names in
+its configuration files (the probe key lives encrypted in the database).
 
 ## The four environment variables
 
@@ -230,6 +235,91 @@ The two embedding models are listed by the gateway but are not chat models.
 Entitlements are a property of the key and persona, so re-run the check after
 a key or persona change rather than relying on this table.
 
+## Probe traffic (wave B2) {#probe-traffic-wave-b2}
+
+Since Phase B wave B2 (`ml(llm): garak through Pythia core: catalog,
+generator, probe child, scorecard` and `feat(llm): probe routes, admission,
+worker, scorecard and findings`) the second Pythia consumer is the LLM
+red-teaming track: garak 0.16.0 probes run against an LLM target through the
+gateway and produce a probe scorecard with k/n denominators and no MRI. How
+the traffic reaches Pythia, verified from `redsim/ml/llm/generator.py`,
+`redsim/ml/llm/runner.py`, `redsim/ml/llm/probe_child.py`,
+`redsim/services/ml_llm.py` and `redsim/workers/tasks/ml_llm.py`:
+
+- **The target.** `POST /v1/models` with `source: endpoint`,
+  `endpoint_kind: llm` (admin) names a canonical Pythia model id
+  (`<vendor>/<model>` or `pythia/auto`; embedding ids refused), the
+  `persona` the probe key is scoped to, a `guardrail_mode`
+  (`permission_gate_only`, `content_filtered` or `unknown`) and a `bearer`
+  `AuthProfile` holding the probe key (`probe_key_required` otherwise). The
+  gateway URL is the body's `gateway_url` or the API's `PYTHIA_BASE_URL`, and
+  it goes through the endpoint egress policy (`endpoint_url_invalid`,
+  `endpoint_not_allowlisted`). The target row carries the host, the model
+  id, the persona and the profile id, never the key.
+- **The generator.** `PythiaGenerator(garak.generators.openai.OpenAICompatible)`
+  posts to `{gateway}/v1/chat/completions` with `X-Pythia-Persona` as a
+  default header, TLS from `redsim.llm.pythia.tls_verify` (the OS trust store
+  on a laptop, recorded in the ledger as `tls_mode`), the OpenAI client at
+  `max_retries=0` and a bounded retry loop in place of garak's uncapped
+  backoff (a 401 raises after one request, a 5xx is retried a few times then
+  raised with the count), and a body of exactly `model`, `messages`,
+  `temperature`, `max_tokens`. The key is caller-supplied (an `api_key=` or a
+  0600 `key_file=`), never read from the environment (`ENV_VAR` is `None`),
+  never written into garak's `_config` (which garak dumps into
+  `report.jsonl`) and never a class attribute. `assert_no_litellm` checks
+  that the litellm garak installs never enters the generator's MRO. A
+  `UsageLedger` records requests, statuses, retries, prompt and completion
+  tokens, wall time and the model ids the gateway answered with (`pythia/auto`
+  resolves per request, which the scorecard limitations say).
+- **The worker.** `redsim.ml_llm_probe_run` (queue `default`, the only pool
+  with Pythia egress) refuses before any gateway request when
+  `REDSIM_DISABLE_LLM` is set, when the project or organisation LLM budget is
+  spent (`enforce_budget_for_run`) or when the profile is gone; resolves the
+  probe key at job pickup (`services.auth_profiles.resolve_auth_for_scan`);
+  lists `GET /v1/models` on the gateway with that key and refuses
+  (`model_not_entitled`, an `llm.probe.entitlement` `success=False` row) when
+  the target model is absent, so a probe run never starts against a model the
+  key cannot reach; then launches the garak child.
+- **The child.** `python -m redsim.ml.llm.probe_child --spec <json>` in a
+  fresh process with the plugin sandbox's interpreter allowlist, network on,
+  `HOME` and `TMPDIR` inside a 0700 work directory, the TLS and proxy
+  variables kept, `REDSIM_ENV_FILE` pinned to an absent file, and every
+  `PYTHIA_*`, `AWS_*`, `KAGGLE*`, `OPENAI*`, `HF_TOKEN`, `HUGGING_FACE*`,
+  `GOOGLE_`/`AZURE_`/`ANTHROPIC_` and other `REDSIM_*` name swept
+  (`assert_child_env_minimal`). The key arrives in a 0600 file the child
+  reads and deletes at once; the XDG and Hugging Face offline variables are
+  pinned before garak imports; the run is configured through a `garak.yaml`
+  (no deprecated argv flags); the hard prompt cap is enforced on every probe;
+  the openai, httpx and httpcore loggers are raised to WARNING so `garak.log`
+  carries no request headers; every written file is checked for the key and
+  scrubbed if found (recorded, observed false in the tests). Wall clock
+  `REDSIM_LLM_PROBE_TIMEOUT_S` (1500 s), CPU 1200 s, 4096 MB, 64 processes,
+  process-group kill on timeout or cancel.
+- **What is stored.** garak's `report.jsonl`, `hitlog.jsonl` and digest HTML,
+  the usage ledger and the child's counts as `ml.llm.*` artifacts, never
+  parsed for text and never stored when the key shape appears in them; the
+  k/n scorecard; one `LLMUsage(task="ml.llm_probe")` row with `cost_cents`
+  from the pricing table (`unpriced_model` otherwise); findings with a
+  severity derived from the hit rate and labelled so; rule-text candidates
+  only, no narrative for probe results.
+- **Knobs.** `REDSIM_LLM_PROBE_MAX_PROMPTS_PER_PROBE` (64, the cap on a
+  request's `max_prompts_per_probe`, default 16),
+  `REDSIM_LLM_PROBE_MAX_RUNS_PER_PROJECT_PER_DAY` (10, `429` with
+  `retry_after`), `REDSIM_LLM_PROBE_HF_DETECTORS` (truthy admits
+  `detector_mode=hf` and the `redsim-extended` set, whose primary detectors
+  are Hugging Face classifiers loaded from `REDSIM_LLM_PROBE_HF_CACHE`),
+  `REDSIM_LLM_PROBE_TIMEOUT_S`, `REDSIM_DISABLE_LLM`.
+
+No probe run against the live gateway has been recorded. The tests
+(`tests/ml/test_llm_core.py`, `tests/ml/test_llm_routes.py`, 11 of them
+`garak`-marked) drive real garak probes through `PythiaGenerator` against
+`tests/ml/fake_openai_server.py`, a stdlib OpenAI-compatible server on the
+loopback interface with a low-entropy fake token, and assert the persona on
+every request, the minimal body, the token sums, that the DAN prompt text
+appears only in garak's own `report.jsonl` and nowhere else, and that the
+child environment, the work directory and every stored file are free of the
+key.
+
 ## Personas and guardrails
 
 The hardening writer is text-only. It sends one system message and one user
@@ -238,18 +328,26 @@ SHAP text summary, with no tools, no images and no structured output. The
 `default` persona's guardrails are appropriate for that traffic and nothing in
 the narrative prompt should trip them.
 
-Phase B (LLM red-teaming with garak through Pythia) is excluded from this
-completion pass and is different. Its probes are adversarial by design:
-prompt injection, jailbreak attempts, toxicity elicitation. A persona with
-content guardrails enabled would block or rewrite those probes and the
+The probe traffic of wave B2 is different. Its probes are adversarial by
+design: prompt injection, jailbreak attempts, toxicity elicitation. A persona
+with content guardrails enabled would block or rewrite those probes and the
 results would measure Pythia's filters rather than the target model. The
 garak persona therefore needs the permission-gate-only guardrail default
 (authentication, entitlement and metering stay on, content filtering off),
 provisioned as a separate key and persona so the hardening writer's `default`
-persona keeps its guardrails. Ask the Pythia operators for that persona when
-Phase B starts, and keep the two keys apart in `.env` (`PYTHIA_PERSONA`
-selects which one a process uses). The probe material for that track is the
-set of corpora garak ships and loads itself, recorded in spec section 11.6:
-those prompts are untrusted data and may only be sent to that
-permission-gate-only persona, never to the `default` persona and never to a
-production system.
+persona keeps its guardrails (owner default LLM-26, applied: the registration
+requires the persona and a `guardrail_mode`, the scorecard limitations state
+the mode, and a mode other than `permission_gate_only` adds the sentence that
+the hit rates measure the gateway's content filters as much as the model).
+The two keys are kept apart by construction: the narrative writer reads
+`PYTHIA_API_KEY` and `PYTHIA_PERSONA` from the worker environment, the probe
+runner reads its key from the target's `AuthProfile` and its persona from the
+target row. Ask the Pythia operators for the permission-gate-only persona and
+key before the first probe run against the live gateway. The probe material
+is the set of corpora garak ships and loads itself (spec section 11.6; the
+public data repository carries a copy with per-subset licences, owner
+decision TESTS_DOCS-33): those prompts are untrusted data and may only be
+sent to that permission-gate-only persona, never to the `default` persona and
+never to a production system. HarmBench material is excluded (`fitd.FITD`,
+owner default LLM-08), as are `dan.AutoDAN`, `grandma.GrandmaIntent` and the
+uncapped corpus variants, each an excluded catalog row with its reason.

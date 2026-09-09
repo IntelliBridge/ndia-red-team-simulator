@@ -13,27 +13,34 @@ and 6.
 ## Running
 
 ```bash
-.venv/bin/python -m pytest -q -p no:cacheprovider                          # default tier: 2081 passed, 35 skipped, 1 deselected at 29db42c (106 s with the ml extra)
-.venv/bin/python -m pytest -q -p no:cacheprovider -m ml                    # only the ml-marked tests
-REDSIM_E2E=1 .venv/bin/python -m pytest -q -p no:cacheprovider -m e2e tests/e2e   # e2e tier: 22 passed at 29db42c (136 s, Postgres lane on)
-.venv/bin/python -m pytest -q -p no:cacheprovider -m garak tests          # garak tier: exit 5 (nothing collected) until a garak-marked test exists
+.venv/bin/python -m pytest -q -p no:cacheprovider                          # default tier: 2257 passed, 35 skipped, 1 deselected at 1439f92 (2:03 with the ml extra)
+.venv/bin/python -m pytest -q -p no:cacheprovider -m ml                    # only the ml-marked tests: 418 passed, 1 skipped at 1439f92
+REDSIM_E2E=1 .venv/bin/python -m pytest -q -p no:cacheprovider -m e2e tests/e2e   # e2e tier: 22 passed at 1439f92 (2:30, Postgres lane on)
+.venv/bin/python -m pytest -q -p no:cacheprovider -m garak tests          # garak tier: the 12 garak-marked tests of wave B2 (needs the garak extra)
 .venv/bin/python -m pytest -q --cov=redsim --cov-report=term | tail -5
 ```
 
-The counts are the wave B0 integration run at `main` `29db42c` (2026-09-09),
+The counts are the wave B1 integration run at `main` `1439f92` (2026-09-09),
 not CI results, and they move with every wave: re-run before quoting them.
-The venv was created with uv and has no `pip`, so always run through
-`.venv/bin/python -m …`. The default `-m` from `addopts` in `pyproject.toml`
-excludes `docker`, `e2e`, `slow`, `auth_required` and `garak`.
+Wave B2's own checks before its rebase (a worktree on `b404eb8`): ruff and
+`mypy redsim` (236 files) clean, 251 passed and 1 xfailed in its writers' ten
+test files, the full default tier 2431 passed, 36 skipped, 12 deselected,
+1 xfailed with 17 failures that were all present at that base and fixed on
+`main` by the B1 integration; the 11 `garak`-marked tests passed with garak
+0.16.0. The B2 integration pass (`fix: integrate Phase B wave B2`, pushed with the B2 commits) re-ran every tier on the rebased tree from the venv: ruff (CI selection) and `mypy redsim` (236 files) clean, the default tier 2480 passed, 35 skipped, 13 deselected, the `ml` tier 420 passed, 1 skipped, the 12 `garak`-marked tests green against the fake gateway, the e2e tier 22 passed against Postgres with the sandbox child, `mkdocs build --strict` exit 0. The venv was created with uv and has no `pip`, so always run
+through `.venv/bin/python -m …`. The default `-m` from `addopts` in
+`pyproject.toml` excludes `docker`, `e2e`, `slow`, `auth_required` and
+`garak`. The wave B2 tests need `reportlab` (worker extra) and `pypdf` (test
+extra).
 
 ## Test tiers
 
 | Tier | Selected by | What it proves | Where it runs |
 |---|---|---|---|
 | default (unit and integration) | no `-m` flag (`addopts`) | pure-Python units plus the sqlite-harness integration tests, including every `ml`-marked test when the extra is installed | both unit lanes (3.13 without `ml`), Coverage gate, API integration (without `ml`) |
-| `ml` | `-m ml`, needs the `ml` extra | the vertical's library layer: targets, attacks, runners, explainers, defenses, sandbox child, endpoint broker, hardening | Unit tests (py3.12), Coverage gate, E2E tier |
-| `e2e` | `tests/e2e/`, stamped `e2e` by its `conftest.py`, run only with `REDSIM_E2E=1` | the completion criteria end to end: real API, admission, eager Celery, the real sandbox child and the real CLI over sqlite on a synthetic asset tree; the Postgres RLS lane with `REDSIM_E2E_POSTGRES_URL` | `E2E tier (python, eager Celery)` on every PR and push (wave B0), and locally |
-| `garak` | `-m garak`, needs the `garak` extra (`garak>=0.16,<0.17`) | the Phase B LLM domain (plan 12 waves B2 and B4). No test carries the marker yet, so the tier collects nothing and exits 5 | `garak offline` on every PR and push (wave B0), mapped to success on exit 5 while empty |
+| `ml` | `-m ml`, needs the `ml` extra | the vertical's library layer: targets, attacks, runners, explainers, defenses, sandbox child, endpoint broker, hardening, and since wave B2 the endpoint registration and validate path, the Phase B admission rules, the worker's broker lifecycle and derived-target registration, the review workflow, the PDF and snapshot path (`tests/ml/test_endpoint_routes.py`, `test_admission_phase_b.py`, `test_tasks_phase_b.py`, `test_review_workflow.py`, `test_reports_phase_b.py`, `test_llm_routes.py`, `test_llm_core.py` default-tier cases) | Unit tests (py3.12), Coverage gate, E2E tier |
+| `e2e` | `tests/e2e/`, stamped `e2e` by its `conftest.py`, run only with `REDSIM_E2E=1` | the completion criteria end to end: real API, admission, eager Celery, the real sandbox child and the real CLI over sqlite on a synthetic asset tree; the Postgres RLS lane with `REDSIM_E2E_POSTGRES_URL`. Phase A only: the B2 scopes get their files in wave B4 | `E2E tier (python, eager Celery)` on every PR and push (wave B0), and locally. Not run after wave B2 |
+| `garak` | `-m garak`, needs the `garak` extra (`garak>=0.16,<0.17`) | the Phase B LLM domain: since wave B2, 11 tests (ten in `tests/ml/test_llm_core.py`, one in `tests/ml/test_llm_routes.py`) that run real garak 0.16.0 through `PythiaGenerator` against the in-process fake gateway `tests/ml/fake_openai_server.py`: headers, body keys and ledger against an `httpx.MockTransport`, the key-file mode check, one real child run (exit 0, counts equal garak's eval records, the hard cap, the persona on every request, no `/v1/models` call, token sums), the credential boundary (no `PYTHIA_`/`AWS_`/`KAGGLE` name in the child env, the key in no file, a DAN prompt fragment only in garak's own `report.jsonl`), the scorecard, rules and report from that run, a version mismatch (exit 3, zero requests), offline mode with HF-detector probes (all `not_run`, zero requests), the wall-clock kill, the committed catalog equal to a fresh regeneration, and the route-to-worker end-to-end case | `garak offline` on every PR and push (wave B0); the workflow still maps exit 5 to success, and whether the 11 pass on the runner is proven by the first run after the B2 push |
 | browser e2e | Playwright, `workflow_dispatch` with `run_e2e=true` | the web app against the compose stack | on demand only, not part of the Phase B waves |
 
 ## Shared fixtures (`tests/conftest.py`)
@@ -86,7 +93,15 @@ extra is absent. A bare `import torch` in a test module fails collection on
 - `tiny_endpoint_server.py::TinyEndpointServer` (wave B1): a stdlib
   `http.server` over `TinyTarget` behind `POST /predict` speaking the
   `endpoint-v1` contract with bearer or header auth and misbehaviour switches
-  (see [Endpoint predict contract](../api/endpoint-contract.md)).
+  (see [Endpoint predict contract](../api/endpoint-contract.md)). Since wave
+  B2 `tests/ml/test_endpoint_routes.py` registers it through `POST /v1/models`
+  and validates it through the worker task.
+- `fake_openai_server.py` (wave B2): a stdlib `ThreadingHTTPServer` on
+  `127.0.0.1` with `GET /v1/models` and `POST /v1/chat/completions`, a bearer
+  check (401 otherwise), persona-header and body-key recording, fixed, echo,
+  empty or callable replies, usage blocks, `fail_status`, `fail_first` and
+  `latency_s` switches, and a low-entropy fake token. The garak tier and the
+  LLM route tests run against it; no test reaches the live gateway.
 - `fixtures/run_record.json`: the frozen `GET /v1/runs/{id}/campaign` shape
   with a full `score` block, sha256
   `e5266f1873dc3fcd0d784acf3bf9e97463595d3bbff351edf7560ca1716d9c1a`.
@@ -140,12 +155,31 @@ Fixture data never appears in the demo catalog or as a result.
 - `test_policy_ml_actions.py`: the seven ML `Action` members, the seven
   Phase B members, their minimum roles, the `viewer` rank, and the OPA and
   Cedar mirrors parsed and asserted equal to the Python table.
-- `tests/ml/test_error_codes.py`: the spec 17.3 table and its dated Phase B
-  addendum parsed from the spec and matched against `redsim/api/errors.py`
-  both ways, plus the `capacity_deferred` marker semantics.
-- `tests/ml/test_phase_b_stubs.py`: every Phase B stub answers `501` with
-  `phase` after its gates, writes nothing, and gates on the real Phase B
-  `Action` member.
+- `tests/ml/test_error_codes.py`: the spec 17.3 table and both dated Phase B
+  addenda (wave B0's 23 codes, wave B2's 13) parsed from the spec and matched
+  against `redsim/api/errors.py` both ways, the Phase A count invariant over
+  both addendum sets, the `capacity_deferred` marker semantics, and a refusal
+  of the register spelling `idempotency_in_flight`.
+- `tests/ml/test_phase_b_stubs.py`: every remaining Phase B stub (14 rows
+  since wave B2) answers `501` with `phase` after its gates, writes nothing,
+  and gates on the real Phase B `Action` member; the five routes wave B2
+  built stay in its `OPENAPI_PATHS` list, and `report.pdf` is pinned as
+  `404 report not yet rendered`.
+- `tests/test_idempotency.py` (wave B2): the `Idempotency-Key` middleware
+  replays a stored 2xx with `Idempotency-Replayed: true` and no second row or
+  enqueue, refuses a reused key with a different body
+  (`idempotency_key_reused`) and an open reservation
+  (`idempotency_conflict`), and passes through without the header.
+- `tests/test_policy_ml_actions.py` and `tests/test_policy_engine.py`: since
+  wave B2 the `dataset.export` bar is `remediator` in the Python table and
+  both mirrors.
+- **e2e pins moved by the B2 integration.** `tests/e2e/test_ml_governance.py`
+  and `tests/e2e/test_ml_verify_upload_reports.py::test_reports_sections_and_pdf_404`
+  now assert `report.pdf` is `404 report not yet rendered` before a render, a
+  `source: endpoint` body without `auth_profile_id` is `422
+  auth_profile_required` with the host-only refusal row, and the campaign
+  projection's `weights` / `non_default_weights` keys are allowed beside the
+  record. The e2e tier is 22 passed on the integrated tree.
 - `test_llm_pythia.py` and `test_pythia_check.py`: the Pythia client and the
   connectivity check against an `httpx.MockTransport`, including `.env`
   discovery isolated from a developer's real `.env`.
@@ -172,8 +206,8 @@ The full description is [CI pipeline](ci.md).
   tests/e2e` with the migrated service Postgres as
   `REDSIM_E2E_POSTGRES_URL`, so the RLS lane runs.
 - `garak offline` (wave B0): `.[garak]` on CPU torch, `import garak`, then
-  `pytest -m garak tests`; exit 5 counts as success while no test carries the
-  marker.
+  `pytest -m garak tests`; the workflow still maps exit 5 to success, and
+  since wave B2 the lane collects 12 tests (11 from the B2 tracks, one probe-route case added by the integration).
 - `Stack E2E (Playwright)`: only via `workflow_dispatch` with `run_e2e=true`,
   brings the compose stack up and runs `web/tests`.
 
