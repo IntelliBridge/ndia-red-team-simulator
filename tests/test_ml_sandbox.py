@@ -12,8 +12,13 @@ import pytest
 pytest.importorskip("art")
 pytest.importorskip("torch")
 
+from redsim.ml.errors import UnsupportedArtifact
 from redsim.ml.reporting import render_campaign_reports
-from redsim.ml.sandbox import _persist_child_artifacts, run_campaign_sandboxed
+from redsim.ml.sandbox import (
+    _persist_child_artifacts,
+    run_campaign_sandboxed,
+    validate_model_sandboxed,
+)
 from redsim.ml.schema import CampaignConfig, CampaignRecord
 
 
@@ -78,7 +83,25 @@ def test_sandbox_returns_partial_record_when_child_fails(tmp_path: Path) -> None
     assert record.completeness == "partial"
     assert record.score is None
     assert record.score_status is not None
-    assert "ML sandbox exited" in (record.error or "")
+    # The refusal travels as typed evidence in the envelope, not as a stderr tail.
+    error = record.error or ""
+    assert error.startswith(("UnsupportedArtifact:", "ModelLoadRefused:", "TargetUnavailable:"))
+    assert "ML sandbox exited" not in error
+    assert "Traceback" not in error
+
+
+def test_real_child_reports_validate_refusal_as_typed_class(tmp_path: Path) -> None:
+    """The real child writes ``{"ok": false, "error_class": ...}``; the parent raises that class."""
+    model = tmp_path / "model.pt"
+    model.write_bytes(b"PK\x03\x04not-a-model")
+
+    with pytest.raises(UnsupportedArtifact) as info:
+        validate_model_sandboxed(
+            "sandbox-test-model", model, _config().target_snapshot["detail"],
+        )
+
+    assert not isinstance(info.value, RuntimeError)
+    assert "Traceback" not in str(info.value)
 
 
 def test_sandbox_kills_process_group_when_cancelled(
