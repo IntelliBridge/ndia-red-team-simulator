@@ -1,5 +1,9 @@
 # P7 Fargate foundation
 
+The runtime implementation and current deployment instructions are in
+[`../runtime/README.md`](../runtime/README.md); network/state bootstrap is in
+`../bootstrap`. This root retains the foundation resource boundary.
+
 This directory defines the code-only AWS foundation for a future canonical
 Fargate runtime. It is based on
 `2fca7a7197945c0750746605c763278252ec8b19` on
@@ -12,10 +16,8 @@ application routing. Existing CI already builds the API, worker, and web
 images. The existing worker Dockerfile already includes the worker ML
 requirements. Neither is changed by this foundation.
 
-Open PR 16 removes the previous AWS workflow and core. Coordinate with that
-work before coupling any runtime implementation to this foundation. CLAUDE
-material can be stale or namespace-specific. Use the actual redsim code and
-updated approved plans as the source for future runtime contracts.
+PR #16 and the foundation PR #19 are merged. Runtime services are managed
+in a separate state root, so the foundation validation remains credential-free.
 
 ## Toolchain and validation
 

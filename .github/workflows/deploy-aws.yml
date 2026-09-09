@@ -29,6 +29,7 @@ on:
       - "packages/**"
       - "deploy/Dockerfile.*"
       - "deploy/docker-compose.yml"
+      - "deploy/runtime/identity/**"
       - "pyproject.toml"
       - "pnpm-lock.yaml"
       - ".github/workflows/deploy-aws.yml"
@@ -55,7 +56,34 @@ jobs:
             dockerfile: deploy/Dockerfile.worker
           - name: web
             dockerfile: deploy/Dockerfile.web
+          - name: identity
+            dockerfile: deploy/Dockerfile.identity
     steps:
+      # Next.js bakes NEXT_PUBLIC_REDSIM_API_URL into the browser bundle at
+      # build time, so a missing or non-https value would ship a web image
+      # that points every visitor's browser at the wrong API origin. Fail
+      # before assuming the AWS role rather than publishing such an image.
+      - name: Require an https NEXT_PUBLIC_REDSIM_API_URL for the web image
+        if: matrix.name == 'web'
+        env:
+          NEXT_PUBLIC_REDSIM_API_URL: ${{ vars.NEXT_PUBLIC_REDSIM_API_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "$NEXT_PUBLIC_REDSIM_API_URL" ]; then
+            echo "::error::Repository variable NEXT_PUBLIC_REDSIM_API_URL is not set. Set it (Settings -> Variables) to the public https:// origin of the API before building the web image." >&2
+            exit 1
+          fi
+          case "$NEXT_PUBLIC_REDSIM_API_URL" in
+            https://localhost*|https://127.*|https://\[::1\]*)
+              echo "::error::NEXT_PUBLIC_REDSIM_API_URL points at a loopback host ($NEXT_PUBLIC_REDSIM_API_URL); browsers would call their own machine instead of the deployed API." >&2
+              exit 1 ;;
+            https://?*) ;;
+            *)
+              echo "::error::NEXT_PUBLIC_REDSIM_API_URL must be an https:// URL, got '$NEXT_PUBLIC_REDSIM_API_URL'." >&2
+              exit 1 ;;
+          esac
+          echo "NEXT_PUBLIC_REDSIM_API_URL=$NEXT_PUBLIC_REDSIM_API_URL"
+
       - uses: actions/checkout@v7
 
       - name: Configure AWS credentials (OIDC)
@@ -76,6 +104,8 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
+          build-args: |
+            NEXT_PUBLIC_REDSIM_API_URL=${{ vars.NEXT_PUBLIC_REDSIM_API_URL }}
           tags: |
             ${{ vars.ECR_REGISTRY }}/ndia-red-team/${{ matrix.name }}:${{ github.sha }}
             ${{ vars.ECR_REGISTRY }}/ndia-red-team/${{ matrix.name }}:latest
