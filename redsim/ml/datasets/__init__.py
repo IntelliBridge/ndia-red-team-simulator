@@ -21,14 +21,21 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from redsim.ml import errors as _errors
 from redsim.ml.errors import TargetUnavailable
 
 WORK_DIR_ENV = "REDSIM_ML_WORK_DIR"
 DEFAULT_WORK_DIR = "./redsim_output/ml"
 
 
-class DatasetUnavailable(TargetUnavailable):
-    """A dataset file or revision could not be fetched or failed its digest check."""
+class DatasetUnavailable(_errors.DatasetUnavailable, TargetUnavailable):
+    """A dataset file or revision could not be fetched or failed its digest check.
+
+    The spec 10.6 failure class ``redsim.ml.errors.DatasetUnavailable`` (with its
+    ``code``) is the primary base, so ``except errors.DatasetUnavailable`` catches
+    it; it stays a ``TargetUnavailable`` too because the dataset loaders raised
+    that before the failure classes existed and callers still match on it.
+    """
 
 
 def work_dir() -> Path:

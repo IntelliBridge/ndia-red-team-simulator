@@ -1,9 +1,10 @@
 """The bundled URL maliciousness classifier (spec 11.3.3, milestone M4).
 
 A tree ensemble on the lexical features of ``redsim.ml.datasets.url_features``:
-XGBoost when it is importable, otherwise scikit-learn's
-``HistGradientBoostingClassifier``. The choice is recorded in the manifest
-(spec 20.2). Beside it the build fits the differentiable PGD surrogate of spec
+scikit-learn's ``HistGradientBoostingClassifier`` by default (``sklearn_joblib``,
+the bundled-only format every worker image can load), or XGBoost when the
+build opts in with ``prefer_xgboost=True`` and xgboost is importable
+(``xgboost_json``). The choice is recorded in the manifest (spec 20.2). Beside it the build fits the differentiable PGD surrogate of spec
 12.2 (a standardised logistic regression trained on the ensemble's predicted
 labels) and records its agreement with the ensemble on the clean eval split.
 """
@@ -47,6 +48,7 @@ class UrlClassifierResult:
     urls: list[str]                  # de-duplicated rows, indexed by train_idx / eval_idx
     labels: np.ndarray
     n_duplicates_removed: int
+    x_eval: np.ndarray | None = None   # featurized eval rows (eval_idx order), written as the eval.npz slice
 
 
 def xgboost_available() -> bool:
@@ -96,7 +98,7 @@ def _make_surrogate(seed: int) -> Any:
 
 
 def train_url_classifier(urls: Sequence[str], labels: Sequence[str], *, seed: int = 0, holdout: float = 0.2,
-                         prefer_xgboost: bool = True, class_names: Sequence[str] = URL_CLASS_NAMES,
+                         prefer_xgboost: bool = False, class_names: Sequence[str] = URL_CLASS_NAMES,
                          log: Log = print) -> UrlClassifierResult:
     """De-duplicate, split, featurize, fit the ensemble and its surrogate, measure both."""
     names = list(class_names)
@@ -115,6 +117,8 @@ def train_url_classifier(urls: Sequence[str], labels: Sequence[str], *, seed: in
     x_eval, y_eval = x[eval_idx], y[eval_idx]
 
     model, fmt, library, params = _make_model(seed, prefer_xgboost, len(names))
+    if prefer_xgboost and library != "xgboost":
+        log("url classifier: xgboost was requested but is not importable; training the scikit-learn ensemble")
     t0 = time.perf_counter()
     model.fit(x_train, y_train)
     fit_s = time.perf_counter() - t0
@@ -134,7 +138,8 @@ def train_url_classifier(urls: Sequence[str], labels: Sequence[str], *, seed: in
     log(f"surrogate ({SURROGATE_KIND}): agreement with the ensemble on the eval split {agreement:.4f}")
 
     training = {
-        "library": library, "params": params, "seed": seed, "holdout": holdout, "split_seed": seed,
+        "library": library, "params": params, "xgboost_requested": prefer_xgboost,
+        "seed": seed, "holdout": holdout, "split_seed": seed,
         "n_train": len(train_idx), "n_eval": len(eval_idx), "n_duplicates_removed": n_dupes,
         "fit_wall_time_s": round(fit_s, 3), "feature_names": list(FEATURE_NAMES),
         "extractor_version": EXTRACTOR_VERSION, "device": "cpu",
@@ -145,6 +150,7 @@ def train_url_classifier(urls: Sequence[str], labels: Sequence[str], *, seed: in
         surrogate_agree_count=agree_count,
         class_names=names, features=feature_entries(x_train), metrics=metrics, training=training,
         train_idx=train_idx, eval_idx=eval_idx, urls=urls_d, labels=y, n_duplicates_removed=n_dupes,
+        x_eval=x_eval,
     )
 
 
@@ -171,6 +177,7 @@ def save_url_classifier(result: UrlClassifierResult, out_dir: Path, *, assets_ro
 
 
 def load_url_classifier(path: Path, fmt: str) -> Any:
+    """Build-side reload (tests and the build's own checks). The worker loads through ``targets.tabular``."""
     if fmt == "xgboost_json":
         import xgboost as xgb
 
@@ -179,4 +186,5 @@ def load_url_classifier(path: Path, fmt: str) -> Any:
         return model
     import joblib
 
+    # Build-side only: the file was written by this process moments earlier (see save_url_classifier).
     return joblib.load(Path(path))

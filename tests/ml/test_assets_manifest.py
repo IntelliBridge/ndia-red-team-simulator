@@ -37,11 +37,17 @@ from redsim.ml.assets.manifest import (
 )
 from redsim.ml.assets.train_cnn import load_small_cnn, predict_logits
 from redsim.ml.schema import CleanAccuracy, MLModelManifest
+from redsim.ml.targets import architectures
 from redsim.ml.targets.architectures import (
+    ARCHITECTURE_ALIASES,
     ARCHITECTURES,
+    CatalogModule,
+    ResNet18,
     SmallCNN,
     UnknownArchitecture,
+    architecture_ids,
     build_architecture,
+    canonical_architecture_id,
 )
 
 
@@ -113,12 +119,66 @@ def test_architecture_catalog_refuses_unknown_ids_and_bad_args():
     assert isinstance(build_architecture("small_cnn", n_classes=3), SmallCNN)
     with pytest.raises(UnknownArchitecture):
         build_architecture("resnet_from_upload")
+    # The alias resolves; the builder's architecture block (with its architecture_id key) is accepted as kwargs.
+    assert ARCHITECTURE_ALIASES == {"smallcnn": "small_cnn"} and canonical_architecture_id("smallcnn") == "small_cnn"
+    assert architecture_ids() == ["resnet18", "small_cnn"]
+    assert architecture_ids(include_aliases=True) == ["resnet18", "small_cnn", "smallcnn"]
+    assert isinstance(build_architecture("smallcnn", n_classes=3), SmallCNN)
+    block = SmallCNN(3, 4, 16).architecture_config()
+    rebuilt = build_architecture(block["architecture_id"], **block)
+    assert isinstance(rebuilt, SmallCNN) and rebuilt.architecture_config() == block
+    with pytest.raises(UnknownArchitecture, match="declares"):
+        build_architecture("resnet18", **block)
     with pytest.raises(ValueError):
         SmallCNN(n_classes=1)
     with pytest.raises(ValueError):
         SmallCNN(image_size=4)
     with pytest.raises(ValueError):
         SmallCNN().set_input_normalization(torch.zeros(3), torch.zeros(3))
+
+
+def test_resnet18_is_a_catalog_architecture_with_offline_init(tmp_path: Path, monkeypatch):
+    """resnet18 adapts torchvision's backbone to the class count; ImageNet weights only from the local cache."""
+    pytest.importorskip("torchvision")
+    assert ARCHITECTURES["resnet18"] is ResNet18 and issubclass(ResNet18, CatalogModule)
+    monkeypatch.setattr(architectures, "imagenet_resnet18_checkpoint", lambda: None)
+    model = build_architecture("resnet18", n_classes=3, image_size=8)
+    assert isinstance(model, ResNet18) and model.input_shape == (3, 8, 8)
+    assert model.architecture_config() == {"architecture_id": "resnet18", "in_channels": 3, "n_classes": 3,
+                                           "image_size": 8}
+    assert "pretrained" not in model.architecture_config(), "init is a build record, not a constructor argument"
+    loaded, note = model.init_imagenet_backbone()
+    assert loaded is False and note.startswith("random init") and model.backbone_init == "random"
+    model.eval()
+    with torch.no_grad():
+        assert model(torch.rand(2, 3, 8, 8)).shape == (2, 3)          # 8x8 inputs run through the adaptive pool
+    assert "input_mean" in model.state_dict() and model.state_dict()["backbone.fc.weight"].shape == (3, 512)
+    with pytest.raises(ValueError):
+        ResNet18(n_classes=1)
+
+    # A cached checkpoint (here: a locally written random resnet18 state_dict, never a download) is loaded
+    # into the backbone only; the head keeps the task's class count.
+    from torchvision.models import resnet18
+
+    fake = tmp_path / architectures.RESNET18_IMAGENET_FILENAME
+    torch.save(resnet18(weights=None, num_classes=1000).state_dict(), fake)
+    monkeypatch.setattr(architectures, "imagenet_resnet18_checkpoint", lambda: fake)
+    pretrained = ResNet18(n_classes=3, image_size=8)
+    loaded, note = pretrained.init_imagenet_backbone()
+    assert loaded is True and "imagenet1k_v1" in note and str(fake) in note
+    assert pretrained.backbone.fc.out_features == 3
+    two_channel = ResNet18(in_channels=2, n_classes=3, image_size=8)
+    assert two_channel.init_imagenet_backbone()[0] is False           # ImageNet weights need 3 channels
+
+    # The build helper records which initialisation was used, without training anything here.
+    from redsim.ml.assets.train_cnn import build_image_model
+
+    monkeypatch.setattr(architectures, "imagenet_resnet18_checkpoint", lambda: None)
+    built, init = build_image_model("resnet18", in_channels=3, n_classes=3, image_size=8, log=_quiet)
+    assert isinstance(built, ResNet18) and init["imagenet_backbone_loaded"] is False
+    assert init["backbone_init"].startswith("random init")
+    small, init_small = build_image_model("smallcnn", in_channels=3, n_classes=3, image_size=8, log=_quiet)
+    assert isinstance(small, SmallCNN) and init_small == {"backbone_init": "random (seeded)"}
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +336,61 @@ def test_one_epoch_build_yields_manifest_and_hash_verifiable_weights(tmp_path: P
     edited["models"]["synthetic_cnn"]["class_names"] = ["class_1", "class_0", "class_2", "class_3"]
     (root / MANIFEST_NAME).write_text(json.dumps(edited))
     assert any("manifest_sha256 mismatch" in p for p in verify_entries(load_manifest(root / MANIFEST_NAME)))
+
+
+def test_split_entry_carries_the_rows_csv_beside_the_slice_and_scoped_verification(tmp_path: Path):
+    from redsim.ml.assets.manifest import SplitEntry, model_entry, verify_model_assets
+
+    root = tmp_path / "assets"
+    root.mkdir()
+    npz, csv_file = root / "datasets/d/eval.npz", root / "datasets/d/eval.csv"
+    npz.parent.mkdir(parents=True)
+    npz.write_bytes(b"npz-bytes")
+    csv_file.write_bytes(b"index,url,type\n")
+    weights = root / "bundled/x/weights.pt"
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"weights")
+    fake = FileEntry(path="bundled/x/weights.pt", sha256=sha256_file(weights), size_bytes=7)
+    manifest = AssetManifest.new()
+    manifest.datasets["hf:example/ds"] = DatasetEntry(
+        id="hf:example/ds", source="huggingface", revision="abc123", class_names=["a", "b"],
+        splits={"test": SplitEntry(name="test", n=2, file=FileEntry(path="datasets/d/eval.npz",
+                                                                     sha256=sha256_file(npz), size_bytes=9),
+                                   rows_csv=FileEntry(path="datasets/d/eval.csv", sha256=sha256_file(csv_file),
+                                                      size_bytes=15))})
+    manifest.models["x"] = stamp_manifest_sha256(_entry(fake))
+    write_manifest(manifest, root / MANIFEST_NAME)
+    loaded = load_manifest(root / MANIFEST_NAME)
+    assert loaded.datasets["hf:example/ds"].splits["test"].rows_csv is not None
+    assert verify_manifest(loaded, root) == []
+    assert not verify_model_assets(loaded, root, "x")
+    assert model_entry(loaded, "x") is loaded.models["x"] and model_entry(loaded, "nope") is None
+
+    csv_file.write_bytes(b"tampered")
+    problems = verify_files(loaded, root)
+    assert len(problems) == 1 and "split test rows" in problems[0]
+    scoped = verify_model_assets(loaded, root, "x")
+    assert scoped.model == [] and len(scoped.dataset) == 1 and "rows" in scoped.dataset[0]
+    npz.unlink()
+    scoped = verify_model_assets(loaded, root, "x")
+    assert any("missing file datasets/d/eval.npz" in p for p in scoped.dataset) and scoped.model == []
+    weights.write_bytes(b"other")
+    scoped = verify_model_assets(loaded, root, "x")
+    assert len(scoped.model) == 1 and "sha256 mismatch" in scoped.model[0]
+
+    # A model bound to a split the dataset does not bundle, or to an unknown dataset, is a dataset problem.
+    loaded.models["y"] = stamp_manifest_sha256(_entry(fake, id="y", dataset_split="eval",
+                                                      clean_accuracy=CleanAccuracy(value=0.5, n=2, split="eval")))
+    assert any("no bundled split 'eval'" in p for p in verify_model_assets(loaded, root, "y").dataset)
+    loaded.models["z"] = stamp_manifest_sha256(_entry(fake, id="z", dataset_id="hf:other/ds"))
+    assert any("not in the manifest's datasets" in p for p in verify_model_assets(loaded, root, "z").dataset)
+    loaded.models["w"] = stamp_manifest_sha256(_entry(fake, id="w", dataset_revision="different"))
+    assert any("dataset_revision" in p for p in verify_model_assets(loaded, root, "w").dataset)
+    assert verify_model_assets(loaded, root, "absent").model == ["model absent: no entry in the manifest"]
+
+    # The legacy tabular id resolves to the current one when only the legacy entry exists.
+    loaded.models["url_classifier"] = loaded.models.pop("x")
+    assert model_entry(loaded, "url_trees") is loaded.models["url_classifier"]
 
 
 def test_same_seed_reproduces_identical_weights(tmp_path: Path):

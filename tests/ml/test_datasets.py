@@ -21,6 +21,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from PIL import Image
 
+from redsim.ml import errors
 from redsim.ml.datasets import (
     DEFAULT_WORK_DIR,
     DatasetUnavailable,
@@ -140,6 +141,31 @@ def test_cifar10_fixture_npz_round_trip_and_fixture_indices(tmp_path: Path) -> N
     np.savez(bad, x=np.zeros((3, 4)), y=np.zeros(3))
     with pytest.raises(DatasetUnavailable):
         cifar10.load_fixture_npz(bad)
+
+
+def test_dataset_unavailable_is_the_spec_failure_class_and_still_a_target_unavailable() -> None:
+    exc = DatasetUnavailable("slice missing")
+    assert isinstance(exc, errors.DatasetUnavailable) and isinstance(exc, TargetUnavailable)
+    assert exc.code == "dataset_unavailable" and isinstance(exc, errors.MLError)
+
+
+def test_cifar10_synthetic_stand_in_is_seeded_and_labelled(tmp_path: Path) -> None:
+    x, y = cifar10.synthetic_test_split(seed=0, n=100)
+    assert x.shape == (100, 3, 32, 32) and x.dtype == np.uint8
+    assert np.bincount(y, minlength=10).tolist() == [10] * 10
+    x2, _ = cifar10.synthetic_test_split(seed=0, n=100)
+    assert np.array_equal(x, x2) and not np.array_equal(x, cifar10.synthetic_test_split(seed=1, n=100)[0])
+    with pytest.raises(ValueError):
+        cifar10.synthetic_test_split(n=3)
+    assert cifar10.SYNTHETIC_DATASET_ID.startswith("local:synthetic") and cifar10.DATASET_ID == "hf:uoft-cs/cifar10"
+    idx = cifar10.fixture_indices(y, per_class=2, seed=0)
+    path = tmp_path / cifar10.FIXTURE_NAME
+    cifar10.save_fixture_npz(path, x[idx], y[idx], idx, dataset_revision="synthetic-seed-0",
+                             dataset_id=cifar10.SYNTHETIC_DATASET_ID)
+    assert cifar10.fixture_provenance(path) == {"dataset_id": cifar10.SYNTHETIC_DATASET_ID,
+                                                "dataset_revision": "synthetic-seed-0"}
+    with pytest.raises(DatasetUnavailable):
+        cifar10.fixture_provenance(tmp_path / "absent.npz")
 
 
 # ----------------------------------------------------------------------------------------

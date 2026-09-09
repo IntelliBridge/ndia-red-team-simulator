@@ -4,9 +4,14 @@ Accepted formats and what loading means for each:
 
 * ``onnx``              ``onnx.load(load_external_data=False)`` -> refuse external data tensors and
                         custom operator domains -> ``onnx.checker`` -> ``onnxruntime`` CPU session with
-                        bounded threads. There is no onnx2torch here, so the ART estimator is a
-                        ``BlackBoxClassifier`` over ``predict`` and ``torch_model()`` is ``None``
-                        (``gradients=False`` in the manifest; white-box attacks are not run silently).
+                        bounded threads. Predictions come from onnxruntime. For gradient attacks the graph
+                        is converted with ``onnx2torch``; the converted module's argmax is compared with
+                        onnxruntime on the evaluation slice and recorded as ``onnx_torch_argmax_agreement``.
+                        When conversion succeeds and agrees, the ART estimator is a ``PyTorchClassifier``
+                        over the converted module (``gradients=True``); when onnx2torch is absent, the
+                        conversion fails, or the two disagree, it is a ``BlackBoxClassifier`` over
+                        ``predict`` and ``torch_model()`` is ``None`` (``gradients=False``; white-box
+                        attacks are reported as not run, never silently substituted).
 * ``torch_state_dict``  zip archive, ``torch.load(weights_only=True)``, an architecture id from the
                         in-tree allowlist, ``load_state_dict(strict=True)`` -> ``PyTorchClassifier``.
 * ``safetensors_state_dict``  safetensors header, ``safetensors.torch.load_file``, the same architecture
@@ -17,6 +22,10 @@ extension and by the ``\\x80`` PROTO opcode), ``weights_only`` failures (what a 
 operationally), unknown signatures, digest mismatches, unknown or missing architecture ids, and
 shape or class-count disagreements with the evaluation data. torch, onnx and ART are imported
 lazily so importing this module (or the registry) pulls no ML library into the API process.
+
+The architecture allowlist mirrors ``redsim.ml.targets.architectures``: canonical ids ``small_cnn``
+and ``resnet18``, alias ``smallcnn`` -> ``small_cnn``. ``ARCHITECTURES`` here maps every accepted
+spelling to a factory so tests can inject tiny modules with ``monkeypatch.setitem``.
 """
 
 from __future__ import annotations
@@ -34,7 +43,7 @@ import numpy as np
 from pydantic import ValidationError
 
 from redsim.ml.datasets.sampling import as_model_input, per_class_counts, stratified_sample
-from redsim.ml.errors import UnsupportedArtifact
+from redsim.ml.errors import ArtifactDigestMismatch, DatasetUnavailable, UnsupportedArtifact
 from redsim.ml.schema import Domain, MLModelManifest, TargetInfo
 from redsim.ml.targets.base import Sample
 
@@ -47,41 +56,75 @@ _ONNX_IR_VERSION_TAG = 0x08     # field 1 (ir_version), varint: the first byte o
 STANDARD_ONNX_DOMAINS: frozenset[str] = frozenset({"", "ai.onnx", "ai.onnx.ml", "ai.onnx.preview.training"})
 _CHUNK = 1 << 20
 
+# onnx2torch agreement: the converted module must reproduce onnxruntime's argmax on (nearly) every row of the
+# evaluation slice before its gradients stand in for the uploaded graph's. The measured rate is recorded
+# either way; below the floor the target stays black-box and says why.
+MIN_ONNX_TORCH_AGREEMENT = 0.99
+AGREEMENT_MAX_N = 1000
+
 
 # --------------------------------------------------------------------------------------
-# Architecture allowlist. ``architectures.py`` is owned by the assets branch; import it lazily so a
-# missing module is a clear refusal rather than an import error, and so tests can inject tiny modules
-# by adding to (or overriding entries of) ``ARCHITECTURES``.
+# Architecture allowlist. ``architectures.py`` imports torch, so it is imported lazily here: a missing
+# module is a clear refusal rather than an import error, and the API process never loads torch. Tests
+# inject tiny modules by adding to (or overriding entries of) ``ARCHITECTURES``.
 # --------------------------------------------------------------------------------------
 
-def _smallcnn(**kwargs: Any) -> Any:
+def _small_cnn(**kwargs: Any) -> Any:
     from redsim.ml.targets.architectures import SmallCNN
 
     return SmallCNN(**kwargs)
 
 
-ARCHITECTURES: dict[str, Callable[..., Any]] = {"smallcnn": _smallcnn}
+def _resnet18(**kwargs: Any) -> Any:
+    from redsim.ml.targets.architectures import ResNet18
+
+    return ResNet18(**kwargs)
+
+
+# Accepted spellings -> canonical id. Read wherever an id comes in; canonical ids are what gets recorded.
+ARCHITECTURE_ALIASES: dict[str, str] = {"smallcnn": "small_cnn"}
+
+ARCHITECTURES: dict[str, Callable[..., Any]] = {
+    "small_cnn": _small_cnn,
+    "smallcnn": _small_cnn,      # alias, kept as a key so architecture_ids() advertises it
+    "resnet18": _resnet18,
+}
+
+
+def canonical_architecture_id(architecture_id: str) -> str:
+    return ARCHITECTURE_ALIASES.get(architecture_id, architecture_id)
 
 
 def architecture_ids() -> list[str]:
+    """Every accepted architecture spelling (canonical ids and their aliases)."""
     return sorted(ARCHITECTURES)
 
 
 def resolve_architecture(architecture_id: str | None, kwargs: dict[str, Any] | None = None) -> Any:
-    """Instantiate an allowlisted architecture. Free-form code is never accepted."""
+    """Instantiate an allowlisted architecture. Free-form code is never accepted.
+
+    ``kwargs`` are the constructor arguments recorded by the build (``ModelEntry.architecture``); the
+    ``architecture_id`` key the builder stores inside that block is checked against the declared id and
+    not passed on.
+    """
     if not architecture_id:
         raise UnsupportedArtifact("architecture_required: a torch state_dict needs an architecture id "
                                   f"from the allowlist {architecture_ids()}")
-    factory = ARCHITECTURES.get(architecture_id)
+    factory = ARCHITECTURES.get(architecture_id) or ARCHITECTURES.get(canonical_architecture_id(architecture_id))
     if factory is None:
         raise UnsupportedArtifact(f"architecture_not_allowlisted: {architecture_id!r} is not one of "
                                   f"{architecture_ids()}")
+    ctor = dict(kwargs or {})
+    inner = ctor.pop("architecture_id", None)
+    if inner is not None and canonical_architecture_id(str(inner)) != canonical_architecture_id(architecture_id):
+        raise UnsupportedArtifact(f"architecture_mismatch: the architecture block names {inner!r} but the entry "
+                                  f"declares {architecture_id!r}")
     try:
-        return factory(**(kwargs or {}))
+        return factory(**ctor)
     except ImportError as exc:
         raise UnsupportedArtifact(f"architecture {architecture_id!r} is not available in this build: {exc}") from exc
-    except TypeError as exc:
-        raise UnsupportedArtifact(f"architecture {architecture_id!r} rejected its kwargs {kwargs!r}: {exc}") from exc
+    except (TypeError, ValueError) as exc:
+        raise UnsupportedArtifact(f"architecture {architecture_id!r} rejected its kwargs {ctor!r}: {exc}") from exc
 
 
 # --------------------------------------------------------------------------------------
@@ -97,10 +140,10 @@ def sha256_file(path: Path) -> str:
 
 
 def verify_sha256(path: Path, expected: str | None) -> str:
-    """Return the file digest; refuse when it disagrees with ``expected``."""
+    """Return the file digest; refuse (``ArtifactDigestMismatch``) when it disagrees with ``expected``."""
     actual = sha256_file(path)
     if expected is not None and actual != expected.strip().lower():
-        raise UnsupportedArtifact(f"hash_mismatch: {Path(path).name} has sha256 {actual}, manifest says {expected}")
+        raise ArtifactDigestMismatch(f"hash_mismatch: {Path(path).name} has sha256 {actual}, manifest says {expected}")
     return actual
 
 
@@ -191,6 +234,7 @@ class OnnxModel:
     n_outputs: int | None
     ir_version: int
     opsets: dict[str, int] = field(default_factory=dict)
+    proto: Any = None                        # the checked ``ModelProto`` (for onnx2torch)
 
     def run(self, x: np.ndarray) -> np.ndarray:
         out = self.session.run([self.output_name], {self.input_name: np.ascontiguousarray(x, dtype=np.float32)})
@@ -237,7 +281,54 @@ def load_onnx_model(path: Path, *, intra_op_threads: int = 2) -> OnnxModel:
     n_outputs = out_dims[-1] if len(out_dims) >= 2 else None
     return OnnxModel(session=session, input_name=inp.name, output_name=out.name, input_shape=in_dims[1:],
                      n_outputs=n_outputs, ir_version=int(proto.ir_version),
-                     opsets={o.domain or "ai.onnx": int(o.version) for o in proto.opset_import})
+                     opsets={o.domain or "ai.onnx": int(o.version) for o in proto.opset_import}, proto=proto)
+
+
+def convert_onnx_to_torch(model: OnnxModel) -> tuple[Any, dict[str, Any]]:
+    """``(torch module | None, conversion record)`` via onnx2torch. Never raises; failure is recorded.
+
+    ``status`` is ``converted``, ``unavailable`` (onnx2torch not installed) or ``failed`` (the converter
+    rejected the graph, typically an unsupported operator). The record is copied into the manifest so
+    a black-box outcome always says why.
+    """
+    try:
+        import onnx2torch
+    except ImportError:
+        return None, {"status": "unavailable", "reason": "onnx2torch is not installed in this build",
+                      "converter": "onnx2torch", "version": library_versions("onnx2torch")["onnx2torch"]}
+    version = library_versions("onnx2torch")["onnx2torch"]
+    try:
+        module = onnx2torch.convert(model.proto)
+    except Exception as exc:  # noqa: BLE001 - the converter raises many types for unsupported ops
+        return None, {"status": "failed", "reason": f"unsupported_onnx_op: {type(exc).__name__}: "
+                                                    f"{str(exc).splitlines()[0][:200]}",
+                      "converter": "onnx2torch", "version": version}
+    return module.eval(), {"status": "converted", "reason": None, "converter": "onnx2torch", "version": version}
+
+
+def onnx_torch_argmax_agreement(model: OnnxModel, module: Any, x: np.ndarray, *,
+                                max_n: int = AGREEMENT_MAX_N) -> dict[str, Any]:
+    """Share of the first ``min(n, max_n)`` evaluation rows on which onnxruntime and the converted module agree.
+
+    Returned with its denominator: ``{"n", "n_agree", "agreement"}``; a runtime error in the converted
+    module is recorded as ``error`` with ``agreement=None``, never as a number.
+    """
+    import torch
+
+    xin = as_model_input(np.asarray(x))[: max(1, int(max_n))]
+    n_agree = 0
+    try:
+        for start in range(0, xin.shape[0], 256):
+            batch = xin[start:start + 256]
+            ref = model.run(batch).argmax(axis=1)
+            with torch.no_grad():
+                got = module(torch.from_numpy(np.ascontiguousarray(batch, dtype=np.float32)))
+            n_agree += int((np.asarray(got.cpu().numpy()).argmax(axis=1) == ref).sum())
+    except Exception as exc:  # noqa: BLE001 - a converted graph can fail at run time on real batches
+        return {"n": int(xin.shape[0]), "n_agree": None, "agreement": None,
+                "error": f"{type(exc).__name__}: {str(exc).splitlines()[0][:200]}"}
+    n = int(xin.shape[0])
+    return {"n": n, "n_agree": n_agree, "agreement": (n_agree / n) if n else None}
 
 
 def _softmax(z: np.ndarray) -> np.ndarray:
@@ -289,10 +380,16 @@ def _load_eval_data(source: EvalData) -> tuple[np.ndarray, np.ndarray, np.ndarra
         x, y = source()
         return np.asarray(x), np.asarray(y).reshape(-1), None
     if isinstance(source, (str, Path)):
-        with np.load(Path(source), allow_pickle=False) as npz:
-            x = np.asarray(npz["x"])
-            y = np.asarray(npz["y"]).reshape(-1)
-            idx = np.asarray(npz["indices"]) if "indices" in npz else None
+        path = Path(source)
+        if not path.is_file():
+            raise DatasetUnavailable(f"evaluation slice not found: {path}")
+        try:
+            with np.load(path, allow_pickle=False) as npz:
+                x = np.asarray(npz["x"])
+                y = np.asarray(npz["y"]).reshape(-1)
+                idx = np.asarray(npz["indices"]) if "indices" in npz else None
+        except (OSError, KeyError, ValueError) as exc:
+            raise DatasetUnavailable(f"evaluation slice {path} is unreadable: {exc}") from exc
         return x, y, idx
     x, y = source
     return np.asarray(x), np.asarray(y).reshape(-1), None
@@ -350,8 +447,11 @@ class ArtifactTarget:
         self._threads = intra_op_threads
         self._format: str | None = None
         self._sha256: str | None = None
-        self._module: Any = None
+        self._module: Any = None            # state_dict formats: the allowlisted architecture with weights applied
         self._onnx: OnnxModel | None = None
+        self._torch_module: Any = None      # onnx: the onnx2torch conversion when it succeeded and agreed
+        self._conversion: dict[str, Any] | None = None
+        self._agreement: dict[str, Any] | None = None
         self._x: np.ndarray | None = None
         self._y: np.ndarray | None = None
         self._indices: np.ndarray | None = None
@@ -361,18 +461,25 @@ class ArtifactTarget:
 
     # -- protocol ---------------------------------------------------------------------
 
+    def _gradients(self) -> bool | None:
+        """Differentiable estimator available? ``None`` until an ONNX upload has been loaded (spec 5.5)."""
+        if self._x is not None:
+            return self._module is not None or self._torch_module is not None
+        fmt = self._format or self._declared
+        if fmt in {"torch_state_dict", "safetensors_state_dict"}:
+            return True
+        return None
+
     def info(self) -> TargetInfo:
         meta: dict[str, Any] = {
             "source": "uploaded", "format": self._format or self._declared, "sha256": self._sha256,
             "architecture_id": self._arch_id, "class_names": self._class_names,
             "n_classes": len(self._class_names), "loaded": self._x is not None,
-            "gradients": (
-                None
-                if self._format is None
-                else self._format in {"torch_state_dict", "safetensors_state_dict"}
-            ),
+            "gradients": self._gradients(),
             **{k: v for k, v in self._dataset.items() if v is not None},
         }
+        if self._agreement is not None:
+            meta["onnx_torch_argmax_agreement"] = self._agreement
         return TargetInfo(id=self.id, name=self._name, domain=self._domain, status="available", metadata=meta)
 
     def load(self) -> None:
@@ -396,7 +503,7 @@ class ArtifactTarget:
                 self._arch_kwargs,
                 artifact_format=self._format,
             )
-            probe = self._torch_logits(as_model_input(x[:1]))
+            probe = self._torch_logits(self._module, as_model_input(x[:1]))
         else:
             self._onnx = load_onnx_model(self._path, intra_op_threads=self._threads)
             for want, got in zip(self._onnx.input_shape, sample_shape):
@@ -408,6 +515,8 @@ class ArtifactTarget:
         if probe.ndim != 2 or probe.shape[1] != len(self._class_names):
             raise UnsupportedArtifact(f"shape_mismatch: model emits {probe.shape[1:]} outputs, manifest declares "
                                       f"{len(self._class_names)} classes")
+        if self._onnx is not None:
+            self._convert_onnx(x)
         self._manifest = model_manifest(
             f"uploaded model {self._path.name}",
             name=self._name, modality=self._domain, format=self._format, sha256=self._sha256,
@@ -415,30 +524,54 @@ class ArtifactTarget:
             n_classes=len(self._class_names), class_names=self._class_names,
             dataset_id=self._dataset["dataset_id"], dataset_revision=self._dataset["dataset_revision"],
             dataset_split=self._dataset["dataset_split"], status="available",
-            gradients=self._module is not None, bundled=False, license=self._dataset["license"],
+            gradients=self._module is not None or self._torch_module is not None, bundled=False,
+            license=self._dataset["license"],
         )
         self._x, self._y, self._indices = x, y.astype(np.int64), idx
+
+    def _convert_onnx(self, x: np.ndarray) -> None:
+        """onnx2torch conversion + argmax agreement on the evaluation slice (spec 9.2, onnx row)."""
+        assert self._onnx is not None
+        module, record = convert_onnx_to_torch(self._onnx)
+        if module is None:
+            self._conversion, self._agreement = record, None
+            return
+        agreement = onnx_torch_argmax_agreement(self._onnx, module, x)
+        self._agreement = agreement
+        rate = agreement.get("agreement")
+        if rate is None:
+            record = {**record, "status": "failed",
+                      "reason": f"converted module failed on the evaluation slice: {agreement.get('error')}"}
+            module = None
+        elif rate < MIN_ONNX_TORCH_AGREEMENT:
+            record = {**record, "status": "disagreement",
+                      "reason": (f"converted module agrees with onnxruntime on {agreement['n_agree']}/{agreement['n']} "
+                                 f"rows ({rate:.4f}), below the {MIN_ONNX_TORCH_AGREEMENT} floor; gradients not offered")}
+            module = None
+        self._conversion, self._torch_module = record, module
 
     def sample(self, n: int, seed: int) -> Sample:
         self.load()
         assert self._x is not None and self._y is not None
         return stratified_sample(self._x, self._y, n, seed, self._class_names, source_indices=self._indices)
 
-    def _torch_logits(self, x: np.ndarray) -> np.ndarray:
+    @staticmethod
+    def _torch_logits(module: Any, x: np.ndarray) -> np.ndarray:
         import torch
 
         with torch.no_grad():
-            out = self._module(torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32)))
+            out = module(torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32)))
         return np.asarray(out.cpu().numpy())
 
     def predict_proba(self, x: np.ndarray) -> np.ndarray:
+        """Class probabilities. ONNX uploads always predict through onnxruntime (the reference runtime)."""
         self.load()
         xin = as_model_input(np.asarray(x))
         outs = []
         for start in range(0, xin.shape[0], 256):
             batch = xin[start:start + 256]
             if self._module is not None:
-                outs.append(_softmax(self._torch_logits(batch)))
+                outs.append(_softmax(self._torch_logits(self._module, batch)))
             else:
                 assert self._onnx is not None
                 raw = self._onnx.run(batch)
@@ -450,11 +583,12 @@ class ArtifactTarget:
         if self._clf is None:
             assert self._x is not None
             shape = tuple(int(d) for d in self._x.shape[1:])
-            if self._module is not None:
+            module = self._module if self._module is not None else self._torch_module
+            if module is not None:
                 from art.estimators.classification import PyTorchClassifier
                 from torch import nn
 
-                self._clf = PyTorchClassifier(model=self._module, loss=nn.CrossEntropyLoss(), input_shape=shape,
+                self._clf = PyTorchClassifier(model=module, loss=nn.CrossEntropyLoss(), input_shape=shape,
                                               nb_classes=len(self._class_names), clip_values=(0.0, 1.0),
                                               device_type="cpu")
             else:
@@ -465,8 +599,12 @@ class ArtifactTarget:
         return self._clf
 
     def torch_model(self) -> Any:
+        """The differentiable module: the loaded state_dict architecture, or the agreeing onnx2torch conversion.
+
+        ``None`` for an ONNX upload that could not be converted -- never faked.
+        """
         self.load()
-        return self._module  # None for ONNX: no differentiable module, never faked
+        return self._module if self._module is not None else self._torch_module
 
     def manifest(self) -> dict[str, Any]:
         """The ``schema.MLModelManifest`` fields (validated at load) plus upload-specific provenance."""
@@ -476,32 +614,46 @@ class ArtifactTarget:
             "source": "uploaded", "file": self._path.name, "architecture_kwargs": self._arch_kwargs or None,
             "eval_n": int(self._y.shape[0]), "eval_per_class": per_class_counts(self._y, self._class_names),
             "library_versions": {**library_versions(
-                "torch", "safetensors", "onnx", "onnxruntime", "adversarial-robustness-toolbox",
+                "torch", "safetensors", "onnx", "onnxruntime", "onnx2torch", "adversarial-robustness-toolbox",
             ),
                                  "python": platform.python_version()},
+            "onnx_torch_argmax_agreement": self._agreement,
             **self._manifest,
         }
         if self._onnx is not None:
+            converted = self._torch_module is not None
             m["onnx"] = {"ir_version": self._onnx.ir_version, "opsets": self._onnx.opsets,
-                         "output_kind": self._output_kind, "estimator": "BlackBoxClassifier",
-                         "note": "no onnx2torch conversion in this build: white-box attacks are not available "
-                                 "for ONNX uploads and are reported as not run"}
+                         "output_kind": self._output_kind,
+                         "estimator": "PyTorchClassifier" if converted else "BlackBoxClassifier",
+                         "predictions": "onnxruntime",
+                         "conversion": self._conversion,
+                         "onnx_torch_argmax_agreement": self._agreement,
+                         "note": ("gradients come from the onnx2torch conversion; its argmax agreement with "
+                                  "onnxruntime on the evaluation slice is recorded above" if converted else
+                                  "no differentiable module: white-box attacks are not available for this ONNX "
+                                  "upload and are reported as not run (unsupported_onnx_op)")}
         return m
 
 
 __all__ = [
     "ACCEPTED_FORMATS",
+    "AGREEMENT_MAX_N",
     "ARCHITECTURES",
+    "ARCHITECTURE_ALIASES",
+    "MIN_ONNX_TORCH_AGREEMENT",
     "PICKLE_SUFFIXES",
     "ArtifactTarget",
     "OnnxModel",
     "architecture_ids",
+    "canonical_architecture_id",
+    "convert_onnx_to_torch",
     "detect_format",
     "library_versions",
     "load_onnx_model",
     "load_state_dict_module",
     "looks_like_probabilities",
     "model_manifest",
+    "onnx_torch_argmax_agreement",
     "resolve_architecture",
     "sha256_file",
     "sniff_format",

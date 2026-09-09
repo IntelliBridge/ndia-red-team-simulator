@@ -53,8 +53,10 @@ def test_trains_on_committed_sample():
     assert table.dataset.n_rows == len(table.urls) == len(table.row_indices) == 60
     assert table.dataset.sampled_from is not None and table.dataset.sampled_from["source_file_sha256"]
     result = train_url_classifier(table.urls, table.labels, seed=0, log=_quiet)
-    assert result.library in {"scikit-learn", "xgboost"}
-    assert result.format in {"sklearn_joblib", "xgboost_json"}
+    assert result.library == "scikit-learn" and result.format == "sklearn_joblib", "sklearn is the default (spec 9.2)"
+    assert result.training["xgboost_requested"] is False
+    assert result.x_eval is not None and result.x_eval.shape == (len(result.eval_idx), len(FEATURE_NAMES))
+    assert np.array_equal(result.x_eval, featurize_array([result.urls[i] for i in result.eval_idx]))
     assert result.n_duplicates_removed == 0
     assert len(result.train_idx) + len(result.eval_idx) == len(table.urls)
     assert not set(result.train_idx.tolist()) & set(result.eval_idx.tolist())
@@ -68,6 +70,18 @@ def test_trains_on_committed_sample():
     assert result.surrogate_agreement == result.surrogate_agree_count / len(result.eval_idx)
     assert result.training["extractor_version"] == EXTRACTOR_VERSION
     assert result.training["surrogate"]["kind"] == SURROGATE_KIND
+
+
+def test_prefer_xgboost_is_honoured_only_when_importable():
+    import importlib.util
+
+    table = _table()
+    result = train_url_classifier(table.urls, table.labels, seed=0, prefer_xgboost=True, log=_quiet)
+    assert result.training["xgboost_requested"] is True
+    if importlib.util.find_spec("xgboost") is None:
+        assert result.library == "scikit-learn" and result.format == "sklearn_joblib"
+    else:  # pragma: no cover - depends on the environment
+        assert result.library == "xgboost" and result.format == "xgboost_json"
 
 
 def test_same_seed_same_split_and_predictions():
@@ -101,7 +115,7 @@ def test_save_and_reload(tmp_path: Path):
 
 
 def test_build_url_asset_writes_manifest_entries(tmp_path: Path):
-    entry, model = build_url_asset(_table(), model_id="url_classifier", root=tmp_path, seed=0, log=_quiet)
+    entry, model = build_url_asset(_table(), model_id="url_trees", root=tmp_path, seed=0, log=_quiet)
     manifest = AssetManifest.new()
     manifest.datasets[entry.id] = entry
     manifest.models[model.id] = model
@@ -109,7 +123,7 @@ def test_build_url_asset_writes_manifest_entries(tmp_path: Path):
     loaded = load_manifest(tmp_path / MANIFEST_NAME)
     assert verify_files(loaded, tmp_path) == []
 
-    record = loaded.models["url_classifier"]
+    record = loaded.models["url_trees"]
     assert record.modality == "tabular" and record.epochs is None
     assert record.features is not None and len(record.features) == 16
     assert record.extractor_version == EXTRACTOR_VERSION
@@ -122,10 +136,12 @@ def test_build_url_asset_writes_manifest_entries(tmp_path: Path):
     assert verify_manifest(loaded, tmp_path) == []
 
     # The written entry is a schema.MLModelManifest row with FeatureSpec features and a SurrogateInfo.
-    raw_entry = json.loads((tmp_path / MANIFEST_NAME).read_text())["models"]["url_classifier"]
+    raw_entry = json.loads((tmp_path / MANIFEST_NAME).read_text())["models"]["url_trees"]
     projected = MLModelManifest.model_validate(raw_entry)
-    assert projected.modality == "tabular" and projected.format in {"sklearn_joblib", "xgboost_json"}
-    assert projected.architecture_id in {"sklearn_hist_gradient_boosting", "xgboost_classifier"}
+    assert projected.modality == "tabular" and projected.format == "sklearn_joblib"
+    assert projected.architecture_id == "sklearn_hist_gradient_boosting"
+    assert raw_entry["file"]["path"] == "bundled/url_trees/model.joblib"
+    assert raw_entry["surrogate"]["file"]["path"] == "bundled/url_trees/surrogate.joblib"
     assert projected.input_shape == [16] and projected.n_classes == 4
     assert projected.class_names == ["benign", "defacement", "phishing", "malware"]
     assert projected.features is not None and [f.name for f in projected.features] == list(FEATURE_NAMES)
@@ -151,9 +167,28 @@ def test_build_url_asset_writes_manifest_entries(tmp_path: Path):
     assert ds_record.splits["train"].n == 48 and ds_record.splits["eval"].n == 12
     assert ds_record.splits["eval"].per_class == {c: 3 for c in ds_record.class_names}
     assert ds_record.preprocessing["features"] == list(FEATURE_NAMES)
-    eval_csv = tmp_path / ds_record.splits["eval"].file.path  # type: ignore[union-attr]
-    lines = eval_csv.read_text(encoding="utf-8").splitlines()
+    eval_split = ds_record.splits["eval"]
+    assert eval_split.file is not None and eval_split.file.path.endswith("/eval.npz")
+    assert eval_split.rows_csv is not None and eval_split.rows_csv.path.endswith("/eval.csv")
+    # The featurized slice is what the target loads (no featurization at load); the CSV lists the same rows.
+    with np.load(tmp_path / eval_split.file.path, allow_pickle=False) as npz:
+        assert npz["x"].shape == (12, 16) and npz["x"].dtype == np.float32
+        assert np.array_equal(npz["indices"], result_eval_idx(entry, model, tmp_path))
+        assert list(npz["feature_names"]) == list(FEATURE_NAMES) and str(npz["extractor_version"]) == EXTRACTOR_VERSION
+        assert list(npz["class_names"]) == ["benign", "defacement", "phishing", "malware"]
+        x_npz, y_npz = npz["x"], npz["y"]
+    lines = (tmp_path / eval_split.rows_csv.path).read_text(encoding="utf-8").splitlines()
     assert lines[0] == "index,url,type" and len(lines) == 13
+    rows = [line.split(",", 2) for line in lines[1:]]
+    assert np.array_equal(featurize_array([r[1] for r in rows]).astype(np.float32), x_npz)
+    assert [ds_record.class_names[int(k)] for k in y_npz] == [r[2] for r in rows]
+    assert "eval.npz" in ds_record.preprocessing["eval_slice"]
+
+
+def result_eval_idx(entry, model, root: Path) -> np.ndarray:
+    """The eval row indices as written to the CSV beside the npz (the two must agree)."""
+    csv_path = root / entry.splits["eval"].rows_csv.path
+    return np.asarray([int(line.split(",", 1)[0]) for line in csv_path.read_text().splitlines()[1:]], dtype=np.int64)
 
 
 def test_unknown_label_is_rejected():

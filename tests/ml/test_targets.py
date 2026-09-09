@@ -30,8 +30,9 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from torch import nn
 
+from redsim.ml import errors
 from redsim.ml import targets as targets_pkg
-from redsim.ml.errors import TargetUnavailable, UnsupportedArtifact
+from redsim.ml.errors import ArtifactDigestMismatch, TargetUnavailable, UnsupportedArtifact
 from redsim.ml.schema import AccuracyPoint, CleanAccuracy, MLModelManifest, SurrogateInfo, TargetInfo
 from redsim.ml.targets import artifact, bundled, tabular, unavailable
 from redsim.ml.targets.base import Target
@@ -429,10 +430,136 @@ def test_bundled_tabular_refuses_feature_disagreement(tmp_path: Path) -> None:
     _write_manifest(tmp_path, {"url_trees": {**entry, "features": reordered}})
     with pytest.raises(UnsupportedArtifact, match="feature order"):
         tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path).load()
-    _write_manifest(tmp_path, {"url_trees": {**entry, "format": "xgboost_json"}})
-    with pytest.raises(UnsupportedArtifact, match="expected sklearn_joblib"):
+    _write_manifest(tmp_path, {"url_trees": {**entry, "format": "onnx"}})
+    with pytest.raises(UnsupportedArtifact, match="expected one of"):
+        tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path).load()
+    _write_manifest(tmp_path, {"url_trees": {**entry, "format": "xgboost_json"}})   # a joblib file is not one
+    with pytest.raises(UnsupportedArtifact, match=r"\.json or \.ubj"):
         tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path).load()
     undigested = {"kind": "logistic_regression", "path": "models/url/surrogate.joblib"}   # no sha256
     _write_manifest(tmp_path, {"url_trees": {**entry, "surrogate": undigested}})
     with pytest.raises(UnsupportedArtifact, match=r"(?s)valid model manifest.*surrogate\.sha256"):
         tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path).load()
+
+
+# ----------------------------------------------------------------------------------------
+# evaluation-slice binding and verification at load (G-ASSET6 / G-ASSET7), legacy ids, unload
+# ----------------------------------------------------------------------------------------
+
+def test_tampered_or_missing_eval_split_raises_dataset_unavailable(tmp_path: Path, tinynet_arch: str) -> None:
+    entry = build_image_assets(tmp_path)
+    split = tmp_path / entry["eval_split"]
+    payload = bytearray(split.read_bytes())
+    payload[-1] ^= 0xFF
+    split.write_bytes(bytes(payload))
+    with pytest.raises(errors.DatasetUnavailable, match="hash_mismatch") as info:
+        bundled.BundledImageTarget("vehicles_cnn", assets_dir=tmp_path).load()
+    assert info.value.code == "dataset_unavailable" and isinstance(info.value, TargetUnavailable)
+    split.unlink()
+    with pytest.raises(errors.DatasetUnavailable, match="not found"):
+        bundled.BundledImageTarget("vehicles_cnn", assets_dir=tmp_path).load()
+    unbound = {k: v for k, v in entry.items() if k not in ("eval_split", "eval_split_sha256")}
+    _write_manifest(tmp_path, {"vehicles_cnn": unbound})
+    with pytest.raises(errors.DatasetUnavailable, match="bound to no evaluation slice"):
+        bundled.BundledImageTarget("vehicles_cnn", assets_dir=tmp_path).load()
+
+    tab = build_tabular_assets(tmp_path)
+    tsplit = tmp_path / tab["eval_split"]
+    payload = bytearray(tsplit.read_bytes())
+    payload[-1] ^= 0xFF
+    tsplit.write_bytes(bytes(payload))
+    with pytest.raises(errors.DatasetUnavailable, match="hash_mismatch"):
+        tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path).load()
+    tsplit.unlink()
+    with pytest.raises(errors.DatasetUnavailable, match="not found"):
+        tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path).load()
+
+
+def test_weights_digest_mismatch_is_a_typed_refusal(tmp_path: Path, tinynet_arch: str) -> None:
+    build_image_assets(tmp_path, sha_override="ab" * 32)
+    with pytest.raises(ArtifactDigestMismatch) as info:
+        bundled.BundledImageTarget("vehicles_cnn", assets_dir=tmp_path).load()
+    assert info.value.code == "artifact_digest_mismatch" and isinstance(info.value, UnsupportedArtifact)
+
+
+def test_eval_split_binds_through_the_dataset_entry(tmp_path: Path, tinynet_arch: str) -> None:
+    """The builder shape: the slice lives at datasets[dataset_id].splits[split].file, not on the model entry."""
+    entry = build_image_assets(tmp_path)
+    split_rel, split_sha = entry.pop("eval_split"), entry.pop("eval_split_sha256")
+    entry.pop("class_names")                                       # class names come from the dataset entry
+    entry["dataset_revision"] = None
+    doc = {
+        "schema": "redsim.ml.assets/1",
+        "datasets": {entry["dataset_id"]: {
+            "id": entry["dataset_id"], "revision": "rev-from-dataset", "class_names": list(CLASS_NAMES),
+            "splits": {"eval": {"name": "eval", "n": 60,
+                                "file": {"path": split_rel, "sha256": split_sha, "size_bytes": 1}}}}},
+        "models": {"vehicles_cnn": {**entry, "file": {"path": entry["weights"], "sha256": entry["sha256"],
+                                                      "size_bytes": 1},
+                                    "architecture": {"architecture_id": "tinynet", "seed": 0}}},
+    }
+    (tmp_path / "MANIFEST.json").write_text(json.dumps(doc))
+    t = bundled.BundledImageTarget("vehicles_cnn", assets_dir=tmp_path)
+    t.load()
+    m = t.manifest()
+    assert m["eval_split_file"] == split_rel and m["eval_split_sha256_verified"] == split_sha
+    assert m["class_names"] == list(CLASS_NAMES) and m["dataset_revision"] == "rev-from-dataset"
+    assert m["manifest_verified"] is False                          # not a full builder manifest: per-file checks ran
+    ref = bundled.resolve_eval_split(doc, doc["models"]["vehicles_cnn"], "vehicles_cnn")
+    assert ref.path == split_rel and ref.split == "eval" and ref.class_names == list(CLASS_NAMES)
+    assert bundled.weights_ref(doc["models"]["vehicles_cnn"]) == (entry["weights"], entry["sha256"])
+    assert bundled.architecture_kwargs(doc["models"]["vehicles_cnn"]) == {"architecture_id": "tinynet", "seed": 0}
+    # A model entry whose sha256 disagrees with its own file block is refused before anything is read.
+    doc["models"]["vehicles_cnn"]["file"]["sha256"] = "ab" * 32
+    (tmp_path / "MANIFEST.json").write_text(json.dumps(doc))
+    with pytest.raises(UnsupportedArtifact, match="file block"):
+        bundled.BundledImageTarget("vehicles_cnn", assets_dir=tmp_path).load()
+    # A dataset entry without the named split falls back to nothing: the run is refused, never guessed.
+    del doc["models"]["vehicles_cnn"]["file"]
+    doc["datasets"][entry["dataset_id"]]["splits"] = {}
+    (tmp_path / "MANIFEST.json").write_text(json.dumps(doc))
+    with pytest.raises(errors.DatasetUnavailable, match="no bundled split"):
+        bundled.BundledImageTarget("vehicles_cnn", assets_dir=tmp_path).load()
+
+
+def test_legacy_tabular_id_resolves_to_url_trees(tmp_path: Path) -> None:
+    entry = build_tabular_assets(tmp_path)
+    _write_manifest(tmp_path, {"url_classifier": entry})           # what earlier builds wrote
+    t = tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path)
+    assert t.info().status == "available"
+    t.load()
+    assert t.manifest()["id"] == "url_trees" and t.manifest()["weights_sha256_verified"] == entry["sha256"]
+    assert bundled.manifest_entry({"models": [{"id": "url_classifier", **entry}]}, "url_trees") is not None
+    assert bundled.manifest_entry({"models": {"url_classifier": entry}}, "vehicles_cnn") is None
+
+
+def test_unload_re_reads_the_asset_tree(tmp_path: Path, tinynet_arch: str) -> None:
+    build_image_assets(tmp_path, per_class=10)
+    t = bundled.BundledImageTarget("vehicles_cnn", assets_dir=tmp_path)
+    assert t.manifest()["eval_n"] == 30
+    build_image_assets(tmp_path, per_class=20)
+    assert t.manifest()["eval_n"] == 30                             # cached
+    t.unload()
+    assert t.manifest()["eval_n"] == 60                             # re-read
+    build_tabular_assets(tmp_path)
+    tab = tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path)
+    tab.load()
+    tab.unload()
+    assert tab._x is None
+    tab.load()
+    assert tab.manifest()["eval_n"] == 120
+
+
+def test_bundled_targets_expose_surrogate_file_refs(tmp_path: Path) -> None:
+    entry = build_tabular_assets(tmp_path, with_surrogate=True)
+    assert bundled.surrogate_ref(entry["surrogate"]) == (entry["surrogate"]["path"], entry["surrogate"]["sha256"])
+    builder_shape = {"kind": "lr", "sha256": entry["surrogate"]["sha256"],
+                     "file": {"path": entry["surrogate"]["path"], "sha256": entry["surrogate"]["sha256"],
+                              "size_bytes": 1}}
+    assert bundled.surrogate_ref(builder_shape) == bundled.surrogate_ref(entry["surrogate"])
+    with pytest.raises(UnsupportedArtifact, match="file block"):
+        bundled.surrogate_ref({**builder_shape, "sha256": "cd" * 32})
+    entry["surrogate"] = builder_shape
+    _write_manifest(tmp_path, {"url_trees": entry})
+    t = tabular.BundledTabularTarget("url_trees", assets_dir=tmp_path)
+    assert t.surrogate_art_classifier() is not None
