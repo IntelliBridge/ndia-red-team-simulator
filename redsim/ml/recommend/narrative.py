@@ -8,19 +8,36 @@ outright when it contains a number absent from the payload or a banned word;
 a rejected or failed narrative leaves the rule output standing
 (``narrative=None``, ``narrative_source="rules"``). Nothing here can fail a
 campaign.
+
+Where it runs (spec 10.8, 16.1): in the **worker parent** on the default pool,
+after the sandbox child has returned its record. The child never holds a Pythia
+key (its environment is stripped, ``redsim.ml.sandbox_worker`` scrubs ``PYTHIA_*``
+again) and never calls this module on its own; ``redsim.ml.campaign.run_campaign``
+only applies a narrative when an offline caller injects ``narrative_settings``
+explicitly. :func:`narrate` is the parent's entry point: it returns a
+:class:`NarrativeOutcome` carrying the prompt and completion texts (for the
+``ml.harden.prompt`` / ``ml.harden.completion`` artifacts), their digests and the
+token usage (for the ``harden.execute`` audit row and the ``LLMUsage`` row) next
+to the rewritten candidates; :func:`build_narrative` / :func:`add_narrative` are
+the thin text-only views over it.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from redsim.llm.guardrails import GuardrailViolation, guard_input, guard_output
-from redsim.llm.pythia import ChatBackend, PythiaSettings, chat_text
+from redsim.llm.pythia import ChatBackend, PythiaSettings, chat_text, make_backend
 from redsim.ml.schema import BANNED_SCORE_WORDS, CandidateRecommendation
 
 logger = logging.getLogger(__name__)
+
+#: Heading the UI and the ``ml.harden.narrative`` artifact print above LLM prose (spec 16.3).
+NARRATIVE_LABEL_TEMPLATE = "LLM-generated narrative of rule outputs (via Pythia, {model})"
 
 # The frozen score-word ban (schema.BANNED_SCORE_WORDS) plus the writer's own validation words.
 BANNED_WORDS: tuple[str, ...] = tuple(dict.fromkeys(
@@ -99,35 +116,203 @@ def split_by_recommendation(narrative: str, rec_ids: list[str]) -> dict[str, str
     return None
 
 
-def build_narrative(recs: list[CandidateRecommendation], summary_text: str, settings: PythiaSettings | None, *,
-                    backend: ChatBackend | None = None, config: Any = None) -> tuple[str | None, str]:
-    """``(narrative_text, status)``; text is ``None`` unless status is ``"ok"``. Never raises."""
+def _sha256(text: str | None) -> str | None:
+    return None if text is None else hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
+
+
+def usage_from_response(response: dict[str, Any] | None) -> tuple[int | None, int | None]:
+    """``(prompt_tokens, completion_tokens)`` from an OpenAI-style ``usage`` block; ``None`` when absent."""
+    if not isinstance(response, dict):
+        return None, None
+    usage = response.get("usage")
+    if not isinstance(usage, dict):
+        return None, None
+    return _int_or_none(usage.get("prompt_tokens")), _int_or_none(usage.get("completion_tokens"))
+
+
+class _RecordingBackend:
+    """Wrap a ``ChatBackend`` so the raw response (with its ``usage`` block) survives ``chat_text``."""
+
+    def __init__(self, inner: ChatBackend) -> None:
+        self.inner = inner
+        self.last_response: dict[str, Any] | None = None
+
+    def chat(self, model: str, messages: list[dict[str, Any]], **kwargs: Any) -> dict[str, Any]:
+        response = self.inner.chat(model, messages, **kwargs)
+        self.last_response = response if isinstance(response, dict) else None
+        return response
+
+
+@dataclass
+class NarrativeOutcome:
+    """Everything the worker parent records about one narrative attempt (spec 5.11 ``harden.execute``).
+
+    ``status`` is ``"ok"`` or the skip / rejection reason. ``prompt`` is the exact user message sent
+    (``None`` when no call was attempted); ``completion`` is the scrubbed response text (``None`` when
+    the call failed before a response). Texts become the ``ml.harden.prompt`` / ``ml.harden.completion``
+    artifacts; only the digests and token counts travel on the audit row. ``narrative_source`` is
+    ``"llm"`` only when ``status == "ok"``.
+    """
+
+    recommendations: list[CandidateRecommendation]
+    status: str
+    narrative_source: str = "rules"
+    model: str | None = None
+    prompt: str | None = None
+    completion: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    called: bool = False
+    text: str | None = None
+    settings_redacted: dict[str, Any] | None = field(default=None)
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "ok"
+
+    @property
+    def prompt_sha256(self) -> str | None:
+        return _sha256(self.prompt)
+
+    @property
+    def completion_sha256(self) -> str | None:
+        return _sha256(self.completion)
+
+    def label(self) -> str:
+        return NARRATIVE_LABEL_TEMPLATE.format(model=self.model or "unknown")
+
+    def narrative_markdown(self) -> str | None:
+        """The ``ml.harden.narrative`` artifact body: the label line, then the text as displayed."""
+        if not self.ok or not self.text:
+            return None
+        return f"{self.label()}\n\n{self.text}\n"
+
+    @property
+    def responded(self) -> bool:
+        """A response came back (text or a usage block): the call consumed tokens and is metered."""
+        return self.called and (
+            self.completion is not None or self.prompt_tokens is not None or self.completion_tokens is not None
+        )
+
+    def audit_detail(self) -> dict[str, Any]:
+        """The narrative fields of the ``harden.execute`` row: digests, counts, redacted settings; never text.
+
+        Token counts travel as ``usage: {"prompt", "completion"}``: the audit redactor
+        (``redsim.audit.redact``) blanks any key containing ``token``, so the spec 5.11
+        names ``prompt_tokens`` / ``completion_tokens`` would be written as ``<REDACTED>``.
+        """
+        return {
+            "llm_used": self.ok,
+            "narrative_source": self.narrative_source,
+            "narrative_status": self.status,
+            "skipped_reason": None if self.ok else self.status,
+            "llm": dict(self.settings_redacted) if self.settings_redacted else None,
+            "model": self.model,
+            "prompt_sha256": self.prompt_sha256,
+            "completion_sha256": self.completion_sha256,
+            "usage": {"prompt": self.prompt_tokens, "completion": self.completion_tokens},
+        }
+
+    def provenance_llm(self) -> dict[str, Any] | None:
+        """``Provenance.llm`` (spec 14.4): redacted settings plus hashes and usage; ``None`` unless generated."""
+        if not self.ok:
+            return None
+        return {
+            **dict(self.settings_redacted or {}),
+            "model": self.model,
+            "prompt_sha256": self.prompt_sha256,
+            "response_sha256": self.completion_sha256,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+        }
+
+
+def _attach(recs: list[CandidateRecommendation], text: str) -> list[CandidateRecommendation]:
+    sections = split_by_recommendation(text, [r.id for r in recs])
+    out: list[CandidateRecommendation] = []
+    for r in recs:
+        para = sections[r.id] if sections is not None else text
+        out.append(r.model_copy(update={"narrative": para, "narrative_source": "llm"}))
+    return out
+
+
+def narrate(recs: list[CandidateRecommendation], summary_text: str, settings: PythiaSettings | None, *,
+            backend: ChatBackend | None = None, config: Any = None) -> NarrativeOutcome:
+    """One narrative attempt with full provenance; never raises.
+
+    Order: input guard on the assembled payload -> ``chat_text`` (one non-streaming turn through the
+    Pythia backend, wrapped so the raw ``usage`` block is kept) -> output guard (secret scrub) -> the
+    banned-word and numeric-consistency post-checks. Any failure returns the untouched candidates with
+    ``narrative_source="rules"`` and the reason in ``status``.
+    """
+    recs = list(recs)
+    redacted = None
+    if settings is not None:
+        redacted_fn = getattr(settings, "redacted", None)
+        redacted = dict(redacted_fn()) if callable(redacted_fn) else None
+    model = getattr(settings, "model", None) if settings is not None else None
+    outcome = NarrativeOutcome(recommendations=recs, status="not configured", model=model,
+                               settings_redacted=redacted)
     if settings is None:
-        return None, "not configured"
+        return outcome
     if not recs:
-        return None, "no recommendations to narrate"
+        outcome.status = "no recommendations to narrate"
+        return outcome
     payload = build_payload(recs, summary_text)
     try:
         guard_input(payload, config=config)
     except GuardrailViolation as exc:
-        return None, f"rejected by input guard ({exc})"
+        outcome.status = f"rejected by input guard ({exc})"
+        return outcome
     except Exception as exc:  # noqa: BLE001 -- guardrails must never fail the job
-        return None, f"input guard unavailable ({type(exc).__name__})"
+        outcome.status = f"input guard unavailable ({type(exc).__name__})"
+        return outcome
     try:
-        text = chat_text(settings, SYSTEM_PROMPT, payload, backend=backend)
+        recording = _RecordingBackend(backend or make_backend(settings))
+    except Exception as exc:  # noqa: BLE001 -- backend construction (TLS context, SDK) is not evidence
+        outcome.status = f"unavailable ({type(exc).__name__})"
+        return outcome
+    outcome.prompt = payload
+    outcome.called = True
+    try:
+        text = chat_text(settings, SYSTEM_PROMPT, payload, backend=recording)
     except Exception as exc:  # noqa: BLE001 -- HTTP errors, timeouts, response shape: degrade to rules
-        return None, f"unavailable ({type(exc).__name__})"
+        outcome.prompt_tokens, outcome.completion_tokens = usage_from_response(recording.last_response)
+        outcome.status = f"unavailable ({type(exc).__name__})"
+        return outcome
+    outcome.prompt_tokens, outcome.completion_tokens = usage_from_response(recording.last_response)
     try:
         text = guard_output(text, config=config)
     except Exception as exc:  # noqa: BLE001
-        return None, f"output guard unavailable ({type(exc).__name__})"
+        outcome.status = f"output guard unavailable ({type(exc).__name__})"
+        return outcome
     text = (text or "").strip()
+    outcome.completion = text
     if not text:
-        return None, "rejected by post-check (empty response)"
+        outcome.status = "rejected by post-check (empty response)"
+        return outcome
     reason = check_banned_words(text) or check_numeric_consistency(text, payload)
     if reason:
-        return None, f"rejected by post-check ({reason})"
-    return text, "ok"
+        outcome.status = f"rejected by post-check ({reason})"
+        return outcome
+    outcome.status = "ok"
+    outcome.narrative_source = "llm"
+    outcome.text = text
+    outcome.recommendations = _attach(recs, text)
+    return outcome
+
+
+def build_narrative(recs: list[CandidateRecommendation], summary_text: str, settings: PythiaSettings | None, *,
+                    backend: ChatBackend | None = None, config: Any = None) -> tuple[str | None, str]:
+    """``(narrative_text, status)``; text is ``None`` unless status is ``"ok"``. Never raises."""
+    outcome = narrate(recs, summary_text, settings, backend=backend, config=config)
+    return (outcome.text if outcome.ok else None), outcome.status
 
 
 def add_narrative(recs: list[CandidateRecommendation], summary_text: str, settings: PythiaSettings | None, *,
@@ -142,13 +327,8 @@ def add_narrative(recs: list[CandidateRecommendation], summary_text: str, settin
     recs = list(recs)
     if settings is None or not recs:
         return recs
-    text, status = build_narrative(recs, summary_text, settings, backend=backend, config=config)
-    if text is None:
-        logger.info("LLM narrative: %s; rule output stands", status)
+    outcome = narrate(recs, summary_text, settings, backend=backend, config=config)
+    if not outcome.ok:
+        logger.info("LLM narrative: %s; rule output stands", outcome.status)
         return recs
-    sections = split_by_recommendation(text, [r.id for r in recs])
-    out: list[CandidateRecommendation] = []
-    for r in recs:
-        para = sections[r.id] if sections is not None else text
-        out.append(r.model_copy(update={"narrative": para, "narrative_source": "llm"}))
-    return out
+    return outcome.recommendations

@@ -33,6 +33,35 @@ class BudgetExceeded(Exception):
     """Raised when a routed call would exceed the project's LLM budget."""
 
 
+class ModelNotConfigured(Exception):
+    """A Pythia-only task has no usable model mapping (spec 10.8).
+
+    ``ml.harden_narrative`` must resolve to a Pythia canonical id
+    (``<vendor>/<model>`` or ``pythia/auto``) from ``config.task_models`` (seeded
+    from ``REDSIM_ML_LLM_MODEL``) or a per-organisation override; the
+    provider-style ``RedsimConfig.model`` default is never used for it. The
+    caller degrades to rule output with this reason, never to another model.
+    """
+
+
+#: Router task of the adversarial-ML hardening narrative (spec 5.12, 10.8, 16.3).
+ML_HARDEN_NARRATIVE_TASK = "ml.harden_narrative"
+
+#: Tasks whose model must be a Pythia canonical id from an explicit mapping.
+PYTHIA_ONLY_TASKS: frozenset[str] = frozenset({ML_HARDEN_NARRATIVE_TASK})
+
+
+def is_pythia_canonical(model: str) -> bool:
+    """``pythia/auto`` or ``<vendor>/<model>``: exactly one slash, both parts non-empty."""
+    if not isinstance(model, str):
+        return False
+    text = model.strip()
+    if text == "pythia/auto":
+        return True
+    vendor, sep, name = text.partition("/")
+    return bool(sep) and bool(vendor.strip()) and bool(name.strip()) and "/" not in name
+
+
 @runtime_checkable
 class BudgetChecker(Protocol):
     def remaining(self, project_id: str | None) -> int | None: ...
@@ -46,7 +75,7 @@ class BudgetChecker(Protocol):
 
 _DEFAULT_TASKS = {
     "patch", "harden", "verify_replay", "report_summarize",
-    "recon", "exploit", "deps_bump",
+    "recon", "exploit", "deps_bump", ML_HARDEN_NARRATIVE_TASK,
 }
 
 
@@ -54,7 +83,15 @@ def _resolve_model(task: str, config: RedsimConfig) -> str:
     task_models = getattr(config, "task_models", None) or {}
     # ``task_models`` is read via ``getattr`` (an optional, dynamically-set
     # attr), so it is ``Any``; both branches are ``str`` at runtime.
-    return cast(str, task_models.get(task) or config.model)
+    mapped = task_models.get(task)
+    if task in PYTHIA_ONLY_TASKS:
+        if not mapped:
+            raise ModelNotConfigured(
+                f"task {task!r} has no model mapping; set REDSIM_ML_LLM_MODEL "
+                "(config.task_models) to a Pythia canonical id"
+            )
+        return cast(str, mapped)
+    return cast(str, mapped or config.model)
 
 
 def route(
@@ -87,6 +124,13 @@ def route(
             model = override_fn(org_id, task)
     if not model:
         model = _resolve_model(task, config)
+    if task in PYTHIA_ONLY_TASKS and not is_pythia_canonical(model):
+        # Spec 10.8: the narrative model must be a Pythia canonical id. An
+        # override or mapping in another shape is refused, never coerced.
+        raise ModelNotConfigured(
+            f"task {task!r} resolved to {model!r}, which is not a Pythia canonical "
+            "id (<vendor>/<model> or pythia/auto)"
+        )
 
     remaining: int | None = None
     if budget_checker is not None:

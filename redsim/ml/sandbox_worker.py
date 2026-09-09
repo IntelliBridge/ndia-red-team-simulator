@@ -30,11 +30,34 @@ from redsim.ml.schema import CampaignConfig
 # applying it needs no ML import (numpy, torch) before the request is trusted.
 ASSETS_DIR_ENV = "REDSIM_ML_ASSETS_DIR"
 
+# Spec 10.8 / 16.1: the Pythia writer runs in the worker parent, never here. The
+# parent already strips these from the child env; scrubbing them again in-process
+# means a widened allowlist can never turn the child into an LLM caller.
+_LLM_ENV_PREFIXES = ("PYTHIA_",)
+_LLM_ENV_KEYS = frozenset({"REDSIM_ML_LLM_MODEL", "AEGIS_ML_LLM_MODEL", "REDSIM_LLM_MODEL"})
+
 #: Exit status for a request the child could not even read (mirrors the plugin worker).
 EXIT_BAD_REQUEST = 2
 
 #: Cap on the envelope the parent will read (spec 9.4: large arrays go to files).
 ENVELOPE_MAX_BYTES = 16 * 1024 * 1024
+
+
+def scrub_llm_env(environ: dict[str, str] | None = None) -> list[str]:
+    """Drop every Pythia / LLM-model variable from ``environ`` (default ``os.environ``).
+
+    Returns the names removed. The child holds no gateway key and never talks to
+    Pythia; the narrative, when requested, is the worker parent's job after the
+    envelope returns (``redsim.workers.tasks.ml_campaign``).
+    """
+    env = os.environ if environ is None else environ
+    removed = sorted(
+        key for key in env
+        if key.startswith(_LLM_ENV_PREFIXES) or key in _LLM_ENV_KEYS
+    )
+    for key in removed:
+        del env[key]
+    return removed
 
 
 def _apply_assets_dir(request: dict[str, Any]) -> Path | None:
@@ -239,6 +262,9 @@ def main() -> int:
     if not isinstance(request, dict):
         print("sandbox request must be an object", file=sys.stderr)
         return EXIT_BAD_REQUEST
+    # The child never narrates: whatever the parent allowlist forwarded, no
+    # Pythia key or model id survives into the campaign code path.
+    scrub_llm_env()
     # Must precede the lazy ML imports in _campaign/_validate: they resolve the
     # manifest from REDSIM_ML_ASSETS_DIR the moment a target is built or loaded.
     _apply_assets_dir(request)
