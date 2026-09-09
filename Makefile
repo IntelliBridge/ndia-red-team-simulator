@@ -182,7 +182,7 @@ smoke-live:
 # profile in the environment (deploy/ec2/README.md).
 deploy-host:
 	aws ssm send-command --instance-ids $${EC2_INSTANCE_ID:-i-0cc7eb0ee0880ea3b} --document-name AWS-RunShellScript \
-	  --parameters 'commands=["sudo /usr/local/bin/redsim-deploy $(or $(REF),main)"]' --query Command.CommandId --output text
+	  --parameters 'commands=["/usr/local/bin/redsim-deploy $(or $(REF),main)"]' --query Command.CommandId --output text
 
 # ---------------------------------------------------------------------
 # Full stack (docker compose)
