@@ -19,19 +19,19 @@ export function EvidenceDiff({
   return (
     <pre
       className={cn(
-        "overflow-x-auto rounded-md border border-slate-200 bg-slate-950 p-3 text-xs leading-5 text-slate-100",
+        "overflow-x-auto rounded-md border border-hairline bg-base p-3 text-xs leading-5 text-foreground",
         className,
       )}
       {...rest}
     >
       {lines.map((line, i) => {
-        let tone = "text-slate-300";
+        let tone = "text-muted-foreground";
         if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) {
-          tone = "text-sky-300";
+          tone = "text-inferred";
         } else if (line.startsWith("+")) {
-          tone = "text-emerald-300";
+          tone = "text-robust";
         } else if (line.startsWith("-")) {
-          tone = "text-red-300";
+          tone = "text-critical";
         }
         return (
           <span key={i} className={cn("block", tone)}>

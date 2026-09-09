@@ -21,9 +21,9 @@ export interface StageTimelineProps {
 }
 
 const MODE_TONE: Record<string, string> = {
-  live: "bg-sky-100 text-sky-900",
-  fixture: "bg-amber-100 text-amber-900",
-  golden_patch: "bg-amber-100 text-amber-900",
+  live: "bg-inferred/10 text-inferred",
+  fixture: "bg-illustrative/10 text-illustrative",
+  golden_patch: "bg-illustrative/10 text-illustrative",
 };
 
 export function StageTimeline({ stages, className }: StageTimelineProps) {
@@ -35,10 +35,10 @@ export function StageTimeline({ stages, className }: StageTimelineProps) {
             className={cn(
               "mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold",
               s.success === true
-                ? "bg-emerald-500 text-white"
+                ? "bg-robust text-base"
                 : s.success === false
-                  ? "bg-red-500 text-white"
-                  : "bg-amber-500 text-white",
+                  ? "bg-critical text-base"
+                  : "bg-degraded text-base",
             )}
             aria-hidden="true"
           >
@@ -46,18 +46,18 @@ export function StageTimeline({ stages, className }: StageTimelineProps) {
           </span>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="font-medium text-slate-900">{s.name}</span>
+              <span className="font-medium text-foreground">{s.name}</span>
               <span
                 className={cn(
                   "rounded px-1.5 py-0.5 text-xs",
-                  MODE_TONE[s.mode] ?? "bg-slate-100 text-slate-700",
+                  MODE_TONE[s.mode] ?? "bg-panel-2 text-muted-foreground",
                 )}
               >
                 {s.mode}
               </span>
             </div>
             {s.detail && (
-              <p className="mt-0.5 truncate text-xs text-slate-600">{s.detail}</p>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{s.detail}</p>
             )}
           </div>
         </li>

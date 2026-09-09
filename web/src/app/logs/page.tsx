@@ -34,9 +34,9 @@ const SEV_TONE: Record<string, string> = {
   trace: "text-muted-foreground",
   debug: "text-muted-foreground",
   info: "text-foreground",
-  warn: "text-amber-600 dark:text-amber-400",
-  error: "text-red-600 dark:text-red-400",
-  fatal: "text-red-700 dark:text-red-300",
+  warn: "text-degraded",
+  error: "text-critical",
+  fatal: "text-critical font-semibold",
 };
 
 function LogTableRow({ row }: { row: LogRow }) {

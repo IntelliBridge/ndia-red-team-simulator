@@ -16,12 +16,12 @@ export type Severity =
   | "unknown";
 
 const TONES: Record<Severity, string> = {
-  critical: "bg-red-100 text-red-900 border-red-200",
-  high: "bg-orange-100 text-orange-900 border-orange-200",
-  medium: "bg-amber-100 text-amber-900 border-amber-200",
-  low: "bg-emerald-100 text-emerald-900 border-emerald-200",
-  info: "bg-sky-100 text-sky-900 border-sky-200",
-  unknown: "bg-slate-100 text-slate-700 border-slate-200",
+  critical: "border-critical/40 bg-critical/10 text-critical",
+  high: "border-critical/40 bg-critical/10 text-critical",
+  medium: "border-degraded/40 bg-degraded/10 text-degraded",
+  low: "border-robust/40 bg-robust/10 text-robust",
+  info: "border-inferred/40 bg-inferred/10 text-inferred",
+  unknown: "border-hairline bg-panel-2 text-muted-foreground",
 };
 
 export interface SeverityChipProps extends HTMLAttributes<HTMLSpanElement> {

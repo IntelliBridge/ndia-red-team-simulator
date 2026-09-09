@@ -16,9 +16,9 @@ const ICON: Record<ChainVerifyState, string> = {
 };
 
 const TONE: Record<ChainVerifyState, string> = {
-  verified: "bg-emerald-100 text-emerald-900 border-emerald-200",
-  broken: "bg-red-100 text-red-900 border-red-200",
-  pending: "bg-slate-100 text-slate-700 border-slate-200",
+  verified: "border-robust/40 bg-robust/10 text-robust",
+  broken: "border-critical/40 bg-critical/10 text-critical",
+  pending: "border-hairline bg-panel-2 text-muted-foreground",
 };
 
 export interface AuditChainBadgeProps extends HTMLAttributes<HTMLSpanElement> {

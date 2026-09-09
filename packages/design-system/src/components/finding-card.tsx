@@ -24,10 +24,10 @@ export interface FindingCardProps {
 }
 
 const VALIDATION_TONES: Record<string, string> = {
-  poc_passed: "bg-emerald-100 text-emerald-900",
-  poc_failed: "bg-red-100 text-red-900",
-  inconclusive: "bg-amber-100 text-amber-900",
-  unvalidated: "bg-slate-100 text-slate-500",
+  poc_passed: "bg-robust/10 text-robust",
+  poc_failed: "bg-critical/10 text-critical",
+  inconclusive: "bg-degraded/10 text-degraded",
+  unvalidated: "bg-panel-2 text-muted-foreground",
 };
 
 export function FindingCard({
@@ -44,17 +44,17 @@ export function FindingCard({
   const validationTone =
     validationState && VALIDATION_TONES[validationState]
       ? VALIDATION_TONES[validationState]
-      : "bg-slate-100 text-slate-500";
+      : "bg-panel-2 text-muted-foreground";
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm",
+        "flex flex-col gap-3 rounded-lg border border-hairline bg-panel p-4 shadow-sm",
         className,
       )}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 text-xs text-slate-500">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <SeverityChip level={severity} />
             <span className="font-mono">{id}</span>
             {target && (
@@ -63,7 +63,7 @@ export function FindingCard({
               </span>
             )}
           </div>
-          <h3 className="mt-2 truncate text-lg font-semibold text-slate-900">
+          <h3 className="mt-2 truncate text-lg font-semibold text-foreground">
             {title}
           </h3>
         </div>
@@ -72,7 +72,7 @@ export function FindingCard({
         )}
       </div>
       <div className="flex items-center gap-2 text-xs">
-        <span className="inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-slate-700">
+        <span className="inline-flex items-center rounded bg-panel-2 px-1.5 py-0.5 text-muted-foreground">
           status: {status}
         </span>
         {validationState && (
@@ -87,7 +87,7 @@ export function FindingCard({
         )}
       </div>
       {children && (
-        <div className="text-sm text-slate-700">{children}</div>
+        <div className="text-sm text-foreground">{children}</div>
       )}
     </div>
   );

@@ -23,10 +23,10 @@ export interface ToastListProps {
 }
 
 const TONE: Record<ToastTone, string> = {
-  info: "bg-sky-50 text-sky-900 border-sky-200",
-  success: "bg-emerald-50 text-emerald-900 border-emerald-200",
-  warning: "bg-amber-50 text-amber-900 border-amber-200",
-  error: "bg-red-50 text-red-900 border-red-200",
+  info: "border-inferred/40 bg-inferred/10 text-inferred",
+  success: "border-robust/40 bg-robust/10 text-robust",
+  warning: "border-degraded/40 bg-degraded/10 text-degraded",
+  error: "border-critical/40 bg-critical/10 text-critical",
 };
 
 export function ToastList({ toasts, onDismiss, className }: ToastListProps) {

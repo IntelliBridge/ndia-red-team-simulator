@@ -12,12 +12,12 @@ export type RunStatus =
   | "cancelled";
 
 const TONES: Record<RunStatus, string> = {
-  queued: "bg-slate-100 text-slate-700",
-  running: "bg-sky-100 text-sky-900",
-  succeeded: "bg-emerald-100 text-emerald-900",
-  partial_success: "bg-amber-100 text-amber-900",
-  failed: "bg-red-100 text-red-900",
-  cancelled: "bg-slate-100 text-slate-500 line-through",
+  queued: "border-hairline bg-panel-2 text-muted-foreground",
+  running: "border-primary/40 bg-primary/10 text-primary",
+  succeeded: "border-robust/40 bg-robust/10 text-robust",
+  partial_success: "border-partial/40 bg-partial/10 text-partial",
+  failed: "border-critical/40 bg-critical/10 text-critical",
+  cancelled: "border-hairline bg-panel-2 text-muted-foreground line-through",
 };
 
 export interface RunStatusBadgeProps extends HTMLAttributes<HTMLSpanElement> {
@@ -33,7 +33,7 @@ export function RunStatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium",
+        "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
         tone,
         className,
       )}

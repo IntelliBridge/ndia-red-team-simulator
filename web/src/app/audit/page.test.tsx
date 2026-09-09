@@ -76,7 +76,7 @@ describe("AuditPage", () => {
     expect(screen.queryByTestId("overall-status")).toBeNull();
   });
 
-  it("renders a verified chain with a green-toned 'verified' status and event blocks", () => {
+  it("renders a verified chain with a robust-toned 'verified' status and event blocks", () => {
     useSWRMock.mockReturnValue({
       data: {
         chains: [
@@ -99,7 +99,10 @@ describe("AuditPage", () => {
 
     const status = screen.getByTestId("status-project:alpha");
     expect(status.textContent).toContain("verified");
-    expect(status.className).toContain("emerald");
+    // The "robust" token, not a raw palette literal: the design port moved
+    // every status tone onto the shared palette, so this asserts the tone the
+    // component means rather than the colour it happened to compile to.
+    expect(status.className).toContain("robust");
 
     // Per-event blocks render with seq labels.
     expect(screen.getByText("seq 1")).toBeTruthy();
@@ -108,7 +111,7 @@ describe("AuditPage", () => {
     // Overall status reflects all-verified.
     const overall = screen.getByTestId("overall-status");
     expect(overall.textContent).toContain("All chains verified");
-    expect(overall.className).toContain("emerald");
+    expect(overall.className).toContain("robust");
   });
 
   it("renders a broken chain with a destructive-toned 'broken' status", () => {
