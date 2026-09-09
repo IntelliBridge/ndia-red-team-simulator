@@ -3,7 +3,7 @@
 // TopBar: the banner landmark of the app shell. The fixture ribbon comes
 // first inside it, then the product name and the UNCLASSIFIED marker on the
 // left with the command-palette button and sign-out on the right, and below
-// the md breakpoint a compact row of the same six nav links, because the
+// the md breakpoint a compact row of the same nav links, because the
 // sidebar is not rendered there and every route has to stay reachable
 // without the palette.
 

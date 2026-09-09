@@ -1,4 +1,4 @@
-// The six sidebar icons, one per NAV entry, as inline SVG so the shell adds
+// The sidebar icons, one per NAV entry, as inline SVG so the shell adds
 // no icon dependency to the workspace. 24-unit grid, 2px round strokes in
 // currentColor, so each one takes the colour of the link it sits in.
 //
@@ -63,6 +63,14 @@ export const FindingsIcon: NavIcon = (props) => (
   <Icon {...props}>
     <circle cx="11" cy="11" r="6.5" />
     <path d="m20 20-4.4-4.4" />
+  </Icon>
+);
+
+export const ExportsIcon: NavIcon = (props) => (
+  <Icon {...props}>
+    <path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15" />
+    <path d="M12 3.5V15" />
+    <path d="m7.5 10.5 4.5 4.5 4.5-4.5" />
   </Icon>
 );
 

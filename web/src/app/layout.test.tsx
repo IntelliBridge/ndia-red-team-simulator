@@ -23,7 +23,7 @@ function renderLayout() {
   );
 }
 
-// The shell carries the six links twice: in the sidebar from the md
+// The shell carries the nav links twice: in the sidebar from the md
 // breakpoint up, and in the compact header row below it. jsdom applies no
 // stylesheet, so both are present and each is asserted on its own.
 function sidebarNav(container: HTMLElement): HTMLElement {
@@ -45,6 +45,7 @@ const PRUNED_NAV = [
   ["Runs", "/runs"],
   ["Tests", "/tests"],
   ["Findings", "/findings"],
+  ["Exports", "/exports"],
   ["Audit", "/audit"],
 ];
 
@@ -68,7 +69,7 @@ describe("RootLayout", () => {
     const { container } = renderLayout();
 
     // The sidebar and the compact header row read the same list, so both
-    // carry the six links in the same order.
+    // carry the same links in the same order.
     expect(linkPairs(container, "aside nav a")).toEqual(PRUNED_NAV);
     expect(linkPairs(container, "header nav a")).toEqual(PRUNED_NAV);
 

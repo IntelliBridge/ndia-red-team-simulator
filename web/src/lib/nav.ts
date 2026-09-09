@@ -2,7 +2,7 @@
 // breakpoint and the command palette all read it, so a route is added or
 // hidden in exactly one place.
 //
-// The six entries and their order mirror the header nav the app shipped
+// The seven entries and their order mirror the header nav the app shipped
 // before the sidebar shell. Projects, Auth Profiles, Logs and Cost stay off
 // the list by owner request (2026-09-09): their pages remain reachable by
 // URL. A route whose page does not exist yet gets no entry. The change that
@@ -11,6 +11,7 @@
 import {
   AuditIcon,
   DashboardIcon,
+  ExportsIcon,
   FindingsIcon,
   ModelsIcon,
   type NavIcon,
@@ -30,6 +31,7 @@ export const NAV: NavItem[] = [
   { href: "/runs", label: "Runs", icon: RunsIcon },
   { href: "/tests", label: "Tests", icon: TestsIcon },
   { href: "/findings", label: "Findings", icon: FindingsIcon },
+  { href: "/exports", label: "Exports", icon: ExportsIcon },
   { href: "/audit", label: "Audit", icon: AuditIcon },
 ];
 
