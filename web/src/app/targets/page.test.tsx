@@ -146,7 +146,7 @@ describe("TargetsPage", () => {
   it("shows the redirect placeholder when unauthenticated", () => {
     useRequireAuthMock.mockReturnValue(false);
     render(h(TargetsPage));
-    expect(screen.getByText("Redirecting to sign in…")).toBeTruthy();
+    expect(screen.getByText("Signing in…")).toBeTruthy();
     expect(screen.queryByText("Targets")).toBeNull();
   });
 
