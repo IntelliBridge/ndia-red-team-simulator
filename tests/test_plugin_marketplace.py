@@ -636,8 +636,14 @@ def test_ml_attacks_entry_point_discovery():
     class ClashAttack(FakeAttack):
         id = "fgsm"      # collides with the built-in
 
+    factory_calls = {"fake": 0}
+
+    def fake_factory():
+        factory_calls["fake"] += 1
+        return FakeAttack()
+
     eps = [
-        _fake_ep("fake", lambda: FakeAttack(), dist_name="fake-attacks", version="1.0"),
+        _fake_ep("fake", fake_factory, dist_name="fake-attacks", version="1.0"),
         _fake_ep("bad", lambda: BadAttack(), dist_name="fake-attacks", version="1.0"),
         _fake_ep("clash", lambda: ClashAttack(), dist_name="fake-attacks", version="1.0"),
     ]
@@ -645,6 +651,7 @@ def test_ml_attacks_entry_point_discovery():
     def entry_points(group):
         return eps if group == "redsim.ml.attacks" else []
 
+    plugins.reset_ml_attack_plugin_memory()
     try:
         # Off by default: nothing is scanned, nothing registered.
         with patch.dict(os.environ, _env_without_plugins(), clear=True), \
@@ -677,12 +684,41 @@ def test_ml_attacks_entry_point_discovery():
         assert ATTACKS.get("fake-plugin-attack").info().name == "Fake plugin attack"
         assert ATTACKS.get("fgsm") is builtin_fgsm
         assert "bad-plugin-attack" not in ATTACKS
+        registered_adapter = ATTACKS.get("fake-plugin-attack")
+        # discover_all ran the factory once (report only), the eager load once more.
+        assert factory_calls["fake"] == 2
 
-        # A second load reports the plugin as already registered rather than duplicating it.
+        # The loader is idempotent: a second load in the same process (redsim.scanners at import, then
+        # GET /v1/attacks, say) is a no-op for the entry point already registered and returns the same
+        # rows, never "already registered", without instantiating the factory or touching the registry.
         with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
                 patch("importlib.metadata.entry_points", side_effect=entry_points):
-            again = {r.name: r for r in plugins.load_ml_attack_plugins()}
-        assert again["fake-plugin-attack"].status == "rejected" and "already registered" in again["fake-plugin-attack"].detail
+            again = plugins.load_ml_attack_plugins()
+        assert [r.to_dict() for r in again] == [r.to_dict() for r in loaded]
+        assert again[0].status == "loaded" and again[0].name == "fake-plugin-attack"
+        assert ATTACKS.get("fake-plugin-attack") is registered_adapter
+        assert factory_calls["fake"] == 2, "the remembered entry point is not instantiated again"
+        # The clash with the built-in and the non-conformant plugin are re-checked and read the same.
+        assert {r.name: r.status for r in again} == {"fake-plugin-attack": "loaded", "bad": "rejected",
+                                                     "fgsm": "rejected"}
+        assert ATTACKS.get("fgsm") is builtin_fgsm
+
+        # The read-only report says what is true after a load: the plugin is loaded (not a duplicate).
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
+                patch("importlib.metadata.entry_points", side_effect=entry_points):
+            report_after = {r.name: r for r in plugins.discover_all() if r.group == "redsim.ml.attacks"}
+        assert report_after["fake-plugin-attack"].status == "loaded"
+        assert factory_calls["fake"] == 2
+
+        # The memory is checked against the registry: once the adapter is gone (a registry reset), the
+        # entry point is scanned and registered afresh instead of being reported from memory.
+        ATTACKS._items.pop("fake-plugin-attack")
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
+                patch("importlib.metadata.entry_points", side_effect=entry_points):
+            reloaded = {r.name: r for r in plugins.load_ml_attack_plugins()}
+        assert reloaded["fake-plugin-attack"].status == "loaded"
+        assert "fake-plugin-attack" in ATTACKS and ATTACKS.get("fake-plugin-attack") is not registered_adapter
+        assert factory_calls["fake"] == 3
 
         # The distribution allowlist applies to attack plugins as it does to scanners.
         with patch.dict(os.environ, {"REDSIM_PLUGINS": "1", "REDSIM_PLUGINS_ALLOW": "some-other-dist"}), \
@@ -705,3 +741,65 @@ def test_ml_attacks_entry_point_discovery():
         assert all(r["kind"] == "attack" for r in attack_rows)
     finally:
         ATTACKS._items.pop("fake-plugin-attack", None)
+        plugins.reset_ml_attack_plugin_memory()
+
+
+def test_ml_attack_loader_is_idempotent_across_the_scanners_import_and_the_catalog():
+    """``redsim.scanners`` (import) and ``GET /v1/attacks`` both load the group: the second sees the same rows.
+
+    Reproduces the wave-3 follow-up: with the gate on, importing ``redsim.scanners`` first registered the
+    plugin and the route's later ``load_ml_attack_plugins`` reported it as ``rejected: already registered``
+    while it was listed in the catalog. Both loads now report ``loaded`` for the same adapter instance.
+    """
+    import pytest
+
+    pytest.importorskip("numpy")
+    from redsim.ml.attacks.registry import ATTACKS
+    from redsim.ml.schema import AttackInfo
+
+    class IdempotentAttack:
+        id = "idempotent-plugin-attack"
+        domains = frozenset({"image"})
+        takes_eps = True
+        capabilities = frozenset({"adversarial_ml", "white_box", "takes_eps", "family:evasion", "modality:image"})
+
+        def info(self):
+            return AttackInfo(id=self.id, name="Idempotent plugin attack", domain="image", family="evasion",
+                              access="white-box", requires_gradients=True)
+
+        def resolve_params(self, params):
+            return {}
+
+        def run(self, target, x, y, params, seed):  # pragma: no cover - never invoked
+            raise NotImplementedError
+
+    ep = _fake_ep("idem", lambda: IdempotentAttack(), dist_name="idem-dist", version="2.0")
+
+    def entry_points(group):
+        return [ep] if group == "redsim.ml.attacks" else []
+
+    from redsim.scanners import maybe_load_ml_attack_entry_points
+
+    plugins.reset_ml_attack_plugin_memory()
+    try:
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
+                patch("importlib.metadata.entry_points", side_effect=entry_points):
+            maybe_load_ml_attack_entry_points()      # what ``import redsim.scanners`` runs with the gate on
+            registered_by_import = ATTACKS.get("idempotent-plugin-attack")
+            second = plugins.load_ml_attack_plugins()   # what GET /v1/attacks runs on its first request
+            third = plugins.load_ml_attack_plugins()
+        assert [r.to_dict() for r in second] == [r.to_dict() for r in third]
+        (row,) = third
+        assert row.status == "loaded" and row.name == "idempotent-plugin-attack" and row.detail == ""
+        assert row.distribution == "idem-dist" and row.version == "2.0"
+        assert ATTACKS.get("idempotent-plugin-attack") is registered_by_import, "never re-registered or replaced"
+        assert registered_by_import.info().name == "Idempotent plugin attack"
+        # Rows are copies: mutating one never changes what the next load reports.
+        row.detail = "mutated by the caller"
+        with patch.dict(os.environ, {"REDSIM_PLUGINS": "1"}), \
+                patch("importlib.metadata.entry_points", side_effect=entry_points):
+            (fourth,) = plugins.load_ml_attack_plugins()
+        assert fourth.detail == "" and fourth.status == "loaded"
+    finally:
+        ATTACKS._items.pop("idempotent-plugin-attack", None)
+        plugins.reset_ml_attack_plugin_memory()

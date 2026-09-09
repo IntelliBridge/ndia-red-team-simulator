@@ -21,10 +21,14 @@ uses): the service verifies the bundled files against the manifest, writes the
 ``model.register`` audit row, copies the weights into the blob store and adds a
 per-project ``Target`` (id ``<bundled_id>-<8 hex>``, value
 ``bundled:<bundled_id>``), which the CLI commits per model. A model the project
-already holds is reported as already present from the service's
-``already_registered`` refusal; every refusal is written to the project chain
-as a ``success=False`` row, as the route does. When the service is absent in
-this build the command says so and exits non-zero instead of pretending.
+already holds is found first by a read-only lookup
+(``redsim.services.ml_models.find_bundled_registration``) and reported as
+already present: re-seeding is the expected idempotent operation, not a refused
+admission, so it writes no audit row and calls the service for nothing. Every
+genuine refusal (unverified assets, an unknown id) is written to the project
+chain as a ``success=False`` ``model.register`` row, as the route does. When the
+service is absent in this build the command says so and exits non-zero instead
+of pretending.
 
 ``build-assets --fixture`` writes the committed CIFAR-10 test slice
 (``tests/ml/fixtures/cifar10_test_500.npz`` and its sidecar entry) from a local
@@ -185,10 +189,10 @@ def add_ml_subparser(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -
             "files against the manifest, writes the model.register audit row first, puts the weights blob and "
             "creates the ml_model_artifact Target (id <bundled_id>-<8 hex>, value bundled:<bundled_id>) as "
             "available; each registration is committed before the next model. A model the project already holds "
-            "is reported as already present (the service's already_registered) and never re-registered; every "
-            "refusal is recorded on the project chain as a success=False model.register row and any refusal other "
-            "than already_registered makes the command exit 1 after the remaining models were tried. When the "
-            "service is absent in this build the command says so and exits non-zero."
+            "is found by a read-only lookup first, reported as already present and never re-registered (no audit "
+            "row: re-seeding is idempotent, not a refusal); every genuine refusal is recorded on the project chain "
+            "as a success=False model.register row and makes the command exit 1 after the remaining models were "
+            "tried. When the service is absent in this build the command says so and exits non-zero."
         ),
     )
     p_seed.add_argument("--project", default=None,
@@ -457,15 +461,19 @@ def _describe_refusal(exc: Any) -> str:
 def cmd_ml_seed(args: argparse.Namespace, config: RedsimConfig) -> None:
     """Register every bundled, non-fixture model of the manifest into one project.
 
-    Per model: ``register_bundled_model`` verifies the bundled files against the
-    manifest, writes the ``model.register`` audit row, copies the weights into
-    the blob store and adds the ``Target`` row; the CLI then commits that row so
-    a refusal further down the list leaves the models before it registered. A
-    refusal (``ApiError``) is written to the project chain as a ``success=False``
-    ``model.register`` row through ``audit_refused_admission``, exactly as
-    ``POST /v1/models`` does; ``already_registered`` is reported as already
-    present and is not a failure, every other code makes the command exit 1
-    after the remaining models were tried.
+    Per model: a read-only ``find_bundled_registration`` lookup first; a live
+    registration in the project is printed as already present and nothing else
+    happens (no service call, no audit row: a re-seed is idempotent, not a
+    refused admission). Otherwise ``register_bundled_model`` verifies the bundled
+    files against the manifest, writes the ``model.register`` audit row, copies
+    the weights into the blob store and adds the ``Target`` row; the CLI then
+    commits that row so a refusal further down the list leaves the models before
+    it registered. A refusal (``ApiError``) is written to the project chain as a
+    ``success=False`` ``model.register`` row through ``audit_refused_admission``,
+    exactly as ``POST /v1/models`` does, and makes the command exit 1 after the
+    remaining models were tried. ``already_registered`` from the service (a
+    registration that landed between the lookup and the call) is still reported
+    as already present, without a row.
     """
     fn = _seed_service()
     if fn is None:
@@ -480,6 +488,8 @@ def cmd_ml_seed(args: argparse.Namespace, config: RedsimConfig) -> None:
         DatasetBindingError,
         MlCatalogUnavailable,
         audit_refused_admission,
+        canonical_bundled_id,
+        find_bundled_registration,
         read_asset_manifest,
     )
 
@@ -517,21 +527,29 @@ def cmd_ml_seed(args: argparse.Namespace, config: RedsimConfig) -> None:
             project_id = _seed_project_id(sess, getattr(args, "project", None))
             _console._info(f"seeding {bundled_ids} into project {project_id} from {assets_dir}")
             for bundled_id in bundled_ids:
+                # Read-only first: a model the project already holds is the expected state on a re-seed,
+                # not a refused admission, so it is reported without a service call or an audit row.
+                existing = find_bundled_registration(sess, project_id, canonical_bundled_id(bundled_id))
+                if existing is not None:
+                    present += 1
+                    _console._info(f"already present: {bundled_id}{_describe_target(existing)}")
+                    continue
                 try:
                     target = fn(sess, project_id, bundled_id, actor, audit_writer=writer, config=config,
                                 blob_store=blob_store, assets_root=assets_dir)
                 except ApiError as exc:
                     sess.rollback()
+                    if exc.code == ALREADY_REGISTERED:
+                        # Registered between the lookup and the call: the same idempotent outcome, no row.
+                        present += 1
+                        _console._info(f"already present: {bundled_id}{_describe_refusal(exc)}")
+                        continue
                     audit_refused_admission(
                         writer, action="model.register", actor=actor, project_id=project_id,
                         detail={"kind": "ml_model_artifact", "source": "bundled", "bundled_id": bundled_id,
                                 "reason": exc.code, **{k: v for k, v in exc.detail.items()
                                                        if k in {"reason", "refusal_reason", "status", "target_id"}}},
                     )
-                    if exc.code == ALREADY_REGISTERED:
-                        present += 1
-                        _console._info(f"already present: {bundled_id}{_describe_refusal(exc)}")
-                        continue
                     failures += 1
                     _console._err(f"{bundled_id}: refused ({exc.code}): {exc}{_describe_refusal(exc)}")
                     continue

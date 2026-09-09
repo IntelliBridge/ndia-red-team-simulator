@@ -565,9 +565,11 @@ def test_ml_seed_registers_or_explains(tmp_path, monkeypatch, capsys):
     """``redsim ml seed`` drives the real ``register_bundled_model`` on a sqlite database.
 
     Seeding twice: the first run registers both non-fixture models (audit row on the project chain,
-    weights blob, ``Target`` row per model, committed one by one), the second reports them as already
-    present from the service's ``already_registered`` and writes nothing new but the refusal rows the
-    route writes too. Refusals other than a duplicate exit 1 after the other models were tried.
+    weights blob, ``Target`` row per model, committed one by one), the second finds them by the read-only
+    ``find_bundled_registration`` lookup, reports them as already present and writes nothing at all: no
+    Target, no blob and no audit row, because a re-seed is the expected idempotent operation and not a
+    refused admission. Genuine refusals still write a ``success=False`` row and exit 1 after the other
+    models were tried.
     """
     pytest.importorskip("numpy")        # the target registry the service resolves ids through
     pytest.importorskip("sqlalchemy")
@@ -656,24 +658,24 @@ def test_ml_seed_registers_or_explains(tmp_path, monkeypatch, capsys):
     assert events[0].prev_hash is None and events[1].prev_hash == events[0].this_hash
     assert events[0].detail["blob_key"] == "ml/assets/bundled/url_trees/model.joblib"
 
-    # 4. Seeding again: both are already present, no new Target or blob, and the chain records the two
-    #    already_registered refusals as success=False rows exactly as POST /v1/models would.
-    with patch("redsim.config.load_config", return_value=config):
+    # 4. Seeding again: both are already present (found read-only, the service is not called), no new
+    #    Target or blob, and the chain is untouched: a re-seed is idempotent, not a refused admission, so
+    #    no success=False model.register row is written for a model the project already holds.
+    with patch("redsim.config.load_config", return_value=config), \
+            patch.object(ml_models, "register_bundled_model",
+                         side_effect=AssertionError("the service must not be called for a present model")):
         cli_main.main(["ml", "seed", "--project", "demo", "--actor", "cli:test"])
     out = capsys.readouterr().out
-    assert f"already present: url_trees (target {by_bundled['url_trees'].id})" in out
-    assert f"already present: vehicles_cnn (target {by_bundled['vehicles_cnn'].id})" in out
+    assert f"already present: url_trees (target {by_bundled['url_trees'].id}, status available)" in out
+    assert f"already present: vehicles_cnn (target {by_bundled['vehicles_cnn'].id}, status available)" in out
     assert "registered:" not in out and "0 registered, 2 already present, 0 refused" in out
     targets_again, events_again = rows()
     assert [t.id for t in targets_again] == [t.id for t in targets]
     assert len([p for p in blob_root.rglob("*") if p.is_file()]) == 2
-    refusals = events_again[2:]
-    assert [(e.chain_id, e.seq, e.action, e.success) for e in refusals] == [
-        ("project:p1", 3, "model.register", False), ("project:p1", 4, "model.register", False)]
-    assert [(e.detail["bundled_id"], e.detail["reason"], e.detail["target_id"]) for e in refusals] == [
-        ("url_trees", "already_registered", by_bundled["url_trees"].id),
-        ("vehicles_cnn", "already_registered", by_bundled["vehicles_cnn"].id)]
-    assert refusals[0].prev_hash == events[1].this_hash
+    assert [(e.chain_id, e.seq, e.action, e.success) for e in events_again] == [
+        ("project:p1", 1, "model.register", True), ("project:p1", 2, "model.register", True)], \
+        "a re-seed writes no refusal row"
+    assert all(e.success for e in events_again)
 
     # 5. A genuine refusal: tampered url_trees weights fail verification into the second project, the command
     #    exits 1 after still registering vehicles_cnn there, and the refusal is on p2's chain with no Target.
@@ -705,4 +707,5 @@ def test_ml_seed_registers_or_explains(tmp_path, monkeypatch, capsys):
     with patch("redsim.config.load_config", return_value=config):
         cli_main.main(["ml", "seed", "--project", "demo", "--only", "cifar10_smallcnn"])
     assert "nothing to seed" in capsys.readouterr().out
-    assert len(rows()[1]) == 6, "no audit row for a usage error, an unknown project or a fixture-only selection"
+    assert len(rows()[1]) == 4, ("no audit row for a usage error, an unknown project, a fixture-only selection "
+                                 "or a re-seed: two registrations on p1, one refusal and one registration on p2")
