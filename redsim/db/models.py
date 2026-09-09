@@ -20,9 +20,12 @@ from sqlalchemy import (
     Index,
     Integer,
     LargeBinary,
+    PrimaryKeyConstraint,
     String,
     Text,
     UniqueConstraint,
+    func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -56,6 +59,17 @@ class Project(Base):
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     slug: Mapped[str] = mapped_column(String(128), nullable=False)
     daily_llm_budget_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Phase B (migration 0011_phase_b_platform), all nullable and additive.
+    # ``ml_scoring`` holds a full ``ScoringConfig`` (redsim/ml/schema.py) as
+    # the per-project override; NULL means the deployment default. It is
+    # validated at the settings route, never renormalised, and read at
+    # campaign admission. ``ml_max_concurrent_runs`` caps concurrent ML runs
+    # per project and ``ml_daily_run_budget`` caps ML admissions per UTC day;
+    # NULL means the deployment default (``REDSIM_ML_MAX_CONCURRENT_RUNS_PER_PROJECT``)
+    # or uncapped (``REDSIM_ML_PROJECT_DAILY_RUN_BUDGET`` unset).
+    ml_scoring: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    ml_max_concurrent_runs: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ml_daily_run_budget: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     __table_args__ = (UniqueConstraint("org_id", "slug"),)
 
@@ -375,3 +389,145 @@ class ApplicationLog(Base):
     span_id: Mapped[str | None] = mapped_column(String(32))
     attrs: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, nullable=False)
+
+
+# --------------------------------------------------------------------------- Phase B
+# Migration ``0011_phase_b_platform``. Every table below carries the Phase 6
+# tenant rails of ``ml_campaigns`` (0010): a denormalized ``org_id`` that a
+# BEFORE INSERT trigger backfills from the project, a BEFORE UPDATE drift
+# guard, ``FORCE ROW LEVEL SECURITY`` and the ``redsim_tenant_isolation``
+# policy. Application code never sets ``org_id``. ``ml_campaigns`` itself stays
+# migration-owned (reflected by the services, no ORM model) so the hand-written
+# sqlite mirrors in the test harnesses keep working; 0011 only adds its
+# ``batch_id`` column.
+
+
+class ReportSnapshot(Base):
+    """One immutable row per rendered report (spec F007, REVIEW_REPORTS-20).
+
+    The bytes live in the content-addressed ``artifacts`` rows named by
+    ``artifact_ids``; ``record_sha256`` is the digest of the ``CampaignRecord``
+    the render was projected from, so a snapshot can be checked against the
+    run record it claims to show. ``archived`` hides a snapshot from listings
+    without deleting evidence.
+    """
+    __tablename__ = "report_snapshots"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False, index=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    # Denormalized tenant key for RLS (0011); trigger-backfilled, see Target.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True)
+    artifact_ids: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'"))
+    record_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    rendered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+    archived: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false"))
+    created_by: Mapped[str | None] = mapped_column(String(256))
+
+
+class IdempotencyKey(Base):
+    """Stored request identity for ``Idempotency-Key`` on mutating routes
+    (spec F004 US1, REVIEW_REPORTS-31).
+
+    The primary key is ``(project_id, key)``: the same key replayed within a
+    project returns the stored ``response_status`` and ``response_body`` when
+    ``route`` and ``request_sha256`` (canonical JSON body) match, and is
+    refused when they do not. Expiry is derived from ``created_at`` by the
+    middleware and the reaper; nothing here is a secret.
+    """
+    __tablename__ = "idempotency_keys"
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    # Denormalized tenant key for RLS (0011); trigger-backfilled, see Target.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True)
+    route: Mapped[str] = mapped_column(String(256), nullable=False)
+    request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_status: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_body: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+    __table_args__ = (
+        PrimaryKeyConstraint("project_id", "key", name="pk_idempotency_keys"),
+    )
+
+
+class MlBatch(Base):
+    """A bulk operation (BULK-01): N linked runs or uploads under one id.
+
+    ``kind`` is ``campaign`` (one ``CampaignConfig`` over N models),
+    ``verify`` (bulk verify) or ``upload`` (bulk model upload). ``config`` is
+    the request as admitted (target ids, campaign body, refused members and
+    their reasons). ``status`` is the batch's own lifecycle (``accepted``,
+    then ``cancelled`` once ``cancelled_at`` is stamped); the member roll-up
+    is derived from the linked runs (``ml_campaigns.batch_id``) so no single
+    word hides a failed member. ``idempotency_key`` and ``request_sha256``
+    let a replayed batch request return the same batch.
+    """
+    __tablename__ = "ml_batches"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    # Denormalized tenant key for RLS (0011); trigger-backfilled, see Target.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # campaign|verify|upload
+    config: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'"))
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="accepted", server_default="accepted")
+    created_by: Mapped[str | None] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    request_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class MlDataset(Base):
+    """A consumed evaluation slice registered through ``POST /v1/datasets``
+    (spec 27.1 consume side, INTEROP-14).
+
+    ``status`` moves ``validating`` -> ``available`` | ``refused`` on the
+    worker after the sandbox child parses the files; ``refusal_reason`` is the
+    typed reason. ``manifest_sha256`` is the dataset revision. ``detail``
+    carries what the parse reports (declared schema, per-file sha256s,
+    ``n_rows``, per-class counts) so the frozen ``redsim/ml/schema.py`` is
+    untouched. Bytes never live here: ``blob_location`` names the artifact
+    store prefix.
+    """
+    __tablename__ = "ml_datasets"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    # Denormalized tenant key for RLS (0011); trigger-backfilled, see Target.
+    org_id: Mapped[str | None] = mapped_column(
+        ForeignKey("organizations.id"), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(  # validating | available | refused
+        String(16), nullable=False, default="validating", server_default="validating")
+    refusal_reason: Mapped[str | None] = mapped_column(Text)
+    license: Mapped[str | None] = mapped_column(String(256))
+    modality: Mapped[str | None] = mapped_column(String(16))
+    class_names: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    manifest_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    blob_location: Mapped[str | None] = mapped_column(String(1024))
+    detail: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_now, server_default=func.now())
+
+
+class DatasetRegisterJobDetail(TypedDict):
+    """Shape of ``Job.detail`` for ``dataset.register`` jobs (INTEROP-14).
+
+    Admission writes every key: the ``ml_datasets`` row to update, where the
+    uploaded bytes were stored, and what the uploader declared about them.
+    The worker verifies the declaration inside the sandbox child and moves
+    the row's ``status``.
+    """
+
+    dataset_id: str
+    blob_location: str
+    declared_format: str
+    declared_sha256: str
