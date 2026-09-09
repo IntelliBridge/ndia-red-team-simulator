@@ -41,7 +41,11 @@ days. Coordinated disclosure is preferred.
   (scanner), `explain.run` (scanner), `harden.recommend` (remediator),
   `finding.review` (approver, plus an independence check so a campaign's
   creator cannot dismiss its own findings), `finding.annotate` (remediator),
-  `report.export` (scanner).
+  `report.export` (scanner), and since Phase B wave B0 `llm.probe.run`
+  (remediator), `dataset.register` (remediator), `dataset.export`
+  (remediator), `integration.push` (admin), `batch.run` (scanner),
+  `report.render` (scanner), `finding.author` (remediator), mirrored in the
+  OPA and Cedar bundles.
 - The role-gate decision is pluggable (`REDSIM_POLICY_ENGINE`): the default
   `static` engine is the built-in role-rank table, `opa` and `cedar` delegate
   to an external policy service. External engines fail closed.
@@ -134,9 +138,16 @@ See [`docs/architecture/multi-tenancy.md`](docs/architecture/multi-tenancy.md).
   and then return `501 Not Implemented`. A target's `verified` flag is never
   set in this build.
 - ML model targets (`Target.kind` of `ml_model_artifact` and
-  `ml_model_endpoint`) are created only through the planned `/v1/models`
-  routes so the upload rules below cannot be bypassed. `POST /v1/targets`
-  with an ML kind is specified to answer `400 use_models_route`.
+  `ml_model_endpoint`) are created only through the `/v1/models` routes so
+  the upload rules below cannot be bypassed. `POST /v1/targets` with an ML
+  kind answers `400 use_models_route`. A black-box endpoint (Phase B wave B2)
+  registers at `target.manage` (admin) with its credential in an
+  `AuthProfile`, passes the egress allowlist and the D3 attestation
+  (`attestation_required` otherwise), is queried only from the worker-parent
+  predict broker (never the API, never the sandbox child), and its profile
+  cannot be deleted while the target is live (`409 auth_profile_in_use`).
+  No DNS-TXT ownership check exists for endpoints (owner default
+  ENDPOINT-26).
 
 ### Deployment hardening (Helm / k8s)
 
@@ -192,7 +203,41 @@ module already runs its top-level code. Only run vetted, signed plugins with
 - Dependency CVEs (`pip-audit`, `trivy`), SAST (`semgrep`, `bandit`) and a
   verified-secrets scan (`trufflehog`) gate CI with documented baselines
   (`.bandit`, `.semgrepignore`, `.github/pip-audit-ignores.txt`,
-  `.trivyignore`).
+  `.trivyignore`). The `.trivyignore` baseline at the wave B4 push holds
+  Next.js 14.2.35 advisories whose fix is only in Next 15 or 16 (a
+  web-workstream migration): `CVE-2026-44573`, `CVE-2026-44578`,
+  `GHSA-8h8q-6873-q5fj`, `GHSA-h25m-26qc-wcjf`, `GHSA-q4gf-8mx6-v5v3`,
+  `CVE-2026-64641`, `CVE-2026-64645`, `CVE-2026-64649`, `CVE-2026-75604` and
+  its alias `GHSA-2xp9-vwfh-vxw4` (an Image Optimization RCE on
+  windows-hosted servers; `deploy/Dockerfile.web` is a Linux container, so
+  the path is not reachable as deployed), and the `postcss` 8.4.31 entries
+  `CVE-2026-45623` and `CVE-2026-73646` (pinned exactly by `next@14.2.35`).
+  Each entry carries its reason in the file; the web UI is auth-gated
+  internal admin.
+- **garak (Phase B LLM domain, decision D5).** The `garak` extra
+  (`garak>=0.16,<0.17`) installs the `openai` and `litellm` client libraries
+  as transitive dependencies. No deploy image installs the extra
+  (`deploy/Dockerfile.worker` installs `.[worker,ml]`, `Dockerfile.api`
+  `.[api,worker]`); it is installed in the `garak offline` and `e2e-python` CI
+  lanes and on a developer venv that opts in, so those clients exist only
+  where a probe run can happen, the worker's `default` pool when an operator
+  installs the extra there. No configuration path reaches them: no provider
+  key variable exists anywhere (`.env.example` names `PYTHIA_API_KEY` as the
+  only LLM credential), garak's generator is `PythiaGenerator`, which posts
+  only to the configured gateway with a probe key held in a bearer
+  `AuthProfile` and never read from the environment, `assert_no_litellm`
+  checks that litellm never enters the generator's class hierarchy, the API
+  process blocks `garak`, `openai` and `litellm` in
+  `tests/test_api_process_has_no_ml.py`, the probe child runs with the
+  interpreter allowlist (every `PYTHIA_*`, `AWS_*`, `KAGGLE*`, `OPENAI*`,
+  `HF_TOKEN` and `REDSIM_*` secret swept) and the key in a 0600 file it
+  deletes at once, and `redsim/llm/pricing.py` snapshots the environment
+  around its own `litellm` import so a cost lookup is never an ambient
+  credential source. The probe corpora garak ships are loaded by garak from
+  the installed package; the public data repository carries a copy with the
+  licence per subset (spec 11.6 addendum). See
+  [`docs/security/supply-chain.md`](docs/security/supply-chain.md) and
+  [`docs/ops/pythia.md`](docs/ops/pythia.md).
 - See [`docs/security/supply-chain.md`](docs/security/supply-chain.md).
 
 ### LLM: Pythia holds the provider keys
@@ -200,8 +245,10 @@ module already runs its top-level code. Only run vetted, signed plugins with
 - Every LLM call goes through Pythia (`redsim/llm/pythia.py`). redsim holds
   one `pk_…` gateway key (`PYTHIA_API_KEY`) and no model-provider key
   anywhere. The gateway applies persona, guardrails, metering and audit before
-  a request reaches a model. The `OPENAI_API_KEY`-style entries in
-  `.env.example` are aegis leftovers read by nothing in the ML vertical.
+  a request reaches a model. Since `7556b22` `.env.example` is Pythia-only:
+  no provider-key placeholder remains. Since Phase B wave B2 the garak probe
+  traffic is the second consumer, with its own probe key in an `AuthProfile`
+  and its own persona (owner default LLM-26), never `PYTHIA_API_KEY`.
 - The key lives in `.env` at the repo root, which is gitignored and
   dockerignored. The Aikido pre-commit hook scans staged files for secrets.
   Nothing logs the key: `PythiaSettings.redacted()` is the only view that
@@ -229,8 +276,8 @@ module already runs its top-level code. Only run vetted, signed plugins with
 - Secret materials: `REDSIM_API_SESSION_PRIVATE_KEY` (web, RS256) with
   `REDSIM_API_SESSION_PUBLIC_KEY` and `…_PREVIOUS` on the API,
   `REDSIM_WORKER_SIGNING_KEY` (shared HMAC, rotation overlap),
-  `REDSIM_AUTH_PROFILES_KEY` (Fernet, encrypts auth-profile secrets at rest,
-  kept for the Phase B endpoint connector), `PYTHIA_API_KEY`, the database
+  `REDSIM_AUTH_PROFILES_KEY` (Fernet, encrypts auth-profile secrets at rest:
+  the endpoint credentials and the LLM probe keys of Phase B), `PYTHIA_API_KEY`, the database
   role passwords, `BETTER_AUTH_SECRET` (Better Auth's own), and the S3
   credentials when an IAM role is not used.
 - Auth-profile secrets are encrypted before any row or audit event is written,
@@ -246,27 +293,31 @@ module already runs its top-level code. Only run vetted, signed plugins with
 ## ML vertical boundaries
 
 These rules come from sections 9, 11, 14 and 21 of the product spec and the
-project brief. The first three are enforced on `main` today, the rest are
-specified for the code in the open ML PRs and the WS4 routes and must hold
-before those merge.
+project brief. Every one is enforced on `main` at `703f8f6` plus Phase B wave
+B4 and tested (the unit and `ml` tiers, and end to end by `tests/e2e/`).
 
 Enforced on `main`:
 
 - **The API process never loads a model or imports an ML library.**
   `tests/test_api_process_has_no_ml.py` builds the app with `torch`,
-  `torchvision`, `art`, `onnx`, `onnxruntime`, `shap`, `sklearn` and
-  `xgboost` blocked and asserts it still serves. `deploy/Dockerfile.api`
+  `torchvision`, `art`, `onnx`, `onnxruntime`, `shap`, `sklearn`, `xgboost`
+  and, since Phase B, `garak`, `openai`, `litellm`, `reportlab`, `pyarrow`
+  and `mlcroissant` blocked and asserts it still serves. `deploy/Dockerfile.api`
   installs `.[api,worker]` without the `ml` extra. Only the worker image
   carries torch, ART, onnxruntime and SHAP.
 - **No pentest execution path remains.** `POST /v1/scans` is unmounted, the
-  scanner roster is empty, and `redsim scan` exits non-zero instead of
-  writing an empty findings file.
+  scanner roster holds only `ml-campaign`, and `redsim scan` exits non-zero
+  instead of writing an empty findings file.
 - **Open data only.** Every dataset is open, unclassified and publicly
-  licensed (spec section 11). There is no dataset upload path in Phase A, no
-  connection to any operational or mission data source, and no fixture is
-  ever presented as a result.
+  licensed (spec section 11 and its 11.6 and 11.7 addenda). The only dataset
+  input path is `POST /v1/datasets` (Phase B wave B3): a Parquet slice with
+  an optional Croissant manifest, refused without a licence statement,
+  statically checked in the API and parsed only in the sandbox child. There
+  is no connection to any operational or mission data source (Lattice is
+  text only by D3; the Foundry push is opt-in, off by default and proven
+  against a fake server only), and no fixture is ever presented as a result.
 
-Specified for the ML code (PR #8, #9 and WS4):
+Enforced for the ML code (waves 1 to 4 and Phase B):
 
 - **Uploaded models are loaded only on the worker inside a sandboxed child
   process** (`redsim/ml/sandbox.py`, `redsim/ml/sandbox_worker.py`), built on
@@ -308,7 +359,17 @@ Specified for the ML code (PR #8, #9 and WS4):
   is never triggered automatically.
 - **Attack ids are declarative references** to registered, bounded ART
   adapters. The repository stores no attack recipes, tactical instructions or
-  executable payloads.
+  executable payloads. LLM probe ids reference garak's catalogued probes; no
+  prompt text is committed to the repository.
+- **Endpoint queries leave only from the worker-parent predict broker**
+  (Phase B): over a unix socket in the 0700 work directory, under the egress
+  allowlist with private-address refusal, a rate limit and a per-job query
+  budget, with the credential decrypted at pickup and held in memory only.
+  The sandbox child holds no URL and no credential.
+- **Nothing that leaves for another system carries a bare score.** The
+  Croissant manifest validator and the Foundry payload guard refuse a bare
+  MRI, a URL string, a JWT-shaped or `pk_` value, model file names and raw
+  bytes before anything is written or sent (D9).
 
 ## Out of scope
 
@@ -326,8 +387,11 @@ Specified for the ML code (PR #8, #9 and WS4):
   gVisor `RuntimeClass` for worker pods exists in the Helm chart. The plugin
   sandbox and the planned ML sandbox child are process isolation plus rlimits,
   not a network or filesystem jail, and ECS Fargate has no gVisor equivalent.
-- The ML sandbox child, the upload route and the refusal paths above are not
-  on `main` yet (open PRs and WS4).
+- The wave B4 e2e files report, by attribution, that no black-box endpoint
+  reaches `available` through the tiny server yet (the 8-row probe leaves the
+  child unscaled, `redsim/ml/targets/endpoint.py:228`), so the endpoint
+  campaign path's boundaries are proven by `tests/ml/` until that closes
+  (README "Open items and not implemented").
 - Worker autoscaling and multi-region DR
   ([ADR-0005](docs/adr/0005-worker-autoscaling-and-dr.md)) and Nix
   reproducible builds ([ADR-0008](docs/adr/0008-nix-reproducible-builds.md))

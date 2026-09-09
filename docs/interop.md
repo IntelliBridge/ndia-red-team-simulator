@@ -14,10 +14,13 @@ section 27 of the
 contracts are in the [API reference](api/v1.md#dataset-export); this page is
 the narrative: what leaves the platform, what enters it, and the rules both
 directions obey. Everything here is opt-in and off by default (spec 27 rule
-1). The end-to-end evidence for the round trip (an export that validates
-against the Croissant schema, a consumed slice bound to a campaign, a fake
-Foundry push through the API) is wave B4's `tests/e2e/test_ml_interop.py`,
-which does not exist yet; what is proven today is proven by `tests/ml/`.
+1). The end-to-end evidence for the round trip is wave B4's
+`tests/e2e/test_ml_interop.py` (the export and its shards, a consumed slice
+registered and validated through the real child, the ATLAS tags and coverage,
+the fake Foundry push, `redsim audit verify --all` over the lot); at the B4
+push five of its six cases hold and the consumed slice bound to a campaign
+fails by attribution (see "Consume" below). `tests/ml/` proves each piece in
+isolation.
 
 ## Contribute: a run's adversarial examples as a Croissant dataset
 
@@ -208,13 +211,22 @@ admission calls it since the B3 reconcile pass: a `dataset_id` matching
 `422 dataset_incompatible` naming why, field `dataset_id`, `dataset_role`
 `consumed`) and match the campaign modality; `dataset_revision` defaults to
 the slice's manifest digest; the admitted `attack.run` row and every refusal
-carry `dataset_id` and `dataset_role`. The upload admission
-(`services/ml_models.py`) and the worker's target loader
-(`ml/targets/artifact.py`) still bind bundled datasets only, so the
-manifest-binding equality check stays in place and a consumed id against a
-model bound to a bundled dataset is refused with an explicit hint to bind the
-slice at upload; the accept path is reachable today for a model whose manifest
-binds no dataset. Those two hooks stay open for wave B4.
+carry `dataset_id` and `dataset_role`. Since wave B4 the upload admission
+(`services/ml_models.py::check_upload_dataset`, falling back to
+`consumed_upload_binding` for a `ds-…` id: an `available` slice of the
+project, split `eval` only) binds a consumed slice too, and the worker's
+target loader (`ml/targets/artifact.py::consumed_eval_slice`) reads a slice
+the worker parent materialised into the job work directory
+(`services/ml_models.py::materialize_consumed_slice` writes the
+`target_detail["consumed_slice"]` block: file, sha256, the declared schema,
+class names, revision, row cap), re-checks its digest and reads it with the
+same `load_consumed_slice` the parse child used, scaling image rows onto
+[0, 1] from the declared range. What stays open is the one call in the worker
+parent (`redsim/workers/tasks/ml_model.py` and `ml_campaign.py`) that writes
+that block when the manifest's `dataset_id` is a `ds-…` id, so a campaign on
+a consumed-bound model does not run end to end yet;
+`tests/e2e/test_ml_interop.py::test_consumed_slice_binds_a_model_and_a_campaign`
+fails with that attribution.
 
 ### Contribute a model (walkthrough, no code)
 
@@ -392,20 +404,29 @@ proposal say otherwise.
   slice only when a remediator uploads one, a push only when an admin names a
   profile against a configured, attested, allowlisted Foundry host.
 
-## Carried forward to wave B4
+## Closed in wave B4, and what stays open
 
-Read from the tree after the B3 reconcile pass: the text and detection
-runners' slices without the self-describing descriptors (INTEROP-04 is closed
-for the classification runner); regenerate-in-child for a run whose slices
-were not retained (INTEROP-07); the INTEROP-16 binding hooks in
-`services/ml_models.py` and `ml/targets/artifact.py` (the campaign hook in
-`services/ml_campaigns.py` is landed); the JWT pattern in
-`redsim/audit/redact.py` (INTEROP-28, the B3 rows are scrubbed before they
-reach a writer); the `atlas_technique_id` projection key on finding list rows
-(INTEROP-18, the tag is in `schema_blob.ml.atlas_technique`); the
-`GET /v1/ml/capabilities` interop block, the `.env.example` and compose
-pass-through of the Foundry and B3 capacity variables scoped to the default
-worker pool (INTEROP-29, BULK-23); the dataset push to Foundry (INTEROP-23);
-a push against a real non-operational instance (INTEROP-26); and the e2e
-round trip, `tests/e2e/test_ml_interop.py`, with the `make check-phase-b`
-gate and the docs-consistency test.
+Closed by the wave B4 fix pass, read from the tree: the text and detection
+runners write the same self-describing slices as the classification runner
+(`redsim/ml/runners/base.py::slice_bytes`; INTEROP-04 for every runner), and
+the export schema gained a nullable `text` column that only a text slice fills
+(a text model has no numeric input tensor, so `input` is null on its rows) and
+labels a detection export's `flipped` column from the flip matrix; the
+INTEROP-16 binding at upload and in the target loader; the JWT pattern in
+`redsim/audit/redact.py` and the Foundry header names (INTEROP-28); the ATLAS
+stamp on analyst drafts (INTEROP-18); the `interop` block on
+`GET /v1/ml/capabilities` and the `.env.example` and compose pass-through of
+the Foundry and capacity variables, the Foundry settings scoped to
+`redsim-worker-default` (INTEROP-29, BULK-23); the e2e round trip
+`tests/e2e/test_ml_interop.py` with the `make check-phase-b` gate and the
+docs-consistency test.
+
+Still open, recorded in the README: the worker-parent
+`materialize_consumed_slice` call (INTEROP-16 remainder, above); the
+`atlas_technique_id` key on finding list rows (the tag is in every finding's
+`schema_blob.ml.atlas_technique`); regenerate-in-child for a run whose slices
+were not retained (INTEROP-07, `export_unavailable` instead); the dataset push
+to Foundry (INTEROP-23, `PUSH_PAYLOADS` is `("scorecard",)`); a push against a
+real non-operational instance (INTEROP-26, the owner's call); and the
+public-index fixture `tests/ml/fixtures/public_index.csv`, which snapshots the
+repository's `INDEX.csv` at `4048a209`, before the export rows.

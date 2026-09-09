@@ -24,8 +24,8 @@ markers) see [Testing](testing.md), and for running the stack and the e2e tier s
 | Unit tests (py3.13) | same, with `and not ml` appended to the marker expression | 3.13 | `api,worker,test,dev` |
 | Coverage gate | the full default suite (the `addopts` marker expression) against Postgres 16 and Redis 7 after `alembic upgrade head`, then `--cov-fail-under=$COV_FAIL_UNDER` | 3.12 | `api,worker,test,dev,ml` |
 | API integration (Postgres + Redis) | `tests/` with `-m "not e2e and not docker and not slow and not auth_required and not ml and not garak"` after `alembic upgrade head` | 3.12 | `api,worker,test` |
-| E2E tier (python, eager Celery) | `scripts/phase_b_gate.sh --only e2e` (the gate's e2e step: `REDSIM_E2E=1 pytest -q -p no:cacheprovider -rs -m e2e tests/e2e` with `REDSIM_E2E_POSTGRES_URL` set after `alembic upgrade head`, so the Postgres RLS lane runs rather than skips and the step fails if the harness still reports the lane off), then `scripts/phase_b_gate.sh --only docs-consistency` (`tests/test_docs_phase_b_consistency.py`). 20 minute timeout, the pytest `--basetemp` (the harness directory) uploaded as an artifact on failure. See "The Python e2e job" and "Phase B gate" | 3.12 | `api,worker,test,dev,ml` |
-| garak offline | `python -c "import garak"`, then `scripts/phase_b_gate.sh --only garak` (`pytest -q -p no:cacheprovider -m garak tests`; exit code 5, nothing selected, counts as success with a notice; since wave B2 the lane collects the 12 `garak`-marked tests). No gateway variable in the environment, the script removes every `PYTHIA_*` variable on top, garak's XDG directories under the runner temp. See "The garak offline job" and "Phase B gate" | 3.12 | `api,worker,test,dev,garak` (CPU torch first) |
+| E2E tier (python, eager Celery) | `scripts/phase_b_gate.sh --only e2e` (the gate's e2e step: `REDSIM_E2E=1 pytest -q -p no:cacheprovider -rs -m e2e tests/e2e` with `REDSIM_E2E_POSTGRES_URL` set after `alembic upgrade head`, so the Postgres RLS lane runs rather than skips and the step fails if the harness still reports the lane off), then `scripts/phase_b_gate.sh --only docs-consistency` (`tests/test_docs_phase_b_consistency.py`). 30 minute timeout (wave B4; the tier grew by seven files), the pytest `--basetemp` (the harness directory) uploaded as an artifact on failure. See "The Python e2e job" and "Phase B gate" | 3.12 | `api,worker,test,dev,ml,garak` (the `garak` extra since wave B4, for the e2e-gated `tests/e2e/test_ml_llm.py`) |
+| garak offline | `python -c "import garak"`, then `scripts/phase_b_gate.sh --only garak` (`pytest -q -p no:cacheprovider -m garak tests`; the lane collects the 12 `garak`-marked tests under `tests/ml`; since wave B4 the step fails on exit code 5, on a run in which no test passed and on a missing extra). No gateway variable in the environment, the script removes every `PYTHIA_*` variable on top, garak's XDG directories under the runner temp. See "The garak offline job" and "Phase B gate" | 3.12 | `api,worker,test,dev,garak` (CPU torch first) |
 | SAST (semgrep + bandit) | `p/python` + `p/security-audit` at ERROR plus `.semgrep.yml`, bandit `-ll -ii` with `.bandit` | 3.12 | `security` |
 | Dependency CVEs (pip-audit + trivy) | pip-audit over the resolved `api,worker,security` env, trivy `fs` at HIGH,CRITICAL | 3.12 | `api,worker,security` |
 | Helm chart lints + templates | `helm lint` and the `helm template` renders including the prod-secret guard | n/a | n/a |
@@ -48,7 +48,7 @@ excluded from this completion pass (it is never run automatically).
 | unit and ML unit | default (`-m` from `addopts`), and `ml`-marked tests need the extra | both unit lanes (3.13 without `ml`), Coverage gate |
 | integration (sqlite harness locally, real Postgres and Redis in CI) | `integration` marker, stamped automatically on DB-touching tests | Coverage gate, API integration |
 | e2e (Python) | `tests/e2e/`, marked `e2e` by its `conftest.py`, skipped unless `REDSIM_E2E` is set. The Postgres RLS lane needs `REDSIM_E2E_POSTGRES_URL` | E2E tier (python, eager Celery), on every PR and push, with the Postgres lane on. Locally as described in [Local stack](local-stack.md#tests-including-the-e2e-tier) |
-| garak (Phase B) | `garak` marker: needs the `garak` extra, skipped when absent. Deselected by `addopts` and by every other lane's marker expression. 11 tests since wave B2 (`tests/ml/test_llm_core.py`, `tests/ml/test_llm_routes.py`), real garak against an in-process fake gateway | garak offline |
+| garak (Phase B) | `garak` marker: needs the `garak` extra, skipped when absent. Deselected by `addopts` and by every other lane's marker expression except `e2e-python`. 12 tests under `tests/ml` (`test_llm_core.py`, `test_llm_routes.py`) plus the four e2e-gated cases of `tests/e2e/test_ml_llm.py`, real garak against an in-process fake gateway | garak offline (`tests/ml`), E2E tier (the e2e file) |
 | browser e2e (Playwright) | `workflow_dispatch` with `run_e2e=true` | Stack E2E job, on demand only, excluded from this pass |
 
 ### The `ml` extra and the Python matrix
@@ -99,8 +99,11 @@ gate for every Phase A criterion and every Phase B path that the tier proves:
 a real FastAPI app, real admission, Celery in eager mode, the real
 credential-free sandbox child, the CLI, all over a file-backed sqlite of the
 harness's own. It installs `api,worker,test,dev` plus `ml` with CPU torch
-first, exactly as the Coverage gate does, and sets nothing else that the
-harness does not set itself. No network, no Kaggle, no Docker: the harness
+first, exactly as the Coverage gate does, and since wave B4 the `garak` extra
+as well, because `tests/e2e/test_ml_llm.py` is `garak`-marked and
+`tests/conftest.py` would otherwise skip its four cases at collection, so the
+LLM probe evidence (register LLM-30) would run in no lane. It sets nothing
+else that the harness does not set itself. No network, no Kaggle, no Docker: the harness
 mocks the Pythia gateway in the worker parent and builds a tiny asset tree.
 
 Postgres 16 and Redis 7 are attached as services, copied from the Coverage
@@ -119,7 +122,11 @@ output), to a known path. On failure the job uploads that directory as the
 `e2e-python-harness` artifact (7 days). `--durations=15` prints the slowest
 items so a tier creeping towards the 20 minute job timeout is visible in the
 log. `REDSIM_ML_KEEP_WORK_DIR` is not set: the harness scrubs it and keeps its
-work directories under the harness root itself.
+work directories under the harness root itself. The job timeout is 30
+minutes since wave B4 (the tier grew from four files to eleven). The
+checkout in CI is the tree the editable install points at, so the
+`PYTHONPATH` the gate sets for a git-worktree run is not needed there (the
+script detects that and sets nothing).
 
 Reproduce locally with the venv interpreter:
 
@@ -141,21 +148,24 @@ imports garak and runs `pytest -q -p no:cacheprovider -m garak tests`.
 
 Two things about this lane are deliberate:
 
-- **Nothing is claimed that is not there.** The step still maps a pytest exit
-  code of 5 (no tests collected) to success with a `::notice::` line, the
-  state the lane was in from wave B0 to wave B1. Since wave B2 the lane
+- **Nothing is claimed that is not there.** From wave B0 to wave B1 the step
+  mapped a pytest exit code of 5 (no tests collected) to success with a
+  `::notice::` line, because no garak test existed. Since wave B2 the lane
   collects 12 `garak`-marked tests (ten in `tests/ml/test_llm_core.py`, two
   in `tests/ml/test_llm_routes.py`) that drive garak 0.16.0 through
   `PythiaGenerator` against `tests/ml/fake_openai_server.py` on the loopback
   interface: the generator's headers and body, one real probe child run with
   its counts, the credential boundary, the scorecard, a version mismatch, the
   offline detector policy, the wall-clock kill, the committed catalog against
-  a fresh regeneration, and the route-to-worker case. They passed in the B2
-  assembler's worktree with garak 0.16.0 (about 19 s for the core file);
-  whether they pass on the runner is proven by the first run after the B2
-  push, which had not happened when this page was written. Any non-zero exit
-  other than 5 fails the job; with tests now collected, exit 5 would mean a
-  collection regression and the mapping should be removed (a wave B4 item).
+  a fresh regeneration, and the route-to-worker case. Since wave B4 the
+  mapping is gone from the script and the workflow: the step fails on exit 5
+  (a marker or collection regression, never an empty tier), on a run in which
+  no test passed (every item skipped) and on a missing extra (checked with
+  `find_spec` before pytest runs, so the extra's absence cannot read as a
+  pass), and `tests/test_docs_phase_b_consistency.py` drives the step with a
+  fake interpreter to prove each of those. The 12 passed locally at `703f8f6`
+  (35 s with the extra installed); whether they pass on the runner is proven
+  by a run after the B4 push, which has not been read.
 - **Offline by construction.** The job exports no `PYTHIA_*` variable and no
   provider key (garak installs the openai and litellm clients, redsim
   configures neither, `tests/test_api_process_has_no_ml.py` blocks both in the
@@ -274,8 +284,8 @@ meaning (lint, typecheck, test). The script needs the venv interpreter (`PY` or
 | `mypy` | `mypy redsim` | 26.27 | the type contract is broken |
 | `unit` | `pytest -q -p no:cacheprovider --ignore=tests/e2e` | 26.27 | the default tier (unit and sqlite integration) is red |
 | `ml` | `pytest -q -p no:cacheprovider -m ml tests/ml` | 26.27 | the `ml` tier is red |
-| `garak` | `pytest -q -p no:cacheprovider -m garak tests` | 26.20 | a garak-marked test failed. Exit 5 (nothing selected) passes with a notice saying the step proved only that the marker selects cleanly |
-| `e2e` | `REDSIM_E2E=1 pytest -q -p no:cacheprovider -rs -m e2e tests/e2e` | 26.2 to 26.24 | a completion-criteria file under `tests/e2e` is red, or `REDSIM_E2E_POSTGRES_URL` is set and the harness still skipped its Postgres lane |
+| `garak` | `pytest -q -p no:cacheprovider -m garak tests` | 26.20 | a garak-marked test failed, nothing was collected (exit 5), no test passed (every item skipped) or the `garak` extra is not installed for `PY`; each is a `FAIL` naming 26.20, never a vacuous pass |
+| `e2e` | `REDSIM_E2E=1 pytest -q -p no:cacheprovider -rs -m e2e tests/e2e` (with `PYTHONPATH=<checkout>` first when `PY` imports `redsim` from another tree, a git worktree) | 26.2 to 26.24 | a completion-criteria file under `tests/e2e` is red, or `REDSIM_E2E_POSTGRES_URL` is set and the harness still skipped its Postgres lane |
 | `docs` | `mkdocs build --strict` (into a temporary site directory) | 26.11 | a broken link or reference in the docs |
 | `docs-consistency` | `pytest -q -p no:cacheprovider tests/test_docs_phase_b_consistency.py` | 26.11, 26.24 | a document disagrees with the tree (see below) |
 | `probes` | HTTP probes against `REDSIM_API_URL`, then `redsim audit verify --all` | 26.9, 26.17, 26.22, 26.24 | the running stack does not have Phase B built, or its audit chain does not verify |
@@ -292,7 +302,11 @@ the one variable the e2e step passes through.
 The e2e step is one pytest invocation. When `REDSIM_E2E_POSTGRES_URL` names a
 migrated database the harness's `postgres_url` fixture turns the RLS lane on
 inside that run, and the step fails if the `-rs` summary still carries the
-"Postgres lane is off" skip reason. Running the tier a second time with the
+"Postgres lane is off" skip reason. The step also resolves `redsim` from a
+neutral directory first: when the editable install points at another
+checkout (a git worktree) it prints a notice and runs pytest with
+`PYTHONPATH=<this checkout>` first, so the sandbox child and the CLI
+subprocess run the tree under test; from the main checkout nothing is set. Running the tier a second time with the
 variable set would double a tier that is sized for a laptop, and pytest's `-k`
 cannot select the lane (its tests are selected by a fixture, not a name), so
 the tripwire on the skip reason is what proves the lane ran.
@@ -372,45 +386,34 @@ unit lanes run ruff, mypy and the default tier, and the Coverage gate runs the
 `ml`-marked tests, so every step of the gate except the stack probes runs in
 CI on every push, and the local `make check-phase-b` runs the same commands.
 
-### State at the time of writing (wave B4 worktree, `cb1e559` plus the B4 tracks)
+### State at the wave B4 push (`703f8f6` plus wave B4, 2026-09-09)
 
-Measured from this worktree with the venv interpreter on 2026-09-09; re-run
-and replace this paragraph rather than carrying it forward. The gate is
-discriminating on this tree, in the two places plan 12 expected it to be:
+Read from the B4 tree before this documentation pass; re-run and replace this
+paragraph rather than carrying it forward. The wave B4 gate track measured the
+gate in its worktree (`cb1e559` plus the B4 tracks): the docs-consistency
+step failed on the five stale-docs facts it was written to catch (the Phase B
+table saying "501 until built" on 20 rows, no spec 22 addendum, the README
+open items, PR #23 described as open in nine places, the nav), the `capabilities` probe
+failed against a stack built from that tree (`text`, `detection`, `llm` and
+`endpoint_connector` still `not_implemented`), and `--only unit` carried 17
+`tests/ml` seam failures. The fix pass closed the roster (`redsim/api/v1/ml_capabilities.py`
+reads every Phase B block from the tree), the assembler added the nav rows,
+and this documentation pass closed the docs facts:
+`scripts/phase_b_gate.sh --only docs-consistency` passes on the B4 tree.
 
-- `scripts/phase_b_gate.sh --only docs-consistency` fails. The Phase B table
-  in `docs/api/v1.md` still says "Phase B, 501 until built" on 20 of 20 rows
-  while an admin reaches a real handler on every one, spec section 22 has no
-  Phase B addendum yet, the README open items do not name the owner decisions
-  or the brief, PR #23 is still described as open in nine places
-  (`README.md`, `CLAUDE.md`, `docs/architecture/ml-vertical.md`,
-  `docs/plans/00-master-plan.md`, `docs/plans/EXECUTION-CONTEXT.md`) and the
-  mkdocs nav lists none of plans 10, 11 and 12. The docs track's rewrite pass
-  lands in the same wave and owns every one of those files except
-  `mkdocs.yml`, which no wave B4 track owns.
-- The `capabilities` probe fails against a stack built from this tree:
-  `redsim/api/v1/ml_capabilities.py` still answers `not_implemented` for
-  `text`, `detection`, `llm` and `endpoint_connector` although the text and
-  detection runners, the LLM probe routes and the endpoint connector are on
-  the tree and `GET /v1/attacks?modality=text` lists `word_substitution`. No
-  wave B4 track owns that file either.
-
-The probe logic's own tests (`tests/test_docs_phase_b_consistency.py`, the
-`test_gate_*` cases), `--list` and `--only docs` pass from this worktree,
-`--only garak` passes (11 passed, 4 skipped, 37 s, with the garak extra
-installed), `--only e2e` restricted to the smoke file through
-`PHASE_B_PYTEST_ARGS="-k test_harness_smoke"` passes with the Postgres lane
-variable set (8 passed, 51 s), and `--only probes` against a uvicorn started
-from this tree fails at the `capabilities` probe as described. `--only unit`
-fails on this worktree (22 failed, 2591 passed, 37 skipped, 202 s): the five
-docs-consistency failures above plus 17 in `tests/ml` (`test_endpoint_target.py`,
-`test_text_modality.py`, `test_detection_modality.py`, `test_campaign.py`,
-`test_campaign_golden.py`, `test_datasets.py`) that reproduce when run alone
-and are seams between the wave B1 to B3 code as written, which the wave
-assembles reconcile. `--only ruff` depends on the sibling
-tracks' files landing lint-clean: one unused import in
-`tests/e2e/test_ml_endpoint.py`, still being written, failed it during this
-pass while this track's own files are clean.
+What the gate reports on the B4 tree now: `ruff` and `mypy` pass; `unit`
+carries one stale pin (`tests/ml/test_audit_campaign.py:113`, the
+`report.render` `formats` now include `pdf`); `ml` was 433 passed at
+`703f8f6` and the B4 tree's count is the assembler's; `garak` passes with the
+extra installed (12 passed, 4 skipped without `REDSIM_E2E`, 35 s) and fails
+without it by design; `e2e` is not green: the B4 files fail by attribution on
+the product defects listed in the README's open items (the unscaled endpoint
+probe, no training slice exposed to the child, the worker-parent
+consumed-slice call, `architecture_kwargs` for `state_dict` uploads) and two
+report pins are stale (`tests/e2e/test_ml_verify_upload_reports.py`,
+`tests/e2e/test_ml_review_reports.py`); `docs` passes; `probes` has not been
+run against `make up` (brief package A). The CI runs for `29db42c`,
+`1439f92`, `57da31f`, `703f8f6` and the B4 push have not been read.
 
 ## State of `main` at `1439f92` and the wave B3 push (2026-09-09)
 
@@ -438,9 +441,8 @@ Facts, in order:
   verified secrets only and has nothing to find there.
 - `mkdocs build --strict` passed for this documentation pass with the new
   `docs/interop.md` in the nav.
-- The Redsim CI runs for `29db42c` and `1439f92` had not been read when this
-  page was written, and the B2 and B3 pushes had not happened. Nothing is
-  claimed green.
+- The Redsim CI runs for `29db42c`, `1439f92`, `57da31f` and `703f8f6` had
+  not been read when this page was written. Nothing is claimed green.
 
 ## State of `main` at `1439f92` and the wave B2 push (2026-09-09)
 
@@ -621,7 +623,7 @@ $V -m ruff check --select E4,E7,E9,F,I redsim tests
 $V -m mypy redsim
 $V -m pytest -q --cov=redsim --cov-report=term | tail -5
 REDSIM_E2E=1 $V -m pytest -q -p no:cacheprovider -m e2e tests/e2e
-$V -m pytest -q -p no:cacheprovider -m garak tests   # the 12 garak-marked tests since wave B2 (needs the garak extra)
+$V -m pytest -q -p no:cacheprovider -m garak tests   # the 12 garak-marked tests under tests/ml (needs the garak extra); REDSIM_E2E=1 adds the 4 of tests/e2e/test_ml_llm.py
 $V -m pytest -q -p no:cacheprovider tests/ml/test_schema_compat.py   # the P0 schema tripwire
 $V -m mkdocs build --strict
 $V -c 'import yaml,sys; [yaml.safe_load(open(f)) for f in sys.argv[1:]]' .github/workflows/*.yml
