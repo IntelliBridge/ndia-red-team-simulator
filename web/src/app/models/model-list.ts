@@ -106,6 +106,56 @@ export function hasActiveFilters(filters: ModelFilters): boolean {
   return Boolean(filters.query.trim() || filters.domain || filters.status || filters.source);
 }
 
+/** How many of the shown rows carry the metric a numeric sort orders by; null for a text sort. */
+export type SortCoverage = {
+  key: "score" | "clean_accuracy";
+  /** Rows that carry the metric. */
+  withValue: number;
+  total: number;
+  /** The metric as a sentence subject, and where it comes from, for the toolbar note. */
+  metric: string;
+  source: string;
+};
+
+export function sortCoverage(models: ModelTarget[], sort: ModelSort): SortCoverage | null {
+  if (sort.key === "score") {
+    return {
+      key: "score",
+      withValue: models.filter((m) => modelScore(m) !== null).length,
+      total: models.length,
+      metric: "The robustness index",
+      source: "A scored campaign records it.",
+    };
+  }
+  if (sort.key === "clean_accuracy") {
+    return {
+      key: "clean_accuracy",
+      withValue: models.filter((m) => modelCleanAccuracy(m) !== null).length,
+      total: models.length,
+      metric: "Clean accuracy",
+      source: "The asset manifest records it.",
+    };
+  }
+  return null;
+}
+
+/**
+ * The toolbar note for a numeric sort: says how many rows carry the metric
+ * when not all of them do, so an order that cannot change is not read as a
+ * broken control. Empty when every row can move or there are no rows.
+ */
+export function sortCoverageNote(coverage: SortCoverage | null): string {
+  if (!coverage || coverage.total === 0) return "";
+  const { withValue, total, metric, source } = coverage;
+  if (withValue === total) return "";
+  const known = `${metric} is known for ${withValue} of ${total} model${total === 1 ? "" : "s"}.`;
+  const effect =
+    withValue < 2
+      ? "Nothing to order yet, so the rows stay in name order."
+      : "Rows without one follow in name order.";
+  return `${known} ${effect} ${source}`;
+}
+
 /**
  * A stable sort. Text keys compare case-insensitively. Numeric keys put rows
  * without a value last in either direction, so unscored models never lead
