@@ -261,7 +261,7 @@ def test_successful_validation_still_succeeds_with_durable_running(
     assert target.detail["status"] == "available"
     assert target.detail["validation"]["class_count"] == 10
     assert [a.kind for a in artifacts] and len(artifacts) == 1
-    assert [e["action"] for e in harness["audit"].events] == ["model.validate"]
+    assert [e["action"] for e in harness["audit"].events] == ["model.validate", "job.complete"]
     assert harness["events"] == ["running", "succeeded"]
 
 
