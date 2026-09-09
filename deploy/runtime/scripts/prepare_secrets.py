@@ -32,6 +32,13 @@ def save_secret(name, value):
         'Tags': [{'Key': 'Application', 'Value': 'redsim'}]})['ARN']
 
 
+# Keys a previous run wrote under a name this one no longer uses. Dropped from
+# the merged secret so a rerun does not leave a task definition referencing
+# both a retired name and its replacement. Add a name here whenever one of the
+# service dicts below renames a key.
+RETIRED_SECRET_KEYS = ('NEXTAUTH_SECRET',)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--environment', default='demo')
@@ -57,7 +64,14 @@ def main():
               'REDSIM_AUTH_PROFILES_KEY': values['auth_profiles_key']}
     services = {name: dict(shared) for name in ['api', 'scans', 'default', 'beat', 'assets']}
     services['api']['REDSIM_API_SESSION_PUBLIC_KEY'] = values['session_public_key']
-    services['web'] = {'NEXTAUTH_SECRET': values['nextauth_secret'],
+    # BETTER_AUTH_SECRET, not NEXTAUTH_SECRET: the T3 refactor replaced NextAuth
+    # with Better Auth and web/src/env.js requires the new name at boot.
+    # configure_connections.py derives the var.service_secrets references from
+    # this dict's keys, so renaming here renames the task definition reference.
+    # The bootstrap key keeping its old name is deliberate: it is read back on
+    # every rerun, and renaming it would mint a fresh secret and sign every
+    # live browser session out.
+    services['web'] = {'BETTER_AUTH_SECRET': values['nextauth_secret'],
         'KEYCLOAK_CLIENT_SECRET': values['keycloak_client_secret'],
         'REDSIM_API_SESSION_PRIVATE_KEY': values['session_private_key']}
     services['identity'] = {'KC_DB_PASSWORD': values['identity_password'],
@@ -70,6 +84,13 @@ def main():
         # Preserve derived connection URLs on reruns.
         current = aws('secretsmanager', 'get-secret-value', {'SecretId': f'{prefix}/{service}'})
         merged = json.loads(current['SecretString']) if current else {}
+        # A merge keeps every key a previous run wrote, including ones this one
+        # has renamed, and configure_connections.py derives the task
+        # definition's secret references from these keys. Without the drop, a
+        # rerun after the NextAuth to Better Auth rename left NEXTAUTH_SECRET
+        # on the web task definition next to its replacement.
+        for retired in RETIRED_SECRET_KEYS:
+            merged.pop(retired, None)
         merged.update(value)
         references[service] = save_secret(f'{prefix}/{service}', merged)
     group_id = f'ndia-red-team-{args.environment}'

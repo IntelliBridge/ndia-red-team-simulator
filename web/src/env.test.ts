@@ -51,10 +51,99 @@ describe("web env schema", () => {
     const env = await importEnv();
     expect(env.NEXT_PUBLIC_REDSIM_API_URL).toBe("http://localhost:8000");
     expect(env.NEXT_PUBLIC_REDSIM_ENV).toBe("dev");
-    expect(env.NEXT_PUBLIC_REDSIM_API_SESSION_COOKIE).toBe("redsim_api_session");
     expect(env.NEXT_PUBLIC_REDSIM_CSRF_COOKIE).toBe("redsim_csrf");
     expect(env.NEXT_PUBLIC_REDSIM_CSRF_HEADER).toBe("X-Redsim-CSRF");
+    expect(env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES).toBe(false);
     expect(env.REDSIM_ENV).toBe("dev");
+  });
+
+  it("no longer exposes the httpOnly session cookie name to the client", async () => {
+    setEnv({
+      BETTER_AUTH_SECRET: VALID_SECRET,
+      BETTER_AUTH_URL: "http://localhost:3000",
+      NEXT_PUBLIC_REDSIM_API_SESSION_COOKIE: "redsim_api_session",
+    });
+    const env = await importEnv();
+    expect("NEXT_PUBLIC_REDSIM_API_SESSION_COOKIE" in env).toBe(false);
+  });
+
+  it("defaults the three server-side cookie names and the API base", async () => {
+    setEnv({
+      BETTER_AUTH_SECRET: VALID_SECRET,
+      BETTER_AUTH_URL: "http://localhost:3000",
+    });
+    const env = await importEnv();
+    expect(env.REDSIM_API_SESSION_COOKIE).toBe("redsim_api_session");
+    expect(env.REDSIM_CSRF_COOKIE).toBe("redsim_csrf");
+    expect(env.REDSIM_DEV_TOKEN_COOKIE).toBe("redsim_dev_token");
+    expect(env.REDSIM_API_URL).toBe("http://localhost:8000");
+    expect(env.REDSIM_DEV_FIXTURES).toBe(false);
+  });
+
+  it("rejects a malformed REDSIM_API_URL by name", async () => {
+    setEnv({
+      BETTER_AUTH_SECRET: VALID_SECRET,
+      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_API_URL: "not-a-url",
+    });
+    await expect(importEnv()).rejects.toThrow(/REDSIM_API_URL/);
+  });
+
+  it("reads the fixture flags as booleans from the spellings an operator writes", async () => {
+    setEnv({
+      BETTER_AUTH_SECRET: VALID_SECRET,
+      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_ENV: "test",
+      REDSIM_DEV_FIXTURES: "1",
+      NEXT_PUBLIC_REDSIM_DEV_FIXTURES: "TRUE",
+    });
+    const env = await importEnv();
+    expect(env.REDSIM_DEV_FIXTURES).toBe(true);
+    expect(env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES).toBe(true);
+  });
+
+  it("refuses the server fixture flag outside the dev or test allowlist", async () => {
+    for (const redsimEnv of ["prod", "staging"]) {
+      setEnv({
+        BETTER_AUTH_SECRET: VALID_SECRET,
+        BETTER_AUTH_URL: "http://localhost:3000",
+        REDSIM_ENV: redsimEnv,
+        REDSIM_DEV_FIXTURES: "1",
+      });
+      await expect(importEnv()).rejects.toThrow(/REDSIM_DEV_FIXTURES/);
+    }
+  });
+
+  it("refuses the public fixture flag in prod, naming both variables", async () => {
+    setEnv({
+      BETTER_AUTH_SECRET: VALID_SECRET,
+      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_ENV: "prod",
+      REDSIM_DEV_FIXTURES: "1",
+      NEXT_PUBLIC_REDSIM_DEV_FIXTURES: "1",
+    });
+    const error = await importEnv().catch((e: unknown) => e as Error);
+    expect(String(error)).toMatch(/REDSIM_DEV_FIXTURES/);
+    expect(String(error)).toMatch(/NEXT_PUBLIC_REDSIM_DEV_FIXTURES/);
+  });
+
+  it("honours fixture mode when REDSIM_ENV is unset, because the default is dev", async () => {
+    setEnv({
+      BETTER_AUTH_SECRET: VALID_SECRET,
+      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_DEV_FIXTURES: "1",
+    });
+    const env = await importEnv();
+    expect(env.REDSIM_DEV_FIXTURES).toBe(true);
+  });
+
+  it("keeps the fixture refinement live under SKIP_ENV_VALIDATION", async () => {
+    setEnv({
+      SKIP_ENV_VALIDATION: "1",
+      REDSIM_ENV: "prod",
+      NEXT_PUBLIC_REDSIM_DEV_FIXTURES: "1",
+    });
+    await expect(importEnv()).rejects.toThrow(/NEXT_PUBLIC_REDSIM_DEV_FIXTURES/);
   });
 
   it("leaves the optional Keycloak and session names undefined", async () => {
@@ -79,6 +168,7 @@ describe("web env schema", () => {
     expect(env.NEXT_PUBLIC_REDSIM_API_URL).toBe("http://localhost:8000");
     expect(env.NEXT_PUBLIC_REDSIM_CSRF_HEADER).toBe("X-Redsim-CSRF");
     expect(env.REDSIM_ENV).toBe("dev");
+    expect(env.REDSIM_API_URL).toBe("http://localhost:8000");
   });
 
   it("still rejects a malformed client value under SKIP_ENV_VALIDATION", async () => {

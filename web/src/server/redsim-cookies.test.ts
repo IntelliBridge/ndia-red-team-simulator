@@ -82,15 +82,26 @@ describe("redsim cookie attributes", () => {
     expect(redsimCookieOptions("csrf").secure).toBe(true);
   });
 
-  it("clears both cookies with maxAge 0", async () => {
+  it("clears every credential cookie with maxAge 0, the dev token included", async () => {
     const { clearRedsimCookies } = await load();
     const set = vi.fn();
     clearRedsimCookies(set);
-    expect(set).toHaveBeenCalledTimes(2);
+    // Three, not two. The dev-token cookie is a credential the tRPC context
+    // accepts on its own, so a sign-out that left it behind would not sign
+    // anyone out of a dev deployment.
+    expect(set).toHaveBeenCalledTimes(3);
+    expect(set.mock.calls.map((call) => call[0])).toEqual([
+      "redsim_api_session",
+      "redsim_csrf",
+      "redsim_dev_token",
+    ]);
     for (const call of set.mock.calls) {
       expect(call[1]).toBe("");
       expect(call[2]).toMatchObject({ maxAge: 0, path: "/" });
     }
+    // Written by document.cookie on the login page, so it has to be cleared
+    // with the readable shape rather than the httpOnly one.
+    expect(set.mock.calls[2]?.[2]).toMatchObject({ httpOnly: false });
   });
 });
 

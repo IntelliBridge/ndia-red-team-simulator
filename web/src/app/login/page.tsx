@@ -20,11 +20,21 @@ export default function LoginPage() {
 
   const devLogin = () => {
     setBusy(true);
+    const token = `dev:${email}`;
     // The API runs in REDSIM_AUTH_MODE=dev (rejected when REDSIM_ENV=prod).
     // Storing the bearer token in localStorage so every SWR call elsewhere
     // can pick it up via api(...).
-    localStorage.setItem("redsim_token", `dev:${email}`);
+    localStorage.setItem("redsim_token", token);
     localStorage.setItem("redsim_email", email);
+    // The same credential as a cookie, because the tRPC layer runs on the
+    // server and never sees localStorage. server/trpc/context.ts turns this
+    // one cookie into the upstream bearer, and the middleware gate reads its
+    // presence, so without it the dev button lands on a 401 and bounces
+    // straight back here. The name is env.js's REDSIM_DEV_TOKEN_COOKIE
+    // default, spelled literally because that name is server-only and has no
+    // NEXT_PUBLIC mirror. Encoded because the reader decodes: the colon and
+    // the at sign would otherwise not survive the round trip.
+    document.cookie = `redsim_dev_token=${encodeURIComponent(token)}; path=/; samesite=lax`;
     router.push("/dashboard");
   };
 

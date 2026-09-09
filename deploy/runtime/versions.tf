@@ -180,6 +180,26 @@ resource "aws_service_discovery_service" "identity" {
   }
   health_check_custom_config { failure_threshold = 1 }
 }
+
+# The web tier's server-side calls to FastAPI resolve here.
+#
+# The public hostname is not an option for that traffic: the web task sits in
+# private subnets whose route tables carry no default route and no NAT gateway,
+# the ALB is internet-facing, and no private hosted zone resolves the hostname,
+# so a public value would leave every server prefetch unreachable. Same shape
+# as the identity entry above, for the same reason: no ALB hairpin.
+resource "aws_service_discovery_service" "api" {
+  name = "api"
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.runtime.id
+    dns_records {
+      ttl  = 10
+      type = "A"
+    }
+    routing_policy = "MULTIVALUE"
+  }
+  health_check_custom_config { failure_threshold = 1 }
+}
 resource "aws_iam_role_policy" "identity_image" {
   name = "${local.name}-identity-image"
   role = "${local.name}-identity-execution"

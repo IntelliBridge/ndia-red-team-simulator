@@ -169,6 +169,30 @@ resource "aws_vpc_security_group_egress_rule" "oidc" {
   ip_protocol                  = "tcp"
 }
 
+# Server-side web access to FastAPI.
+#
+# The web tier's tRPC layer calls the API in-VPC on the service-discovery name
+# rather than through the internet-facing ALB, so it needs its own rule the way
+# the OIDC pair above does. Without it every server-rendered page reaches a
+# closed port.
+resource "aws_vpc_security_group_ingress_rule" "web_to_api" {
+  security_group_id            = aws_security_group.service["api"].id
+  referenced_security_group_id = aws_security_group.service["web"].id
+  from_port                    = 8000
+  to_port                      = 8000
+  ip_protocol                  = "tcp"
+  description                  = "Server-side rendering calls from the web tier."
+}
+
+resource "aws_vpc_security_group_egress_rule" "web_to_api" {
+  security_group_id            = aws_security_group.service["web"].id
+  referenced_security_group_id = aws_security_group.service["api"].id
+  from_port                    = 8000
+  to_port                      = 8000
+  ip_protocol                  = "tcp"
+  description                  = "Server-side rendering calls to the API tier."
+}
+
 resource "aws_vpc_endpoint" "interface" {
   for_each            = toset(["ecr.api", "ecr.dkr", "logs", "secretsmanager"])
   vpc_id              = var.network.vpc_id

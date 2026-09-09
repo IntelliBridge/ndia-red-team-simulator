@@ -38,4 +38,30 @@ describe("RootLayout a11y", () => {
     const results = await axe(container);
     expect(results.violations).toEqual([]);
   });
+
+  it("keeps the skip link first in the tab order once the fixture ribbon paints", async () => {
+    const saved = process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES;
+    process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES = "1";
+    vi.resetModules();
+    try {
+      const { default: Layout } = (await import("./layout")) as {
+        default: typeof RootLayout;
+      };
+      const { container } = render(
+        React.createElement(Layout, null, React.createElement("h1", null, "Page heading")),
+      );
+
+      // The ribbon is not focusable, so it must not come between the top of
+      // the document and the skip link a keyboard user reaches first.
+      const focusable = Array.from(container.querySelectorAll("a[href], button"));
+      expect(focusable[0]?.textContent).toBe("Skip to content");
+
+      const results = await axe(container);
+      expect(results.violations).toEqual([]);
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES;
+      else process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES = saved;
+      vi.resetModules();
+    }
+  });
 });
