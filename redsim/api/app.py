@@ -69,6 +69,11 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     # it ends up *inner* (Starlette runs the last-added middleware outermost):
     # the scope is set just around route handling and reset right after, and a
     # rejected CSRF / rate-limit request never opens a tenant-scoped session.
+    # Phase B (wave B2, reports-compare-weights): ``Idempotency-Key`` on the mutating
+    # ML routes. Added first so it runs innermost, inside the tenant scope.
+    from redsim.api.middleware.idempotency import IdempotencyMiddleware
+    app.add_middleware(IdempotencyMiddleware, settings=settings)
+
     from redsim.api.middleware.tenant import tenant_middleware
     app.middleware("http")(tenant_middleware(settings))
 
