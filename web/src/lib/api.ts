@@ -3,7 +3,13 @@
 // Being replaced by the tRPC layer under web/src/server/trpc/. The response
 // types below are the procedure output types and stay (R5); the fetch client
 // and the SWR-era helpers go in U14 once every page reads its data through a
-// procedure. Each helper carries the procedure that replaces it.
+// procedure.
+//
+// A helper gains a marker naming its replacement as that procedure lands, so
+// U14 can tell what is still in use from what is only still exported. Only
+// upstreamError's counterpart mlErrorDetail carries one today, because runs is
+// the only router U1 shipped; U8 adds the rest and marks the helpers it
+// retires as it goes.
 //
 // Auth modes:
 //   - Cookie (browser): credentials: "include" so redsim_api_session
