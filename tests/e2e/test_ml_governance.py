@@ -726,7 +726,18 @@ def test_capabilities_and_unsupported_paths(
         assert row["status"] == "not_implemented" and row["phase"] == "B" and row["reason"], row
     assert body["endpoint_connector"]["status"] == "not_implemented"
     assert body["endpoint_connector"]["phase"] == "B" and body["endpoint_connector"]["reason"]
-    assert {row["id"] for row in body["bundled_models"]} == set(h.BUNDLED_IDS), "fixtures are never listed"
+    # Phase A bundled models are listed; the fixture-only cifar10_smallcnn never is. Since wave B1 the registry also
+    # serves the Phase B bundled targets (assets_frcnn_mnv3 registers with the dpatch adapter, sms_tfidf_lr when
+    # redsim.ml.targets.text is imported); each is listed with its own status and, until built, a reason.
+    bundled_rows = {row["id"]: row for row in body["bundled_models"]}
+    assert set(h.BUNDLED_IDS) <= set(bundled_rows), "the Phase A bundled models are listed"
+    assert "cifar10_smallcnn" not in bundled_rows, "fixtures are never listed"
+    for bundled_id, row in bundled_rows.items():
+        if bundled_id in h.BUNDLED_IDS:
+            continue
+        assert row["modality"] in ("text", "detection"), row
+        assert row["status"] in ("available", "not_implemented"), row
+        assert row["status"] == "available" or row["reason"], row
     assert body["defenses"], "the defense roster comes from the registry, never an empty list"
 
     # -- gateway not configured (mock off): configured=False with the reason, still nothing secret ---

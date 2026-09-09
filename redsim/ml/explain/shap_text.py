@@ -409,11 +409,15 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
         artifacts[TEXT_VALUES_NAME] = sink.put(f"{prefix}/{TEXT_VALUES_NAME}", npz_buf.getvalue(),
                                                "application/octet-stream")
         hashes = {nm: sink.sha256(p) for nm, p in artifacts.items()}
+        # Observation.text (wave B0 TextObservation): n_changed is an int (0 when the words were not 1:1 and no
+        # position can be named), attribution_artifacts maps name -> Artifact.id (the ``artifacts`` entries).
+        n_changed = len(changed) if changed is not None else 0
         text_block: dict[str, Any] = {
             "n_tokens": len(tokens_clean), "changed_positions": list(changed or []),
-            "n_changed": len(changed) if changed is not None else None,
+            "n_changed": n_changed,
+            "edit_fraction": (n_changed / len(tokens_clean)) if tokens_clean else None,
             "top_tokens_clean": top_clean, "top_tokens_adv": top_adv,       # position ranks, never token strings
-            "attribution_artifacts": sorted(artifacts),
+            "attribution_artifacts": dict(artifacts),
         }
         obs_kwargs: dict[str, Any] = {
             "id": obs_id, "sample_index": i, "true_label": name_t, "pred_clean": name_c, "pred_adv": name_a,
@@ -428,7 +432,8 @@ def explain(target: Target, sample: Sample, x_adv: np.ndarray, proba_clean: np.n
         observations.append(Observation(**obs_kwargs))
         per_sample[obs_id] = {"flipped": is_flipped, "aligned": aligned, "expl_shift": shift_value,
                               "expl_shift_noise": noise_value, "n_tokens": len(tokens_clean),
-                              "n_changed": text_block["n_changed"], "changed_positions": text_block["changed_positions"],
+                              "n_changed": len(changed) if changed is not None else None,
+                              "changed_positions": text_block["changed_positions"],
                               "top_positions_clean": top_clean, "top_positions_adv": top_adv,
                               "top3_changed": top3_changed}
 
