@@ -482,8 +482,26 @@ def render_curve_png(curves: list[RobustnessCurve], *, norm: str, reference_eps:
 
 # --- configuration -> runnable pieces -------------------------------------------------------------------
 
+def _bundled_registry_id(config: CampaignConfig) -> str:
+    """The ``redsim.ml.targets`` registry id behind a platform Target.
+
+    Bundled models registered through ``POST /v1/models`` get a per-project ``Target.id``
+    (``<bundled_id>-<8 hex>``) while ``Target.value`` stays ``bundled:<registry id>`` and
+    ``detail.bundled_id`` carries the registry id; the frozen config's ``target_id`` is the
+    platform id, so resolve the registry id from the snapshot first and fall back to the id.
+    """
+    snapshot = dict(config.target_snapshot or {})
+    value = str(snapshot.get("value") or "")
+    if value.startswith("bundled:") and value[len("bundled:"):]:
+        return value[len("bundled:"):]
+    detail = snapshot.get("detail")
+    if isinstance(detail, dict) and detail.get("bundled_id"):
+        return str(detail["bundled_id"])
+    return config.target_id
+
+
 def _resolve_target(config: CampaignConfig) -> Target:
-    target = TARGETS.maybe_get(config.target_id)
+    target = TARGETS.maybe_get(_bundled_registry_id(config))
     if target is None:
         raise TargetUnavailable(f"unknown target {config.target_id!r}")
     info = target.info()

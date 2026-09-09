@@ -608,6 +608,19 @@ def test_configuration_errors_raise_before_running(no_optional_modules, sink, ov
         run_campaign(base_config(**overrides), sink, explain=False)
 
 
+@pytest.mark.parametrize("snapshot", [
+    {"id": "tiny-1a2b3c4d", "kind": "ml_model", "value": "bundled:tiny", "detail": {}},
+    {"id": "tiny-1a2b3c4d", "kind": "ml_model", "value": "blob", "detail": {"bundled_id": "tiny"}},
+])
+def test_per_project_target_id_resolves_the_bundled_registry_id(no_optional_modules, sink, snapshot):
+    # POST /v1/models registers bundled models with a per-project Target.id; the registry id
+    # travels in target_snapshot.value ("bundled:<id>") or detail.bundled_id.
+    rec = run_campaign(base_config(target_id="tiny-1a2b3c4d", attack_ids=["fgsm"], attack_params={},
+                                   target_snapshot=snapshot), sink, explain=False)
+    assert rec.config.target_id == "tiny-1a2b3c4d"
+    assert rec.target.id == "tiny"
+
+
 @pytest.mark.parametrize("overrides", [
     {"reference_eps": 0.05},
     {"eps_grid": [0.03, -0.1], "reference_eps": 0.03},
