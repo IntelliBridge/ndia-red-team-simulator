@@ -37,11 +37,15 @@ def _script_dir() -> ScriptDirectory:
     return ScriptDirectory.from_config(cfg)
 
 
-def test_0010_is_the_single_head_above_0009():
+def test_0010_sits_above_0009_on_a_single_head_chain():
+    # 0010 was the P0-frozen head; 0011_phase_b_platform moved it once (see
+    # tests/test_migration_0011.py for the exact head). This test keeps the
+    # chain linear and 0010's position in it.
     script = _script_dir()
-    assert script.get_heads() == ["0010_ml_vertical"]
+    assert len(script.get_heads()) == 1
     rev = script.get_revision("0010_ml_vertical")
     assert rev.down_revision == "0009_tenant_org_id_guard"
+    assert "0010_ml_vertical" in {r.revision for r in script.walk_revisions()}
 
 
 def _offline_sql(direction: str) -> str:

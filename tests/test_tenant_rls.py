@@ -22,6 +22,13 @@ Two test surfaces:
   is a no-op. The GUC set by ``get_session`` survives ``SET ROLE`` within the
   same transaction.
 
+``TestTenantRLS`` also covers the tables that joined the RLS set later:
+``ml_campaigns`` (0010_ml_vertical) and the Phase B tables of
+``0011_phase_b_platform`` (``report_snapshots``, ``idempotency_keys``,
+``ml_batches``, ``ml_datasets``), each through the same four checks: the
+insert trigger backfills ``org_id``, ``FORCE ROW LEVEL SECURITY`` is set, a
+session scoped to another org sees nothing, the update guard rejects drift.
+
 NB: sqlalchemy / redsim.db imports are deferred into methods. The offline unit
 job installs without the api/worker extras (no sqlalchemy), and a module-level
 import would fail at *collection* time — the class-level skipUnless only guards
@@ -45,6 +52,13 @@ REDSIM_DB = os.environ.get("REDSIM_DB_URL")
 _SCOPED_TABLES = (
     "targets", "runs", "jobs", "findings", "llm_usage", "artifacts",
     "remediation_attempts", "application_logs",
+)
+
+# Tables that gained the same denormalized org_id + RLS parity in 0011. Kept
+# apart from ``_SCOPED_TABLES`` because the tenant reconciler
+# (``redsim.workers.tasks.tenant_reconcile``) scans the 0006 set only.
+_PHASE_B_SCOPED_TABLES = (
+    "report_snapshots", "idempotency_keys", "ml_batches", "ml_datasets",
 )
 
 
@@ -94,6 +108,18 @@ class TestTenantSeamSqlite(unittest.TestCase):
             self.assertIn("org_id", cols, f"{table} missing org_id")
             # Nullable on the ORM — the DB trigger backfills it.
             self.assertTrue(cols["org_id"].nullable, f"{table}.org_id not nullable")
+
+    def test_phase_b_models_declare_org_id_and_project_id(self):
+        # 0011_phase_b_platform: every new table carries the tenant pair. The
+        # ORM org_id is nullable (trigger-backfilled); project_id is NOT NULL
+        # so the BEFORE UPDATE drift guard always has an owning org to check.
+        from redsim.db.models import Base
+        for table in _PHASE_B_SCOPED_TABLES:
+            cols = Base.metadata.tables[table].columns
+            self.assertIn("org_id", cols, f"{table} missing org_id")
+            self.assertTrue(cols["org_id"].nullable, f"{table}.org_id not nullable")
+            self.assertIn("project_id", cols, f"{table} missing project_id")
+            self.assertFalse(cols["project_id"].nullable, f"{table}.project_id nullable")
 
     def test_set_current_tenants_normalizes_and_roundtrips(self):
         from redsim.db import session as sess_mod
@@ -461,6 +487,88 @@ class TestTenantRLS(unittest.TestCase):
         with self.assertRaises(DBAPIError), self.sess_mod.get_session() as s:
             s.execute(text("UPDATE ml_campaigns SET org_id = :o WHERE run_id = :r"),
                       {"o": self.org_b, "r": self.run_a})
+
+    def _assert_phase_b_rls_parity(self, model, make_row, pk):
+        """The four 0010 checks for a Phase B table, through its ORM model.
+
+        ``make_row(project_id)`` builds an instance WITHOUT ``org_id``; ``pk``
+        is the identity ``Session.get`` takes. Insert into project A as the
+        system, then: the trigger set ``org_id``; the table is FORCE RLS; a
+        session scoped to org B sees nothing while org A sees the row; an
+        UPDATE that drifts ``org_id`` is rejected by the 0009-style guard.
+        """
+        from sqlalchemy import text
+        from sqlalchemy.exc import DBAPIError
+
+        table = model.__tablename__
+        with self.sess_mod.get_session() as s:  # system scope
+            s.add(make_row(self.proj_a))
+        with self.sess_mod.get_session() as s:
+            row = s.get(model, pk)
+            self.assertIsNotNone(row, f"{table} row not persisted")
+            self.assertEqual(row.org_id, self.org_a, f"{table}.org_id not backfilled")
+            enabled, forced = s.execute(text(
+                "SELECT relrowsecurity, relforcerowsecurity FROM pg_class "
+                "WHERE relname = :t"), {"t": table}).one()
+            self.assertTrue(enabled and forced, f"{table} is not FORCE RLS")
+            policies = {r[0] for r in s.execute(text(
+                "SELECT policyname FROM pg_policies WHERE tablename = :t"), {"t": table})}
+            self.assertEqual(policies, {"redsim_tenant_isolation"})
+        with self._scoped_session([self.org_b]) as s:
+            self.assertIsNone(s.get(model, pk), f"{table}: org B can read org A's row")
+        with self._scoped_session([self.org_a]) as s:
+            self.assertIsNotNone(s.get(model, pk), f"{table}: org A cannot read its own row")
+        with self.assertRaises(DBAPIError), self.sess_mod.get_session() as s:
+            row = s.get(model, pk)
+            row.org_id = self.org_b
+            s.flush()
+        with self.sess_mod.get_session() as s:
+            self.assertEqual(s.get(model, pk).org_id, self.org_a)
+
+    def test_report_snapshots_has_rls_parity_and_hides_other_orgs_rows(self):
+        from redsim.db.models import ReportSnapshot
+
+        snap_id = "snap-" + self.run_a
+        self._assert_phase_b_rls_parity(
+            ReportSnapshot,
+            lambda project_id: ReportSnapshot(
+                id=snap_id, run_id=self.run_a, project_id=project_id,
+                artifact_ids=["art-1"], record_sha256="0" * 64),
+            snap_id)
+
+    def test_idempotency_keys_has_rls_parity_and_hides_other_orgs_rows(self):
+        from redsim.db.models import IdempotencyKey
+
+        key = "idem-" + self.run_a
+        self._assert_phase_b_rls_parity(
+            IdempotencyKey,
+            lambda project_id: IdempotencyKey(
+                project_id=project_id, key=key, route="POST /v1/models/{id}/attacks",
+                request_sha256="1" * 64, response_status=202, response_body={"run_id": self.run_a}),
+            (self.proj_a, key))
+
+    def test_ml_batches_has_rls_parity_and_hides_other_orgs_rows(self):
+        from redsim.db.models import MlBatch
+
+        batch_id = "batch-" + self.run_a
+        self._assert_phase_b_rls_parity(
+            MlBatch,
+            lambda project_id: MlBatch(
+                id=batch_id, project_id=project_id, kind="campaign",
+                config={"target_ids": ["t-1", "t-2"]}, created_by="cli:test"),
+            batch_id)
+
+    def test_ml_datasets_cross_org_read_returns_nothing(self):
+        from redsim.db.models import MlDataset
+
+        dataset_id = "ds-" + self.run_a
+        self._assert_phase_b_rls_parity(
+            MlDataset,
+            lambda project_id: MlDataset(
+                id=dataset_id, project_id=project_id, license="CC-BY-4.0",
+                modality="tabular", class_names=["benign", "malicious"],
+                manifest_sha256="2" * 64, created_by="cli:test"),
+            dataset_id)
 
     def test_update_project_less_log_row_allowed(self):
         # application_logs.project_id is nullable (system-scoped logs). The 0009
