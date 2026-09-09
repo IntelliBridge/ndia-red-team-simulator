@@ -35,7 +35,7 @@ const SEVERITIES = ["critical", "high", "medium", "low", "info"] as const;
  * block that starts with "Measured:" (redsim.services.ml_findings writes the
  * lead first), trimmed for the list.
  */
-export function plainLanguage(description: string): string {
+function plainLanguage(description: string): string {
   const cut = description.indexOf(" Measured:");
   const lead = (cut > 0 ? description.slice(0, cut) : description).replace(/^What happened: /, "");
   return lead.length > 320 ? `${lead.slice(0, 317).trimEnd()}...` : lead;
