@@ -51,12 +51,15 @@ API integration and the web build and is excluded from this completion pass
 ### The `ml` extra and the Python matrix
 
 The ml stack (torch, torchvision, ART, SHAP, onnxruntime, onnx2torch,
-scikit-learn) is installed and exercised on Python 3.12 only. That is the
-interpreter the deploy images pin (`deploy/Dockerfile.api`,
-`deploy/Dockerfile.worker`), and it keeps the 3.13 lane a fast pure-platform
-check. CI installs CPU-only torch first from
-`https://download.pytorch.org/whl/cpu`, exactly as the worker Dockerfile does,
-so the extra resolves against it instead of pulling the multi-GB CUDA wheels.
+scikit-learn) is installed and exercised on Python 3.12 only. It is the
+interpreter the ml stack is validated on, and it keeps the 3.13 lane a fast
+pure-platform check. The deploy images no longer pin 3.12: the dependabot
+docker bump `ff24944` (#13) moved `deploy/Dockerfile.api` and
+`deploy/Dockerfile.worker` to `python:3.14-slim`, and the image builds were
+green on that base in the last green run (`ea39f97`). CI installs CPU-only
+torch first from `https://download.pytorch.org/whl/cpu`, exactly as the
+worker Dockerfile does, so the extra resolves against it instead of pulling
+the multi-GB CUDA wheels.
 
 The 3.13 lane and the API integration job deselect the `ml` marker.
 Deselection happens after collection, so an ML test module must still import
@@ -68,6 +71,22 @@ marker. The same applies to `mypy redsim` on the 3.13 lane: a function whose
 return type is only known with torch or `truststore` installed needs an
 explicit annotation (`d4804d1` and `d5e0bc9` fixed two such cases in
 `redsim/ml/datasets/image_hub.py` and `redsim/ml/assets/train_cnn.py`).
+
+The same rule holds for the order in which `redsim.ml` packages are imported.
+Without the extra, the `ml`-marked modules skip at the top and never import
+`redsim.ml.targets`, so the first ML import the 3.13 lane performs is whatever
+the first un-marked module needs: at `bb43bd7` that was
+`redsim.ml.datasets.cifar10` (from `tests/ml/test_cifar10_fixture.py`), and
+`redsim.ml.datasets.sampling` imported `Sample` from `redsim.ml.targets.base`,
+which runs the targets package `__init__` (it registers every target) and
+reaches back into the half-initialised `sampling` module. The layering is now
+one-way: `Sample` is defined in `redsim.ml.datasets.sampling` and re-exported
+by `redsim.ml.targets.base` and `redsim.ml.targets`, the datasets package
+imports nothing from the targets package, and
+`tests/ml/test_import_order.py` imports the two packages in a fresh
+interpreter with torch, ART, SHAP and scikit-learn blocked in three orders
+(datasets first as on 3.13, `sampling` first, targets first) and fails on the
+first cycle. Run that file after touching either package's imports.
 
 ### Lint and type gates
 
@@ -96,11 +115,13 @@ The floor is **81%**, set on 2026-09-08 after the pentest-domain removal and
 the redsim rename as the local measurement minus 2, rounded down, so a
 contributor without Postgres can still predict the CI result. The measurements
 recorded when it was set (83% locally on SQLite, 86.26% in the Coverage gate
-job on `main`) predate the ML PRs and the completion waves and have not been
-re-measured on `bb43bd7`, so measure before quoting. The target is **90** as the
-ML vertical settles: the owner of a merged phase raises `COV_FAIL_UNDER` to
-the new measured value minus 2 in the same PR. Do not lower it again without
-recording the reason here.
+job on `main`) predate the ML PRs and the completion waves. The Coverage gate
+job itself measured 89.09% on `bb43bd7` and 88.89% on `58461cc` (it printed
+"Required test coverage of 81% reached" before failing on the 23 upload tests
+described below, so the measurement stands even though the job was red). The
+target is **90** as the ML vertical settles: the owner of a merged phase raises
+`COV_FAIL_UNDER` to the new measured value minus 2 in the same PR. Do not lower
+it again without recording the reason here.
 
 Measure locally with:
 
@@ -128,7 +149,14 @@ pinned by `TRIVY_VERSION` in the workflow so a scanner behaviour change cannot
 flip the gate on its own. Dependabot cannot bump a curl-installed binary, so
 raise the pin by hand when a new release is out. `.trivyignore` carries the
 documented baseline of Next.js 14 advisories whose fix is in a later major, and
-they go away together with the Next upgrade owned by the web workstream.
+they go away together with the Next upgrade owned by the web workstream. The
+baseline grew by one advisory on 2026-09-09: `CVE-2026-75604` and its alias
+`GHSA-2xp9-vwfh-vxw4` (Next 14.2.35, fixed only in 15.5.24 / 16.3.3) describe an
+unauthenticated RCE in the Image Optimization API on windows-hosted servers;
+`deploy/Dockerfile.web` is a Linux container, so the affected path is not
+reachable as deployed, and the entry says so. A new Next.js advisory with a
+fix only in 15+ goes in the same block with the same justification; anything
+else needs its own reason or a pin bump.
 
 ### Dependabot
 
@@ -138,17 +166,56 @@ Docker base-image bump as a runtime change, not a routine one: it moves the
 interpreter the `ml` extra is validated on, and the 2026-09-08 bump to
 `node:26` broke the web image until #21 installed pnpm explicitly.
 
-## State of `main` at the time of writing (2026-09-08, `bb43bd7`)
+## State of `main` at the time of writing (2026-09-09, after `58461cc`)
 
-Redsim CI on `main` is red and the cause is being investigated. Do not read
-this page as a claim of a green pipeline. What is known from this tree:
+Redsim CI on `main` has been red on every push since `ea39f97` (the last
+green run, before the ML PRs landed). Do not read this page as a claim of a
+green pipeline: the fixes below are in the tree, and the next push to `main`
+is what shows whether they hold. What the failed runs said, read from the job
+logs of `bb43bd7` (run 34299574164) and `58461cc` (run 34307513075; the #23
+merge `10650da`, run 34308071046, failed the same three jobs):
 
-| Check | Result on `bb43bd7`, run locally with the venv interpreter |
+| Job | What was red | What changed in this tree |
+|---|---|---|
+| Coverage gate | 23 tests in `tests/ml/test_models_routes.py` and `tests/test_review22_models.py` failed with `AssertionError: The python-multipart library must be installed to use form parsing`: `POST /v1/models` with `source="upload"` reads a multipart form and no extra declared the parser. Coverage itself was 89.09% / 88.89%, above the 81% floor | `python-multipart>=0.0.9` is in the `api` extra in `pyproject.toml`. The Coverage gate, API integration and both unit lanes install `api`; `deploy/Dockerfile.api` installs `.[api,worker]`, so the image picks it up too |
+| Unit tests (py3.13) at `bb43bd7` | collection `ImportError: cannot import name 'as_model_input' from partially initialized module 'redsim.ml.datasets.sampling'`: the datasets -> targets -> datasets import cycle described under "The `ml` extra and the Python matrix" | `Sample` moved to `redsim.ml.datasets.sampling`, re-exported unchanged from `redsim.ml.targets.base`; `tests/ml/test_import_order.py` reproduces the 3.13 import order in a fresh interpreter and fails on a cycle |
+| Unit tests (py3.13) at `58461cc` | collection got past the cycle by luck of module order and ran 1090 tests; two failed: `tests/ml/test_cli_ml.py::test_build_options_come_from_args_and_the_cache_env` and `::test_bad_options_exit_2` raise `ModuleNotFoundError: No module named 'torch'` because `redsim/cli/ml.py` imports `redsim.ml.assets.build`, which imports `redsim.ml.assets.train_cnn` (`import torch` at module level) even to validate options | **Not fixed here.** The two tests are not `ml`-marked and do not `importorskip("torch")`, and the builder module imports torch eagerly. Either the tests skip without torch or `redsim/ml/assets/build.py` imports `train_cnn` inside the function that trains. Until one of those lands, this lane stays red and API integration (which also runs without the extra) fails the same two tests |
+| Dependency CVEs (pip-audit + trivy) | pip-audit clean; trivy reported CRITICAL `CVE-2026-75604` / `GHSA-2xp9-vwfh-vxw4` on `next 14.2.35` in `pnpm-lock.yaml`, fixed only in 15.5.24 / 16.3.3 | both IDs baselined in `.trivyignore` under the existing Next 14 -> 15 policy, with the windows-only reachability note (see "Dependency CVEs") |
+
+API integration, the Next.js build and the image builds carry `needs: unit`, so
+they were skipped on every one of these runs, not passed. They start running
+as soon as both unit lanes are green (the py3.13 lane is the one still red, for
+the `test_cli_ml.py` reason above). What to expect from them, measured from
+this tree on 2026-09-09 rather than assumed:
+
+- **API integration**: the job's selection (`-m "not e2e and not docker and not
+  slow and not auth_required and not ml"`, no `ml` extra) run locally on the
+  sqlite harness with torch, ART, SHAP and scikit-learn blocked fails the same
+  two `test_cli_ml.py` tests and nothing else that is attributable to this
+  tree. Postgres-specific behaviour is not covered by that local run.
+- **Next.js build**: `pnpm --filter @redsim/design-system run typecheck` passes;
+  `pnpm --filter @redsim/web typecheck` fails (`web/src/__fixtures__/typed.ts:6`,
+  TS2352: the `campaign.json` fixture does not overlap the `Campaign` type) and
+  `pnpm --filter @redsim/web test` fails 11 of 274 tests in 3 files
+  (`src/app/runs/[id]/page.test.tsx`, `page.a11y.test.tsx`,
+  `src/app/findings/[id]/page.test.tsx`; the run page reads
+  `campaign.target.metadata.framework_versions` at `page.tsx:288` and the
+  fixture's `target` has no `metadata`). Expect this job red until the web
+  fixtures and `@/lib/api` types agree; `next build` was not reached.
+- **Build images**: not run locally. The four Dockerfiles last built green at
+  `ea39f97` on the same `python:3.14-slim` / `node:26` bases; the only new
+  runtime dependency since then that the api image installs is
+  `python-multipart`, a pure-Python wheel.
+
+Local results from this tree with the venv interpreter (Python 3.12, `ml`
+extra installed), 2026-09-09:
+
+| Check | Result |
 |---|---|
-| `pytest -q -p no:cacheprovider --ignore=tests/e2e` | 1594 passed, 30 skipped (78 s with the `ml` extra) |
-| `ruff check --select E4,E7,E9,F,I redsim tests` | clean (as reported by the wave 2 assembler) |
-| `mypy redsim` | clean (as reported by the wave 2 assembler, from a venv that has `truststore` and `torch`) |
-| `mkdocs build --strict` | clean |
+| `pytest -q -p no:cacheprovider tests/ml/test_import_order.py` | 4 passed (3 of 4 failed before the `Sample` move) |
+| `pytest -q -p no:cacheprovider --ignore=tests/e2e` | 1680 passed, 30 skipped (92 s with the `ml` extra). An earlier run during the same pass had two failures in files another writer was editing concurrently (`tests/ml/test_campaign_routes.py`, `tests/test_plugin_marketplace.py`); both passed once those edits settled |
+| `ruff check --select E4,E7,E9,F,I redsim tests` | clean |
+| `mypy redsim` | clean (190 source files) |
 
 `Docs` builds on every docs change and its Pages deploy stays off.
 `Deploy to AWS` fails at the AssumeRole step. The CI state is recorded here as

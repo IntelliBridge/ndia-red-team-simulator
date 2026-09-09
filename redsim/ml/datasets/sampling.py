@@ -5,15 +5,32 @@ where the class has enough members. When a class is exhausted the remainder
 is redistributed over the classes that still have members. The same
 ``(labels, n, seed)`` always yields the same indices, so a rerun with the same
 ``(dataset_revision, split, n, seed)`` sees the same rows.
+
+The ``Sample`` dataclass is defined here and re-exported by
+``redsim.ml.targets.base`` (and ``redsim.ml.targets``), so the datasets package
+never imports the targets package. ``import redsim.ml.targets`` registers every
+target and reaches back into this module; a targets import here would make
+the datasets package fail whenever it is imported first (the py3.13 CI lane,
+where no ml extra is installed, hit exactly that). ``tests/ml/test_import_order.py``
+guards the layering.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 
-from redsim.ml.targets.base import Sample
+
+@dataclass
+class Sample:
+    """Evaluation slice. ``x`` is float32 in [0, 1], NCHW for images."""
+
+    x: np.ndarray
+    y: np.ndarray            # int labels, shape (n,)
+    indices: np.ndarray      # index into the source split, for reproducibility
+    class_names: list[str]
 
 
 def per_class_counts(y: np.ndarray, class_names: Sequence[str]) -> dict[str, int]:
@@ -105,4 +122,4 @@ def stratified_sample(
     )
 
 
-__all__ = ["as_model_input", "per_class_counts", "stratified_indices", "stratified_sample"]
+__all__ = ["Sample", "as_model_input", "per_class_counts", "stratified_indices", "stratified_sample"]
