@@ -16,6 +16,11 @@
 * ``GET /v1/runs/{run_id}/llm-scorecard``: the k/n probe scorecard artifact,
   never an MRI (spec 15.9, D9). Membership; ``409 score_unavailable`` while the
   run is not terminal; ``409 llm_target_required`` for a campaign run.
+* ``GET /v1/llm/models``: the Pythia models the configured key is entitled to
+  (spec 17.4; register LLM-26), for the web UI's model picker when an LLM
+  target is registered. Always ``200``; ``configured=false`` with an empty list
+  when ``PYTHIA_*`` is unset, ``error`` (key material stripped) when the gateway
+  call fails. Never cached, never the key.
 
 Nothing here imports garak, an OpenAI client or any ML library
 (``tests/test_api_process_has_no_ml.py``).
@@ -23,6 +28,7 @@ Nothing here imports garak, an OpenAI client or any ML library
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, status
@@ -47,6 +53,10 @@ _ML_KINDS = frozenset({"ml_model_artifact", "ml_model_endpoint"})
 #: The gate in force: ``Action.LLM_PROBE_RUN`` ("llm.probe.run", remediator; register LLM-25). Kept
 #: under the name the wave B0 stub exported so ``tests/ml/test_phase_b_stubs.py`` still resolves it.
 LLM_PROBE_RUN: Action = Action.LLM_PROBE_RUN
+
+#: Key material that must never reach a response: ``Authorization: Bearer ...`` header text and
+#: ``pk_...`` Pythia key tokens.
+_KEY_MATERIAL = re.compile(r"(?i)(authorization\s*[:=]\s*)?bearer\s+\S+|pk_[A-Za-z0-9_\-]+")
 
 
 def _target_project(model_id: str) -> str:
@@ -98,6 +108,41 @@ def start_probe_run(
     return handle.to_response()
 
 
+def _redact(exc: BaseException) -> str:
+    """``<class name>: <first line of the message>`` with any bearer token or ``pk_`` key stripped."""
+    message = str(exc).splitlines()[0] if str(exc).strip() else ""
+    message = _KEY_MATERIAL.sub("[redacted]", message)
+    return f"{type(exc).__name__}: {message}" if message else type(exc).__name__
+
+
+@router.get("/llm/models")
+def list_models(_user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    """The Pythia models the configured key is entitled to (spec 17.4; register LLM-26). Always 200, never the key."""
+    from redsim.llm import pythia
+    from redsim.services.ml_llm import gateway_host
+
+    settings = pythia.PythiaSettings.from_env()
+    if settings is None:
+        return {"configured": False, "gateway_url": None, "gateway_host": None, "persona": None,
+                "default_model": None, "models": [], "count": 0}
+    out: dict[str, Any] = {
+        "configured": True, "gateway_url": settings.base_url, "gateway_host": gateway_host(settings.base_url) or None,
+        "persona": settings.persona, "default_model": settings.model, "models": [], "count": 0,
+    }
+    try:
+        raw = pythia.list_models(settings)
+    except Exception as exc:  # httpx errors, non-2xx, PythiaUnavailable: one line, no key material
+        out["error"] = _redact(exc)
+        return out
+    models: list[dict[str, Any]] = [
+        {"id": str(m["id"]), "owned_by": m.get("owned_by"), "name": m.get("name")}
+        for m in raw if m.get("id")
+    ]
+    models.sort(key=lambda m: str(m["id"]))
+    out["models"], out["count"] = models, len(models)
+    return out
+
+
 @router.get("/runs/{run_id}/llm-scorecard")
 def llm_scorecard(run_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """The k/n probe scorecard of a probe run, never an MRI (spec 15.9, D9): membership, then the artifact."""
@@ -113,4 +158,4 @@ def llm_scorecard(run_id: str, user: CurrentUser = Depends(get_current_user)) ->
             "status_url": f"/v1/runs/{run_id}", "artifacts_url": f"/v1/runs/{run_id}/artifacts"}
 
 
-__all__ = ["LLM_PROBE_RUN", "list_probes", "llm_scorecard", "router", "start_probe_run"]
+__all__ = ["LLM_PROBE_RUN", "list_models", "list_probes", "llm_scorecard", "router", "start_probe_run"]

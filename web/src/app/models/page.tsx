@@ -15,6 +15,8 @@ import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
 import { useCapabilities } from "@/hooks/useMlCatalog";
 import { useDatasets } from "@/hooks/useMlCatalog";
+import { isLlmTarget, registerLlmTarget } from "@/lib/llm";
+import { EMPTY_LLM_FORM, LlmRegisterForm } from "./llm-register-form";
 export default function ModelsPage() {
   const authed = useRequireAuth();
   const router = useRouter();
@@ -47,6 +49,9 @@ export default function ModelsPage() {
   const [license, setLicense] = useState("");
   const [bundledId, setBundledId] = useState("");
   const [datasetId, setDatasetId] = useState("");
+  const [llm, setLlm] = useState(EMPTY_LLM_FORM);
+  const endpointAvailable =
+    capabilities?.endpoint_connector?.status === "available";
   if (!authed) return <p>Redirecting to sign in…</p>;
   const add = async () => {
     setBusy(true);
@@ -74,6 +79,22 @@ export default function ModelsPage() {
         body.append("modality", "image");
         body.append("dataset_id", datasetId);
         await api("/v1/models", { method: "POST", body });
+      } else if (source === "llm") {
+        const out = await registerLlmTarget({
+          source: "endpoint",
+          endpoint_kind: "llm",
+          project_id: projectId ?? "",
+          model_id: llm.modelId.trim(),
+          persona: llm.persona.trim(),
+          guardrail_mode: llm.guardrailMode,
+          auth_profile_id: llm.authProfileId,
+          ...(name.trim() ? { name: name.trim() } : {}),
+        });
+        setOpen(false);
+        setName("");
+        mutate();
+        router.push(`/models/${out.id}`);
+        return;
       } else {
         await api("/v1/models", {
           method: "POST",
@@ -89,9 +110,12 @@ export default function ModelsPage() {
       setName("");
       mutate();
     } catch (e) {
-      const d = mlErrorDetail(e);
+      const d = mlErrorDetail(e) as ReturnType<typeof mlErrorDetail> & {
+        reason?: string;
+      };
+      const where = [d.field, d.reason].filter(Boolean).join(" · ");
       setErr(
-        `${d.code ?? "model_refused"}: ${d.message ?? "The model was not accepted."}${d.reasons?.length ? ` — ${d.reasons.join(", ")}` : ""}`,
+        `${d.code ?? "model_refused"}: ${d.message ?? "The model was not accepted."}${where ? ` (${where})` : ""}${d.reasons?.length ? ` — ${d.reasons.join(", ")}` : ""}`,
       );
     } finally {
       setBusy(false);
@@ -175,17 +199,53 @@ export default function ModelsPage() {
               <div className="mt-5 grid grid-cols-3 gap-3 text-xs">
                 <div>
                   <div className="redsim-kicker">domain</div>
-                  {m.modality}
+                  {isLlmTarget(m) ? (
+                    <span className="rounded-sm border border-border bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider">
+                      llm
+                    </span>
+                  ) : (
+                    m.modality
+                  )}
                 </div>
-                <div>
-                  <div className="redsim-kicker">sha256</div>
-                  {String(m.sha256 ?? "—").slice(0, 12)}
-                </div>
-                <div>
-                  <div className="redsim-kicker">clean accuracy</div>
-                  {formatCleanAccuracy(m.manifest.clean_accuracy, m.manifest.clean_n)}
-                </div>
+                {isLlmTarget(m) ? (
+                  <>
+                    <div>
+                      <div className="redsim-kicker">model</div>
+                      <span className="font-mono">
+                        {typeof m.manifest.model_id === "string"
+                          ? m.manifest.model_id
+                          : "—"}
+                      </span>
+                    </div>
+                    <div>
+                      <div className="redsim-kicker">persona</div>
+                      {typeof m.manifest.persona === "string"
+                        ? m.manifest.persona
+                        : "—"}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <div className="redsim-kicker">sha256</div>
+                      {String(m.sha256 ?? "—").slice(0, 12)}
+                    </div>
+                    <div>
+                      <div className="redsim-kicker">clean accuracy</div>
+                      {formatCleanAccuracy(m.manifest.clean_accuracy, m.manifest.clean_n)}
+                    </div>
+                  </>
+                )}
               </div>
+              {isLlmTarget(m) &&
+                (typeof m.manifest.gateway_host === "string" ||
+                  typeof m.manifest.guardrail_mode === "string") && (
+                  <div className="mt-2 font-mono text-xs text-muted-foreground">
+                    {[m.manifest.gateway_host, m.manifest.guardrail_mode]
+                      .filter((v): v is string => typeof v === "string")
+                      .join(" · ")}
+                  </div>
+                )}
               {m.reason && (
                 <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
                   {m.reason}
@@ -230,18 +290,35 @@ export default function ModelsPage() {
               >
                 Upload artifact
               </button>
-              <button
-                disabled
-                className="border border-border px-3 py-2 text-sm text-muted-foreground"
-                title={
-                  capabilities?.endpoint_connector?.reason ??
-                  "Endpoint connector is unavailable in Phase B"
-                }
-              >
-                Connect endpoint ·{" "}
-                {capabilities?.endpoint_connector?.reason ?? "Phase B"}
-              </button>
+              {endpointAvailable ? (
+                <button
+                  aria-pressed={source === "llm"}
+                  className={`border px-3 py-2 text-sm ${source === "llm" ? "border-primary bg-primary/10" : "border-border"}`}
+                  onClick={() => setSource("llm")}
+                >
+                  Connect endpoint
+                </button>
+              ) : (
+                <button
+                  disabled
+                  className="border border-border px-3 py-2 text-sm text-muted-foreground"
+                  title={
+                    capabilities?.endpoint_connector?.reason ??
+                    "Endpoint connector is unavailable in Phase B"
+                  }
+                >
+                  Connect endpoint ·{" "}
+                  {capabilities?.endpoint_connector?.reason ?? "Phase B"}
+                </button>
+              )}
             </div>
+            {source === "llm" && (
+              <LlmRegisterForm
+                projectId={projectId}
+                value={llm}
+                onChange={setLlm}
+              />
+            )}
             {source === "bundled" && (
               <label className="mt-4 block text-sm">
                 Bundled sample
@@ -328,12 +405,16 @@ export default function ModelsPage() {
             )}
             {err && <p className="mt-3 text-sm text-destructive">{err}</p>}
             <label className="mt-4 block text-sm">
-              Model name
+              Model name{source === "llm" ? " (optional)" : ""}
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 className="mt-1 w-full rounded-sm border border-input bg-background px-3 py-2"
-                placeholder="vehicle-classifier-v1"
+                placeholder={
+                  source === "llm"
+                    ? "defaults to <model> via <gateway> (<persona>)"
+                    : "vehicle-classifier-v1"
+                }
               />
             </label>
             <div className="mt-5 flex justify-end gap-2">
@@ -347,8 +428,12 @@ export default function ModelsPage() {
                 disabled={
                   busy ||
                   !projectId ||
-                  !name ||
+                  (source !== "llm" && !name) ||
                   (source === "bundled" && !bundledId) ||
+                  (source === "llm" &&
+                    (!llm.modelId.trim() ||
+                      !llm.persona.trim() ||
+                      !llm.authProfileId)) ||
                   (source === "upload" &&
                     (!file ||
                       !datasetId ||
