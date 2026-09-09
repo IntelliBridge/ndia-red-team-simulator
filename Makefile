@@ -154,7 +154,13 @@ check: lint typecheck test
 # HTTP probes plus `redsim audit verify --all` (needs REDSIM_DB_URL). Each
 # failure names the spec 26 criterion it fails. `make check` keeps its
 # meaning above; this target is the Phase B definition of done. Needs the
-# ml, docs and garak extras for a full run (`scripts/phase_b_gate.sh --list`).
+# ml, docs and garak extras (`EXTRAS=api,worker,test,dev,ml,docs,garak make
+# install`): a missing extra fails its step rather than passing vacuously (the
+# garak step fails on pytest exit 5 and on an all-skipped run, since the tree
+# carries garak-marked tests). From a git worktree the script puts the checkout
+# under test first on PYTHONPATH for the e2e step, because the editable install
+# points at the main checkout; from the main checkout nothing is needed.
+# `scripts/phase_b_gate.sh --list` prints the steps and their criteria.
 check-phase-b:
 	@test -x $(PY) || { echo "error: $(VENV) is missing. Run 'make install' first." >&2; exit 1; }
 	PY=$(PY) scripts/phase_b_gate.sh

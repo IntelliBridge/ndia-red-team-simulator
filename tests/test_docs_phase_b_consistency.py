@@ -21,12 +21,18 @@ What is asserted, and who owns the fix when it fails:
 * the README "Open items" section names the web UI, the owner decisions and the
   remaining-work brief (26.11);
 * no document still says "open PR #23" (it merged as ``10650da``) or "not
-  started" for waves B0 to B3 (26.11);
+  started" of a Phase B wave, B0 to B4 (26.11). The wave a sentence is about is
+  the nearest ``B<n>`` before the phrase in the same sentence or table cell,
+  else the row's subject cell, else the enclosing heading, so "B0 to B3 landed,
+  B4 not started" is a claim about B4 only;
 * the mkdocs nav lists plans 10, 11 and 12 so a reader can find them;
 * ``scripts/phase_b_gate.sh`` is provably discriminating: its probe program,
   run against a fake stack whose Phase B routes still answer ``501`` for an
-  allowed role, fails and names the spec 26 criterion; ``make check-phase-b``
-  and the ``e2e-python`` / ``garak-offline`` CI jobs call the same script.
+  allowed role, fails and names the spec 26 criterion; its garak step, driven
+  with a fake interpreter, fails on pytest exit 5 (nothing collected), on a run
+  in which no test passed and on a missing garak extra, and passes only when
+  garak-marked tests ran; ``make check-phase-b`` and the ``e2e-python`` /
+  ``garak-offline`` CI jobs call the same script.
 
 A failure outside this track's files is reported with an attribution prefix in
 square brackets naming the file to fix, never by weakening the assertion. The
@@ -38,7 +44,9 @@ from the stale-phrase scan and say so here.
 from __future__ import annotations
 
 import json
+import os
 import re
+import stat
 import subprocess
 import types
 from collections.abc import Iterator
@@ -390,23 +398,77 @@ def _scanned_docs() -> list[Path]:
     return [p for p in paths if p.relative_to(REPO_ROOT).as_posix() not in STALE_SCAN_EXCLUDED]
 
 
-def test_no_doc_says_open_pr_23_or_not_started_for_waves_b0_to_b3() -> None:
-    """26.11: PR #23 merged (``10650da``) and waves B0 to B3 are on the tree; no page may say otherwise."""
+WAVE = re.compile(r"\bB([0-4])\b")
+NOT_STARTED = re.compile(r"not\s+started", re.IGNORECASE)
+HEADING = re.compile(r"^#+\s+(.*)")
+
+
+def wave_said_not_started(line: str, heading: str = "") -> str | None:
+    """The Phase B wave (``B0`` to ``B4``) ``line`` says is not started, or ``None``.
+
+    The wave is the one the phrase is about: the nearest ``B<n>`` before "not
+    started" in the same sentence or table cell, else the subject cell of a table
+    row, else the enclosing ``heading``. A wave named after the phrase, or in
+    another sentence of the line, is not its subject: "B0, B1, B2 and B3 landed,
+    B4 not started" is about B4, and a row whose status cell reads "Not started.
+    It owes the e2e files for everything B2 and B3 built" is about the wave in
+    its first cell.
+    """
+    match = NOT_STARTED.search(line)
+    if match is None:
+        return None
+    before = line[:match.start()]
+    segment_start = max(before.rfind("|"), before.rfind(". "), before.rfind("; ")) + 1
+    waves = WAVE.findall(before[segment_start:])
+    if waves:
+        return "B" + waves[-1]
+    if line.lstrip().startswith("|"):
+        cells = line.strip().strip("|").split("|")
+        subject = WAVE.findall(cells[0]) if cells else []
+        if subject:
+            return "B" + subject[-1]
+    in_heading = WAVE.findall(heading)
+    return "B" + in_heading[-1] if in_heading else None
+
+
+def test_wave_said_not_started_reads_the_subject_of_the_sentence() -> None:
+    """The heuristic's own contract: the subject wave, never a wave that merely shares the line."""
+    assert wave_said_not_started("B0, B1, B2 and B3 landed, B4 not started; no route is a stub") == "B4"
+    assert wave_said_not_started("| Phase B wave B4 (e2e, gate, docs) | Not started. It owes the files B2 and B3 built |") == "B4"
+    assert wave_said_not_started("| evidence | `tests/e2e/x.py` | wave B4 (`e2e-endpoint-llm`), not started. |") == "B4"
+    assert wave_said_not_started("Status (2026-09-09): not started. Items B0 and B1 made true.", "### Wave B4: gate") == "B4"
+    assert wave_said_not_started("Wave B2 is not started.") == "B2"
+    assert wave_said_not_started("| B1 | not started |") == "B1"
+    assert wave_said_not_started("Status: not started.", "## 6. Completion checks") is None
+    assert wave_said_not_started("B3 landed; the plan-07 rewrite is not started.") is None
+    assert wave_said_not_started("nothing to see here B2") is None
+
+
+def test_no_doc_says_open_pr_23_or_not_started_for_waves_b0_to_b4() -> None:
+    """26.11: PR #23 merged (``10650da``) and waves B0 to B4 are on the tree; no page may say otherwise.
+
+    B4 is the wave this gate belongs to: a document that still calls it "not
+    started" once the gate passes is exactly the claim 26.11 forbids.
+    """
     open_pr: list[str] = []
     not_started: list[str] = []
-    wave = re.compile(r"\b(?:wave\s+)?B[0-3]\b", re.IGNORECASE)
     for path in _scanned_docs():
         rel = path.relative_to(REPO_ROOT).as_posix()
+        heading = ""
         for number, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
+            heading_match = HEADING.match(line)
+            if heading_match is not None:
+                heading = heading_match.group(1)
             if re.search(r"open\s+PR\s+#23", line, re.IGNORECASE):
                 open_pr.append(f"{rel}:{number}")
-            if re.search(r"not\s+started", line, re.IGNORECASE) and wave.search(line):
-                not_started.append(f"{rel}:{number}")
+            wave = wave_said_not_started(line, heading)
+            if wave is not None:
+                not_started.append(f"{rel}:{number} ({wave})")
     problems = []
     if open_pr:
         problems.append("'open PR #23' at " + ", ".join(open_pr))
     if not_started:
-        problems.append("'not started' beside a wave B0 to B3 at " + ", ".join(not_started))
+        problems.append("'not started' said of a Phase B wave at " + ", ".join(not_started))
     if problems:
         attributed_fail("docs track (the files listed)", "; ".join(problems))
 
@@ -629,7 +691,64 @@ def test_gate_script_parses_and_lists_the_steps_in_the_brief_order() -> None:
         "audit verify --all",
     ):
         assert command in text, command
-    assert "rc -eq 5" in text, "exit 5 (no garak tests selected) must count as a pass"
+    # Exit 5 (nothing collected) was a pass with a notice from wave B0 to wave B1, when no garak
+    # test existed; since wave B2 the tree carries them, so the mapping is gone and the listed
+    # step says so (the behaviour itself is proven by test_gate_garak_step_fails_unless_tests_ran).
+    assert "passes with a notice" not in text, "the garak step must not map pytest exit 5 to a pass"
+    garak_row = next(line for line in listed.stdout.splitlines() if re.match(r"\s*5\.\s+garak\b", line))
+    assert "exit 5" in garak_row and "fails" in garak_row, garak_row
+
+
+FAKE_PY = """#!/usr/bin/env bash
+# A stand-in interpreter for the gate: answers the version and extra checks, and plays pytest.
+case "${1:-}" in
+  -c)
+    if [[ "${FAKE_GARAK_MISSING:-}" == "1" && "${2:-}" == *garak* ]]; then exit 1; fi
+    exit 0 ;;
+  -m)
+    printf '%s\\n' "${FAKE_SUMMARY:-}"
+    exit "${FAKE_RC:-0}" ;;
+esac
+exit 0
+"""
+
+GARAK_STEP_CASES: list[tuple[str, dict[str, str], int, str]] = [
+    # (case id, fake interpreter environment, expected gate exit, a line the gate must print)
+    ("exit-5-nothing-collected", {"FAKE_RC": "5", "FAKE_SUMMARY": "no tests ran in 0.90s"}, 1,
+     "collected no garak-marked test"),
+    ("exit-0-all-skipped", {"FAKE_RC": "0", "FAKE_SUMMARY": "16 skipped in 1.02s"}, 1,
+     "no garak-marked test passed"),
+    ("garak-extra-missing", {"FAKE_RC": "0", "FAKE_SUMMARY": "12 passed in 20.0s", "FAKE_GARAK_MISSING": "1"}, 1,
+     "garak extra is not installed"),
+    ("one-failure", {"FAKE_RC": "1", "FAKE_SUMMARY": "1 failed, 11 passed, 4 skipped in 21.3s"}, 1,
+     "FAIL: step garak"),
+    ("tests-ran", {"FAKE_RC": "0", "FAKE_SUMMARY": "12 passed, 4 skipped, 1 warning in 20.10s"}, 0,
+     "PASS garak"),
+]
+
+
+@pytest.mark.parametrize(("case", "fake_env", "expected_exit", "expected_line"), GARAK_STEP_CASES,
+                         ids=[case[0] for case in GARAK_STEP_CASES])
+def test_gate_garak_step_fails_unless_tests_ran(tmp_path: Path, case: str, fake_env: dict[str, str],
+                                                expected_exit: int, expected_line: str) -> None:
+    """TESTS_DOCS-36 / 26.20: the garak step passes only when garak-marked tests ran and passed.
+
+    ``PY`` is a shell stand-in for the interpreter, so the step's exit-code and
+    summary handling is exercised without garak: pytest exit 5, an all-skipped
+    exit 0 and a missing extra each fail the gate naming criterion 26.20.
+    """
+    del case
+    fake = tmp_path / "python"
+    fake.write_text(FAKE_PY, encoding="utf-8")
+    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    env = {**os.environ, "PY": str(fake), **fake_env}
+    result = subprocess.run([_bash(), str(GATE), "--only", "garak"], capture_output=True, text=True, check=False,
+                            cwd=REPO_ROOT, env=env)
+    assert result.returncode == expected_exit, result.stdout + result.stderr
+    assert expected_line in result.stdout, result.stdout + result.stderr
+    if expected_exit != 0:
+        assert "spec 26 criterion 26.20" in result.stdout, result.stdout
+        assert "FAIL: step garak" in result.stdout, result.stdout
 
 
 def test_makefile_has_check_phase_b_and_check_keeps_its_meaning() -> None:
@@ -653,6 +772,20 @@ def test_ci_jobs_call_the_same_gate_steps() -> None:
     assert "scripts/phase_b_gate.sh --only e2e" in run_text(jobs["e2e-python"])
     assert "scripts/phase_b_gate.sh --only docs-consistency" in run_text(jobs["e2e-python"])
     assert "scripts/phase_b_gate.sh --only garak" in run_text(jobs["garak-offline"])
+    # Both lanes hand the script the runner's interpreter, so the step runs as `make check-phase-b` does.
+    for job in ("e2e-python", "garak-offline"):
+        step_envs = [step.get("env", {}) or {} for step in jobs[job].get("steps", [])
+                     if "scripts/phase_b_gate.sh" in str(step.get("run", ""))]
+        assert step_envs and all(env.get("PY") == "python" for env in step_envs), (job, step_envs)
+    # tests/e2e/test_ml_llm.py is garak-marked and e2e-gated: it runs only where both the garak extra
+    # is installed and REDSIM_E2E is set, which is the e2e-python lane. Without the extra there,
+    # tests/conftest.py would skip it at collection and the LLM probe evidence would run in no lane.
+    assert ".[garak]" in run_text(jobs["e2e-python"]), "e2e-python must install the garak extra"
+    assert ".[garak]" in run_text(jobs["garak-offline"])
+    # The wave B0 mapping of pytest exit 5 to success is gone from the workflow as well as the script.
+    raw = CI_WORKFLOW.read_text(encoding="utf-8")
+    assert not re.search(r"exit 5[^\n]*(counts as a pass|= success|to success|nothing selected\))", raw), \
+        "the workflow still describes pytest exit 5 as a pass"
     # The garak lane still exports no gateway variable (docs/dev/ci.md "The garak offline job").
     garak_env = {**workflow.get("env", {}), **jobs["garak-offline"].get("env", {})}
     for step in jobs["garak-offline"].get("steps", []):
