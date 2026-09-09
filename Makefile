@@ -95,7 +95,6 @@ require-install:
 # `make -j dev-api dev-web dev-worker` once the stack is up.
 
 dev: require-install
-	$(PY) -m pytest -q
 	@echo "==> api: http://localhost:8000  (/docs, /health)"
 	@echo "==> web: http://localhost:3000"
 	$(MAKE) -j dev-api dev-web

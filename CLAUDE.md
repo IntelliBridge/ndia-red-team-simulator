@@ -1000,8 +1000,8 @@ loader's pin.
 - Web: pnpm 10 workspace at the repo root. `pnpm --filter @redsim/web dev`
   (:3000), `pnpm --filter @redsim/web typecheck`, `pnpm --filter @redsim/web
   test` (vitest), `pnpm --filter @redsim/design-system typecheck`.
-- Make targets: `install`, `require-install`, `dev` (pytest, then `dev-api`
-  + `dev-web` under `make -j`), `dev-api` (`uvicorn redsim.api.app:create_app
+- Make targets: `install`, `require-install`, `dev` (`dev-api` + `dev-web`
+  under `make -j`, no test gate), `dev-api` (`uvicorn redsim.api.app:create_app
   --factory --reload --port 8000`, boots without Postgres or Redis but only
   `/health`, `/docs` and `/metrics` work until they are up), `dev-web`,
   `dev-worker` (`celery -A redsim.workers.celery_app worker -Q scans,default`,

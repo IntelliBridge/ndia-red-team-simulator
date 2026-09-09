@@ -537,7 +537,7 @@ Quickstart (`redsim ml attack`, `3ab9de7`).
 |---|---|
 | `make install` | Venv, `uv pip install --native-tls -e ".[$(EXTRAS)]"` (or pip), `pnpm install` |
 | `make require-install` | Fails fast with one clear line when `.venv` or `node_modules` is missing. |
-| `make dev` | pytest, then `dev-api` and `dev-web` under `make -j` |
+| `make dev` | `dev-api` and `dev-web` under `make -j`. Run `make test` yourself. |
 | `make dev-api` | `uvicorn redsim.api.app:create_app --factory --reload --port 8000` |
 | `make dev-web` | `pnpm --filter @redsim/web dev` on :3000 |
 | `make dev-worker` | `celery -A redsim.workers.celery_app worker -Q scans,default`. Not on the `dev` line, needs Redis and Postgres first. |

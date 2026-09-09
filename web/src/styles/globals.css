@@ -2,33 +2,212 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   redsim design tokens.
+
+   Ported from the redsim-designs reference export, which authored
+   them as Tailwind v4 `@theme inline` custom properties. This
+   workspace is Tailwind v3, so the palette is expressed as HSL
+   triples consumed through `hsl(var(--token))` in tailwind.config.ts.
+
+   One palette carries two vocabularies. The shadcn names the shipped
+   components already use (background, card, muted-foreground, border)
+   are repointed onto the redsim palette, so every existing component
+   takes the new skin without edits. The redsim names the reference
+   export introduced (panel, hairline, robust, measured) are added
+   beside them for the ported components.
+
+   `--muted` stays the surface, as the shipped components read it, and
+   the reference export's muted *text* is `--muted-foreground`. That is
+   the only name the two vocabularies spell differently, so ported
+   markup rewrites `text-muted` to `text-muted-foreground`.
+   ============================================================ */
+
 :root {
-  --background: 42 35% 96%; --foreground: 205 32% 16%;
-  --card: 42 32% 99%; --card-foreground: 205 32% 16%;
-  --popover: 42 32% 99%; --popover-foreground: 205 32% 16%;
-  --primary: 190 72% 30%; --primary-foreground: 42 35% 96%;
-  --secondary: 38 25% 89%; --secondary-foreground: 205 32% 16%;
-  --muted: 38 25% 91%; --muted-foreground: 205 14% 43%;
-  --accent: 32 78% 57%; --accent-foreground: 205 32% 16%;
-  --destructive: 5 69% 42%; --destructive-foreground: 42 35% 96%;
-  --border: 36 22% 80%; --input: 36 22% 80%; --ring: 190 72% 30%;
+  --background: 216 29% 97%;
+  --foreground: 214 33% 9%;
+  --card: 0 0% 100%;
+  --card-foreground: 214 33% 9%;
+  --popover: 214 26% 95%;
+  --popover-foreground: 214 33% 9%;
+  --primary: 216 84% 52%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 214 26% 95%;
+  --secondary-foreground: 214 33% 9%;
+  --muted: 214 26% 95%;
+  --muted-foreground: 208 13% 38%;
+  --accent: 24 86% 41%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 63% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 212 22% 87%;
+  --input: 212 22% 87%;
+  --ring: 216 84% 52%;
+
+  --base: 216 29% 97%;
+  --panel: 0 0% 100%;
+  --panel-2: 214 26% 95%;
+  --hairline: 212 22% 87%;
+  --muted-2: 209 12% 59%;
+  --primary-fg: 0 0% 100%;
+
+  --robust: 156 77% 31%;
+  --degraded: 41 89% 35%;
+  --critical: 0 63% 50%;
+  --adversarial: 260 56% 52%;
+
+  --candidate: 41 89% 35%;
+  --inferred: 216 84% 52%;
+  --heuristic: 260 56% 52%;
+  --measured: 156 77% 31%;
+  --illustrative: 24 86% 41%;
+  --partial: 41 89% 35%;
+  --phaseb: 209 12% 59%;
+  --focus: 216 84% 52%;
+  --radius: 0.5rem;
 }
+
 .dark {
-  --background: 205 32% 11%; --foreground: 42 35% 95%;
-  --card: 205 29% 15%; --card-foreground: 42 35% 95%;
-  --popover: 205 29% 15%; --popover-foreground: 42 35% 95%;
-  --primary: 174 54% 57%; --primary-foreground: 205 32% 11%;
-  --secondary: 205 23% 21%; --secondary-foreground: 42 35% 95%;
-  --muted: 205 23% 20%; --muted-foreground: 36 17% 69%;
-  --accent: 32 78% 57%; --accent-foreground: 205 32% 11%;
-  --destructive: 5 65% 56%; --destructive-foreground: 205 32% 11%;
-  --border: 205 19% 29%; --input: 205 19% 29%; --ring: 174 54% 57%;
+  --background: 213 29% 6%;
+  --foreground: 208 35% 93%;
+  --card: 214 28% 10%;
+  --card-foreground: 208 35% 93%;
+  --popover: 213 26% 14%;
+  --popover-foreground: 208 35% 93%;
+  --primary: 214 100% 65%;
+  --primary-foreground: 215 80% 8%;
+  --secondary: 213 26% 14%;
+  --secondary-foreground: 208 35% 93%;
+  --muted: 213 26% 14%;
+  --muted-foreground: 210 13% 60%;
+  --accent: 25 95% 53%;
+  --accent-foreground: 215 80% 8%;
+  --destructive: 0 100% 68%;
+  --destructive-foreground: 215 80% 8%;
+  --border: 211 24% 19%;
+  --input: 211 24% 19%;
+  --ring: 214 100% 65%;
+
+  --base: 213 29% 6%;
+  --panel: 214 28% 10%;
+  --panel-2: 213 26% 14%;
+  --hairline: 211 24% 19%;
+  --muted-2: 208 12% 41%;
+  --primary-fg: 215 80% 8%;
+
+  --robust: 154 69% 55%;
+  --degraded: 40 90% 61%;
+  --critical: 0 100% 68%;
+  --adversarial: 262 100% 77%;
+
+  --candidate: 40 90% 61%;
+  --inferred: 214 100% 65%;
+  --heuristic: 262 100% 77%;
+  --measured: 154 69% 55%;
+  --illustrative: 25 95% 53%;
+  --partial: 40 90% 61%;
+  --phaseb: 208 12% 41%;
+  --focus: 214 100% 65%;
 }
+
 @layer base {
-  * { border-color: hsl(var(--border)); box-sizing: border-box; }
-  body { background: hsl(var(--background)); color: hsl(var(--foreground)); font-family: "IBM Plex Sans", "Segoe UI", sans-serif; margin: 0; }
+  * {
+    border-color: hsl(var(--border));
+    box-sizing: border-box;
+  }
+  html {
+    background: hsl(var(--background));
+  }
+  body {
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: var(--font-inter), "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  :focus-visible {
+    outline: 2px solid hsl(var(--focus));
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
 }
-.font-mono { font-family: "IBM Plex Mono", monospace; }
-.redsim-panel { border: 1px solid hsl(var(--border)); background: hsl(var(--card)); box-shadow: 0 1px 2px hsl(var(--foreground) / .05); }
-.redsim-kicker { color: hsl(var(--muted-foreground)); font-size: .68rem; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-.redsim-footer { border-top: 1px solid hsl(var(--border)); color: hsl(var(--muted-foreground)); font-size: .72rem; line-height: 1.5; padding-top: 1.25rem; }
+
+.font-mono {
+  font-family: var(--font-jbmono), "IBM Plex Mono", ui-monospace, monospace;
+}
+
+/* Tabular figures, so a column of measurements stays aligned. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.redsim-panel {
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  box-shadow: 0 1px 2px hsl(var(--foreground) / 0.05);
+}
+.redsim-kicker {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.redsim-footer {
+  border-top: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  font-size: 0.72rem;
+  line-height: 1.5;
+  padding-top: 1.25rem;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(var(--base));
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--panel-2));
+  border-radius: 8px;
+  border: 2px solid hsl(var(--base));
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--hairline));
+}
+
+@keyframes redsim-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in {
+  animation: redsim-fade-in 0.18s ease-out both;
+}
+
+/* Diagonal stripes marking fixture and Phase B affordances. */
+.stripe-warning {
+  background-image: repeating-linear-gradient(
+    45deg,
+    hsl(var(--illustrative) / 0.14) 0,
+    hsl(var(--illustrative) / 0.14) 8px,
+    transparent 8px,
+    transparent 16px
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
