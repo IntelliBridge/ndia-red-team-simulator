@@ -23,6 +23,7 @@ app = Celery(
         "redsim.workers.tasks.worm_export",
         "redsim.workers.tasks.ml_campaign",
         "redsim.workers.tasks.ml_model",
+        "redsim.workers.tasks.ml_llm",
     ],
 )
 
@@ -57,12 +58,17 @@ app.conf.task_time_limit = 2100
 # scan can't starve a report behind it. Deploy a dedicated worker pool per
 # queue (see deploy/docker-compose.yml). The pentest fix / agent / CI-gate
 # tasks that used to be routed here were removed with the pentest domain.
+# The LLM probe run (spec 17.4, plan 12 wave B2) is on ``default`` on purpose:
+# that pool is the only one with Pythia egress (spec 10.8), the probe child
+# talks to the gateway and never loads model bytes, so it does not belong on
+# the credential-free ``scans`` pool.
 app.conf.task_default_queue = "default"
 app.conf.task_routes = {
     "redsim.scan_start": {"queue": "scans"},
     "redsim.verify_replay": {"queue": "scans"},
     "redsim.ml_campaign_run": {"queue": "scans"},
     "redsim.ml_model_validate": {"queue": "scans"},
+    "redsim.ml_llm_probe_run": {"queue": "default"},
     "redsim.report_render": {"queue": "default"},
     "redsim.reap_stale_jobs": {"queue": "default"},
     "redsim.verify_tenant_integrity": {"queue": "default"},
