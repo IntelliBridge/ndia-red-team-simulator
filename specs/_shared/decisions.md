@@ -1,6 +1,6 @@
 # Clarification and Decision Register
 
-Every row is **OPEN** unless a reviewer explicitly records a decision below. D001–D005 were resolved by the product owner on 2026-09-08; their records follow the register in the "Recording a resolution" format. D006 and D007 remain open. D008 was closed as moot on 2026-09-08 (later) when the corpus it concerned was withdrawn. The "Proposed starting point" column is kept as history so divergences are visible.
+Every row is **OPEN** unless a reviewer explicitly records a decision below. D001–D005 were resolved by the product owner on 2026-09-08; their records follow the register in the "Recording a resolution" format. D006 and D007 remain open. D008 was closed as moot on 2026-09-08 (later) when the corpus it concerned was withdrawn. D014 (data-poisoning evaluation) was resolved by the product owner on 2026-09-09 and takes the number the remaining-work brief gave it (`docs/plans/10-remaining-work-brief.md` section F, "D14"). D009 to D013 are not allocated in this register. The "Proposed starting point" column is kept as history so divergences are visible.
 
 | ID | Status | Decision needed | Proposed starting point (history) | Blocks | Suggested decision owner |
 | --- | --- | --- | --- | --- | --- |
@@ -12,6 +12,7 @@ Every row is **OPEN** unless a reviewer explicitly records a decision below. D00
 | D006 | OPEN | Retention period, export redaction, license restrictions, and audit metadata retention | Minimize retained content; exports redacted by policy; block destructive purge until approved | F007 export policy and F008 retention operations | Data owner + security reviewer |
 | D007 | OPEN | Named feature owners and independent reviewers | Assign one accountable owner per feature; specialists may contribute across features | Team scheduling and approval, not document drafting | Project owner |
 | D008 | RESOLVED 2026-09-08 (closed as moot: corpus withdrawn) | Licence and redistribution of the malicious-gpt corpus (Phase B LLM-track probe material) | Internal research use only until the upstream authors state a licence. No shipping, publication or redistribution | Nothing. The corpus was withdrawn and the Phase B LLM track uses the probe corpora garak ships (spec 11.6) | Product owner + security reviewer |
+| D014 | RESOLVED 2026-09-09 | Scope of training-data poisoning: the spec 3.3 non-goal "a training-data poisoning pipeline" is narrowed to a bounded exposure evaluation | Keep the non-goal as written: no poisoning work at all | The data-poisoning evaluation module (`docs/plans/10-remaining-work-brief.md` package F), its schema fields, `Action` and reporting card | Product owner |
 
 ## Recording a resolution
 
@@ -111,6 +112,21 @@ All five records below are reflected in the product spec ([docs/superpowers/spec
 - **Approver:** product owner (hackathon), 2026-09-08.
 - **Affected requirements:** spec section 4 row 58, 4.4, 11.5, 11.6, 12.2 and milestone B1. The local download and the combined JSONL were deleted from the asset cache.
 - **New dependencies / changed exclusions:** none. garak remains a Phase B dependency (D6).
+
+## Resolutions recorded 2026-09-09
+
+### D014: Training-data poisoning, exposure evaluation, not a pipeline
+
+- **Status:** RESOLVED 2026-09-09.
+- **Chosen option:** the product spec's section 3.3 non-goal "a training-data poisoning pipeline" is narrowed. redsim evaluates a classifier's exposure to training-data poisoning on the bundled datasets and the small bundled models only. It is not a training platform and not a poisoning pipeline for real data. Nothing in it touches operational data, and the D3 bounds hold: open, unclassified, public data only, no targeting or weapons model is trained, optimized or deployed, no mission-system connection.
+- **Rationale:** the project brief and the original use case name data poisoning as a vulnerability class. An exposure evaluation on bundled material answers that without building a pipeline that could be pointed at real data.
+- **Diverges from the proposal:** yes. The proposal (the spec 3.3 non-goal as written) excluded poisoning work entirely.
+- **Alternatives rejected:** a general poisoning pipeline over user-supplied training data, and folding poisoning results into the Model Robustness Index.
+- **Reporting rule:** poisoning results are never an MRI input and are never aggregated with evasion results (D9). They get their own Poisoning Exposure card with k/n denominators, and the card carries the same illustrative and non-readiness labels as every other reading.
+- **Approver:** product owner, 2026-09-09.
+- **Affected requirements:** the spec section 3.3 non-goal sentence and reconciliation row 46, `docs/project-brief.md` "Decisions taken", the additive schema fields announced in `docs/plans/00-master-plan.md` section 0 under the plan-01 section 8 protocol, a new `Action` in `redsim/api/policy.py` and its OPA and Cedar mirrors, `redsim/ml/reporting.py` for the card.
+- **New dependencies / changed exclusions:** none new. "A training-data poisoning pipeline" stays excluded. "A bounded exposure evaluation on the bundled datasets and small bundled models" is included.
+- **Build state:** the module itself (`redsim/ml/poisoning/`, `redsim/workers/tasks/ml_poisoning.py`, `redsim/services/ml_poisoning.py`, `redsim/api/v1/poisoning.py`) is not built on this tree. It is package F of `docs/plans/10-remaining-work-brief.md`. This record is the decision, not a claim that the evaluation exists.
 
 ## Work that can begin before the open decisions close
 
