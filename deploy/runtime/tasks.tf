@@ -46,8 +46,10 @@ locals {
       #
       # NEXTAUTH_URL is gone rather than carried alongside. PR #24 is merged,
       # so every image this runtime pulls is a Better Auth image, and
-      # prepare_secrets.py already retires NEXTAUTH_SECRET, which would leave
-      # the URL without its secret.
+      # configure_connections.py leaves NEXTAUTH_SECRET out of the references
+      # it emits, which would leave the URL without its secret. The value
+      # stays in the secret until the task definitions that still name it have
+      # been re-registered.
       BETTER_AUTH_URL    = local.origin
       REDSIM_API_URL     = local.api_internal
       KEYCLOAK_CLIENT_ID = "redsim-web"

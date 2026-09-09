@@ -32,10 +32,17 @@ def save_secret(name, value):
         'Tags': [{'Key': 'Application', 'Value': 'redsim'}]})['ARN']
 
 
-# Keys a previous run wrote under a name this one no longer uses. Dropped from
-# the merged secret so a rerun does not leave a task definition referencing
-# both a retired name and its replacement. Add a name here whenever one of the
-# service dicts below renames a key.
+# Keys a previous run wrote under a name this one no longer uses.
+#
+# configure_connections.py leaves them out of the ECS valueFrom references it
+# emits, so a task definition registered from here on carries the replacement
+# alone. They stay in the secret itself on purpose. A task definition that was
+# already registered still points at "<arn>:NEXTAUTH_SECRET::", and a web task
+# placed before the apply that re-registers it cannot resolve its secrets and
+# will not start, so deleting the key is a change that has to wait for the new
+# task definitions to be live.
+#
+# Add a name here whenever one of the service dicts below renames a key.
 RETIRED_SECRET_KEYS = ('NEXTAUTH_SECRET',)
 
 
@@ -83,14 +90,11 @@ def main():
     for service, value in services.items():
         # Preserve derived connection URLs on reruns.
         current = aws('secretsmanager', 'get-secret-value', {'SecretId': f'{prefix}/{service}'})
+        # A merge keeps every key a previous run wrote, retired names included.
+        # That is deliberate: the retired value has to outlive the task
+        # definition that still references it. RETIRED_SECRET_KEYS is applied
+        # where the references are built, not here.
         merged = json.loads(current['SecretString']) if current else {}
-        # A merge keeps every key a previous run wrote, including ones this one
-        # has renamed, and configure_connections.py derives the task
-        # definition's secret references from these keys. Without the drop, a
-        # rerun after the NextAuth to Better Auth rename left NEXTAUTH_SECRET
-        # on the web task definition next to its replacement.
-        for retired in RETIRED_SECRET_KEYS:
-            merged.pop(retired, None)
         merged.update(value)
         references[service] = save_secret(f'{prefix}/{service}', merged)
     group_id = f'ndia-red-team-{args.environment}'

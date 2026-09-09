@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from urllib.parse import quote
 
-from prepare_secrets import aws, save_secret
+from prepare_secrets import RETIRED_SECRET_KEYS, aws, save_secret
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--foundation-outputs', type=Path, required=True)
@@ -30,7 +30,11 @@ for service in ['api', 'web', 'scans', 'default', 'beat', 'migration', 'assets',
         values['REDSIM_BROKER_URL'] = redis_url + '/0?ssl_cert_reqs=required'
         values['REDSIM_RESULT_BACKEND'] = redis_url + '/1?ssl_cert_reqs=required'
     arn = save_secret(f'{prefix}/{service}', values)
-    references[service] = {key: f'{arn}:{key}::' for key in values}
+    # Retired names stay in the secret so an already-registered task definition
+    # can still resolve them, and are left out here so the task definitions
+    # this run produces reference the replacement alone.
+    references[service] = {key: f'{arn}:{key}::' for key in values
+                           if key not in RETIRED_SECRET_KEYS}
 master = connections['database']['managed_master_secret_arn']
 references['migration']['REDSIM_DB_ADMIN_USERNAME'] = f'{master}:username::'
 references['migration']['REDSIM_DB_ADMIN_PASSWORD'] = f'{master}:password::'
