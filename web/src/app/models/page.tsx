@@ -6,6 +6,7 @@ import {
   ApiError,
   api,
   deleteModel,
+  formatCleanAccuracy,
   mlErrorDetail,
   type ModelTarget,
 } from "@/lib/api";
@@ -182,8 +183,7 @@ export default function ModelsPage() {
                 </div>
                 <div>
                   <div className="redsim-kicker">clean accuracy</div>
-                  {m.manifest.clean_accuracy ?? "—"}{" "}
-                  {m.manifest.clean_n ? `(n=${m.manifest.clean_n})` : ""}
+                  {formatCleanAccuracy(m.manifest.clean_accuracy, m.manifest.clean_n)}
                 </div>
               </div>
               {m.reason && (
