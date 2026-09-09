@@ -10,7 +10,16 @@ Per attack and grid eps: the adapter runs (a minimal-norm adapter with ``takes_e
 is thresholded against the grid, examples over budget reverting to the clean input, spec 15.1), the rows
 carry ``n`` and the ASR denominator, the adversarial slice is written as ``adv_slice/<attack>_<eps>.npz``
 under the artifact cap, ``pert_first_success`` lands on the reference row only, and the finding
-threshold crossing is noted from ``scoring.finding_inputs``. A white-box adapter that raises
+threshold crossing is noted from ``scoring.finding_inputs``.
+
+Per-sample export slices (Phase B, INTEROP-04): every slice this runner writes is a self-describing
+``.npz`` — ``clean_slice.npz`` after ``clean_eval`` (``x``, ``indices``, ``y``, ``y_pred_clean``,
+``conf_clean``), ``adv_slice/<attack>_<eps>.npz`` per attack row and ``control_slice/<eps>.npz`` per
+control row (``x_adv``, ``indices``, ``y``, ``y_pred_clean``, ``y_pred_adv``, ``conf_clean``, ``conf_adv``),
+each carrying the descriptor keys ``family`` / ``attack`` / ``eps`` the Croissant export labels it by
+(``redsim.ml.interop.parquet.SLICE_META_KEYS``). Confidences are the probability of the predicted class.
+Every slice is written under the same ``REDSIM_ML_MAX_ADV_ARTIFACT_MB`` cap; one not retained is noted on
+its measurement row, never faked at export time. A white-box adapter that raises
 ``AttackNotApplicable`` on a target without loss gradients is retried on the declared surrogate (spec
 12.9) or recorded ``not_run`` through the frame. The control runs the uniform-noise adapter at every
 grid eps and the spec 12.4 predicate decides whether it preserved accuracy. The explain closure runs
@@ -21,6 +30,7 @@ row; an unavailable or failing explainer is recorded, never faked (spec 14.7).
 from __future__ import annotations
 
 import importlib
+import io
 import logging
 import math
 import time
@@ -49,7 +59,6 @@ from redsim.ml.runners.base import (
     dataset_caveats,
     explain_fields,
     max_adv_artifact_bytes,
-    npz_bytes,
     split_notes,
     surrogate_description,
     surrogate_for_white_box,
@@ -60,10 +69,36 @@ from redsim.ml.targets.base import Sample, Target
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["run_classification"]
+__all__ = ["SLICE_FAMILY_ADVERSARIAL", "SLICE_FAMILY_CLEAN", "SLICE_FAMILY_CONTROL", "run_classification",
+           "slice_bytes"]
 
 # (eps, x_adv, params, notes, wall_time_s, queries_mean) per grid eps
 AttackOutputs = list[tuple[float, np.ndarray, dict[str, Any], list[str], float, float | None]]
+
+#: Slice families (mirrors ``redsim.ml.interop.parquet.FAMILY_*``; the runner never imports the export).
+SLICE_FAMILY_CLEAN = "clean"
+SLICE_FAMILY_ADVERSARIAL = "adversarial"
+SLICE_FAMILY_CONTROL = "control"
+SLICE_NOT_RETAINED_NOTE = "{what} slice not retained (over REDSIM_ML_MAX_ADV_ARTIFACT_MB)"
+
+
+def slice_bytes(*, family: str, attack: str, eps: float | None, **arrays: np.ndarray) -> bytes:
+    """A self-describing per-sample slice (INTEROP-04).
+
+    ``arrays`` are the per-sample columns (``x`` or ``x_adv``, ``indices``, ``y``, ``y_pred_clean``,
+    ``y_pred_adv``, ``conf_clean``, ``conf_adv``); ``family`` / ``attack`` travel as zero-dimensional
+    unicode arrays and ``eps`` as a float scalar (omitted for the clean slice), so the export labels the
+    slice from its own bytes whatever the blob backend did with the name (``allow_pickle=False`` loads
+    every key). Compressed, no pickle.
+    """
+    payload: dict[str, Any] = dict(arrays)
+    payload["family"] = np.asarray(family)
+    payload["attack"] = np.asarray(attack)
+    if eps is not None:
+        payload["eps"] = np.asarray(float(eps), dtype=np.float64)
+    buf = io.BytesIO()
+    np.savez_compressed(buf, **payload)
+    return buf.getvalue()
 
 
 def run_classification(config: CampaignConfig, target: Target, *, frame: CampaignFrame) -> ModalityResult:
@@ -109,13 +144,23 @@ def run_classification(config: CampaignConfig, target: Target, *, frame: Campaig
     measurements.append(m_clean)
     acc_clean = m_clean.accuracy
     n_clean_correct = m_clean.n_correct
+    # Per-sample export slices (INTEROP-04): the clean slice carries the clean predictions and their
+    # confidence (probability of the predicted class); adversarial and control slices below reuse them.
+    conf_clean = proba_clean.max(axis=1)
+    sample_indices = np.asarray(sample.indices)
+    max_adv_bytes = max_adv_artifact_bytes()
+    blob = slice_bytes(family=SLICE_FAMILY_CLEAN, attack="", eps=None, x=x, indices=sample_indices, y=y,
+                       y_pred_clean=y_clean, conf_clean=conf_clean)
+    if len(blob) <= max_adv_bytes:
+        sink.put("clean_slice.npz", blob, "application/octet-stream")
+    else:
+        m_clean.notes.append(SLICE_NOT_RETAINED_NOTE.format(what="clean"))
     stage_done("clean_eval")
 
     # --- attack ------------------------------------------------------------------------------
     x_adv_ref: dict[str, np.ndarray] = {}
     proba_adv_ref: dict[str, np.ndarray] = {}
     flip_matrix: dict[str, dict[str, list[bool]]] = {}
-    max_adv_bytes = max_adv_artifact_bytes()
     tabular = domain == "tabular"
     via_surrogate: list[str] = []             # white-box attacks that ran on the declared surrogate (12.9)
     surrogate_desc = surrogate_description(manifest)
@@ -200,11 +245,13 @@ def run_classification(config: CampaignConfig, target: Target, *, frame: Campaig
             if math.isclose(e, ref, abs_tol=1e-12):
                 x_adv_ref[aid] = x_adv
                 proba_adv_ref[aid] = proba_adv
-            blob = npz_bytes(x_adv, np.asarray(sample.indices), y)
+            blob = slice_bytes(family=SLICE_FAMILY_ADVERSARIAL, attack=aid, eps=e, x_adv=x_adv,
+                               indices=sample_indices, y=y, y_pred_clean=y_clean, y_pred_adv=y_adv,
+                               conf_clean=conf_clean, conf_adv=proba_adv.max(axis=1))
             if len(blob) <= max_adv_bytes:
                 sink.put(f"adv_slice/{aid}_{eps_tag(e)}.npz", blob, "application/octet-stream")
             else:
-                m.notes.append("full adversarial slice not retained (over REDSIM_ML_MAX_ADV_ARTIFACT_MB)")
+                m.notes.append(SLICE_NOT_RETAINED_NOTE.format(what="full adversarial"))
 
         # pert at first success (spec 15.1) lives on the reference row only.
         pert_mean, pert_n = pert_first_success(flips_by_eps, norms_by_eps)
@@ -267,6 +314,14 @@ def run_classification(config: CampaignConfig, target: Target, *, frame: Campaig
                                    f"accuracy from {m_clean.n_correct}/{n} to {m.n_correct}/{n}, so evasion results "
                                    "at this eps are not attributable to adversarial alignment alone.")
             measurements.append(m)
+            blob = slice_bytes(family=SLICE_FAMILY_CONTROL, attack=CONTROL_ATTACK_ID, eps=e,
+                               x_adv=np.asarray(out.x_adv, dtype=np.float32), indices=sample_indices, y=y,
+                               y_pred_clean=y_clean, y_pred_adv=y_ctrl, conf_clean=conf_clean,
+                               conf_adv=proba_ctrl.max(axis=1))
+            if len(blob) <= max_adv_bytes:
+                sink.put(f"control_slice/{eps_tag(e)}.npz", blob, "application/octet-stream")
+            else:
+                m.notes.append(SLICE_NOT_RETAINED_NOTE.format(what="control"))
         stage_done("control")
     else:
         limitations.append("The benign noise control was disabled for this run (include_control=false); "

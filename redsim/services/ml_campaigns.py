@@ -725,6 +725,7 @@ def create_attack_campaign(
     """
     from redsim.db.models import Job, Project, Run, Target
     from redsim.db.session import get_session
+    from redsim.services.ml_datasets import is_dataset_id, resolve_consumed_slice
 
     requested: dict[str, Any] = (
         campaign.model_dump(mode="json") if isinstance(campaign, CampaignConfig) else _as_mapping(campaign)
@@ -870,6 +871,23 @@ def create_attack_campaign(
                 field="n_samples", reasons=[f"{modality} n_samples cap {n_cap}"], cap=n_cap,
             )
         dataset_id = snapshot.get("dataset_id")
+        consumed = None
+        if isinstance(dataset_id, str) and is_dataset_id(dataset_id):
+            # Consumed-slice hook (INTEROP-16): a ``ds-…`` id must name an *available* consumed slice of
+            # this project, of the campaign's modality; its manifest digest is the dataset revision.
+            audit_context["dataset_id"] = dataset_id          # a refusal names the id it judged (ids only)
+            audit_context["dataset_role"] = "consumed"
+            with get_session() as lookup:
+                consumed = resolve_consumed_slice(lookup, dataset_id, project_id=project_id)
+            if consumed is None:
+                raise ApiError(DATASET_INCOMPATIBLE,
+                               f"dataset {dataset_id!r} is not an available consumed slice of this project "
+                               "(unknown, still validating, refused, or registered under another project)",
+                               field="dataset_id", dataset_role="consumed")
+            if consumed.modality != modality:
+                raise ApiError(DATASET_INCOMPATIBLE,
+                               f"consumed slice {dataset_id!r} is a {consumed.modality} slice; the campaign "
+                               f"modality is {modality!r}", field="dataset_id", dataset_role="consumed")
         if dataset_id is None:
             if not manifest_dataset:
                 raise ApiError(DATASET_INCOMPATIBLE,
@@ -877,10 +895,18 @@ def create_attack_campaign(
                                "evaluation dataset", field="dataset_id")
             snapshot["dataset_id"] = manifest_dataset
         elif manifest_dataset and dataset_id != manifest_dataset:
+            # The child samples the split the model manifest binds; a record naming another dataset
+            # would not describe what ran. A consumed slice binds at upload (POST /v1/models dataset_id).
+            hint = (" — bind the consumed slice at model upload so the child evaluates on it"
+                    if consumed is not None else "")
             raise ApiError(DATASET_INCOMPATIBLE,
                            f"dataset {dataset_id!r} is not the dataset the model manifest binds "
-                           f"({manifest_dataset!r})", field="dataset_id")
-        if snapshot.get("dataset_revision") is None and manifest_revision:
+                           f"({manifest_dataset!r}){hint}", field="dataset_id")
+        if consumed is not None:
+            if snapshot.get("dataset_revision") is None:
+                snapshot["dataset_revision"] = consumed.revision or manifest_revision or None
+            audit_context["dataset_revision"] = snapshot.get("dataset_revision")
+        elif snapshot.get("dataset_revision") is None and manifest_revision:
             snapshot["dataset_revision"] = manifest_revision
         attack_ids = snapshot.get("attack_ids")
         if not isinstance(attack_ids, list) or not attack_ids or not all(isinstance(a, str) for a in attack_ids):
@@ -1103,6 +1129,8 @@ def create_attack_campaign(
         "norm": frozen.norm, "eps_grid": list(frozen.eps_grid), "reference_eps": frozen.reference_eps,
         "n_samples": frozen.n_samples, "seed": frozen.seed, "explain_k": frozen.explain_k,
         "dataset_id": frozen.dataset_id, "dataset_revision": frozen.dataset_revision,
+        # INTEROP-16: a ``ds-…`` id is a consumed slice of the project (the hook above verified it).
+        "dataset_role": "consumed" if is_dataset_id(frozen.dataset_id) else "bundled",
         "model_sha256": model_sha256, "settings_hash": frozen_settings_hash,
         "rerun": parent_run_id is not None, "parent_run_id": parent_run_id,
         "scoring_source": scoring_source, "scoring_weights": scoring_weights,

@@ -27,19 +27,20 @@ Phase B interoperability (spec 27.1 to 27.3; plan 12 wave B3, interop-consume):
 * ``GET /v1/datasets/{id}``: a consumed slice's record (membership on its
   project) or, when the id names a campaign run, the Croissant manifest of
   that run's export as ``application/ld+json`` (membership through the run;
-  ``404`` until the export exists; ``501`` while the export service of the
-  interop-contribute track is not on the tree).
+  ``404`` until the export exists) through
+  ``services.ml_datasets_export.get_export_manifest``.
 * ``POST /v1/runs/{run_id}/dataset`` (membership, ``dataset.export``): the
   Croissant export job through ``services.ml_datasets_export.admit_export``
-  (interop-contribute), ``202`` with the job handle; ``501`` with the reason
-  when that service is absent. Nothing is faked.
+  (audit-first, follow-up run, typed refusals ``export_unavailable`` /
+  ``export_in_flight`` / ``fixture_not_exportable`` / ``queue_unavailable``),
+  ``202`` with the job handle plus ``status_url`` and ``dataset_url``; a second
+  call answers the existing export (``status: exists``). Nothing is faked.
 
 Nothing here imports an ML library (``tests/test_api_process_has_no_ml.py``).
 """
 
 from __future__ import annotations
 
-import inspect
 import json
 import logging
 from typing import Any
@@ -51,12 +52,13 @@ from redsim.api.errors import (
     HTTP_STATUS,
     NOT_FOUND,
     NOT_IMPLEMENTED,
+    SCORE_UNAVAILABLE,
     ApiError,
     api_error,
 )
 from redsim.api.policy import Action, accessible_project_ids, check, ensure_project_access, ensure_run_access
 from redsim.api.v1.batches import project_field, project_required
-from redsim.api.v1.integrations import not_built, phase_b_action
+from redsim.api.v1.integrations import phase_b_action
 from redsim.services.ml_datasets import (
     DatasetAdmissionError,
     dataset_record,
@@ -67,6 +69,7 @@ from redsim.services.ml_datasets import (
     register_consumed_dataset,
     upload_max_bytes,
 )
+from redsim.services.ml_datasets_export import ExportJobHandle, admit_export, get_export_manifest
 from redsim.services.ml_models import (
     DatasetBindingError,
     assets_root_path,
@@ -305,16 +308,6 @@ async def register_dataset(request: Request, project: str | None = None,
 # --------------------------------------------------------------------------- manifest reads
 
 
-def _export_service() -> Any | None:
-    """``redsim.services.ml_datasets_export`` when the interop-contribute track has landed it, else ``None``."""
-    try:
-        import importlib
-
-        return importlib.import_module("redsim.services.ml_datasets_export")
-    except ImportError:
-        return None
-
-
 def _run_project(run_id: str) -> str | None:
     from redsim.db.models import Run
     from redsim.db.session import get_session
@@ -339,13 +332,14 @@ def get_dataset(dataset_id: str, user: CurrentUser = Depends(get_current_user)) 
     if project_id is None:
         raise api_error(NOT_FOUND, "dataset not found")
     ensure_project_access(user, project_id)
-    service = _export_service()
-    reader = getattr(service, "get_export_manifest", None) if service is not None else None
-    if not callable(reader):
-        raise not_built("Croissant manifest reads are not implemented", wave="B3", track="interop-contribute")
-    with get_session() as sess:
-        manifest = reader(sess, dataset_id)
-    if not isinstance(manifest, dict):
+    try:
+        with get_session() as sess:
+            manifest = get_export_manifest(sess, dataset_id)
+    except ValueError as exc:
+        # The stored manifest bytes disagree with the artifact digest: refused, never served.
+        raise api_error(SCORE_UNAVAILABLE, "the export manifest bytes do not match the recorded digest",
+                        reasons=["artifact_digest_mismatch"], run_id=dataset_id) from exc
+    if manifest is None:
         raise api_error(NOT_FOUND, "no dataset export exists for this run yet")
     return Response(content=json.dumps(manifest, sort_keys=True), media_type="application/ld+json")
 
@@ -353,24 +347,12 @@ def get_dataset(dataset_id: str, user: CurrentUser = Depends(get_current_user)) 
 # --------------------------------------------------------------------------- export (INTEROP-05..12 route)
 
 
-def _handle_to_response(result: Any, run_id: str) -> dict[str, Any]:
-    """A ``202`` body from whatever ``admit_export`` returns (a handle with ``to_response``, a Job row or a dict)."""
-    if isinstance(result, dict):
-        body: dict[str, Any] = dict(result)
-    elif hasattr(result, "to_response") and callable(result.to_response):
-        value = result.to_response()
-        body = dict(value) if isinstance(value, dict) else {"result": str(value)}
-    else:
-        job_id = getattr(result, "job_id", None) or getattr(result, "id", None)
-        body = {
-            "run_id": str(getattr(result, "run_id", None) or run_id),
-            "job_id": str(job_id) if job_id else None,
-            "status": str(getattr(result, "status", None) or "queued"),
-        }
-    body.setdefault("run_id", run_id)
-    body.setdefault("status", "queued")
-    body.setdefault("status_url", f"/v1/runs/{body['run_id']}")
-    body.setdefault("dataset_url", f"/v1/datasets/{body['run_id']}")
+def _handle_to_response(handle: ExportJobHandle, source_run_id: str) -> dict[str, Any]:
+    """The ``202`` body: the handle plus the follow-up run's ``status_url`` and the manifest's ``dataset_url``."""
+    body = handle.to_response()
+    body["source_run_id"] = source_run_id
+    body["status_url"] = f"/v1/runs/{handle.run_id or source_run_id}"
+    body["dataset_url"] = f"/v1/datasets/{handle.dataset_id}"
     return body
 
 
@@ -384,32 +366,18 @@ def export_run_dataset(run_id: str, user: CurrentUser = Depends(get_current_user
 
     project_id = ensure_run_access(user, run_id)
     check(user, DATASET_EXPORT, project_id)
-    service = _export_service()
-    admit = getattr(service, "admit_export", None) if service is not None else None
-    if not callable(admit):
-        raise not_built("Croissant dataset export of a campaign run is not implemented",
-                        wave="B3", track="interop-contribute")
     config = load_config()
     writer = resolve_writer(config)
     actor = f"user:{user.sub}"
-    try:
-        parameters: set[str] = set(inspect.signature(admit).parameters)
-    except (TypeError, ValueError):
-        parameters = set()
-    optional: dict[str, Any] = {}
-    for name, value in (("audit_writer", writer), ("config", config)):
-        if name in parameters:
-            optional[name] = value
     try:
         with get_session() as sess:
             run = sess.get(Run, run_id)
             if run is None:
                 raise api_error(NOT_FOUND, "run not found")
-            result = admit(sess, run, actor, **optional)
-            body = _handle_to_response(result, run_id)
+            handle = admit_export(sess, run, actor, audit_writer=writer, config=config)
     except ApiError as exc:
         raise exc.as_http_exception() from exc
-    return body
+    return _handle_to_response(handle, run_id)
 
 
 __all__ = ["DATASET_EXPORT", "DATASET_REGISTER", "dataset_rows", "router"]

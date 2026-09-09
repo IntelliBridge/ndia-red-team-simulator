@@ -12,7 +12,14 @@ and ``ml.flip_matrix`` are persisted. The tests prove:
   banned content leaves;
 * the export is audit-first and idempotent (one export per run, byte-identical
   manifest sha256 on re-export);
-* fixture-only, non-terminal and slice-less runs are refused with the right code.
+* fixture-only, non-terminal and slice-less runs are refused with the right code;
+* INTEROP-04 end to end: the classification runner's self-describing slices (clean,
+  adversarial with per-sample predictions, control), stored under the filesystem
+  store's digest-only locations, export as three families with prediction columns;
+  legacy slices fall back to the storage-location label and a non-npz slice is
+  skipped with a caveat;
+* the routes: ``POST /v1/runs/{id}/dataset`` answers the handle with ``status_url``
+  / ``dataset_url`` and ``GET /v1/datasets/{id}`` serves the manifest as ld+json.
 """
 
 from __future__ import annotations
@@ -215,6 +222,65 @@ class Harness:
                                          location=str(loc), content_type="application/octet-stream",
                                          size_bytes=len(data)))
         return flip
+
+    def seed_from_sink(self, record: CampaignRecord, artifacts_dir: Path, *, run_id: str | None = None,
+                       extra: dict[str, bytes] | None = None) -> str:
+        """Persist a runner-written artifact tree the way the worker sink does.
+
+        Every file goes through the ``FilesystemBlobStore`` (a pure digest location, no
+        name) and gets the worker's ``Artifact.kind`` for its name; ``extra`` adds
+        ``{name: bytes}`` rows (a legacy or foreign slice). Returns the run id.
+        """
+        from redsim.workers.tasks.ml_campaign import artifact_kind
+
+        run_id = run_id or record.run_id
+        record_bytes = record.model_dump_json().encode()
+        files: dict[str, bytes] = {
+            str(path.relative_to(artifacts_dir)).replace("\\", "/"): path.read_bytes()
+            for path in sorted(artifacts_dir.rglob("*")) if path.is_file()
+        }
+        files.update(extra or {})
+        files["run_record.json"] = record_bytes
+        with self.get_session() as session:
+            session.add(Run(id=run_id, project_id=PROJECT_ID, scanner="ml.campaign", target_id=TARGET_ID,
+                            status="succeeded", stage_table={}, created_by=CREATOR))
+            session.flush()
+            session.execute(self.campaigns.insert().values(
+                run_id=run_id, project_id=PROJECT_ID, target_id=TARGET_ID, kind="attack",
+                modality=record.config.modality, config=record.config.model_dump(mode="json"), limitations=[]))
+            seen: set[tuple[str, str]] = set()
+            for i, (name, data) in enumerate(files.items()):
+                ref = self.store.put(f"{PROJECT_ID}/{run_id}/{name}/{hashlib.sha256(data).hexdigest()}", data,
+                                     content_type="application/octet-stream")
+                assert name not in ref.location, "the filesystem store keeps a digest-only path"
+                kind = artifact_kind(name)
+                if (kind, ref.sha256) in seen:
+                    continue   # rows are unique on (run, kind, sha256); the worker sink reuses the row too
+                seen.add((kind, ref.sha256))
+                session.add(Artifact(id=f"art-{run_id}-{i}", run_id=run_id, project_id=PROJECT_ID,
+                                     kind=kind, sha256=ref.sha256, location=ref.location,
+                                     content_type="application/octet-stream", size_bytes=len(data)))
+        return run_id
+
+    def mount_api(self, *, role: str = "admin") -> Any:
+        """A ``TestClient`` over this harness with one member of the project (``role``)."""
+        from fastapi.testclient import TestClient
+
+        from redsim.api.app import create_app
+        from redsim.api.auth import CurrentUser, get_current_user
+        from redsim.api.middleware import rate_limit as rl
+        from redsim.api.settings import APISettings
+
+        audit_dir = self.audit_dir
+        self.monkeypatch.setattr("redsim.audit.chain.resolve_writer", lambda _config: JsonlAuditWriter(audit_dir))
+        rl._BUCKETS.clear()
+        app_ = create_app(APISettings(
+            env="dev", auth_mode="dev", cors_origins=["http://localhost:3000"],
+            rate_limit_per_user_per_min=10_000, rate_limit_per_project_per_min=10_000,
+        ))
+        user = CurrentUser(sub="dev:alice", email="alice@test", project_memberships={PROJECT_ID: role})
+        app_.dependency_overrides[get_current_user] = lambda: user
+        return TestClient(app_)
 
     # -- running and reading back ---------------------------------------------
 
@@ -435,3 +501,197 @@ def test_card_is_template_only(harness: Harness) -> None:
     from redsim.ml.schema import GRADE_STATEMENT, contains_banned_score_word
 
     assert not contains_banned_score_word(card_text.replace(GRADE_STATEMENT, ""))
+
+
+# --------------------------------------------------------------------------- INTEROP-04: runner slices
+
+
+def _tiny_campaign(tmp_path: Path) -> tuple[CampaignRecord, Path]:
+    """One real, complete image campaign (fgsm, three eps, control on) on the TinyTarget.
+
+    The explain stage runs the deterministic fake explainer of ``tests/ml/test_campaign.py`` so the
+    record is ``complete`` (the export refuses a partial run); everything else is the real runner.
+    """
+    import sys
+
+    pytest.importorskip("torch")
+    pytest.importorskip("art")
+    from redsim.ml.artifacts import FilesystemSink
+    from redsim.ml.campaign import run_campaign
+    from redsim.ml.schema import CampaignConfig
+    from redsim.ml.targets.registry import TARGETS
+    from tests.ml.fakes import TinyTarget
+    from tests.ml.test_campaign import EXPLAIN_MOD, make_fake_explain
+
+    if TARGETS.maybe_get("tiny") is None:
+        TARGETS.register(TinyTarget(seed=0))
+    config = CampaignConfig(target_id="tiny", modality="image", attack_ids=["fgsm"], eps_grid=[0.01, 0.03, 0.1],
+                            reference_eps=0.03, n_samples=16, seed=0, explain_k=4, dataset_id="synthetic")
+    sink = FilesystemSink(tmp_path / "campaign")
+    before = sys.modules.get(EXPLAIN_MOD, "__absent__")
+    sys.modules[EXPLAIN_MOD] = make_fake_explain(shift=0.4)
+    try:
+        record = run_campaign(config, sink, explain=True)
+    finally:
+        if before == "__absent__":
+            sys.modules.pop(EXPLAIN_MOD, None)
+        else:
+            sys.modules[EXPLAIN_MOD] = before
+    assert record.completeness == "complete", record.missing
+    return record, Path(sink.root) / "artifacts"
+
+
+def test_runner_slices_are_self_describing() -> None:
+    """Every slice the classification runner writes labels itself; the legacy path still parses names."""
+    from redsim.ml.interop import parse_npz, slice_descriptor_from_arrays, slice_descriptor_from_location
+    from redsim.ml.runners.classification import slice_bytes
+
+    x = np.zeros((4, 3, 2, 2), dtype="float32")
+    idx = np.arange(4)
+    y = np.array([0, 1, 2, 0])
+    clean = parse_npz(slice_bytes(family="clean", attack="", eps=None, x=x, indices=idx, y=y,
+                                  y_pred_clean=y, conf_clean=np.full(4, 0.9)))
+    assert slice_descriptor_from_arrays(clean) == ("clean", "", None)
+    assert set(clean) >= {"x", "indices", "y", "y_pred_clean", "conf_clean", "family", "attack"} and "eps" not in clean
+    adv = parse_npz(slice_bytes(family="adversarial", attack="fgsm", eps=0.03, x_adv=x, indices=idx, y=y,
+                                y_pred_clean=y, y_pred_adv=(y + 1) % 3, conf_clean=np.full(4, 0.9),
+                                conf_adv=np.full(4, 0.6)))
+    assert slice_descriptor_from_arrays(adv) == ("adversarial", "fgsm", 0.03)
+    ctrl = parse_npz(slice_bytes(family="control", attack="noise_control", eps=0.1, x_adv=x, indices=idx, y=y,
+                                 y_pred_clean=y, y_pred_adv=y, conf_clean=np.full(4, 0.9), conf_adv=np.full(4, 0.8)))
+    assert slice_descriptor_from_arrays(ctrl) == ("control", "control", 0.1)
+    # a legacy slice (arrays only) carries no descriptor; the location parse is the fallback
+    legacy = parse_npz(_npz(x_adv=x, indices=idx, y=y))
+    assert slice_descriptor_from_arrays(legacy) is None
+    assert slice_descriptor_from_location("/blobs/p/run/adv_slice/pgd_eps0.1.npz/abcd") == ("adversarial", "pgd", 0.1)
+    assert slice_descriptor_from_location("/blobs/ab/abcdef0123") is None
+    # garbage descriptors are not guessed
+    assert slice_descriptor_from_arrays({"family": np.asarray("adversarial"), "attack": np.asarray("fgsm")}) is None
+    assert slice_descriptor_from_arrays({"family": np.asarray("other")}) is None
+
+
+def test_live_campaign_exports_clean_adversarial_and_control_shards(harness: Harness, tmp_path: Path) -> None:
+    """INTEROP-04 end to end: the runner's slices, stored under digest-only locations, export as three families."""
+    from redsim.ml.interop import read_table
+
+    record, artifacts_dir = _tiny_campaign(tmp_path)
+    names = sorted(str(p.relative_to(artifacts_dir)) for p in artifacts_dir.rglob("*") if p.is_file())
+    assert "clean_slice.npz" in names
+    assert {n for n in names if n.startswith("control_slice/")} == {f"control_slice/eps{e:g}.npz" for e in [0.01, 0.03, 0.1]}
+    assert {n for n in names if n.startswith("adv_slice/")} == {f"adv_slice/fgsm_eps{e:g}.npz" for e in [0.01, 0.03, 0.1]}
+
+    run_id = harness.seed_from_sink(record, artifacts_dir)
+    handle = harness.admit(run_id)
+    assert handle.status == "queued"
+    manifest = harness.export_manifest(run_id)
+    assert manifest is not None
+    assert {rs["name"] for rs in manifest["recordSet"]} == {"clean", "adversarial", "control"}
+
+    families: dict[str, int] = {}
+    flip = json.loads((artifacts_dir / "flip_matrix.json").read_text())
+    for row in harness.artifacts(run_id, "ml.dataset.parquet"):
+        table = read_table(bytes(harness.store.get(str(row.location))))
+        family = table.column("family").to_pylist()[0]
+        families[family] = families.get(family, 0) + 1
+        assert table.num_rows == 16
+        y_pred_clean = table.column("y_pred_clean").to_pylist()
+        conf_clean = table.column("conf_clean").to_pylist()
+        assert None not in y_pred_clean and all(0.0 <= c <= 1.0 for c in conf_clean)
+        if family == "clean":
+            assert set(table.column("y_pred_adv").to_pylist()) == {None}
+            assert set(table.column("flipped").to_pylist()) == {None}
+            continue
+        assert None not in table.column("y_pred_adv").to_pylist()
+        assert None not in table.column("conf_adv").to_pylist()
+        if family == "adversarial":
+            # flipped is computed from the retained predictions and equals the run's oracle
+            eps = table.column("eps").to_pylist()[0]
+            oracle = dict(zip(flip["indices"], flip["flipped"]["fgsm"][f"eps{eps:g}"]))
+            for idx, flipped in zip(table.column("sample_index").to_pylist(), table.column("flipped").to_pylist()):
+                assert bool(flipped) == bool(oracle[idx])
+    assert families == {"clean": 1, "adversarial": 3, "control": 3}
+
+    chain = harness.chain(handle.run_id)
+    execute = next(r for r in chain if r["action"] == "dataset.export.execute")
+    assert execute["success"] and execute["detail"]["caveats"] == []
+    assert execute["detail"]["projection_checked_against"] == "flip_matrix" and execute["detail"]["n_shards"] == 7
+
+
+def test_foreign_slice_bytes_are_skipped_with_a_caveat_never_guessed(harness: Harness, tmp_path: Path) -> None:
+    """A text-runner JSON-lines ``ml.adv_slice`` and an unlabelled legacy npz are skipped, the rest exports."""
+    record, artifacts_dir = _tiny_campaign(tmp_path)
+    legacy = _npz(x_adv=np.zeros((2, 3, 8, 8), dtype="float32"), indices=np.arange(2), y=np.zeros(2, dtype="int64"))
+    run_id = harness.seed_from_sink(record, artifacts_dir, extra={
+        "adv_slice/typo_eps0.5.jsonl": b'{"message": "not an npz"}\n',
+        "adv_slice/legacy_eps0.5.npz": legacy,
+    })
+    handle = harness.admit(run_id)
+    manifest = harness.export_manifest(run_id)
+    assert manifest is not None and len(harness.artifacts(run_id, "ml.dataset.parquet")) == 7
+    execute = next(r for r in harness.chain(handle.run_id) if r["action"] == "dataset.export.execute")
+    caveats = execute["detail"]["caveats"]
+    assert len(caveats) == 2
+    assert any("not an npz slice" in c for c in caveats) and any("no slice descriptor" in c for c in caveats)
+
+
+def test_unlabelled_slices_only_is_a_refusal(harness: Harness) -> None:
+    """Slices that cannot be labelled leave nothing to export: success=False execute row, no artifacts."""
+    record = harness.record
+    legacy = _npz(x_adv=np.zeros((N, 3, 8, 8), dtype="float32"), indices=np.arange(N), y=np.zeros(N, dtype="int64"))
+    empty_dir = harness.tmp_path / "empty-artifacts"
+    empty_dir.mkdir()
+    run_id = harness.seed_from_sink(record, empty_dir, run_id="run-unlabelled", extra={
+        "adv_slice/legacy_eps0.03.npz": legacy,
+        "flip_matrix.json": json.dumps({"indices": list(range(N)), "flipped": {}}).encode(),
+    })
+    # eager Celery: the task's failure must read as a failed job, not as a broker outage at admission
+    harness.monkeypatch.setitem(app.conf, "task_eager_propagates", False)
+    handle = harness.admit(run_id)
+    assert handle.status == "queued" and handle.job_id is not None
+    assert harness.artifacts(run_id, "ml.dataset.parquet") == [] and harness.export_manifest(run_id) is None
+    execute = [r for r in harness.chain(handle.run_id) if r["action"] == "dataset.export.execute"]
+    assert len(execute) == 1 and execute[0]["success"] is False
+    assert "no labelled slices" in execute[0]["detail"]["reason"]
+    with harness.sessions() as session:
+        job = session.get(Job, handle.job_id)
+    assert job is not None and job.status == "failed"
+
+
+# --------------------------------------------------------------------------- routes
+
+
+def test_export_and_manifest_routes_round_trip(harness: Harness) -> None:
+    """``POST /v1/runs/{id}/dataset`` -> 202 handle; ``GET /v1/datasets/{id}`` -> the manifest as ld+json."""
+    harness.seed_run("run-route-1")
+    client = harness.mount_api()
+
+    assert client.get("/v1/datasets/run-route-1").status_code == 404, "no export exists yet"
+    resp = client.post("/v1/runs/run-route-1/dataset")
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["status"] == "queued" and body["dataset_id"] == "run-route-1" and body["source_run_id"] == "run-route-1"
+    assert body["job_ids"] == [body["job_id"]] and body["type"] == "dataset.export"
+    assert body["status_url"] == f"/v1/runs/{body['run_id']}" and body["run_id"] != "run-route-1"
+    assert body["dataset_url"] == "/v1/datasets/run-route-1"
+
+    resp = client.get("/v1/datasets/run-route-1")
+    assert resp.status_code == 200 and resp.headers["content-type"].startswith("application/ld+json")
+    served = json.loads(resp.content)
+    assert served == harness.export_manifest("run-route-1")
+    assert served["@type"] == "sc:Dataset"
+
+    # one export per run: the second call answers the existing export, no new job
+    again = client.post("/v1/runs/run-route-1/dataset")
+    assert again.status_code == 202 and again.json()["status"] == "exists"
+    assert again.json()["manifest_sha256"] == hashlib.sha256(json.dumps(served, sort_keys=True).encode()).hexdigest() \
+        or again.json()["manifest_sha256"] == harness.artifacts("run-route-1", "ml.dataset.manifest")[0].sha256
+    with harness.sessions() as session:
+        assert session.query(Job).filter(Job.type == "dataset.export").count() == 1
+
+    # a run without slices is the service's typed refusal through the route; unknown ids are 404
+    harness.seed_run("run-route-2", with_slices=False)
+    refused = client.post("/v1/runs/run-route-2/dataset")
+    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "export_unavailable"
+    assert client.post("/v1/runs/no-such-run/dataset").status_code == 404
+    assert client.get("/v1/datasets/no-such-id").status_code == 404
+
