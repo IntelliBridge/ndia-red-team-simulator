@@ -18,10 +18,17 @@ drives the production path it names and asserts on what that path left behind:
    mutated event breaks the verify naming the chain and the sequence number;
    restoring the event verifies again.
 3. ``test_capabilities_and_unsupported_paths``: ``GET /v1/ml/capabilities``
-   never carries the Pythia key or base URL (mock on and off), the endpoint
-   connector and ``report.pdf`` are ``501 not_implemented`` with a ``phase``,
-   and the catalog routes answer ``503 ml_catalog_unavailable`` instead of an
-   empty ``200`` when a registry cannot be imported.
+   never carries the Pythia key or base URL (mock on and off); since wave B4 it
+   reports ``text``, ``detection``, ``llm`` and the endpoint connector as
+   ``available`` from the tree (runner modules, the attack tags, the probe
+   catalog, the ``endpoint-v1`` contract summary), the explainer roster and
+   the interop block, and still names the non-builds (detection explainer,
+   endpoint ownership verification, Lattice) as ``not_implemented`` with a
+   reason; an endpoint registration without a credential profile is the typed
+   ``422``, ``report.pdf`` is the worker-rendered PDF (or ``404`` before a
+   render on a worker without reportlab), and the catalog routes
+   answer ``503 ml_catalog_unavailable`` instead of an empty ``200`` when a
+   registry cannot be imported.
 4. ``test_rls_hides_other_orgs_scores`` (``integration`` + ``e2e``): against the
    Postgres named by ``REDSIM_E2E_POSTGRES_URL``, migrated inside the test with
    the platform's own runner (``alembic upgrade head``, idempotent), two
@@ -721,11 +728,43 @@ def test_capabilities_and_unsupported_paths(
     assert "small_cnn" in body["architectures"]
     for modality in ("image", "tabular"):
         assert body["modalities"][modality] == {"status": "available", "phase": "A"}
-    for modality in ("llm", "text", "detection"):
-        row = body["modalities"][modality]
-        assert row["status"] == "not_implemented" and row["phase"] == "B" and row["reason"], row
-    assert body["endpoint_connector"]["status"] == "not_implemented"
-    assert body["endpoint_connector"]["phase"] == "B" and body["endpoint_connector"]["reason"]
+    # Wave B4 (spec 26.24): the Phase B rows are read from the tree. Text and detection are available
+    # because their runner modules import and the registry carries a tagged adapter; llm because the
+    # probe routes are mounted and the committed catalog loads; each names what it read.
+    text, detection, llm = (body["modalities"][m] for m in ("text", "detection", "llm"))
+    assert text["status"] == "available" and text["phase"] == "B", text
+    assert text["runner"] == "redsim.ml.runners.text" and "word_substitution" in text["attacks"], text
+    assert detection["status"] == "available" and detection["phase"] == "B" and "dpatch" in detection["attacks"]
+    assert llm["status"] == "available" and llm["phase"] == "B" and llm["kind"] == "probe", llm
+    assert "redsim-core" in llm["probe_sets"] and llm["n_probes"] > 0 and "MRI" in llm["note"]
+    # The endpoint connector is available with the endpoint-v1 contract summary; what is not built says so.
+    connector = body["endpoint_connector"]
+    assert connector["status"] == "available" and connector["phase"] == "B" and connector["gradients"] is False
+    assert connector["contract"]["contract_version"] == "endpoint-v1"
+    assert connector["contract"]["request"]["body"]["contract"] == "endpoint-v1"
+    assert connector["auth_kinds"] == ["bearer", "header"] and "hopskipjump" in connector["attacks"]
+    assert "fgsm" not in connector["attacks"], "a white-box attack is never offered against predictions only"
+    assert connector["ownership_verification"]["status"] == "not_implemented"
+    assert connector["ownership_verification"]["reason"] and connector["ownership_verification"]["phase"] == "B"
+    # Explainer roster: SHAP per classification modality, no explainer for object detectors (with the reason).
+    assert body["explainers"] == {"image": "shap", "tabular": "shap", "text": "shap", "detection": None}
+    roster = body["explainer_roster"]
+    assert roster["detection"]["status"] == "not_implemented" and roster["detection"]["reason"]
+    assert roster["image"]["black_box"] and roster["tabular"]["tree"] and roster["text"]["status"] == "available"
+    # Interop block (spec 27; INTEROP-29): export and consume routes, the pinned ATLAS release as strings,
+    # the integrations roster with statuses and booleans only (no host, no token; Lattice not built).
+    interop = body["interop"]
+    assert interop["dataset_export"]["status"] == "available" and interop["dataset_export"]["route"]
+    assert interop["dataset_consume"]["status"] == "available"
+    assert interop["dataset_consume"]["modalities"] == ["image", "tabular"]
+    assert interop["dataset_consume"]["not_implemented_modalities"] == ["text", "detection"]
+    assert interop["atlas"]["status"] == "available" and interop["atlas"]["release"] and interop["atlas"]["data_sha256"]
+    assert all(isinstance(v, str) for v in interop["atlas"].values()), "the ATLAS citation carries strings only"
+    foundry = interop["integrations"]["foundry"]
+    assert foundry["status"] in {"disabled", "misconfigured", "configured"} and "host" not in foundry
+    assert not any(str(v).startswith("http") for v in foundry.values()), "never a URL"
+    assert interop["integrations"]["lattice"]["status"] == "not_implemented"
+    assert interop["integrations"]["lattice"]["reason"]
     # Phase A bundled models are listed; the fixture-only cifar10_smallcnn never is. Since wave B1 the registry also
     # serves the Phase B bundled targets (assets_frcnn_mnv3 registers with the dpatch adapter, sms_tfidf_lr when
     # redsim.ml.targets.text is imported); each is listed with its own status and, until built, a reason.
@@ -768,12 +807,21 @@ def test_capabilities_and_unsupported_paths(
     listing = admin.get("/v1/models", params={"project": e2e_org.project_id}).json()["models"]
     assert not [row for row in listing if row.get("name") == "e2e-endpoint"], "no endpoint target was created"
 
-    # -- report.pdf (wave B2): a worker-written artifact only; the completion path renders md/json/html, so
-    #    before a POST report.render it is 404 (never a filesystem fallback), behind the same export gate ----
+    # -- report.pdf (spec 14.8): a worker-written artifact only, never a filesystem fallback. Since wave B4 the
+    #    completion path renders it beside md/json/html when reportlab is installed on the worker; without
+    #    reportlab no empty row is faked and the route stays 404 until a POST report.render. Either way the
+    #    export gate precedes the format. (Wave B2 pinned the 404: the completion path wrote three formats.)
+    import importlib.util
+
     run_id = campaigns.scanner.run_id
     pdf = scanner.get(f"/v1/runs/{run_id}/report.pdf")
-    assert pdf.status_code == 404, pdf.text
-    assert pdf.json()["detail"] == "report not yet rendered"
+    if importlib.util.find_spec("reportlab") is not None:
+        assert pdf.status_code == 200, pdf.text[:200]
+        assert pdf.headers["content-type"].startswith("application/pdf") and pdf.content.startswith(b"%PDF-")
+        assert h.MOCK_PYTHIA_API_KEY.encode() not in pdf.content and b"pk_e2e" not in pdf.content
+    else:
+        assert pdf.status_code == 404, pdf.text
+        assert pdf.json()["detail"] == "report not yet rendered"
     assert viewer.get(f"/v1/runs/{run_id}/report.pdf").status_code == 403, "the export gate precedes the format"
 
     # -- an attack id outside the registry is a typed refusal (422 unknown_attack, or 501 for a named

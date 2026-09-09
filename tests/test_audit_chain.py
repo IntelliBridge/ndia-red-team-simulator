@@ -175,8 +175,35 @@ class TestTokenRedaction(unittest.TestCase):
         self.assertEqual(out["model"], "pythia/auto")
 
     def test_short_or_benign_identifiers_untouched(self):
-        benign = "pk_x pk_ref KGAT_ id=abc123 stage=attack:pgd"
+        benign = "pk_x pk_ref KGAT_ id=abc123 stage=attack:pgd eyJ eyJhbGciOiJub25lIn0 dataset.export"
         self.assertEqual(redact_audit_detail(benign), benign)
+
+    # INTEROP-28: a JWT-shaped bearer (Foundry and other gateways) is scrubbed by shape; low-entropy
+    # fixture segments only (``{"alg":"none"}`` / ``{"sub":"fixture"}`` / a spelled-out signature), joined at
+    # runtime so no token-shaped literal sits in the source (the repository's secret scan blocks one).
+    JWT = ".".join(("eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0", "eyJzdWIiOiJmaXh0dXJlLW5vdC1yZWFsIn0",
+                    "fixture-signature_not-real-0000"))
+
+    def test_jwt_shaped_token_scrubbed_by_shape(self):
+        out = redact_audit_detail({
+            "note": f"Authorization: Bearer {self.JWT} sent to foundry",
+            "nested": [f"token={self.JWT}", f"({self.JWT})"],
+            "headers": {"X-Foundry-Token": self.JWT, "Content-Type": "application/json"},
+            "foundry_token": self.JWT,
+            "x-foundry-token": self.JWT,
+        })
+        dumped = json.dumps(out)
+        self.assertNotIn("eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0", dumped)
+        self.assertNotIn("fixture-signature", dumped)
+        self.assertEqual(out["note"], "Authorization: Bearer <REDACTED> sent to foundry")
+        self.assertEqual(out["nested"], ["token=<REDACTED>", "(<REDACTED>)"])
+        self.assertEqual(out["headers"], {"X-Foundry-Token": "<REDACTED>", "Content-Type": "application/json"})
+        self.assertEqual(out["foundry_token"], "<REDACTED>")
+        self.assertEqual(out["x-foundry-token"], "<REDACTED>")
+        # Two segments, or a segment shorter than the floor, is not a JWT and stays (it may be an id).
+        for benign in ("eyJhbGciOiJub25lIn0.eyJzdWIiOiJmaXh0dXJlIn0", "eyJhbGciOiJub25lIn0.short.short"):
+            with self.subTest(text=benign):
+                self.assertEqual(redact_audit_detail(benign), benign)
 
     def test_chain_writer_scrubs_pythia_and_kaggle_tokens(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -57,7 +57,8 @@ def api(sqlite_session_factory: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: 
     monkeypatch.setenv("REDSIM_CONFIG", str(tmp_path / "absent.yaml"))
     monkeypatch.delenv("REDSIM_DB_URL", raising=False)
     monkeypatch.setenv("REDSIM_ML_ASSETS_DIR", str(tmp_path / "no-assets"))
-    for key in ("PYTHIA_API_KEY", "PYTHIA_BASE_URL", "PYTHIA_PERSONA", "REDSIM_ML_LLM_MODEL"):
+    for key in ("PYTHIA_API_KEY", "PYTHIA_BASE_URL", "PYTHIA_PERSONA", "REDSIM_ML_LLM_MODEL",
+                "REDSIM_INTEGRATION_FOUNDRY_URL", "REDSIM_LLM_PROBE_HF_DETECTORS"):
         monkeypatch.delenv(key, raising=False)
 
     import redsim.api.middleware.rate_limit as rl
@@ -96,9 +97,30 @@ def test_capabilities_never_leak_pythia(api: SimpleNamespace, monkeypatch: pytes
     assert body["pickle_accepted"] is False
     assert body["upload_formats"] == ["onnx", "torch_state_dict", "safetensors_state_dict"]
     assert {"small_cnn", "smallcnn", "resnet18"} <= set(body["architectures"])
-    assert body["modalities"]["llm"]["status"] == "not_implemented" and body["modalities"]["llm"]["phase"] == "B"
     assert body["upload_max_mb"] == 512
     assert isinstance(body["worker_ml_extra"], bool)
+    # Wave B4: the Phase B rows are read from the tree, not asserted (spec 26.24).
+    for modality in ("image", "tabular"):
+        assert body["modalities"][modality] == {"status": "available", "phase": "A"}
+    text, detection, llm = (body["modalities"][m] for m in ("text", "detection", "llm"))
+    assert text["status"] == "available" and text["phase"] == "B" and "word_substitution" in text["attacks"]
+    assert detection["status"] == "available" and detection["phase"] == "B" and "dpatch" in detection["attacks"]
+    assert llm["status"] == "available" and llm["phase"] == "B" and llm["kind"] == "probe"
+    assert "redsim-core" in llm["probe_sets"] and llm["garak_version_expected"] and "MRI" in llm["note"]
+    connector = body["endpoint_connector"]
+    assert connector["status"] == "available" and connector["phase"] == "B" and connector["gradients"] is False
+    assert connector["auth_kinds"] == ["bearer", "header"] and connector["contract"]["contract_version"] == "endpoint-v1"
+    assert "hopskipjump" in connector["attacks"] and "fgsm" not in connector["attacks"]
+    assert connector["ownership_verification"]["status"] == "not_implemented"
+    assert body["explainers"] == {"image": "shap", "tabular": "shap", "text": "shap", "detection": None}
+    assert body["explainer_roster"]["detection"]["status"] == "not_implemented"
+    assert body["explainer_roster"]["detection"]["reason"] and "image" in body["explainer_roster"]
+    interop = body["interop"]
+    assert interop["dataset_export"]["status"] == "available" and interop["dataset_consume"]["modalities"] == ["image", "tabular"]
+    assert interop["atlas"]["release"] and interop["atlas"]["data_sha256"]
+    assert interop["integrations"]["foundry"]["status"] == "disabled", "no Foundry URL in this process"
+    assert interop["integrations"]["lattice"]["status"] == "not_implemented"
+    assert "REDSIM_INTEGRATION_FOUNDRY_URL" in interop["integrations"]["foundry"]["settings"]
 
     # Unconfigured: the block says so with a reason and still names nothing secret.
     for key in ("PYTHIA_API_KEY", "PYTHIA_BASE_URL", "PYTHIA_PERSONA", "REDSIM_ML_LLM_MODEL"):
@@ -113,6 +135,7 @@ def test_capabilities_never_leak_pythia(api: SimpleNamespace, monkeypatch: pytes
     ("/v1/models/vehicles_cnn?project=proj-1", "redsim.ml.targets", "id"),
     ("/v1/ml/capabilities", "redsim.ml.targets", "bundled_models"),
     ("/v1/ml/capabilities", "redsim.ml.defenses", "defenses"),
+    ("/v1/ml/capabilities", "redsim.ml.attacks", "modalities"),
     ("/v1/defenses", "redsim.ml.defenses", "defenses"),
 ])
 def test_catalog_503_not_empty(
@@ -187,6 +210,29 @@ def test_datasets_catalog_reports_manifest_state(api: SimpleNamespace, monkeypat
 
 
 # --- GET /v1/attacks: opt-in plugin adapters ---------------------------------------------
+
+def test_attack_catalog_filters_on_capability_tags(api: SimpleNamespace) -> None:
+    """``?modality=`` follows the ``modality:<domain>`` tags admission uses, not ``AttackInfo.domain`` alone."""
+    everything = api.client.get("/v1/attacks")
+    assert everything.status_code == 200, everything.text
+    rows = {row["id"]: row for row in everything.json()["attacks"]}
+    for row in rows.values():
+        assert f"modality:{row['domain']}" in row["capabilities"], row["id"]
+        assert row["domain"] in row["domains"] and row["domains"] == sorted(row["domains"]), row["id"]
+    assert rows["hopskipjump"]["domains"] == ["image", "tabular"] and rows["pgd"]["domains"] == ["image", "tabular"]
+    assert rows["fgsm"]["domains"] == ["image"]
+    image = {row["id"] for row in api.client.get("/v1/attacks", params={"modality": "image"}).json()["attacks"]}
+    tabular = {row["id"] for row in api.client.get("/v1/attacks", params={"modality": "tabular"}).json()["attacks"]}
+    assert {"fgsm", "pgd", "hopskipjump", "noise_control"} <= image, "image HopSkipJump is listed (wave B1 tag)"
+    assert {"pgd", "hopskipjump"} <= tabular, "the tabular surrogate-transfer PGD is listed"
+    assert "fgsm" not in tabular
+    text = api.client.get("/v1/attacks", params={"modality": "text"}).json()
+    assert [row["id"] for row in text["attacks"]] == ["word_substitution"] and text["count"] == 1
+    detection = {row["id"] for row in api.client.get("/v1/attacks", params={"modality": "detection"}).json()["attacks"]}
+    assert "dpatch" in detection and "fgsm" not in detection
+    assert api.client.get("/v1/attacks", params={"modality": "llm"}).json()["attacks"] == []
+    assert api.client.get("/v1/attacks", params={"modality": "no-such-modality"}).json()["count"] == 0
+
 
 FAKE_ATTACK_ID = "catalog-test-plugin-attack"
 BROKEN_ATTACK_ID = "catalog-test-broken-attack"

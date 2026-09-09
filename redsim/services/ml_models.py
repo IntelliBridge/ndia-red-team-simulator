@@ -71,6 +71,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import tempfile
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -163,17 +164,19 @@ class DatasetBindingError(ValueError):
 
 @dataclass(frozen=True)
 class DatasetBinding:
-    """A bundled evaluation slice an uploaded model is evaluated on."""
+    """A bundled evaluation slice, or since wave B4 a consumed slice, an uploaded model is evaluated on."""
 
     dataset_id: str
     split: str
-    file_path: str                  # relative to the assets root
+    file_path: str                  # relative to the assets root; a blob location for a consumed slice
     file_sha256: str | None
     class_names: list[str]
     revision: str | None
     modality: str | None            # None when the manifest does not say
     fixture_only: bool = False
     legacy: bool = False            # resolved from a flat ``models[*].eval_split`` entry
+    source: str = "bundled"         # ``bundled`` or ``consumed`` (an ``ml_datasets`` row, INTEROP-16)
+    project_id: str | None = None   # the consumed slice's project; ``None`` for a bundled split
 
 
 # ---------------------------------------------------------------------------
@@ -412,14 +415,30 @@ def check_upload_dataset(
     dataset_split: str | None = None,
     document: dict[str, Any] | None = None,
     root: str | Path | None = None,
+    session: Session | None = None,
+    project_id: str | None = None,
 ) -> DatasetBinding:
     """The static compatibility check the API runs before any byte is persisted.
 
     Confirms the dataset is bundled, has an evaluation split, and (when the
     manifest records one) is of the declared modality. Shape and class-count
     checks against the model stay on the worker inside the sandbox.
+
+    INTEROP-16 (wave B4): a ``ds-…`` id that is no bundled dataset falls back to
+    an ``available`` consumed slice (:func:`consumed_upload_binding`). The
+    binding is scoped to ``project_id`` when the caller passes one (the
+    endpoint registration does); a caller that cannot (the upload routes call
+    this before any row exists and hand over no project) gets the slice's own
+    ``project_id`` on the binding and the worker's evaluation binding, which
+    resolves the slice again inside the target's project, is the check that
+    refuses a cross-project id (``refused`` with ``dataset_incompatible``). A
+    consumed slice never binds a ``dataset_split`` other than ``eval``.
     """
-    binding = resolve_dataset_binding(dataset_id, dataset_split=dataset_split, document=document, root=root)
+    try:
+        binding = resolve_dataset_binding(dataset_id, dataset_split=dataset_split, document=document, root=root)
+    except DatasetBindingError as bundled_error:
+        binding = consumed_upload_binding(dataset_id, modality=modality, dataset_split=dataset_split,
+                                          session=session, project_id=project_id, bundled_error=bundled_error)
     if binding.modality is not None and binding.modality != modality:
         raise DatasetBindingError(
             f"dataset {binding.dataset_id!r} is a {binding.modality} dataset; "
@@ -427,6 +446,127 @@ def check_upload_dataset(
             field="dataset_id",
         )
     return binding
+
+
+def consumed_upload_binding(
+    dataset_id: str,
+    *,
+    modality: str,
+    dataset_split: str | None,
+    session: Session | None,
+    project_id: str | None,
+    bundled_error: DatasetBindingError,
+) -> DatasetBinding:
+    """The consumed-slice half of :func:`check_upload_dataset` (INTEROP-16).
+
+    Re-raises ``bundled_error`` for anything that is not a ``ds-…`` id, so the
+    bundled message (``unknown bundled dataset``, ``no bundled evaluation
+    split``) is what a bundled-only caller still sees. For a consumed id the
+    slice must be ``available`` (a ``validating`` or ``refused`` row says which)
+    and, when ``project_id`` is given, of that project; the binding's
+    ``file_path`` is the primary Parquet blob location and ``revision`` the
+    manifest digest.
+    """
+    from redsim.services.ml_datasets import get_consumed_dataset, is_dataset_id, resolve_consumed_slice
+
+    if not is_dataset_id(dataset_id):
+        raise bundled_error
+    if dataset_split and dataset_split != "eval":
+        raise DatasetBindingError(
+            f"consumed dataset {dataset_id!r} has one slice, bound as split 'eval'; {dataset_split!r} is not it",
+            field="dataset_split",
+        )
+
+    def resolve(sess: Session) -> DatasetBinding:
+        slice_ = resolve_consumed_slice(sess, dataset_id, project_id=project_id)
+        if slice_ is None:
+            row = get_consumed_dataset(sess, dataset_id)
+            if row is not None and (project_id is None or str(row.project_id) == str(project_id)):
+                if row.status != "available":
+                    raise DatasetBindingError(
+                        f"consumed dataset {dataset_id!r} is {row.status}; only an available slice binds a model",
+                    )
+                raise DatasetBindingError(f"consumed dataset {dataset_id!r} records no readable declaration")
+            raise DatasetBindingError(
+                f"{bundled_error}; and {dataset_id!r} is no available consumed slice"
+                + (f" of project {project_id!r}" if project_id else ""),
+            )
+        parquet = slice_.parquet_files
+        if not parquet:
+            raise DatasetBindingError(f"consumed dataset {dataset_id!r} records no Parquet part")
+        if slice_.modality != modality:
+            raise DatasetBindingError(
+                f"consumed dataset {dataset_id!r} is a {slice_.modality} slice; the upload declares modality "
+                f"{modality!r}",
+            )
+        return DatasetBinding(
+            dataset_id=slice_.dataset_id, split="eval", file_path=str(parquet[0].get("location") or ""),
+            file_sha256=str(parquet[0].get("sha256") or "") or None, class_names=list(slice_.class_names),
+            revision=slice_.revision or None, modality=slice_.modality, fixture_only=False,
+            source="consumed", project_id=str(slice_.project_id),
+        )
+
+    if session is not None:
+        return resolve(session)
+    from redsim.db.session import get_session
+
+    with get_session() as sess:
+        return resolve(sess)
+
+
+def materialize_consumed_slice(
+    session: Session,
+    blob_store: BlobStore,
+    *,
+    dataset_id: str,
+    project_id: str,
+    work_dir: str | Path,
+) -> dict[str, Any]:
+    """Copy a consumed slice's primary Parquet into ``work_dir`` and describe it for the sandbox child (INTEROP-16, 5b).
+
+    The worker parent calls this before it writes the request file of a
+    validate or campaign job whose target manifest names a ``ds-…`` dataset and
+    puts the returned block at ``target_detail["consumed_slice"]``;
+    :func:`artifact_target_from_path` hands it to
+    ``redsim.ml.targets.artifact.consumed_eval_slice`` in the child, which reads
+    the file under the declared schema (the same reader the parse child used).
+    Scoped to ``project_id``: a slice of another project is
+    ``UnsupportedArtifact("dataset_incompatible: …")`` and nothing is copied.
+    The bytes are digest-checked against the admission record before they are
+    written; the child checks them again.
+    """
+    from redsim.ml.errors import UnsupportedArtifact
+    from redsim.services.ml_datasets import max_rows, resolve_consumed_slice
+
+    slice_ = resolve_consumed_slice(session, dataset_id, project_id=project_id)
+    if slice_ is None:
+        raise UnsupportedArtifact(
+            f"dataset_incompatible: {dataset_id!r} is no available consumed slice of project {project_id!r}"
+        )
+    parquet = slice_.parquet_files
+    if not parquet:
+        raise UnsupportedArtifact(f"dataset_incompatible: consumed dataset {dataset_id!r} records no Parquet part")
+    primary = parquet[0]
+    location = str(primary.get("location") or "")
+    expected = str(primary.get("sha256") or "").strip().lower() or None
+    data = blob_store.get(location)
+    raw = data.encode("utf-8") if isinstance(data, str) else bytes(data)
+    actual = hashlib.sha256(raw).hexdigest()
+    if expected is not None and actual != expected:
+        raise UnsupportedArtifact(
+            f"dataset_incompatible: consumed slice {dataset_id!r} part {primary.get('name')!r} has sha256 {actual}, "
+            f"the admission record says {expected}"
+        )
+    target_dir = Path(work_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path = target_dir / f"{safe_filename(str(primary.get('name') or dataset_id), default=dataset_id)}.parquet"
+    path.write_bytes(raw)
+    return {
+        "dataset_id": slice_.dataset_id, "project_id": slice_.project_id, "file": str(path), "sha256": actual,
+        "size_bytes": len(raw), "schema": slice_.schema.to_mapping(), "class_names": list(slice_.class_names),
+        "revision": slice_.revision or None, "modality": slice_.modality, "license": slice_.license,
+        "n_rows": slice_.n_rows, "max_rows": max_rows(), "source": "consumed",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -490,14 +630,24 @@ def artifact_target_from_path(
     declared_format = str(manifest.get("format") or detail.get("format") or "")
     dataset_id = str(manifest.get("dataset_id") or "")
     dataset_split = str(manifest.get("dataset_split") or "").strip() or None
-    eval_path, class_names, dataset_revision, resolved_split = _evaluation_binding(
-        dataset_id, dataset_split=dataset_split,
-    )
+    consumed = detail.get("consumed_slice") if isinstance(detail.get("consumed_slice"), dict) else None
+    eval_data: Any
+    if consumed:
+        # INTEROP-16: the worker parent materialised the consumed Parquet slice into the work dir
+        # (``materialize_consumed_slice``); the child reads it under the declared schema.
+        from redsim.ml.targets.artifact import consumed_eval_slice
+
+        eval_data, class_names, dataset_revision, resolved_split = consumed_eval_slice(consumed)
+        dataset_id = str(consumed.get("dataset_id") or dataset_id)
+    else:
+        eval_data, class_names, dataset_revision, resolved_split = _evaluation_binding(
+            dataset_id, dataset_split=dataset_split,
+        )
     return ArtifactTarget(
         target_id,
         path,
         class_names=class_names,
-        eval_data=eval_path,
+        eval_data=eval_data,
         dataset_id=dataset_id,
         declared_format=declared_format,
         expected_sha256=str(manifest.get("sha256") or "") or None,
@@ -520,8 +670,18 @@ def artifact_target_from_path(
 def uploaded_model_file(
     target: Target,
     blob_store: BlobStore,
+    *,
+    session: Session | None = None,
 ) -> Iterator[tuple[Path, dict[str, Any]]]:
-    """Materialize opaque uploaded bytes without deserializing them."""
+    """Materialize opaque uploaded bytes without deserializing them.
+
+    With ``session`` (the worker parent) a manifest that binds a consumed ``ds-…`` slice gets that
+    slice materialised beside the weights (:func:`materialize_consumed_slice`, INTEROP-16) and the
+    block at ``detail["consumed_slice"]`` for the child; a slice of another project is the
+    ``UnsupportedArtifact`` the callers already map to a refusal.
+    """
+    from redsim.services.ml_datasets import is_dataset_id
+
     detail = dict(target.detail or {})
     manifest = (
         dict(detail["manifest"])
@@ -537,12 +697,21 @@ def uploaded_model_file(
     data = blob_store.get(str(target.value))
     fd, raw_path = tempfile.mkstemp(prefix="redsim-model-", suffix=suffix)
     path = Path(raw_path)
+    slice_dir: str | None = None
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
+        bound = str(manifest.get("dataset_id") or "")
+        if session is not None and is_dataset_id(bound):
+            slice_dir = tempfile.mkdtemp(prefix="redsim-slice-")
+            detail["consumed_slice"] = materialize_consumed_slice(
+                session, blob_store, dataset_id=bound, project_id=str(target.project_id), work_dir=slice_dir,
+            )
         yield path, detail
     finally:
         path.unlink(missing_ok=True)
+        if slice_dir is not None:
+            shutil.rmtree(slice_dir, ignore_errors=True)
 
 
 @contextmanager
@@ -1112,7 +1281,8 @@ def admit_endpoint_registration(
 
     try:
         binding = check_upload_dataset(registration.dataset_id, modality=registration.modality,
-                                       dataset_split=registration.dataset_split, root=assets_root)
+                                       dataset_split=registration.dataset_split, root=assets_root,
+                                       session=session, project_id=project_id)
     except DatasetBindingError as exc:
         raise EndpointAdmissionError(DatasetBindingError.code, str(exc), field=exc.field,
                                      dataset_id=registration.dataset_id) from exc
@@ -1477,6 +1647,7 @@ __all__ = [
     "campaign_history",
     "canonical_bundled_id",
     "check_upload_dataset",
+    "consumed_upload_binding",
     "dataset_entries",
     "dataset_modality",
     "delete_model_target",
@@ -1485,6 +1656,7 @@ __all__ = [
     "endpoint_request_block",
     "find_bundled_registration",
     "is_deleted",
+    "materialize_consumed_slice",
     "is_endpoint_target",
     "last_run_ids",
     "load_endpoint_auth_profile",

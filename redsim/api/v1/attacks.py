@@ -9,7 +9,9 @@ here. Nothing is parsed out of exception text. An optional ``parent_run_id`` in
 the body admits a rerun of a failed or cancelled campaign with the parent's
 configuration (spec 10.6, lineage in ``ml_campaigns.parent_run_id``).
 
-``GET /v1/attacks`` lists the registry after giving opt-in third-party adapters
+``GET /v1/attacks`` lists the registry (each row with its ``capabilities`` tags and
+the ``domains`` derived from them; ``?modality=`` filters on those tags, the same
+rule admission applies) after giving opt-in third-party adapters
 (``REDSIM_PLUGINS=1``, ``redsim.ml.attacks`` entry points) one chance per API
 process to register through :func:`redsim.plugins.load_ml_attack_plugins`. The
 discovery rows travel in the response under ``plugins`` so a rejected or skipped
@@ -110,7 +112,7 @@ def list_attack_catalog(
     reason, and an unimportable registry stays ``503 ml_catalog_unavailable``.
     """
     try:
-        from redsim.ml.attacks import list_attacks
+        from redsim.ml.attacks import list_attack_capabilities, list_attacks
     except ImportError as exc:
         raise _catalog_unavailable(exc) from exc
     try:
@@ -121,10 +123,19 @@ def list_attack_catalog(
     # registry mapping (``redsim.ml.atlas``); the frozen ``AttackInfo`` gains no field.
     from redsim.ml.atlas import attack_atlas_row, release_citation
 
-    attacks = [{**row.model_dump(mode="json", exclude_none=True), **attack_atlas_row(row.id)}
-               for row in list_attacks()]
+    # The capability tags admission decides applicability from (``modality:<domain>`` for every domain
+    # the adapter serves, ``dd2bbd4``): the additive ``capabilities`` and ``domains`` keys carry them, and
+    # ``?modality=`` filters on the tag rather than on ``AttackInfo.domain``, so ``hopskipjump`` is listed
+    # for ``image`` and ``pgd`` for ``tabular`` exactly when ``POST /v1/models/{id}/attacks`` admits them.
+    tags_by_id = list_attack_capabilities()
+    attacks = []
+    for row in list_attacks():
+        tags = list(tags_by_id.get(row.id, ()))
+        domains = sorted(tag.removeprefix("modality:") for tag in tags if tag.startswith("modality:"))
+        attacks.append({**row.model_dump(mode="json", exclude_none=True), **attack_atlas_row(row.id),
+                        "capabilities": tags, "domains": domains or [row.domain]})
     if modality:
-        attacks = [row for row in attacks if row.get("domain") == modality]
+        attacks = [row for row in attacks if modality in row["domains"]]
     return {"attacks": attacks, "count": len(attacks), "plugins": plugins, "atlas": release_citation()}
 
 

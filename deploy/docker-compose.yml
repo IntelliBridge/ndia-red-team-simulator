@@ -96,6 +96,25 @@ services:
       PYTHIA_API_KEY: ${PYTHIA_API_KEY:-}
       PYTHIA_PERSONA: ${PYTHIA_PERSONA:-}
       REDSIM_ML_LLM_MODEL: ${REDSIM_ML_LLM_MODEL:-}
+      # Phase B admission caps the API enforces (.env.example documents each; empty keeps the default).
+      REDSIM_ML_ENDPOINT_MAX_ROWS: ${REDSIM_ML_ENDPOINT_MAX_ROWS:-}
+      REDSIM_ML_ENDPOINT_MAX_REQUESTS: ${REDSIM_ML_ENDPOINT_MAX_REQUESTS:-}
+      REDSIM_LLM_PROBE_MAX_PROMPTS_PER_PROBE: ${REDSIM_LLM_PROBE_MAX_PROMPTS_PER_PROBE:-}
+      REDSIM_LLM_PROBE_MAX_RUNS_PER_PROJECT_PER_DAY: ${REDSIM_LLM_PROBE_MAX_RUNS_PER_PROJECT_PER_DAY:-}
+      REDSIM_LLM_PROBE_HF_DETECTORS: ${REDSIM_LLM_PROBE_HF_DETECTORS:-}
+      REDSIM_ML_MAX_CONCURRENT_RUNS_PER_PROJECT: ${REDSIM_ML_MAX_CONCURRENT_RUNS_PER_PROJECT:-}
+      REDSIM_ML_DAILY_RUN_BUDGET: ${REDSIM_ML_DAILY_RUN_BUDGET:-}
+      REDSIM_ML_BATCH_MAX_MEMBERS: ${REDSIM_ML_BATCH_MAX_MEMBERS:-}
+      REDSIM_ML_BULK_UPLOAD_MAX_FILES: ${REDSIM_ML_BULK_UPLOAD_MAX_FILES:-}
+      REDSIM_ML_BULK_UPLOAD_MAX_MB: ${REDSIM_ML_BULK_UPLOAD_MAX_MB:-}
+      REDSIM_ML_DATASET_UPLOAD_MAX_MB: ${REDSIM_ML_DATASET_UPLOAD_MAX_MB:-}
+      REDSIM_ML_DATASET_MAX_ROWS: ${REDSIM_ML_DATASET_MAX_ROWS:-}
+      # Foundry presence only (GET /v1/integrations reports disabled / misconfigured / configured);
+      # the push itself runs on the default worker pool. No token: the bearer is an AuthProfile.
+      REDSIM_INTEGRATION_FOUNDRY_URL: ${REDSIM_INTEGRATION_FOUNDRY_URL:-}
+      REDSIM_INTEGRATION_FOUNDRY_NON_OPERATIONAL: ${REDSIM_INTEGRATION_FOUNDRY_NON_OPERATIONAL:-}
+      REDSIM_INTEGRATION_FOUNDRY_DATASET_RID: ${REDSIM_INTEGRATION_FOUNDRY_DATASET_RID:-}
+      REDSIM_INTEGRATION_FOUNDRY_TIMEOUT_S: ${REDSIM_INTEGRATION_FOUNDRY_TIMEOUT_S:-}
     ports: ["8000:8000"]
 
   # Long-running attack/explain/verify work (-Q scans).
@@ -125,17 +144,45 @@ services:
       PYTHIA_API_KEY: ${PYTHIA_API_KEY:-}
       PYTHIA_PERSONA: ${PYTHIA_PERSONA:-}
       REDSIM_ML_LLM_MODEL: ${REDSIM_ML_LLM_MODEL:-}
+      # Phase B worker-parent settings (.env.example documents each; empty keeps the default). The
+      # sandbox child and the probe child receive none of them: the parent reads them and hands the
+      # child the numbers it needs in the request file.
+      REDSIM_ML_ENDPOINT_RPS: ${REDSIM_ML_ENDPOINT_RPS:-}
+      REDSIM_ML_ENDPOINT_BATCH_ROWS: ${REDSIM_ML_ENDPOINT_BATCH_ROWS:-}
+      REDSIM_ML_ENDPOINT_TIMEOUT_S: ${REDSIM_ML_ENDPOINT_TIMEOUT_S:-}
+      REDSIM_ML_ENDPOINT_MAX_ROWS: ${REDSIM_ML_ENDPOINT_MAX_ROWS:-}
+      REDSIM_ML_ENDPOINT_MAX_REQUESTS: ${REDSIM_ML_ENDPOINT_MAX_REQUESTS:-}
+      REDSIM_LLM_PROBE_HF_DETECTORS: ${REDSIM_LLM_PROBE_HF_DETECTORS:-}
+      REDSIM_LLM_PROBE_HF_CACHE: ${REDSIM_LLM_PROBE_HF_CACHE:-}
+      REDSIM_LLM_PROBE_TIMEOUT_S: ${REDSIM_LLM_PROBE_TIMEOUT_S:-}
+      REDSIM_LLM_PROBE_CPU_SECONDS: ${REDSIM_LLM_PROBE_CPU_SECONDS:-}
+      REDSIM_LLM_PROBE_MEMORY_MB: ${REDSIM_LLM_PROBE_MEMORY_MB:-}
+      REDSIM_LLM_PROBE_FILESIZE_MB: ${REDSIM_LLM_PROBE_FILESIZE_MB:-}
+      REDSIM_LLM_PROBE_MAX_PROCESSES: ${REDSIM_LLM_PROBE_MAX_PROCESSES:-}
+      REDSIM_ML_MAX_CONCURRENT_RUNS_PER_PROJECT: ${REDSIM_ML_MAX_CONCURRENT_RUNS_PER_PROJECT:-}
+      REDSIM_ML_DAILY_RUN_BUDGET: ${REDSIM_ML_DAILY_RUN_BUDGET:-}
+      REDSIM_ML_DATASET_MAX_ROWS: ${REDSIM_ML_DATASET_MAX_ROWS:-}
 
   # Fast bookkeeping (-Q default): report rendering, the stale-job reaper,
-  # tenant reconciliation, and WORM export. Kept off the scans pool so long scans can't
-  # starve it. Reuses the worker image + env via the &worker-env anchor.
+  # tenant reconciliation, WORM export and, since Phase B wave B3, the Foundry
+  # push (redsim.integration_push): the only pool with outbound HTTPS egress, so
+  # the REDSIM_INTEGRATION_FOUNDRY_* settings are scoped to this service and
+  # the scans pool never carries them (INTEROP-29, BULK-23). Kept off the scans
+  # pool so long scans can't starve it. Reuses the worker image + env via the
+  # &worker-env anchor, extended with the Foundry settings.
   redsim-worker-default:
     image: redsim-worker:dev
     command: ["celery", "-A", "redsim.workers.celery_app", "worker", "-Q", "default", "--loglevel=info"]
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-    environment: *worker-env
+    environment:
+      <<: *worker-env
+      # Off unless the host shell exports the URL; no token variable exists (the bearer is an AuthProfile).
+      REDSIM_INTEGRATION_FOUNDRY_URL: ${REDSIM_INTEGRATION_FOUNDRY_URL:-}
+      REDSIM_INTEGRATION_FOUNDRY_NON_OPERATIONAL: ${REDSIM_INTEGRATION_FOUNDRY_NON_OPERATIONAL:-}
+      REDSIM_INTEGRATION_FOUNDRY_DATASET_RID: ${REDSIM_INTEGRATION_FOUNDRY_DATASET_RID:-}
+      REDSIM_INTEGRATION_FOUNDRY_TIMEOUT_S: ${REDSIM_INTEGRATION_FOUNDRY_TIMEOUT_S:-}
 
   # Beat scheduler: the only process that fires app.conf.beat_schedule (the
   # stale-job reaper, every 5 min). Without it the reaper never runs.
