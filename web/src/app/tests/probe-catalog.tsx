@@ -216,8 +216,6 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
   const selectedRunnable = (catalog?.probes ?? [])
     .filter((p) => selected.has(p.id) && runnable(p))
     .map((p) => p.id);
-  const estimate =
-    selectedRunnable.length * (Number.isFinite(maxPromptsN) ? maxPromptsN : 0);
 
   // ── Launch ────────────────────────────────────────────────────────
   const [busy, setBusy] = useState<string | null>(null);
@@ -627,11 +625,7 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
       {/* ── Sticky action bar ────────────────────────────────────── */}
       <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border border-border bg-card p-3 shadow-sm">
         <div className="text-xs text-muted-foreground">
-          <div className="redsim-kicker">Prompt estimate</div>
-          {selectedRunnable.length} probes ×{" "}
-          {Number.isFinite(maxPromptsN) ? maxPromptsN : 0} prompts ≈{" "}
-          <span className="font-mono">{estimate}</span> prompts at most; each
-          probe corpus may be smaller than the cap.
+          {selectedRunnable.length} probe{selectedRunnable.length === 1 ? "" : "s"} selected.
           {selected.size > selectedRunnable.length && (
             <span>
               {" "}
