@@ -102,9 +102,18 @@ describe("api() request shaping", () => {
     expect(init.credentials).toBe("include");
   });
 
-  it("omits CSRF when there is no session cookie to protect", async () => {
+  it("attaches CSRF from the csrf cookie alone, since the session cookie is httpOnly", async () => {
+    // R35: document.cookie never carries redsim_api_session, so the old
+    // hasCookie(SESSION_COOKIE) gate meant the header was never sent and the
+    // API answered 403 on every cookie-authed mutation.
     fetchMock.mockResolvedValue(ok("{}"));
     document.cookie = "redsim_csrf=csrf123";
+    await api("/v1/x", { method: "DELETE" });
+    expect(headerOf(lastInit(), "X-Redsim-CSRF")).toBe("csrf123");
+  });
+
+  it("omits CSRF when no csrf cookie is present", async () => {
+    fetchMock.mockResolvedValue(ok("{}"));
     await api("/v1/x", { method: "DELETE" });
     expect(headerOf(lastInit(), "X-Redsim-CSRF")).toBeUndefined();
   });

@@ -3,6 +3,7 @@ import "@/styles/globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CommandPalette } from "@/components/command-palette";
+import { TRPCReactProvider } from "@/lib/trpc/client";
 
 export const metadata = {
   title: "redsim",
@@ -27,6 +28,9 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground antialiased">
+        {/* Outside ThemeProvider so every page, including the hydration
+            boundary a server component renders, sits inside one QueryClient. */}
+        <TRPCReactProvider>
         <ThemeProvider>
           {/* Skip link: first focusable element, visually hidden until
               keyboard-focused, so keyboard/screen-reader users can jump
@@ -66,6 +70,7 @@ export default function RootLayout({
           </main>
           <CommandPalette links={NAV_LINKS} />
         </ThemeProvider>
+        </TRPCReactProvider>
       </body>
     </html>
   );

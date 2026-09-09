@@ -32,6 +32,13 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // `server-only` resolves through Next's own bundler alias, so it is not
+      // a package in node_modules and vitest cannot find it. Every runtime
+      // module under src/server/ imports it as the mechanical guard that keeps
+      // the router out of the browser bundle (KTD2), so the runner needs a
+      // no-op stand-in. Storybook and any script runner that imports a server
+      // module needs the same alias.
+      "server-only": fileURLToPath(new URL("./src/test/server-only-stub.ts", import.meta.url)),
     },
   },
 });

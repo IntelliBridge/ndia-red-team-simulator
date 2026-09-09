@@ -44,3 +44,57 @@ describe("POST /api/auth/signout-redsim", () => {
     await expect(res.json()).resolves.toEqual({ ok: true });
   });
 });
+
+describe("GET /api/auth/signout-redsim (the server-prefetch hop)", () => {
+  const FAKE_SESSION = "fake-rejected-session-cookie";
+
+  async function hopUrl(credential: string): Promise<string> {
+    const { mintHopToken } = await import("@/server/gate");
+    const token = await mintHopToken(process.env.BETTER_AUTH_SECRET ?? "", credential);
+    return `http://localhost:3000/api/auth/signout-redsim?hop=${encodeURIComponent(token)}`;
+  }
+
+  function withCookie(value: string | null): HeadersInit {
+    return value === null ? {} : { cookie: `redsim_api_session=${value}` };
+  }
+
+  it("clears the redsim pair and lands on /login?reason=rejected", async () => {
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request(await hopUrl(FAKE_SESSION), { headers: withCookie(FAKE_SESSION) }),
+    );
+
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toContain("/login?reason=rejected");
+    const cleared = response.cookies.getAll().map((c) => [c.name, c.value, c.maxAge]);
+    expect(cleared).toEqual(
+      expect.arrayContaining([
+        ["redsim_api_session", "", 0],
+        ["redsim_csrf", "", 0],
+      ]),
+    );
+  });
+
+  it("refuses a token minted for a different cookie value, clearing nothing", async () => {
+    const { GET } = await import("./route");
+    const response = await GET(
+      new Request(await hopUrl(FAKE_SESSION), { headers: withCookie("a-different-value") }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(response.cookies.getAll()).toEqual([]);
+  });
+
+  it("refuses a request with no token and one with no cookie", async () => {
+    const { GET } = await import("./route");
+    const noToken = await GET(
+      new Request("http://localhost:3000/api/auth/signout-redsim", {
+        headers: withCookie(FAKE_SESSION),
+      }),
+    );
+    expect(noToken.status).toBe(403);
+
+    const noCookie = await GET(new Request(await hopUrl(FAKE_SESSION)));
+    expect(noCookie.status).toBe(403);
+  });
+});

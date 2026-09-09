@@ -44,8 +44,14 @@ config:
   oidcIssuer: http://redsim-keycloak:8080/realms/redsim
   oidcJwksUrl: http://redsim-keycloak:8080/realms/redsim/protocol/openid-connect/certs
   disableLlm: "1"
-  # Web (Next.js) public config.
+  # Web (Next.js) public config. The browser reaches FastAPI directly for
+  # exactly three surfaces: the run-events socket, artifact images and report
+  # downloads. Everything else goes through the tRPC layer in the web pod.
   webApiUrl: http://localhost:8000
+  # Where the Next server itself reaches FastAPI. In-cluster, so the Service
+  # name rather than a browser-facing origin. Server-only and read at runtime,
+  # so changing it does not rebuild the web image.
+  apiUrl: http://redsim-api:8000
   # Browser-facing origin for Better Auth.
   betterAuthUrl: http://localhost:3300
   # The redsim-web realm client is public and uses PKCE, so there is no
@@ -295,15 +301,24 @@ ingress:
   className: ""
   annotations: {}
   # Hosts route to the web UI and the api. Adjust to your domain.
+  #
+  # /api belongs to web, not to the API: /api/trpc, /api/upload and /api/auth
+  # are Next route handlers. The API owns the versioned routes and /health.
+  # More specific paths are listed first because most controllers match in
+  # order of specificity, and an /api rule pointing at the API service would
+  # break every browser data call.
   hosts:
     - host: redsim.local
       paths:
+        - path: /v1
+          pathType: Prefix
+          service: api
+        - path: /health
+          pathType: Prefix
+          service: api
         - path: /
           pathType: Prefix
           service: web
-        - path: /api
-          pathType: Prefix
-          service: api
   tls: []
   #  - secretName: redsim-tls
   #    hosts: [redsim.local]

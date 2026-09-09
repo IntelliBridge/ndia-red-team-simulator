@@ -84,6 +84,10 @@ services:
       REDSIM_S3_ACCESS_KEY_ID: redsim
       REDSIM_S3_SECRET_ACCESS_KEY: redsim-secret
       REDSIM_CORS_ORIGINS: http://localhost:3300
+      # Hygiene, not a fix: the socket handshake is already admitted through
+      # REDSIM_CORS_ORIGINS above (redsim/api/ws.py accepts either). Declaring
+      # it stops the API from also admitting the unused port 3000 default.
+      REDSIM_WEB_ORIGIN: http://localhost:3300
       REDSIM_OIDC_ISSUER: http://keycloak:8080/realms/redsim
       REDSIM_OIDC_JWKS_URL: http://keycloak:8080/realms/redsim/protocol/openid-connect/certs
       # The public half of the keypair redsim-web signs redsim_api_session
@@ -110,6 +114,7 @@ services:
       redis: { condition: service_healthy }
     environment: &worker-env
       REDSIM_ENV: dev
+      REDSIM_WEB_ORIGIN: http://localhost:3300
       REDSIM_DB_URL: postgresql+psycopg://redsim:redsim@postgres:5432/redsim
       REDSIM_BROKER_URL: redis://redis:6379/0
       REDSIM_RESULT_BACKEND: redis://redis:6379/1
@@ -162,7 +167,14 @@ services:
     # Next.js process is unchanged.
     ports: ["3300:3000"]
     environment:
+      # The browser reaches FastAPI directly for exactly three surfaces: the
+      # run-events socket, artifact images and report downloads. Everything
+      # else goes through the tRPC layer inside this container.
       NEXT_PUBLIC_REDSIM_API_URL: http://localhost:8000
+      # Where the Next server itself reaches FastAPI. Container to container,
+      # so the service name rather than the published port. A runtime
+      # variable, not baked into the image.
+      REDSIM_API_URL: http://redsim-api:8000
       # Browser-facing origin, so the published port rather than the service
       # name. BETTER_AUTH_SECRET must be at least 32 characters; this dev
       # placeholder is not a secret and must be replaced outside local dev.

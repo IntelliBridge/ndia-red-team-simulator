@@ -1,5 +1,9 @@
 locals {
   identity_internal = "http://identity.${aws_service_discovery_private_dns_namespace.runtime.name}:8080/auth/realms/redsim"
+  # In-VPC base for the web tier's tRPC layer. Plain HTTP inside the VPC, the
+  # posture KEYCLOAK_ISSUER already takes; the session cookie rides every
+  # upstream call on it.
+  api_internal = "http://api.${aws_service_discovery_private_dns_namespace.runtime.name}:8000"
   common_environment = merge({
     REDSIM_ENV                  = "prod"
     REDSIM_AUTH_MODE            = "oidc"
@@ -33,8 +37,13 @@ locals {
       REDSIM_DB_NAME = "redsim"
     }
     web = {
-      REDSIM_ENV         = "prod"
-      NEXTAUTH_URL       = local.origin
+      REDSIM_ENV = "prod"
+      # The T3 refactor replaced NextAuth with Better Auth, and web/src/env.js
+      # refuses to boot without this name. It is also the origin the tRPC
+      # mutation gate compares against when a request carries no fetch
+      # metadata, so it has to be the browser-facing value.
+      BETTER_AUTH_URL    = local.origin
+      REDSIM_API_URL     = local.api_internal
       KEYCLOAK_CLIENT_ID = "redsim-web"
       KEYCLOAK_ISSUER    = local.identity_internal
     }
@@ -71,6 +80,11 @@ locals {
   }
   service_names = toset(["api", "web", "scans", "default", "beat", "identity"])
   target_groups = merge(local.network.target_group_arns, { identity = aws_lb_target_group.identity.arn })
+  # Services registered into the private DNS namespace, keyed by service name.
+  discovery_services = {
+    identity = aws_service_discovery_service.identity.arn
+    api      = aws_service_discovery_service.api.arn
+  }
 }
 
 resource "aws_ecs_task_definition" "runtime" {
@@ -162,9 +176,11 @@ resource "aws_ecs_service" "runtime" {
       container_port   = local.task_specs[each.key].port
     }
   }
+  # A discovery service with no registered task resolves to nothing, so the
+  # api tasks are registered alongside identity rather than left out.
   dynamic "service_registries" {
-    for_each = each.key == "identity" ? [1] : []
-    content { registry_arn = aws_service_discovery_service.identity.arn }
+    for_each = contains(keys(local.discovery_services), each.key) ? [each.key] : []
+    content { registry_arn = local.discovery_services[each.key] }
   }
   depends_on = [aws_lb_listener_rule.api, aws_lb_listener_rule.identity]
 }

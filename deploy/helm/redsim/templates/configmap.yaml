@@ -24,5 +24,7 @@ data:
   REDSIM_DISABLE_LLM: {{ .Values.config.disableLlm | quote }}
   # Web (Next.js) public config.
   NEXT_PUBLIC_REDSIM_API_URL: {{ .Values.config.webApiUrl | quote }}
+  # Server-only: the upstream base of the tRPC layer, never sent to a browser.
+  REDSIM_API_URL: {{ .Values.config.apiUrl | quote }}
   BETTER_AUTH_URL: {{ .Values.config.betterAuthUrl | quote }}
   KEYCLOAK_CLIENT_ID: {{ .Values.config.keycloakClientId | quote }}

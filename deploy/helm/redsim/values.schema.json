@@ -14,6 +14,18 @@
           "description": "Deployment environment. 'prod' activates the dev-placeholder secret guard.",
           "enum": ["dev", "staging", "prod"]
         },
+        "apiUrl": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 1,
+          "description": "Server-only base URL the web pod's tRPC layer calls FastAPI on. In-cluster Service name, never a browser-facing origin, and never sent to a browser."
+        },
+        "webApiUrl": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 1,
+          "description": "Browser-facing API origin. Read only by the run-events socket, artifact images and report links."
+        },
         "secret": {
           "type": "object",
           "additionalProperties": false,

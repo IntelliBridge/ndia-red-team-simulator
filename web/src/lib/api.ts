@@ -1,5 +1,10 @@
 // Unified API client.
 //
+// Being replaced by the tRPC layer under web/src/server/trpc/. The response
+// types below are the procedure output types and stay (R5); the fetch client
+// and the SWR-era helpers go in U14 once every page reads its data through a
+// procedure. Each helper carries the procedure that replaces it.
+//
 // Auth modes:
 //   - Cookie (browser): credentials: "include" so redsim_api_session
 //     rides along; X-Redsim-CSRF auto-attached from the redsim_csrf
@@ -12,13 +17,13 @@
 // worker + scanner logs correlate.
 
 import { env } from "@/env";
+import type { UpstreamErrorBlock } from "@/lib/trpc/types";
 
 const BASE = env.NEXT_PUBLIC_REDSIM_API_URL;
 
 export const apiBase = BASE;
 export const apiWsBase = BASE.replace(/^http/, "ws");
 
-const SESSION_COOKIE = env.NEXT_PUBLIC_REDSIM_API_SESSION_COOKIE;
 const CSRF_COOKIE = env.NEXT_PUBLIC_REDSIM_CSRF_COOKIE;
 const CSRF_HEADER = env.NEXT_PUBLIC_REDSIM_CSRF_HEADER;
 
@@ -88,7 +93,12 @@ export async function api<T>(
   }
 
   // CSRF: cookie-authed mutations must echo the cookie via the header.
-  if (!bearer && MUTATING.has(method) && hasCookie(SESSION_COOKIE)) {
+  //
+  // The presence of the csrf cookie is the only signal available here (R35).
+  // Gating on the session cookie, as this did, could never fire: that cookie
+  // is httpOnly, so document.cookie never carries it and every cookie-authed
+  // mutation went out without the header for the API to compare.
+  if (!bearer && MUTATING.has(method)) {
     const csrf = readCookie(CSRF_COOKIE);
     if (csrf) headers[CSRF_HEADER] = csrf;
   }
@@ -563,6 +573,28 @@ export type JobHandle = {
   status_url: string;
 };
 
+/**
+ * The spec 17.3 envelope carried by a tRPC error, or undefined when there is
+ * none (KTD8, R4).
+ *
+ * Deliberately structural rather than `instanceof`: the same block has to be
+ * readable from a live client error, whose data sits under `shape.data`, and
+ * from a query the server prefetched and dehydrated, which crosses the RSC
+ * boundary as a plain object with no prototype and no stack (KTD4). Every
+ * honest state branches on `upstream.code`; nothing branches on message text.
+ */
+export function upstreamError(error: unknown): UpstreamErrorBlock | undefined {
+  const candidate = error as
+    | {
+        data?: { upstream?: UpstreamErrorBlock };
+        shape?: { data?: { upstream?: UpstreamErrorBlock } };
+      }
+    | null
+    | undefined;
+  return candidate?.data?.upstream ?? candidate?.shape?.data?.upstream;
+}
+
+/** Replaced by {@link upstreamError}; removed with the fetch client in U14. */
 export function mlErrorDetail(error: unknown): MlErrorDetail {
   if (error instanceof ApiError) {
     try {
