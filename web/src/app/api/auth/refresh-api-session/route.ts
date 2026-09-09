@@ -1,11 +1,13 @@
-// POST /api/auth/refresh-api-session — re-mint the redsim_api_session and
+// POST /api/auth/refresh-api-session re-mints the redsim_api_session and
 // redsim_csrf cookies for the currently signed-in user.
 //
 // Nothing calls this route today. The measured current behaviour is a 900
 // second cookie lifetime followed by a forced interactive re-auth: requireAuth
 // pushes to /login once the non-httpOnly redsim_csrf cookie expires, and
-// /login renders a button the user must click. Adding an interval caller is
-// deferred work under KTD12, and R22 forbids adding one here.
+// /login renders a button the user must click. An interval caller that
+// refreshes the cookie before it expires does not belong in this route: it
+// would move the refresh trigger from the client to the server, changing the
+// binding this route relies on (the caller's own session email).
 //
 // The carry-forward is only ever taken from a signature-verified existing
 // cookie that is bound to the caller. Re-signing claims decoded without

@@ -5,7 +5,7 @@ KEYCLOAK_*).
 
 Recreate, not the default RollingUpdate, and one replica: Better Auth is
 stateless on the in-memory adapter, so a second web pod resolves no session
-past the cookie-cache window (KTD12, values.yaml web.replicaCount).
+past the cookie-cache window. See values.yaml web.replicaCount.
 */}}
 {{- $component := "web" -}}
 apiVersion: apps/v1
@@ -97,7 +97,7 @@ spec:
                   key: BETTER_AUTH_SECRET
             # Without this the web process never sees REDSIM_ENV, isProd is
             # false on every Helm deploy including config.env=prod, and both
-            # redsim cookies ship without Secure (R19). The ConfigMap already
+            # redsim cookies ship without Secure. The ConfigMap already
             # defines the key for the api and worker pods.
             - name: REDSIM_ENV
               valueFrom:

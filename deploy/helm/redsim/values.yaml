@@ -164,7 +164,7 @@ web:
   # the in-memory adapter, so past the 300 second cookie-cache window only
   # the instance that handled the OAuth callback resolves the session.
   # A second replica produces intermittent sign-outs with no error in any
-  # log. Scaling this up needs a shared session store first (KTD12).
+  # log. Scaling this up needs a shared session store first.
   replicaCount: 1
   # Recreate for the same reason: the default RollingUpdate surges a
   # second pod on every release, which the replica pin exists to prevent.

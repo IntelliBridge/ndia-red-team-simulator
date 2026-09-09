@@ -23,13 +23,13 @@ import { z } from "zod";
  * The build-time escape hatch, narrowed to the server names that a build
  * genuinely cannot supply.
  *
- * T3's `skipValidation` switches off the whole schema and returns the raw
- * environment. That is wrong here, and measurably so: Next inlines every
- * `NEXT_PUBLIC_*` read at build time, so a build with the whole schema off
- * bakes `undefined` in place of each client default and ships an image whose
- * API base is the string "undefined". It also fails the build outright,
- * because `apiWsBase` derives from that value at module scope and every
- * prerendered page evaluates it.
+ * `createEnv`'s `skipValidation` switches off the whole schema and returns
+ * the raw environment. That is wrong here, and measurably so: Next inlines
+ * every `NEXT_PUBLIC_*` read at build time, so a build with the whole schema
+ * off bakes `undefined` in place of each client default and ships an image
+ * whose API base is the string "undefined". It also fails the build
+ * outright, because `apiWsBase` derives from that value at module scope and
+ * every prerendered page evaluates it.
  */
 const buildTime = !!process.env.SKIP_ENV_VALIDATION;
 
@@ -126,6 +126,6 @@ export const env = createEnv({
     const named = issues
       .map((issue) => `${issue.path?.join(".") ?? "(root)"}: ${issue.message}`)
       .join("; ");
-    throw new Error(`Invalid environment variables — ${named}`);
+    throw new Error(`Invalid environment variables: ${named}`);
   },
 });

@@ -4,7 +4,7 @@
 // after-hook, reaches the Redsim signing key. Nothing here may be imported
 // from a client component.
 //
-// Stateless by construction (KTD12): no database option, which selects the
+// Stateless by construction: no database option, which selects the
 // in-memory adapter and carries the session across restarts in the encrypted
 // session_data cookie, and no JWT plugin, which would want a jwks table and
 // could not produce the fixed-key, fixed-iss, fixed-aud token FastAPI expects.
@@ -25,7 +25,7 @@ import { mintFromAccount } from "../redsim-cookies";
  * logged line rather than throwing, so a developer with no realm still gets a
  * booting app and the dev-token login path. On a deployed stack that silence
  * is the failure mode to design against, which is why compose orders the web
- * service after a healthy Keycloak (R31).
+ * service after a healthy Keycloak.
  */
 function keycloakProviders() {
   if (!env.KEYCLOAK_ISSUER || !env.KEYCLOAK_CLIENT_ID) return [];
@@ -62,21 +62,21 @@ export function createAuth() {
       storeAccountCookie: false,
     },
     user: {
-      // R22 binds the refresh route's carry-forward to the session email, so
-      // the email must not be movable by its owner.
+      // The refresh route's carry-forward binds to the session email, so the
+      // email must not be movable by its owner.
       changeEmail: { enabled: false },
     },
     session: {
       // Both numbers are the library's own defaults on 1.7.3, taken as-is.
-      // With web.replicaCount pinned to 1 (R35) they are one constraint: past
-      // the cookie-cache window only the instance that handled the callback
+      // With web.replicaCount pinned to 1, they are one constraint: past the
+      // cookie-cache window only the instance that handled the callback
       // resolves the session, because the memory adapter row lives there.
       cookieCache: { enabled: true, maxAge: 300 },
       expiresIn: 60 * 60 * 24 * 7,
     },
     advanced: {
-      // Follow the same rule R19 sets for the redsim pair rather than the
-      // library's inference from the base URL protocol.
+      // Follows the same secure-cookie rule as the redsim pair, rather than
+      // the library's inference from the base URL protocol.
       useSecureCookies: isProd,
     },
     hooks: {

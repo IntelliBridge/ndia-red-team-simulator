@@ -1,4 +1,4 @@
-// Unified API client (Phase 4 v0.4.0 F18).
+// Unified API client.
 //
 // Auth modes:
 //   - Cookie (browser): credentials: "include" so redsim_api_session
@@ -757,7 +757,7 @@ export function centsToUsd(cents: number): string {
   }).format(cents / 100);
 }
 
-// --- DAST authentication profiles (feat/authenticated-dast) ---
+// --- DAST authentication profiles ---
 //
 // Secrets are write-only: POST accepts `secret`, but GET never returns
 // it — `config` is the non-secret portion only.

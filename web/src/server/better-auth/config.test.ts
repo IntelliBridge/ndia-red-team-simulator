@@ -268,7 +268,7 @@ describe("Better Auth Keycloak login mints the FastAPI cookie", () => {
     expect(cookies.has("redsim_api_session")).toBe(false);
     expect(cookies.has("redsim_csrf")).toBe(false);
     // The Better Auth session still exists, so the user sees the UI shell and
-    // API calls surface 401, matching the behaviour this migration replaced.
+    // API calls surface 401.
     expect(cookies.has("better-auth.session_token")).toBe(true);
     expect(warn).toHaveBeenCalled();
   });
@@ -351,7 +351,8 @@ describe("Better Auth Keycloak login mints the FastAPI cookie", () => {
     );
     // Asserted on the provider's absence rather than on the log line, because
     // discovery is asynchronous and the line is not deterministic. This is the
-    // failure U9's compose ordering exists to prevent.
+    // failure the compose Keycloak healthcheck and the chart's readiness gate
+    // exist to prevent.
     expect(signIn.status).toBeGreaterThanOrEqual(400);
   });
 
@@ -383,7 +384,7 @@ describe("Better Auth Keycloak login mints the FastAPI cookie", () => {
     });
     // Better Auth normalizes the email to lower case in its own store while
     // the minted cookie carries the id_token's original casing. That mismatch
-    // is exactly why R22's carry-forward binding compares case-insensitively.
+    // is exactly why the carry-forward binding compares case-insensitively.
     expect(session?.user.email).toBe("user@redsim.local");
   });
 

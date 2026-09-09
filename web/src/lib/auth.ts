@@ -44,10 +44,10 @@ export async function logout(): Promise<void> {
  * Bounce to /login when no token is present. Returns the token (or undefined
  * during the brief server-render pass; the redirect fires on hydration).
  *
- * F18: cookie-authed users have no localStorage token but do have an
- * httpOnly redsim_api_session cookie. We can't read that from JS, so we
- * additionally check for the non-httpOnly redsim_csrf cookie that the
- * login after-hook (F13) sets alongside it.
+ * Cookie-authed users have no localStorage token but do have an httpOnly
+ * redsim_api_session cookie. We can't read that from JS, so we additionally
+ * check for the non-httpOnly redsim_csrf cookie that the login after-hook
+ * sets alongside it.
  */
 export function requireAuth(router: { push: (path: string) => void }): string | undefined {
   const token = getToken();

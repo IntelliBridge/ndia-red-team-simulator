@@ -1,4 +1,4 @@
-// Better Auth handler — Keycloak code flow.
+// Better Auth handler for the Keycloak code flow.
 //
 // Better Auth owns the browser session in its own encrypted cookie. FastAPI
 // never sees that cookie; what it sees is the RS256 redsim_api_session cookie

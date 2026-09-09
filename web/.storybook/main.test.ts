@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 // the module so the config object itself still loads cleanly.
 vi.mock("@storybook/nextjs", () => ({}));
 
-// path is used inside webpackFinal — pass the real module through so the
+// path is used inside webpackFinal, so pass the real module through and the
 // design-system alias resolves in the vitest module graph.
 vi.mock("node:path", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:path")>();

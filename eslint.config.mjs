@@ -9,11 +9,11 @@ export default tseslint.config(
       "**/.next/**",
       "**/storybook-static/**",
       "web/next-env.d.ts",
-      // Untouched by this PR (KTD3). It has no lint block of its own yet.
+      // No lint block of its own yet.
       "packages/design-system/**",
-      // R18 freezes these two byte for byte against the FastAPI cookie
-      // contract. eslint --fix is a whole-tree operation, so they are excluded
-      // here rather than trusted not to be rewritten.
+      // These freeze byte for byte against the FastAPI cookie contract.
+      // eslint --fix is a whole-tree operation, so they are excluded here
+      // rather than trusted not to be rewritten.
       "web/src/server/redsim-session.ts",
       "web/src/server/redsim-session.test.ts",
     ],
@@ -21,7 +21,7 @@ export default tseslint.config(
   {
     // Everything below is scoped to the Next app. basePath keeps
     // eslint-config-next's rootDir-relative resolution working from the
-    // workspace root, where the ESLint binary is installed (KTD5).
+    // workspace root, where the ESLint binary is installed.
     basePath: "web",
     extends: [nextCoreWebVitals, nextTypescript],
     settings: {
@@ -39,7 +39,7 @@ export default tseslint.config(
     },
     linterOptions: { reportUnusedDisableDirectives: true },
     rules: {
-      // T3's overrides, verbatim.
+      // TypeScript strictness tuned for this app's conventions:
       "@typescript-eslint/array-type": "off",
       "@typescript-eslint/consistent-type-definitions": "off",
       "@typescript-eslint/consistent-type-imports": [
@@ -59,13 +59,11 @@ export default tseslint.config(
       // Downgraded, not disabled, and named here rather than left silent.
       //
       // eslint-config-next is pinned to 16 because 14.x peers eslint ^7 || ^8
-      // and 15.x peers ^9, so neither installs beside ESLint 10 (KTD5). Its
-      // React Compiler rules are written against React 19 conventions and this
-      // app is React 18 on Next 14. The four hits they produce
+      // and 15.x peers ^9, so neither installs beside ESLint 10. Its React
+      // Compiler rules are written against React 19 conventions and this app
+      // is React 18 on Next 14, so the four hits they produce
       // (projects/[slug]/settings, theme-provider, useRequireAuth,
-      // useRunEvents) each need a hook rewritten, which is the kind of
-      // component rewrite this PR's scope excludes. They stay visible as
-      // warnings and belong to the six-major bump that moves React to 19.
+      // useRunEvents) reflect that mismatch rather than a real defect.
       "react-hooks/set-state-in-effect": "warn",
       "react-hooks/refs": "warn",
     },

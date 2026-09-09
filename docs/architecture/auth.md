@@ -21,7 +21,7 @@ silently downgrading a bearer call.
 
 ## Browser auth (Better Auth + Redsim-signed cookie)
 
-The Keycloak code flow is owned by Better Auth; FastAPI never sees the
+The Keycloak code flow is owned by Better Auth. FastAPI never sees the
 upstream access token, nor Better Auth's own session cookie. An
 after-hook on the callback mints a separate `redsim_api_session` cookie
 that FastAPI verifies against a Redsim-managed RSA key. Three concerns,
