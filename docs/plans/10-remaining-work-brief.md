@@ -245,6 +245,73 @@ fields in `redsim/ml/schema.py` under the protocol, `redsim/api/policy.py`
   verify, CLI matrix).
 - The web UI is deferred by the owner. API contracts for every page exist.
 
+## H. Coordination with the Phase B waves
+
+Phase B runs in parallel with this brief as workflow waves that push directly to
+`main` after each wave's assemble. Both efforts change the same repository, so
+the split below is the contract.
+
+**Ownership split.** This brief owns packages A to F entirely: compose-stack
+operations, CI parity, process documents, the residual Phase A rows,
+infrastructure completion, and the data-poisoning module. The Phase B waves own
+the spec 3.2 stretch items and bulk operations listed in section G and will not
+run infrastructure or poisoning tracks; where the Phase B plan
+(`docs/plans/11-phase-b-plan.md`) lists infrastructure items, this brief's
+package E supersedes them.
+
+**Files the waves will touch heavily.** Expect concurrent change in
+`redsim/ml/targets/*`, `redsim/ml/attacks/*`, `redsim/ml/explain/*`,
+`redsim/ml/scoring.py`, `redsim/ml/campaign.py`, `redsim/ml/reporting.py`,
+`redsim/services/ml_campaigns.py`, `redsim/services/ml_findings.py`,
+`redsim/api/v1/{models,attacks,verify,compare,reports,ml_findings}.py`,
+`redsim/workers/tasks/ml_campaign.py`, `redsim/api/policy.py`,
+`redsim/db/models.py` and the Alembic versions, `tests/e2e/harness.py`, and the
+docs pages. Items in this brief that touch them: D2 (`ml_campaigns.py`), D3
+(`policy.py`), D9 (`reporting.py`), F2 (schema), F5 to F7 (`reporting.py`,
+`policy.py`, a new migration). For those:
+
+1. Keep each PR small and land it quickly: one item or one package per PR,
+   rebased onto `main` immediately before the push, re-running the affected
+   tests after the rebase. Wave assembles land several commits at once, so a
+   long-lived branch will conflict.
+2. Prefer new files over edits to contended ones: package F lives in
+   `redsim/ml/poisoning/`, `redsim/workers/tasks/ml_poisoning.py`,
+   `redsim/services/ml_poisoning.py`, `redsim/api/v1/poisoning.py`,
+   `tests/ml/test_poisoning.py`, `tests/e2e/test_ml_poisoning.py`. The only
+   contended edits it needs are the schema additions (F2), the `Action` member
+   (F7), the report section hook (F5) and `include_router` in
+   `redsim/api/app.py`; keep each to a few lines.
+3. Schema additions follow the plan-01 section 8 protocol in both efforts:
+   additive, default-valued, and announced in `docs/plans/00-master-plan.md`
+   section 0 before or with the PR. Land F2 as its own PR first so the Phase B
+   schema-additive track sees the new literals and does not reintroduce them
+   under other names. Use family and kind names prefixed `poison` so they cannot
+   collide with the Phase B families (`text`, `detection`, `llm`).
+4. Migrations: take the next free Alembic revision at PR time and name it by
+   purpose; if a wave lands one first, renumber before the rebase. The chain
+   must stay linear.
+5. Do not edit the e2e harness (`tests/e2e/conftest.py`, `tests/e2e/harness.py`);
+   put any fixture you need inside your own test file, as the wave-4 tests do.
+6. Do not edit `redsim/ml/schema.py` beyond F2, and never change the meaning of
+   an existing field.
+
+**What the waves deliver that this brief can use.** Bulk operations will add a
+batch identity to `ml_campaigns` and batch routes; the demo walkthrough (C9)
+and the live smoke (E8) may use them once landed but must not wait for them.
+The review-workflow and report tracks will add PDF export and report snapshots;
+D9 should land before them so the header fields are in every format they render.
+
+**What this brief delivers that the waves depend on.** B2 (the `ml` CI job) and
+D2 (admission bounds) should land early; the Phase B attack tracks add
+parameters that the bounds must cover, and the CI job is where their tests run.
+Package E is independent of the waves except that new worker task names from
+Phase B must be added to the compose and Fargate task definitions as they land
+(A6, E3).
+
+**When in doubt**, check `docs/plans/00-master-plan.md` section 0 (every wave
+records what it landed and which files it owned) and the latest
+`git log --oneline -30 origin/main` before starting an item.
+
 ## 7. How to report back
 
 Open one PR per package (A to F), or one per large item (A9, F3, F4, F6). In the
