@@ -1,7 +1,8 @@
 """G-ERR1: ``redsim.api.errors`` is the spec section 17.3 table, one constant per code.
 
 The table is read from the spec document itself (the 17.3 table plus its dated
-Phase B addendum) so a code added or renamed there fails here rather than in the UI.
+Phase B addendum and the addendum's second table of wave B2) so a code added or
+renamed there fails here rather than in the UI.
 """
 
 from __future__ import annotations
@@ -49,6 +50,25 @@ PHASE_B_CODES = {
     "endpoint_unreachable": 502,
 }
 
+#: The addendum's second table (wave B2, ``codes-b2`` track, 2026-09-09): code -> HTTP.
+#: The brief's statuses win over the register where they differ (see the spec note).
+PHASE_B2_CODES = {
+    "reviewer_not_independent": 403,
+    "auth_profile_in_use": 409,
+    "idempotency_key_reused": 409,
+    "idempotency_conflict": 409,
+    "review_state_conflict": 409,
+    "snapshot_archived": 409,
+    "bulk_too_large": 413,
+    "auth_profile_required": 422,
+    "probe_key_required": 422,
+    "batch_member_refused": 422,
+    "bulk_too_many_files": 422,
+    "fixture_not_exportable": 422,
+    "query_budget_exceeded": 429,
+}
+_B2_MARKER = "17.3 addendum, second table (Phase B wave B2, `codes-b2` track, 2026-09-09)"
+
 
 def _section_173() -> str:
     text = _SPEC.read_text(encoding="utf-8")
@@ -67,7 +87,8 @@ def _spec_table() -> dict[str, int]:
         for code in re.findall(r"`([a-z_]+)`", match.group("codes")):
             assert code not in table, f"{code} has two rows in spec 17.3"
             table[code] = int(match.group("http"))
-    assert len(table) >= _PHASE_A_COUNT + len(PHASE_B_CODES), f"parsed only {len(table)} codes from the spec table"
+    expected = _PHASE_A_COUNT + len(PHASE_B_CODES) + len(PHASE_B2_CODES)
+    assert len(table) >= expected, f"parsed only {len(table)} codes from the spec table"
     return table
 
 
@@ -93,12 +114,109 @@ def test_phase_b_addendum_is_dated_and_parsed() -> None:
     table = _spec_table()
     for code, http in PHASE_B_CODES.items():
         assert table.get(code) == http, f"{code}: addendum says {table.get(code)}, expected {http}"
-    # The Phase A rows are untouched: what is not in the addendum set is the original 29.
-    assert len(set(table) - set(PHASE_B_CODES)) == _PHASE_A_COUNT
+    # The Phase A rows are untouched: what is not in either addendum set is the original 29.
+    assert len(set(table) - set(PHASE_B_CODES) - set(PHASE_B2_CODES)) == _PHASE_A_COUNT
     # Every Phase B code sits after the original table and before 17.4.
     addendum_at = section.index("17.3 addendum (Phase B, 2026-09-09)")
     for code in PHASE_B_CODES:
         assert section.index(f"| `{code}`") > addendum_at, code
+
+
+def test_b2_addendum_table_is_dated_and_parsed() -> None:
+    """The second addendum table sits after the first, inside 17.3, and lists exactly the B2 codes."""
+    section = _section_173()
+    assert _B2_MARKER in section
+    first_at = section.index("17.3 addendum (Phase B, 2026-09-09)")
+    second_at = section.index(_B2_MARKER)
+    assert second_at > first_at
+    table = _spec_table()
+    for code, http in PHASE_B2_CODES.items():
+        assert table.get(code) == http, f"{code}: spec says {table.get(code)}, expected {http}"
+        assert section.index(f"| `{code}`") > second_at, code
+    # The two addendum sets are disjoint and neither overlaps Phase A.
+    assert set(PHASE_B2_CODES).isdisjoint(PHASE_B_CODES)
+    # The B0 rows stay where they were: every B0 code appears before the second table.
+    for code in PHASE_B_CODES:
+        assert section.index(f"| `{code}`") < second_at, code
+    # The rows are in status order, like the tables before them.
+    statuses = [http for _, http in PHASE_B2_CODES.items()]
+    assert statuses == sorted(statuses)
+    # The note records where the brief overrode the register, so a reader finds the rationale.
+    for phrase in ("`query_budget_exceeded` is `429`", "`idempotency_key_reused` is `409`",
+                   "`fixture_not_exportable` is `422`", "`idempotency_in_flight` is `idempotency_conflict`"):
+        assert phrase in section, phrase
+
+
+def test_b2_codes_in_table() -> None:
+    """Register ENDPOINT-06/-08/-18, LLM-03/-04, BULK-03/-10/-11/-13, INTEROP-10, REVIEW_REPORTS-06/-12/-22."""
+    for code, http in PHASE_B2_CODES.items():
+        constant = code.upper()
+        assert getattr(errors, constant) == code
+        assert constant in errors.__all__, constant
+        assert errors.HTTP_STATUS[code] == http
+        assert errors.http_status(code) == http
+        assert 400 <= http < 500, f"{code} is a refusal, never a marker"
+        assert code not in errors.MARKER_CODES
+        detail = errors.error_detail(code)
+        assert detail == {"code": code, "message": detail["message"]}
+        assert isinstance(detail["message"], str) and detail["message"]
+        exc = errors.ApiError(code, "why", field="x")
+        assert exc.status == http
+        assert exc.detail == {"code": code, "message": "why", "field": "x"}
+    # The brief's statuses, spelled once more so a table edit cannot silently move one.
+    assert errors.HTTP_STATUS[errors.AUTH_PROFILE_REQUIRED] == 422
+    assert errors.HTTP_STATUS[errors.AUTH_PROFILE_IN_USE] == 409
+    assert errors.HTTP_STATUS[errors.QUERY_BUDGET_EXCEEDED] == 429
+    assert errors.HTTP_STATUS[errors.BATCH_MEMBER_REFUSED] == 422
+    assert errors.HTTP_STATUS[errors.BULK_TOO_LARGE] == 413
+    assert errors.HTTP_STATUS[errors.BULK_TOO_MANY_FILES] == 422
+    assert errors.HTTP_STATUS[errors.IDEMPOTENCY_KEY_REUSED] == 409
+    assert errors.HTTP_STATUS[errors.IDEMPOTENCY_CONFLICT] == 409
+    assert errors.HTTP_STATUS[errors.FIXTURE_NOT_EXPORTABLE] == 422
+    assert errors.HTTP_STATUS[errors.REVIEW_STATE_CONFLICT] == 409
+    assert errors.HTTP_STATUS[errors.REVIEWER_NOT_INDEPENDENT] == 403
+    assert errors.HTTP_STATUS[errors.SNAPSHOT_ARCHIVED] == 409
+    assert errors.HTTP_STATUS[errors.PROBE_KEY_REQUIRED] == 422
+
+
+def test_b2_envelopes_carry_the_documented_fields() -> None:
+    """The spec rows name the context each refusal carries; the envelope passes it through untouched."""
+    members = [{"target_id": "t2", "code": "attack_requires_gradients", "message": "no gradients"}]
+    batch = errors.ApiError(errors.BATCH_MEMBER_REFUSED, members=members)
+    assert batch.status == 422 and batch.detail["members"] == members
+    budget = errors.ApiError(errors.QUERY_BUDGET_EXCEEDED, estimate=640_000, cap=500_000)
+    assert budget.status == 429 and (budget.detail["estimate"], budget.detail["cap"]) == (640_000, 500_000)
+    in_use = errors.ApiError(errors.AUTH_PROFILE_IN_USE, target_ids=["t1", "t2"])
+    assert in_use.detail["target_ids"] == ["t1", "t2"]
+    reused = errors.ApiError(errors.IDEMPOTENCY_KEY_REUSED, request_sha256="0" * 64)
+    assert reused.detail["request_sha256"] == "0" * 64
+    conflict = errors.ApiError(errors.REVIEW_STATE_CONFLICT, status="open", review_state="in_review")
+    assert conflict.detail == {"code": "review_state_conflict", "message": conflict.detail["message"],
+                               "status": "open", "review_state": "in_review"}
+    independence = errors.ApiError(errors.REVIEWER_NOT_INDEPENDENT, relation="campaign_creator")
+    assert independence.status == 403 and independence.detail["relation"] == "campaign_creator"
+    # 403 with a structured body: the string-detail shortcut is for the retained routes only.
+    fastapi = pytest.importorskip("fastapi")
+    http = errors.api_error(errors.REVIEWER_NOT_INDEPENDENT, relation="revision_author")
+    assert isinstance(http, fastapi.HTTPException)
+    assert http.status_code == 403
+    assert http.detail == {"code": "reviewer_not_independent",
+                           "message": errors.error_detail(errors.REVIEWER_NOT_INDEPENDENT)["message"],
+                           "relation": "revision_author"}
+    plain = errors.api_error(errors.REVIEWER_NOT_INDEPENDENT)
+    assert isinstance(plain.detail, dict), "a B2 code never collapses to a plain string"
+
+
+def test_query_budget_code_matches_the_broker_error_class() -> None:
+    """ENDPOINT-06: the broker's ``QueryBudgetExceeded.code`` is the table spelling, so the two never drift."""
+    try:
+        from redsim.ml import endpoint_broker
+    except Exception:  # noqa: BLE001 - the broker needs the ml extra; the table does not
+        pytest.skip("redsim.ml.endpoint_broker is not importable here")
+    cls = getattr(endpoint_broker, "QueryBudgetExceeded", None)
+    if cls is None:
+        pytest.skip("QueryBudgetExceeded is not defined in the broker")
+    assert getattr(cls, "code", None) == errors.QUERY_BUDGET_EXCEEDED
 
 
 def test_phase_b_codes_in_table() -> None:
@@ -180,6 +298,9 @@ def test_phase_b_codes_keep_the_structured_envelope() -> None:
     """None of the addendum codes joins the plain-string set, and none grows a phase."""
     assert errors.STRING_DETAIL_CODES.isdisjoint(PHASE_B_CODES)
     assert errors.PHASE_REQUIRED_CODES.isdisjoint(PHASE_B_CODES)
+    assert errors.STRING_DETAIL_CODES.isdisjoint(PHASE_B2_CODES)
+    assert errors.PHASE_REQUIRED_CODES.isdisjoint(PHASE_B2_CODES)
+    assert errors.MARKER_CODES.isdisjoint(PHASE_B2_CODES)
     # ``integration_disabled`` is a 501 for a configuration state, not a phase deferral:
     # it must not borrow ``not_implemented``'s phase marker.
     assert "phase" not in errors.error_detail(errors.INTEGRATION_DISABLED, integration="foundry")
@@ -228,7 +349,9 @@ def test_error_detail_refuses_off_table_codes() -> None:
         errors.http_status("artifact_not_found")
     # The register's alternative spellings are not codes: the addendum names the table name.
     for alias in ("project_run_budget_exceeded", "export_blocked_pending_d006",
-                  "dataset_not_exported", "integration_not_configured"):
+                  "dataset_not_exported", "integration_not_configured",
+                  # REVIEW_REPORTS-32's spelling of the in-flight case is ``idempotency_conflict``.
+                  "idempotency_in_flight"):
         with pytest.raises(ValueError):
             errors.error_detail(alias)
 

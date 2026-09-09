@@ -58,7 +58,7 @@ action_min_role := {
 	# Phase B (spec 7.4 addendum, 2026-09-09).
 	"llm.probe.run": "remediator",
 	"dataset.register": "remediator",
-	"dataset.export": "scanner",
+	"dataset.export": "remediator",
 	"integration.push": "admin",
 	"batch.run": "scanner",
 	"report.render": "scanner",
