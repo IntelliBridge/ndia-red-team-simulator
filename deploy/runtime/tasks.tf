@@ -33,7 +33,11 @@ locals {
       REDSIM_DB_NAME = "redsim"
     }
     web = {
-      REDSIM_ENV         = "prod"
+      REDSIM_ENV = "prod"
+      # Better Auth (web/src/env.js) needs its origin at boot; BETTER_AUTH_SECRET
+      # arrives as a secret (service_secrets.web, the same field as NEXTAUTH_SECRET).
+      # The NextAuth names stay for images built before PR #24.
+      BETTER_AUTH_URL    = local.origin
       NEXTAUTH_URL       = local.origin
       KEYCLOAK_CLIENT_ID = "redsim-web"
       KEYCLOAK_ISSUER    = local.identity_internal

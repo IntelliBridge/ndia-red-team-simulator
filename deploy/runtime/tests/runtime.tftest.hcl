@@ -89,3 +89,10 @@ run "approved_project_prefixes" {
     error_message = "The four artifact-using roles receive the named project prefix and nothing wider."
   }
 }
+run "web_task_carries_the_better_auth_origin" {
+  command = plan
+  assert {
+    condition     = contains([for e in jsondecode(aws_ecs_task_definition.runtime["web"].container_definitions)[0].environment : e.name], "BETTER_AUTH_URL")
+    error_message = "The web image validates BETTER_AUTH_URL at boot (web/src/env.js); a task without it never becomes healthy."
+  }
+}

@@ -31,6 +31,7 @@ import json
 import secrets
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -42,29 +43,51 @@ CLAIM = "redsim_project_roles"
 
 
 class Keycloak:
-    def __init__(self, base_url: str, realm: str, token: str, context: ssl.SSLContext) -> None:
+    """Admin API client. ``token_source`` re-issues the bootstrap admin token
+    when a call answers 401 (the master realm's access tokens live 60 s, and a
+    slow proxy can outlast one)."""
+
+    def __init__(self, base_url: str, realm: str, token_source, context: ssl.SSLContext) -> None:
         self.base = f"{base_url.rstrip('/')}/admin/realms/{realm}"
-        self.token = token
+        self.token_source = token_source
+        self.token = token_source()
         self.context = context
 
     def call(self, method: str, path: str, body: object = None) -> object:
-        data = None if body is None else json.dumps(body).encode()
-        request = urllib.request.Request(f"{self.base}{path}", data=data, method=method, headers={
-            "Authorization": f"Bearer {self.token}", "Content-Type": "application/json"})
+        for attempt in (1, 2):
+            data = None if body is None else json.dumps(body).encode()
+            request = urllib.request.Request(f"{self.base}{path}", data=data, method=method, headers={
+                "Authorization": f"Bearer {self.token}", "Content-Type": "application/json"})
+            try:
+                raw = _send(request, self.context, retry=method == "GET")
+            except urllib.error.HTTPError as exc:
+                if exc.code == 401 and attempt == 1:
+                    self.token = self.token_source()
+                    continue
+                raise RuntimeError(f"{method} {path}: HTTP {exc.code} {exc.read()[:300]!r}") from exc
+            return json.loads(raw) if raw else None
+        raise AssertionError("unreachable")
+
+
+def _send(request: urllib.request.Request, context: ssl.SSLContext, *, retry: bool) -> bytes:
+    """Send one request; retry connection-level failures (a proxy reset) on idempotent calls only."""
+    attempts = 4 if retry else 1
+    for attempt in range(1, attempts + 1):
         try:
-            with urllib.request.urlopen(request, context=self.context, timeout=60) as response:
-                raw = response.read()
-        except urllib.error.HTTPError as exc:
-            raise RuntimeError(f"{method} {path}: HTTP {exc.code} {exc.read()[:300]!r}") from exc
-        return json.loads(raw) if raw else None
+            with urllib.request.urlopen(request, context=context, timeout=60) as response:
+                return response.read()
+        except (urllib.error.URLError, ConnectionError, TimeoutError) as exc:
+            if isinstance(exc, urllib.error.HTTPError) or attempt == attempts:
+                raise
+            time.sleep(2 * attempt)
+    raise AssertionError("unreachable")
 
 
 def admin_token(base_url: str, username: str, password: str, context: ssl.SSLContext) -> str:
     data = urllib.parse.urlencode({"grant_type": "password", "client_id": "admin-cli",
                                    "username": username, "password": password}).encode()
     request = urllib.request.Request(f"{base_url.rstrip('/')}/realms/master/protocol/openid-connect/token", data=data)
-    with urllib.request.urlopen(request, context=context, timeout=60) as response:
-        return str(json.load(response)["access_token"])
+    return str(json.loads(_send(request, context, retry=True))["access_token"])
 
 
 def ensure_mapper(kc: Keycloak, client_id: str) -> str:
@@ -138,10 +161,18 @@ def ensure_user(kc: Keycloak, spec: dict, password: str | None) -> tuple[str, st
     if found:
         user = found[0]
         current = (user.get("attributes") or {}).get(CLAIM) or []
-        if current == [claim_value] and user.get("enabled"):
-            return "present", None
-        kc.call("PUT", f"/users/{user['id']}", {**user, **representation})
-        return "updated", None
+        outcome = "present"
+        if current != [claim_value] or not user.get("enabled"):
+            kc.call("PUT", f"/users/{user['id']}", {**user, **representation})
+            outcome = "updated"
+        if password is not None:
+            return outcome, None
+        # The user exists but no password is on record (an earlier run stopped
+        # before storing it): set a fresh one so the record is complete again.
+        new_password = secrets.token_urlsafe(24)
+        kc.call("PUT", f"/users/{user['id']}/reset-password",
+                {"type": "password", "value": new_password, "temporary": False})
+        return f"{outcome}, password reset", new_password
     kc.call("POST", "/users", representation)
     created = kc.call("GET", f"/users?username={urllib.parse.quote(spec['username'])}&exact=true")[0]
     new_password = password or secrets.token_urlsafe(24)
@@ -167,9 +198,9 @@ def main() -> int:
     context = ssl.create_default_context()
     sm = boto3.client("secretsmanager", region_name=args.region)
     identity = json.loads(sm.get_secret_value(SecretId=args.identity_secret)["SecretString"])
-    token = admin_token(args.base_url, identity.get("KC_BOOTSTRAP_ADMIN_USERNAME", "redsim-admin"),
-                        identity["KC_BOOTSTRAP_ADMIN_PASSWORD"], context)
-    kc = Keycloak(args.base_url, args.realm, token, context)
+    kc = Keycloak(args.base_url, args.realm, lambda: admin_token(
+        args.base_url, identity.get("KC_BOOTSTRAP_ADMIN_USERNAME", "redsim-admin"),
+        identity["KC_BOOTSTRAP_ADMIN_PASSWORD"], context), context)
 
     print(f"mapper {CLAIM} on {args.client_id}: {ensure_mapper(kc, args.client_id)}")
     print(f"user-profile attribute {CLAIM}: {ensure_profile_attribute(kc)}")
@@ -185,21 +216,25 @@ def main() -> int:
         secret_exists = True
     except sm.exceptions.ResourceNotFoundException:
         stored, secret_exists = {}, False
-    changed = False
-    for spec in users:
-        outcome, password = ensure_user(kc, spec, stored.get(spec["username"]))
-        print(f"user {spec['username']} {json.dumps(spec.get('memberships') or {}, sort_keys=True)}: {outcome}")
-        if password is not None and stored.get(spec["username"]) != password:
-            stored[spec["username"]] = password
-            changed = True
-    if changed:
+    def store() -> None:
+        nonlocal secret_exists
         payload = json.dumps(stored)
         if secret_exists:
             sm.put_secret_value(SecretId=args.users_secret, SecretString=payload)
         else:
             sm.create_secret(Name=args.users_secret, SecretString=payload,
                              Description="redsim demo user passwords (generated by seed_identity.py)")
-        print(f"passwords stored in Secrets Manager {args.users_secret} (never printed)")
+            secret_exists = True
+
+    for spec in users:
+        outcome, password = ensure_user(kc, spec, stored.get(spec["username"]))
+        print(f"user {spec['username']} {json.dumps(spec.get('memberships') or {}, sort_keys=True)}: {outcome}")
+        if password is not None:
+            # Stored at once, per user, so a failure later in the loop never
+            # leaves a user whose password nobody holds.
+            stored[spec["username"]] = password
+            store()
+            print(f"  password stored in Secrets Manager {args.users_secret} (never printed)")
     return 0
 
 
