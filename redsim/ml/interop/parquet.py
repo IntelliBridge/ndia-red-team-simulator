@@ -12,17 +12,22 @@ library into the API process (``tests/test_api_process_has_no_ml.py``).
 
 The input column is always a numeric feature vector or a flattened tensor,
 never a raw string: a tabular export carries feature vectors, never the URL
-string (spec 11.5, the D9 bound). Per-sample clean/adversarial predictions and
+string (spec 11.5, the D9 bound). A text-modality slice has no numeric input
+tensor (the model consumes the message itself), so its rows leave ``input``
+null and carry the message in the nullable ``text`` column; every other
+modality leaves ``text`` null. Per-sample clean/adversarial predictions and
 confidences are carried when the slice retained them and left null otherwise;
 ``flipped`` is computed from the retained predictions when present and taken
 from the run's ``flip_matrix`` oracle otherwise (the projection guard in
 ``croissant.py`` checks either against that oracle).
 
-A slice the classification runner writes is **self-describing**: besides the
-arrays it carries the descriptor keys :data:`SLICE_META_KEYS` (``family``,
-``attack``, ``eps``) so the export can label it whatever the blob backend did
-with its name (the filesystem store keeps a pure digest path). The storage
-location is only a fallback for slices written before the descriptor existed.
+A slice a modality runner writes is **self-describing**: besides the arrays it
+carries the descriptor keys :data:`SLICE_META_KEYS` (``family``, ``attack``,
+``eps``) so the export can label it whatever the blob backend did with its
+name (the filesystem store keeps a pure digest path). The classification, text
+and detection runners all write them (``redsim.ml.runners.base.slice_bytes``).
+The storage location is only a fallback for slices written before the
+descriptor existed.
 """
 
 from __future__ import annotations
@@ -46,7 +51,7 @@ CONTROL_ATTACK_LABEL = "control"
 # nullable so one schema fits clean, adversarial and control rows.
 COLUMNS: tuple[str, ...] = (
     "family", "attack", "eps", "norm", "sample_index", "true_label", "flipped",
-    "y_pred_clean", "y_pred_adv", "conf_clean", "conf_adv", "input",
+    "y_pred_clean", "y_pred_adv", "conf_clean", "conf_adv", "input", "text",
     "dataset_id", "dataset_revision", "run_id",
 )
 
@@ -55,7 +60,7 @@ COLUMN_DATATYPES: dict[str, str] = {
     "family": "sc:Text", "attack": "sc:Text", "eps": "sc:Float", "norm": "sc:Text",
     "sample_index": "sc:Integer", "true_label": "sc:Integer", "flipped": "sc:Boolean",
     "y_pred_clean": "sc:Integer", "y_pred_adv": "sc:Integer",
-    "conf_clean": "sc:Float", "conf_adv": "sc:Float", "input": "sc:Float",
+    "conf_clean": "sc:Float", "conf_adv": "sc:Float", "input": "sc:Float", "text": "sc:Text",
     "dataset_id": "sc:Text", "dataset_revision": "sc:Text", "run_id": "sc:Text",
 }
 
@@ -65,9 +70,10 @@ COLUMN_DATATYPES: dict[str, str] = {
 #: control), ``eps`` the grid budget (absent on the clean slice). Zero-dimensional arrays; the strings
 #: are unicode arrays, so ``allow_pickle=False`` loads them.
 SLICE_META_KEYS: tuple[str, ...] = ("family", "attack", "eps")
-#: Per-sample array keys of a slice, in the order the runner writes them.
+#: Per-sample array keys of a slice, in the order the runner writes them (``text`` / ``text_adv`` are the
+#: text runner's message columns; a detection slice adds its packed ``boxes`` / ``labels`` / ``offsets``).
 SLICE_ARRAY_KEYS: tuple[str, ...] = (
-    "x", "x_adv", "indices", "y", "y_pred_clean", "y_pred_adv", "conf_clean", "conf_adv",
+    "x", "x_adv", "text", "text_adv", "indices", "y", "y_pred_clean", "y_pred_adv", "conf_clean", "conf_adv",
 )
 
 
@@ -163,6 +169,7 @@ def _pa_schema() -> Any:
         ("norm", pa.string()), ("sample_index", pa.int64()), ("true_label", pa.int64()),
         ("flipped", pa.bool_()), ("y_pred_clean", pa.int64()), ("y_pred_adv", pa.int64()),
         ("conf_clean", pa.float64()), ("conf_adv", pa.float64()), ("input", pa.list_(pa.float64())),
+        ("text", pa.string()),
         ("dataset_id", pa.string()), ("dataset_revision", pa.string()), ("run_id", pa.string()),
     ])
 
@@ -188,7 +195,9 @@ def build_shards(record: CampaignRecord, loaded: list[LoadedSlice], *,
 
     Rows are a projection of the slice arrays: ``flipped`` is computed from the
     retained per-sample predictions when present, else taken from ``flip_matrix``.
-    Every input is a numeric feature vector / flattened tensor — never a string.
+    Every ``input`` is a numeric feature vector / flattened tensor — never a string;
+    a text slice (``text`` / ``text_adv`` unicode arrays, no tensor) fills the
+    ``text`` column instead and leaves ``input`` null.
     """
     import numpy as np
 
@@ -202,12 +211,17 @@ def build_shards(record: CampaignRecord, loaded: list[LoadedSlice], *,
         x = arrays.get("x_adv")
         if x is None:
             x = arrays.get("x")
-        if x is None or "indices" not in arrays or "y" not in arrays:
+        text = _text_column(arrays) if x is None else None
+        if (x is None and text is None) or "indices" not in arrays or "y" not in arrays:
             continue
         indices = np.asarray(arrays["indices"]).astype("int64")
         y = np.asarray(arrays["y"]).astype("int64")
         n = int(indices.shape[0])
-        xf = np.asarray(x, dtype="float64").reshape(n, -1) if n else np.zeros((0, 0), dtype="float64")
+        xf: Any = None
+        if x is not None:
+            xf = np.asarray(x, dtype="float64").reshape(n, -1) if n else np.zeros((0, 0), dtype="float64")
+        elif text is not None and len(text) != n:
+            continue
         ypc = _opt_int(arrays.get("y_pred_clean"), n)
         ypa = _opt_int(arrays.get("y_pred_adv"), n)
         conf_clean = _opt_float(arrays.get("conf_clean"), n)
@@ -237,7 +251,8 @@ def build_shards(record: CampaignRecord, loaded: list[LoadedSlice], *,
             "y_pred_adv": [None if ypa is None else int(ypa[i]) for i in order],
             "conf_clean": [None if conf_clean is None else float(conf_clean[i]) for i in order],
             "conf_adv": [None if conf_adv is None else float(conf_adv[i]) for i in order],
-            "input": [[float(v) for v in xf[i]] for i in order],
+            "input": [None if xf is None else [float(v) for v in xf[i]] for i in order],
+            "text": [None if text is None else text[i] for i in order],
             "dataset_id": [dataset_id] * n,
             "dataset_revision": [dataset_rev] * n,
             "run_id": [run_id] * n,
@@ -248,6 +263,21 @@ def build_shards(record: CampaignRecord, loaded: list[LoadedSlice], *,
             n_rows=n, data=data, sha256=hashlib.sha256(data).hexdigest(), size=len(data),
         ))
     return shards
+
+
+def _text_column(arrays: dict[str, Any]) -> list[str] | None:
+    """The per-sample message strings of a text slice (``text_adv`` first, else ``text``), or ``None``."""
+    import numpy as np
+
+    for key in ("text_adv", "text"):
+        value = arrays.get(key)
+        if value is None:
+            continue
+        arr = np.asarray(value)
+        if arr.dtype.kind not in ("U", "S") or arr.ndim != 1:
+            return None
+        return [item.decode("utf-8") if isinstance(item, bytes) else str(item) for item in arr.tolist()]
+    return None
 
 
 def read_table(data: bytes) -> Any:

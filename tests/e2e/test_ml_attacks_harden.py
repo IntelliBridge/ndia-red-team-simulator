@@ -114,6 +114,10 @@ DEFECTS: dict[str, str] = {
     "D_TRAIN_SLICE": (
         "No target exposes the train_sample(n, seed) accessor redsim/ml/harden/apply.py:421-434 (load_train_slice) "
         "requires when no train_slice is passed: `grep -rn train_sample redsim/` finds only harden/apply.py. "
+        "(On the rebased tree redsim/ml/campaign.py:_apply_defense catches the typed TrainingDefenseUnavailable and "
+        "records the defense as unavailable with the score withheld, so the verify Run now succeeds without a "
+        "defense_apply stage, a derived target or a MeasuredDelta; the honest shape is asserted below, the root "
+        "cause is unchanged.) "
         "redsim/ml/assets/datasets.py:1485-1542 ships write_train_slice / TrainSliceOptions ('wiring into build.py "
         "is a follow-up in that file') but redsim/ml/assets/build.py:310-361 build_cnn_asset writes no training "
         "slice and redsim/ml/targets/bundled.py BundledImageTarget reads none (ATTACKS_HARDEN-11), so "
@@ -810,6 +814,38 @@ def _assert_training_verify_failed_honestly(e2e_app: E2EApp, e2e_org: E2EOrg, ve
     return error
 
 
+def _assert_training_verify_unavailable_honestly(e2e_app: E2EApp, e2e_org: E2EOrg, verify: dict[str, Any], *,
+                                                 defense_id: str, derived_before: set[str]) -> str:
+    """The honest state of a verify whose child recorded the training defense as unavailable (spec 15.6 / 16.4):
+    the run succeeds on the undefended model, no defense_apply stage, no score, no derived target, no delta, the
+    finding inconclusive -> open. Nothing is claimed that was not measured."""
+    from redsim.ml.harden.apply import NO_TRAIN_SLICE_REASON
+
+    record = verify["record"]
+    defense_prov = record["provenance"]["defense"]
+    assert defense_prov["status"] == "unavailable" and defense_prov["kind"] == "training"
+    assert defense_prov["id"] == defense_id and "derived_sha256" not in defense_prov
+    reason = str(defense_prov["reason"])
+    table = verify["run"]["stage_table"]
+    assert "defense_apply" not in table["stages_done"], "nothing was applied, so no stage says it was"
+    assert table["stages"].get("defense_apply", {}).get("status") in (None, "skipped"), table["stages"]
+    assert record["score"] is None and record["completeness"] == "partial"
+    assert any("was not applied" in item and defense_id in item for item in record["limitations"]), record["limitations"]
+    assert not [t for t in _derived_targets(e2e_app, e2e_org.other_project_id) if t["id"] not in derived_before]
+    finding = verify["finding"]
+    assert finding["status"] == "open" and finding["validation_state"] == "inconclusive"
+    detail = finding["schema_blob"]["ml"]
+    assert detail["verify"]["run_id"] == verify["run_id"] and detail["verify"]["outcome"] == "inconclusive"
+    assert detail["verify"]["defense"]["id"] == defense_id and detail["verify"]["delta"] is None
+    assert all(rec["validation"] == "not evaluated" and rec["measured"] is None for rec in _recs(detail))
+    execute = _events(e2e_app, f"run:{verify['run_id']}", "verify.execute")[-1]
+    assert execute["success"] is False and execute["detail"]["outcome"] == "inconclusive"
+    assert "derived_sha256" not in execute["detail"] and execute["detail"]["measured_for"] == []
+    assert not _events(e2e_app, f"run:{verify['run_id']}", "campaign.score"), "no score row without a score"
+    assert NO_TRAIN_SLICE_REASON.split(":")[0] in reason, reason
+    return f"{defense_id}: recorded unavailable ({reason})"
+
+
 def test_training_defense_verify_registers_a_derived_target(
     e2e_app: E2EApp, e2e_org: E2EOrg, memorising_model: str, memorising_tree: dict[str, Any], finding_run: h.CampaignRun,
 ) -> None:
@@ -826,6 +862,13 @@ def test_training_defense_verify_registers_a_derived_target(
                          memorising_tree["root"])
         _assert_training_verify_admitted(e2e_app, e2e_org, verify, defense_id=defense_id, params=params,
                                          baseline=finding_run)
+        defense_prov = (verify["record"].get("provenance") or {}).get("defense") or {}
+        if verify["run"]["status"] == "succeeded" and defense_prov.get("status") == "unavailable":
+            # The child could not train (no training slice reachable from the target) and said so: the run
+            # measures the undefended model with the score withheld. Asserted honestly, then attributed.
+            failures.append(_assert_training_verify_unavailable_honestly(
+                e2e_app, e2e_org, verify, defense_id=defense_id, derived_before=derived_before))
+            continue
         if verify["run"]["status"] == "succeeded":
             _assert_training_verify_succeeded(e2e_app, e2e_org, verify, defense_id=defense_id, params=params,
                                               baseline=finding_run, model_id=memorising_model,

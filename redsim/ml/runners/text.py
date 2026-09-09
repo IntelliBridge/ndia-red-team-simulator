@@ -21,7 +21,14 @@ changes against the classification runner:
   row id ``m.control.noise.eps<eps>`` with ``attack_id`` ``noise_control`` so the
   spec 12.4 predicate and rules I1 / I2 apply unchanged;
 * the adversarial slices are JSON lines of message strings (``adv_slice/*.jsonl``)
-  under the ``REDSIM_ML_MAX_ADV_ARTIFACT_MB`` cap;
+  under the ``REDSIM_ML_MAX_ADV_ARTIFACT_MB`` cap, and beside them the
+  self-describing export slices every runner writes (INTEROP-04):
+  ``clean_slice.npz`` after ``clean_eval``, ``adv_slice/<attack>_<eps>.npz`` per
+  attack row and ``control_slice/<eps>.npz`` per control row, each carrying the
+  messages as unicode ``text`` / ``text_adv`` arrays (a text model has no numeric
+  input tensor), ``indices``, ``y``, ``y_pred_clean`` / ``y_pred_adv`` and the
+  predicted-class confidences, plus the ``family`` / ``attack`` / ``eps``
+  descriptors the export labels them by;
 * the trailing limitations are the text caveats of MODALITIES-23, the edit-grid
   scoring statement with the lexicon digest, and a correction of the standing
   white-box sentence (no gradient attack applies to a text pipeline; the black-box
@@ -54,6 +61,10 @@ from redsim.ml.errors import AttackNotApplicable, TargetUnavailable
 from redsim.ml.eval import eps_tag, measure, pert_first_success
 from redsim.ml.runners.base import (
     CONTROL_ATTACK_ID,
+    SLICE_FAMILY_ADVERSARIAL,
+    SLICE_FAMILY_CLEAN,
+    SLICE_FAMILY_CONTROL,
+    SLICE_NOT_RETAINED_NOTE,
     CampaignFrame,
     ModalityResult,
     as_float,
@@ -63,6 +74,7 @@ from redsim.ml.runners.base import (
     dataset_caveats,
     explain_fields,
     max_adv_artifact_bytes,
+    slice_bytes,
     split_notes,
     uniq,
 )
@@ -221,6 +233,18 @@ def run_text(config: CampaignConfig, target: Target, *, frame: CampaignFrame) ->
     measurements.append(m_clean)
     acc_clean = m_clean.accuracy
     n_clean_correct = m_clean.n_correct
+    # Per-sample export slices (INTEROP-04): the clean slice carries the messages, the clean predictions and
+    # their confidence (probability of the predicted class); the adversarial and control slices reuse them.
+    conf_clean = proba_clean.max(axis=1)
+    sample_indices = np.asarray(sample.indices)
+    text_clean = np.asarray(texts, dtype=str)
+    max_adv_bytes = max_adv_artifact_bytes()
+    blob = slice_bytes(family=SLICE_FAMILY_CLEAN, attack="", eps=None, text=text_clean, indices=sample_indices,
+                       y=y, y_pred_clean=y_clean, conf_clean=conf_clean)
+    if len(blob) <= max_adv_bytes:
+        sink.put("clean_slice.npz", blob, "application/octet-stream")
+    else:
+        m_clean.notes.append(SLICE_NOT_RETAINED_NOTE.format(what="clean"))
     stage_done("clean_eval")
 
     # --- attack ------------------------------------------------------------------------------
@@ -228,7 +252,6 @@ def run_text(config: CampaignConfig, target: Target, *, frame: CampaignFrame) ->
     proba_adv_ref: dict[str, np.ndarray] = {}
     flip_matrix: dict[str, dict[str, list[bool]]] = {}
     edit_matrix: dict[str, dict[str, list[float | None]]] = {}
-    max_adv_bytes = max_adv_artifact_bytes()
     lexicon_notes: list[str] = []
 
     for adapter in adapters:
@@ -276,11 +299,20 @@ def run_text(config: CampaignConfig, target: Target, *, frame: CampaignFrame) ->
             if math.isclose(e, ref, abs_tol=1e-12):
                 x_adv_ref[aid] = x_adv
                 proba_adv_ref[aid] = proba_adv
-            blob = _jsonl_bytes(adv_texts, np.asarray(sample.indices), y, class_names)
+            blob = _jsonl_bytes(adv_texts, sample_indices, y, class_names)
             if len(blob) <= max_adv_bytes:
                 sink.put(f"adv_slice/{aid}_{eps_tag(e)}.jsonl", blob, "application/json")
             else:
                 m.notes.append("full adversarial slice not retained (over REDSIM_ML_MAX_ADV_ARTIFACT_MB)")
+            # The self-describing export slice (INTEROP-04) beside the readable JSON lines.
+            blob = slice_bytes(family=SLICE_FAMILY_ADVERSARIAL, attack=aid, eps=e,
+                               text=text_clean, text_adv=np.asarray(adv_texts, dtype=str),
+                               indices=sample_indices, y=y, y_pred_clean=y_clean, y_pred_adv=y_adv,
+                               conf_clean=conf_clean, conf_adv=proba_adv.max(axis=1))
+            if len(blob) <= max_adv_bytes:
+                sink.put(f"adv_slice/{aid}_{eps_tag(e)}.npz", blob, "application/octet-stream")
+            else:
+                m.notes.append(SLICE_NOT_RETAINED_NOTE.format(what="full adversarial export"))
 
         # pert at first success (spec 15.1) lives on the reference row only: the realised edit fraction of the
         # smallest budget at which each message flipped, averaged over the messages that flipped anywhere.
@@ -348,6 +380,14 @@ def run_text(config: CampaignConfig, target: Target, *, frame: CampaignFrame) ->
                                    "evasion results at this budget are not attributable to synonym-directed "
                                    "substitution alone.")
             measurements.append(m)
+            blob = slice_bytes(family=SLICE_FAMILY_CONTROL, attack=CONTROL_ATTACK_ID, eps=e,
+                               text=text_clean, text_adv=np.asarray(ctrl_texts, dtype=str),
+                               indices=sample_indices, y=y, y_pred_clean=y_clean, y_pred_adv=y_ctrl,
+                               conf_clean=conf_clean, conf_adv=proba_ctrl.max(axis=1))
+            if len(blob) <= max_adv_bytes:
+                sink.put(f"control_slice/{eps_tag(e)}.npz", blob, "application/octet-stream")
+            else:
+                m.notes.append(SLICE_NOT_RETAINED_NOTE.format(what="control"))
         stage_done("control")
     else:
         limitations.append("The benign word-swap control was disabled for this run (include_control=false); "

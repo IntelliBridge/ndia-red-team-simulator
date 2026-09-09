@@ -787,10 +787,14 @@ def test_text_scorecard_is_its_own_and_never_compared_with_image(
         assert score["norm"] == "edit" and score["eps_grid"] == TEXT_EDIT_GRID
         assert score["reference_eps"] == TEXT_REFERENCE and score["attack_ids"] == [TEXT_ATTACK_ID]
         assert score["settings_hash"] == campaign["settings_hash"]
+        # Spec 15.7: every subscore is a 0-100 number (the frozen ``Subscores`` model, redsim/ml/schema.py) and
+        # its denominators are the ``score["inputs"]`` rows ``_assert_score_state`` checked (``n`` > 0 each); a
+        # subscore value is never a dict. (Test fix: this loop used to look for ``"n"`` inside the float.)
         for key in SUBSCORE_KEYS:
             value = score["subscores"].get(key)
             if value is not None:
-                assert "n" in value, f"{key} carries its denominator (spec 15.7)"
+                assert isinstance(value, (int, float)) and 0.0 <= value <= 100.0, (key, value)
+        assert score["inputs"], "a computed subscore names the rows and denominators it was read from"
     if complete:
         assert MRI_SCOPE_LIMITATION in campaign["limitations"]
     else:
@@ -1030,9 +1034,14 @@ def test_detection_has_no_mri_only_a_scorecard(
     assert not _events(e2e_app, f"run:{detection_run.run_id}", "campaign.score"), "no campaign.score row without a score"
     assert detection_run.stage_table["completeness"] == "partial"
 
-    # The detection scorecard artifact: every value with its denominator, no MRI key anywhere.
+    # The detection scorecard artifact: every value with its denominator, no MRI key anywhere. Its kind is the
+    # worker's spec 5.8 table entry for SCORECARD_NAME (``ml.detection.scorecard``, docs/architecture/ml-vertical.md);
+    # test fix: an earlier revision derived ``ml.detection_scorecard`` from the file stem.
+    from redsim.workers.tasks.ml_campaign import artifact_kind
+
     artifacts = _artifact_rows(viewer, detection_run.run_id)
-    kind = f"ml.{SCORECARD_NAME.rsplit('.', 1)[0]}"
+    kind = artifact_kind(SCORECARD_NAME)
+    assert kind == "ml.detection.scorecard"
     rows = [row for row in artifacts.values() if row["kind"] == kind]
     assert len(rows) == 1, f"one {SCORECARD_NAME} artifact (kind {kind}); kinds: {sorted({r['kind'] for r in artifacts.values()})}"
     payload = json.loads(_download(viewer, rows[0]))
