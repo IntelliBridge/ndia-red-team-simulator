@@ -606,6 +606,7 @@ def campaign_table(metadata: Any) -> Any:
         Column("modality", String(16), nullable=False),
         Column("baseline_run_id", String(64), nullable=True),
         Column("parent_run_id", String(64), nullable=True),
+        Column("batch_id", String(64), nullable=True, index=True),
         Column("settings_hash", String(64), nullable=True, index=True),
         Column("config", JSON, nullable=False),
         Column("provenance", JSON, nullable=True),
