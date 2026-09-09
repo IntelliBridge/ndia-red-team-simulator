@@ -2194,6 +2194,18 @@ Nav order: Dashboard · Runs · Models · Findings · Projects · Audit · Logs 
 | `/targets` | changed → redirect | The pentest launcher (scanner select `trivy` / `zap` / `nuclei` and `startScan`) is deleted with its tests; the route redirects to `/models`. | — | — |
 | `/agents`, `/tools` | removed | Gone with the CAI agents and Kali tooling. | — | — |
 
+**18.1 addendum (2026-09-09, Exports page).** The product owner asked for a
+top-level Exports page covering the export formats this spec names: the run
+reports of 14.8 and 17.1 (Markdown, JSON, HTML and, since Phase B, PDF, with
+their snapshots and the audited re-render) and the adversarial dataset export
+of 27.1 (Croissant over Parquet plus the card). The Foundry push stays on the
+campaign page's Integrations line (27.3) and the WORM audit export stays a CLI
+operation; neither is a format and neither is on this page.
+
+| Route | State | Purpose | Data | UX gating (section 7.9) |
+|---|---|---|---|---|
+| `/exports` | **new** | One table across the caller's projects, a row per campaign or verify run, newest first, with a kind filter (`?kind=campaign\|verify`) and `?project=`: Run, Model, Kind, Status, Reports (the four formats as download links, a struck-through label for a format not rendered, the snapshot version, "render in flight", and **Render again**), Dataset (not exported, export queued or running with the follow-up run, exported with the Croissant manifest link, Parquet file count, bytes and manifest digest, or failed with the job's error; the admission blockers spelled out; **Export dataset** or **Retry dataset export**), Created. Never a bare MRI or any score (15.7). An API refusal is shown beside its row with its code and message, never rewritten. Nav order becomes Dashboard · Models · Runs · Tests · Findings · Exports · Audit. | `GET /v1/exports` (new, read-only, membership-scoped; `docs/api/v1.md#exports`), then the existing `GET /v1/runs/{id}/report.{ext}`, `GET /v1/datasets/{id}`, `POST /v1/runs/{id}/report.render`, `POST /v1/runs/{id}/dataset` | Downloads: scanner (`report.export`). Render again: scanner (`report.render`). Export dataset: remediator (`dataset.export`). The list itself: any member. |
+
 ### 18.2 Campaign launcher (`/models/[id]`)
 
 The form is built from `/v1/attacks`, `/v1/datasets`, `/v1/defenses` and `/v1/ml/capabilities`, never from hard-coded lists:
