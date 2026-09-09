@@ -4,13 +4,15 @@
 # Keys for the removed pentest engines (Strix / CAI / MCP-Kali / vuln-fixer,
 # demo target packs, PR opening) are gone; see redsim/config.py for the full
 # list of supported keys and their env-var overrides.
+#
+# There is no LLM provider key and no provider-style default model here (D5):
+# every LLM call goes through the Pythia gateway, configured by environment
+# variables only — PYTHIA_BASE_URL, PYTHIA_API_KEY, REDSIM_ML_LLM_MODEL (see
+# .env.example and docs/ops/pythia.md). When they are absent the hardening
+# narrative is skipped and recommendations render from the rule layer alone.
 
 # Directory where Redsim writes scan results, reports, etc.
 output_dir: "./redsim_output"
-
-# LLM model identifier used by the orchestrator.
-# Doctor derives the required API key from this (Gemini, OpenAI, Anthropic, ...).
-model: "gemini/gemini-2.5-flash"
 
 # Only these targets are permitted for active scanning.
 # Add entries here to authorise additional hosts/IPs.
@@ -18,3 +20,8 @@ target_allowlist:
   - "127.0.0.1"
   - "localhost"
   - "host.docker.internal"
+
+# Per-task LLM model routing ({task: model id}). The hardening narrative task
+# ("ml.harden_narrative") is seeded from REDSIM_ML_LLM_MODEL when unmapped here;
+# a mapping must be a Pythia canonical id (<vendor>/<model> or pythia/auto).
+task_models: {}

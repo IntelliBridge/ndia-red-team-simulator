@@ -12,6 +12,12 @@ import yaml
 @dataclass
 class RedsimConfig:
     output_dir: str = "./redsim_output"
+    # Legacy router fallback for tasks absent from ``task_models``
+    # (``redsim.llm.router.route``). Every LLM call goes through the Pythia
+    # gateway (D5): this provider-style id is never used for the Pythia-only
+    # tasks (spec 10.8), the committed ``redsim.yaml`` and ``redsim init`` no
+    # longer write the key, and ``redsim doctor`` no longer derives a provider
+    # API key from it — ``PYTHIA_API_KEY`` is the only LLM credential.
     model: str = "gemini/gemini-2.5-flash"
     target_allowlist: list[str] = field(
         default_factory=lambda: ["127.0.0.1", "localhost", "host.docker.internal"]
