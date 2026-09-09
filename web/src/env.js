@@ -103,6 +103,9 @@ export const env = createEnv({
     // discovers the issuer at construction and skips the provider when it is
     // absent, which is the documented local-dev shape.
     KEYCLOAK_ISSUER: z.string().url().optional(),
+    // The issuer as the browser reaches it, for the authorization redirect.
+    // Unset means the same URL as KEYCLOAK_ISSUER (one host for both).
+    KEYCLOAK_PUBLIC_ISSUER: z.string().url().optional(),
     KEYCLOAK_CLIENT_ID: z.string().optional(),
     // The realm's redsim-web is a public client using PKCE, so this stays
     // unset in every environment the repo ships.
@@ -154,6 +157,7 @@ export const env = createEnv({
     BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
     REDSIM_ENV: process.env.REDSIM_ENV,
     KEYCLOAK_ISSUER: process.env.KEYCLOAK_ISSUER,
+    KEYCLOAK_PUBLIC_ISSUER: process.env.KEYCLOAK_PUBLIC_ISSUER,
     KEYCLOAK_CLIENT_ID: process.env.KEYCLOAK_CLIENT_ID,
     KEYCLOAK_CLIENT_SECRET: process.env.KEYCLOAK_CLIENT_SECRET,
     REDSIM_API_SESSION_PRIVATE_KEY: process.env.REDSIM_API_SESSION_PRIVATE_KEY,

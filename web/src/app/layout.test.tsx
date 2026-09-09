@@ -8,7 +8,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 // which the shell deliberately renders without its chrome.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-  usePathname: () => "/dashboard",
+  usePathname: () => "/findings/abc",
 }));
 
 import RootLayout, { metadata } from "./layout";
@@ -64,17 +64,45 @@ describe("RootLayout", () => {
     expect(screen.queryByText("Kali tools", { selector: "a" })).toBeNull();
   });
 
-  it("marks the active nav entry for assistive technology, not by colour alone", () => {
-    renderLayout();
-    const nav = screen.getByRole("navigation", { name: "Primary" });
-    const current = nav.querySelectorAll('a[aria-current="page"]');
-    expect(current.length).toBe(1);
-    expect(current[0]?.getAttribute("href")).toBe("/dashboard");
+  it("brands the header with the Agile Defense Labs mark linking home", () => {
+    const { container } = render(
+      React.createElement(
+        RootLayout,
+        null,
+        React.createElement("div", null, "child-sentinel"),
+      ),
+    );
+    const brand = container.querySelector('header a[data-testid="brand-link"]');
+    expect(brand?.getAttribute("href")).toBe("/dashboard");
+    const logo = brand?.querySelector("img");
+    expect(logo?.getAttribute("src")).toBe("/brand/agile-labs.svg");
+    expect(logo?.getAttribute("alt")).toBe("Agile Defense Labs");
   });
 
-  it("offers a sign-out control", () => {
-    renderLayout();
-    expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
+  it("is dark only: the html root carries the dark class and the header has no theme toggle", () => {
+    const { container } = render(
+      React.createElement(
+        RootLayout,
+        null,
+        React.createElement("div", null, "child-sentinel"),
+      ),
+    );
+    expect(container.querySelector("html")?.className).toContain("dark");
+    expect(container.querySelector("header nav button")).toBeNull();
+  });
+
+  it("marks the nav link of the current route section with aria-current", () => {
+    const { container } = render(
+      React.createElement(
+        RootLayout,
+        null,
+        React.createElement("div", null, "child-sentinel"),
+      ),
+    );
+    const current = Array.from(container.querySelectorAll("header nav a")).filter(
+      (a) => a.getAttribute("aria-current") === "page",
+    );
+    expect(current.map((a) => a.textContent)).toEqual(["Findings"]);
   });
 
   it("themes the shell with semantic token classes", () => {

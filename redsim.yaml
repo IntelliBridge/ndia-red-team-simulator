@@ -20,6 +20,7 @@ target_allowlist:
   - "127.0.0.1"
   - "localhost"
   - "host.docker.internal"
+  - "pythia.fdet.agiledefense.xyz"
 
 # Per-task LLM model routing ({task: model id}). The hardening narrative task
 # ("ml.harden_narrative") is seeded from REDSIM_ML_LLM_MODEL when unmapped here;

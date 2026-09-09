@@ -21,9 +21,9 @@ export interface StageTimelineProps {
 }
 
 const MODE_TONE: Record<string, string> = {
-  live: "bg-inferred/10 text-inferred",
-  fixture: "bg-illustrative/10 text-illustrative",
-  golden_patch: "bg-illustrative/10 text-illustrative",
+  live: "bg-sky-400/10 text-sky-300",
+  fixture: "bg-amber-500/15 text-amber-200",
+  golden_patch: "bg-amber-500/15 text-amber-200",
 };
 
 export function StageTimeline({ stages, className }: StageTimelineProps) {
@@ -34,11 +34,12 @@ export function StageTimeline({ stages, className }: StageTimelineProps) {
           <span
             className={cn(
               "mt-1 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold",
+              // A failed stage is orange, not red: red is the brand accent.
               s.success === true
-                ? "bg-robust text-base"
+                ? "bg-emerald-400 text-navy-deepest"
                 : s.success === false
-                  ? "bg-critical text-base"
-                  : "bg-degraded text-base",
+                  ? "bg-orange-400 text-navy-deepest"
+                  : "bg-amber-400 text-navy-deepest",
             )}
             aria-hidden="true"
           >
@@ -50,7 +51,7 @@ export function StageTimeline({ stages, className }: StageTimelineProps) {
               <span
                 className={cn(
                   "rounded px-1.5 py-0.5 text-xs",
-                  MODE_TONE[s.mode] ?? "bg-panel-2 text-muted-foreground",
+                  MODE_TONE[s.mode] ?? "bg-muted text-muted-foreground",
                 )}
               >
                 {s.mode}

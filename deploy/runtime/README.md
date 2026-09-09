@@ -186,6 +186,19 @@ gateway CIDR opened in the foundation (`pythia_ipv4_cidrs`) plus the
 `redsim.ml_campaign_run` (the scans pool, where the narrative is written in
 the worker parent). Recommendations then carry `narrative_source: rules`.
 
+## Rolling a release
+
+`scripts/roll.sh <commit> <inputs.tfvars.json> [terraform]` is the one
+command per release: it pins the four ECR digests tagged with the commit,
+applies this root, runs the migration task, waits for Keycloak to answer,
+forces a new web deployment and prints the rollout state. The web redeploy
+is deliberate: Keycloak restarts with no overlap on every release, and a web
+task that boots during that window used to lose its sign-in provider until
+restarted. The web image now sets the Keycloak endpoints explicitly
+(`KEYCLOAK_PUBLIC_ISSUER` for the browser redirect, `KEYCLOAK_ISSUER` for
+the server calls), so the redeploy is a belt-and-braces step rather than
+the fix. Roll only commits whose `Deploy to AWS` run has finished.
+
 ## Scale to zero and teardown
 
 Between demos, stop the workers first and then the serving tier; both are
@@ -304,6 +317,14 @@ Confirm upload/report prefixes against the application for each project.
 
 Beat has desired count one only when workers are enabled. Its deployment
 minimum/maximum percentages are 0/100 so a rollout cannot overlap schedulers.
+Identity rolls the same way: one Keycloak task with `KC_CACHE=local` cannot
+overlap itself, so every identity rollout is a login outage. The identity
+target group bounds it with a 15s deregistration delay and a 10s health check
+that passes after two hits, so the window is Keycloak's boot time (about 45s)
+plus roughly 30s, rather than the eight minutes the ALB defaults produced on
+2026-09-09. The web app retries OIDC discovery while the window is open and
+answers 503 with `Retry-After` on its auth routes, instead of dropping the
+Keycloak provider for the life of the process.
 ML workers have no internet egress. Pythia narratives and WORM exports remain
 off; the audit bucket has no mandatory retention or export writer.
 

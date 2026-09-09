@@ -54,6 +54,9 @@ locals {
       REDSIM_API_URL     = local.api_internal
       KEYCLOAK_CLIENT_ID = "redsim-web"
       KEYCLOAK_ISSUER    = local.identity_internal
+      # The browser is redirected to the public realm URL; the token and
+      # userinfo calls stay on the in-VPC issuer above (web/src/server/better-auth).
+      KEYCLOAK_PUBLIC_ISSUER = "${local.origin}/auth/realms/redsim"
     }
     identity = {
       KC_DB                           = "postgres"
@@ -165,13 +168,20 @@ resource "aws_ecs_task_definition" "runtime" {
 }
 
 resource "aws_ecs_service" "runtime" {
-  for_each                           = local.service_names
-  name                               = "${local.name}-${each.key}"
-  cluster                            = local.network.cluster_arn
-  task_definition                    = aws_ecs_task_definition.runtime[each.key].arn
-  desired_count                      = var.enable_services && (contains(["scans", "default", "beat"], each.key) ? var.enable_workers : true) ? 1 : 0
-  launch_type                        = "FARGATE"
-  platform_version                   = "1.4.0"
+  for_each         = local.service_names
+  name             = "${local.name}-${each.key}"
+  cluster          = local.network.cluster_arn
+  task_definition  = aws_ecs_task_definition.runtime[each.key].arn
+  desired_count    = var.enable_services && (contains(["scans", "default", "beat"], each.key) ? var.enable_workers : true) ? 1 : 0
+  launch_type      = "FARGATE"
+  platform_version = "1.4.0"
+  # Beat must never overlap itself. Identity must not either: Keycloak runs
+  # with KC_CACHE=local, so two tasks behind one target group would not share
+  # sessions or in-flight login codes, and the web service exchanges codes over
+  # the internal discovery name that resolves to any registered task. Both
+  # therefore roll stop-then-start; the identity target group in versions.tf
+  # keeps that window short, and the web app retries OIDC discovery while it
+  # is closed instead of dropping the provider.
   deployment_minimum_healthy_percent = each.key == "beat" || each.key == "identity" ? 0 : 100
   deployment_maximum_percent         = each.key == "beat" || each.key == "identity" ? 100 : 200
   health_check_grace_period_seconds  = each.key == "identity" ? 600 : (contains(keys(local.target_groups), each.key) ? 180 : null)

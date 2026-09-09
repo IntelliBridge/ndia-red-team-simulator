@@ -117,15 +117,26 @@ resource "aws_route53_record" "runtime" {
     evaluate_target_health = true
   }
 }
+# Identity runs as one Keycloak task with KC_CACHE=local, so its ECS service
+# rolls stop-then-start (0/100 in tasks.tf) and every rollout is a login
+# outage. The two knobs below bound that outage. With the ALB defaults (300s
+# drain, 30s interval x 5 healthy checks) the 2026-09-09 apply kept login down
+# for eight minutes; a Keycloak request is short and the health path answers
+# as soon as the realm is imported, so drain and detection are cut to seconds.
 resource "aws_lb_target_group" "identity" {
-  name        = "${local.name}-identity"
-  port        = 8080
-  protocol    = "HTTP"
-  target_type = "ip"
-  vpc_id      = local.network.vpc_id
+  name                 = "${local.name}-identity"
+  port                 = 8080
+  protocol             = "HTTP"
+  target_type          = "ip"
+  vpc_id               = local.network.vpc_id
+  deregistration_delay = 15
   health_check {
-    path    = "/auth/realms/redsim"
-    matcher = "200"
+    path                = "/auth/realms/redsim"
+    matcher             = "200"
+    interval            = 10
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
   }
 }
 resource "aws_lb_listener" "https" {

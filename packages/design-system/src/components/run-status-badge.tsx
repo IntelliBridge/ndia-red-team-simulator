@@ -11,13 +11,15 @@ export type RunStatus =
   | "failed"
   | "cancelled";
 
+// Translucent tints on the navy ground. `failed` is orange, not red: red is
+// the brand accent in this UI.
 const TONES: Record<RunStatus, string> = {
-  queued: "border-hairline bg-panel-2 text-muted-foreground",
-  running: "border-primary/40 bg-primary/10 text-primary",
-  succeeded: "border-robust/40 bg-robust/10 text-robust",
-  partial_success: "border-partial/40 bg-partial/10 text-partial",
-  failed: "border-critical/40 bg-critical/10 text-critical",
-  cancelled: "border-hairline bg-panel-2 text-muted-foreground line-through",
+  queued: "border-border bg-muted text-muted-foreground",
+  running: "border-sky-400/40 bg-sky-400/10 text-sky-300",
+  succeeded: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
+  partial_success: "border-amber-400/50 bg-amber-500/15 text-amber-200",
+  failed: "border-orange-400/50 bg-orange-500/20 text-orange-200",
+  cancelled: "border-border bg-muted text-muted-foreground line-through",
 };
 
 export interface RunStatusBadgeProps extends HTMLAttributes<HTMLSpanElement> {
@@ -33,7 +35,7 @@ export function RunStatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
+        "inline-flex items-center rounded-sm border px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wider",
         tone,
         className,
       )}

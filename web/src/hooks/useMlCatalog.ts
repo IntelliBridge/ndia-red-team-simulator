@@ -8,9 +8,15 @@ import {
   type Capabilities,
 } from "@/lib/api";
 const get = <T>(p: string) =>
-  api<T | { items: T[] }>(p).then((x) =>
-    Array.isArray(x) ? x : ((x as { items: T[] }).items ?? []),
-  );
+  api<T[] | Record<string, unknown>>(p).then((x) => {
+    if (Array.isArray(x)) return x as T[];
+    // The API wraps lists under a named key ({ attacks }, { defenses },
+    // { datasets }); older shapes used { items }. Take the first array value.
+    const named = ["items", "attacks", "defenses", "datasets"]
+      .map((k) => (x as Record<string, unknown>)[k])
+      .find(Array.isArray);
+    return (named ?? Object.values(x).find(Array.isArray) ?? []) as T[];
+  });
 export const useAttacks = (modality?: string, enabled = true) =>
   useSWR(
     enabled

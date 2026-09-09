@@ -235,6 +235,8 @@ services:
       # container; the browser reaches the realm on localhost:8080, which is
       # the known hostname split recorded as deferred in the plan.
       KEYCLOAK_ISSUER: http://keycloak:8080/realms/redsim
+      # The browser reaches Keycloak on the published host port.
+      KEYCLOAK_PUBLIC_ISSUER: http://localhost:8080/realms/redsim
       KEYCLOAK_CLIENT_ID: redsim-web
       # Operator-supplied. No keypair is committed, so a stack without it
       # completes the login and mints no redsim cookies, and API calls 401.

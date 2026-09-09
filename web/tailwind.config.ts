@@ -10,6 +10,8 @@ import type { Config } from "tailwindcss";
 const token = (name: string) => `hsl(var(--${name}) / <alpha-value>)`;
 
 const config: Config = {
+  // One dark theme (labs.agiledefense.com). `<html class="dark">` is set in
+  // app/layout.tsx so the vendored shadcn primitives' `dark:` variants apply.
   darkMode: "class",
   content: [
     "./src/**/*.{ts,tsx}",
@@ -17,16 +19,22 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        // The Labs pairing: Helvetica Neue for prose, JetBrains Mono for
+        // labels. Both stacks are also exposed as --sans / --mono in
+        // globals.css for CSS-only callers.
+        sans: ['"Helvetica Neue"', "Helvetica", "Arial", "sans-serif"],
+        mono: ['"JetBrains Mono"', '"Courier New"', "monospace"],
+      },
       colors: {
         // Semantic tokens backed by CSS variables defined in globals.css.
         // Utilities like `bg-background`, `text-foreground`, `border-border`,
-        // `bg-card`, `text-muted-foreground` resolve through these and flip
-        // automatically under the `.dark` class.
-        border: token("border"),
-        input: token("input"),
-        ring: token("ring"),
-        background: token("background"),
-        foreground: token("foreground"),
+        // `bg-card`, `text-muted-foreground` resolve through these.
+        border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
+        ring: "hsl(var(--ring))",
+        background: "hsl(var(--background))",
+        foreground: "hsl(var(--foreground))",
         primary: {
           DEFAULT: token("primary"),
           foreground: token("primary-foreground"),
@@ -35,9 +43,23 @@ const config: Config = {
           DEFAULT: token("secondary"),
           foreground: token("secondary-foreground"),
         },
+        // Amber-orange, not red: red is the brand accent and never means
+        // danger in this UI.
         destructive: {
           DEFAULT: token("destructive"),
           foreground: token("destructive-foreground"),
+        },
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+          foreground: "hsl(var(--warning-foreground))",
+        },
+        success: {
+          DEFAULT: "hsl(var(--success))",
+          foreground: "hsl(var(--success-foreground))",
+        },
+        info: {
+          DEFAULT: "hsl(var(--info))",
+          foreground: "hsl(var(--info-foreground))",
         },
         muted: {
           DEFAULT: token("muted"),
@@ -55,55 +77,18 @@ const config: Config = {
           DEFAULT: token("card"),
           foreground: token("card-foreground"),
         },
-
-        // Surface and text names the redsim-designs export introduced. They
-        // sit beside the shadcn names above over one palette, so a ported
-        // component and a shipped one read the same colours.
-        base: token("base"),
-        panel: {
-          DEFAULT: token("panel"),
-          2: token("panel-2"),
+        // The raw Labs navy steps, for the rare place a token is too coarse.
+        navy: {
+          deepest: "#04060f",
+          deep: "#060c1a",
+          mid: "#0a1628",
+          surface: "#0f1f36",
+          elevated: "#142640",
         },
-        hairline: token("hairline"),
-        "muted-2": token("muted-2"),
-        "primary-fg": token("primary-fg"),
-        focus: token("focus"),
-
-        // Derived-severity and status palette. Never a readiness reading:
-        // these colour a measured value, not a verdict about fitness.
-        robust: token("robust"),
-        degraded: token("degraded"),
-        critical: token("critical"),
-        adversarial: token("adversarial"),
-
-        // Label-badge accents, one per `redsim/ml/schema.py` literal.
-        candidate: token("candidate"),
-        inferred: token("inferred"),
-        heuristic: token("heuristic"),
-        measured: token("measured"),
-        illustrative: token("illustrative"),
-        partial: token("partial"),
-        phaseb: token("phaseb"),
-      },
-      fontFamily: {
-        sans: [
-          "var(--font-inter)",
-          "IBM Plex Sans",
-          "ui-sans-serif",
-          "system-ui",
-          "sans-serif",
-        ],
-        mono: [
-          "var(--font-jbmono)",
-          "IBM Plex Mono",
-          "ui-monospace",
-          "monospace",
-        ],
-      },
-      borderRadius: {
-        sm: "calc(var(--radius) - 2px)",
-        md: "var(--radius)",
-        lg: "calc(var(--radius) + 4px)",
+        brand: {
+          DEFAULT: "#ff5a58",
+          muted: "#d23c3a",
+        },
       },
     },
   },

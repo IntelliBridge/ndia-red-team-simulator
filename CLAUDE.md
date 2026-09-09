@@ -669,6 +669,23 @@ browser against a running stack and is listed as open in the README.
 `web/src/lib/api.ts` defaults to `http://localhost:8000`, overridable with
 `NEXT_PUBLIC_REDSIM_API_URL`.
 
+Visual language (branch `ui`, 2026-09-09): one dark theme after
+labs.agiledefense.com. The Labs palette (navy `#04060f` ground, red
+`#ff5a58` accent, white text at 100 / 72 / 48 percent) and the semantic
+tokens live in `web/src/styles/globals.css`; `tailwind.config.ts` adds the
+`warning`, `success`, `info`, `navy-*` and `brand` colours and the
+Helvetica Neue / JetBrains Mono font stacks. There is no light theme and no
+theme toggle: `<html class="dark">` is fixed in `app/layout.tsx`. The header
+carries the Agile Defense Labs mark (`web/public/brand/agile-labs.svg`,
+vendored from the Labs site) and the favicon is `web/src/app/icon.svg`.
+JetBrains Mono is self-hosted under `web/public/fonts/` (SIL OFL 1.1, licence
+beside the files) so a build needs no network. Red is the brand and never
+means danger: `destructive`, the severity chips, the run-status badges, the
+audit-chain badge and the log levels sit on an amber and orange scale. The
+`.redsim-panel` (glass card), `.redsim-kicker`, `.redsim-nav-link`,
+`.redsim-cta`, `.redsim-ghost` and `.redsim-meta` classes are the shared
+Labs idioms.
+
 ### Deploy
 
 `deploy/docker-compose.yml`: postgres (5432), redis (6379), keycloak (8080),

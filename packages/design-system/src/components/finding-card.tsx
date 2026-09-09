@@ -23,11 +23,12 @@ export interface FindingCardProps {
   className?: string;
 }
 
+// `poc_failed` is orange, not red: red is the brand accent in this UI.
 const VALIDATION_TONES: Record<string, string> = {
-  poc_passed: "bg-robust/10 text-robust",
-  poc_failed: "bg-critical/10 text-critical",
-  inconclusive: "bg-degraded/10 text-degraded",
-  unvalidated: "bg-panel-2 text-muted-foreground",
+  poc_passed: "bg-emerald-400/10 text-emerald-300",
+  poc_failed: "bg-orange-500/20 text-orange-200",
+  inconclusive: "bg-amber-500/15 text-amber-200",
+  unvalidated: "bg-muted text-muted-foreground",
 };
 
 export function FindingCard({
@@ -44,11 +45,11 @@ export function FindingCard({
   const validationTone =
     validationState && VALIDATION_TONES[validationState]
       ? VALIDATION_TONES[validationState]
-      : "bg-panel-2 text-muted-foreground";
+      : "bg-muted text-muted-foreground";
   return (
     <div
       className={cn(
-        "flex flex-col gap-3 rounded-lg border border-hairline bg-panel p-4 shadow-sm",
+        "redsim-panel flex flex-col gap-3 p-4",
         className,
       )}
     >
@@ -72,7 +73,7 @@ export function FindingCard({
         )}
       </div>
       <div className="flex items-center gap-2 text-xs">
-        <span className="inline-flex items-center rounded bg-panel-2 px-1.5 py-0.5 text-muted-foreground">
+        <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-foreground/80">
           status: {status}
         </span>
         {validationState && (
@@ -87,7 +88,7 @@ export function FindingCard({
         )}
       </div>
       {children && (
-        <div className="text-sm text-foreground">{children}</div>
+        <div className="text-sm text-foreground/80">{children}</div>
       )}
     </div>
   );
