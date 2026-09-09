@@ -22,7 +22,7 @@ and mark the apply step as open for the account owner.
 
 ## 1. State of the tree
 
-`origin/main` is at `60a6c41` or later. On it:
+`origin/main` is at `e73dea0` (wave 4 integration) or later. On it:
 
 - PR #22 (Metz): P4 campaign orchestration, compare and reports, web contract
   alignment, with the eight review findings fixed before the squash.
@@ -38,14 +38,35 @@ and mark the apply step as open for the account owner.
   `https://redsim.ndia.agiledefense.xyz`, applied by its author; two review
   fixes landed on it (deploy workflow API-URL guard, Keycloak project-role
   mapper).
-- Wave 4 is landing: the three end-to-end completion-criteria test files under
-  `tests/e2e`, three CI fixes for `main` (B1), admission follow-ups, and the
-  documentation refresh. Rebase onto `main` before you start.
+- Wave 4 (`3dda572..e73dea0`, 2026-09-09): the three end-to-end
+  completion-criteria test files `tests/e2e/test_ml_campaigns.py`,
+  `test_ml_verify_upload_reports.py` and `test_ml_governance.py`; the three
+  CI fixes for `main` (B1); admission follow-ups (control in `attack_ids` and
+  FGSM under L2 refused at admission, idempotent plugin loader, quiet
+  re-seed); the documentation refresh; and one product fix the e2e tests
+  exposed: the sandbox child's artifact sink keyed digests by bare name while
+  returning a `sandbox:<name>:<digest>` reference, so every explain stage
+  failed through the production path and no MRI ever completed through the
+  worker. Fixed in `redsim/ml/sandbox_worker.py` and `redsim/ml/sandbox.py`
+  at integration.
 
-Local suite at wave 3: 1663 passed, 30 skipped; ruff and mypy clean. Local
-assets (gitignored, `assets/MANIFEST.json`): vehicles model now ResNet-18 at
-0.7687 clean accuracy on 1,621 test images (illustrative, local build), URL
-classifier 0.9087, CIFAR-10 fixture 0.6872 (fixture only).
+Verified at `e73dea0` from the tree with the venv interpreter:
+
+- default tier `pytest -q --ignore=tests/e2e`: 1680 passed, 30 skipped;
+- e2e tier `REDSIM_E2E=1 pytest -q -m e2e tests/e2e` with
+  `REDSIM_E2E_POSTGRES_URL` set: 22 passed, including the Postgres RLS case;
+- `ruff check --select E4,E7,E9,F,I redsim tests` and `mypy redsim`: clean;
+- `mkdocs build --strict`: clean;
+- web: `pnpm --filter @redsim/web typecheck` passes; `pnpm --filter @redsim/web
+  test` has one failing test out of 274, pre-existing on `main` (B5);
+- Redsim CI for `e73dea0` was in progress at the time of writing. The three
+  fixes are expected to turn the Coverage gate, both unit lanes and the
+  Dependency CVEs job green; the Next.js job is expected red on the one
+  vitest failure until B5 lands.
+
+Local assets (gitignored, `assets/MANIFEST.json`): vehicles model now
+ResNet-18 at 0.7687 clean accuracy on 1,621 test images (illustrative, local
+build), URL classifier 0.9087, CIFAR-10 fixture 0.6872 (fixture only).
 
 ## 2. Ground rules that apply to every item
 
@@ -135,7 +156,8 @@ Spec section 22.5. Files: `.github/workflows/redsim-ci.yml`, root `Makefile`,
 
 | Id | Requirement | State on 2026-09-09 | Acceptance check | Size |
 |---|---|---|---|---|
-| B1 | Do not redo the three `main` fixes wave 4 lands: `python-multipart` in the `api` extra (coverage job), the `redsim.ml.datasets.sampling` to `redsim.ml.targets` import cycle on the torch-less lane, and the Next.js advisory baseline in `.trivyignore`. Confirm `main` is green after wave 4 before B2. | Landing in wave 4. | `gh run list --branch main --workflow redsim-ci.yml --limit 1` shows success. | S |
+| B1 | Do not redo the three `main` fixes wave 4 landed in `d8a9f15` and `e73dea0`: `python-multipart` in the `api` extra (coverage job), the `redsim.ml.datasets.sampling` to `redsim.ml.targets` import cycle and the lazy torch imports behind `redsim ml build-assets` (torch-less lane), and the Next.js advisory baseline in `.trivyignore`. Confirm the run for `e73dea0` or later is green on those jobs before B2. | Landed; the CI run was in progress at the time of writing. | `gh run list --branch main --workflow redsim-ci.yml --limit 1` shows success on every job except, until B5, the Next.js build. | S |
+| B5 | One vitest test fails on `main`: `web/src/app/findings/[id]/page.test.tsx` "submits selected defense and editable params". Its `useDefenses` mock has no `art_class` and expects a three-argument `verifyFinding` call, while the page enables Verify only when a candidate recommendation references the selected defense's `art_class` and calls `verifyFinding` with a fourth argument (the recommendation id). Align the test with the page behaviour (add `art_class` to the mock, expect the fourth argument). This is a test fix, not UI work. | Failing, pre-existing. | `pnpm --filter @redsim/web test` reports 274 passed; the Next.js CI job is green. | S |
 | B2 | A dedicated `ml` CI job: installs `.[test,dev,ml]` with the CPU torch wheel cached (`actions/cache` keyed by the torch version), runs `pytest -q -m ml` offline, and is a required check. Today the py3.12 unit job installs torch inline and runs the ml tests with the default tier. | Partial. | A job named `ML tier (py3.12, ml extra)` passes and its torch install hits the cache on the second run. | M |
 | B3 | `make check` mirrors CI: `ruff check --select E4,E7,E9,F,I redsim tests`, `mypy redsim`, `pytest -q`, and `pnpm --filter @redsim/web typecheck && pnpm --filter @redsim/web test`. | Partial. `make check` runs ruff, mypy and pytest; confirm the web half is included and documented. | `make check` exits 0 on a clean checkout with pnpm installed and fails when a vitest test fails. | S |
 | B4 | `docs/dev/ci.md` describes the lanes, what gates the downstream jobs (API integration, Next.js build, image build, Playwright), and the honest current state. | Wave 4 rewrites the state paragraph; keep it current after B2. | The page matches the workflow file. | S |
@@ -160,6 +182,7 @@ unchecked and every reviewer name blank.
 | C7 | `SECURITY.md` "Known gaps" is current: the Next.js advisories baselined in `.trivyignore` (including CVE-2026-75604 and GHSA-2xp9-vwfh-vxw4 added in wave 4) with the tracked Next 15 upgrade, and the sandbox and upload status after waves 1 to 3 (typed sandbox config, rlimits, no network jail, ONNX and state_dict only, pickles refused). | Partial. | The section names every `.trivyignore` id and describes the sandbox as `redsim/ml/sandbox.py` implements it. | S |
 | C8 | Illustrative numbers labelled illustrative everywhere (spec 26.2 item 11): local asset accuracies (0.7687, 0.9087, 0.6872) and demo-script figures. Wave 4 labels README and docs; sweep `specs/` and `docs/plans/06` to `08`. | Partial. | `grep -rn "0\.7687\|0\.9087\|0\.5151" docs specs README.md` shows "illustrative" in the same paragraph for every hit. | S |
 | C9 | A scripted walkthrough of the spec 24 demo (no UI): a shell script or `make demo` target that seeds, registers the bundled models, starts the image campaign, waits, starts verify, downloads the report and runs `redsim audit verify --all`, printing the ids at each step. | Missing. | `make demo` (or `scripts/demo.sh`) exits 0 against `make up` and prints the run id, finding id, verify run id and report path. | M |
+| C10 | Docs wording drift left by wave 4: about ten places (`README.md`, `CLAUDE.md`, `docs/plans/00-master-plan.md` section 4.1, `docs/plans/EXECUTION-CONTEXT.md`, `docs/architecture/ml-vertical.md`) still say "open PR #23"; it merged as `10650da` with two review fixes. The same pages should record wave 4 as landed (`e73dea0`, the counts in section 1) and the CI state once the run for `e73dea0` has concluded (B1). Also `tests/e2e/README.md` should say `REDSIM_E2E_POSTGRES_URL` is driver-qualified (`postgresql+psycopg://`) in a venv without `psycopg2` (the governance fixture normalises a bare scheme; the harness fixture alone does not), and the docstring of `_attack_plugins` in `redsim/api/v1/attacks.py` still describes the pre-idempotent "already registered" behaviour. | Missing. | `grep -rn "open PR #23\|Open PR #23" README.md CLAUDE.md docs` prints nothing; `mkdocs build --strict` passes. | S |
 
 ## D. Residual Phase A rows
 
@@ -179,6 +202,12 @@ plan-01 section 8 protocol in `docs/plans/00-master-plan.md` section 0.
 | D9 | Every report carries a coverage header (dataset id and revision, split, `n_samples`, seed, selection method) and `generated_at`, the Run id, the `settings_hash` and the model sha (spec 14; `redsim/ml/reporting.py`). | Partial. Wave 1 rewrote the renderer to six sections; confirm every header field in all three formats. | `tests/ml/test_report.py` asserts each field in md, json and html. | S |
 | D10 | `GET /v1/__settings` (`redsim/api/app.py`) hidden in production mode. | Unverified. | A test asserts 404 in production mode and 200 in dev. | S |
 | D11 | `docs/api/v1.md`: stale pentest-era routes pruned; every mounted ML route documented with its codes. | Wave 4 documents the ML routes; prune remaining pentest rows. | The page lists no route `redsim/api/app.py` does not mount. | S |
+| D12 | Upload admission chain: a successful upload's `model.register` audit row lands on the ingest run's chain rather than the project chain (`redsim/api/v1/models.py`); spec 5.11 puts registration on the project chain. Move it or record the divergence. | Divergence, reported by the wave-4 e2e writers. | An admission test asserts the chain the row lands on, matching the recorded decision. | S |
+| D13 | `GET /v1/models/{id}` for a soft-deleted model without `?project=` answers 403 by falling through to the literal `default` project instead of 404 (`redsim/api/v1/models.py`). | Reported. | Route test: 404 `not_found` for a deleted id regardless of the `project` query. | S |
+| D14 | `POST /v1/models` with `source=endpoint` is gated at `remediator` before answering `501 not_implemented`; spec 7.4 puts endpoint registration at `admin` (`target.manage`). Align the gate or record the divergence. | Reported. | Route test: remediator gets 403, admin gets 501 with `phase`. | S |
+| D15 | `ensure_project_access` refusals name the project id in the 403 detail on sqlite, while Postgres with RLS answers 404 for the same request. Make the two lanes agree (404 without naming the project is the safer shape). | Reported. | The governance e2e test asserts the same status on both lanes. | S |
+| D16 | Bundled image model as an upload: `redsim ml build-assets` writes no ONNX export of the bundled image model, and `SmallCNN`'s `AdaptiveAvgPool2d(4)` does not export through the legacy ONNX exporter below `image_size` 16 (spec 9.2 demo upload). Add an `--onnx` export to build-assets (opset that exports the pool, or a fixed-size pool at export time) so the demo can upload the bundled model as ONNX without the `Upsample` front end the e2e test uses. | Missing. | `redsim ml build-assets --only vehicles_cnn --onnx` writes `bundled/vehicles_cnn/model.onnx` that `POST /v1/models` validates to `available` with `gradients: true`. | M |
+| D17 | Harness evaluation split: the tiny e2e assets (URL split 12 rows, 9 clean-correct, below the finding floor of 10; degenerate image CNN) cannot yield a worker-projected finding, so the governance test builds its gate-subject finding with the product's own builders. A slightly larger seeded harness split (about 40 rows and a trained tiny CNN) would let the e2e tier exercise the projected-finding path. Also `tests/e2e/test_harness_smoke.py` leaves its tamper unrestored and sibling tests assert the exact broken-chain set; restore after the assertion. | Reported. | `REDSIM_E2E=1 pytest -q -m e2e tests/e2e` passes with a projected finding asserted in the governance test and the tamper restored. | M |
 
 ## E. Infrastructure completion
 
