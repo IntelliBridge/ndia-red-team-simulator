@@ -9,21 +9,8 @@ import { NAV_LINKS } from "@/lib/nav";
 
 import { CommandPalette } from "./command-palette";
 import { SidebarNav } from "./sidebar-nav";
+import { SiteFooter } from "./site-footer";
 import { TopBar } from "./top-bar";
-
-/** The standing caveat, verbatim on every page. */
-export function AppFooter() {
-  return (
-    <footer className="border-t border-border bg-card px-6 py-4 text-[11px] leading-relaxed text-muted-foreground">
-      <div className="redsim-meta mb-1">
-        REDSIM // ADVERSARIAL ML RED-TEAM SIMULATOR
-      </div>
-      Proof of concept on open, unclassified public data. Results are evidence
-      for human review, not a safety, readiness, or certification
-      determination.
-    </footer>
-  );
-}
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
@@ -44,7 +31,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <main id="main-content" tabIndex={-1} className="flex-1">
             <div className="mx-auto w-full max-w-[1400px] p-6">{children}</div>
           </main>
-          <AppFooter />
+          <SiteFooter />
         </div>
       </div>
       <CommandPalette links={NAV_LINKS} />
