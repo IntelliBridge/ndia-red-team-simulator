@@ -27,11 +27,23 @@ pytest.importorskip("art")
 import numpy as np
 
 from redsim.ml.artifacts import FilesystemSink
-from redsim.ml.campaign import run_campaign
+from redsim.ml.attacks import ATTACKS, apply_mask, perturbable_mask, resolve_from_schema
+from redsim.ml.attacks.base import AttackOutput
+from redsim.ml.campaign import (
+    CURVE_PNG_NAME,
+    D3_BOUNDS_LIMITATION,
+    REALIZABILITY_CAVEAT,
+    SHAP_SUMMARY_TEXT_NAME,
+    SUBJECT_CENTERED_CAVEAT,
+    TABULAR_LIMITATION,
+    run_campaign,
+)
 from redsim.ml.errors import AttackNotApplicable, ExplainUnavailable, MLError, TargetUnavailable
+from redsim.ml.eval import perturbation_norms
 from redsim.ml.explain.base import ExplainOutput
 from redsim.ml.schema import (
     STAGES,
+    AttackInfo,
     CampaignConfig,
     CampaignRecord,
     CandidateRecommendation,
@@ -42,6 +54,7 @@ from redsim.ml.schema import (
     MRIRecord,
     MRIWeights,
     Observation,
+    ParamSpec,
     RunRecord,
     ScoringConfig,
     contains_banned_score_word,
@@ -57,7 +70,7 @@ from redsim.ml.scoring import (
     weights_by_subscore,
 )
 from redsim.ml.targets.registry import TARGETS
-from tests.ml.fakes import TinyTarget
+from tests.ml.fakes import TABULAR_DATASET, TABULAR_FROZEN, TinyTabularTarget, TinyTarget
 
 pytestmark = pytest.mark.ml
 
@@ -653,3 +666,344 @@ def test_verify_run_records_the_applied_defense_as_the_wrapper_describes_it(no_o
     assert prov["torch_model_defended"] is False              # what the wrapper does not defend, stated
     assert record.target.name.endswith("+ Feature squeezing (bit-depth reduction)")
     assert record.target.metadata["defense"] == prov
+
+
+# --- tabular campaign end to end (spec 12.9, register G-ATK-TAB, G-CAVEAT) ---------------------------
+
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def tabular_config(**overrides) -> CampaignConfig:
+    cfg = {"target_id": "tiny_tabular", "modality": "tabular", "attack_ids": ["pgd", "hopskipjump"],
+           "attack_params": {"pgd": {"max_iter": 3},
+                             "hopskipjump": {"max_iter": 1, "max_eval": 100, "init_eval": 10, "init_size": 3}},
+           "eps_grid": GRID, "reference_eps": REF, "n_samples": 24, "seed": 0, "explain_k": 4,
+           "dataset_id": TABULAR_DATASET}
+    cfg.update(overrides)
+    return CampaignConfig(**cfg)
+
+
+def test_tabular_campaign_end_to_end(monkeypatch, sink):
+    """PGD by surrogate transfer + HopSkipJump + control on the shared tabular double, TreeExplainer on the real
+    model, the realizability caveat on every evasion row, and the campaign's own complete MRI."""
+    pytest.importorskip("shap")
+    pytest.importorskip("sklearn")
+    monkeypatch.setitem(sys.modules, RULES_MOD, None)
+    target = TinyTabularTarget(seed=0)
+    assert not hasattr(target.art_classifier(), "loss_gradient")           # the real tree has no gradients
+    assert hasattr(target.surrogate_art_classifier(), "loss_gradient")     # the declared surrogate has
+    with pytest.raises(NotImplementedError):
+        target.torch_model()
+    cfg = tabular_config()
+
+    rec = run_campaign(cfg, sink, target_override=target)
+
+    assert rec.status == "succeeded" and rec.target.domain == "tabular" and rec.config == cfg
+    assert [a.id for a in rec.attacks] == ["pgd", "hopskipjump"]
+    clean = rec.measurements[0]
+    assert clean.id == "m.clean" and clean.n == 24 and clean.n_correct >= 10
+    evasion = [m for m in rec.measurements if m.family == "evasion"]
+    assert {m.id for m in evasion} == {f"m.evasion.{a}.eps{e}" for a in ("pgd", "hopskipjump") for e in EPS_TAGS}
+    manifest = target.manifest()
+    agree = manifest["surrogate"]["agreement_clean"]
+    for m in evasion:
+        assert REALIZABILITY_CAVEAT in m.notes                              # realizability caveat on every row
+        assert m.n == 24 and m.n_clean_correct == clean.n_correct and m.conf_gap_n == 24
+        if m.attack_id == "pgd":
+            notes = [n_ for n_ in m.notes if n_.startswith("white-box via surrogate transfer")]
+            assert len(notes) == 1, "exactly one surrogate-transfer label per row (adapter or campaign, never both)"
+            assert "kind=logistic_regression" in notes[0]
+            assert f"{agree['n_correct']}/{agree['n']}" in notes[0]                 # measured agreement, k/n
+            assert m.queries_mean is None
+        else:
+            assert not any(n_.startswith("white-box via surrogate transfer") for n_ in m.notes)
+            assert m.queries_mean is not None and any(n_.startswith("thresholded at eps=") for n_ in m.notes)
+    control = [m for m in rec.measurements if m.family == "control"]
+    assert [m.params["eps"] for m in control] == GRID and all(m.n == 24 for m in control)
+    # the frozen features (declared perturbable=false) are untouched by the surrogate-transfer attack
+    art = Path(sink.root) / "artifacts"
+    x_clean = target.sample(24, 0).x
+    frozen_cols = [i for i, name in enumerate(target.feature_names) if name in TABULAR_FROZEN]
+    for e in EPS_TAGS:
+        x_adv = np.load(art / "adv_slice" / f"pgd_eps{e}.npz")["x_adv"]
+        assert np.array_equal(x_adv[:, frozen_cols], x_clean[:, frozen_cols])
+        assert np.abs(x_adv - x_clean).max() <= float(e) + 1e-5
+    # the campaign's own MRI: five subscores over both tabular families, never mixed with an image campaign
+    s = rec.score
+    assert s is not None and rec.score_status is None and s.attack_ids == ["pgd", "hopskipjump"]
+    assert s.completeness == "complete" and s.mri is not None and s.grade == grade_for_mri(s.mri)
+    assert s.subscores.missing() == [] and set(s.per_attack) == {"pgd", "hopskipjump"} and len(s.inputs) == 6
+    assert rec.completeness == "complete" and not contains_banned_score_word(s.reading or "")
+    # TreeExplainer on the real model: feature identifiers, no centre-mass analogue
+    assert rec.observations and all(o.center_mass_ratio_clean is None and o.top_features_clean for o in rec.observations)
+    assert all(f in target.feature_names for o in rec.observations for f in o.top_features_clean)
+    assert "TreeExplainer is deterministic" in rec.provenance.nondeterminism
+    assert rec.provenance.sklearn and rec.provenance.model_sha256 == manifest["weights_sha256"]
+    lims = rec.limitations
+    assert TABULAR_LIMITATION in lims and D3_BOUNDS_LIMITATION in lims
+    surrogate_lim = next(lim for lim in lims if lim.startswith("White-box rows for pgd were computed by surrogate transfer"))
+    assert "kind=logistic_regression" in surrogate_lim and "realizability is not established" in surrogate_lim
+    assert any(lim.startswith(f"Dataset caveat ({TABULAR_DATASET}):") for lim in lims)
+    assert not any("MRI not computed" in lim for lim in lims)
+    assert any("black-box attack hopskipjump" in lim for lim in lims)
+    assert (art / SHAP_SUMMARY_TEXT_NAME).exists() and (art / CURVE_PNG_NAME).exists()
+    txt = (art / SHAP_SUMMARY_TEXT_NAME).read_text()
+    assert "SHAP attributions describe the model's sensitivity, not the cause of a failure." in txt
+    assert f"MRI = {s.mri}" in txt and "top features by mean |SHAP|" in txt
+    assert not any(i.id.startswith("i.explain.unavailable") or i.id.startswith("i.attack.not_run") for i in rec.interpretation)
+    RunRecord.model_validate(rec.model_dump())
+
+
+def test_white_box_not_run_removed_before_scoring(monkeypatch, sink):
+    """A white-box attack on a target without loss gradients and without a surrogate is recorded not_run: no row,
+    no curve, no slice, an Interpretation and a limitation; scoring runs over the attacks that ran (spec 9.5, 15.4)."""
+    monkeypatch.setitem(sys.modules, RULES_MOD, None)
+    target = TinyTabularTarget(seed=0, surrogate=False)
+    assert target.surrogate_art_classifier() is None and "surrogate" not in target.manifest()
+    cfg = tabular_config()
+
+    rec = run_campaign(cfg, sink, target_override=target, explain=False)
+
+    assert rec.status == "succeeded"
+    assert rec.config.attack_ids == ["pgd", "hopskipjump"]               # the declared set stays on the record
+    assert [a.id for a in rec.attacks] == ["hopskipjump"]                # the in-scope set is what ran
+    assert not any(m.attack_id == "pgd" for m in rec.measurements)       # no row, no number, nothing faked
+    assert {m.id for m in rec.measurements if m.family == "evasion"} == {
+        f"m.evasion.hopskipjump.eps{e}" for e in EPS_TAGS}
+    assert "attack:pgd" not in rec.stages_done and "attack:hopskipjump" in rec.stages_done
+    s = rec.score
+    assert s is not None and rec.score_status is None                    # scored, over the reduced set
+    assert s.attack_ids == ["hopskipjump"] and set(s.per_attack) == {"hopskipjump"} and len(s.inputs) == 3
+    assert s.subscores.S_acc is not None and s.subscores.missing() == ["S_expl"]     # explain off, so partial
+    assert not any("partial run" in lim for lim in rec.limitations)      # the reduced set is not a partial run
+    i = next(i for i in rec.interpretation if i.id == "i.attack.not_run.pgd")
+    assert i.kind == "inferred" and i.basis == ["m.clean"]
+    assert "not_run" in i.statement and "removed from the in-scope attack set before scoring" in i.statement
+    assert any(lim.startswith("Attack 'pgd' was not run") and "removed from the in-scope attack set" in lim
+               for lim in rec.limitations)
+    assert not any(lim.startswith("White-box rows for") for lim in rec.limitations)   # none declared, none claimed
+    assert not any(n_.startswith("white-box via surrogate transfer") for m in rec.measurements for n_ in m.notes)
+    assert [c.attack_id for c in rec.curve] == ["hopskipjump"]
+    art = Path(sink.root) / "artifacts"
+    assert (art / "curve" / "hopskipjump.json").exists() and not (art / "curve" / "pgd.json").exists()
+    assert not list((art / "adv_slice").glob("pgd_*")) and list((art / "adv_slice").glob("hopskipjump_*"))
+    flips = json.loads((art / "flip_matrix.json").read_text())
+    assert flips["attack_ids"] == ["hopskipjump"] and set(flips["flipped"]) == {"hopskipjump"}
+    assert set(flips["not_run"]) == {"pgd"} and flips["not_run"]["pgd"]
+    assert json.loads((art / "run_record.json").read_text())["score"]["attack_ids"] == ["hopskipjump"]
+    RunRecord.model_validate(rec.model_dump())
+
+
+def test_all_attacks_not_run_leaves_the_score_unavailable(monkeypatch, sink):
+    monkeypatch.setitem(sys.modules, RULES_MOD, None)
+    target = TinyTabularTarget(seed=0, surrogate=False)
+    rec = run_campaign(tabular_config(attack_ids=["pgd"], attack_params={"pgd": {"max_iter": 3}}), sink,
+                       target_override=target, explain=False)
+    assert rec.status == "succeeded" and rec.attacks == [] and rec.curve == []
+    assert rec.score is None and rec.score_status is not None and rec.score_status.state == "unavailable"
+    assert "not_run" in (rec.score_status.reason or "") and rec.missing == [rec.score_status.reason]
+    assert [m.family for m in rec.measurements] == ["clean", "control", "control", "control"]
+    assert not any(s.startswith("attack:") for s in rec.stages_done) and "score" in rec.stages_done
+    assert any("No declared attack could run" in lim for lim in rec.limitations)
+    assert any(i.id == "i.attack.not_run.pgd" for i in rec.interpretation)
+    assert not (Path(sink.root) / "artifacts" / CURVE_PNG_NAME).exists()
+    RunRecord.model_validate(rec.model_dump())
+
+
+# --- robustness_curve.png (spec 12.3, register G-ATK7) ----------------------------------------------
+
+def test_curve_png_written(record_no_explain):
+    rec, root = record_no_explain
+    png = Path(root) / "artifacts" / CURVE_PNG_NAME
+    assert png.exists() and png.read_bytes()[:8] == PNG_MAGIC and png.stat().st_size > 2000
+    assert (Path(root) / "artifacts" / "curve" / "fgsm.json").exists()        # rendered beside the JSON
+    assert not any("not rendered" in lim for lim in rec.limitations)
+
+
+def test_curve_png_skipped_with_a_limitation_when_matplotlib_is_absent(no_optional_modules, monkeypatch, sink):
+    for name in ("matplotlib", "matplotlib.figure", "matplotlib.backends", "matplotlib.backends.backend_agg"):
+        monkeypatch.setitem(sys.modules, name, None)
+    rec = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}), sink, explain=False)
+    assert rec.status == "succeeded" and rec.score is not None
+    art = Path(sink.root) / "artifacts"
+    assert not (art / CURVE_PNG_NAME).exists() and (art / "curve" / "fgsm.json").exists()
+    assert any(lim.startswith(f"{CURVE_PNG_NAME} not rendered: matplotlib is not installed") for lim in rec.limitations)
+
+
+# --- noise-sensitivity Interpretation through the control predicate (spec 12.4, register G-SCORE1) ----
+
+def test_noise_sensitive_control_records_an_interpretation_with_its_basis(no_optional_modules, monkeypatch, sink,
+                                                                          record_no_explain):
+    control = ATTACKS.get("noise_control")
+    real_run = control.run
+
+    def misclassified_inputs(target, x, y, params, seed):
+        """Hand back, for every sample, a clean input the model gets wrong for that sample's label."""
+        out = real_run(target, x, y, params, seed)
+        pred = np.asarray(target.predict_proba(x)).argmax(axis=1)
+        x_adv = np.array(x, copy=True)
+        for i in range(len(y)):
+            x_adv[i] = x[next(k for k in range(len(y)) if pred[k] != y[i])]
+        out.x_adv = x_adv
+        return out
+
+    monkeypatch.setattr(control, "run", misclassified_inputs)
+    rec = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, n_samples=48), sink, explain=False)
+    clean = rec.measurements[0]
+    assert clean.n_correct >= 5, "the slice must carry some clean-correct samples for the drop to be measurable"
+    rows = [m for m in rec.measurements if m.family == "control"]
+    assert len(rows) == 3 and all(m.n_correct == 0 for m in rows)
+    ids = {i.id: i for i in rec.interpretation}
+    for e in EPS_TAGS:
+        i = ids[f"i.control.noise_sensitive.eps{e}"]
+        assert i.kind == "inferred" and i.basis == ["m.clean", f"m.control.noise.eps{e}"]
+        assert f"noise-sensitive at eps={float(e):g}" in i.statement and f"{clean.n_correct}/48 to 0/48" in i.statement
+        assert "not attributable to adversarial alignment alone" in i.statement
+        assert "control_preserves_accuracy" in i.statement or "campaign fallback" in i.statement
+    assert all(any("the control did not preserve accuracy" in n_ for n_ in m.notes) for m in rows)
+    assert sum("noise-sensitive at eps=" in lim for lim in rec.limitations) == 3
+    RunRecord.model_validate(rec.model_dump())
+    # an ordinary run states the verdict on every control row too, whichever way it went
+    plain, _ = record_no_explain
+    for m in (m for m in plain.measurements if m.family == "control"):
+        assert any(n_.startswith("control preserves accuracy") or "did not preserve accuracy" in n_ for n_ in m.notes)
+
+
+# --- subject_centered caveat, shap_summary.txt and the standing text (spec 13.4, 13.6, 14.5) ----------
+
+class _OffCentreTarget(TinyTarget):
+    """The manifest of a dataset whose subjects are not reliably centred, with a build-time caveat."""
+
+    def manifest(self) -> dict:
+        return {**super().manifest(), "subject_centered": False,
+                "caveats": ["Subjects are web-thumbnail framed and not tightly cropped."]}
+
+
+def test_subject_centered_false_adds_the_weak_subject_caveat(monkeypatch, sink, tmp_path):
+    monkeypatch.setitem(sys.modules, EXPLAIN_MOD, make_fake_explain(shift=0.4))
+    monkeypatch.setitem(sys.modules, RULES_MOD, None)
+    rec = run_campaign(base_config(), sink, target_override=_OffCentreTarget())
+    assert len(rec.observations) == 8
+    for o in rec.observations:
+        assert o.metric_kind == "heuristic" and o.metric_note.startswith("center_mass_ratio")
+        assert o.metric_note.endswith(SUBJECT_CENTERED_CAVEAT)
+    assert SUBJECT_CENTERED_CAVEAT in rec.limitations
+    assert "Dataset caveat (synthetic): Subjects are web-thumbnail framed and not tightly cropped." in rec.limitations
+    assert rec.provenance.model_manifest["subject_centered"] is False
+    assert not contains_banned_score_word(SUBJECT_CENTERED_CAVEAT)
+    # a manifest that declares nothing gets no caveat: the flag is read, never assumed
+    plain = run_campaign(base_config(), FilesystemSink(tmp_path / "plain"))
+    assert plain.observations and not any(SUBJECT_CENTERED_CAVEAT in o.metric_note for o in plain.observations)
+    assert SUBJECT_CENTERED_CAVEAT not in plain.limitations
+    assert not any(lim.startswith("Dataset caveat") for lim in plain.limitations)
+
+
+def test_shap_summary_text_written_whenever_explain_ran(monkeypatch, sink, tmp_path, record_no_explain):
+    monkeypatch.setitem(sys.modules, EXPLAIN_MOD, make_fake_explain(shift=0.4))
+    monkeypatch.setitem(sys.modules, RULES_MOD, None)
+    monkeypatch.delitem(sys.modules, SUMMARY_MOD, raising=False)          # the real summary module
+    rec = run_campaign(base_config(), sink)
+    path = Path(sink.root) / "artifacts" / SHAP_SUMMARY_TEXT_NAME
+    assert path.exists()
+    txt = path.read_text(encoding="utf-8")
+    assert txt.rstrip().endswith("SHAP attributions describe the model's sensitivity, not the cause of a failure.")
+    assert f"MRI = {rec.score.mri} (grade {rec.score.grade})" in txt and "Limitations:" in txt
+    assert D3_BOUNDS_LIMITATION in txt and "Observations: 8 explained samples" in txt
+    assert not any(SHAP_SUMMARY_TEXT_NAME in lim for lim in rec.limitations)
+    # explain did not run: no summary and no claim of one
+    _, root = record_no_explain
+    assert not (Path(root) / "artifacts" / SHAP_SUMMARY_TEXT_NAME).exists()
+    # the summary module is absent: recorded as unavailable, never a placeholder file
+    monkeypatch.setitem(sys.modules, SUMMARY_MOD, None)
+    rec2 = run_campaign(base_config(), FilesystemSink(tmp_path / "nosummary"))
+    assert not (tmp_path / "nosummary" / "artifacts" / SHAP_SUMMARY_TEXT_NAME).exists()
+    assert any(lim.startswith(f"{SHAP_SUMMARY_TEXT_NAME} not written (module '{SUMMARY_MOD}' not importable")
+               for lim in rec2.limitations)
+
+
+def test_limitations_carry_the_d3_bounds_statement_after_the_standing_text(record_no_explain):
+    rec, _ = record_no_explain
+    standing = standing_limitations("synthetic", GRID)
+    assert rec.limitations[:len(standing)] == standing and rec.limitations[len(standing)] == D3_BOUNDS_LIMITATION
+    assert not contains_banned_score_word(D3_BOUNDS_LIMITATION)
+    assert "never trains, optimises or deploys targeting or weapons models" in D3_BOUNDS_LIMITATION
+    assert "not a readiness or certification determination" in D3_BOUNDS_LIMITATION
+    assert TABULAR_LIMITATION not in rec.limitations                        # image campaign: no tabular caveat
+    assert not any("surrogate transfer" in lim for lim in rec.limitations)  # no surrogate was used
+
+
+# --- the campaign-side surrogate fallback (spec 12.9) for adapters that do not resolve the surrogate -------
+
+class _GradientOnlyAdapter:
+    """A white-box adapter that only knows ``target.art_classifier()``: one signed-gradient step on the surrogate."""
+
+    id = "gradient_only"
+    domains = frozenset({"tabular"})
+    takes_eps = True
+    _schema = [ParamSpec(name="eps", type="float", default=0.03, min=1e-6, max=1.0)]
+
+    def info(self) -> AttackInfo:
+        return AttackInfo(id=self.id, name="one signed gradient step (test adapter)", domain="tabular",
+                          family="evasion", params_schema=list(self._schema), access="white-box",
+                          requires_gradients=True)
+
+    def resolve_params(self, params):
+        return resolve_from_schema(self._schema, params)
+
+    def run(self, target, x, y, params, seed):
+        clf = target.art_classifier()
+        if not hasattr(clf, "loss_gradient"):
+            raise AttackNotApplicable("gradient_only needs a differentiable estimator (no loss_gradient)")
+        p = self.resolve_params(params)
+        one_hot = np.eye(int(clf.nb_classes), dtype=np.float32)[np.asarray(y).astype(int)]
+        grad = np.asarray(clf.loss_gradient(np.asarray(x, dtype=np.float32), one_hot))
+        lo, hi = clf.clip_values
+        x_adv = np.clip(x + float(p["eps"]) * np.sign(grad), lo, hi).astype(np.float32)
+        x_adv = apply_mask(x, x_adv, perturbable_mask(target, x))
+        linf, l2 = perturbation_norms(x, x_adv)
+        return AttackOutput(x_adv=x_adv, linf_norm_mean=linf, l2_norm_mean=l2, wall_time_s=0.0, params=dict(p),
+                            notes=["one signed gradient step"])
+
+
+class _RegistryWithTestAdapter:
+    def __init__(self, extra):
+        self._extra = extra
+
+    def maybe_get(self, aid):
+        return self._extra if aid == self._extra.id else ATTACKS.maybe_get(aid)
+
+    def get(self, aid):
+        found = self.maybe_get(aid)
+        if found is None:
+            raise KeyError(aid)
+        return found
+
+    def ids(self):
+        return [*ATTACKS.ids(), self._extra.id]
+
+
+def test_campaign_hands_the_declared_surrogate_to_an_adapter_that_cannot_find_it(monkeypatch, sink):
+    """An adapter that raises AttackNotApplicable on the real estimator is retried on a view of the target whose
+    estimator is the declared surrogate; the row and the limitations say so, predictions stay on the real model."""
+    import redsim.ml.campaign as campaign_module
+
+    monkeypatch.setitem(sys.modules, RULES_MOD, None)
+    monkeypatch.setattr(campaign_module, "ATTACKS", _RegistryWithTestAdapter(_GradientOnlyAdapter()))
+    target = TinyTabularTarget(seed=0)
+    cfg = tabular_config(attack_ids=["gradient_only"], attack_params={})
+    rec = run_campaign(cfg, sink, target_override=target, explain=False)
+    rows = [m for m in rec.measurements if m.family == "evasion"]
+    assert [m.id for m in rows] == [f"m.evasion.gradient_only.eps{e}" for e in EPS_TAGS]
+    for m in rows:
+        note = next(n_ for n_ in m.notes if n_.startswith("white-box via surrogate transfer"))
+        assert "the campaign handed the adapter the declared surrogate estimator" in note
+        assert "kind=logistic_regression" in note and "agreement_clean=" in note and "scored on the real model" in note
+        assert REALIZABILITY_CAVEAT in m.notes and m.n_clean_correct == rec.measurements[0].n_correct
+    assert rec.score is not None and rec.score.attack_ids == ["gradient_only"]
+    assert not any(i.id.startswith("i.attack.not_run") for i in rec.interpretation)
+    assert any(lim.startswith("White-box rows for gradient_only were computed by surrogate transfer") for lim in rec.limitations)
+    # the same adapter without a declared surrogate is not_run, never quietly handed the real estimator
+    rec2 = run_campaign(cfg, FilesystemSink(Path(sink.root).parent / "no_surrogate"),
+                        target_override=TinyTabularTarget(seed=0, surrogate=False), explain=False)
+    assert rec2.attacks == [] and rec2.score is None and "gradient_only" in json.loads(
+        (Path(sink.root).parent / "no_surrogate" / "artifacts" / "flip_matrix.json").read_text())["not_run"]
