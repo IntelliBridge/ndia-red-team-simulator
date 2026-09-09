@@ -1,0 +1,535 @@
+{
+  "schema_version": 1,
+  "role": "CI synonym fixture for the word-substitution attack (MODALITIES-15); WordNet 3.0 excerpt, never a target",
+  "source": {
+    "dataset_id": "nltk_data:wordnet",
+    "version": "3.0",
+    "repo": "nltk/nltk_data",
+    "revision": "550b6625bcef1f2abff2ff770a5a0d272c9c6b2a",
+    "url": "https://raw.githubusercontent.com/nltk/nltk_data/550b6625bcef1f2abff2ff770a5a0d272c9c6b2a/packages/corpora/wordnet.zip",
+    "zip_sha256": "cbda5ea6eef7f36a97a43d4a75f85e07fccbb4f23657d27b4ccbc93e2646ab59",
+    "license": "WordNet 3.0 License",
+    "license_sha256": "7731175a77952e259390b496fab905e57118b8d19ad3a8383c67eee724ff443f",
+    "homepage": "https://wordnet.princeton.edu/"
+  },
+  "copyright": "WordNet 3.0 Copyright 2006 by Princeton University.  All rights reserved.",
+  "license_note": "Princeton WordNet 3.0 licence (BSD-style, from wordnet/LICENSE in the zip): permission to use, copy, modify and distribute the software and database for any purpose and without fee is granted provided the copyright notice, statements and disclaimer appear on all copies; Princeton's name may not be used in advertising or publicity; title stays with Princeton. WordNet 3.0 Copyright 2006 by Princeton University.  All rights reserved. redsim caches the zip at build time and never republishes it.",
+  "reader": "redsim.ml.assets.fixture_sample.wordnet_synonyms (index.<pos> / data.<pos>, wninput(5WN))",
+  "max_synonyms_per_entry": 8,
+  "n_entries": 47,
+  "skipped": [
+    "tomorrow",
+    "money",
+    "guaranteed"
+  ],
+  "entries": {
+    "free": {
+      "pos": "a",
+      "synonyms": [
+        "complimentary",
+        "costless",
+        "gratis",
+        "gratuitous",
+        "detached",
+        "spare",
+        "barren",
+        "destitute"
+      ]
+    },
+    "win": {
+      "pos": "v",
+      "synonyms": [
+        "acquire",
+        "gain",
+        "advance",
+        "pull ahead",
+        "make headway",
+        "get ahead",
+        "gain ground",
+        "succeed"
+      ]
+    },
+    "call": {
+      "pos": "v",
+      "synonyms": [
+        "name",
+        "telephone",
+        "call up",
+        "phone",
+        "ring",
+        "shout",
+        "shout out",
+        "cry"
+      ]
+    },
+    "prize": {
+      "pos": "n",
+      "synonyms": [
+        "award",
+        "loot",
+        "booty",
+        "pillage",
+        "plunder",
+        "swag",
+        "dirty money",
+        "trophy"
+      ]
+    },
+    "urgent": {
+      "pos": "a",
+      "synonyms": [
+        "pressing"
+      ]
+    },
+    "claim": {
+      "pos": "v",
+      "synonyms": [
+        "lay claim",
+        "arrogate",
+        "take",
+        "exact"
+      ]
+    },
+    "reward": {
+      "pos": "n",
+      "synonyms": [
+        "wages",
+        "payoff",
+        "reinforcement",
+        "advantage"
+      ]
+    },
+    "cash": {
+      "pos": "n",
+      "synonyms": [
+        "hard cash",
+        "hard currency",
+        "immediate payment",
+        "Johnny Cash",
+        "John Cash"
+      ]
+    },
+    "mobile": {
+      "pos": "a",
+      "synonyms": [
+        "nomadic",
+        "peregrine",
+        "roving",
+        "wandering",
+        "fluid"
+      ]
+    },
+    "phone": {
+      "pos": "n",
+      "synonyms": [
+        "telephone",
+        "telephone set",
+        "speech sound",
+        "sound",
+        "earphone",
+        "earpiece",
+        "headphone"
+      ]
+    },
+    "message": {
+      "pos": "n",
+      "synonyms": [
+        "content",
+        "subject matter",
+        "substance"
+      ]
+    },
+    "friend": {
+      "pos": "n",
+      "synonyms": [
+        "ally",
+        "acquaintance",
+        "supporter",
+        "protagonist",
+        "champion",
+        "admirer",
+        "booster",
+        "Quaker"
+      ]
+    },
+    "home": {
+      "pos": "n",
+      "synonyms": [
+        "place",
+        "dwelling",
+        "domicile",
+        "abode",
+        "habitation",
+        "dwelling house",
+        "home plate",
+        "home base"
+      ]
+    },
+    "night": {
+      "pos": "n",
+      "synonyms": [
+        "nighttime",
+        "dark",
+        "Nox"
+      ]
+    },
+    "love": {
+      "pos": "v",
+      "synonyms": [
+        "enjoy",
+        "sleep together",
+        "roll in the hay",
+        "make out",
+        "make love",
+        "sleep with",
+        "get laid",
+        "have sex"
+      ]
+    },
+    "good": {
+      "pos": "a",
+      "synonyms": [
+        "full",
+        "estimable",
+        "honorable",
+        "respectable",
+        "beneficial",
+        "just",
+        "upright",
+        "adept"
+      ]
+    },
+    "great": {
+      "pos": "a",
+      "synonyms": [
+        "outstanding",
+        "bang-up",
+        "bully",
+        "corking",
+        "cracking",
+        "dandy",
+        "groovy",
+        "keen"
+      ]
+    },
+    "happy": {
+      "pos": "a",
+      "synonyms": [
+        "felicitous",
+        "glad",
+        "well-chosen"
+      ]
+    },
+    "new": {
+      "pos": "a",
+      "synonyms": [
+        "fresh",
+        "novel",
+        "raw",
+        "unexampled",
+        "newfangled",
+        "Modern",
+        "young"
+      ]
+    },
+    "big": {
+      "pos": "a",
+      "synonyms": [
+        "large",
+        "bad",
+        "prominent",
+        "heavy",
+        "boastful",
+        "braggart",
+        "bragging",
+        "braggy"
+      ]
+    },
+    "small": {
+      "pos": "a",
+      "synonyms": [
+        "little",
+        "minor",
+        "modest",
+        "small-scale",
+        "pocket-size",
+        "pocket-sized",
+        "humble",
+        "low"
+      ]
+    },
+    "fast": {
+      "pos": "a",
+      "synonyms": [
+        "debauched",
+        "degenerate",
+        "degraded",
+        "dissipated",
+        "dissolute",
+        "libertine",
+        "profligate",
+        "riotous"
+      ]
+    },
+    "late": {
+      "pos": "a",
+      "synonyms": [
+        "belated",
+        "tardy",
+        "recent",
+        "later",
+        "former",
+        "previous"
+      ]
+    },
+    "early": {
+      "pos": "a",
+      "synonyms": [
+        "former",
+        "other"
+      ]
+    },
+    "buy": {
+      "pos": "v",
+      "synonyms": [
+        "purchase",
+        "bribe",
+        "corrupt",
+        "grease one's palms"
+      ]
+    },
+    "send": {
+      "pos": "v",
+      "synonyms": [
+        "direct",
+        "send out",
+        "mail",
+        "post",
+        "transport",
+        "ship",
+        "station",
+        "place"
+      ]
+    },
+    "receive": {
+      "pos": "v",
+      "synonyms": [
+        "have",
+        "get",
+        "find",
+        "obtain",
+        "incur",
+        "pick up",
+        "experience",
+        "take in"
+      ]
+    },
+    "stop": {
+      "pos": "v",
+      "synonyms": [
+        "halt",
+        "discontinue",
+        "cease",
+        "give up",
+        "quit",
+        "lay off",
+        "block",
+        "kibosh"
+      ]
+    },
+    "reply": {
+      "pos": "v",
+      "synonyms": [
+        "answer",
+        "respond"
+      ]
+    },
+    "offer": {
+      "pos": "n",
+      "synonyms": [
+        "offering",
+        "crack",
+        "fling",
+        "go",
+        "pass",
+        "whirl"
+      ]
+    },
+    "chance": {
+      "pos": "n",
+      "synonyms": [
+        "opportunity",
+        "luck",
+        "fortune",
+        "hazard",
+        "probability",
+        "prospect"
+      ]
+    },
+    "winner": {
+      "pos": "n",
+      "synonyms": [
+        "victor",
+        "achiever",
+        "success",
+        "succeeder"
+      ]
+    },
+    "holiday": {
+      "pos": "n",
+      "synonyms": [
+        "vacation"
+      ]
+    },
+    "ticket": {
+      "pos": "n",
+      "synonyms": [
+        "tag",
+        "slate",
+        "just the ticket"
+      ]
+    },
+    "meeting": {
+      "pos": "n",
+      "synonyms": [
+        "group meeting",
+        "get together",
+        "encounter",
+        "coming together",
+        "merging",
+        "confluence"
+      ]
+    },
+    "work": {
+      "pos": "n",
+      "synonyms": [
+        "piece of work",
+        "employment",
+        "study",
+        "workplace",
+        "oeuvre",
+        "body of work"
+      ]
+    },
+    "car": {
+      "pos": "n",
+      "synonyms": [
+        "auto",
+        "automobile",
+        "machine",
+        "motorcar",
+        "railcar",
+        "railway car",
+        "railroad car",
+        "gondola"
+      ]
+    },
+    "quick": {
+      "pos": "a",
+      "synonyms": [
+        "speedy",
+        "flying",
+        "fast",
+        "agile",
+        "nimble",
+        "spry",
+        "ready",
+        "immediate"
+      ]
+    },
+    "cheap": {
+      "pos": "a",
+      "synonyms": [
+        "inexpensive",
+        "brassy",
+        "flash",
+        "flashy",
+        "garish",
+        "gaudy",
+        "gimcrack",
+        "loud"
+      ]
+    },
+    "important": {
+      "pos": "a",
+      "synonyms": [
+        "of import",
+        "significant",
+        "crucial",
+        "authoritative"
+      ]
+    },
+    "special": {
+      "pos": "a",
+      "synonyms": [
+        "particular",
+        "peculiar",
+        "especial",
+        "exceptional",
+        "limited",
+        "extra"
+      ]
+    },
+    "customer": {
+      "pos": "n",
+      "synonyms": [
+        "client"
+      ]
+    },
+    "service": {
+      "pos": "n",
+      "synonyms": [
+        "religious service",
+        "divine service",
+        "military service",
+        "armed service",
+        "Robert William Service",
+        "avail",
+        "help",
+        "table service"
+      ]
+    },
+    "contact": {
+      "pos": "v",
+      "synonyms": [
+        "reach",
+        "get through",
+        "get hold of",
+        "touch",
+        "adjoin",
+        "meet"
+      ]
+    },
+    "collect": {
+      "pos": "v",
+      "synonyms": [
+        "roll up",
+        "accumulate",
+        "pile up",
+        "amass",
+        "compile",
+        "hoard",
+        "take in",
+        "gather"
+      ]
+    },
+    "award": {
+      "pos": "n",
+      "synonyms": [
+        "awarding",
+        "accolade",
+        "honor",
+        "honour",
+        "laurels",
+        "prize"
+      ]
+    },
+    "bonus": {
+      "pos": "n",
+      "synonyms": [
+        "fillip",
+        "incentive"
+      ]
+    }
+  }
+}
