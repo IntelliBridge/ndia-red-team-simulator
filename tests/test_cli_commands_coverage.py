@@ -266,9 +266,11 @@ class TestBuildParser(unittest.TestCase):
         self.assertEqual((args.n_samples, args.seed, args.explain_k), (50, 3, 0))
         self.assertTrue(args.no_control)
         self.assertEqual(args.out, "/tmp/runs")
-        # Defaults follow CampaignConfig / spec 12.3.
+        # Budget defaults follow the norm, and the norm the target's modality (spec 12.3): the handler
+        # fills them (redsim.cli.ml.resolve_attack_defaults), so the parser leaves them unset.
         defaults = parser.parse_args(["ml", "attack", "url_trees"])
-        self.assertEqual(defaults.attacks, "fgsm,pgd")
+        self.assertIsNone(defaults.attacks)
+        self.assertIsNone(defaults.norm)
         self.assertIsNone(defaults.eps)
         self.assertEqual((defaults.n_samples, defaults.seed, defaults.explain_k), (200, 0, 8))
         self.assertFalse(defaults.no_control)

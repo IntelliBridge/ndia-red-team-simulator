@@ -484,6 +484,26 @@ def test_ml_attack_sends_the_text_and_detection_defaults_to_the_adapter(tmp_path
     assert "refused (not_found)" in text_out
 
 
+def test_adapter_admits_every_known_norm_with_the_modality_defaults():
+    """The adapter takes the CLI's edit / patch_area norms: the omitted grid and reference come from the
+    modality table (spec 12.3), an explicit grid passes through, and an unknown norm is the typed refusal."""
+    from redsim.ml import campaign_adapter
+    from redsim.services.ml_campaigns import KNOWN_NORMS
+
+    assert KNOWN_NORMS == {"linf", "l2", "edit", "patch_area"}
+    parse = campaign_adapter._parse_grid
+    req = campaign_adapter.OfflineCampaignRequest
+    assert parse(req(target_id="t", norm="edit")) == ([0.1, 0.2, 0.3], 0.2)
+    assert parse(req(target_id="t", norm="patch_area")) == ([0.01, 0.03, 0.05], 0.03)
+    assert parse(req(target_id="t", norm="linf")) == ([0.01, 0.03, 0.1], 0.03)
+    assert parse(req(target_id="t", norm="l2")) == ([0.25, 0.5, 1.0], 0.5)
+    # An explicit grid without the default reference falls back to the middle member.
+    assert parse(req(target_id="t", norm="edit", eps_grid=(0.05, 0.1))) == ([0.05, 0.1], 0.1)
+    with pytest.raises(campaign_adapter.OfflineCampaignRefused) as exc:
+        parse(req(target_id="t", norm="hamming"))
+    assert exc.value.reason == campaign_adapter.REASON_EPS_GRID
+
+
 def test_parser_has_ml_seed():
     args = _parse(["ml", "seed"])
     assert args.ml_action == "seed" and args.project is None and args.only is None and args.assets_dir is None
