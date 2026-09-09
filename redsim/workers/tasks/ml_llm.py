@@ -462,6 +462,8 @@ def _run_child(runner: Any, *, detail: Mapping[str, Any], gateway_url: str, mode
         "detector_mode": str(detail.get("detector_mode") or "offline"),
         "work_dir": str(work_dir),
         "key_file": str(work_dir / child.KEY_FILE),
+        "transport_max_tries": int(os.environ.get("REDSIM_LLM_PROBE_TRANSPORT_MAX_TRIES", "8")),
+        "transport_max_sleep_s": float(os.environ.get("REDSIM_LLM_PROBE_TRANSPORT_MAX_SLEEP_S", "60")),
     }
     expected = detail.get("expected_garak_version")
     if isinstance(expected, str) and expected:

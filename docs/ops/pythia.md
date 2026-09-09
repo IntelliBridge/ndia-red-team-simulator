@@ -261,8 +261,15 @@ the traffic reaches Pythia, verified from `redsim/ml/llm/generator.py`,
   default header, TLS from `redsim.llm.pythia.tls_verify` (the OS trust store
   on a laptop, recorded in the ledger as `tls_mode`), the OpenAI client at
   `max_retries=0` and a bounded retry loop in place of garak's uncapped
-  backoff (a 401 raises after one request, a 5xx is retried a few times then
-  raised with the count), and a body of exactly `model`, `messages`,
+  backoff (8 total tries by default, exponential sleeps capped at 60 seconds).
+  The worker reads `REDSIM_LLM_PROBE_TRANSPORT_MAX_TRIES` (1–12) and
+  `REDSIM_LLM_PROBE_TRANSPORT_MAX_SLEEP_S` (0–600 seconds), validates them
+  in the child spec and passes them as configuration, not child environment.
+  A 429 honours `Retry-After` seconds or HTTP-date; missing or malformed values
+  use exponential backoff. A requested wait beyond the cap terminates the run
+  instead of retrying earlier than permitted. The ledger counts actual retries
+  and `retry_after_honoured` waits. Exhausted tries abort; a 401 remains terminal.
+  Other retryable transport failures use the same bounded loop, and a body of exactly `model`, `messages`,
   `temperature`, `max_tokens`. The key is caller-supplied (an `api_key=` or a
   0600 `key_file=`), never read from the environment (`ENV_VAR` is `None`),
   never written into garak's `_config` (which garak dumps into
