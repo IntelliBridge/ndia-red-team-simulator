@@ -75,7 +75,6 @@ export default function FindingsPage() {
         <ul className="space-y-3" aria-label="Findings across all accessible runs">
           {findings.map((f: Finding) => {
             const lead = findingLead(f.schema_blob.description, 600);
-            const ml = f.schema_blob.ml;
             return (
               <li
                 key={f.id}
@@ -97,10 +96,10 @@ export default function FindingsPage() {
                     {f.schema_blob.description}
                   </p>
                 )}
-                <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-xs sm:grid-cols-3 lg:grid-cols-6">
+                <dl className="mt-3 flex flex-wrap gap-x-8 gap-y-2 text-xs">
                   <div>
                     <dt className="redsim-kicker uppercase tracking-wide text-muted-foreground">Finding</dt>
-                    <dd className="font-mono">
+                    <dd className="whitespace-nowrap font-mono">
                       <a className="text-primary underline" href={`/findings/${f.id}`}>
                         {f.id}
                       </a>
@@ -108,7 +107,7 @@ export default function FindingsPage() {
                   </div>
                   <div>
                     <dt className="redsim-kicker uppercase tracking-wide text-muted-foreground">Run</dt>
-                    <dd className="font-mono">
+                    <dd className="whitespace-nowrap font-mono">
                       <a className="text-primary underline" href={`/runs/${f.run_id}`}>
                         {f.run_id}
                       </a>
@@ -116,15 +115,7 @@ export default function FindingsPage() {
                   </div>
                   <div>
                     <dt className="redsim-kicker uppercase tracking-wide text-muted-foreground">Attack or probe</dt>
-                    <dd>{ml?.attack_id ?? f.schema_blob.llm?.probe_id ?? "—"}</dd>
-                  </div>
-                  <div>
-                    <dt className="redsim-kicker uppercase tracking-wide text-muted-foreground">First ε</dt>
-                    <dd>{ml?.first_success_eps ?? "—"}</dd>
-                  </div>
-                  <div>
-                    <dt className="redsim-kicker uppercase tracking-wide text-muted-foreground">Validation</dt>
-                    <dd>{f.validation_state}</dd>
+                    <dd>{f.schema_blob.ml?.attack_id ?? f.schema_blob.llm?.probe_id ?? "—"}</dd>
                   </div>
                   <div>
                     <dt className="redsim-kicker uppercase tracking-wide text-muted-foreground">Source</dt>
