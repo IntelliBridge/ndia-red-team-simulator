@@ -143,23 +143,40 @@ done
 cat > /etc/caddy/Caddyfile <<EOF
 ${HOSTNAME_FQDN} {
   encode gzip
+  # A deploy restarts uvicorn and next start for a few seconds; hold the
+  # request and retry the upstream instead of answering 502 in that window.
   handle /v1/* {
-    reverse_proxy 127.0.0.1:8000
+    reverse_proxy 127.0.0.1:8000 {
+      lb_try_duration 15s
+      lb_try_interval 250ms
+    }
   }
   handle /health {
-    reverse_proxy 127.0.0.1:8000
+    reverse_proxy 127.0.0.1:8000 {
+      lb_try_duration 15s
+      lb_try_interval 250ms
+    }
   }
   handle /ws/* {
-    reverse_proxy 127.0.0.1:8000
+    reverse_proxy 127.0.0.1:8000 {
+      lb_try_duration 15s
+      lb_try_interval 250ms
+    }
   }
   handle /metrics {
     respond 404
   }
   handle /auth/* {
-    reverse_proxy 127.0.0.1:8080
+    reverse_proxy 127.0.0.1:8080 {
+      lb_try_duration 15s
+      lb_try_interval 250ms
+    }
   }
   handle {
-    reverse_proxy 127.0.0.1:3000
+    reverse_proxy 127.0.0.1:3000 {
+      lb_try_duration 30s
+      lb_try_interval 250ms
+    }
   }
 }
 EOF
