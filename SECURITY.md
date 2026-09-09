@@ -246,11 +246,11 @@ module already runs its top-level code. Only run vetted, signed plugins with
 ## ML vertical boundaries
 
 These rules come from sections 9, 11, 14 and 21 of the product spec and the
-project brief. The first three are enforced on `main` today, the rest are
-specified for the code in the open ML PRs and the WS4 routes and must hold
-before those merge.
+project brief. Every rule below is enforced on `main` (the ML vertical landed
+through the Phase A completion waves and Phase B waves B0 to B3, 2026-09-09).
+The tests named here are the evidence. Re-run them before quoting them.
 
-Enforced on `main`:
+Platform boundaries:
 
 - **The API process never loads a model or imports an ML library.**
   `tests/test_api_process_has_no_ml.py` builds the app with `torch`,
@@ -259,23 +259,37 @@ Enforced on `main`:
   installs `.[api,worker]` without the `ml` extra. Only the worker image
   carries torch, ART, onnxruntime and SHAP.
 - **No pentest execution path remains.** `POST /v1/scans` is unmounted, the
-  scanner roster is empty, and `redsim scan` exits non-zero instead of
-  writing an empty findings file.
+  scanner roster holds only the `ml-campaign` adapter, and `redsim scan`
+  exits non-zero instead of writing an empty findings file.
 - **Open data only.** Every dataset is open, unclassified and publicly
-  licensed (spec section 11). There is no dataset upload path in Phase A, no
-  connection to any operational or mission data source, and no fixture is
-  ever presented as a result.
+  licensed (spec section 11). There is no connection to any operational or
+  mission data source, and no fixture is ever presented as a result. The
+  Phase B wave B3 consumed-dataset path (`POST /v1/datasets`) accepts Parquet
+  plus a Croissant manifest with a declared licence, refuses remote
+  references, and parses the files only in the sandbox child.
 
-Specified for the ML code (PR #8, #9 and WS4):
+ML sandbox and upload rules (`redsim/ml/sandbox.py`,
+`redsim/ml/sandbox_worker.py`, `redsim/api/v1/models.py`,
+`redsim/workers/tasks/ml_model.py`):
 
-- **Uploaded models are loaded only on the worker inside a sandboxed child
-  process** (`redsim/ml/sandbox.py`, `redsim/ml/sandbox_worker.py`), built on
-  the plugin sandbox primitives: separate process, rlimits, wall-clock kill,
-  minimal environment, no network configuration, no switch to run
-  in-process. The parent populates a per-job work directory with the
-  digest-checked model file and the evaluation slice. The child never reaches
-  S3, Postgres, Redis or the dataset source. Bundled models take the same
-  path on every run.
+- **Models are loaded only on the worker inside a sandboxed child process.**
+  `redsim.ml.sandbox.run_campaign_sandboxed` spawns
+  `python -m redsim.ml.sandbox_worker` in its own process group. The typed
+  `MlSandboxConfig` (from `REDSIM_ML_SANDBOX_*`) sets the parent's wall clock
+  (1200 s), `RLIMIT_CPU` (900 s), `RLIMIT_AS` (4096 MB), `RLIMIT_FSIZE`
+  (1024 MB) and the thread pins (2). The child environment is the interpreter
+  allowlist plus `MPLBACKEND=Agg`, the offline HF flags and four `REDSIM_*`
+  names only: `REDSIM_ML_ASSETS_DIR`, `REDSIM_PLUGINS`, `REDSIM_ENV_FILE`
+  pinned to an absent file and `REDSIM_DISABLE_LLM=1`. Every secret-bearing,
+  cloud, Pythia and proxy variable is removed, and the child receives no
+  network configuration. A timeout or cancel kills the process group. There
+  is no switch to run in process. The parent populates a per-job work
+  directory (mode 0700) with the digest-checked model file and the
+  evaluation slice. The child never reaches S3, Postgres, Redis or the
+  dataset source, and an endpoint target is reached only through the parent's
+  broker socket. Bundled models take the same path on every run
+  (`tests/test_ml_sandbox.py`, `tests/ml/test_sandbox_loader.py`,
+  `tests/test_api_process_has_no_ml.py`).
 - **Accepted formats are ONNX and pickle-free state dicts only.** ONNX is
   preferred (`onnx.checker` plus an onnxruntime session without custom-op
   libraries, `onnx2torch` for gradients). PyTorch `state_dict` uploads are
@@ -322,12 +336,38 @@ Specified for the ML code (PR #8, #9 and WS4):
 
 ## Known gaps (tracked)
 
-- Kernel-level (microVM) isolation for model loading and attack runs. The
+Current on 2026-09-09.
+
+- **Kernel-level (microVM) isolation** for model loading and attack runs. The
   gVisor `RuntimeClass` for worker pods exists in the Helm chart. The plugin
-  sandbox and the planned ML sandbox child are process isolation plus rlimits,
-  not a network or filesystem jail, and ECS Fargate has no gVisor equivalent.
-- The ML sandbox child, the upload route and the refusal paths above are not
-  on `main` yet (open PRs and WS4).
+  sandbox and the ML sandbox child (`redsim/ml/sandbox.py`) are process
+  isolation plus rlimits: a separate process group, `RLIMIT_CPU`,
+  `RLIMIT_AS`, `RLIMIT_FSIZE`, a wall-clock kill and an allowlisted
+  environment. Neither is a network namespace or a filesystem jail. The
+  child is never handed network configuration, but nothing stops a process
+  that already has a socket API from opening one. ECS Fargate has no gVisor
+  equivalent.
+- **Next.js advisories baselined in `.trivyignore`.** The web app pins
+  `next@14.2.35`. Every fix below lands only on the Next 15.x or 16.x line,
+  so the twelve ids are ignored in the `deps` CI job until the tracked Next
+  14 to 15 (or 16 plus React 19, dependabot PR #15) upgrade is done as a
+  tested frontend migration. The web UI is an auth-gated internal admin
+  surface, which lowers exposure but does not remove it. Ids: `CVE-2026-44573`
+  (information disclosure via middleware), `CVE-2026-44578` (SSRF),
+  `GHSA-8h8q-6873-q5fj` (Server Actions DoS), `GHSA-h25m-26qc-wcjf` (request
+  deserialisation DoS), `GHSA-q4gf-8mx6-v5v3` (Server Components DoS),
+  `CVE-2026-64641` (App Router DoS), `CVE-2026-64645` (SSRF),
+  `CVE-2026-64649` (SSRF via host redirection in Server Actions),
+  `CVE-2026-75604` and its alias `GHSA-2xp9-vwfh-vxw4` (unauthenticated RCE
+  in the Image Optimization API on Windows-hosted servers, not reachable from
+  the Linux `deploy/Dockerfile.web` image), and the two `postcss@8.4.31` ids
+  `CVE-2026-45623` (information disclosure or DoS via crafted CSS) and
+  `CVE-2026-73646` (path traversal in source-map loading), which cannot move
+  independently because `next@14.2.35` pins that exact postcss. Remove each
+  id from `.trivyignore` in the upgrade PR.
+- **Audit redaction** blanks keys containing `token` and known key shapes. A
+  JWT pattern for `redsim/audit/redact.py` is an open item (README "Open
+  items").
 - Worker autoscaling and multi-region DR
   ([ADR-0005](docs/adr/0005-worker-autoscaling-and-dr.md)) and Nix
   reproducible builds ([ADR-0008](docs/adr/0008-nix-reproducible-builds.md))
