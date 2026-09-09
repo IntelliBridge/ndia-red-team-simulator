@@ -17,8 +17,12 @@ class Action(str, Enum):
     ``AUTH_PROFILE_MANAGE``, ``AUDIT_VERIFY`` and ``RUN_CANCEL``. The seven
     ``MODEL_REGISTER`` to ``REPORT_EXPORT`` members are the adversarial-ML
     vertical's gates (spec section 7.4); their routes land in M1 to M6. The
-    pentest-era members (agent, fix, tool, ticket) were pruned at M0 with the
-    routes that used them. The table is mirrored verbatim in
+    seven ``LLM_PROBE_RUN`` to ``FINDING_AUTHOR`` members are the Phase B
+    gates (spec 7.4 addendum of 2026-09-09; plan 12 wave B0): their routes
+    answer ``501 not_implemented`` until the wave that builds them, but the
+    gate is checked first so a refusal never leaks whether the route exists.
+    The pentest-era members (agent, fix, tool, ticket) were pruned at M0 with
+    the routes that used them. The table is mirrored verbatim in
     ``deploy/opa/redsim-authz.rego`` and ``deploy/cedar/redsim-policy.cedar``.
     Change all three together: an unknown action fails closed.
     """
@@ -37,6 +41,15 @@ class Action(str, Enum):
     FINDING_REVIEW = "finding.review"
     FINDING_ANNOTATE = "finding.annotate"
     REPORT_EXPORT = "report.export"
+    # Phase B (spec 7.4 addendum, 2026-09-09). Values are the audit action
+    # names of the routes they gate, so a chain row and its gate read alike.
+    LLM_PROBE_RUN = "llm.probe.run"
+    DATASET_REGISTER = "dataset.register"
+    DATASET_EXPORT = "dataset.export"
+    INTEGRATION_PUSH = "integration.push"
+    BATCH_RUN = "batch.run"
+    REPORT_RENDER = "report.render"
+    FINDING_AUTHOR = "finding.author"
 
 
 # ``viewer`` ranks 0: it passes every membership (read) gate and fails every
@@ -69,6 +82,26 @@ _ACTION_MIN_ROLE: dict[Action, str] = {
     Action.FINDING_REVIEW: "approver",
     Action.FINDING_ANNOTATE: "remediator",
     Action.REPORT_EXPORT: "scanner",
+    # --- Phase B ---------------------------------------------------------
+    # A probe run spends LLM budget and sends adversarial text to the
+    # gateway: above ATTACK_RUN's scanner tier, below INTEGRATION_PUSH.
+    # LLM target registration stays TARGET_MANAGE (admin).
+    Action.LLM_PROBE_RUN: "remediator",
+    # Consuming another team's dataset admits untrusted bytes to the sandbox
+    # child: parity with MODEL_REGISTER.
+    Action.DATASET_REGISTER: "remediator",
+    # Exporting a run's adversarial slice is a projection of evidence the
+    # caller can already read: parity with REPORT_EXPORT.
+    Action.DATASET_EXPORT: "scanner",
+    # A push sends data outside the deployment boundary: admin only.
+    Action.INTEGRATION_PUSH: "admin",
+    # A batch is N single-run admissions under one id: same bar as ATTACK_RUN.
+    Action.BATCH_RUN: "scanner",
+    # Re-rendering a report from the immutable record: same bar as export.
+    Action.REPORT_RENDER: "scanner",
+    # Analyst-authored drafts and revisions (review drafts): remediator, like
+    # FINDING_ANNOTATE; the review verdict itself stays FINDING_REVIEW.
+    Action.FINDING_AUTHOR: "remediator",
 }
 
 

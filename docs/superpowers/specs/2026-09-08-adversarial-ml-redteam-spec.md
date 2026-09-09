@@ -771,6 +771,18 @@ Columns show the William role, its redsim role in parentheses, and the concrete 
 
 Existing members reused unchanged: `VERIFY_REPLAY` (`remediator`), `RUN_CANCEL` (`remediator`), `TARGET_MANAGE` (`admin`), `AUTH_PROFILE_MANAGE` (`admin`), `AUDIT_VERIFY` (`admin`). Members with no ML caller (`AGENT_RUN`, `AGENT_EXECUTE`, `FIX_GENERATE`, `FIX_APPLY`, `TOOL_INVOKE`, `TICKET_SYNC`) are pruned at M0 together with the routes that used them (section 17.1). Because `StaticPolicyEngine` reads `_ACTION_MIN_ROLE`, and the OPA/Cedar engines receive `action` as a string, the new values need a table row and, for external engines, a policy entry; an unknown action fails closed.
 
+**7.4 addendum (Phase B, 2026-09-09).** Seven `Action` members added by plan 12 wave B0 (`actions-and-codes` track) for the Phase B routes of 17.4 and sections 21, 25 and 27 and the bulk operations of plan 12. Each is a table row in `redsim/api/policy.py`, a row in `deploy/opa/redsim-authz.rego` and a permit in `deploy/cedar/redsim-policy.cedar`, changed together (`tests/test_policy_ml_actions.py` parses both mirrors). The gate is checked before the route answers, so while a route is still `501 not_implemented` a caller below the bar gets `403`, never a hint that the route exists. Values are the audit action names of the routes they gate.
+
+| `Action` | value | min role | Notes |
+|---|---|---|---|
+| `LLM_PROBE_RUN` | `llm.probe.run` | `remediator` | `POST /v1/models/{id}/probes`: spends LLM budget and sends adversarial text to the gateway, above `ATTACK_RUN`'s scanner tier; LLM target registration stays `TARGET_MANAGE` (admin) (LLM-25) |
+| `DATASET_REGISTER` | `dataset.register` | `remediator` | consume side, `POST /v1/datasets`: admits untrusted bytes to the sandbox child, parity with `MODEL_REGISTER` (INTEROP-02, 27.4) |
+| `DATASET_EXPORT` | `dataset.export` | `scanner` | `POST /v1/runs/{id}/dataset`: a projection of evidence the caller can already read, parity with `REPORT_EXPORT`. Plan 12's brief sets scanner; INTEROP-02 and the 17.4 table above wrote remediator; the code follows the plan and this row records the divergence |
+| `INTEGRATION_PUSH` | `integration.push` | `admin` | Foundry push (27.3): sends data outside the deployment boundary |
+| `BATCH_RUN` | `batch.run` | `scanner` | `POST /v1/campaigns/batch`: N single-run admissions under one batch id, same bar as `ATTACK_RUN` |
+| `REPORT_RENDER` | `report.render` | `scanner` | `POST /v1/runs/{id}/report/render`: re-renders from the immutable record, same bar as `REPORT_EXPORT` (REVIEW_REPORTS-21) |
+| `FINDING_AUTHOR` | `finding.author` | `remediator` | analyst drafts and revisions (REVIEW_REPORTS-05); the verdict stays `FINDING_REVIEW` (approver) |
+
 ### 7.5 Read-side rules
 
 - Every ML read route resolves the resource's `project_id` first and calls `ensure_project_access` (single resource) or filters by `accessible_project_ids` (lists). `404` for an unknown id, `403` for no membership; the `403` body never reveals whether the id exists in another project.
@@ -2057,6 +2069,34 @@ New `Action` members added to `redsim/api/policy.py` are those of section 7.4: `
 | `not_implemented` | 501 | Endpoint connector, text / detection / LLM modalities, Phase B attacks, garak, explain on an unsupported modality. Always carries `phase`. |
 | `queue_unavailable` | 503 | Celery broker unreachable at enqueue. |
 | `db_unavailable` (string detail) | 503 | `REDSIM_DB_URL` missing (existing `RuntimeError` mapping). |
+
+**17.3 addendum (Phase B, 2026-09-09).** Codes added by plan 12 wave B0 (`actions-and-codes` track) for the Phase B routes of 17.4 and sections 21, 25 and 27 and the bulk operations of plan 12. Same envelope, same rules as the table above: emitted only through `redsim/api/errors.py`, never as inline strings, and `tests/ml/test_error_codes.py` parses this table too, so a code lives here or it does not exist. Worker-side refusals stay job and target states (`refused` with `refusal_reason`), never HTTP codes. Two notes: `capacity_deferred` is not a refusal but a marker carried in the body of a `202` JobHandle when a run is admitted and its dispatch waits on project capacity (`ApiError` and `api_error` refuse to raise it); `license_required` was already emitted by the upload route and named by the 17.4 dataset row, and now has its table row. Where the register of 2026-09-09 spelled a code differently, the table name wins: `project_run_budget_exceeded` is `daily_budget_exceeded`, `export_blocked_pending_d006` and `dataset_not_exported` are `export_unavailable` (with `reason`), `integration_not_configured` is `integration_disabled`.
+
+| Code | HTTP | Raised when |
+|---|---|---|
+| `capacity_deferred` (202 marker, not a refusal) | 202 | A single-run or batch admission is accepted while the project's concurrent-run cap (`REDSIM_ML_MAX_CONCURRENT_RUNS_PER_PROJECT`) is reached; the JobHandle body carries it and the dispatcher starts the run when capacity frees. |
+| `endpoint_not_allowlisted` | 403 | Endpoint registration or an LLM probe names a host that fails `config.target_allowlist`; written after the `success=False` audit row with `allowlist_check: fail`. |
+| `egress_refused` | 403 | The egress policy of section 21 refuses the request for a reason other than the allowlist: private, link-local or loopback address without `REDSIM_ML_ENDPOINT_ALLOW_LOOPBACK`, or a redirect off the registered host. |
+| `snapshot_not_found` | 404 | Unknown report snapshot id, or a snapshot of a run the caller has no membership on. |
+| `llm_target_required` | 409 | `POST /v1/models/{id}/probes` on a target that is not an `endpoint_kind: llm` endpoint; `/attacks`, `/explain` and `/compare` on an LLM target refuse with the same code, because probe results never enter an MRI. |
+| `export_in_flight` | 409 | `POST /v1/runs/{id}/dataset` while a `dataset.export` job for the run is queued or running (one export per run, 27.1). |
+| `export_unavailable` | 409 | The run exists but no export can be served: never exported, the export failed, or an imagery export is held in the artifacts bucket pending the redistribution decision (INTEROP-34); `reason` names which. |
+| `resolution_blocked` | 409 | Review decision `resolve` with at least one unmet condition (`poc_passed`, `status: fixed`, `confirmed`, equal `settings_hash`, independent reviewer); the envelope carries `unmet: [...]` (REVIEW_REPORTS-04). |
+| `review_transition_invalid` | 409 | A review decision the transition table over the widened `ReviewState` does not allow from the finding's current state; the envelope names `from` and `decision`. |
+| `dataset_too_large` | 413 | Dataset upload exceeds `REDSIM_ML_DATASET_UPLOAD_MAX_MB`, checked from `Content-Length` before any byte reaches the blob store. |
+| `unsupported_dataset_format` | 415 | Declared or detected dataset format outside Croissant JSON-LD plus Parquet, or Parquet alone (27.1; Parquet magic `PAR1`). |
+| `endpoint_url_invalid` | 422 | Endpoint URL is not `https` (plaintext `http` only for loopback or allowlisted literal-IP hosts), or carries userinfo, a query string or a fragment (section 21). |
+| `auth_profile_kind_unsupported` | 422 | The referenced `AuthProfile` kind cannot be sent to an inference endpoint: only `bearer` and `header` are; `form` and `cookie` are refused. |
+| `endpoint_schema_mismatch` | 422 | A synchronous endpoint call made on the caller's behalf answered outside the `redsim-predict-proba/1` contract (shape, class count, dtype); the same condition inside validate or a campaign is the target's `refusal_reason`, not an HTTP code. |
+| `probe_set_unknown` | 422 | `POST /v1/models/{id}/probes` names a probe set that `GET /v1/llm/probes` does not list. |
+| `license_required` | 422 | Model upload or dataset registration without a `license_statement` (11.1: no license statement, no registration). |
+| `remote_reference_refused` | 422 | A Croissant `contentUrl` or distribution entry points outside the upload (27.1). |
+| `schema_undeclared` | 422 | Dataset registration without the feature or image schema and class names declared. |
+| `batch_modality_mismatch` | 422 | A batch names targets of more than one modality; the envelope carries `groups: {modality: [target ids]}` so the client resubmits one batch per modality (BULK-04). |
+| `batch_too_large` | 422 | A batch names more targets than `REDSIM_ML_BATCH_MAX_MEMBERS`. |
+| `daily_budget_exceeded` | 429 | The project's daily run budget (`REDSIM_ML_PROJECT_DAILY_RUN_BUDGET`, `attack.run` plus `verify.replay` since UTC midnight) is spent; structured detail with `budget`, `used`, `resets_at` and a `Retry-After` header, after the `success=False` admission row. A batch is refused whole. |
+| `integration_disabled` | 501 | An integration route (`POST /v1/integrations/{name}/push`) whose integration is not enabled in this deployment; carries `integration`. Off by default (27.3). |
+| `endpoint_unreachable` | 502 | A synchronous endpoint call made on the caller's behalf got no answer within `REDSIM_ML_ENDPOINT_TIMEOUT_S`; the same condition inside validate or a campaign is the target's `refusal_reason` or the job's failure, not an HTTP code. |
 
 ### 17.4 Phase B routes (named so the UI can show them honestly)
 
