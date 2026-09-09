@@ -58,9 +58,27 @@ fi
 # system or the lockfile changed, or when no build exists yet. redsim-run web
 # supplies the build-time environment (NEXT_PUBLIC_REDSIM_API_URL and the Better
 # Auth values env.js validates) exactly as the running server sees it.
+#
+# The build runs in place while the previous `next start` keeps serving, and
+# the unit restarts only afterwards. REDSIM_WEB_INPLACE_BUILD=1 tells
+# next.config.mjs not to empty .next first: the default wipe removed the old
+# content-hashed CSS and chunk files the running server's HTML still pointed
+# at, so every page rendered unstyled for the whole build (a 200 on /login,
+# which the health check below cannot tell from a styled one). The generated
+# .next/types are cleared by hand because a route deleted in this push would
+# leave a stale type file there and fail the build's type check. A --build
+# rebuild wipes the directory outright, with the unit stopped, so stale files
+# from many in-place builds do not accumulate forever.
 if [ "$BUILD" = 1 ] || grep -qE '^(web/|packages/design-system/|pnpm-lock.yaml)' <<<"$changed" || [ ! -f "$SRC/web/.next/BUILD_ID" ]; then
-  echo "web changed or no build present: next build"
-  sudo -u redsim env HOME=/var/lib/redsim COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true /usr/local/bin/redsim-run web pnpm --filter @redsim/web build
+  if [ "$BUILD" = 1 ]; then
+    echo "--build: stopping the web unit and wiping the previous build"
+    systemctl stop redsim-web
+    sudo -u redsim rm -rf "$SRC/web/.next"
+  else
+    echo "web changed or no build present: next build (in place, keeping the served assets)"
+    sudo -u redsim rm -rf "$SRC/web/.next/types"
+  fi
+  sudo -u redsim env HOME=/var/lib/redsim COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true REDSIM_WEB_INPLACE_BUILD=1 /usr/local/bin/redsim-run web pnpm --filter @redsim/web build
   restart_web=1
 fi
 if grep -qE '^deploy/ec2/native/systemd/' <<<"$changed"; then
