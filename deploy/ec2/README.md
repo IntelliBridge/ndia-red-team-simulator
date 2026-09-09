@@ -62,6 +62,16 @@ ssh -i ~/.ssh/redsim-ec2.pem ubuntu@100.61.75.31          # from the operator IP
 
 `deploy-aws.yml` (the ECR image build) is manual only and not part of any deploy.
 
+## Tenant rows
+
+Project memberships are token claims, not rows, but the `default` project
+and its organisation `org-default` must exist as rows for any audited write
+(`audit_events.project_id` is a foreign key). `redsim-deploy` runs
+`deploy/runtime/scripts/seed_project.py org-default default Default` through
+`redsim-run api` on every deploy; it creates the two rows once and reports
+them present afterwards. Bundled model registration stays a separate step
+(`redsim ml seed --project default`, needs the asset bundle).
+
 ## Environment
 
 Non-secret values: `/opt/redsim/env/{common,web,identity}.env`, written by
