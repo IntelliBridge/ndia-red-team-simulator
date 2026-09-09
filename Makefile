@@ -177,6 +177,13 @@ check-phase-b:
 smoke-live:
 	scripts/smoke_live.sh
 
+# Deploy the current origin/main (or REF=<ref>) from source on the EC2 host
+# over SSM, without waiting for GitHub Actions. Needs the hackathon AWS
+# profile in the environment (deploy/ec2/README.md).
+deploy-host:
+	aws ssm send-command --instance-ids $${EC2_INSTANCE_ID:-i-0cc7eb0ee0880ea3b} --document-name AWS-RunShellScript \
+	  --parameters 'commands=["sudo /usr/local/bin/redsim-deploy $(or $(REF),main)"]' --query Command.CommandId --output text
+
 # ---------------------------------------------------------------------
 # Full stack (docker compose)
 # ---------------------------------------------------------------------
@@ -223,7 +230,7 @@ docs-build-strict:
 docs-clean:
 	rm -rf site/
 
-.PHONY: install require-install smoke-live \
+.PHONY: install require-install smoke-live deploy-host \
 	dev dev-api dev-web dev-worker \
 	test test-cov \
 	lint lint-py lint-web \
