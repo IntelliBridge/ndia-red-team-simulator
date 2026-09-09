@@ -204,6 +204,21 @@ describe("/models", () => {
     expect(names()).toEqual(["Vehicles", "URL trees", "Upload"]);
   });
 
+  it("says when a numeric sort has too few values to reorder the rows", () => {
+    catalog();
+    render(createElement(ModelsPage));
+    expect(screen.queryByTestId("sort-coverage")).toBeNull();
+    fireEvent.change(screen.getByLabelText("sort"), { target: { value: "clean_accuracy:desc" } });
+    expect(screen.getByTestId("sort-coverage").textContent).toBe(
+      "Clean accuracy is known for 2 of 3 models. Rows without one follow in name order. The asset manifest records it.",
+    );
+    // Filter down to the one row without a metric: the note says nothing can move.
+    fireEvent.change(screen.getByLabelText("status"), { target: { value: "refused" } });
+    expect(screen.getByTestId("sort-coverage").textContent).toMatch(/^Clean accuracy is known for 0 of 1 model\. Nothing to order yet/);
+    fireEvent.change(screen.getByLabelText("sort"), { target: { value: "name:asc" } });
+    expect(screen.queryByTestId("sort-coverage")).toBeNull();
+  });
+
   it("sorts the list view from its column headers", () => {
     catalog();
     localStorage.setItem("redsim_models_view", "list");
