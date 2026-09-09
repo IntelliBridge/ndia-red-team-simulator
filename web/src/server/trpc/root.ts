@@ -1,6 +1,7 @@
 import "server-only";
 
 import { router } from "./init";
+import { exportsRouter } from "./routers/exports";
 import { runsRouter } from "./routers/runs";
 
 /**
@@ -11,6 +12,7 @@ import { runsRouter } from "./routers/runs";
  */
 export const appRouter = router({
   runs: runsRouter,
+  exports: exportsRouter,
 });
 
 export type AppRouter = typeof appRouter;

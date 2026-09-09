@@ -18,6 +18,7 @@ from redsim.api.v1 import (
     compare,
     datasets,
     defenses,
+    exports,
     findings,
     health,
     integrations,
@@ -123,6 +124,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(findings.router, prefix="/v1")
     app.include_router(audit.router, prefix="/v1")
     app.include_router(reports.router, prefix="/v1")
+    app.include_router(exports.router, prefix="/v1")
     app.include_router(scanners.router, prefix="/v1")
     app.include_router(verify.router, prefix="/v1")
     app.include_router(targets.router, prefix="/v1")

@@ -46,8 +46,7 @@ def main(argv: list[str]) -> int:
     env.update(read_env_file(ENV_DIR / ("common.env" if service in PYTHON_SERVICES else f"{service}.env")))
     # Committed, non-secret overrides (capacity caps and the like) so an operator
     # changes them with a merge to main instead of a hand edit on the host.
-    if service in PYTHON_SERVICES:
-        env.update(read_env_file(Path("/opt/redsim/src/deploy/ec2/native/host.env")))
+    env.update(read_env_file(Path("/opt/redsim/src/deploy/ec2/native/host.env")))
     for name in ([service] + (["pythia"] if service in PYTHON_SERVICES else [])):
         path = ENV_DIR / f"{name}.json"
         if path.is_file():

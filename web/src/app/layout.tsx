@@ -2,6 +2,7 @@ import "@/styles/globals.css";
 
 import { CommandPalette } from "@/components/command-palette";
 import { NavLinks } from "@/components/nav-links";
+import { SessionKeepalive } from "@/components/session-keepalive";
 import { env } from "@/env";
 import { TRPCReactProvider } from "@/lib/trpc/client";
 
@@ -29,6 +30,7 @@ const NAV_LINKS: { href: string; label: string }[] = [
   { href: "/runs", label: "Runs" },
   { href: "/tests", label: "Tests" },
   { href: "/findings", label: "Findings" },
+  { href: "/exports", label: "Exports" },
   { href: "/audit", label: "Audit" },
 ];
 
@@ -119,6 +121,7 @@ export default function RootLayout({
             </footer>
           </main>
           <CommandPalette links={NAV_LINKS} />
+          <SessionKeepalive />
         </TRPCReactProvider>
       </body>
     </html>
