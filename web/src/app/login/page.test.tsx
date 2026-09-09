@@ -17,16 +17,14 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock }),
 }));
 
-// The OIDC button drives Better Auth's Keycloak code flow.
-const socialMock = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/auth-client", () => ({
-  signIn: { social: socialMock },
-}));
+// The branded form posts to /api/auth/login, which runs the Keycloak password
+// grant server-side. The page only ever sees the status and the reason.
+const fetchMock = vi.fn();
 
 beforeEach(() => {
   pushMock.mockReset();
-  socialMock.mockReset();
-  socialMock.mockResolvedValue({ data: {}, error: null });
+  fetchMock.mockReset();
+  vi.stubGlobal("fetch", fetchMock);
   localStorage.clear();
   clearDevTokenCookie();
 });
@@ -34,7 +32,19 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   clearDevTokenCookie();
+  vi.unstubAllGlobals();
 });
+
+/** Fill the organization form and submit it. */
+function submitCredentials(username: string, password: string) {
+  fireEvent.change(screen.getByLabelText("Username or email"), {
+    target: { value: username },
+  });
+  fireEvent.change(screen.getByLabelText("Password"), {
+    target: { value: password },
+  });
+  fireEvent.submit(screen.getByRole("form", { name: "Organization account sign in" }));
+}
 
 /** jsdom keeps one cookie jar per file, so a case has to clear its own. */
 function clearDevTokenCookie() {
@@ -49,47 +59,57 @@ describe("LoginPage", () => {
     expect(input).toBeTruthy();
   });
 
-  it("renders the Keycloak/OIDC sign-in button", () => {
-    render(React.createElement(LoginPage));
-    expect(
-      screen.getByRole("button", { name: "Continue with Keycloak" })
-    ).toBeTruthy();
-  });
-
-  it("clicking Continue with Keycloak starts the keycloak social sign-in for /dashboard", () => {
-    render(React.createElement(LoginPage));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Continue with Keycloak" })
+  it("posts the credentials to /api/auth/login and lands on the dashboard", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, email: "admin@redsim.local" }), { status: 200 }),
     );
-    expect(socialMock).toHaveBeenCalledTimes(1);
-    expect(socialMock).toHaveBeenCalledWith({
-      provider: "keycloak",
-      callbackURL: "/dashboard",
-    });
-    // The OIDC flow does NOT mint a dev bearer token.
+    localStorage.setItem("redsim_token", "dev:stale@redsim.local");
+    render(React.createElement(LoginPage));
+
+    submitCredentials("admin", "correct horse");
+
+    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/dashboard"));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/auth/login");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ username: "admin", password: "correct horse" });
+    // A stale dev bearer would win over the fresh cookie pair in api().
     expect(localStorage.getItem("redsim_token")).toBeNull();
+    expect(localStorage.getItem("redsim_email")).toBe("admin@redsim.local");
   });
 
-  it("re-enables the Keycloak button when sign-in comes back with an error", async () => {
-    socialMock.mockResolvedValue({ data: null, error: { message: "nope" } });
-    render(React.createElement(LoginPage));
-    const button = screen.getByRole("button", {
-      name: "Continue with Keycloak",
-    });
-    fireEvent.click(button);
-    await waitFor(() =>
-      expect((button as HTMLButtonElement).disabled).toBe(false),
+  it("shows the refusal and re-enables the form on a 401", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: "invalid_credentials" }), { status: 401 }),
     );
+    render(React.createElement(LoginPage));
+
+    submitCredentials("admin", "wrong");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("Incorrect username or password.");
+    expect((screen.getByRole("button", { name: "Sign in" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect(pushMock).not.toHaveBeenCalled();
   });
 
-  it("the Keycloak button becomes disabled after being clicked (busy state)", () => {
+  it("explains a missing session key distinctly from a bad password", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: "mint_failed" }), { status: 500 }),
+    );
     render(React.createElement(LoginPage));
-    const button = screen.getByRole("button", {
-      name: "Continue with Keycloak",
-    });
-    expect((button as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(button);
-    expect((button as HTMLButtonElement).disabled).toBe(true);
+
+    submitCredentials("admin", "correct horse");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("no API session key");
+  });
+
+  it("tells a bounced user their session ended", () => {
+    render(React.createElement(LoginPage, { searchParams: { reason: "rejected" } }));
+    expect(screen.getByRole("status").textContent).toContain("Your session ended");
   });
 
   it("updating the email input changes its displayed value", () => {
@@ -107,8 +127,8 @@ describe("LoginPage", () => {
     expect(localStorage.getItem("redsim_email")).toBe("admin@redsim.local");
     expect(pushMock).toHaveBeenCalledWith("/dashboard");
     expect(pushMock).toHaveBeenCalledTimes(1);
-    // The dev path does NOT trigger the OIDC flow.
-    expect(socialMock).not.toHaveBeenCalled();
+    // The dev path never reaches the sign-in route.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("writes the dev-token cookie the tRPC context reads", () => {
