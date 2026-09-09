@@ -1,12 +1,12 @@
 # ML vertical
 
-Status as of 2026-09-08, `main` at `bb43bd7` (waves 1 and 2 of the completion
-plan merged after PR #22). This page describes the adversarial-ML vertical as
-it runs from this tree: the flow from admission to report, the stage table,
-the artifact and audit vocabularies, the verify loop, and the places where the
-tree knowingly departs from the spec. Items from wave 3 of the plan, which is
-landing on `main` in parallel, are marked "(wave 3, landing 2026-09-09)". The
-authoritative design is the
+Status as of 2026-09-09, `main` at `58461cc` (waves 1 to 3 of the completion
+plan merged after PR #22, wave 3 being `7556b22..58461cc`). This page
+describes the adversarial-ML vertical as it runs from this tree: the flow from
+admission to report, the stage table, the artifact and audit vocabularies, the
+verify loop, and the places where the tree knowingly departs from the spec.
+The three end-to-end files of wave 4 are named where they matter and marked
+"added in wave 4". The authoritative design is the
 [product spec](../superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md),
 the coordination plan is the [master plan](../plans/00-master-plan.md), and
 the spec-versus-tree audit that drove the completion waves is the
@@ -38,16 +38,17 @@ routing with budgets, and the Pythia transport.
 
 ## Where things stand
 
-| Piece | State at `bb43bd7` |
+| Piece | State at `58461cc` |
 |---|---|
 | Frozen contracts: `redsim/ml/schema.py`, `redsim/ml/targets/base.py`, `redsim/ml/attacks/base.py`, migration `0010_ml_vertical`, the seven ML `Action` members | on `main`, frozen by P0. `redsim/ml/errors.py` adds the spec 10.6 failure classes (`ModelLoadRefused`, `ArtifactDigestMismatch`, `SandboxTimeout`, `SandboxKilled`, `EnvelopeInvalid`, `DatasetUnavailable`, `MlExtraUnavailable`, `ExplainerUnavailable`), each with a stable `code` |
 | Targets, attacks, eval, scoring, campaign runner, SHAP, rules, narrative writer (`redsim/ml/`) | on `main` (#8, #9, then wave 1 `f8693c2..a99d9cc`). Registered targets `cifar10_smallcnn` (fixture only), `url_trees` (alias `url_classifier`), `vehicles_cnn`, `endpoint_stub`, and attacks `fgsm`, `pgd`, `hopskipjump`, `noise_control`. Loaders read the build-assets manifest shape, ONNX uploads are converted with onnx2torch and their argmax agreement recorded, `pgd` on a tree ensemble runs by surrogate transfer with per-feature ε scaling and an ART mask for frozen features, attacks that cannot run are recorded `not_run` and dropped from the scored set, the robustness curve is rendered to PNG, the control check is a binomial predicate, an image target without a torch module falls back to `PartitionExplainer`, explanations are cached per (model, sample, attack, ε, explainer, seed), and the report renderer writes the six sections of spec 14.8 |
 | Sandbox child (`redsim/ml/sandbox.py`, `redsim/ml/sandbox_worker.py`) | on `main`. Typed `MlSandboxConfig` from `REDSIM_ML_SANDBOX_*`, per-job work directory, typed result envelope, `SandboxTimeout` / `SandboxKilled` / `EnvelopeInvalid` distinct from a model refusal |
 | Worker (`redsim.ml_campaign_run`, `redsim.ml_model_validate`, ML branch of `redsim.report_render`) | on `main` (wave 2 `055bdee..bb43bd7`). Spec 10.5 audit vocabulary, spec 6.5 stage table, Pythia narrative in the worker parent, typed validate envelope with a parent-side digest check, observability init, stage spans and the run roll-up in the reaper |
 | API admission and routes | on `main` (#22, then wave 2). Every ML route of spec 17.2 is mounted and uses the spec 17.3 codes from `redsim/api/errors.py`. See the [API reference](../api/v1.md) |
-| Offline CLI `redsim ml attack`, `redsim ml seed`, the `ml-campaign` scanner adapter, `redsim.ml.attacks` plugin discovery, the `tests/e2e` harness, the Pythia-centred `redsim doctor`, Pythia-only `redsim.yaml` and `.env.example` | wave 3, landing 2026-09-09. Not in this tree: `redsim ml` has `build-assets` only, `GET /v1/scanners` is empty, `tests/e2e/` holds an `__init__.py`, and `redsim doctor` still derives a provider key from `redsim.yaml` |
+| Offline CLI `redsim ml attack`, `redsim ml seed`, the `ml-campaign` scanner adapter, `redsim.ml.attacks` plugin discovery, the `tests/e2e` harness, the Pythia-centred `redsim doctor`, Pythia-only `redsim.yaml` and `.env.example` | on `main` (wave 3, `7556b22..58461cc`). `redsim ml` has `build-assets`, `attack` and `seed` (`3ab9de7`, `98a8733`), `GET /v1/scanners` lists `ml-campaign` (`3ab9de7`), `GET /v1/attacks` loads plugins and reports them under `plugins` (`c3868e5`), `tests/e2e/` holds the harness and the 8-case smoke file (`35e71c7`, `a45a787`), `redsim doctor` checks no provider key and gained `--worker-mode` (`7556b22`, `c3868e5`), audit timestamps are canonical and `audit verify` has `--run-dir` (`aa9674e`), admission strips grid-owned params and decides by capability tag (`dd2bbd4`) and admits PGD by surrogate on tabular (`58461cc`), the sandbox child is pinned to an absent `.env` with `REDSIM_DISABLE_LLM=1` (`c3868e5`), `resnet18` has the `39126ce` fine-tune recipe |
+| End-to-end completion criteria: `tests/e2e/test_ml_campaigns.py`, `tests/e2e/test_ml_verify_upload_reports.py`, `tests/e2e/test_ml_governance.py` | added in wave 4, being written in parallel with this page on the wave-3 harness. They are the evidence the README's test section points at, and are not claimed until they are on `main` |
 | Web pages `/models`, `/models/[id]`, MRI panels on `/runs/[id]`, three-pane `/findings/[id]` | on `main` (#16). #22 aligned the web contract with the mounted routes. Wiring beyond that alignment and the Playwright browser e2e are excluded from this completion pass |
-| ECS Fargate deployment | Terraform foundation only (#19, `deploy/terraform/`). Applying it, Helm and compose operations are excluded from this completion pass |
+| ECS Fargate deployment | Terraform foundation on `main` (#19, `deploy/terraform/`), nothing applied from this tree. Open PR #23 (`feat/p7-fargate-runtime`) adds a runtime its author reports applied at https://redsim.ndia.agiledefense.xyz with workers at zero, demo users and real assets outstanding. Applying, Helm and compose operations are excluded from this completion pass |
 
 The bundled assets were built locally with `redsim ml build-assets` on
 2026-09-09. They are gitignored under `assets/`, so a fresh clone builds its
@@ -57,18 +58,22 @@ manifest, not results and not product claims:
 | Asset | Recipe | Clean accuracy (illustrative, local build) |
 |---|---|---|
 | `url_trees` | scikit-learn `HistGradientBoosting` on lexical URL features, with a build-time PGD surrogate | 0.9087 on `n = 128224` (Kaggle malicious-URLs eval split), surrogate clean agreement 0.7891 |
-| `vehicles_cnn` | `resnet18`, ImageNet initialisation from the local torch hub cache, fine-tune at lr 3e-4 with cosine decay, flip and crop augmentation, best epoch by a 10 percent validation slice held out of the training split | 0.7687 on `n = 1621` (`test_coarse`). The earlier `small_cnn` recipe reached 0.5151 on the same split |
+| `vehicles_cnn` | `resnet18` with the `39126ce` recipe: ImageNet initialisation from the local torch hub cache, fine-tune at lr 3e-4 with cosine decay, random flip and reflect-pad crop augmentation, best epoch by a per-class 10 percent validation slice held out of the training split, so the evaluation split is never used for selection | 0.7687 on `n = 1621` (`test_coarse`). The earlier `small_cnn` recipe reached 0.5151 on the same split |
 | `cifar10_smallcnn` | `small_cnn`, CI fixture only, never a demo target | 0.6872 on the CIFAR-10 test split |
 
 ## Orchestration
 
-One API-launched campaign is one job. The flow at `bb43bd7`:
+One API-launched campaign is one job. The flow at `58461cc`:
 
 1. **Admission** (`POST /v1/models/{id}/attacks`, `redsim/services/ml_campaigns.py::create_attack_campaign`).
    The route checks membership and `attack.run`. The service resolves the
    target (status must be `available`), fills defaults (norm `linf`, the
    default ε grid for the norm, `reference_eps`, the dataset the manifest
-   binds), validates every attack against the registry, freezes a
+   binds), validates every attack against the registry (applicability by
+   the adapter's `modality:<domain>` capability tag, the gradients check
+   waived for a `surrogate_transfer` adapter on a target with a declared
+   surrogate, the grid-owned `eps` and `norm_l2` stripped so that only the
+   caller's keys are frozen into `attack_params`), freezes a
    `CampaignConfig` with the target snapshot and the attack infos, and
    computes `settings_hash`. Every refusal is an `ApiError` with a spec 17.3
    code and writes an `attack.run` audit row with `success=False`.
@@ -97,9 +102,11 @@ One API-launched campaign is one job. The flow at `bb43bd7`:
    0700 work directory under `REDSIM_ML_WORK_DIR/<job_id>`. The child
    environment is built from an empty dict: the interpreter allowlist plus
    `PYTHONHASHSEED = config.seed`, thread caps, `MPLBACKEND=Agg`, the
-   Hugging Face offline flags and `REDSIM_ML_ASSETS_DIR`. No `REDSIM_*`
-   secret, no `PYTHIA_*` value and no proxy variable reaches it, and the child
-   scrubs the LLM variables again itself. Bundled targets load from the asset
+   Hugging Face offline flags, `REDSIM_ML_ASSETS_DIR`, `REDSIM_ENV_FILE`
+   pinned to the absent `<work_dir>/no-env` and `REDSIM_DISABLE_LLM=1`
+   (`c3868e5`). No `REDSIM_*` secret, no `PYTHIA_*` value and no proxy
+   variable reaches it, the child cannot fall back to a checkout's `.env`,
+   and it scrubs the LLM variables again itself. Bundled targets load from the asset
    tree. An uploaded model is materialised from the blob store by the parent,
    which re-checks its sha256 against the registered manifest before the
    child starts. The child runs `redsim.ml.campaign.run_campaign`, reports
@@ -157,14 +164,16 @@ sandbox child (`validate_model_sandboxed`), and moves the target to
 carrying format, status, gradients, ONNX agreement and library versions, a
 `validation_report.json` artifact and `job.complete`.
 
-The offline path (wave 3, landing 2026-09-09) runs the same
-`run_campaign_sandboxed` from `redsim ml attack <target_id>` without the
-database: the `attack.run` row goes first to a `JsonlAuditWriter` at
-`<out>/<run_id>/audit.jsonl` (chain `run:<run_id>`), then `run_record.json`,
-`report.md/json/html` and the curve land under `<out>/<run_id>/`, stage
-events and `job.complete` join the same chain, `llm_narrative` stays off and
-the command prints `narrative_source=rules`. `endpoint_stub` and fixture-only
-targets are refused before anything is written.
+The offline path (`redsim ml attack <target_id>`, `3ab9de7`) runs the same
+`run_campaign_sandboxed` without the database: the `attack.run` row goes
+first to a `JsonlAuditWriter` at `<out>/<run_id>/audit.jsonl` (chain
+`run:<run_id>`), then `run_record.json`, `report.md/json/html` and the curve
+land under `<out>/<run_id>/`, stage events and `job.complete` join the same
+chain, `llm_narrative` stays off and the command prints
+`narrative_source=rules`. `endpoint_stub` and fixture-only targets are
+refused before anything is written. `redsim audit verify --run <run_id>`
+finds that chain through the `<output_dir>/<run_id>/audit.jsonl` fallback,
+or `--run-dir <out>/<run_id>` names it (`aa9674e`).
 
 ## Stages and the stage table
 
@@ -516,10 +525,17 @@ silently reinterpreted elsewhere.
 
 Excluded from this completion pass and listed in the README as open: web UI
 wiring beyond the #22 contract alignment, the Playwright browser e2e, applying
-the Fargate Terraform, Helm and compose operations, Phase B (garak via Pythia,
-the endpoint connector, interoperability B2), the fallback datasets, and every
-spec 26 criterion that needs a named human reviewer (26.18 upload sign-off,
-26.25 to 26.27 checklists and approvals, and decisions D006 and D007 stay open).
+the Fargate Terraform, Helm and compose operations from this tree (open PR
+#23 carries a runtime applied by its author, with the pinned asset bundle,
+demo users and memberships and automatic rollout still outstanding), Phase B
+(garak via Pythia, the endpoint connector, interoperability B2), the fallback
+datasets, and every spec 26 criterion that needs a named human reviewer
+(26.18 upload sign-off, 26.25 to 26.27 checklists and approvals, and
+decisions D006 and D007 stay open). CI on `main` is red at `58461cc` on three
+jobs (wave 4 fixes the `python-multipart`, import-cycle and advisory causes
+and records the 3.13 lane's eager torch import as still open), and the three
+wave-4 e2e files are the completion-criteria evidence once they are on
+`main`.
 
 ## Spec index
 

@@ -8,7 +8,7 @@ Every LLM call in redsim goes through `redsim/llm/pythia.py` (decision D5 in
 the product spec). There is no litellm and there are no provider keys anywhere
 in the stack.
 
-Status at `main` `bb43bd7` (2026-09-08): the only consumer is the optional
+Status at `main` `58461cc` (2026-09-09): the only consumer is the optional
 hardening narrative, one plain, non-streaming chat completion per campaign
 with candidate recommendations, fed the rule outputs, the measurements and a
 SHAP text summary. Since wave 2 it runs in the **worker parent** after the
@@ -17,10 +17,10 @@ routed through `redsim.llm.router.route("ml.harden_narrative")` with the
 `DbBudgetChecker`, and metered as one `LLMUsage` row per call. The sandbox
 child never holds the key. When Pythia is not configured the narrative is
 skipped, never faked, and recommendations render from the rule layer alone
-with `narrative_source = "rules"`. Wave 3 (landing 2026-09-09) makes
-`redsim doctor`, `redsim.yaml` and `.env.example` Pythia-only. At `bb43bd7`
-`.env.example` still lists the aegis-era provider keys, which nothing in the
-ML vertical reads.
+with `narrative_source = "rules"`. Since `7556b22` `redsim doctor`,
+`redsim.yaml` and `.env.example` are Pythia-only: no provider key is listed,
+checked or written anywhere, and `PYTHIA_API_KEY` is the only LLM credential
+the tree names.
 
 ## The four environment variables
 
@@ -96,9 +96,11 @@ The sandbox child is built from an empty environment and additionally
 scrubs every `PYTHIA_*` variable and the model variables in-process, so a
 widened allowlist can never turn it into an LLM caller. Because
 `redsim.llm.pythia` falls back to `./.env` and the repo-root `.env` when
-`REDSIM_ENV_FILE` is unset, wave 3 (landing 2026-09-09) additionally pins
-`REDSIM_ENV_FILE` to an absent path and sets `REDSIM_DISABLE_LLM` in the
-child environment.
+`REDSIM_ENV_FILE` is unset, the sandbox parent additionally pins
+`REDSIM_ENV_FILE` to the absent `<work_dir>/no-env` and sets
+`REDSIM_DISABLE_LLM=1` in the child environment (`c3868e5`), and an explicit
+`REDSIM_ENV_FILE` that is not a file means "no `.env`" rather than a fall
+through to `./.env` or the repo root.
 
 ## Corporate proxy (Zscaler) and TLS
 
@@ -181,9 +183,9 @@ The check prints which settings are present (the key as its three-character
 prefix and length only), the TLS mode, `GET /v1/models` (count and ids), and
 one short chat completion with the reply, latency and token usage. It exits 0
 on success and 1 on any failure with a one-line reason. Any accidental echo of
-the key in an error body is scrubbed before printing. The wave 3 `redsim
-doctor` (landing 2026-09-09) prints the same redacted block as an
-informational check that never fails the doctor.
+the key in an error body is scrubbed before printing. `redsim doctor`
+(`7556b22`) prints the same redacted block as an informational check that
+never fails the doctor.
 
 Observed on 2026-09-08 from a laptop behind Zscaler, persona `default`, model
 `pythia/auto` (gateway URL redacted here, it is in `.env`):

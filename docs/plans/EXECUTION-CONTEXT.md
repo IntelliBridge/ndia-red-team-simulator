@@ -3,10 +3,9 @@
 Read this before executing any phase plan in a fresh session. It carries the
 operational facts that are not in the phase files, and the order to read things.
 
-Refreshed 2026-09-08 (night) against `main` at `bb43bd7` (completion waves 1
-and 2 merged). Facts marked "(wave 3, landing 2026-09-09)" come from the wave 3
-writers' reports and are not in that tree. Re-verify them before building on
-them.
+Refreshed 2026-09-09 against `main` at `58461cc` (completion waves 1 to 3
+merged, wave 3 being `7556b22..58461cc`). Items marked "added in wave 4" are
+being written in parallel and are not in that tree yet.
 
 ## Read order
 
@@ -16,16 +15,18 @@ them.
    other source. Sections 10 (job and worker flow, 10.5 audit vocabulary, 10.6
    failure classes), 17.3 (error codes) and 20.3 (environment variables) are
    the ones the tree is measured against most often.
-3. **Master plan** — `docs/plans/00-master-plan.md`. Section 0 (v2.3) records
-   what landed and the six divergences the tree keeps, section 4.1 the
-   workstream and CI status, section 5 the shared contracts, section 8 where
-   the definition of done stands.
+3. **Master plan** — `docs/plans/00-master-plan.md`. Section 0 (v2.3 and
+   v2.4) records what landed and the six divergences the tree keeps, section
+   4.1 the workstream and CI status with the wave-3 shas, section 5 the
+   shared contracts, section 8 where the definition of done stands.
 4. **Gap register** — `docs/plans/09-gap-register-2026-09-08.md`, the
    spec-vs-tree register the completion waves work from. Its header paragraph
    gives the status after waves 1 to 3.
 5. **Your phase file** — `docs/plans/0N-*.md`. `02`–`05` open with a dated
-   Landed status block (what is on `main`, what lands with wave 3, what is
-   open). The bodies below the blocks are the pre-merge plans.
+   Landed status block written at `bb43bd7` (what is on `main`, what lands
+   with wave 3, what is open). Wave 3 is on `main` since `58461cc`, so read
+   those wave-3 items as landed. The bodies below the blocks are the
+   pre-merge plans.
 6. **Feature detail** — `specs/F001`-`F008` (`spec.md`, `plan.md`, `tasks.md`).
    Where a feature file conflicts with the canonical spec, the spec wins.
 7. **The code you will touch** — `redsim/ml/`, `redsim/api/v1/`, `redsim/workers/`,
@@ -81,7 +82,7 @@ them.
 
 ## CLI surface
 
-On `main` at `bb43bd7` (`redsim/cli/main.py`):
+On `main` at `58461cc` (`redsim/cli/main.py`, `redsim/cli/ml.py`):
 
 - `redsim ml build-assets [--dataset {image,tabular,cifar10,all}] [--only MODEL_ID ...]
   [--epochs N] [--out DIR] [--cache-dir DIR] [--seed N] [--arch {small_cnn,resnet18}]
@@ -92,37 +93,43 @@ On `main` at `bb43bd7` (`redsim/cli/main.py`):
   else the committed CI sample). `--fixture` writes
   `tests/ml/fixtures/cifar10_test_500.npz` and its sidecar from local files
   and downloads nothing. `--cache-dir` wins over `REDSIM_ML_DATASET_CACHE`.
-- `redsim audit verify [--run RUN_ID | --all]` and
-  `redsim audit export [--all | --chain ID]`.
-- `redsim doctor [--api-mode]`, `redsim init`, `redsim status`,
-  `redsim tenants verify`, `redsim plugins list|sign`, `redsim evidence-pack`,
-  `redsim migrate`, and the pentest-era `redsim scan`, `findings`, `verify`,
-  `report`. `redsim scan` and `redsim/cli/api_client.py` still post to the
-  unmounted `/v1/scans` and get 404.
-
-Wave 3, landing 2026-09-09:
-
-- `redsim ml attack <target_id>`: an offline campaign for a bundled target
-  (assets from `REDSIM_ML_ASSETS_DIR` or `./assets`) that writes the
-  `attack.run` audit row first on a `JsonlAuditWriter` chain, runs the
-  sandbox child, and leaves `<out>/<run_id>/{run_record.json, report.md,
-  report.json, report.html, robustness curve, audit.jsonl}`. `endpoint_stub`
-  is refused with `not_implemented` and fixture-only targets with
+- `redsim ml attack <target_id> [--attacks IDS] [--eps GRID] [--reference-eps E]
+  [--n-samples N] [--seed N] [--explain-k K] [--no-control] [--norm linf|l2]
+  [--out DIR] [--assets-dir DIR] [--actor A]` (`3ab9de7`): an offline
+  campaign for a bundled target (assets from `REDSIM_ML_ASSETS_DIR` or
+  `./assets`) that writes the `attack.run` audit row first on a
+  `JsonlAuditWriter` chain, runs the sandbox child, and leaves
+  `<out>/<run_id>/{run_record.json, report.md, report.json, report.html,
+  artifacts/curve/robustness_curve.png, audit.jsonl}`. `endpoint_stub` is
+  refused with `not_implemented` and fixture-only targets with
   `fixture_only` before anything is written. No LLM call offline:
-  `narrative_source = "rules"`. `redsim audit verify --run <run_id>` verifies
-  the chain through the new `--run-dir` fallback.
-- `redsim ml seed [--project ID] [--only MODEL_ID ...]`: registers every
-  non-fixture manifest model through
-  `redsim.services.ml_models.register_bundled_model` and reports registered
-  versus already present.
-- `redsim doctor` in worker mode (`--worker-mode`, or
-  `REDSIM_DOCTOR_WORKER_MODE=1`) treats the `ml` extra, the sandbox child
-  launch and the assets manifest as required. The Pythia block is
-  informational with the key redacted, and no provider key is checked.
+  `narrative_source = "rules"`. `--out` defaults to the config
+  `output_dir`, which is where `redsim audit verify --run <run_id>` looks.
+- `redsim ml seed [--project ID] [--only IDS] [--assets-dir DIR] [--actor A]`
+  (`3ab9de7`, `98a8733`): registers every non-fixture manifest model through
+  `redsim.services.ml_models.register_bundled_model`, one commit per model,
+  and reports registered versus already present. Needs `REDSIM_DB_URL`.
+- `redsim audit verify [--run RUN_ID | --project ID | --all] [--run-dir PATH]`
+  (`aa9674e`): `--run` falls back to `<output_dir>/<run_id>/audit.jsonl`
+  when the primary store has no events for the chain, `--run-dir` names a
+  run directory or `.jsonl` file directly. `redsim audit export
+  [--all | --chain ID]` is unchanged.
+- `redsim doctor [--api-mode] [--worker-mode]` (`7556b22`, `c3868e5`):
+  worker mode (`--worker-mode` or `REDSIM_DOCTOR_WORKER_MODE=1`) treats the
+  `ml` extra, the sandbox child launch and the assets manifest as required.
+  The Pythia block is informational with the key redacted, and no provider
+  key is checked.
+- `redsim init`, `redsim status`, `redsim tenants verify`,
+  `redsim plugins list|sign`, `redsim evidence-pack`, `redsim migrate`, and
+  the pentest-era `redsim scan`, `findings`, `verify`, `report`.
+  `redsim scan --scanner X` exits 1 when no adapter of that name is
+  registered, and `ml-campaign` is the only registered name (`3ab9de7`).
+  `redsim/cli/api_client.py` still posts to the unmounted `/v1/scans` and
+  gets 404.
 
 ## Environment variables (spec 20.3)
 
-Read by code on `main` at `bb43bd7`:
+Read by code on `main` at `58461cc`:
 
 | Variable | Read by | Meaning |
 |---|---|---|
@@ -140,15 +147,16 @@ Read by code on `main` at `bb43bd7`:
 | `REDSIM_ML_EXPLAIN_CACHE` | sandbox child (`redsim/ml/explain/base.py`) | Explanation cache directory. Not in the spec 20.3 table, read by code. |
 | `KAGGLE_API_TOKEN` (or `KAGGLE_USERNAME` / `KAGGLE_KEY`) | `redsim ml build-assets` only | Kaggle download credential. Never on the API, web or steady-state worker. |
 
-`.env.example` at `bb43bd7` documents the four Pythia variables,
-`REDSIM_ML_LLM_MODEL` and `REDSIM_DISABLE_LLM` but none of the `REDSIM_ML_*`
-knobs, and still carries provider-key placeholders (`GOOGLE_API_KEY`,
-`OPENAI_API_KEY` and friends) that nothing in the ML vertical reads.
-`redsim.yaml` still writes a provider-style `model`. Wave 3 (landing
-2026-09-09) replaces both: `.env.example` documents every spec 20.3 variable
-with empty values, drops the provider keys, and adds `REDSIM_ENV_FILE` and
-`KAGGLE_API_TOKEN`. `redsim.yaml` and `redsim init` drop the provider model
-and write `task_models: {}`.
+`.env.example` (`7556b22`) documents the four Pythia variables,
+`REDSIM_ML_LLM_MODEL`, `REDSIM_DISABLE_LLM`, `REDSIM_ENV_FILE`, every
+`REDSIM_ML_*` knob above, `KAGGLE_API_TOKEN`, `REDSIM_E2E`, `REDSIM_E2E_LIVE`
+and `REDSIM_PLUGINS`, all with empty values, and carries no provider-key
+placeholder. `redsim.yaml` and `redsim init` write no provider-style `model`
+and carry `task_models: {}`. The sandbox child additionally receives
+`REDSIM_ENV_FILE=<work_dir>/no-env` (an absent file) and
+`REDSIM_DISABLE_LLM=1` (`c3868e5`). Read by the tooling but not in the
+file: `REDSIM_DOCTOR_WORKER_MODE`, and the e2e harness's
+`REDSIM_E2E_POSTGRES_URL` and `REDSIM_E2E_SANDBOX`.
 
 ## Local assets (illustrative, never results)
 
@@ -158,7 +166,7 @@ the build. `assets/MANIFEST.json` is the only source of clean-accuracy
 numbers. The build in hand on 2026-09-09 recorded: `url_trees`
 (`sklearn_hist_gradient_boosting` on the full Kaggle malicious-URLs set) clean
 accuracy 0.9087 on n=128224, surrogate agreement 0.7891. `vehicles_cnn` as
-`resnet18` (ImageNet init from the local torch hub cache, 12 epochs, lr 3e-4
+`resnet18` (the `39126ce` recipe: ImageNet init from the local torch hub cache, 12 epochs, lr 3e-4
 with cosine annealing, flip and crop augmentation, best epoch by a 10 percent
 validation slice held out of the training split) clean accuracy 0.7687 on
 n=1621 `test_coarse`. `cifar10_smallcnn` 0.6872, `fixture_only`, never a demo
@@ -187,13 +195,21 @@ Account `140381642432`, region `us-east-1`:
 - Repo variables set: `AWS_ACCOUNT_ID`, `AWS_REGION`, `AWS_DEPLOY_ROLE_ARN`,
   `ECR_REGISTRY`.
 - `.github/workflows/deploy-aws.yml` builds the api, worker and web images on
-  push to `main` via OIDC. Its deploy job is dormant until the `ECS_*`
-  variables are set, and it fails loudly rather than reporting a
-  false-positive green deploy.
+  push to `main` via OIDC. The `58461cc` push built and pushed all three (the
+  AssumeRole step had failed on the `bb43bd7` push). Its deploy job is
+  skipped until `ECS_CLUSTER` is set, and it fails loudly rather than
+  reporting a false-positive green deploy.
 - `deploy/terraform/` (#19, `b40f7e1`) is the code-only Fargate foundation: no
-  listeners, task definitions or services, nothing applied. Fargate, Terraform
-  and Helm apply and compose operations are outside the completion pass
-  (master plan section 8).
+  listeners, task definitions or services, nothing applied from this tree.
+  Open PR #23 (`feat/p7-fargate-runtime`, William) adds `deploy/bootstrap/`
+  and `deploy/runtime/` and reports a public HTTPS demo runtime at
+  https://redsim.ndia.agiledefense.xyz applied to this account (migrations
+  through `0010`, health, login and OIDC discovery 200, unauthenticated API
+  401, workers at zero until a pinned asset bundle exists, demo users and
+  memberships and real assets outstanding, automatic rollout disabled).
+  `deploy/runtime/README.md` on that branch is the sequence. Fargate,
+  Terraform and Helm apply and compose operations stay outside the
+  completion pass (master plan section 8).
 - **Action: rotate the bootstrap AWS access keys.** Keys were pasted in
   plaintext during setup and must be treated as compromised. The pipeline uses
   OIDC, not static keys.
@@ -232,18 +248,30 @@ Account `140381642432`, region `us-east-1`:
   has no ESLint config.
 - `redsim scan` and `redsim/cli/api_client.py` still post to `/v1/scans` (404
   since P0).
-- Wave 3 (landing 2026-09-09) fixes six defects found by the offline CLI and
-  the e2e harness: admission freezing `eps` (and PGD's `norm_l2`) into
-  `attack_params` so the child refused every API-launched campaign, `pgd`
-  refused on tabular targets by `AttackInfo.domain`, the audit chain `ts`
-  re-derived on read so a sqlite chain failed to verify, the sandbox child
-  able to read a checkout's `.env`, `redsim audit verify --run` unable to see
-  the offline chain, and `GET /v1/attacks` not loading attack plugins. Until
-  wave 3 is on `main`, an API-launched campaign against a bundled target fails
-  at the child's config check.
-- CI on `main` is red at the time of writing and under investigation (master
-  plan section 4.1). Local checks at `bb43bd7`: 1594 passed and 30 skipped,
-  ruff and mypy clean.
+- Fixed on `main` by wave 3, found by the offline CLI and the e2e harness:
+  admission freezing `eps` (and PGD's `norm_l2`) into `attack_params` so the
+  child refused every API-launched campaign, and `pgd` refused on tabular
+  targets by `AttackInfo.domain` (`dd2bbd4`, applicability now by
+  `modality:<domain>` capability tag), PGD by surrogate transfer refused by
+  the `requires_gradients` check on `url_trees` (`58461cc`), the audit chain
+  `ts` re-derived on read so a sqlite chain failed to verify (`aa9674e`,
+  `canonical_ts`), the sandbox child able to read a checkout's `.env`
+  (`c3868e5`), `redsim audit verify --run` unable to see the offline chain
+  (`aa9674e`, `--run-dir`), and `GET /v1/attacks` not loading attack plugins
+  (`c3868e5`).
+- Known caveat in `GET /v1/attacks` (recorded in the route's docstring at
+  `c3868e5`): when `redsim.scanners` was imported earlier in the same process
+  with `REDSIM_PLUGINS=1`, its import already registered the group and the
+  route's rows read `rejected: already registered` while the adapters are in
+  the catalog. An idempotent loader is a wave-4 admission follow-up.
+- CI on `main` is red at `58461cc` on the Coverage gate (`python-multipart`
+  missing from the `api` extra), Unit tests (py3.13) and Dependency CVEs
+  (`next` 14.2.35 advisory), the same three jobs as at `bb43bd7` (master plan
+  section 4.1). Wave 4 lands the `python-multipart`, import-cycle and
+  trivy-baseline fixes and records the 3.13 lane's eager torch import
+  (`redsim/cli/ml.py` importing `redsim.ml.assets.build`) as still open in
+  `docs/dev/ci.md`. Local checks at `58461cc`: 1663 passed and 30 skipped, 8
+  e2e passed, ruff and mypy clean (190 files).
 
 ## Test doubles
 
@@ -259,9 +287,15 @@ Account `140381642432`, region `us-east-1`:
   result.
 - `tests/ml/conftest.py` has an autouse fixture that isolates every ML test
   from a developer's `.env`.
-- `tests/e2e/` (wave 3, landing 2026-09-09): `conftest.py` and `harness.py`
-  stamp every item `e2e` and skip unless `REDSIM_E2E` is set. Fixtures build a
-  tiny synthetic asset tree, run FastAPI over sqlite with an eager Celery,
-  provide one dev-token client per role, a mocked Pythia transport, and
-  `REDSIM_E2E_POSTGRES_URL` for the RLS lane (skipped when unset). The test
-  files themselves are wave 4.
+- `tests/e2e/` (`35e71c7`, `a45a787`): `conftest.py` and `harness.py` stamp
+  every item `e2e` and skip unless `REDSIM_E2E` is set. Fixtures build a tiny
+  synthetic asset tree with the real builders, run FastAPI over one
+  autocommit sqlite connection with eager Celery and the real sandbox child
+  (`REDSIM_E2E_SANDBOX=child|inprocess`), provide one dev-token client per
+  role, a parent-side mocked Pythia transport, the real `redsim audit verify
+  --all` as a subprocess, and `REDSIM_E2E_POSTGRES_URL` for the RLS lane
+  (skipped when unset, failing when unmigrated). `test_harness_smoke.py` (8
+  cases, passing at `58461cc`) is the harness's own check. The
+  completion-criteria files `test_ml_campaigns.py`,
+  `test_ml_verify_upload_reports.py` and `test_ml_governance.py` are added
+  in wave 4. `tests/e2e/README.md` describes every fixture.
