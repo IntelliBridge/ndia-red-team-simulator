@@ -55,15 +55,23 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Sign in</h1>
-
-      <div className="space-y-2">
+    <div className="mx-auto max-w-xl space-y-8 pt-8">
+      <div className="space-y-3">
+        <div className="redsim-kicker">Adversarial ML Red-Team Simulator</div>
+        <h1 className="text-4xl">Sign in</h1>
         <p className="text-muted-foreground">
+          Evaluate and harden ML classifiers under adversarial evasion. Open,
+          unclassified public data only.
+        </p>
+      </div>
+
+      <div className="redsim-panel space-y-4 p-6">
+        <div className="redsim-kicker">Organization account</div>
+        <p className="text-sm text-muted-foreground">
           Sign in with your organization account via Keycloak / OIDC.
         </p>
         <button
-          className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-50"
+          className="redsim-cta"
           disabled={busy}
           onClick={oidcLogin}
         >
@@ -72,22 +80,23 @@ export default function LoginPage() {
       </div>
 
       {!isProd && (
-        <div className="space-y-3 border-t border-border pt-4">
-          <p>
+        <div className="redsim-panel space-y-4 p-6">
+          <div className="redsim-kicker">Dev auth mode</div>
+          <p className="text-sm text-muted-foreground">
             The stack is also running in dev auth mode. Pick the admin email to
             continue as; the API rejects this token whenever{" "}
-            <code>REDSIM_ENV=prod</code>.
+            <code className="text-foreground/80">REDSIM_ENV=prod</code>.
           </p>
-          <label className="block">
-            Email{" "}
+          <label className="block text-sm">
+            <span className="redsim-meta mb-1 block">Email</span>
             <input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-80 rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+              className="w-full max-w-sm rounded border border-input bg-navy-deepest/60 px-3 py-2 font-mono text-sm text-foreground focus-visible:border-ring focus-visible:outline-none"
             />
           </label>
           <button
-            className="rounded-md border border-input bg-background px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
+            className="redsim-ghost"
             disabled={busy}
             onClick={devLogin}
           >

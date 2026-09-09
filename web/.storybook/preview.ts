@@ -5,11 +5,13 @@ const preview: Preview = {
   parameters: {
     controls: { matchers: { color: /(background|color)$/i, date: /Date$/ } },
     a11y: { config: { rules: [] } },
+    // One dark theme (labs.agiledefense.com): the page ground and the card
+    // surface, so a story can be checked against both.
     backgrounds: {
-      default: "redsim-light",
+      default: "redsim-navy",
       values: [
-        { name: "redsim-light", value: "#f8fafc" },
-        { name: "redsim-dark", value: "#0b1220" },
+        { name: "redsim-navy", value: "#04060f" },
+        { name: "redsim-surface", value: "#0f1f36" },
       ],
     },
   },

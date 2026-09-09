@@ -1,6 +1,6 @@
 // AuditChainBadge — surfaces verify state for a chain (run or project).
 //
-// Three states map to colours: verified ✓ (green), broken ✗ (red),
+// Three states map to colours: verified ✓ (green), broken ✗ (orange),
 // pending (gray). The chain id and event count are tooltip / aria
 // affordances only — the user mostly cares about the ✓.
 
@@ -15,10 +15,11 @@ const ICON: Record<ChainVerifyState, string> = {
   pending: "…",
 };
 
+// `broken` is orange, not red: red is the brand accent in this UI.
 const TONE: Record<ChainVerifyState, string> = {
-  verified: "bg-emerald-100 text-emerald-900 border-emerald-200",
-  broken: "bg-red-100 text-red-900 border-red-200",
-  pending: "bg-slate-100 text-slate-700 border-slate-200",
+  verified: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
+  broken: "border-orange-400/50 bg-orange-500/20 text-orange-200",
+  pending: "border-border bg-muted text-muted-foreground",
 };
 
 export interface AuditChainBadgeProps extends HTMLAttributes<HTMLSpanElement> {

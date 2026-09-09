@@ -91,7 +91,7 @@ function ChainLink({ broken }: { broken?: boolean }) {
 function ChainCard({ chain }: { chain: ChainStatus }) {
   const events = chain.events ?? [];
   const statusTone = chain.verified
-    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+    ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
     : "border-destructive/40 bg-destructive/10 text-destructive";
 
   return (
@@ -201,7 +201,7 @@ export default function AuditPage() {
               data-testid="overall-status"
               className={`inline-flex items-center gap-1 rounded-md border px-3 py-1 text-sm font-medium ${
                 allVerified
-                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                  ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-300"
                   : "border-destructive/40 bg-destructive/10 text-destructive"
               }`}
             >

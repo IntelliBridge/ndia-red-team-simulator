@@ -7,6 +7,7 @@ import { axe } from "vitest-axe";
 // shell renders outside a Next app-router context.
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => "/dashboard",
 }));
 
 import RootLayout from "./layout";
