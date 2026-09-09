@@ -57,13 +57,10 @@ function runsPerDay(runs: readonly Run[], days = 14, now = new Date()): { day: s
 
 function StatTile({ label, value, sub, href }: { label: string; value: string; sub?: string; href: string }) {
   return (
-    <Link
-      href={href}
-      className="block rounded-md border border-border bg-card p-4 transition-colors hover:bg-muted"
-    >
-      <div className="redsim-kicker text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="mt-1 text-3xl font-semibold tabular-nums">{value}</div>
-      {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
+    <Link href={href} className="redsim-stat">
+      <div className="redsim-kicker">{label}</div>
+      <div className="redsim-numeral">{value}</div>
+      {sub && <div className="redsim-stat-note">{sub}</div>}
     </Link>
   );
 }
@@ -78,19 +75,19 @@ function BarRows({
   ariaLabel: string;
 }) {
   const max = Math.max(1, ...rows.map(([, n]) => n));
-  if (rows.length === 0) return <p className="text-sm text-muted-foreground">Nothing recorded yet.</p>;
+  if (rows.length === 0) return <p className="text-sm text-ink-3">Nothing recorded yet.</p>;
   return (
-    <ul className="space-y-2" aria-label={ariaLabel}>
+    <ul className="m-0 list-none space-y-2.5 p-0" aria-label={ariaLabel}>
       {rows.map(([key, n]) => (
-        <li key={key} className="grid grid-cols-[7rem_1fr_3rem] items-center gap-3 text-sm">
-          <span className="truncate capitalize">{key}</span>
-          <span className="h-3 rounded-sm bg-muted" aria-hidden="true">
+        <li key={key} className="grid grid-cols-[6.5rem_1fr_3rem] items-center gap-3 text-sm">
+          <span className="truncate text-xs capitalize text-ink-2">{key}</span>
+          <span className="relative block h-px w-full bg-line-strong" aria-hidden="true">
             <span
-              className={`block h-3 rounded-sm ${colorFor ? colorFor(key) : "bg-primary"}`}
+              className={`absolute left-0 top-1/2 block h-[3px] -translate-y-1/2 ${colorFor ? colorFor(key) : "bg-data-adv"}`}
               style={{ width: `${Math.max(2, Math.round((n / max) * 100))}%` }}
             />
           </span>
-          <span className="text-right tabular-nums">{n}</span>
+          <span className="text-right text-xs tabular-nums text-ink-1">{n}</span>
         </li>
       ))}
     </ul>
@@ -99,12 +96,12 @@ function BarRows({
 
 function Panel({ title, children, action }: { title: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
-    <section className="rounded-md border border-border bg-card p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">{title}</h2>
-        {action}
-      </div>
-      {children}
+    <section className="redsim-sheet">
+      <h2 className="redsim-sheet-label">
+        {title}
+        {action && <small className="redsim-sheet-note">{action}</small>}
+      </h2>
+      <div className="redsim-sheet-body">{children}</div>
     </section>
   );
 }
@@ -119,7 +116,7 @@ export default function DashboardPage() {
   // Poll every 15s so the dashboard tracks newly queued/finished runs
   // without a manual refresh (the run-detail view has its own live feed).
   const { data, error, isLoading } = useSWR(authed ? "/v1/runs" : null, runsFetcher, { refreshInterval: 15000 });
-  if (!authed) return <p className="text-muted-foreground">Signing in…</p>;
+  if (!authed) return <p className="text-ink-3">Signing in…</p>;
 
   const runs: Run[] = Array.isArray(data?.runs) ? data.runs : [];
   const modelRows: ModelTarget[] = Array.isArray(models.data?.models) ? models.data.models : [];
@@ -149,19 +146,16 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
+        <h1>Dashboard</h1>
         <div className="flex items-center gap-3 text-sm">
-          <span className="text-muted-foreground">{getEmail() ?? "(session)"}</span>
-          <button
-            onClick={signOut}
-            className="rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted"
-          >
+          <span className="text-ink-3">{getEmail() ?? "(session)"}</span>
+          <button onClick={signOut} className="redsim-ghost redsim-btn-sm">
             Sign out
           </button>
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label="Registered models"
           value={models.data ? String(registered.length) : "—"}
@@ -188,39 +182,44 @@ export default function DashboardPage() {
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Panel title="Runs by status">
-          <BarRows rows={runStatus} ariaLabel="Runs by status" />
-        </Panel>
-        <Panel title="Findings by severity">
-          <BarRows rows={severity} colorFor={(k) => SEVERITY_BAR[k] ?? "bg-primary"} ariaLabel="Findings by severity" />
-        </Panel>
-        <Panel title="Runs started, last 14 days">
-          <div className="flex h-24 items-end gap-1" role="img" aria-label={`Runs per day: ${perDay.map((d) => `${d.day} ${d.count}`).join(", ")}`}>
-            {perDay.map((d) => (
-              <div key={d.day} className="group relative flex-1" title={`${d.day}: ${d.count}`}>
-                <div
-                  className="w-full rounded-t-sm bg-primary"
-                  style={{ height: `${Math.max(d.count === 0 ? 2 : 8, Math.round((d.count / perDayMax) * 96))}px` }}
-                />
-              </div>
-            ))}
+      <Panel title="Activity">
+        <div className="grid gap-8 md:grid-cols-3">
+          <div>
+            <h3 className="redsim-kicker mb-3">Runs by status</h3>
+            <BarRows rows={runStatus} ariaLabel="Runs by status" />
           </div>
-          <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
-            <span>{perDay[0]?.day.slice(5)}</span>
-            <span>{perDay[perDay.length - 1]?.day.slice(5)}</span>
+          <div>
+            <h3 className="redsim-kicker mb-3">Findings by severity</h3>
+            <BarRows rows={severity} colorFor={(k) => SEVERITY_BAR[k] ?? "bg-data-adv"} ariaLabel="Findings by severity" />
           </div>
-        </Panel>
-      </div>
+          <div>
+            <h3 className="redsim-kicker mb-3">Runs started, last 14 days</h3>
+            <div className="flex h-24 items-end gap-1 border-b border-line-strong" role="img" aria-label={`Runs per day: ${perDay.map((d) => `${d.day} ${d.count}`).join(", ")}`}>
+              {perDay.map((d) => (
+                <div key={d.day} className="group relative flex-1" title={`${d.day}: ${d.count}`}>
+                  <div
+                    className={d.count === 0 ? "w-full bg-line-strong" : "w-full bg-data-adv"}
+                    style={{ height: `${Math.max(d.count === 0 ? 1 : 8, Math.round((d.count / perDayMax) * 96))}px` }}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="mt-1 flex justify-between font-mono text-[10px] text-ink-3">
+              <span>{perDay[0]?.day.slice(5)}</span>
+              <span>{perDay[perDay.length - 1]?.day.slice(5)}</span>
+            </div>
+          </div>
+        </div>
+      </Panel>
 
       <Panel
         title="High and critical findings"
-        action={<Link className="text-xs text-primary underline" href="/findings">All findings</Link>}
+        action={<Link className="redsim-link text-xs" href="/findings">All findings</Link>}
       >
         {severe.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No high or critical findings recorded.</p>
+          <p className="text-sm text-ink-3">No high or critical findings recorded.</p>
         ) : (
-          <ul className="space-y-3">
+          <ul className="m-0 list-none border-t border-line p-0">
             {severe.map((f) => (
               <FindingSummaryCard key={f.id} finding={f} leadMax={280} />
             ))}
@@ -228,27 +227,27 @@ export default function DashboardPage() {
         )}
       </Panel>
 
-      <Panel title="Recent runs" action={<Link className="text-xs text-primary underline" href="/runs">All runs</Link>}>
-        {isLoading && <p className="text-muted-foreground">Loading…</p>}
+      <Panel title="Recent runs" action={<Link className="redsim-link text-xs" href="/runs">All runs</Link>}>
+        {isLoading && <p className="text-ink-3">Loading…</p>}
         {error && (
-          <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+          <p className="rounded-[4px] border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
             Failed to load runs: {String(error)}
           </p>
         )}
         {!isLoading && !error && runs.length === 0 && (
-          <p className="text-muted-foreground">
+          <p className="text-ink-3">
             No runs yet. Head to{" "}
-            <Link className="text-primary underline" href="/models">
+            <Link className="redsim-link" href="/models">
               /models
             </Link>{" "}
             to register a target and start one.
           </p>
         )}
         {recent.length > 0 && (
-          <div className="overflow-hidden rounded-md border border-border">
+          <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
-                <tr>
+              <thead className="text-left">
+                <tr className="border-b border-line-strong">
                   <th className="px-3 py-2">Run</th>
                   <th className="px-3 py-2">Project</th>
                   <th className="px-3 py-2">Scanner</th>
@@ -258,18 +257,18 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {recent.map((r) => (
-                  <tr key={r.id} {...rowLink(`/runs/${r.id}`)} className={`border-t border-border ${rowLink("").className}`}>
-                    <td className="px-3 py-2 font-mono text-xs">
-                      <a className="text-primary underline" href={`/runs/${r.id}`}>
+                  <tr key={r.id} {...rowLink(`/runs/${r.id}`)} className={`border-b border-line last:border-0 ${rowLink("").className}`}>
+                    <td className="px-3 py-2.5 font-mono text-xs">
+                      <a className="redsim-link" href={`/runs/${r.id}`}>
                         {r.id}
                       </a>
                     </td>
-                    <td className="px-3 py-2">{r.project_id}</td>
-                    <td className="px-3 py-2">{r.scanner ?? "—"}</td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2.5">{r.project_id}</td>
+                    <td className="px-3 py-2.5">{r.scanner ?? "—"}</td>
+                    <td className="px-3 py-2.5">
                       <RunStatusBadge status={r.status} />
                     </td>
-                    <td className="px-3 py-2 text-muted-foreground">{new Date(r.created_at).toLocaleString()}</td>
+                    <td className="px-3 py-2.5 text-ink-3">{new Date(r.created_at).toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>

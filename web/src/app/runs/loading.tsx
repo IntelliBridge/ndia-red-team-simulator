@@ -15,19 +15,19 @@ const COLUMNS = ["Run", "Model", "Attacks", "Status", "Created"];
 export default function RunsLoading() {
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Runs</h1>
+      <h1>Runs</h1>
       <div
-        className="overflow-hidden rounded-md border border-border bg-card"
+        className="overflow-x-auto"
         aria-busy="true"
         aria-label="Loading runs"
       >
-        <div className="flex gap-4 border-b border-border px-4 py-3">
+        <div className="flex gap-4 border-b border-line-strong px-3 py-3">
           {COLUMNS.map((column) => (
             <Skeleton key={column} className="h-4 w-24" />
           ))}
         </div>
         {Array.from({ length: SKELETON_ROWS }, (_, row) => (
-          <div key={row} className="flex gap-4 border-b border-border px-4 py-4 last:border-b-0">
+          <div key={row} className="flex gap-4 border-b border-line px-3 py-4 last:border-b-0">
             {COLUMNS.map((column) => (
               <Skeleton key={column} className="h-4 w-24" />
             ))}
