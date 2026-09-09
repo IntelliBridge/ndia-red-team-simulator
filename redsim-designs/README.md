@@ -1,9 +1,9 @@
 # Design reference for redsim web
 
-This directory is a [v0.dev](https://v0.dev) export of an alternative UI for
-`@redsim/web`, kept here as a design reference for the web redesign
-discussion. It is **not** the shipped web app, which stays at `web/`
-(`@redsim/web`) and `packages/design-system` (`@redsim/design-system`) per
+This directory is an exported build of an alternative UI for `@redsim/web`,
+kept here as a design reference for the web redesign discussion. It is
+**not** the shipped web app, which stays at `web/` (`@redsim/web`) and
+`packages/design-system` (`@redsim/design-system`) per
 `pnpm-workspace.yaml`.
 
 - Not a pnpm workspace member. It carries its own `pnpm-workspace.yaml` and
