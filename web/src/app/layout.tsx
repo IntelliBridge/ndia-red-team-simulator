@@ -87,7 +87,7 @@ export default function RootLayout({
                   aria-hidden="true"
                   className="hidden h-5 w-px bg-border sm:block"
                 />
-                <span className="hidden text-sm font-semibold tracking-tight sm:block">
+                <span className="hidden text-sm font-semibold tracking-tight text-red-500 sm:block">
                   Adversarial ML Red-Team Simulator
                 </span>
                 <span

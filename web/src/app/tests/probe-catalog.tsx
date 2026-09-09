@@ -18,6 +18,7 @@ import {
   type StartProbeRunBody,
 } from "@/lib/llm";
 import { useProbeCatalog } from "@/hooks/useLlm";
+import { rowLink } from "@/lib/row-link";
 import { useModels } from "@/hooks/useModels";
 import { useRoles } from "@/hooks/useRoles";
 
@@ -555,7 +556,8 @@ export function ProbeCatalog({ enabled }: { enabled: boolean }) {
                       return (
                         <tr
                           key={p.id}
-                          className={`border-t border-border ${blocked ? "text-muted-foreground" : ""} ${isSelected ? "bg-primary/5" : ""}`}
+                          {...rowLink(`/tests/probes/${encodeURIComponent(p.id)}`)}
+                          className={`border-t border-border ${blocked ? "text-muted-foreground" : ""} ${isSelected ? "bg-primary/5" : ""} ${rowLink("").className}`}
                         >
                           <td className="px-3 py-2 align-top">
                             <input
