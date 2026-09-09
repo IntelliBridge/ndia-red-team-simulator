@@ -520,6 +520,10 @@ jobs:
   # from the process; Postgres here serves only the RLS lane, which the tier
   # reaches through REDSIM_E2E_POSTGRES_URL after the migrate step. No network,
   # no Pythia (the harness mocks the gateway in the worker parent), no Docker.
+  # The tier and the docs-consistency test run through scripts/phase_b_gate.sh
+  # (plan 12 wave B4, TESTS_DOCS-36), the same script `make check-phase-b` runs
+  # locally, so the two agree on the command, the scrubbed environment and the
+  # spec 26 criterion a failure is attributed to (docs/dev/ci.md "Phase B gate").
   e2e-python:
     name: E2E tier (python, eager Celery)
     runs-on: ubuntu-latest
@@ -569,18 +573,30 @@ jobs:
         env:
           REDSIM_DB_URL: ${{ env.E2E_POSTGRES_URL }}
         run: alembic upgrade head
+      # The gate's e2e step sets REDSIM_E2E=1 itself and runs
+      # `pytest -q -p no:cacheprovider -rs -m e2e tests/e2e` with the Postgres
+      # lane on (REDSIM_E2E_POSTGRES_URL), failing if the harness still reports
+      # the lane as off. PHASE_B_PYTEST_ARGS carries the CI-only arguments:
       # ``--basetemp`` pins the harness directory (assets, sqlite file, blobs,
       # sandbox work dirs, CLI output) to a known path so it can be uploaded on
-      # failure. The harness sets REDSIM_ML_WORK_DIR under it and scrubs
-      # REDSIM_ML_KEEP_WORK_DIR, so the keep switch is not set here.
-      - name: Python end-to-end tier
+      # failure (the harness sets REDSIM_ML_WORK_DIR under it and scrubs
+      # REDSIM_ML_KEEP_WORK_DIR, so the keep switch is not set here), and
+      # ``--durations`` prints the slowest items.
+      - name: Python end-to-end tier (scripts/phase_b_gate.sh --only e2e)
         env:
-          REDSIM_E2E: "1"
+          PY: python
           REDSIM_E2E_POSTGRES_URL: ${{ env.E2E_POSTGRES_URL }}
-        run: >-
-          pytest -q -p no:cacheprovider -m e2e tests/e2e
-          --durations=15
-          --basetemp="$RUNNER_TEMP/redsim-e2e"
+          PHASE_B_PYTEST_ARGS: "--durations=15 --basetemp=${{ runner.temp }}/redsim-e2e"
+        run: scripts/phase_b_gate.sh --only e2e
+      # tests/test_docs_phase_b_consistency.py: the Phase B docs match the tree
+      # (the route table against the OpenAPI document, the named test files, the
+      # README open items, the mkdocs nav) and the gate's probe logic fails on a
+      # stack whose Phase B routes still answer 501. The default tier already
+      # runs its unit half in the unit lanes; this runs the whole file.
+      - name: Docs consistency (scripts/phase_b_gate.sh --only docs-consistency)
+        env:
+          PY: python
+        run: scripts/phase_b_gate.sh --only docs-consistency
       - name: Upload the harness directory (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -593,9 +609,11 @@ jobs:
   # The garak tier (plan 12, TESTS_DOCS-02): installs the pinned garak extra on
   # top of the platform extras and runs the garak-marked tests with no gateway
   # variable in the environment, so a probe that reaches for a real endpoint
-  # fails loudly. Passing with zero tests selected is acceptable while the LLM
-  # tracks land their tests: pytest exits 5 in that case and the step maps it
-  # to success, so the lane proves only that the extra installs and imports.
+  # fails loudly. The tier runs through scripts/phase_b_gate.sh --only garak
+  # (TESTS_DOCS-36), the same step `make check-phase-b` runs locally: pytest
+  # exit 5 (nothing selected) counts as a pass with a notice, any other
+  # non-zero exit fails, and the script removes every PYTHIA_* variable from
+  # the pytest environment on top of this job exporting none.
   garak-offline:
     name: garak offline
     runs-on: ubuntu-latest
@@ -626,17 +644,10 @@ jobs:
           python -m pip install -e ".[garak]"
       - name: garak extra imports
         run: python -c "import garak; print('garak', garak.__version__)"
-      - name: garak tier (-m garak; exit 5 = nothing selected yet)
-        run: |
-          set +e
-          pytest -q -p no:cacheprovider -m garak tests
-          rc=$?
-          set -e
-          if [ "$rc" -eq 5 ]; then
-            echo "::notice::no garak-marked tests collected yet; this lane proves the extra installs and imports, nothing more"
-            exit 0
-          fi
-          exit "$rc"
+      - name: garak tier (scripts/phase_b_gate.sh --only garak; exit 5 = nothing selected)
+        env:
+          PY: python
+        run: scripts/phase_b_gate.sh --only garak
 
   e2e-stack:
     name: Stack E2E (Playwright, fixture-assisted)
