@@ -219,8 +219,13 @@ _EXACT_KINDS: dict[str, str] = {
     HARDEN_PROMPT_NAME: "ml.harden.prompt",
     HARDEN_COMPLETION_NAME: "ml.harden.completion",
     HARDEN_NARRATIVE_NAME: "ml.harden.narrative",
+    # Phase B (INTEROP-04): one per-run clean slice with per-sample keys the export projects from.
+    # ``ml.clean_slice`` / ``ml.control_slice`` are this track's names (announced in the cross-track
+    # notes); the modality runner writes the npz bytes, this table only names their kind.
+    "clean_slice.npz": "ml.clean_slice",
     # Training defenses (redsim.ml.harden.apply.WEIGHTS_ARTIFACT / REPORT_ARTIFACT): the derived state_dict
-    # and the training record of a defense_apply stage (ATTACKS_HARDEN-12/-15).
+    # and the training record of a defense_apply stage (ATTACKS_HARDEN-12/-13/-15). The derived model is
+    # registered as a new Target through the register-then-validate path.
     "derived_model/weights.pt": "ml.derived_model",
     "derived_model/training_report.json": "ml.training_report",
     # Detection modality (redsim.ml.runners.detection.SCORECARD_NAME): the campaign-level box scorecard.
@@ -257,6 +262,10 @@ _BASENAME_KINDS: dict[str, str] = {
 _PREFIX_KINDS: tuple[tuple[str, str], ...] = (
     ("curve/", "ml.curve"),
     ("adv_slice/", "ml.adv_slice"),
+    # Phase B (INTEROP-04): per-(family, eps) export slices; the runner writes control_slice/<eps>.npz
+    # and clean_slice/<...>.npz when a run keeps them under the size cap.
+    ("control_slice/", "ml.control_slice"),
+    ("clean_slice/", "ml.clean_slice"),
 )
 
 
@@ -980,8 +989,17 @@ def _verify_outcome(record: CampaignRecord, attack_id: str) -> tuple[str, str | 
 
 def _project_verify(
     ctx: Any, *, job: Any, record: CampaignRecord, baseline_run_id: str | None, emitter: _AuditEmitter,
+    sink: DatabaseArtifactSink,
 ) -> dict[str, Any]:
-    """Write the verify outcome onto the baseline finding (spec 6.4, 16.4, 16.5) and emit ``verify.execute``."""
+    """Write the verify outcome onto the baseline finding (spec 6.4, 16.4, 16.5) and emit ``verify.execute``.
+
+    A verify whose defense had kind ``training`` also registers the derived model the child produced as a
+    new Target (``ml_model_artifact``, source ``derived``, ``MLModelManifest.derived_from`` lineage) through
+    the register-then-validate path (ATTACKS_HARDEN-13); the derived digest and the training budget are named
+    on the ``verify.execute`` row, in the remediation summary and beside the ``MeasuredDelta`` (ATTACKS_HARDEN-18).
+    Every verify appends a :class:`FindingVerify` (with ``settings_hash`` and ``baseline_run_id``) to
+    ``retests``, keeping ``verify`` the latest (REVIEW_REPORTS-08).
+    """
     from redsim.db.models import Finding, RemediationAttempt
     from redsim.ml.schema import FindingVerify, MeasuredDelta, MLFindingDetail
     from redsim.services.ml_campaigns import recommendation_defense_ids
@@ -998,7 +1016,13 @@ def _project_verify(
         raise RuntimeError("verify campaign carries no defense")
     outcome, reason = _verify_outcome(record, ml_detail.attack_id)
     score_delta = record.score.delta if record.score is not None else None
-    ml_detail.verify = FindingVerify(run_id=ctx.run_id, defense=defense, outcome=outcome, delta=score_delta)
+    # ATTACKS_HARDEN-13: register the derived model a training defense produced (a no-op for a
+    # preprocessing defense or when the child left no derived weights).
+    derived = _register_derived_target(ctx, record=record, sink=sink, emitter=emitter)
+    # REVIEW_REPORTS-08: verify is the latest retest and every verify is appended to the history.
+    ml_detail.verify = FindingVerify(run_id=ctx.run_id, defense=defense, outcome=outcome, delta=score_delta,
+                                     settings_hash=record.settings_hash, baseline_run_id=baseline_run_id)
+    ml_detail.retests = [*ml_detail.retests, ml_detail.verify]
 
     measured_for: list[str] = []
     if (
@@ -1039,11 +1063,24 @@ def _project_verify(
     finding.validated_at = _now()
     finding.updated_at = _now()
 
+    # ATTACKS_HARDEN-18: the derived model's digest and training budget are the changed variable of a
+    # training verify; they travel on the summary (RemediationAttempt), the audit row and beside the
+    # MeasuredDelta so the report and compare surfaces can name them without re-reading the campaign.
+    derived_detail: dict[str, Any] = {}
+    if derived is not None:
+        derived_detail = {
+            "derived_target_id": derived.get("derived_target_id"),
+            "derived_sha256": derived.get("derived_sha256"),
+            "parent_target_id": derived.get("parent_target_id"),
+            "parent_sha256": derived.get("parent_sha256"),
+            "training_budget": derived.get("training_budget"),
+        }
     summary = {
         "verify_run_id": ctx.run_id, "baseline_run_id": baseline_run_id, "defense": defense.model_dump(mode="json"),
         "outcome": outcome, "validation_state": validation_state, "status": status,
         "delta_mri": score_delta.delta if score_delta is not None else None,
         "inconclusive_reason": reason, "measured_for": measured_for,
+        **({"derived": derived_detail} if derived_detail else {}),
     }
     # Spec 10.2: append_remediation_log(finding_id, action="ml.verify.<defense>", result=<json>, success=<bool>).
     # The finding belongs to the baseline run, so the row is written directly rather than through the
@@ -1065,6 +1102,7 @@ def _project_verify(
         "measured_for": measured_for,
         "inconclusive_reason": reason,
         "baseline_run_id": baseline_run_id,
+        **derived_detail,
     }, success=outcome != "inconclusive")
     return summary
 
@@ -1087,9 +1125,12 @@ def _verify_inconclusive_on_failure(ctx: Any, *, job: Any, error: str) -> None:
         if isinstance(defense, dict) and defense.get("id"):
             from redsim.ml.schema import DefenseConfig
 
+            # REVIEW_REPORTS-08: a failed retest is still a retest; append it and keep it the latest.
             ml_detail.verify = FindingVerify(
                 run_id=ctx.run_id, defense=DefenseConfig.model_validate(defense), outcome="inconclusive",
+                baseline_run_id=detail.get("baseline_run_id"),
             )
+            ml_detail.retests = [*ml_detail.retests, ml_detail.verify]
             schema_blob["ml"] = ml_detail.model_dump(mode="json")
     except Exception:  # noqa: BLE001 - the state write below is what matters
         logger.debug("verify failure: could not stamp FindingVerify", exc_info=True)
@@ -1101,6 +1142,255 @@ def _verify_inconclusive_on_failure(ctx: Any, *, job: Any, error: str) -> None:
     finding.validated_at = _now()
     finding.updated_at = _now()
     logger.warning("verify run %s failed (%s); finding %s left inconclusive/open", ctx.run_id, error, finding.id)
+
+
+# ---------------------------------------------------------------------------
+# Black-box endpoint jobs (ENDPOINT-05): broker in the worker parent, credential at run time
+# ---------------------------------------------------------------------------
+
+
+def _is_endpoint_target(target: Any) -> bool:
+    """True when the campaign target is a registered black-box inference endpoint (spec 9.1 rule 4)."""
+    return str(getattr(target, "kind", "") or "") == "ml_model_endpoint"
+
+
+def _endpoint_request_block(target: Any, config: CampaignConfig) -> dict[str, Any]:
+    """The ``target_endpoint`` block ``run_campaign_sandboxed`` hands the worker-parent ``PredictBroker``.
+
+    The full request URL is an internal field of the ``Target`` row, never the manifest / report / export
+    (D3: those carry ``url_host`` only). The endpoint-admission track (``services.ml_models`` /
+    ``api/v1/models`` endpoint branch) stores it; this reader accepts it under ``detail['endpoint_url']``,
+    ``detail['url']`` or ``detail['endpoint']['url']`` and is noted in the cross-track notes so the two
+    tracks agree after the rebase. No credential is read here: only the ``auth_profile_id`` travels, and
+    the secret is resolved separately at run time (:func:`_resolve_endpoint_auth`).
+    """
+    detail = getattr(target, "detail", None)
+    detail = dict(detail) if isinstance(detail, dict) else {}
+    manifest = detail.get("manifest")
+    manifest = dict(manifest) if isinstance(manifest, dict) else detail
+    endpoint = manifest.get("endpoint")
+    endpoint = dict(endpoint) if isinstance(endpoint, dict) else {}
+    detail_endpoint = detail.get("endpoint")
+    detail_endpoint = dict(detail_endpoint) if isinstance(detail_endpoint, dict) else {}
+    url = (detail.get("endpoint_url") or detail.get("url")
+           or detail_endpoint.get("url") or endpoint.get("url"))
+    if not url:
+        raise RuntimeError(
+            "endpoint target carries no stored request URL (detail.endpoint_url / detail.url); "
+            "the worker cannot reach the endpoint without faking a result")
+    auth_profile_id = (endpoint.get("auth_profile_id") or detail_endpoint.get("auth_profile_id")
+                       or manifest.get("auth_profile_id") or detail.get("auth_profile_id"))
+    block: dict[str, Any] = {
+        "url": str(url),
+        "auth_profile_id": auth_profile_id,
+        "manifest": {
+            "modality": config.modality,
+            "dataset_id": config.dataset_id,
+            "dataset_split": config.dataset_split,
+            "dataset_revision": config.dataset_revision or manifest.get("dataset_revision"),
+            "input_shape": manifest.get("input_shape") or endpoint.get("input_shape"),
+            "n_classes": manifest.get("n_classes"),
+            "class_names": manifest.get("class_names"),
+            "features": manifest.get("features"),
+            "name": manifest.get("name") or detail.get("name"),
+            "license": manifest.get("license"),
+        },
+    }
+    batch_rows = endpoint.get("batch_rows") or detail_endpoint.get("batch_rows") or manifest.get("batch_rows")
+    timeout_s = endpoint.get("timeout_s") or detail_endpoint.get("timeout_s") or manifest.get("timeout_s")
+    if isinstance(batch_rows, int) and batch_rows > 0:
+        block["batch_rows"] = batch_rows
+    if isinstance(timeout_s, (int, float)) and timeout_s > 0:
+        block["timeout_s"] = float(timeout_s)
+    limits = detail.get("endpoint_limits") or detail_endpoint.get("limits") or manifest.get("endpoint_limits")
+    if isinstance(limits, dict):
+        block["limits"] = dict(limits)
+    return block
+
+
+def _resolve_endpoint_auth(session: Session, auth_profile_id: str | None) -> dict[str, Any]:
+    """The decrypted credential for the endpoint, resolved from the AuthProfile vault at run time.
+
+    Returns the ``resolve_auth_for_scan`` shape (``{"kind", "config", "secret"}``); the secret reaches only
+    the worker-parent broker (in memory), never the child, an audit row, a job detail or a log line.
+    """
+    if not auth_profile_id:
+        raise RuntimeError("endpoint target names no auth_profile_id; cannot resolve a credential")
+    from redsim.services.auth_profiles import resolve_auth_for_scan
+
+    return resolve_auth_for_scan(session, str(auth_profile_id))
+
+
+def _endpoint_broker_summary(record: CampaignRecord) -> dict[str, Any] | None:
+    """The parent-side broker tally (rows, requests, per-purpose split, budget) for an endpoint run.
+
+    Read from ``record.provenance.model_manifest['endpoint_broker']`` (attached by ``redsim.ml.sandbox``
+    after the child exits). Carries counts, the budget the job stayed under and the response fingerprint;
+    never a URL or a credential.
+    """
+    provenance = record.provenance
+    if provenance is None:
+        return None
+    broker = provenance.model_manifest.get("endpoint_broker")
+    if not isinstance(broker, dict):
+        return None
+    return {
+        "rows": broker.get("rows"),
+        "requests": broker.get("requests"),
+        "by_purpose": broker.get("by_purpose"),
+        "budget": broker.get("limits"),
+        "rate_limit_wait_s": broker.get("rate_limit_wait_s"),
+        "fingerprint_sha256": broker.get("fingerprint_sha256"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Derived-model registration for a training verify (ATTACKS_HARDEN-13)
+# ---------------------------------------------------------------------------
+
+
+def _register_derived_target(
+    ctx: Any, *, record: CampaignRecord, sink: DatabaseArtifactSink, emitter: _AuditEmitter,
+) -> dict[str, Any] | None:
+    """Register the derived model a training verify produced as a new Target (ATTACKS_HARDEN-13).
+
+    A ``kind: training`` defense (adversarial fine-tuning, distillation) re-trains a derived copy in the
+    verify child; the child writes ``derived_model/weights.pt`` and ``derived_model/training_report.json``.
+    This registers those weights as a new ``ml_model_artifact`` Target with source ``derived`` and
+    ``MLModelManifest.derived_from = DerivedFrom(parent_target_id, parent_sha256, defense_id, training_budget)``
+    through the standard register-then-validate path: the ``model.register`` audit row precedes the Target,
+    the validate Run/Job and the enqueue. Returns the lineage fields, or ``None`` when the defense was not a
+    training defense or the child left no derived weights (never faked). Never fails the verify job.
+    """
+    provenance = record.provenance
+    defense_prov = provenance.defense if provenance is not None else None
+    if not isinstance(defense_prov, dict) or defense_prov.get("kind") != "training":
+        return None
+    if defense_prov.get("status") == "unavailable":
+        return None
+    weights_name = "derived_model/weights.pt"
+    weights_id = sink.ids.get(weights_name)
+    if weights_id is None:
+        logger.warning("verify run %s: training defense left no %r artifact; derived target not registered",
+                       ctx.run_id, weights_name)
+        return None
+    from redsim.db.models import Artifact, Job, Run, Target
+
+    weights_row = ctx.session.get(Artifact, weights_id)
+    if weights_row is None:
+        logger.warning("verify run %s: derived weights artifact %s vanished; not registered", ctx.run_id, weights_id)
+        return None
+    report = defense_prov.get("training_report")
+    report = dict(report) if isinstance(report, dict) else {}
+    derived_state_sha = str(defense_prov.get("derived_sha256") or report.get("weights_sha256") or "")
+    blob_sha = str(getattr(weights_row, "sha256", "") or "")
+    size_bytes = int(getattr(weights_row, "size_bytes", 0) or 0)
+    location = str(getattr(weights_row, "location", "") or "")
+    parent_target_id = str(report.get("target_id") or record.config.target_id)
+    parent_sha256 = str(defense_prov.get("parent_sha256") or report.get("parent_manifest_sha256")
+                        or report.get("parent_weights_sha256") or "")
+    defense_id = str(defense_prov.get("id") or (record.config.defense.id if record.config.defense else "") or "")
+    training_budget: dict[str, Any] = {
+        k: report.get(k) for k in (
+            "epochs_requested", "epochs_run", "n_train", "wall_budget_s", "wall_time_s",
+            "budget_exhausted", "backbone_frozen")
+        if report.get(k) is not None
+    }
+    try:
+        from redsim.ml.schema import DerivedFrom
+
+        derived_from = DerivedFrom(
+            parent_target_id=parent_target_id, parent_sha256=parent_sha256 or blob_sha or derived_state_sha,
+            defense_id=defense_id, training_budget=training_budget,
+        ).model_dump(mode="json")
+    except Exception:  # noqa: BLE001 - a lineage we cannot form is not registered, never faked
+        logger.warning("verify run %s: could not build DerivedFrom lineage; derived target not registered",
+                       ctx.run_id, exc_info=True)
+        return None
+
+    parent = ctx.session.get(Target, parent_target_id)
+    parent_detail = dict(getattr(parent, "detail", None) or {}) if parent is not None else {}
+    parent_manifest = parent_detail.get("manifest")
+    if not isinstance(parent_manifest, dict):
+        parent_manifest = {k: v for k, v in parent_detail.items()
+                           if k not in {"manifest", "validation", "blob", "status"}}
+    manifest: dict[str, Any] = {
+        **parent_manifest,
+        "sha256": blob_sha or derived_state_sha,
+        "size_bytes": size_bytes,
+        "status": "registered", "refusal_reason": None, "bundled": False, "source_url": None,
+        "derived_from": derived_from,
+    }
+    try:  # a fully-valid MLModelManifest when the parent carried enough; else a raw projection carrying lineage
+        from redsim.ml.schema import MLModelManifest
+
+        manifest = MLModelManifest.model_validate(manifest).model_dump(mode="json")
+    except Exception:  # noqa: BLE001 - derived_from is present either way; validity is not load-bearing here
+        logger.info("verify run %s: derived manifest kept as a raw projection (not MLModelManifest-valid)",
+                    ctx.run_id, exc_info=True)
+
+    derived_target_id = f"derived-{uuid4().hex}"
+    validate_run_id = f"run-{uuid4().hex[:12]}"
+    validate_job_id = f"job-{uuid4().hex[:12]}"
+    detail: dict[str, Any] = {
+        **{k: v for k, v in parent_detail.items() if k not in {"blob", "validation", "registered_at"}},
+        "source": "derived",
+        "status": "validating",
+        "manifest": manifest,
+        "derived_from": derived_from,
+        "blob": {"key": location, "location": location, "sha256": blob_sha, "size_bytes": size_bytes},
+        "validation": {"ingest_job_id": validate_job_id, "ingest_run_id": validate_run_id, "source": "derived"},
+        "registered_by": emitter.actor,
+    }
+    target = Target(id=derived_target_id, project_id=ctx.project_id, kind="ml_model_artifact",
+                    value=location, verified=True)
+    target.detail = detail
+    ctx.session.add(target)
+    ctx.session.flush()
+    ctx.session.add(Run(id=validate_run_id, project_id=ctx.project_id, target_id=derived_target_id,
+                        mode="worker", status="queued", scanner="ml.ingest", created_by=emitter.actor,
+                        stage_table={"stage": None, "stages_done": [], "jobs": {}}))
+    ctx.session.flush()
+    ctx.session.add(Job(id=validate_job_id, run_id=validate_run_id, project_id=ctx.project_id,
+                        type="model.validate", status="queued", created_by=emitter.actor,
+                        detail={"target_id": derived_target_id}))
+    ctx.session.flush()
+    # Spec 9.3 step 4: the chained ``model.register`` precedes the enqueue. It lands on the validate run's
+    # own chain (that run carries model.validate + job.complete), never the verify run's chain. Ids and
+    # digests only; no credential and no weights bytes.
+    from redsim.safety import authorize
+
+    authorize(
+        "model.register", None, allowlist=emitter.allowlist, actor=emitter.actor, writer=emitter.writer,
+        run_id=validate_run_id, project_id=ctx.project_id,
+        detail={
+            "actor": emitter.actor, "target_id": derived_target_id, "kind": "ml_model_artifact",
+            "source": "derived", "parent_target_id": parent_target_id, "parent_sha256": parent_sha256 or None,
+            "defense_id": defense_id, "derived_sha256": derived_state_sha or None, "sha256": blob_sha or None,
+            "size_bytes": size_bytes, "training_budget": training_budget, "verify_run_id": ctx.run_id,
+            "weights_artifact_id": weights_id,
+        },
+    )
+    ctx.session.commit()
+    enqueued = False
+    try:
+        from redsim.workers.tasks.ml_model import ml_model_validate
+
+        queued = ml_model_validate.delay(validate_job_id)
+        live = ctx.session.get(Job, validate_job_id)
+        if live is not None:
+            live.celery_task_id = str(queued.id)
+        enqueued = True
+    except Exception:  # noqa: BLE001 - the durable queued Job survives a broker outage; the reaper picks it up
+        logger.warning("derived-target validation enqueue failed for job %s", validate_job_id, exc_info=True)
+    logger.info("registered derived target %s from verify run %s (defense %s, derived sha256 %s)",
+                derived_target_id, ctx.run_id, defense_id, derived_state_sha[:12])
+    return {
+        "derived_target_id": derived_target_id, "derived_sha256": derived_state_sha or None,
+        "parent_target_id": parent_target_id, "parent_sha256": parent_sha256 or None,
+        "defense_id": defense_id, "training_budget": training_budget,
+        "validate_run_id": validate_run_id, "validate_job_id": validate_job_id, "enqueued": enqueued,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1164,8 +1454,16 @@ def _apply_verify_baseline(record: CampaignRecord, baseline_record: CampaignReco
 def _emit_record_audit(
     emitter: _AuditEmitter, *, config: CampaignConfig, record: CampaignRecord, sink: DatabaseArtifactSink,
     load_detail: dict[str, Any], harden_audit: dict[str, Any] | None,
+    endpoint_summary: dict[str, Any] | None = None,
 ) -> None:
-    """The spec 10.5 rows a returned record justifies, in order, skipping any already emitted live."""
+    """The spec 10.5 rows a returned record justifies, in order, skipping any already emitted live.
+
+    ``endpoint_summary`` (ENDPOINT-05, -08) is the parent-side broker tally for a black-box endpoint job
+    (rows, requests, per-purpose split and the per-job budget). It is merged onto the ``attack.execute``
+    and ``campaign.score`` rows so the query counts and the budget the run stayed under travel with the
+    trail; it never carries a URL or a credential.
+    """
+    endpoint_extra = {"endpoint": endpoint_summary} if endpoint_summary else {}
     provenance = record.provenance
     versions = dict(provenance.model_manifest.get("library_versions") or {}) if provenance is not None else {}
     if not emitter.has("model.load"):
@@ -1184,11 +1482,11 @@ def _emit_record_audit(
     for attack_id in config.attack_ids:
         action = f"attack.execute.{attack_id}"
         if attack_id in not_run:
-            emitter.emit(action, {**_attack_detail(config, attack_id), "not_run": not_run[attack_id]},
-                         success=False)
+            emitter.emit(action, {**_attack_detail(config, attack_id), "not_run": not_run[attack_id],
+                                  **endpoint_extra}, success=False)
         elif not emitter.has(action):
-            emitter.emit(action, {**_attack_detail(config, attack_id), "executed": attack_id in executed},
-                         success=attack_id in executed)
+            emitter.emit(action, {**_attack_detail(config, attack_id), "executed": attack_id in executed,
+                                  **endpoint_extra}, success=attack_id in executed)
     if "explain" in record.stages_done:
         digests = sorted({d for o in record.observations for d in o.artifact_sha256.values()})
         emitter.emit("explain.execute", {
@@ -1213,6 +1511,7 @@ def _emit_record_audit(
             "scoring_version": record.score.scoring_version,
             "score_sha256": sink._hashes.get("score.json"),
             "delta_mri": record.score.delta.delta if record.score.delta is not None else None,
+            **endpoint_extra,
         })
     if harden_audit is not None and ("recommend" in record.stages_done or record.recommendations):
         emitter.emit("harden.execute", dict(harden_audit))
@@ -1259,6 +1558,9 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
             requested_by=job.created_by,
         )
         load_detail = _target_load_detail(config, target)
+        is_endpoint = _is_endpoint_target(target)
+        if is_endpoint:
+            load_detail["source"] = "endpoint"
         sink = DatabaseArtifactSink(
             ctx.session, ctx.blob_store,
             run_id=ctx.run_id, project_id=ctx.project_id,
@@ -1277,6 +1579,10 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
             # and its training record are artifacts and Provenance.defense on the returned record.
             if stage == "load_target" and not emitter.has("model.load"):
                 emitter.emit("model.load", dict(load_detail), success=True)
+            # An endpoint job defers its attack.execute rows to the post-record pass so the broker's
+            # query counts and budget (available only once the child has exited) travel on them.
+            if is_endpoint:
+                return
             if stage == "attack":
                 for attack_id in config.attack_ids:
                     action = f"attack.execute.{attack_id}"
@@ -1299,6 +1605,17 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
         baseline_run_id = campaign_row.get("baseline_run_id")
         parent_run_id = campaign_row.get("parent_run_id")
         is_verify = job.type == "verify.replay"
+
+        # ENDPOINT-05: resolve the endpoint request URL and the AuthProfile credential in the worker
+        # parent, at run time. ``run_campaign_sandboxed`` starts the ``PredictBroker`` here (worker
+        # parent), hands the child only the socket path, and stops the broker in its ``finally``. The
+        # secret reaches the broker in memory only; it never enters the request, an audit row or a log.
+        endpoint_request: dict[str, Any] | None = None
+        endpoint_auth: dict[str, Any] | None = None
+        endpoint_summary: dict[str, Any] | None = None
+        if is_endpoint:
+            endpoint_request = _endpoint_request_block(target, config)
+            endpoint_auth = _resolve_endpoint_auth(ctx.session, endpoint_request.get("auth_profile_id"))
 
         def is_cancelled() -> bool:
             from redsim.db.session import get_session
@@ -1325,10 +1642,27 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
                 "completeness": record.completeness if record is not None else "partial",
                 "envelope_sha256": sink._hashes.get("run_record.json"),
                 "error_class": error_class,
+                **({"endpoint": endpoint_summary} if endpoint_summary else {}),
             }, success=success)
 
         try:
-            if str(target.value).startswith("bundled:"):
+            if is_endpoint:
+                assert endpoint_request is not None
+                # The broker (and the only outbound HTTP in the worker) is started inside
+                # run_campaign_sandboxed, in this worker parent, and stopped in its finally block.
+                record = run_campaign_sandboxed(
+                    config,
+                    sink,
+                    on_stage=on_stage,
+                    is_cancelled=is_cancelled,
+                    baseline_run_id=baseline_run_id,
+                    parent_run_id=parent_run_id,
+                    job_id=job_id,
+                    target_endpoint=endpoint_request,
+                    endpoint_auth=endpoint_auth,
+                    endpoint_allowlist=list(redsim_config.target_allowlist),
+                )
+            elif str(target.value).startswith("bundled:"):
                 record = run_campaign_sandboxed(
                     config,
                     sink,
@@ -1376,6 +1710,10 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
         # run_campaign is storage-agnostic and allocates a local id. The
         # platform run id is authoritative at this boundary.
         record = record.model_copy(update={"run_id": ctx.run_id})
+        if is_endpoint:
+            # The parent-side broker counters and budget (ENDPOINT-05, -08) travel on the run record's
+            # provenance and are surfaced on the attack.execute / campaign.score / job.complete rows.
+            endpoint_summary = _endpoint_broker_summary(record)
         if record.status == "cancelled" or is_cancelled():
             tracker.aborted("cancelled", str(record.error or "campaign cancelled"),
                             stages_done=list(record.stages_done))
@@ -1417,7 +1755,7 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
         n_findings = 0
         verify_summary: dict[str, Any] | None = None
         _emit_record_audit(emitter, config=config, record=record, sink=sink, load_detail=load_detail,
-                           harden_audit=harden_audit)
+                           harden_audit=harden_audit, endpoint_summary=endpoint_summary)
         if job.type == "attack.run" and record.status == "succeeded":
             from redsim.services.ml_findings import project_campaign_findings
 
@@ -1426,7 +1764,7 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
             n_findings = 1 if _merge_followon(ctx, job=job, record=record, sink=sink) else 0
         elif is_verify:
             verify_summary = _project_verify(
-                ctx, job=job, record=record, baseline_run_id=baseline_run_id, emitter=emitter,
+                ctx, job=job, record=record, baseline_run_id=baseline_run_id, emitter=emitter, sink=sink,
             )
             n_findings = 1
         emitter.emit("report.render", {
