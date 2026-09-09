@@ -27,8 +27,10 @@ COPY pyproject.toml ./
 COPY redsim ./redsim
 
 # This image runs the attacks, so it carries the ml extra (torch, ART,
-# SHAP, onnxruntime, scikit-learn) on top of the Celery worker deps.
-RUN pip install -e ".[worker,ml]"
+# SHAP, onnxruntime, scikit-learn), plus garak for default-pool LLM probes.
+RUN pip install -e ".[worker,ml,garak]"
+RUN python -c "import garak, redsim.ml.llm.probe_child" && \
+    python -m redsim.ml.llm.probe_child --help
 
 # A standalone worker consumes both queues so nothing is stranded; the compose
 # stack overrides this to run a dedicated pool per queue (-Q scans / -Q default)

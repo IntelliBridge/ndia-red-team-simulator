@@ -59,6 +59,8 @@ api = [
     "numpy>=1.26,<3",
 ]
 worker = [
+    # Probe AuthProfiles are decrypted in the worker parent, never in the child environment.
+    "cryptography>=42",
     "celery[redis]>=5.3",
     "redis>=5.0",
     "sqlalchemy>=2.0",
