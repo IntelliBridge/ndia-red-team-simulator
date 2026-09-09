@@ -129,9 +129,15 @@ describe("/models", () => {
     render(createElement(ModelsPage));
     const blocks = screen.getAllByTestId("score-summary");
     expect(blocks).toHaveLength(2);
+    // Collapsed by default: the headline and the count show, the categories do not.
     expect(blocks[0]!.textContent).toContain("55.5");
+    expect(blocks[0]!.textContent).toContain("2 campaigns");
+    expect(blocks[0]!.textContent).not.toContain("Accuracy under attack");
+    fireEvent.click(blocks[0]!.querySelector("button")!);
     expect(blocks[0]!.textContent).toContain("Accuracy under attack");
     expect(blocks[0]!.textContent).not.toContain("Perturbation budget needed");
+    expect(blocks[1]!.textContent).not.toContain("30%");
+    fireEvent.click(blocks[1]!.querySelector("button")!);
     expect(blocks[1]!.textContent).toContain("dan");
     expect(blocks[1]!.textContent).toContain("30%");
   });

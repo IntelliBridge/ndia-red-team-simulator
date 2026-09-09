@@ -26,61 +26,81 @@ const DIMENSION_LABELS: Record<string, string> = {
   S_expl: "Explanation stability",
 };
 
-/** Average score of a model by category, from its own scorecards; nothing when unscored. */
+/**
+ * Average score of a model by category, from its own scorecards; nothing when
+ * unscored. Collapsed by default: the header line shows the headline number
+ * and the count, the per-category bars open on click.
+ */
 function ScoreSummaryBlock({ summary }: { summary: ModelTarget["score_summary"] }) {
+  const [open, setOpen] = useState(false);
   if (!summary) return null;
-  if (summary.kind === "mri") {
-    const dims = Object.entries(summary.subscores_mean).filter(([, v]) => v !== null) as [string, number][];
-    if (summary.mri_mean === null && dims.length === 0) return null;
-    return (
-      <div className="mt-4 border-t border-border pt-3" data-testid="score-summary">
-        <div className="flex items-baseline justify-between">
-          <div className="redsim-kicker">average robustness index</div>
-          <div className="text-xs text-muted-foreground">
-            {summary.n_campaigns} campaign{summary.n_campaigns === 1 ? "" : "s"}
-          </div>
-        </div>
-        <div className="text-2xl font-semibold tabular-nums">{summary.mri_mean ?? "—"}</div>
-        <ul className="mt-2 space-y-1">
-          {dims.map(([key, value]) => (
-            <li key={key} className="grid grid-cols-[1fr_6rem_2.5rem] items-center gap-2 text-xs">
-              <span className="truncate">{DIMENSION_LABELS[key] ?? key}</span>
-              <span className="h-2 rounded-sm bg-muted" aria-hidden="true">
-                <span className="block h-2 rounded-sm bg-primary" style={{ width: `${Math.max(2, Math.min(100, value))}%` }} />
-              </span>
-              <span className="text-right tabular-nums">{value}</span>
-            </li>
-          ))}
-        </ul>
-        <p className="mt-2 text-[11px] text-muted-foreground" title={summary.note}>
-          Mean over this model&apos;s scored campaigns; each scorecard keeps its denominators.
-        </p>
-      </div>
-    );
-  }
-  if (summary.families.length === 0) return null;
+  const isMri = summary.kind === "mri";
+  const dims = isMri
+    ? (Object.entries(summary.subscores_mean).filter(([, v]) => v !== null) as [string, number][])
+    : [];
+  if (isMri && summary.mri_mean === null && dims.length === 0) return null;
+  if (!isMri && summary.families.length === 0) return null;
+  const headline = isMri
+    ? `${summary.mri_mean ?? "—"}`
+    : `${summary.families.length} famil${summary.families.length === 1 ? "y" : "ies"}`;
+  const count = isMri
+    ? `${summary.n_campaigns} campaign${summary.n_campaigns === 1 ? "" : "s"}`
+    : `${summary.n_runs} run${summary.n_runs === 1 ? "" : "s"}`;
   return (
     <div className="mt-4 border-t border-border pt-3" data-testid="score-summary">
-      <div className="flex items-baseline justify-between">
-        <div className="redsim-kicker">average hit rate by probe family</div>
-        <div className="text-xs text-muted-foreground">
-          {summary.n_runs} run{summary.n_runs === 1 ? "" : "s"}
-        </div>
-      </div>
-      <ul className="mt-2 space-y-1">
-        {summary.families.map((f) => (
-          <li key={f.family} className="grid grid-cols-[1fr_6rem_3.5rem] items-center gap-2 text-xs">
-            <span className="truncate">{f.family}</span>
-            <span className="h-2 rounded-sm bg-muted" aria-hidden="true">
-              <span className="block h-2 rounded-sm bg-orange-500" style={{ width: `${Math.max(2, Math.round(f.hit_rate * 100))}%` }} />
-            </span>
-            <span className="text-right tabular-nums">{Math.round(f.hit_rate * 100)}%</span>
-          </li>
-        ))}
-      </ul>
-      <p className="mt-2 text-[11px] text-muted-foreground" title={summary.note}>
-        Hits over evaluated replies, pooled across runs; a hit is the detector&apos;s judgement.
-      </p>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <span className="redsim-kicker">
+          {isMri ? "average robustness index" : "average hit rate by probe family"}
+        </span>
+        <span className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground">{count}</span>
+          <span className="text-lg font-semibold tabular-nums">{headline}</span>
+          <span aria-hidden="true" className="text-muted-foreground">
+            {open ? "▾" : "▸"}
+          </span>
+        </span>
+      </button>
+      {open && isMri && (
+        <>
+          <ul className="mt-2 space-y-1">
+            {dims.map(([key, value]) => (
+              <li key={key} className="grid grid-cols-[1fr_6rem_2.5rem] items-center gap-2 text-xs">
+                <span className="truncate">{DIMENSION_LABELS[key] ?? key}</span>
+                <span className="h-2 rounded-sm bg-muted" aria-hidden="true">
+                  <span className="block h-2 rounded-sm bg-primary" style={{ width: `${Math.max(2, Math.min(100, value))}%` }} />
+                </span>
+                <span className="text-right tabular-nums">{value}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px] text-muted-foreground" title={summary.note}>
+            Mean over this model&apos;s scored campaigns; each scorecard keeps its denominators.
+          </p>
+        </>
+      )}
+      {open && !isMri && (
+        <>
+          <ul className="mt-2 space-y-1">
+            {summary.families.map((f) => (
+              <li key={f.family} className="grid grid-cols-[1fr_6rem_3.5rem] items-center gap-2 text-xs">
+                <span className="truncate">{f.family}</span>
+                <span className="h-2 rounded-sm bg-muted" aria-hidden="true">
+                  <span className="block h-2 rounded-sm bg-orange-500" style={{ width: `${Math.max(2, Math.round(f.hit_rate * 100))}%` }} />
+                </span>
+                <span className="text-right tabular-nums">{Math.round(f.hit_rate * 100)}%</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-[11px] text-muted-foreground" title={summary.note}>
+            Hits over evaluated replies, pooled across runs; a hit is the detector&apos;s judgement.
+          </p>
+        </>
+      )}
     </div>
   );
 }
@@ -385,13 +405,13 @@ export default function ModelsPage() {
                   </>
                 )}
               </div>
-              <ScoreSummaryBlock summary={m.score_summary} />
               {m.reason && (
                 <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
                   {m.reason}
                 </p>
               )}
             </button>
+            <ScoreSummaryBlock summary={m.score_summary} />
             <RoleGated minRole="admin" callerRole={roles[m.project_id]}>
               <button
                 className="mt-3 border border-destructive/30 px-3 py-1 text-xs text-destructive"
