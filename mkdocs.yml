@@ -181,6 +181,7 @@ nav:
           - "Remaining-work brief": plans/10-remaining-work-brief.md
           - "Phase B register (2026-09-09)": plans/11-phase-b-register-2026-09-09.md
           - "Phase B plan": plans/12-phase-b-plan.md
+          - "LLM live-gateway brief": plans/13-llm-live-gateway-brief.md
       - Workstreams:
           - ML core: workstreams/ml-core.md
           - ML assets: workstreams/ml-assets.md
