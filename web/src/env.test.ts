@@ -90,16 +90,61 @@ describe("web env schema", () => {
   });
 
   it("reads the fixture flags as booleans from the spellings an operator writes", async () => {
+    // The server flag keeps all four spellings: it is a plain runtime read.
+    // Pinned so nobody later narrows flag() itself on the strength of the
+    // public flag's stricter rule below.
+    setEnv({
+      BETTER_AUTH_SECRET: VALID_SECRET,
+      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_ENV: "test",
+      REDSIM_DEV_FIXTURES: "TRUE",
+      NEXT_PUBLIC_REDSIM_DEV_FIXTURES: "1",
+    });
+    const env = await importEnv();
+    expect(env.REDSIM_DEV_FIXTURES).toBe(true);
+    expect(env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES).toBe(true);
+  });
+
+  it('refuses a public fixture flag that is not literally "1"', async () => {
+    // upstream.ts compares that name against "1" as a literal, because that
+    // is the only form the bundler can fold away. A spelling flag() accepts
+    // and the comparison does not used to validate cleanly at boot, pass the
+    // auth gate, serve no fixture and fall through to a 401.
+    for (const spelling of ["true", "TRUE", "on", "yes"]) {
+      setEnv({
+        BETTER_AUTH_SECRET: VALID_SECRET,
+        BETTER_AUTH_URL: "http://localhost:3000",
+        REDSIM_ENV: "test",
+        REDSIM_DEV_FIXTURES: "1",
+        NEXT_PUBLIC_REDSIM_DEV_FIXTURES: spelling,
+      });
+      await expect(importEnv()).rejects.toThrow(/NEXT_PUBLIC_REDSIM_DEV_FIXTURES/);
+    }
+  });
+
+  it("refuses the server fixture flag with the public one absent", async () => {
+    // Same failure with nothing to inline at all: fixture mode is on at
+    // runtime and the fixture module is not in the build.
     setEnv({
       BETTER_AUTH_SECRET: VALID_SECRET,
       BETTER_AUTH_URL: "http://localhost:3000",
       REDSIM_ENV: "test",
       REDSIM_DEV_FIXTURES: "1",
-      NEXT_PUBLIC_REDSIM_DEV_FIXTURES: "TRUE",
+    });
+    await expect(importEnv()).rejects.toThrow(/NEXT_PUBLIC_REDSIM_DEV_FIXTURES/);
+  });
+
+  it('leaves the public flag alone when the server flag is off, so "0" still parses', async () => {
+    // The rule is one-directional. Only fixture mode being on at runtime
+    // demands the literal, so an ordinary build carrying "0" is unaffected.
+    setEnv({
+      BETTER_AUTH_SECRET: VALID_SECRET,
+      BETTER_AUTH_URL: "http://localhost:3000",
+      NEXT_PUBLIC_REDSIM_DEV_FIXTURES: "0",
     });
     const env = await importEnv();
-    expect(env.REDSIM_DEV_FIXTURES).toBe(true);
-    expect(env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES).toBe(true);
+    expect(env.REDSIM_DEV_FIXTURES).toBe(false);
+    expect(env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES).toBe(false);
   });
 
   it("refuses the server fixture flag outside the dev or test allowlist", async () => {
@@ -132,6 +177,7 @@ describe("web env schema", () => {
       BETTER_AUTH_SECRET: VALID_SECRET,
       BETTER_AUTH_URL: "http://localhost:3000",
       REDSIM_DEV_FIXTURES: "1",
+      NEXT_PUBLIC_REDSIM_DEV_FIXTURES: "1",
     });
     const env = await importEnv();
     expect(env.REDSIM_DEV_FIXTURES).toBe(true);

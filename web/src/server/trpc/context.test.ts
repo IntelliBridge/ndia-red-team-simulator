@@ -153,7 +153,11 @@ describe("createContext credential rules", () => {
   });
 
   it("reports fixture mode only when the server flag and the environment agree", async () => {
-    setEnv({ REDSIM_ENV: "dev", REDSIM_DEV_FIXTURES: "1" });
+    setEnv({
+      REDSIM_ENV: "dev",
+      REDSIM_DEV_FIXTURES: "1",
+      NEXT_PUBLIC_REDSIM_DEV_FIXTURES: "1",
+    });
     const on = await loadContext();
     expect(on.createContext(on.requestPartsFromRequest(request())).fixtures).toBe(true);
 

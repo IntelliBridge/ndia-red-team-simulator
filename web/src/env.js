@@ -9,10 +9,13 @@
  * to gate the dynamic import of the fixture module, because Next only inlines
  * the literal read and a property lookup on the object below is not a constant
  * the bundler can fold away. That read compares against `"1"`, so a build
- * enables the fixture module with that spelling alone even though `flag()`
- * below accepts four. A build without the flag therefore drops the
- * module from the output; this schema still validates the same name for the
- * ribbon and for the refinement at the bottom of the file.
+ * without the flag drops the module from the output. `flag()` below accepts
+ * four spellings and that comparison accepts one, which used to let
+ * `NEXT_PUBLIC_REDSIM_DEV_FIXTURES=true` validate at boot, pass the auth gate,
+ * serve no fixture and fall through to a 401. The refinement at the bottom of
+ * the file closes that gap by refusing any other spelling once fixture mode is
+ * on, so the two halves cannot disagree. This schema still validates the same
+ * name for the ribbon.
  *
  * Centralizing the reads buys two things a scattered `process.env.X ?? default`
  * does not. A missing or malformed value fails at boot naming the variable,
@@ -63,6 +66,16 @@ const flag = (fallback = "0") =>
  * every prerendered page evaluates it.
  */
 const buildTime = !!process.env.SKIP_ENV_VALIDATION;
+
+/**
+ * The public fixture flag exactly as it was written, before `flag()` folds four
+ * spellings into a boolean.
+ *
+ * A literal member expression, the same form `upstream.ts` uses, so the
+ * refinement below compares the value that read will compare rather than a
+ * value the bundler never inlined.
+ */
+const rawPublicFixtures = process.env.NEXT_PUBLIC_REDSIM_DEV_FIXTURES;
 
 /**
  * Required when the process is actually running, optional during a build.
@@ -170,14 +183,31 @@ export const env = createEnv({
    *
    * It is applied only when the server shape is present. On the browser the
    * server names are not part of the parsed object at all, so there is no
-   * `REDSIM_ENV` to check; the same build already failed on the server side
+   * `REDSIM_ENV` to check. The same build already failed on the server side
    * if the combination was illegal.
+   *
+   * The second rule is the spelling one. `upstream.ts` gates the fixture
+   * module on `NEXT_PUBLIC_REDSIM_DEV_FIXTURES === "1"` as a literal, so any
+   * other spelling `flag()` accepts leaves fixture mode on at runtime with no
+   * fixture module in the build, and the request falls through to a 401
+   * instead. Refusing it here is what makes the promise at the top of this
+   * file true for that name. One-directional on purpose: only fixture mode
+   * being on demands the literal, so an ordinary build carrying `"0"` is
+   * untouched.
    */
   createFinalSchema: (shape, isServer) =>
     z.object(shape).superRefine((value, ctx) => {
       if (!isServer) return;
       const parsed = /** @type {Record<string, unknown>} */ (value);
       const redsimEnv = /** @type {string | undefined} */ (parsed.REDSIM_ENV);
+      if (parsed.REDSIM_DEV_FIXTURES === true && rawPublicFixtures !== "1") {
+        const got = rawPublicFixtures === undefined ? "unset" : `"${rawPublicFixtures}"`;
+        ctx.addIssue({
+          code: "custom",
+          path: ["NEXT_PUBLIC_REDSIM_DEV_FIXTURES"],
+          message: `fixture mode needs NEXT_PUBLIC_REDSIM_DEV_FIXTURES="1" exactly, because only that literal survives the build (got ${got})`,
+        });
+      }
       if (redsimEnv === undefined || DEV_ENVS.includes(redsimEnv)) return;
       for (const name of ["REDSIM_DEV_FIXTURES", "NEXT_PUBLIC_REDSIM_DEV_FIXTURES"]) {
         if (parsed[name] !== true) continue;

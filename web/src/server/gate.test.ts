@@ -72,7 +72,13 @@ describe("gateDecision", () => {
   });
 
   it("passes every route in fixture mode", async () => {
-    setEnv({ REDSIM_ENV: "test", REDSIM_DEV_FIXTURES: "1" });
+    // Both flags, because env.js refuses fixture mode with the public one
+    // spelled anything but "1".
+    setEnv({
+      REDSIM_ENV: "test",
+      REDSIM_DEV_FIXTURES: "1",
+      NEXT_PUBLIC_REDSIM_DEV_FIXTURES: "1",
+    });
     const { gateDecision } = await loadGate();
     expect(
       gateDecision({ pathname: "/runs", hasSessionCookie: false, hasDevTokenCookie: false }),
