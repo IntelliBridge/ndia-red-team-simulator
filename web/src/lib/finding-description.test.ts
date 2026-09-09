@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeFinding, findingLead } from "./finding-description";
+import { describeFinding, findingLead, findingModel } from "./finding-description";
 
 const EVASION =
   "What happened: redsim took the images this model classified correctly and altered each one with the FGSM technique. " +
@@ -60,5 +60,20 @@ describe("describeFinding", () => {
     );
     expect(findingLead("Measured: only technical text.")).toBeNull();
     expect(findingLead(LLM, 40)?.endsWith("...")).toBe(true);
+  });
+});
+
+describe("findingModel", () => {
+  it("drops the bundled prefix and the legacy gateway suffix, keeps the target id for the link", () => {
+    expect(findingModel({ target: "bundled:vehicles_cnn", affected_component: "vehicles_cnn-1234abcd" })).toEqual({
+      label: "vehicles_cnn",
+      targetId: "vehicles_cnn-1234abcd",
+    });
+    expect(findingModel({ target: "anthropic/claude-opus-4-8 via pythia.fdet.agiledefense.xyz (default)", affected_component: "llm-1" })).toEqual({
+      label: "anthropic/claude-opus-4-8",
+      targetId: "llm-1",
+    });
+    expect(findingModel({ target: null, affected_component: "t-9" })).toEqual({ label: "t-9", targetId: "t-9" });
+    expect(findingModel({})).toBeNull();
   });
 });

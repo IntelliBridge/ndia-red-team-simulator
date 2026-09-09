@@ -1,7 +1,7 @@
 "use client";
 import { SeverityChip } from "@redsim/design-system";
 import type { Finding } from "@/lib/api";
-import { findingLead } from "@/lib/finding-description";
+import { findingLead, findingModel } from "@/lib/finding-description";
 import { rowLink } from "@/lib/row-link";
 
 /**
@@ -14,6 +14,7 @@ import { rowLink } from "@/lib/row-link";
 export function FindingSummaryCard({ finding: f, leadMax = 600 }: { finding: Finding; leadMax?: number }) {
   const lead = findingLead(f.schema_blob.description, leadMax);
   const href = `/findings/${f.id}`;
+  const model = findingModel(f.schema_blob);
   return (
     <li {...rowLink(href)} className={`rounded-md border border-border bg-card p-4 ${rowLink("").className}`}>
       <div className="flex flex-wrap items-center gap-2">
@@ -36,6 +37,22 @@ export function FindingSummaryCard({ finding: f, leadMax = 600 }: { finding: Fin
             <a className="text-primary underline" href={href}>
               {f.id}
             </a>
+          </dd>
+        </div>
+        <div>
+          <dt className="redsim-kicker uppercase tracking-wide text-muted-foreground">Model</dt>
+          <dd className="whitespace-nowrap">
+            {model ? (
+              model.targetId ? (
+                <a className="text-primary underline" href={`/models/${model.targetId}`}>
+                  {model.label}
+                </a>
+              ) : (
+                model.label
+              )
+            ) : (
+              "—"
+            )}
           </dd>
         </div>
         <div>

@@ -173,6 +173,8 @@ export type FindingSchemaBlob = {
   description?: string;
   cve?: string;
   target?: string;
+  /** The Target row id the finding is about (RedsimFinding.affected_component). */
+  affected_component?: string;
   attack_id?: string;
   first_success_eps?: number;
   ml?: MLFindingDetail | null;
