@@ -327,8 +327,14 @@ Open items, and two report-format pins the completion render made stale are
 still to be moved (`tests/ml/test_audit_campaign.py`,
 `tests/e2e/test_ml_review_reports.py`). Every other tier was green at
 `703f8f6`. The verify paradigm removal of 2026-09-09 deleted the verify tests
-and rewrote the mixed ones, so every count above is stale until the tiers are
-re-run on this tree.
+and rewrote the mixed ones. Its counts, run on branch
+`refactor/remove-verify-paradigm` after the merge of `main` at `776c74b`: the
+default tier 2588 passed, 36 skipped, 25 deselected; the `ml` tier 400 passed,
+1 skipped; the e2e tier through the real sandbox child 54 passed, 5 skipped
+(the Postgres lane and the garak-gated cases); ruff and `mypy redsim` (246
+files) clean; `mkdocs build --strict` exit 0; web typechecks clean and vitest
+502 passed. The `garak` tier was not run: its extra is not installed in that
+venv.
 
 Markers are declared in `pyproject.toml`. `unit` and `integration` run by
 default. The `integration` tests use the shared sqlite harness in

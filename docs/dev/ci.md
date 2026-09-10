@@ -547,8 +547,8 @@ together with the wave B2 push that follows it. Facts, in order:
 - The B2 integration commit moved the e2e pins that B2 made stale
   (`tests/e2e/test_ml_governance.py`: `report.pdf` is `404 report not yet
   rendered` and an endpoint body without a profile is `422
-  auth_profile_required`; `tests/e2e/test_ml_upload_reports.py::test_reports_sections_and_pdf_404`:
-  the same `404`, and the projection's weights keys beside the record), so
+  auth_profile_required`; `tests/e2e/test_ml_upload_reports.py::test_reports_sections_and_completion_pdf`
+  now proves the completion path renders `report.pdf`, and the projection's weights keys beside the record), so
   the `e2e-python` job has nothing known-red.
 - The wave B2 tests need `reportlab` and `pillow` (worker extra) and `pypdf`
   (test extra), declared in `pyproject.toml` by B2; every lane installs

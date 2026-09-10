@@ -1248,6 +1248,18 @@ section 8. Each is a knowing choice of the completion pass, not an oversight.
 
 ## Verified state (2026-09-09, `main` at `703f8f6` plus wave B4)
 
+Branch `refactor/remove-verify-paradigm` (2026-09-09, after the merge of
+`main` at `776c74b`), run from the repository root with the venv interpreter
+and the `ml` extra: `pytest -q -p no:cacheprovider --ignore=tests/e2e` 2588
+passed, 36 skipped, 25 deselected; `pytest -q -m ml tests/ml` 400 passed, 1
+skipped; `REDSIM_E2E=1 pytest -q -m e2e tests/e2e` through the real sandbox
+child 54 passed, 5 skipped (the Postgres lane without
+`REDSIM_E2E_POSTGRES_URL`, the four garak-gated cases); `pytest -m garak`
+skipped every case because the `garak` extra is not installed in that venv;
+`ruff check --select E4,E7,E9,F,I redsim tests` clean; `mypy redsim` clean
+(246 files); `mkdocs build --strict` exit 0; both web typechecks clean and
+vitest 502 passed. The paragraphs below are the pre-removal history.
+
 The counts of record are the B3 integration's on `main` at `703f8f6`, run
 from the repository root with the venv interpreter and the `ml` extra:
 `pytest -q -p no:cacheprovider --ignore=tests/e2e` 2634 passed, 35 skipped,
