@@ -397,14 +397,8 @@ jobs:
         run: |
           # --scanners vuln: this job is the dependency-CVE gate; secret
           # scanning is the trufflehog job's responsibility.
-          # --skip-dirs redsim-designs: a v0.dev design export kept for
-          # reference only (see redsim-designs/README.md). It is not a
-          # pnpm workspace member, is not built, tested or shipped, and
-          # carries its own pinned lockfile we do not intend to baseline
-          # advisories for; it is slated for removal once the redesign
-          # work it references is done.
           trivy fs --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
-            --exit-code 1 --ignorefile .trivyignore --skip-dirs redsim-designs \
+            --exit-code 1 --ignorefile .trivyignore \
             --no-progress .
 
   coverage:
