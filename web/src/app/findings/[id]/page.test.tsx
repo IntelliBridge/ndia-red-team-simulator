@@ -27,6 +27,11 @@ vi.mock("@/hooks/useMlCatalog", () => ({
     ],
   }),
 }));
+vi.mock("@/lib/chat", async () => ({
+  ...(await vi.importActual("@/lib/chat")),
+  fetchChatStatus: vi.fn(async () => ({ configured: true, model: "anthropic/claude-opus-5" })),
+  streamFindingChat: vi.fn(),
+}));
 vi.mock("@/lib/api", async () => ({
   ...(await vi.importActual("@/lib/api")),
   explainFinding: explain,
@@ -146,5 +151,13 @@ describe("/findings/[id]", () => {
       llm_narrative: false,
     });
     expect(screen.getByText(/candidate · not evaluated/)).toBeTruthy();
+  });
+  it("opens the finding chat drawer from the Chat button", async () => {
+    render(createElement(FindingPage, { params: { id: "fixture-finding" } }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
+    const dialog = await screen.findByRole("dialog", { name: "Chat with this finding" });
+    expect(dialog.textContent).toContain("fixture-finding");
+    expect(screen.getByRole("button", { name: /Explain this finding in plain language/ })).toBeTruthy();
   });
 });

@@ -123,6 +123,22 @@ export const env = createEnv({
     // flag cannot be the authority, because the web image builds with
     // SKIP_ENV_VALIDATION and no REDSIM_ENV (KTD13).
     REDSIM_DEV_FIXTURES: flag(),
+    // The Pythia gateway, for the finding chat (web/src/app/api/chat). The
+    // same four names the Python services read (docs/ops/pythia.md), so one
+    // secret serves every process. All optional: without a base URL and a
+    // key the chat route answers 503 llm_not_configured and the panel says
+    // so. The key is read here only and never reaches the browser.
+    PYTHIA_BASE_URL: z.string().url().optional(),
+    PYTHIA_API_KEY: z.string().optional(),
+    PYTHIA_PERSONA: z.string().optional(),
+    // Seconds before a gateway request is aborted, the whole streamed answer
+    // included. The Python client defaults to 60 for one narrative turn; a
+    // streamed chat answer needs longer.
+    PYTHIA_TIMEOUT_S: z.coerce.number().int().positive().default(120),
+    // The canonical Pythia model id the chat sends, `<vendor>/<model>`.
+    // Its own name rather than REDSIM_ML_LLM_MODEL, because the narrative
+    // writer and the chat may run different models.
+    REDSIM_WEB_CHAT_MODEL: z.string().default("anthropic/claude-opus-5"),
   },
 
   /**
@@ -163,6 +179,11 @@ export const env = createEnv({
     REDSIM_REFRESH_COOKIE: process.env.REDSIM_REFRESH_COOKIE,
     REDSIM_API_URL: process.env.REDSIM_API_URL,
     REDSIM_DEV_FIXTURES: process.env.REDSIM_DEV_FIXTURES,
+    PYTHIA_BASE_URL: process.env.PYTHIA_BASE_URL,
+    PYTHIA_API_KEY: process.env.PYTHIA_API_KEY,
+    PYTHIA_PERSONA: process.env.PYTHIA_PERSONA,
+    PYTHIA_TIMEOUT_S: process.env.PYTHIA_TIMEOUT_S,
+    REDSIM_WEB_CHAT_MODEL: process.env.REDSIM_WEB_CHAT_MODEL,
     NEXT_PUBLIC_REDSIM_API_URL: process.env.NEXT_PUBLIC_REDSIM_API_URL,
     NEXT_PUBLIC_REDSIM_ENV: process.env.NEXT_PUBLIC_REDSIM_ENV,
     NEXT_PUBLIC_REDSIM_CSRF_COOKIE: process.env.NEXT_PUBLIC_REDSIM_CSRF_COOKIE,

@@ -22,6 +22,7 @@ import {
   type Measurement,
   type Observation,
 } from "@/lib/api";
+import { FindingChatPanel } from "@/components/finding-chat-panel";
 import { useFinding } from "@/hooks/useFinding";
 import { useDefenses } from "@/hooks/useMlCatalog";
 import { describeFinding } from "@/lib/finding-description";
@@ -134,6 +135,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
   const [feedback, setFeedback] = useState("");
   const [defenseId, setDefenseId] = useState("");
   const [defenseParams, setDefenseParams] = useState("{}");
+  const [chatOpen, setChatOpen] = useState(false);
 
   if (!authed) return <p>Signing in…</p>;
   if (error) {
@@ -226,26 +228,38 @@ export default function FindingPage({ params }: { params: { id: string } }) {
         target={data.schema_blob.target}
         validationState={data.validation_state ?? null}
         actions={
-          <RoleGated minRole="approver" callerRole={role}>
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => {
-                const reason = window.prompt("Reason for dismissal");
-                if (reason)
-                  void act(
-                    "dismiss",
-                    () => dismissFinding(data.id, reason, data.status),
-                    "Dismissal recorded.",
-                  );
-              }}
-              className="border border-border px-2 py-1 text-xs"
+              type="button"
+              onClick={() => setChatOpen(true)}
+              aria-haspopup="dialog"
+              aria-expanded={chatOpen}
+              className="border border-primary/50 px-2 py-1 text-xs text-primary hover:bg-primary/10"
             >
-              Dismiss
+              Chat
             </button>
-          </RoleGated>
+            <RoleGated minRole="approver" callerRole={role}>
+              <button
+                onClick={() => {
+                  const reason = window.prompt("Reason for dismissal");
+                  if (reason)
+                    void act(
+                      "dismiss",
+                      () => dismissFinding(data.id, reason, data.status),
+                      "Dismissal recorded.",
+                    );
+                }}
+                className="border border-border px-2 py-1 text-xs"
+              >
+                Dismiss
+              </button>
+            </RoleGated>
+          </div>
         }
       >
         <DescriptionBoxes description={data.schema_blob.description} />
       </FindingCard>
+      <FindingChatPanel finding={data} open={chatOpen} onOpenChange={setChatOpen} />
       {feedback && (
         <p
           role="status"
