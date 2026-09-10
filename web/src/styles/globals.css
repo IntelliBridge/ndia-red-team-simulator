@@ -97,8 +97,17 @@
     border-color: hsl(var(--border));
     box-sizing: border-box;
   }
+  /* The ground lives on the root element, never on body: the login page
+     stacks a fixed hero layer at z-index -1, which paints above the root's
+     background and below everything in the body. A body fill would cover it.
+     The faint red glow and navy lift are the ones the Labs pages carry behind
+     their glass; fixed so they do not scroll with the content. */
   html {
-    background: var(--navy-deepest);
+    background-color: var(--navy-deepest);
+    background-image:
+      radial-gradient(ellipse 60% 40% at 15% 0%, rgba(255, 90, 88, 0.07), transparent 70%),
+      radial-gradient(ellipse 50% 40% at 100% 100%, rgba(15, 31, 54, 0.9), transparent 70%);
+    background-attachment: fixed;
   }
   body {
     margin: 0;
@@ -107,13 +116,7 @@
     font-family: var(--sans);
     font-size: 15px;
     line-height: 1.6;
-    background-color: var(--navy-deepest);
-    /* The faint red glow and navy lift the Labs pages carry behind their
-       glass. Fixed so it does not scroll with the content. */
-    background-image:
-      radial-gradient(ellipse 60% 40% at 15% 0%, rgba(255, 90, 88, 0.07), transparent 70%),
-      radial-gradient(ellipse 50% 40% at 100% 100%, rgba(15, 31, 54, 0.9), transparent 70%);
-    background-attachment: fixed;
+    background: transparent;
     -webkit-font-smoothing: antialiased;
   }
   h1, h2, h3, h4 {
@@ -239,6 +242,36 @@
 .redsim-ghost:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+/* Login hero: the full-bleed data-center render behind the sign-in form.
+   Fixed to the viewport and stacked under the page, dimmed by a vertical
+   gradient that darkens toward the footer and a soft radial pool under the
+   form. The header's translucent navy sits on top of it. */
+.redsim-login-hero {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--navy-deepest);
+  background-image: url("/brand/login-hero.jpg");
+  background-size: cover;
+  background-position: center;
+}
+.redsim-login-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(4, 6, 15, 0.45) 0%, rgba(4, 6, 15, 0.25) 35%, rgba(4, 6, 15, 0.55) 75%, rgba(4, 6, 15, 0.92) 100%),
+    radial-gradient(45% 55% at 50% 58%, rgba(4, 6, 15, 0.5) 0%, rgba(4, 6, 15, 0) 100%);
+}
+
+/* The sign-in panel sits on the hero, so it is denser than the glass card
+   used over the plain navy ground. */
+.redsim-panel--solid {
+  background: rgba(6, 12, 26, 0.72);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
 }
 
 /* Text input on the login form: navy well, muted border, red focus ring. */
