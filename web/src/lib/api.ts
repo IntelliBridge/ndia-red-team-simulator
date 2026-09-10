@@ -770,6 +770,26 @@ export type ExportDataset = {
   blockers: ExportDatasetBlocker[];
 };
 
+export type ExportFoundryStatus =
+  | "not_configured"
+  | "not_pushed"
+  | "queued"
+  | "running"
+  | "pushed"
+  | "failed";
+export type ExportFoundryBlocker = "not_terminal" | "run_failed" | "fixture_target" | "score_unavailable";
+
+/** The Foundry push state of one run, as `GET /v1/exports` reports it (spec 27.3). */
+export type ExportFoundry = {
+  status: ExportFoundryStatus;
+  auto_push: boolean;
+  push_run_id: string | null;
+  transaction_rid: string | null;
+  pushed_at: string | null;
+  error: string | null;
+  blockers: ExportFoundryBlocker[];
+};
+
 export type ExportRow = {
   run_id: string;
   project_id: string;
@@ -787,6 +807,45 @@ export type ExportRow = {
   };
   reports: ExportReports;
   dataset: ExportDataset;
+  foundry: ExportFoundry;
+};
+
+// --- Per-project Foundry settings (spec 27.3) ---
+// Mirrors GET/PUT /v1/projects/{slug}/integrations/foundry. The deployment
+// block is operator configuration read from the API environment; the settings
+// block is what an admin sets per project; `effective` is what a push would use.
+export type FoundryDeploymentStatus = "disabled" | "misconfigured" | "configured";
+export type FoundryBlocker =
+  | "integration_disabled"
+  | "integration_misconfigured"
+  | "auth_profile_missing"
+  | "auth_profile_deleted"
+  | "auth_profile_kind_unsupported"
+  | "dataset_rid_missing";
+
+export type FoundryProjectSettings = {
+  project_id: string;
+  project: string;
+  deployment: {
+    status: FoundryDeploymentStatus;
+    host: string | null;
+    reason: string | null;
+    attested: boolean;
+    default_dataset_rid: string | null;
+  };
+  settings: {
+    dataset_rid: string | null;
+    auth_profile_id: string | null;
+    auth_profile_name: string | null;
+    auto_push: boolean;
+    updated_at: string | null;
+    updated_by: string | null;
+  };
+  effective: {
+    dataset_rid: string | null;
+    ready: boolean;
+    blockers: FoundryBlocker[];
+  };
 };
 
 export type ExportsList = {

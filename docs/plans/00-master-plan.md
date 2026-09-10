@@ -913,6 +913,15 @@ Celery task `redsim.verify_replay` and the `redsim verify` CLI subcommand are
 gone. The bullets below keep the pre-removal shapes where they name these
 fields, as dated history. Read this note first.
 
+The migration head moved a third time on 2026-09-10, from
+`0012_remove_verify_paradigm` to `0013_foundry_auto_push`: one nullable JSONB
+column, `projects.ml_integrations`, holding the per-project Foundry dataset
+rid, bearer auth profile and auto-push toggle the web Exports page edits
+(`redsim/services/ml_integrations.py`; `docs/interop.md` "Per-project
+settings and auto-push"). Additive, no existing column or frozen contract
+changed; `FoundryPushRequest.auth_profile_id` became optional with the
+project setting as its fallback. `tests/test_migration_0013.py` pins the head.
+
 - **Schema** (`redsim/ml/schema.py`): the `RunRecord`/`Measurement`/`Observation`/
   `Interpretation`/`CandidateRecommendation` evidence model stays. It is written
   as a sha256-addressed Artifact (`ml.run_record`) and **projected** onto

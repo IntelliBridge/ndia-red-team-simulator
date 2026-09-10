@@ -1118,8 +1118,9 @@ def ml_campaign_run(self: Task, job_id: str) -> dict[str, Any]:
     from redsim.services.ml_campaigns import persist_campaign_record
     from redsim.workers.bootstrap import task_context
     from redsim.workers.tasks.capacity import deferred_continuation
+    from redsim.workers.tasks.foundry_auto_push import auto_push_continuation
 
-    with deferred_continuation(job_id), task_context(job_id, task=self) as ctx:
+    with auto_push_continuation(job_id), deferred_continuation(job_id), task_context(job_id, task=self) as ctx:
         if ctx.skip:
             return {"job_id": job_id, "skipped": True}
         audit_writer = ctx.audit_writer

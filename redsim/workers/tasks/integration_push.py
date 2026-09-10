@@ -145,6 +145,16 @@ class _Stages:
     def failed(self, stage: str, error: str) -> None:
         self._store(stage, "failed", error=error, completeness="partial")
 
+    def annotate(self, **fields: Any) -> None:
+        """Identifiers (never payloads or tokens) the exports inventory reads: transaction rid, pushed_at."""
+        run = self._run()
+        if run is None:
+            return
+        table = dict(run.stage_table or {})
+        table.update({k: v for k, v in fields.items() if v is not None})
+        run.stage_table = table
+        self.session.commit()
+
     def finish(self) -> None:
         run = self._run()
         if run is None:
@@ -336,6 +346,8 @@ def integration_push(self: Task, job_id: str) -> dict[str, Any]:
         })
         emitter.emit(EXECUTE_ACTION, execute_detail, success=True)
         stages.completed("receipt")
+        stages.annotate(transaction_rid=receipt.transaction_rid, pushed_at=receipt.pushed_at,
+                        target_ref=target_ref, n_files=len(receipt.files))
         stages.finish()
         complete("succeeded", success=True, extra={"transaction_rid": receipt.transaction_rid,
                                                     "n_files": len(receipt.files)})

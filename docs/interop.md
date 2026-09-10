@@ -377,6 +377,36 @@ the CI proof. The adversarial-dataset push "when exported"
 (the second half of INTEROP-23) is not built: `PUSH_PAYLOADS` is `("scorecard",)`
 and the roster says so.
 
+### Per-project settings and auto-push (2026-09-10)
+
+The owner asked for the push to be configurable from the web Exports page and
+to fire on its own. The split keeps spec 27.3 and D3 intact: the host, the
+attestation and the allowlist stay operator-set in the environment, and a
+project admin chooses the rest through `GET` and `PUT
+/v1/projects/{slug}/integrations/foundry` (`redsim.services.ml_integrations`,
+stored in `projects.ml_integrations` by migration `0013_foundry_auto_push`):
+the dataset rid, the bearer `AuthProfile` holding the token, and an
+`auto_push` toggle that the route refuses to turn on until a push would be
+admitted (a configured deployment, a live bearer profile, an effective rid).
+The push body's keys became optional so the project settings fill an empty
+body; the admission boundary is unchanged otherwise.
+
+With the toggle on, `ml_campaign_run` runs
+`redsim.workers.tasks.foundry_auto_push.auto_push_after_campaign` as its
+outermost continuation (after `deferred_continuation`, after the terminal
+status is committed) and, for a campaign that `succeeded`, calls
+`create_foundry_push` exactly as an admin's `POST` does, actor
+`worker:auto_push`. Every refusal the boundary knows applies and is audited
+the same way; a failed push is recorded on its own follow-up run and never
+touches the campaign run; nothing retries (the push task keeps
+`max_retries=0`), the toggle stays on and the next campaign tries again.
+Failed, cancelled and partial runs are never pushed. `GET /v1/exports` rows
+carry a `foundry` block (the newest push run's state, the transaction rid the
+worker stamps on that run's `stage_table`, the admission blockers) and the
+Exports page shows the panel, the per-run state and a manual "Push to
+Foundry" button. Tests: `tests/ml/test_foundry_auto_push.py` and
+`tests/test_migration_0013.py`.
+
 ## Lattice: text only
 
 Anduril Lattice is an operating-picture platform. The D3 bound and the

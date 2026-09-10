@@ -21,6 +21,8 @@ target_allowlist:
   - "localhost"
   - "host.docker.internal"
   - "pythia.fdet.agiledefense.xyz"
+  # The non-operational Foundry demo stack the scorecard push writes to (spec 27.3; owner, 2026-09-10).
+  - "ndia-hackathon-2026.palantirsec.com"
 
 # Per-task LLM model routing ({task: model id}). The hardening narrative task
 # ("ml.harden_narrative") is seeded from REDSIM_ML_LLM_MODEL when unmapped here;
