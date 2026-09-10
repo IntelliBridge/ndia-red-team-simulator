@@ -67,10 +67,7 @@ function LoginForm({ next, reason }: { next: string; reason: string | undefined 
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-col justify-center py-10 sm:py-16">
-      <div className="mb-8 space-y-2">
-        <div className="redsim-kicker">Adversarial ML Red-Team Simulator</div>
-        <h1 className="text-4xl font-semibold tracking-tight">Sign in</h1>
-      </div>
+      <h1 className="mb-8 text-4xl font-semibold tracking-tight">Sign in</h1>
 
       {reason ? (
         <p
