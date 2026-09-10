@@ -414,6 +414,27 @@ def read_finding_detail(schema_blob: dict[str, Any] | None) -> MLFindingDetail |
 # ---------------------------------------------------------------------------
 
 
+def finding_target_label(target: Any) -> str | None:
+    """The model name a finding shows for its target.
+
+    A bundled registration keeps its ``bundled:<id>`` value, which the web
+    shortens to the registry id. Any other target (an upload, whose ``value``
+    is the blob location, or an endpoint, whose ``value`` is its URL) is named
+    by the ``name`` its registration recorded in ``detail`` or
+    ``detail.manifest``, so a finding never carries an S3 location or a URL
+    as the model name. Without a recorded name the raw value is kept.
+    """
+    if target is None:
+        return None
+    value = str(target.value)
+    if value.startswith("bundled:"):
+        return value
+    detail = dict(getattr(target, "detail", None) or {})
+    manifest: dict[str, Any] = detail["manifest"] if isinstance(detail.get("manifest"), dict) else {}
+    name = str(detail.get("name") or manifest.get("name") or "").strip()
+    return name or value
+
+
 def project_campaign_findings(session: Session, campaign: CampaignRecord) -> list[str]:
     """Project threshold-crossing attacks from a completed campaign once.
 
@@ -436,7 +457,7 @@ def project_campaign_findings(session: Session, campaign: CampaignRecord) -> lis
 
     target_row_id = run.target_id or campaign.config.target_id
     target = session.get(Target, target_row_id) if target_row_id else None
-    target_value = str(target.value) if target is not None else None
+    target_value = finding_target_label(target)
     run_record_id = _run_record_artifact_id(session, campaign.run_id)
     attacks = {attack.id: attack for attack in campaign.attacks}
     projected: list[str] = []
@@ -833,6 +854,6 @@ __all__ = ["DISMISSABLE_FROM", "DISMISSED_STATUS", "LLM_FINDING_KIND", "LLM_FIND
            "LLM_SEVERITY_BANDS", "LLM_SEVERITY_BASIS", "LLM_SOURCE_TOOL", "FindingJobHandle",
            "MLFindingAdmissionError", "build_finding_detail", "create_finding_action_job",
            "finding_description", "finding_measurements", "finding_observations",
-           "finding_remediation_steps", "finding_title", "llm_finding_description", "llm_finding_title",
+           "finding_remediation_steps", "finding_target_label", "finding_title", "llm_finding_description", "llm_finding_title",
            "llm_severity_from_hit_rate", "project_campaign_findings", "project_llm_findings",
            "read_finding_detail", "read_llm_finding_detail"]

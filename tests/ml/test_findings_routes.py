@@ -51,7 +51,7 @@ from redsim.db.models import (
     Target,
 )
 from redsim.ml.schema import CampaignRecord, MLFindingDetail
-from redsim.services.ml_findings import project_campaign_findings
+from redsim.services.ml_findings import finding_target_label, project_campaign_findings
 from redsim.storage.blobs import BlobRef
 from tests.conftest import patch_jsonb_for_sqlite
 
@@ -394,6 +394,49 @@ def test_finding_fields_and_dismissal_matrix(ml_api: dict[str, Any]) -> None:
     assert fixed.status_code == 409 and fixed.json()["detail"]["code"] == "run_terminal"
     assert writer.last("finding.review").success is False
     assert reviewer.patch("/v1/findings/nope/status", json=body).status_code == 404
+
+
+def test_finding_target_label_prefers_the_registered_name_over_a_blob_location() -> None:
+    upload = Target(id="t-up", project_id=PROJECT, kind="ml_model_artifact",
+                    value="s3://redsim-blobs/p1/models/t-up/model.safetensors", verified=True,
+                    detail={"name": "edadaltocg/resnet18_cifar10", "source": "upload",
+                            "manifest": {"name": "edadaltocg/resnet18_cifar10"}})
+    assert finding_target_label(upload) == "edadaltocg/resnet18_cifar10"
+    manifest_only = Target(id="t-m", project_id=PROJECT, kind="ml_model_artifact",
+                           value="s3://redsim-blobs/p1/models/t-m/model.onnx", verified=True,
+                           detail={"manifest": {"name": "  cifar10 resnet  "}})
+    assert finding_target_label(manifest_only) == "cifar10 resnet"
+    endpoint = Target(id="t-ep", project_id=PROJECT, kind="ml_model_endpoint",
+                      value="https://models.example.test/predict", verified=False,
+                      detail={"name": "vendor classifier", "manifest": {"name": "vendor classifier"}})
+    assert finding_target_label(endpoint) == "vendor classifier"
+    bundled = Target(id="t-b", project_id=PROJECT, kind="ml_model_artifact", value="bundled:vehicles_cnn",
+                     verified=True, detail={"name": "Vehicles CNN", "bundled_id": "vehicles_cnn"})
+    assert finding_target_label(bundled) == "bundled:vehicles_cnn"
+    nameless = Target(id="t-n", project_id=PROJECT, kind="ml_model_artifact",
+                      value="s3://redsim-blobs/p1/models/t-n/model.pt", verified=True, detail={})
+    assert finding_target_label(nameless) == "s3://redsim-blobs/p1/models/t-n/model.pt"
+    assert finding_target_label(None) is None
+
+
+def test_uploaded_model_finding_names_the_model_not_its_blob_location(ml_api: dict[str, Any]) -> None:
+    """A Hugging Face upload's finding shows the registered name, never the S3 location the row stores."""
+    record = ml_api["records"][BASELINE]
+    location = f"s3://redsim-blobs/{PROJECT}/models/{record.config.target_id}/model.safetensors"
+    with ml_api["get_session"]() as session:
+        target = session.get(Target, record.config.target_id)
+        target.value = location
+        target.detail = {"modality": "image", "status": "available", "source": "upload",
+                         "name": "edadaltocg/resnet18_cifar10", "blob": {"location": location},
+                         "manifest": {"name": "edadaltocg/resnet18_cifar10", "modality": "image"}}
+    _seed_campaign_artifacts(ml_api)
+    findings = _project(ml_api)
+    client = ml_api["as_user"](_user("reader", "viewer"))
+    for finding_id in findings.values():
+        blob = client.get(f"/v1/findings/{finding_id}").json()["schema_blob"]
+        assert blob["target"] == "edadaltocg/resnet18_cifar10"
+        assert location not in json.dumps(blob)
+        assert blob["affected_component"] == record.config.target_id
 
 
 def test_reviewer_notes_roundtrip_and_audit(ml_api: dict[str, Any]) -> None:
