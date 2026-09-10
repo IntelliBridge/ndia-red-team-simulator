@@ -43,6 +43,17 @@ def test_from_env_requires_all_three(clean_env, monkeypatch):
     assert s.model == "amazon/nova-lite-v1:0" and s.timeout_s == 60.0
 
 
+def test_from_env_without_a_model_serves_only_the_roster(clean_env, monkeypatch):
+    """The gateway roster needs the url and key; the narrative model is a separate choice."""
+    monkeypatch.setenv("PYTHIA_BASE_URL", "https://gw.example/")
+    monkeypatch.setenv("PYTHIA_API_KEY", "pk_x")
+    assert PythiaSettings.from_env() is None
+    s = PythiaSettings.from_env(require_model=False)
+    assert s is not None and s.base_url == "https://gw.example" and s.model == ""
+    monkeypatch.delenv("PYTHIA_API_KEY")
+    assert PythiaSettings.from_env(require_model=False) is None
+
+
 def test_from_env_accepts_deprecated_aegis_alias_with_warning(clean_env, monkeypatch):
     monkeypatch.setenv("PYTHIA_BASE_URL", "https://gw.example")
     monkeypatch.setenv("PYTHIA_API_KEY", "pk_x")

@@ -39,7 +39,11 @@ its configuration files (the probe key lives encrypted in the database).
 | `REDSIM_ML_LLM_MODEL` | yes | Canonical model id, `<vendor>/<model>` or `pythia/auto`. `AEGIS_ML_LLM_MODEL` is still read as a deprecated alias (a `DeprecationWarning` is raised) and so is the older scaffold name `REDSIM_LLM_MODEL`. Rename to the canonical name when you touch a config. `redsim/config.py` seeds `task_models["ml.harden_narrative"]` from it so the router resolves the task without a `redsim.yaml` entry. |
 
 `PythiaSettings.from_env()` returns `None` unless the three required values
-are present. Supporting variables:
+are present. The model roster is the one exception: `GET /v1/llm/models` and
+`pythia_check --skip-chat` call `from_env(require_model=False)` and need only
+the URL and the key, because listing what a key is entitled to is a separate
+question from choosing the narrative model (2026-09-10). Supporting
+variables:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

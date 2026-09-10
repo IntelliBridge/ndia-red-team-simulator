@@ -1321,3 +1321,32 @@ def test_probe_run_against_the_fake_gateway_end_to_end(tmp_path: Path, monkeypat
     # The work directory is gone: garak.log and the xdg cache never survive the run.
     work_root = tmp_path / "work"
     assert not work_root.exists() or not any(p.name.startswith("llm-") for p in work_root.iterdir())
+
+
+# --------------------------------------------------------------------------- GET /v1/llm/models
+
+
+def test_gateway_roster_needs_the_url_and_key_but_not_the_narrative_model(
+    api: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A stack with a key and no REDSIM_ML_LLM_MODEL still lists the entitled models for the register form."""
+    from redsim.llm import pythia
+
+    monkeypatch.setenv(pythia.ENV_FILE_VAR, str(tmp_path / "absent.env"))
+    for name in (pythia.MODEL_ENV, *pythia.DEPRECATED_MODEL_ENV, "PYTHIA_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(pythia, "list_models", lambda settings: [{"id": "b/two"}, {"id": "a/one", "name": "One"}])
+
+    body = api.call(ADMIN, "GET", "/v1/llm/models").json()
+    assert body["configured"] is False and body["models"] == []
+
+    monkeypatch.setenv("PYTHIA_BASE_URL", "https://gw.example/")
+    monkeypatch.setenv("PYTHIA_API_KEY", "pk_roster")
+    body = api.call(ADMIN, "GET", "/v1/llm/models").json()
+    assert body["configured"] is True and body["default_model"] is None
+    assert [m["id"] for m in body["models"]] == ["a/one", "b/two"] and body["count"] == 2
+    assert "pk_roster" not in api.call(ADMIN, "GET", "/v1/llm/models").text
+
+    monkeypatch.setenv(pythia.MODEL_ENV, "a/one")
+    assert api.call(ADMIN, "GET", "/v1/llm/models").json()["default_model"] == "a/one"
+

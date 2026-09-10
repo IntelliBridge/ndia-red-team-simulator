@@ -97,8 +97,13 @@ def run(argv: Sequence[str] | None = None, *, environ: Mapping[str, str] | None 
         model_note = "  (from --model)"
     say(f"  {pythia.MODEL_ENV}: {model or '(unset)'}{model_note}")
 
-    missing = [name for name, value in (("PYTHIA_BASE_URL", base), ("PYTHIA_API_KEY", key),
-                                         (pythia.MODEL_ENV, model)) if not value]
+    # The model roster needs the gateway and the key only, so --skip-chat can
+    # prove a key without a narrative model having been chosen (the same
+    # rule GET /v1/llm/models applies); the chat probe still needs the model.
+    required = [("PYTHIA_BASE_URL", base), ("PYTHIA_API_KEY", key)]
+    if not args.skip_chat:
+        required.append((pythia.MODEL_ENV, model))
+    missing = [name for name, value in required if not value]
     if missing:
         say(f"FAIL: missing {', '.join(missing)}. Set them in the environment or in {env_path or './.env'}.")
         return 1
@@ -117,7 +122,7 @@ def run(argv: Sequence[str] | None = None, *, environ: Mapping[str, str] | None 
     ids = [str(m.get("id")) for m in models if m.get("id")]
     shown = ", ".join(ids[: max(args.show_models, 0)]) if ids else "(none)"
     say(f"models: {len(ids)} entitled. First: {shown}")
-    if ids and model != "pythia/auto" and model not in ids:
+    if ids and model and model != "pythia/auto" and model not in ids:
         say(f"  note: {model} is not in the entitled list, the chat probe may be refused")
 
     if args.skip_chat:

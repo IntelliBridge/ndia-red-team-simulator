@@ -121,13 +121,17 @@ def list_models(_user: CurrentUser = Depends(get_current_user)) -> dict[str, Any
     from redsim.llm import pythia
     from redsim.services.ml_llm import gateway_host
 
-    settings = pythia.PythiaSettings.from_env()
+    # The roster needs the gateway and the key only. REDSIM_ML_LLM_MODEL picks
+    # the narrative writer's model and is reported as default_model when set;
+    # requiring it here left the register form without a list on every stack
+    # that had a key but no narrative model.
+    settings = pythia.PythiaSettings.from_env(require_model=False)
     if settings is None:
         return {"configured": False, "gateway_url": None, "gateway_host": None, "persona": None,
                 "default_model": None, "models": [], "count": 0}
     out: dict[str, Any] = {
         "configured": True, "gateway_url": settings.base_url, "gateway_host": gateway_host(settings.base_url) or None,
-        "persona": settings.persona, "default_model": settings.model, "models": [], "count": 0,
+        "persona": settings.persona, "default_model": settings.model or None, "models": [], "count": 0,
     }
     try:
         raw = pythia.list_models(settings)

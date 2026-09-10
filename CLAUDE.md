@@ -1201,7 +1201,9 @@ gateway's answer to the `/findings/[id]` drawer. No provider key, no
 | `REDSIM_DISABLE_LLM` | Truthy skips the narrative entirely (rules only). |
 
 If any required variable is missing, `PythiaSettings.from_env()` returns
-`None`, the recommendation keeps `narrative = None` and
+`None` (the model roster `GET /v1/llm/models` and `pythia_check --skip-chat`
+pass `require_model=False` and need only the URL and key, 2026-09-10), the
+recommendation keeps `narrative = None` and
 `narrative_source = "rules"`, and the UI says "Narrative unavailable". Never
 fake a narrative. The writer receives metrics and a SHAP text summary only,
 never images, model bytes or dataset rows. The narrative runs in the worker

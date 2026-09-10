@@ -200,19 +200,24 @@ class PythiaSettings:
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None, *,
-                 env_file: bool = True) -> PythiaSettings | None:
+                 env_file: bool = True, require_model: bool = True) -> PythiaSettings | None:
         """Return settings when all required variables are present, else ``None``.
 
         Reads ``environ`` (default ``os.environ``) layered over the ``.env``
         file unless ``env_file`` is false. Required: ``PYTHIA_BASE_URL``,
         ``PYTHIA_API_KEY`` and ``REDSIM_ML_LLM_MODEL`` (or a deprecated alias).
+
+        ``require_model=False`` is for callers that only talk to the gateway
+        about the key, the model roster above all: they get settings with an
+        empty ``model`` when none is configured, since choosing a narrative
+        model is a separate decision from holding an entitled key.
         """
         source = os.environ if environ is None else environ
         env = resolve_env(source) if env_file else dict(source)
         base = env.get("PYTHIA_BASE_URL", "").strip()
         key = env.get("PYTHIA_API_KEY", "").strip()
         model, _ = resolve_model(env)
-        if not (base and key and model):
+        if not (base and key) or (require_model and not model):
             return None
         persona = env.get("PYTHIA_PERSONA", "").strip() or None
         timeout = float(env.get("PYTHIA_TIMEOUT_S", "").strip() or "60")

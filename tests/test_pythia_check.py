@@ -181,4 +181,5 @@ def test_module_is_runnable_with_python_dash_m_and_exits_1_without_settings(isol
     proc = subprocess.run([sys.executable, "-m", "redsim.llm.pythia_check", "--skip-chat"], env=env,
                           cwd=str(repo_root), capture_output=True, text=True, timeout=60, check=False)
     assert proc.returncode == 1, proc.stdout + proc.stderr
-    assert "FAIL: missing PYTHIA_BASE_URL, PYTHIA_API_KEY, REDSIM_ML_LLM_MODEL" in proc.stdout
+    # --skip-chat proves the key alone, so the narrative model is not required.
+    assert "FAIL: missing PYTHIA_BASE_URL, PYTHIA_API_KEY." in proc.stdout
