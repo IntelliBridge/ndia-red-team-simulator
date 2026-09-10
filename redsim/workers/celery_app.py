@@ -16,7 +16,6 @@ app = Celery(
     backend=os.environ.get("REDSIM_RESULT_BACKEND", "redis://localhost:6379/1"),
     include=[
         "redsim.workers.tasks.scan",
-        "redsim.workers.tasks.verify",
         "redsim.workers.tasks.report",
         "redsim.workers.tasks.reaper",
         "redsim.workers.tasks.tenant_reconcile",
@@ -76,7 +75,6 @@ app.conf.task_time_limit = 2100
 app.conf.task_default_queue = "default"
 app.conf.task_routes = {
     "redsim.scan_start": {"queue": "scans"},
-    "redsim.verify_replay": {"queue": "scans"},
     "redsim.ml_campaign_run": {"queue": "scans"},
     "redsim.ml_model_validate": {"queue": "scans"},
     "redsim.ml_llm_probe_run": {"queue": "default"},

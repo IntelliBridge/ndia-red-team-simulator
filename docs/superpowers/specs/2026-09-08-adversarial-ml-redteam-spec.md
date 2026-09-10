@@ -8,6 +8,17 @@
 | **Governance** | `docs/project-brief.md` (reporting principles are design constraints); `.specify/memory/constitution.md` (principles binding; amendment proposals of 2026-09-08 pending named approval) |
 | **Repository** | `IntelliBridge/ndia-red-team-simulator` (fork of `IntelliBridge/aegis`), branch `redsim-implementation` |
 
+> **Decision of 2026-09-09 (product owner): the verify paradigm is removed.** Every run is a
+> measurement in its own right. The verify-after-harden loop (`POST /v1/findings/{id}/verify`, its bulk
+> form, `verify.replay`, the `ml.verify` run kind, `MRIDelta`, `MeasuredDelta`, the linked retests), the
+> `unvalidated` / `poc_passed` finding validation state, the recommendation label `not evaluated` /
+> `measured` and the defense catalog (`GET /v1/defenses`, `DefenseConfig`, the preprocessing and
+> training defenses, the `defense_apply` stage, derived models) are gone from the tree. Candidate
+> recommendations stay text-only candidates and a finding closes by reviewer decision (`resolve`
+> requires `confirmed`). Sections 6.4, 15.6, 16, 17, 24 and 26 below describe the removed loop and are
+> kept as history. The record of the decision is `docs/project-brief.md` ("Decisions taken") and
+> `docs/plans/00-master-plan.md` section 5; the tree is described by `CLAUDE.md` and `docs/api/v1.md`.
+
 This document consolidates three spec sources — John Sasser's product spec (S1), the lean brief-grounded design and its code contracts (S2), and William Yiu's Spec Kit feature tree (S3) — under the product owner's decisions of 2026-09-08 (D1–D13, indexed in section 4.1). Where a decision overrides a source, the override is stated where it binds and recorded in the reconciliation table (section 4). Nothing in this document claims that the ML vertical is implemented: as of this date `redsim/ml/` contains contracts only (section 2.2).
 
 ## Table of contents
@@ -2083,11 +2094,11 @@ New `Action` members added to `redsim/api/policy.py` are those of section 7.4: `
 | `architecture_required` | 422 | State_dict format without a declared `architecture_id`. |
 | `architecture_not_allowlisted` | 422 | Declared `architecture_id` is not in the section 9 catalog. |
 | `dataset_incompatible` | 422 | Dataset shape or class count does not match the model manifest. |
-| `unknown_attack` / `unknown_defense` | 422 | Id not in the registry. |
-| `attack_modality_mismatch` / `defense_modality_mismatch` | 422 | Attack or defense domain differs from the model modality. |
+| `unknown_attack` | 422 | Id not in the registry. |
+| `attack_modality_mismatch` | 422 | Attack domain differs from the model modality. |
 | `attack_requires_gradients` | 422 | White-box attack requested on a target with `gradients: false` (section 9.5). |
 | `eps_grid_invalid` / `reference_eps_not_in_grid` | 422 | Grid rules of section 12.3. |
-| `params_out_of_range` | 422 | `AttackAdapter.resolve_params` or defense param validation raised. |
+| `params_out_of_range` | 422 | `AttackAdapter.resolve_params` raised. |
 | `rate_limited` (string detail) | 429 | Existing write-route limiter. |
 | `not_implemented` | 501 | Endpoint connector, text / detection / LLM modalities, Phase B attacks, garak, explain on an unsupported modality. Always carries `phase`. |
 | `queue_unavailable` | 503 | Celery broker unreachable at enqueue. |

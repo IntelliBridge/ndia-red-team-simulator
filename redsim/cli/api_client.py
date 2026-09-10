@@ -1,6 +1,6 @@
 """Small HTTP client used by the CLI when ``--api`` / ``REDSIM_MODE=api``.
 
-Phase 4 v0.3.1 F4: ``--api`` routes write commands (``scan``, ``verify``,
+Phase 4 v0.3.1 F4: ``--api`` routes write commands (``scan``,
 ``runs cancel``) through ``REDSIM_API_URL`` instead of the local admission
 services. The API itself enforces the same RBAC +
 audit pipeline (F6), so this is purely a transport-flip.
@@ -82,9 +82,6 @@ class ApiClient:
         if override_authorized:
             body["override_authorized"] = True
         return self._request("POST", "/v1/scans", body=body)
-
-    def verify(self, *, finding_id: str) -> dict[str, Any]:
-        return self._request("POST", f"/v1/findings/{finding_id}/verify")
 
     def cancel_run(self, *, run_id: str) -> dict[str, Any]:
         return self._request("POST", f"/v1/runs/{run_id}/cancel")

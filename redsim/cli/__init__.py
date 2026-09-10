@@ -1,7 +1,7 @@
 """Redsim CLI package.
 
 The original ``redsim/cli.py`` was promoted to ``redsim/cli/main.py``, and each
-subcommand now lives in its own module (``redsim.cli.scan``, ``redsim.cli.verify``,
+subcommand now lives in its own module (``redsim.cli.scan``, ``redsim.cli.report``,
 …) mirroring the already-extracted ``status`` / ``audit`` / ``migrate``
 siblings. ``main.py`` keeps only the argument-parser builder and
 the dispatch loop, and re-exports each ``cmd_*`` from its new per-command
@@ -17,7 +17,6 @@ from redsim.cli.main import (
     cmd_init,
     cmd_report,
     cmd_scan,
-    cmd_verify,
     main,
 )
 
@@ -28,6 +27,5 @@ __all__ = [
     "cmd_init",
     "cmd_report",
     "cmd_scan",
-    "cmd_verify",
     "main",
 ]
