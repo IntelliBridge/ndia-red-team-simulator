@@ -3,17 +3,26 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import findingFixture from "@/__fixtures__/finding.json";
 import type { Finding } from "@/lib/api";
 
+import campaignFixture from "@/__fixtures__/campaign.json";
+import type { Campaign } from "@/lib/api";
+
 import {
+  buildProposalRequest,
   ChatError,
   CHAT_STORAGE_PREFIX,
   describeChatError,
   examplePrompts,
   loadConversation,
+  parseProposal,
+  PROPOSAL_FENCE,
   readNdjson,
   saveConversation,
   streamFindingChat,
+  validateProposal,
   type ChatStreamEvent,
 } from "./chat";
+
+const campaign = campaignFixture as unknown as Campaign;
 
 const finding = findingFixture as unknown as Finding;
 
@@ -85,7 +94,8 @@ describe("describeChatError", () => {
 describe("examplePrompts", () => {
   it("uses the finding's attack, reference eps and severity", () => {
     const prompts = examplePrompts(finding);
-    expect(prompts).toHaveLength(6);
+    expect(prompts).toHaveLength(7);
+    expect(prompts[0]).toBe("What should I run next to narrow this finding? Propose a campaign.");
     expect(prompts.join("\n")).toContain("ε = 0.03");
     expect(prompts.join("\n")).toContain(`${finding.severity} severity`);
     expect(prompts.join("\n")).not.toMatch(/deploy|ready|certif/i);
@@ -93,7 +103,7 @@ describe("examplePrompts", () => {
 
   it("falls back to generic terms on a finding without ML detail", () => {
     const bare = { ...finding, schema_blob: {} } as Finding;
-    expect(examplePrompts(bare)[2]).toBe("How does the noise control compare with the attack?");
+    expect(examplePrompts(bare)[3]).toBe("How does the noise control compare with the attack?");
   });
 });
 
@@ -110,5 +120,83 @@ describe("conversation storage", () => {
     expect(loadConversation("f3")).toEqual([turns[0]]);
     saveConversation("f1", []);
     expect(window.sessionStorage.getItem(`${CHAT_STORAGE_PREFIX}f1`)).toBeNull();
+  });
+});
+
+const PROPOSAL = {
+  attack_ids: ["pgd", "fgsm", "pgd"],
+  norm: "linf",
+  eps_grid: [0.03, 0.01, 0.1],
+  reference_eps: 0.03,
+  n_samples: 50,
+  rationale: "m1 measured 24/50 correct at eps 0.03 under fgsm.",
+};
+
+function block(doc: unknown): string {
+  return "```" + PROPOSAL_FENCE + "\n" + JSON.stringify(doc, null, 2) + "\n```";
+}
+
+describe("parseProposal", () => {
+  it("returns the prose untouched when there is no block", () => {
+    expect(parseProposal("Measured at m1.")).toEqual({ text: "Measured at m1.", proposal: null, invalid: null, pending: false });
+  });
+
+  it("splits a closed block from the prose, sorts the grid and drops a repeated attack id", () => {
+    const parsed = parseProposal(`Run PGD next.\n\n${block(PROPOSAL)}`);
+    expect(parsed.text).toBe("Run PGD next.");
+    expect(parsed.pending).toBe(false);
+    expect(parsed.invalid).toBeNull();
+    expect(parsed.proposal).toEqual({
+      attack_ids: ["pgd", "fgsm"],
+      norm: "linf",
+      eps_grid: [0.01, 0.03, 0.1],
+      reference_eps: 0.03,
+      n_samples: 50,
+      rationale: "m1 measured 24/50 correct at eps 0.03 under fgsm.",
+    });
+  });
+
+  it("keeps a half-written block out of the prose while the stream is inside it", () => {
+    const parsed = parseProposal("Run PGD next.\n\n```" + PROPOSAL_FENCE + '\n{"attack_ids": ["pgd"');
+    expect(parsed).toEqual({ text: "Run PGD next.", proposal: null, invalid: null, pending: true });
+  });
+
+  it("keeps prose written after the block", () => {
+    const parsed = parseProposal(`Before.\n${block(PROPOSAL)}\nAfter.`);
+    expect(parsed.text).toBe("Before.\n\nAfter.");
+    expect(parsed.proposal?.attack_ids).toEqual(["pgd", "fgsm"]);
+  });
+
+  it("names why a block cannot be run and still shows the prose", () => {
+    expect(parseProposal("Text.\n```" + PROPOSAL_FENCE + "\nnot json\n```").invalid).toMatch(/not valid JSON/);
+    expect(parseProposal(`T.\n${block({ ...PROPOSAL, reference_eps: 0.5 })}`).invalid).toMatch(/reference_eps/);
+    expect(parseProposal(`T.\n${block({ ...PROPOSAL, attack_ids: [] })}`).invalid).toMatch(/attack_ids/);
+    expect(parseProposal(`T.\n${block({ ...PROPOSAL, norm: "l7" })}`).invalid).toMatch(/norm/);
+    expect(parseProposal(`T.\n${block({ ...PROPOSAL, n_samples: 5000 })}`).invalid).toMatch(/n_samples/);
+    expect(parseProposal(`T.\n${block({ ...PROPOSAL, eps_grid: [0.03, 0.03] })}`).invalid).toMatch(/repeat/);
+    expect(validateProposal([]).invalid).toMatch(/JSON object/);
+  });
+});
+
+describe("buildProposalRequest", () => {
+  it("keeps the recorded settings, replaces the attack set and grid, and carries no server-owned key", () => {
+    const parsed = parseProposal(block(PROPOSAL));
+    const request = buildProposalRequest(campaign.config, parsed.proposal!);
+    expect(request).toMatchObject({
+      attack_ids: ["pgd", "fgsm"],
+      norm: "linf",
+      eps_grid: [0.01, 0.03, 0.1],
+      reference_eps: 0.03,
+      n_samples: 50,
+      dataset_id: "fixture-public-image",
+      dataset_revision: "fixture-revision",
+      seed: 7,
+      include_control: true,
+      finding_asr_threshold: 0.2,
+      explain_k: 8,
+    });
+    for (const key of ["target_id", "modality", "dataset_split", "scoring", "target_snapshot", "attacks", "attack_params"]) {
+      expect(request).not.toHaveProperty(key);
+    }
   });
 });

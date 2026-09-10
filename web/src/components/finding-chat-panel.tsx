@@ -10,11 +10,15 @@
 // of recorded evidence, never a measurement.
 
 import * as React from "react";
+import Link from "next/link";
 import * as Dialog from "@radix-ui/react-dialog";
+import { RoleGated } from "@redsim/design-system";
 
-import type { Finding } from "@/lib/api";
-import { examplePrompts, type ChatTurn } from "@/lib/chat";
+import { mlErrorDetail, startCampaign, type Finding } from "@/lib/api";
+import { buildProposalRequest, examplePrompts, parseProposal, type CampaignProposal, type ChatTurn } from "@/lib/chat";
+import { useCampaign } from "@/hooks/useCampaign";
 import { useFindingChat } from "@/hooks/useFindingChat";
+import { useRoles } from "@/hooks/useRoles";
 
 export interface FindingChatPanelProps {
   finding: Finding;
@@ -22,9 +26,130 @@ export interface FindingChatPanelProps {
   onOpenChange: (open: boolean) => void;
 }
 
-function Turn({ turn, streaming }: { turn: ChatTurn; streaming: boolean }) {
+/**
+ * A candidate campaign the assistant proposed, and the one control that acts
+ * on it. The card shows the exact settings the request will carry. The Run
+ * button posts them to the API's own admission (POST /v1/models/{id}/attacks),
+ * which writes its attack.run audit row and admits or refuses on its own
+ * checks; the refusal is shown here with its code, never rewritten. Nothing
+ * is predicted about what the run will measure.
+ */
+function ProposalCard({
+  finding,
+  proposal,
+  runId,
+  onStarted,
+}: {
+  finding: Finding;
+  proposal: CampaignProposal;
+  runId: string | null | undefined;
+  onStarted: (runId: string) => void;
+}) {
+  const { data: campaign, error: campaignError } = useCampaign(finding.run_id);
+  const { roles } = useRoles();
+  const role = roles[finding.project_id];
+  const [pending, setPending] = React.useState(false);
+  const [refusal, setRefusal] = React.useState<string | null>(null);
+
+  const run = async () => {
+    if (!campaign) return;
+    setPending(true);
+    setRefusal(null);
+    try {
+      const handle = await startCampaign(campaign.target.id, buildProposalRequest(campaign.config, proposal));
+      onStarted(handle.run_id);
+    } catch (error) {
+      const detail = mlErrorDetail(error);
+      const message = detail.message ?? "the request was refused";
+      setRefusal(detail.code ? `${detail.code}: ${message}` : message);
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <section
+      aria-label="Proposed campaign"
+      className="mt-3 rounded-md border border-primary/40 bg-primary/5 p-3 text-xs"
+      data-testid="proposal-card"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="redsim-kicker">proposed campaign · candidate, not run</div>
+        {campaign ? (
+          <span className="font-mono text-muted-foreground" title="target">
+            {campaign.target.name}
+          </span>
+        ) : null}
+      </div>
+      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+        <dt className="text-muted-foreground">attacks</dt>
+        <dd className="font-mono">{proposal.attack_ids.join(", ")}</dd>
+        <dt className="text-muted-foreground">norm</dt>
+        <dd className="font-mono">{proposal.norm}</dd>
+        <dt className="text-muted-foreground">eps grid</dt>
+        <dd className="font-mono">
+          {proposal.eps_grid.join(", ")} <span className="text-muted-foreground">(reference {proposal.reference_eps})</span>
+        </dd>
+        <dt className="text-muted-foreground">n samples</dt>
+        <dd className="font-mono">{proposal.n_samples}</dd>
+        {proposal.rationale ? (
+          <>
+            <dt className="text-muted-foreground">rationale</dt>
+            <dd className="leading-relaxed">{proposal.rationale}</dd>
+          </>
+        ) : null}
+      </dl>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-muted-foreground">
+          Approval is yours: the API admits it through its own checks and audit row.
+        </span>
+        {runId ? (
+          <Link className="text-primary underline" href={`/runs/${runId}`}>
+            Run {runId} admitted, open it
+          </Link>
+        ) : campaignError ? (
+          <span role="alert" className="text-warning">
+            The campaign record could not be read, so this proposal cannot be run from here.
+          </span>
+        ) : (
+          <RoleGated minRole="scanner" callerRole={role}>
+            <button
+              type="button"
+              onClick={() => void run()}
+              disabled={pending || !campaign}
+              className="rounded bg-primary px-3 py-1 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {pending ? "Submitting…" : "Run this campaign"}
+            </button>
+          </RoleGated>
+        )}
+      </div>
+      {refusal ? (
+        <p role="alert" className="mt-2 text-warning">
+          {refusal}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function Turn({
+  turn,
+  streaming,
+  finding,
+  onStarted,
+}: {
+  turn: ChatTurn;
+  streaming: boolean;
+  finding: Finding;
+  onStarted: (turnId: string, runId: string) => void;
+}) {
   const user = turn.role === "user";
   const thinking = !user && streaming && turn.content.length === 0 && !turn.error;
+  const parsed = React.useMemo(
+    () => (user ? { text: turn.content, proposal: null, invalid: null, pending: false } : parseProposal(turn.content)),
+    [user, turn.content],
+  );
   return (
     <li
       className={
@@ -40,8 +165,26 @@ function Turn({ turn, streaming }: { turn: ChatTurn; streaming: boolean }) {
           Thinking…
         </p>
       ) : (
-        <p className="whitespace-pre-wrap leading-relaxed">{turn.content}</p>
+        <p className="whitespace-pre-wrap leading-relaxed">{parsed.text}</p>
       )}
+      {parsed.pending ? (
+        <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
+          Writing a proposal…
+        </p>
+      ) : null}
+      {parsed.proposal ? (
+        <ProposalCard
+          finding={finding}
+          proposal={parsed.proposal}
+          runId={turn.proposal_run_id}
+          onStarted={(runId) => onStarted(turn.id, runId)}
+        />
+      ) : null}
+      {parsed.invalid ? (
+        <p role="alert" className="mt-2 text-xs text-warning">
+          The assistant wrote a proposal this panel cannot run: {parsed.invalid}.
+        </p>
+      ) : null}
       {turn.error ? (
         <p role="alert" className="mt-2 text-xs text-warning">
           {turn.error}
@@ -125,8 +268,9 @@ export function FindingChatPanel({ finding, open, onOpenChange }: FindingChatPan
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">
                   Ask about this finding&apos;s recorded measurements, observations, interpretation
-                  and candidate recommendations. The assistant reads the finding and its campaign
-                  record and nothing else.
+                  and candidate recommendations, or ask what to run next. The assistant reads the
+                  finding, its campaign record and the attack catalog and nothing else. A proposed
+                  campaign runs only when you approve it.
                 </p>
                 <div className="redsim-kicker">example questions</div>
                 <ul className="space-y-2" aria-label="Example questions">
@@ -147,7 +291,13 @@ export function FindingChatPanel({ finding, open, onOpenChange }: FindingChatPan
             ) : (
               <ul className="space-y-3">
                 {chat.turns.map((turn) => (
-                  <Turn key={turn.id} turn={turn} streaming={chat.streaming} />
+                  <Turn
+                    key={turn.id}
+                    turn={turn}
+                    streaming={chat.streaming}
+                    finding={finding}
+                    onStarted={(turnId, runId) => chat.annotate(turnId, { proposal_run_id: runId })}
+                  />
                 ))}
               </ul>
             )}
