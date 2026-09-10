@@ -1,10 +1,16 @@
 SHELL := /bin/bash
 
+# `up` runs compose through scripts/with-session-keypair.sh: it generates the
+# API session keypair (deploy/certs/redsim-api-session.{key,pub}, gitignored)
+# on the first run and exports both halves, so redsim-web can mint the
+# redsim_api_session cookie and redsim-api can verify it. `rebuild` goes
+# through the same wrapper because recreating a container without the two
+# variables would leave it with empty keys.
 up:
-	docker compose up -d --build
+	scripts/with-session-keypair.sh docker compose up -d --build
 
 up-obs:
-	docker compose --profile obs up -d --build
+	scripts/with-session-keypair.sh docker compose --profile obs up -d --build
 
 # The organisation and project rows only, through the same script the Fargate
 # runtime runs (deploy/runtime/scripts/seed_project.py, fed on stdin). No User
@@ -27,7 +33,7 @@ logs:
 	docker compose logs -f --tail=200 $$svc
 
 rebuild:
-	docker compose build $$svc && docker compose up -d $$svc
+	docker compose build $$svc && scripts/with-session-keypair.sh docker compose up -d $$svc
 
 down:
 	docker compose down

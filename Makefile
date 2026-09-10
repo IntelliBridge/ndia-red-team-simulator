@@ -89,13 +89,15 @@ require-install:
 # it Next exits at startup naming the missing variable, which reads like a
 # broken machine and is not one.
 #
+# `dev` starts servers only. The test suite is `make test` and the full local
+# gate is `make check`, so a red test never blocks a dev server from booting.
+#
 # dev-worker is deliberately NOT on the default `dev` line: it needs Redis
 # (REDSIM_BROKER_URL, REDSIM_RESULT_BACKEND) and Postgres (REDSIM_DB_URL) up
 # front and the ml extra installed. Run it in a second terminal, or use
 # `make -j dev-api dev-web dev-worker` once the stack is up.
 
 dev: require-install
-	$(PY) -m pytest -q
 	@echo "==> api: http://localhost:8000  (/docs, /health)"
 	@echo "==> web: http://localhost:3000"
 	$(MAKE) -j dev-api dev-web
@@ -193,9 +195,16 @@ deploy-host:
 # redsim-worker-default (-Q default), redsim-beat, redsim-web (host port 3300)
 # and redsim-log-ingest. Optional profiles: --profile obs, obs-search, policy.
 # deploy/Makefile has the finer-grained helpers (seed, psql, logs, rebuild).
+#
+# `up` runs compose through deploy/scripts/with-session-keypair.sh, which
+# generates the RSA keypair the web app signs the redsim_api_session cookie
+# with (and the API verifies it with) into deploy/certs/ on the first run,
+# gitignored, and exports both halves to compose. Without them every API call
+# the browser makes after login answers 401. The built ./assets tree is
+# mounted read-only into redsim-api and the worker pools by the compose file.
 
 up:
-	$(COMPOSE) up -d --build
+	deploy/scripts/with-session-keypair.sh $(COMPOSE) up -d --build
 
 down:
 	$(COMPOSE) down
