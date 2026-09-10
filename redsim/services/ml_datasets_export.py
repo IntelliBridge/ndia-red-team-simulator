@@ -261,6 +261,10 @@ def admit_export(session: Session, run: Any, actor: str, *, audit_writer: AuditW
         sess.add(Run(id=run_id, project_id=project_id, target_id=run_obj.target_id, mode="api",
                      status="queued", scanner=_EXPORT_SCANNER, created_by=actor,
                      stage_table={"parent_run_id": source_run_id, "jobs": {}}))
+        # Flush the Run before the Job: Postgres enforces jobs.run_id -> runs.id and the
+        # unit of work has no relationship to order the two inserts by (sqlite does not
+        # enforce the key, so only a live deployment saw the violation).
+        sess.flush()
         sess.add(Job(id=job_id, run_id=run_id, project_id=project_id, type=_EXPORT_JOB_TYPE,
                      status="queued", created_by=actor, detail=detail))
         sess.flush()
