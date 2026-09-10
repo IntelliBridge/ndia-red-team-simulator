@@ -122,7 +122,17 @@ services:
       # The Ed25519 key that signs evidence packs (GET /v1/runs/{id}/evidence-pack). Empty leaves packs unsigned.
       REDSIM_EVIDENCE_SIGNING_KEY_FILE: ${REDSIM_EVIDENCE_SIGNING_KEY_FILE:-}
       REDSIM_EVIDENCE_SIGNING_KEY: ${REDSIM_EVIDENCE_SIGNING_KEY:-}
+      # The built asset tree (`redsim ml build-assets`): GET /v1/models and
+      # /v1/datasets read MANIFEST.json here, and registering a bundled model
+      # answers 409 bundled_assets_missing without it.
+      REDSIM_ML_ASSETS_DIR: /app/assets
     ports: ["8000:8000"]
+    # The repo's ./assets (README only until `redsim ml build-assets` has run)
+    # mounted read-only at the path the API and the worker parent read as
+    # REDSIM_ML_ASSETS_DIR; the sandbox child inherits the variable.
+    # REDSIM_ML_ASSETS_HOST_DIR points the mount at a tree built elsewhere.
+    volumes: &assets-volume
+      - ${REDSIM_ML_ASSETS_HOST_DIR:-./../assets}:/app/assets:ro
 
   # Long-running attack, explain and model-validate work (-Q scans).
   redsim-worker:
@@ -134,8 +144,10 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+    volumes: *assets-volume
     environment: &worker-env
       REDSIM_ENV: dev
+      REDSIM_ML_ASSETS_DIR: /app/assets
       REDSIM_WEB_ORIGIN: http://localhost:3300
       REDSIM_DB_URL: postgresql+psycopg://redsim:redsim@postgres:5432/redsim
       REDSIM_BROKER_URL: redis://redis:6379/0
@@ -184,6 +196,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+    volumes: *assets-volume
     environment:
       <<: *worker-env
       # Off unless the host shell exports the URL; no token variable exists (the bearer is an AuthProfile).
