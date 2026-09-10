@@ -34,8 +34,9 @@ def _script_dir() -> ScriptDirectory:
 
 
 def test_0013_is_the_single_head_above_0012():
+    # 0014_audit_run_id_no_fk (2026-09-10) sits above 0013; tests/test_migration_0014.py pins that head.
     script = _script_dir()
-    assert script.get_heads() == [REVISION]
+    assert script.get_heads() == ["0014_audit_run_id_no_fk"]
     assert script.get_revision(REVISION).down_revision == DOWN_REVISION
 
 

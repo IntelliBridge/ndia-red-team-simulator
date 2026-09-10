@@ -922,6 +922,14 @@ settings and auto-push"). Additive, no existing column or frozen contract
 changed; `FoundryPushRequest.auth_profile_id` became optional with the
 project setting as its fallback. `tests/test_migration_0013.py` pins the head.
 
+The head moved a fourth time the same day, to `0014_audit_run_id_no_fk`, which
+drops the foreign key from `audit_events.run_id` to `runs.id`. The constraint
+contradicted spec 6.7 invariant 4 (the admission row precedes the `Run` row and
+`PostgresAuditWriter` commits it in its own transaction); it surfaced on the
+first campaign admitted on a Postgres deployment, the EC2 demo host, because
+sqlite never enforced it. The column, its index and the RLS stay;
+`AuditEvent.run_id` is a chain key. `tests/test_migration_0014.py` pins the head.
+
 - **Schema** (`redsim/ml/schema.py`): the `RunRecord`/`Measurement`/`Observation`/
   `Interpretation`/`CandidateRecommendation` evidence model stays. It is written
   as a sha256-addressed Artifact (`ml.run_record`) and **projected** onto
