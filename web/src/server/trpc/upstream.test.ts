@@ -100,7 +100,7 @@ describe("credential forwarding", () => {
   it("sends the cookie pair and the client CSRF header on a mutation, and no bearer", async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { run_id: "r1" }));
     const ctx = ctxWith(
-      { redsim_api_session: "s", redsim_csrf: "c", redsim_dev_token: "dev:a@b.test" },
+      { redsim_api_session: "s", redsim_csrf: "c", other_cookie: "must-not-cross" },
       { "x-redsim-csrf": "c", "x-something-else": "nope" },
     );
     await upstreamFetch(ctx, { method: "POST", segments: ["v1", "runs", "r1", "cancel"] }, anyBody);
@@ -110,16 +110,6 @@ describe("credential forwarding", () => {
     expect(headerOf("Authorization")).toBeUndefined();
     expect(headerOf("x-something-else")).toBeUndefined();
     expect(lastInit().cache).toBe("no-store");
-  });
-
-  it("sends a bearer and no cookie on the dev-token path", async () => {
-    fetchMock.mockResolvedValue(jsonResponse(200, {}));
-    const ctx = ctxWith({ redsim_dev_token: "dev:a@b.test" }, { "x-redsim-csrf": "c" });
-    await upstreamFetch(ctx, { method: "POST", segments: ["v1", "runs"] }, anyBody);
-
-    expect(headerOf("Authorization")).toBe("Bearer dev:a@b.test");
-    expect(headerOf("Cookie")).toBeUndefined();
-    expect(headerOf("X-Redsim-CSRF")).toBeUndefined();
   });
 
   it("refuses before any upstream call when no credential is present", async () => {

@@ -1,7 +1,7 @@
 # Frontend development
 
 This doc covers the Next.js app, the design-system workspace and Storybook.
-For the auth flow (NextAuth plus the redsim-signed cookie) see
+For the auth flow (the branded login page plus the redsim-signed cookie) see
 [`docs/architecture/auth.md`](../architecture/auth.md). For the API surface
 the app consumes see [`docs/api/v1.md`](../api/v1.md). The target ML pages
 are section 18 of the
@@ -129,29 +129,34 @@ api<T>(path, { method: "POST", body: JSON.stringify(...), headers: {…} })
 ```
 
 - Attaches `X-Redsim-Request-ID` per call.
-- Bearer wins: when `localStorage.redsim_token` (or `init.token`) is set,
-  `Authorization: Bearer …` is sent with `credentials: omit`.
-- Otherwise `credentials: include` so the cookie rides, and on mutating
-  methods the `X-Redsim-CSRF` header is attached from the `redsim_csrf`
-  cookie.
+- Cookie session only: `credentials: include` so the httpOnly session cookie
+  rides, and on mutating methods the `X-Redsim-CSRF` header is attached from
+  the readable `redsim_csrf` cookie. A 401 renews the session once through
+  `/api/auth/refresh-api-session` and retries.
 - Non-2xx surfaces as `ApiError(status, body)`. Pages render the detail.
 
 `useRoles()` wraps SWR around `/v1/projects` and returns `{roles, projects}`.
 `<RoleGated minRole="approver" callerRole={roles[projectId]}>` is the
 canonical gate. `useRunEvents()` subscribes to the run WebSocket.
 
-## NextAuth
+## Login
 
-The Keycloak code flow lives at `web/src/app/api/auth/[...nextauth]/route.ts`.
-The session callback mints two cookies via the server-only
-`web/src/server/redsim-session.ts`:
+`/login` is the app's own email and password form. `POST /api/auth/login`
+(`web/src/app/api/auth/login/route.ts`) hands the credentials to
+`web/src/server/identity.ts`, which runs the password grant against the
+realm and verifies the ID token, then mints three cookies via the server-only
+`web/src/server/redsim-cookies.ts`:
 
 - `redsim_api_session`: httpOnly, secure in prod, sameSite=Lax, RS256-signed
   via `jose`.
 - `redsim_csrf`: not httpOnly so the SPA can read it.
+- `redsim_refresh`: httpOnly, path `/api/auth`, the realm's refresh token
+  sealed under `REDSIM_WEB_SESSION_SECRET` (`web/src/server/refresh-cookie.ts`).
 
-`/api/auth/refresh-api-session` (POST) re-mints without bouncing through
-Keycloak, and `/api/auth/signout-redsim` (POST) clears both cookies on logout.
+`/api/auth/refresh-api-session` (POST) trades the sealed refresh token for a
+new pair, and `/api/auth/signout-redsim` (POST) revokes it upstream and
+clears all three. The page's sentences live in `web/src/lib/login-messages.ts`
+and never name the identity provider. There is no dev login.
 
 ## Adding a new page
 

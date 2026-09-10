@@ -8,8 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const savedEnv = { ...process.env };
 
 const BASE_ENV: Record<string, string> = {
-  BETTER_AUTH_SECRET: "test-not-a-real-secret-change-me-0123456789",
-  BETTER_AUTH_URL: "http://localhost:3000",
+  REDSIM_WEB_SESSION_SECRET: "test-not-a-real-secret-change-me-0123456789",
+  REDSIM_WEB_ORIGIN: "http://localhost:3000",
 };
 
 function setEnv(values: Record<string, string> = {}) {
@@ -58,8 +58,8 @@ describe("createContext credential rules", () => {
           {
             redsim_api_session: "session-value",
             redsim_csrf: "csrf-value",
-            "better-auth.session_token": "must-not-cross",
-            redsim_dev_token: "dev:someone@example.test",
+            redsim_refresh: "must-not-cross",
+            other_cookie: "must-not-cross-either",
           },
           { "x-redsim-csrf": "csrf-value", "x-something-else": "nope" },
         ),
@@ -72,51 +72,8 @@ describe("createContext credential rules", () => {
       csrfHeader: "csrf-value",
     });
     expect(ctx.credential?.kind === "cookie" && ctx.credential.cookieHeader).not.toContain(
-      "better-auth",
+      "must-not-cross",
     );
-    expect(ctx.credential?.kind === "cookie" && ctx.credential.cookieHeader).not.toContain(
-      "redsim_dev_token",
-    );
-  });
-
-  it("prefers the session cookie when the dev cookie is present too", async () => {
-    setEnv({ REDSIM_ENV: "dev" });
-    const { createContext, requestPartsFromRequest } = await loadContext();
-    const ctx = createContext(
-      requestPartsFromRequest(
-        request({ redsim_api_session: "s", redsim_dev_token: "dev:a@b.test" }),
-      ),
-    );
-    expect(ctx.credential?.kind).toBe("cookie");
-  });
-
-  it("turns the dev cookie into a bearer when REDSIM_ENV is dev", async () => {
-    setEnv({ REDSIM_ENV: "dev" });
-    const { createContext, requestPartsFromRequest } = await loadContext();
-    const ctx = createContext(
-      requestPartsFromRequest(request({ redsim_dev_token: "dev:a@b.test" })),
-    );
-    expect(ctx.credential).toEqual({ kind: "bearer", token: "dev:a@b.test" });
-  });
-
-  it("honours the dev cookie when REDSIM_ENV is unset, because the env default is dev", async () => {
-    setEnv();
-    const { createContext, requestPartsFromRequest } = await loadContext();
-    const ctx = createContext(
-      requestPartsFromRequest(request({ redsim_dev_token: "dev:a@b.test" })),
-    );
-    expect(ctx.credential).toEqual({ kind: "bearer", token: "dev:a@b.test" });
-  });
-
-  it("refuses the dev cookie outside the dev or test allowlist", async () => {
-    for (const redsimEnv of ["prod", "staging", "anything-else"]) {
-      setEnv({ REDSIM_ENV: redsimEnv });
-      const { createContext, requestPartsFromRequest } = await loadContext();
-      const ctx = createContext(
-        requestPartsFromRequest(request({ redsim_dev_token: "dev:a@b.test" })),
-      );
-      expect(ctx.credential).toBeNull();
-    }
   });
 
   it("carries the fetch metadata, origin and content type the mutation gate reads", async () => {
@@ -170,18 +127,18 @@ describe("a malformed cookie in the jar", () => {
   // anything. An unguarded decode turned one bad cookie into a raw 500 on every
   // procedure call and on the recovery hop itself.
   const MALFORMED = "junk=100%";
-  const ENCODED_DEV_TOKEN = "redsim_dev_token=dev%3Aoperator%40example.test";
+  const ENCODED_SESSION = "redsim_api_session=fake%2Fsession%2Bvalue";
 
   it("is skipped by the reader the sign-out hop uses, leaving the rest of the jar readable", async () => {
     setEnv();
     const { cookieReaderFromHeader } = await loadContext();
 
-    const cookie = cookieReaderFromHeader(`${MALFORMED}; ${ENCODED_DEV_TOKEN}`);
+    const cookie = cookieReaderFromHeader(`${MALFORMED}; ${ENCODED_SESSION}`);
 
     expect(cookie("junk")).toBeUndefined();
     // Decoded, not raw: this reader has to agree with `cookies()` on the
     // server-component side or the hop refuses a legitimate credential.
-    expect(cookie("redsim_dev_token")).toBe("dev:operator@example.test");
+    expect(cookie("redsim_api_session")).toBe("fake/session+value");
   });
 
   it("does not stop the tRPC route handler building a context", async () => {
@@ -189,10 +146,13 @@ describe("a malformed cookie in the jar", () => {
     const { createContext, requestPartsFromRequest } = await loadContext();
 
     const ctx = createContext(
-      requestPartsFromRequest(rawCookieRequest(`${MALFORMED}; ${ENCODED_DEV_TOKEN}`)),
+      requestPartsFromRequest(rawCookieRequest(`${MALFORMED}; ${ENCODED_SESSION}`)),
     );
 
-    expect(ctx.credential).toEqual({ kind: "bearer", token: "dev:operator@example.test" });
+    expect(ctx.credential).toMatchObject({
+      kind: "cookie",
+      cookieHeader: "redsim_api_session=fake/session+value",
+    });
   });
 
   it("does not stop the session credential being read either", async () => {

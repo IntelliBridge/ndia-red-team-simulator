@@ -237,13 +237,9 @@ export async function upstreamFetch<T>(
     Accept: "application/json",
     "X-Redsim-Request-ID": ctx.requestId,
   };
-  if (ctx.credential.kind === "cookie") {
-    headers.Cookie = ctx.credential.cookieHeader;
-    if (ctx.credential.csrfHeader !== null && MUTATING.has(init.method)) {
-      headers[env.NEXT_PUBLIC_REDSIM_CSRF_HEADER] = ctx.credential.csrfHeader;
-    }
-  } else {
-    headers.Authorization = `Bearer ${ctx.credential.token}`;
+  headers.Cookie = ctx.credential.cookieHeader;
+  if (ctx.credential.csrfHeader !== null && MUTATING.has(init.method)) {
+    headers[env.NEXT_PUBLIC_REDSIM_CSRF_HEADER] = ctx.credential.csrfHeader;
   }
   if (init.body !== undefined) headers["Content-Type"] = "application/json";
 

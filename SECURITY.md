@@ -25,9 +25,11 @@ days. Coordinated disclosure is preferred.
 
 ### Auth and authorization
 
-- Browser sessions: Better Auth + Keycloak code flow. The redsim-signed
-  `redsim_api_session` cookie (RS256) is the only token FastAPI trusts on the
-  cookie path.
+- Browser sessions: the app's own login page runs the OAuth 2 password grant
+  against Keycloak from the Next server, verifies the ID token and mints the
+  cookies; the realm's refresh token is sealed in an httpOnly cookie. The
+  redsim-signed `redsim_api_session` cookie (RS256) is the only token FastAPI
+  trusts on the cookie path. The web tier has no dev login.
 - CLI / CI: bearer tokens only. Bearer wins when both are present.
   `REDSIM_AUTH_MODE=dev` accepts `dev:<email>` bearers and is refused when
   `REDSIM_ENV=prod`.

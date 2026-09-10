@@ -32,7 +32,7 @@
       "publicClient": false,
       "secret": "${REDSIM_WEB_CLIENT_SECRET}",
       "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": false,
+      "directAccessGrantsEnabled": true,
       "redirectUris": [
         "${REDSIM_PUBLIC_ORIGIN}/api/auth/callback/keycloak"
       ],

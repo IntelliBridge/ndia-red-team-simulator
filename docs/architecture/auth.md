@@ -19,49 +19,77 @@ silently downgrading a bearer call.
 
 ---
 
-## Browser auth (Better Auth + Redsim-signed cookie)
+## Browser auth (branded login page + Redsim-signed cookie)
 
-The Keycloak code flow is owned by Better Auth. FastAPI never sees the
-upstream access token, nor Better Auth's own session cookie. An
-after-hook on the callback mints a separate `redsim_api_session` cookie
-that FastAPI verifies against a Redsim-managed RSA key. Three concerns,
-three keys:
+The browser signs in on the app's own page: an email and password form at
+`/login`. There is no redirect to the identity provider's page, no dev
+token and no bypass. The Next server owns the exchange:
+
+1. `POST /api/auth/login` (same-origin only) forwards the email and
+   password once to the realm's token endpoint as the OAuth 2 password
+   grant (Keycloak's "direct access grants", enabled on the `redsim-web`
+   client), with the client secret when the client is confidential.
+2. It verifies the returned ID token against the realm's JWKS (signature,
+   expiry, audience, and an issuer that is either `KEYCLOAK_ISSUER` or
+   `KEYCLOAK_PUBLIC_ISSUER`), and reads `sub`, `email`, `name` and
+   `redsim_project_roles` from it.
+3. It mints the `redsim_api_session` cookie FastAPI verifies, the readable
+   `redsim_csrf` cookie beside it, and seals the realm's refresh token into
+   a third httpOnly cookie, `redsim_refresh`, scoped to `/api/auth`.
+
+The password never reaches FastAPI, the browser bundle or a log. The
+realm's error text never reaches the browser either: the route answers a
+code (`invalid_credentials`, `account_disabled`, `account_locked`,
+`not_configured`, `unavailable`) and `web/src/lib/login-messages.ts` turns
+it into a sentence. Three concerns, three keys:
 
 | Concern         | Holder            | Key                                                  |
 |-----------------|-------------------|------------------------------------------------------|
 | Identity        | Keycloak          | Keycloak signing keys (rotated by Keycloak)          |
-| Browser session | Better Auth       | `BETTER_AUTH_SECRET` (opaque to Redsim)               |
-| API session    | Redsim             | `REDSIM_API_SESSION_PRIVATE_KEY` (RS256)              |
+| Refresh cookie  | Next server       | `REDSIM_WEB_SESSION_SECRET` (seals `redsim_refresh`)  |
+| API session     | Redsim            | `REDSIM_API_SESSION_PRIVATE_KEY` (RS256)              |
 
-Better Auth runs stateless: no database, so the session lives in its own
-encrypted cookie, and the web tier runs a single replica because past the
-cookie-cache window only the instance that handled the callback resolves
-the session. That window is 8 hours, and it is the real session bound
-rather than the 7 day `expiresIn`. It is also the revocation lag, because a
-sign-out or a Keycloak suspension is not observed until the cache is
-consulted again.
+The web tier keeps no session store. The session pair lives
+`REDSIM_API_SESSION_TTL_SECONDS` (900 by default); while a tab is open the
+keepalive posts `/api/auth/refresh-api-session`, which opens the sealed
+cookie, trades the refresh token at the realm, re-mints the pair and rotates
+the refresh cookie. The refresh cookie lives as long as the realm said the
+refresh token does (its `refresh_expires_in`, so the realm's SSO idle
+timeout bounds the browser session), capped at 24 hours. A refresh token the
+realm no longer honours clears every credential, so the next page load lands
+on `/login?reason=rejected` rather than looping on 401. Sign-out
+(`POST /api/auth/signout-redsim`) revokes the refresh token at the realm's
+logout endpoint, best effort, and clears the three cookies.
+
+Trade-offs of the password grant, accepted for this deployment: the realm's
+browser flow is bypassed, so a user with OTP or another second factor cannot
+sign in through this page, and there is no "forgot password" link (the page
+says to contact an administrator). Brute-force protection still applies,
+because the realm enforces it on the token endpoint.
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant U as User browser
-    participant N as Next.js Better Auth
+    participant N as Next.js /api/auth
     participant K as Keycloak
     participant API as redsim-api
 
-    U->>N: GET /dashboard
-    N->>K: redirect to authorization endpoint
-    U->>K: Keycloak login form
-    K-->>N: callback with auth code
-    N->>K: POST token (exchange code)
-    K-->>N: access_token + id_token
-    Note over N: after-hook reads sub from the linked<br/>account's accountId, roles from its id_token
-    Note over N: after-hook mints<br/>redsim_api_session + redsim_csrf
-    N-->>U: Set-Cookie redsim_api_session (httpOnly)<br/>+ redsim_csrf (readable by SPA)
+    U->>N: POST /api/auth/login {email, password}
+    N->>K: POST token (grant_type=password, client credentials)
+    K-->>N: id_token + refresh_token
+    Note over N: verify id_token against the realm JWKS<br/>read sub, email, name, redsim_project_roles
+    Note over N: mint redsim_api_session + redsim_csrf<br/>seal refresh_token into redsim_refresh
+    N-->>U: Set-Cookie redsim_api_session (httpOnly)<br/>+ redsim_csrf (readable) + redsim_refresh (httpOnly, /api/auth)
 
     U->>API: GET /v1/runs with redsim_api_session cookie
     API->>API: verify against REDSIM_API_SESSION_PUBLIC_KEY
     API-->>U: 200 runs payload
+
+    U->>N: POST /api/auth/refresh-api-session (keepalive, every 5 min)
+    N->>K: POST token (grant_type=refresh_token)
+    K-->>N: id_token + rotated refresh_token
+    N-->>U: fresh cookie pair + rotated redsim_refresh
 ```
 
 The Redsim cookie's claims:
@@ -102,8 +130,8 @@ Match is constant-time via `secrets.compare_digest`. The SPA's
 
 ```ts
 // web/src/lib/api.ts
-if (!bearer && MUTATING.has(method) && _hasSessionCookie()) {
-  const csrf = _readCookie(CSRF_COOKIE);
+if (MUTATING.has(method)) {
+  const csrf = readCookie(CSRF_COOKIE);
   if (csrf) headers[CSRF_HEADER] = csrf;
 }
 ```

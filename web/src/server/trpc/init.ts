@@ -67,7 +67,7 @@ export const publicProcedure = t.procedure.use(withRequestId);
  * A procedure that changes something upstream.
  *
  * The gate runs before any upstream call, so a cross-site or same-site sender
- * never reaches FastAPI. `BETTER_AUTH_URL` is optional at build time, and an
+ * never reaches FastAPI. `REDSIM_WEB_ORIGIN` is optional at build time, and an
  * absent value fails the Origin comparison closed.
  */
 export const mutationProcedure = publicProcedure.use(({ ctx, next }) => {
@@ -76,7 +76,7 @@ export const mutationProcedure = publicProcedure.use(({ ctx, next }) => {
     origin: ctx.origin,
     contentType: ctx.contentType,
     acceptedContentType: "application/json",
-    trustedOrigin: env.BETTER_AUTH_URL ?? "",
+    trustedOrigin: env.REDSIM_WEB_ORIGIN ?? "",
   });
   if (!verdict.ok) {
     throw new UpstreamTRPCError("FORBIDDEN", {

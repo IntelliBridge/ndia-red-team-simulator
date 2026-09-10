@@ -241,6 +241,33 @@
   opacity: 0.5;
 }
 
+/* Text input on the login form: navy well, muted border, red focus ring. */
+.redsim-input {
+  width: 100%;
+  border-radius: 4px;
+  border: 1px solid hsl(var(--input));
+  background: rgba(4, 6, 15, 0.6);
+  color: hsl(var(--foreground));
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  padding: 0.625rem 0.75rem;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.redsim-input::placeholder {
+  color: var(--ink-3);
+}
+.redsim-input:focus-visible {
+  outline: none;
+  border-color: var(--red-bright);
+  box-shadow: 0 0 0 3px rgba(255, 90, 88, 0.18);
+}
+.redsim-input[aria-invalid="true"] {
+  border-color: hsl(var(--destructive));
+}
+.redsim-input:disabled {
+  opacity: 0.6;
+}
+
 /* Tiny status line in the header and footer ("UNCLASSIFIED // OPEN DATA"). */
 .redsim-meta {
   color: rgba(255, 180, 178, 0.85);

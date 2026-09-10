@@ -48,11 +48,12 @@ for svc in api scans default beat web identity; do
   aws secretsmanager get-secret-value --region $REGION --secret-id "ndia-red-team/demo/${svc}" --query SecretString --output text > "$HOST_DIR/env/${svc}.json"
   chmod 0600 "$HOST_DIR/env/${svc}.json"
 done
-# Better Auth reads BETTER_AUTH_SECRET; the web secret carries NEXTAUTH_SECRET.
+# The web process reads REDSIM_WEB_SESSION_SECRET; the web secret still carries
+# the older names from the NextAuth and Better Auth eras.
 python3 - "$HOST_DIR/env/web.json" <<'PY'
 import json, sys
 p = sys.argv[1]; d = json.load(open(p))
-d.setdefault("BETTER_AUTH_SECRET", d.get("NEXTAUTH_SECRET", ""))
+d.setdefault("REDSIM_WEB_SESSION_SECRET", d.get("BETTER_AUTH_SECRET") or d.get("NEXTAUTH_SECRET", ""))
 json.dump(d, open(p, "w"))
 PY
 if aws secretsmanager get-secret-value --region $REGION --secret-id ndia-red-team/demo/pythia --query SecretString --output text > "$HOST_DIR/env/pythia.json" 2>/dev/null; then
@@ -85,7 +86,7 @@ EOF
 cat > $HOST_DIR/env/web.env <<EOF
 REDSIM_ENV=prod
 NEXT_TELEMETRY_DISABLED=1
-BETTER_AUTH_URL=${ORIGIN}
+REDSIM_WEB_ORIGIN=${ORIGIN}
 REDSIM_API_URL=http://127.0.0.1:8000
 NEXT_PUBLIC_REDSIM_API_URL=${ORIGIN}
 KEYCLOAK_CLIENT_ID=redsim-web
@@ -120,7 +121,7 @@ $VENV/bin/python -c "import redsim, torch, art; print('venv ok', torch.__version
 echo "== web dependencies"
 (cd $SRC && CI=true pnpm install --frozen-lockfile)   # CI=true: no TTY prompt when node_modules is replaced
 # Production build of the web app; the unit runs `next start` on it. Needs the env
-# files written above (env.js validates NEXT_PUBLIC_REDSIM_API_URL and Better Auth).
+# files written above (env.js validates NEXT_PUBLIC_REDSIM_API_URL and the web secret).
 (cd $SRC && sudo -u redsim env HOME=/var/lib/redsim COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true /usr/local/bin/redsim-run web pnpm --filter @redsim/web build)
 
 echo "== keycloak ${KC_VERSION}"

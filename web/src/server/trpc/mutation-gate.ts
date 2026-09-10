@@ -10,7 +10,7 @@ import "server-only";
 export type RequestOriginInput = {
   secFetchSite: string | null;
   origin: string | null;
-  /** `env.BETTER_AUTH_URL`, the same value Better Auth uses for trustedOrigins. */
+  /** `env.REDSIM_WEB_ORIGIN`, the browser-facing origin of this app. */
   trustedOrigin: string;
 };
 

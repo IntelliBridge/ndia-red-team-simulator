@@ -123,7 +123,7 @@ export function toBrowserSafeError(error: unknown): { data: UpstreamErrorData } 
  * @returns The session cookie, else the dev token, else undefined.
  */
 function rejectedCredential(cookie: CookieReader): string | undefined {
-  return cookie(env.REDSIM_API_SESSION_COOKIE) ?? cookie(env.REDSIM_DEV_TOKEN_COOKIE);
+  return cookie(env.REDSIM_API_SESSION_COOKIE);
 }
 
 /**
@@ -139,7 +139,7 @@ function rejectedCredential(cookie: CookieReader): string | undefined {
 export async function unauthorizedRedirectTarget(): Promise<string> {
   const credential = rejectedCredential(serverRequestParts().cookie);
   if (credential === undefined) return "/login";
-  const token = await mintHopToken(env.BETTER_AUTH_SECRET ?? "", credential);
+  const token = await mintHopToken(env.REDSIM_WEB_SESSION_SECRET ?? "", credential);
   return `/api/auth/signout-redsim?hop=${encodeURIComponent(token)}`;
 }
 

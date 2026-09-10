@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MockUpstream, detailBody } from "@/test/mock-upstream";
 import type { AppRouter } from "@/server/trpc/root";
 
-const DEV_COOKIE = "dev:tester@example.test";
+const SESSION_COOKIE = "fake-session-cookie-value";
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
@@ -127,7 +127,7 @@ function dehydratedQuery(state: unknown): { state: { status: string; data?: unkn
 
 beforeEach(() => {
   jar.clear();
-  jar.set("redsim_dev_token", DEV_COOKIE);
+  jar.set("redsim_api_session", SESSION_COOKIE);
   upstream.json(200, EMPTY);
   upstream.calls.length = 0;
   redirectMock.mockClear();

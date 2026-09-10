@@ -107,6 +107,25 @@ def ensure_mapper(kc: Keycloak, client_id: str) -> str:
     return "created"
 
 
+def ensure_direct_grant(kc: Keycloak, client_id: str) -> str:
+    """Turn on direct access grants for the web client on a live realm.
+
+    The branded login page posts the email and password from the web server to
+    the realm's token endpoint (the OAuth 2 password grant). ``--import-realm``
+    never updates an existing realm, so the flag in ``realm.json`` reaches a
+    running deployment only through this call. Idempotent.
+    """
+    clients = kc.call("GET", f"/clients?clientId={urllib.parse.quote(client_id)}")
+    if not clients:
+        raise RuntimeError(f"client {client_id} not found in the realm")
+    client = clients[0]
+    if client.get("directAccessGrantsEnabled"):
+        return "present"
+    client["directAccessGrantsEnabled"] = True
+    kc.call("PUT", f"/clients/{client['id']}", client)
+    return "enabled"
+
+
 def ensure_profile_attribute(kc: Keycloak) -> str:
     profile = kc.call("GET", "/users/profile")
     attributes = profile.setdefault("attributes", [])
@@ -202,6 +221,7 @@ def main() -> int:
         args.base_url, identity.get("KC_BOOTSTRAP_ADMIN_USERNAME", "redsim-admin"),
         identity["KC_BOOTSTRAP_ADMIN_PASSWORD"], context), context)
 
+    print(f"direct access grants on {args.client_id}: {ensure_direct_grant(kc, args.client_id)}")
     print(f"mapper {CLAIM} on {args.client_id}: {ensure_mapper(kc, args.client_id)}")
     print(f"user-profile attribute {CLAIM}: {ensure_profile_attribute(kc)}")
     if args.cli_client:

@@ -52,11 +52,12 @@ config:
   # name rather than a browser-facing origin. Server-only and read at runtime,
   # so changing it does not rebuild the web image.
   apiUrl: http://redsim-api:8000
-  # Browser-facing origin for Better Auth.
+  # Browser-facing origin of the web app (injected as BETTER_AUTH_URL, which
+  # web/src/env.js reads as the fallback for REDSIM_WEB_ORIGIN).
   betterAuthUrl: http://localhost:3300
-  # The redsim-web realm client is public and uses PKCE, so there is no
-  # client secret to carry. If a confidential client is ever adopted, its
-  # secret belongs in config.secret, never here.
+  # The redsim-web realm client is public with direct access grants on, so
+  # there is no client secret to carry. If a confidential client is ever
+  # adopted, its secret belongs in config.secret, never here.
   keycloakClientId: redsim-web
 
   # Secret-bearing values. Templated into a Secret, NEVER hardcoded into a

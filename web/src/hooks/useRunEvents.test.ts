@@ -1,11 +1,9 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// apiWsBase is a value import; bearerToken is the cookie-vs-subprotocol switch.
-const bearerTokenMock = vi.hoisted(() => vi.fn<() => string | undefined>(() => undefined));
+// apiWsBase is a value import; the socket carries the cookie session only.
 vi.mock("@/lib/api", () => ({
   apiWsBase: "ws://api.test",
-  bearerToken: bearerTokenMock,
 }));
 
 // jsdom has no WebSocket: capture each construction so we can drive onmessage,
@@ -26,8 +24,6 @@ class FakeWS {
 import { useRunEvents } from "./useRunEvents";
 
 beforeEach(() => {
-  bearerTokenMock.mockReset();
-  bearerTokenMock.mockReturnValue(undefined);
   wsInstances.length = 0;
   vi.stubGlobal("WebSocket", FakeWS);
 });
@@ -38,17 +34,11 @@ afterEach(() => {
 });
 
 describe("useRunEvents", () => {
-  it("opens a socket at the run's events url (cookie path: no subprotocol)", () => {
+  it("opens a socket at the run's events url with no subprotocol: the cookie rides the upgrade", () => {
     renderHook(() => useRunEvents("run-1", vi.fn()));
     expect(wsInstances).toHaveLength(1);
     expect(wsInstances[0].url).toBe("ws://api.test/v1/runs/run-1/events");
     expect(wsInstances[0].protocols).toBeUndefined();
-  });
-
-  it("offers the redsim.bearer.<token> subprotocol for programmatic callers", () => {
-    bearerTokenMock.mockReturnValue("tok-xyz");
-    renderHook(() => useRunEvents("run-1", vi.fn()));
-    expect(wsInstances[0].protocols).toEqual(["redsim.bearer.tok-xyz"]);
   });
 
   it("invokes onJob for a job-lifecycle frame with the parsed payload", () => {

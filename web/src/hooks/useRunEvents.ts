@@ -17,15 +17,11 @@
 // source of truth, with a slow poll as the fallback when the socket is down.
 //
 // Auth mirrors the api() client (src/lib/api.ts): the redsim_api_session cookie
-// rides the upgrade automatically, and a programmatic bearer token (localStorage
-// redsim_token) is offered via the `redsim.bearer.<token>` subprotocol, which the
-// server echoes back (RFC 6455).
+// rides the upgrade automatically, so no subprotocol is offered.
 
 import { useEffect, useRef } from "react";
 
-import { apiWsBase, bearerToken } from "@/lib/api";
-
-const BEARER_SUBPROTOCOL_PREFIX = "redsim.bearer.";
+import { apiWsBase } from "@/lib/api";
 
 export type JobEvent = {
   type: "job" | "stage";
@@ -68,12 +64,9 @@ export function useRunEvents(
     }
 
     const url = `${apiWsBase}/v1/runs/${runId}/events`;
-    const token = bearerToken();
     let ws: WebSocket;
     try {
-      ws = token
-        ? new WebSocket(url, [`${BEARER_SUBPROTOCOL_PREFIX}${token}`])
-        : new WebSocket(url);
+      ws = new WebSocket(url);
     } catch {
       // Construction can throw (bad URL, hardened environments). Fall back to
       // the SWR poll silently rather than crashing the page.

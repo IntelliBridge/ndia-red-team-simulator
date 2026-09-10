@@ -84,7 +84,7 @@ require-install:
 # .env.example to .env and `set -a; source .env; set +a` for a quick start.
 #
 # dev-web reads its own file: web/src/env.js validates at config load and
-# BETTER_AUTH_SECRET (32 characters or more) and BETTER_AUTH_URL are required,
+# REDSIM_WEB_SESSION_SECRET (32 characters or more) and REDSIM_WEB_ORIGIN are required,
 # so copy web/.env.example to web/.env before the first `make dev-web`. Without
 # it Next exits at startup naming the missing variable, which reads like a
 # broken machine and is not one.

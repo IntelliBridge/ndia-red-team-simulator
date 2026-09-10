@@ -5,14 +5,14 @@ import { beforeEach, vi } from "vitest";
 // here. SKIP_ENV_VALIDATION would work too and is the wrong tool: it returns
 // the raw environment, stripping every schema default out from under the
 // assertions these suites already make.
-process.env.BETTER_AUTH_SECRET ??=
+process.env.REDSIM_WEB_SESSION_SECRET ??=
   "test-not-a-real-secret-change-me-0123456789";
-process.env.BETTER_AUTH_URL ??= "http://localhost:3000";
+process.env.REDSIM_WEB_ORIGIN ??= "http://localhost:3000";
 
 // Node 25 ships an experimental global `localStorage` that shadows jsdom's and
 // throws without `--localstorage-file`. Replace it with a deterministic
-// in-memory Storage before every test so the browser-side auth client
-// (src/lib/api.ts, src/lib/auth.ts) reads/writes a clean slate.
+// in-memory Storage before every test so the pages that remember a view or a
+// sort (src/app/models, src/app/findings) read and write a clean slate.
 class MemoryStorage implements Storage {
   private store = new Map<string, string>();
   get length(): number {

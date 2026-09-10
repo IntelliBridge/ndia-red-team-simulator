@@ -1,158 +1,156 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
-import { cookieReaderFromHeader } from "@/server/trpc/context";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import LoginPage from "./page";
 
-const pushMock = vi.fn();
+const replaceMock = vi.fn();
+let searchParams = new URLSearchParams();
 
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: pushMock }),
+  useRouter: () => ({ replace: replaceMock, push: vi.fn() }),
+  useSearchParams: () => searchParams,
 }));
 
-// The OIDC button drives Better Auth's Keycloak code flow.
-const socialMock = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/auth-client", () => ({
-  signIn: { social: socialMock },
-}));
+const signInMock = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/auth", () => ({ signInWithPassword: signInMock }));
 
 beforeEach(() => {
-  pushMock.mockReset();
-  socialMock.mockReset();
-  socialMock.mockResolvedValue({ data: {}, error: null });
-  localStorage.clear();
-  clearDevTokenCookie();
+  replaceMock.mockReset();
+  signInMock.mockReset();
+  searchParams = new URLSearchParams();
 });
 
-afterEach(() => {
-  cleanup();
-  clearDevTokenCookie();
-});
+afterEach(cleanup);
 
-/** jsdom keeps one cookie jar per file, so a case has to clear its own. */
-function clearDevTokenCookie() {
-  document.cookie = "redsim_dev_token=; path=/; max-age=0";
+function fill(email: string, password: string) {
+  fireEvent.change(screen.getByLabelText("Email"), { target: { value: email } });
+  fireEvent.change(screen.getByLabelText("Password"), { target: { value: password } });
+}
+
+function submit() {
+  fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
 }
 
 describe("LoginPage", () => {
-  it("renders the Sign in heading and email input with default value", () => {
+  it("renders the heading, an email field, a password field and one submit button", () => {
     render(React.createElement(LoginPage));
     expect(screen.getByRole("heading", { name: "Sign in" })).toBeTruthy();
-    const input = screen.getByDisplayValue("admin@redsim.local");
-    expect(input).toBeTruthy();
+    const email = screen.getByLabelText("Email") as HTMLInputElement;
+    const password = screen.getByLabelText("Password") as HTMLInputElement;
+    expect(email.type).toBe("email");
+    expect(email.autocomplete).toBe("username");
+    expect(email.value).toBe("");
+    expect(password.type).toBe("password");
+    expect(password.autocomplete).toBe("current-password");
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
   });
 
-  it("renders the Keycloak/OIDC sign-in button", () => {
-    render(React.createElement(LoginPage));
-    expect(
-      screen.getByRole("button", { name: "Continue with Keycloak" })
-    ).toBeTruthy();
+  it("offers no other way in and never names the identity provider", () => {
+    const { container } = render(React.createElement(LoginPage));
+    expect(screen.queryByText(/dev/i)).toBeNull();
+    expect(screen.getAllByRole("button")).toHaveLength(2);
+    expect(container.textContent?.toLowerCase()).not.toMatch(/keycloak|oidc|oauth/);
+    expect(container.querySelectorAll("input")).toHaveLength(2);
   });
 
-  it("clicking Continue with Keycloak starts the keycloak social sign-in for /dashboard", () => {
+  it("submits the trimmed email and the password, then replaces to the dashboard", async () => {
+    signInMock.mockResolvedValue({ ok: true });
     render(React.createElement(LoginPage));
-    fireEvent.click(
-      screen.getByRole("button", { name: "Continue with Keycloak" })
-    );
-    expect(socialMock).toHaveBeenCalledTimes(1);
-    expect(socialMock).toHaveBeenCalledWith({
-      provider: "keycloak",
-      callbackURL: "/dashboard",
-    });
-    // The OIDC flow does NOT mint a dev bearer token.
-    expect(localStorage.getItem("redsim_token")).toBeNull();
+    fill("  alice@redsim.local ", "correct horse");
+    submit();
+
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/dashboard"));
+    expect(signInMock).toHaveBeenCalledWith("alice@redsim.local", "correct horse");
   });
 
-  it("re-enables the Keycloak button when sign-in comes back with an error", async () => {
-    socialMock.mockResolvedValue({ data: null, error: { message: "nope" } });
+  it("returns to the same-origin next path and ignores a foreign one", async () => {
+    signInMock.mockResolvedValue({ ok: true });
+    searchParams = new URLSearchParams({ next: "/runs/abc?tab=curve" });
     render(React.createElement(LoginPage));
-    const button = screen.getByRole("button", {
-      name: "Continue with Keycloak",
-    });
-    fireEvent.click(button);
-    await waitFor(() =>
-      expect((button as HTMLButtonElement).disabled).toBe(false),
-    );
+    fill("a@b.c", "pw");
+    submit();
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/runs/abc?tab=curve"));
+    cleanup();
+
+    replaceMock.mockReset();
+    searchParams = new URLSearchParams({ next: "https://evil.test/" });
+    render(React.createElement(LoginPage));
+    fill("a@b.c", "pw");
+    submit();
+    await waitFor(() => expect(replaceMock).toHaveBeenCalledWith("/dashboard"));
   });
 
-  it("the Keycloak button becomes disabled after being clicked (busy state)", () => {
+  it("shows the refusal as an alert, clears the password and keeps the email", async () => {
+    signInMock.mockResolvedValue({ ok: false, code: "invalid_credentials" });
     render(React.createElement(LoginPage));
-    const button = screen.getByRole("button", {
-      name: "Continue with Keycloak",
-    });
-    expect((button as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(button);
-    expect((button as HTMLButtonElement).disabled).toBe(true);
+    fill("alice@redsim.local", "wrong");
+    submit();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/did not match/i);
+    expect((screen.getByLabelText("Password") as HTMLInputElement).value).toBe("");
+    expect((screen.getByLabelText("Email") as HTMLInputElement).value).toBe("alice@redsim.local");
+    expect(screen.getByLabelText("Email").getAttribute("aria-invalid")).toBe("true");
+    expect(replaceMock).not.toHaveBeenCalled();
+    // The button is usable again for another attempt.
+    expect((screen.getByRole("button", { name: "Sign in" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("updating the email input changes its displayed value", () => {
+  it("explains a locked account and an unavailable service in plain words", async () => {
+    signInMock.mockResolvedValue({ ok: false, code: "account_locked" });
     render(React.createElement(LoginPage));
-    const input = screen.getByDisplayValue("admin@redsim.local");
-    fireEvent.change(input, { target: { value: "other@redsim.local" } });
-    expect(screen.getByDisplayValue("other@redsim.local")).toBeTruthy();
+    fill("a@b.c", "pw");
+    submit();
+    expect((await screen.findByRole("alert")).textContent).toMatch(/locked/i);
+    cleanup();
+
+    signInMock.mockResolvedValue({ ok: false, code: "unavailable" });
+    render(React.createElement(LoginPage));
+    fill("a@b.c", "pw");
+    submit();
+    expect((await screen.findByRole("alert")).textContent).toMatch(/not available right now/i);
   });
 
-  it("clicking Continue writes both localStorage keys and navigates to /dashboard with default email", () => {
+  it("refuses an empty form locally without calling the route", async () => {
     render(React.createElement(LoginPage));
-    const button = screen.getByRole("button", { name: "Continue as dev admin" });
-    fireEvent.click(button);
-    expect(localStorage.getItem("redsim_token")).toBe("dev:admin@redsim.local");
-    expect(localStorage.getItem("redsim_email")).toBe("admin@redsim.local");
-    expect(pushMock).toHaveBeenCalledWith("/dashboard");
-    expect(pushMock).toHaveBeenCalledTimes(1);
-    // The dev path does NOT trigger the OIDC flow.
-    expect(socialMock).not.toHaveBeenCalled();
+    submit();
+    expect((await screen.findByRole("alert")).textContent).toMatch(/enter your email and password/i);
+    expect(signInMock).not.toHaveBeenCalled();
   });
 
-  it("writes the dev-token cookie the tRPC context reads", () => {
-    // localStorage reaches the old fetch client only. The tRPC layer runs on
-    // the server and sees cookies, so the dev bearer has to travel as one or
-    // every procedure call answers 401 and the gate bounces back to /login.
-    // Read back through the server's own parser, so an encoding that parser
-    // cannot decode fails here rather than in a browser.
+  it("disables the form while a sign-in is in flight and says so", async () => {
+    let resolve: (value: { ok: true }) => void = () => {};
+    signInMock.mockReturnValue(new Promise((r) => (resolve = r)));
     render(React.createElement(LoginPage));
-    fireEvent.click(screen.getByRole("button", { name: "Continue as dev admin" }));
+    fill("a@b.c", "pw");
+    submit();
 
-    const cookie = cookieReaderFromHeader(document.cookie);
-    expect(cookie("redsim_dev_token")).toBe("dev:admin@redsim.local");
+    const busy = await screen.findByRole("button", { name: "Signing in…" });
+    expect((busy as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByLabelText("Email") as HTMLInputElement).disabled).toBe(true);
+    expect(signInMock).toHaveBeenCalledTimes(1);
+    resolve({ ok: true });
+    await waitFor(() => expect(replaceMock).toHaveBeenCalled());
   });
 
-  it("percent-encodes the cookie so the colon and the at sign survive the round trip", () => {
+  it("toggles the password between hidden and shown", () => {
     render(React.createElement(LoginPage));
-    const input = screen.getByDisplayValue("admin@redsim.local");
-    fireEvent.change(input, { target: { value: "tester@redsim.local" } });
-    fireEvent.click(screen.getByRole("button", { name: "Continue as dev admin" }));
-
-    // The raw jar holds the encoded form, and the reader decodes it. Both
-    // halves matter: an unencoded value would split on the colon.
-    expect(document.cookie).toContain("redsim_dev_token=dev%3Atester%40redsim.local");
-    expect(cookieReaderFromHeader(document.cookie)("redsim_dev_token")).toBe(
-      "dev:tester@redsim.local",
-    );
+    const password = screen.getByLabelText("Password") as HTMLInputElement;
+    fireEvent.click(screen.getByRole("button", { name: "Show" }));
+    expect(password.type).toBe("text");
+    fireEvent.click(screen.getByRole("button", { name: "Hide" }));
+    expect(password.type).toBe("password");
   });
 
-  it("clicking Continue uses the updated email when the input was edited", () => {
+  it("explains why the browser landed here when the reason is known", () => {
+    searchParams = new URLSearchParams({ reason: "rejected" });
     render(React.createElement(LoginPage));
-    const input = screen.getByDisplayValue("admin@redsim.local");
-    fireEvent.change(input, { target: { value: "tester@redsim.local" } });
-    fireEvent.click(screen.getByRole("button", { name: "Continue as dev admin" }));
-    expect(localStorage.getItem("redsim_token")).toBe("dev:tester@redsim.local");
-    expect(localStorage.getItem("redsim_email")).toBe("tester@redsim.local");
-    expect(pushMock).toHaveBeenCalledWith("/dashboard");
-  });
+    expect(screen.getByRole("status").textContent).toMatch(/session ended/i);
+    cleanup();
 
-  it("the Continue button becomes disabled after being clicked (busy state)", () => {
+    searchParams = new URLSearchParams({ reason: "nonsense" });
     render(React.createElement(LoginPage));
-    const button = screen.getByRole("button", { name: "Continue as dev admin" });
-    expect((button as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(button);
-    expect((button as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
