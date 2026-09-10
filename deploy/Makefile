@@ -6,22 +6,13 @@ up:
 up-obs:
 	docker compose --profile obs up -d --build
 
+# The organisation and project rows only, through the same script the Fargate
+# runtime runs (deploy/runtime/scripts/seed_project.py, fed on stdin). No User
+# or ProjectMembership row: the API reads memberships from the
+# redsim_project_roles token claim, which the realm export gives the admin
+# user as {"default": "admin"}. A rerun reports the rows as present.
 seed:
-	docker compose exec redsim-api python - <<'PY'
-	from redsim.db.models import Organization, Project, User, ProjectMembership
-	from redsim.db.session import get_session, init_engine
-	import os
-	init_engine(os.environ['REDSIM_DB_URL'])
-	with get_session() as s:
-	    if not s.get(Organization, 'default-org'):
-	        s.add(Organization(id='default-org', name='Default', slug='default'))
-	    if not s.get(Project, 'default'):
-	        s.add(Project(id='default', org_id='default-org', name='Default', slug='default'))
-	    if not s.get(User, 'admin'):
-	        s.add(User(id='admin', sub='admin@redsim.local', email='admin@redsim.local'))
-	        s.add(ProjectMembership(user_id='admin', project_id='default', role='admin'))
-	    print('seeded')
-	PY
+	docker compose exec -T redsim-api python - default-org default Default < runtime/scripts/seed_project.py
 
 token-for:
 	@echo "dev:$$(basename $@)"
