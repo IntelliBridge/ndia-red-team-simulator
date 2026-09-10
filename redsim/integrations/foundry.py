@@ -747,8 +747,10 @@ class FoundryClient:
 
     def create_transaction(self, dataset_rid: str, *, transaction_type: str = "APPEND") -> tuple[str, int]:
         """Open a transaction; ``(transaction rid, status)``."""
+        # Foundry reads the type from the JSON body (``CreateTransactionRequest``); a query parameter is
+        # ``400 MissingRequiredFields`` on a real stack (proven 2026-09-10 against a developer-tier instance).
         response = self._request("create_transaction", "POST", f"{self._rid_path(dataset_rid)}/transactions",
-                                 params={"transactionType": transaction_type}, content=b"{}",
+                                 content=json.dumps({"transactionType": transaction_type}).encode("utf-8"),
                                  content_type="application/json")
         try:
             body = response.json()
