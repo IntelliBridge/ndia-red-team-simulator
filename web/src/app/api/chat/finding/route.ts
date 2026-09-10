@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { env } from "@/env";
-import type { Campaign, Finding } from "@/lib/api";
+import type { AttackInfo, Campaign, Finding } from "@/lib/api";
 import { buildMessages, type HistoryTurn } from "@/server/chat/context";
 import { gatewaySettings, GatewayStreamError, openChatStream } from "@/server/chat/pythia";
 import { beginCall, createContext, requestPartsFromRequest } from "@/server/trpc/context";
@@ -57,6 +57,20 @@ const findingSchema = z.looseObject({
 const campaignSchema = z.looseObject({
   run_id: z.string(),
   status: z.string(),
+});
+
+/** `GET /v1/attacks?modality=`: the rows the model may name in a proposal. Ids and flags only are read. */
+const attacksSchema = z.looseObject({
+  attacks: z.array(
+    z.looseObject({
+      id: z.string(),
+      name: z.string(),
+      family: z.string(),
+      access: z.string(),
+      requires_gradients: z.boolean(),
+      status: z.string(),
+    }),
+  ),
 });
 
 /** One NDJSON event as the panel reads it. */
@@ -163,7 +177,26 @@ export async function POST(request: Request): Promise<Response> {
     campaignUnavailable = error.data.upstream.code;
   }
 
-  const messages = buildMessages({ finding, campaign, campaignUnavailable }, history as HistoryTurn[]);
+  // The attack catalog for the campaign's modality bounds what a proposal may
+  // name (rule 8). It is context, not a requirement: a catalog the API cannot
+  // serve leaves available_attacks null and the model is told to propose nothing.
+  let attacks: AttackInfo[] | null = null;
+  const modality = (campaign?.config as { modality?: unknown } | undefined)?.modality;
+  if (typeof modality === "string" && modality.length > 0) {
+    try {
+      const catalog = await upstreamFetch(
+        ctx,
+        { method: "GET", segments: ["v1", "attacks"], query: { modality } },
+        attacksSchema,
+      );
+      attacks = catalog.attacks as unknown as AttackInfo[];
+    } catch (error) {
+      if (!(error instanceof UpstreamTRPCError)) throw error;
+      attacks = null;
+    }
+  }
+
+  const messages = buildMessages({ finding, campaign, campaignUnavailable, attacks }, history as HistoryTurn[]);
 
   const controller = new AbortController();
   const deadline = AbortSignal.timeout(settings.timeoutMs);

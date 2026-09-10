@@ -13,7 +13,14 @@ const KEY = "pk_test_not_a_real_key";
 type Call = { url: string; method: string; headers: Record<string, string>; body: string | null };
 
 /** A fetch stub that plays FastAPI and the gateway by URL and records every call. */
-function fakeNetwork(options: { gateway?: () => Response; finding?: Response; campaign?: Response } = {}) {
+const ATTACKS = {
+  attacks: [
+    { id: "fgsm", name: "FGSM", family: "evasion", access: "white-box", requires_gradients: true, status: "available", capabilities: ["modality:image", "norm:linf"] },
+    { id: "hopskipjump", name: "HopSkipJump", family: "evasion", access: "black-box", requires_gradients: false, status: "available", capabilities: ["modality:image", "norm:linf", "norm:l2"] },
+  ],
+};
+
+function fakeNetwork(options: { gateway?: () => Response; finding?: Response; campaign?: Response; attacks?: Response } = {}) {
   const calls: Call[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -25,6 +32,7 @@ function fakeNetwork(options: { gateway?: () => Response; finding?: Response; ca
     });
     if (url.startsWith(`${API}/v1/findings/`)) return options.finding ?? Response.json(findingFixture);
     if (url.endsWith("/campaign")) return options.campaign ?? Response.json(campaignFixture);
+    if (url.startsWith(`${API}/v1/attacks`)) return options.attacks ?? Response.json(ATTACKS);
     if (url === `${GATEWAY}/v1/chat/completions`) {
       return options.gateway
         ? options.gateway()
@@ -184,13 +192,14 @@ describe("POST /api/chat/finding", () => {
     expect(calls.map((c) => c.url)).toEqual([
       `${API}/v1/findings/fixture-finding`,
       `${API}/v1/runs/fixture-run-001/campaign`,
+      `${API}/v1/attacks?modality=image`,
       `${GATEWAY}/v1/chat/completions`,
     ]);
-    for (const apiCall of calls.slice(0, 2)) {
+    for (const apiCall of calls.slice(0, 3)) {
       expect(apiCall.headers.Cookie).toBe(COOKIE);
       expect(apiCall.headers.Authorization).toBeUndefined();
     }
-    const gateway = calls[2]!;
+    const gateway = calls[3]!;
     expect(gateway.headers.Authorization).toBe(`Bearer ${KEY}`);
     expect(gateway.headers.Cookie).toBeUndefined();
     const body = JSON.parse(gateway.body ?? "{}") as { messages: Array<{ role: string; content: string }>; stream: boolean };
@@ -198,8 +207,24 @@ describe("POST /api/chat/finding", () => {
     expect(body.messages[0]?.role).toBe("system");
     expect(body.messages[0]?.content).toContain('"mri":0.58');
     expect(body.messages[0]?.content).toContain('"id":"m1"');
+    expect(body.messages[0]?.content).toContain('"available_attacks":[{"id":"fgsm"');
+    expect(body.messages[0]?.content).toContain('"id":"hopskipjump"');
+    expect(body.messages[0]?.content).toContain('"norms":["linf","l2"]');
     expect(body.messages[body.messages.length - 1]).toEqual({ role: "user", content: "Explain this finding." });
     expect(gateway.body).not.toContain(COOKIE);
+  });
+
+  it("still answers when the attack catalog is refused, with no roster in the context", async () => {
+    const { calls, fetchMock } = fakeNetwork({
+      attacks: Response.json({ detail: { code: "ml_catalog_unavailable", message: "no registry" } }, { status: 503 }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { POST } = await load();
+    const res = await POST(post(ask));
+    expect(res.status).toBe(200);
+    expect((await events(res)).at(-1)).toEqual({ type: "done" });
+    const body = JSON.parse(calls[3]!.body ?? "{}") as { messages: Array<{ content: string }> };
+    expect(body.messages[0]?.content).toContain('"available_attacks":null');
   });
 
   it("chats on the finding alone when the campaign record is refused", async () => {
