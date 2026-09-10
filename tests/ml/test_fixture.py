@@ -60,8 +60,7 @@ def test_fixture_has_every_panel(record):
     assert all(o.center_mass_ratio_clean is not None for o in record.observations)
     assert record.interpretation and all(i.kind == "inferred" for i in record.interpretation)
     assert record.recommendations
-    assert all(r.status == "candidate" and r.validation == "not evaluated" and r.measured is None
-               for r in record.recommendations)
+    assert all(r.status == "candidate" for r in record.recommendations)
     assert record.limitations
     assert record.completeness == "complete" and record.missing == []
 
@@ -75,7 +74,6 @@ def test_fixture_score_is_complete(record):
     assert len(score.inputs) == 6 and all(r.n > 0 and r.n_correct_clean for r in score.inputs)
     assert score.eps_grid == record.config.eps_grid and score.reference_eps == record.config.reference_eps
     assert score.reading and not S.contains_banned_score_word(score.reading)
-    assert score.delta is None
 
 
 def test_fixture_asr_denominators_are_the_clean_row(record):

@@ -63,7 +63,7 @@ class TestGuardedAssignment(unittest.TestCase):
     def test_valid_status_transition(self):
         f = RedsimFinding(**_VALID)
         f.status = "fixed"
-        self.assertEqual(f.status, "fixing")
+        self.assertEqual(f.status, "fixed")
 
     def test_invalid_assignment_rejected(self):
         f = RedsimFinding(**_VALID)
