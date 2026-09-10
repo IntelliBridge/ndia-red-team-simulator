@@ -160,8 +160,9 @@ catalog the API cannot serve leaves the roster `null` and the prompt tells
 the model to propose nothing.
 
 The browser (`web/src/lib/chat.ts::parseProposal`) keeps the block out of
-the prose, checks its shape (ids non-empty, a known norm, 1 to 8 positive
-grid values with the reference among them, `n_samples` 1 to 500) and renders
+the prose, checks its shape (ids non-empty, a known norm, 1 to 3 positive
+grid values with the reference among them, the admission's default grid
+limit, `n_samples` 1 to 500) and renders
 it as a card labelled "candidate, not run" with the exact settings the
 request would carry. The one control is "Run this campaign", shown to a
 scanner and above. It posts `buildProposalRequest(campaign.config, proposal)`
@@ -169,6 +170,8 @@ to `POST /v1/models/{target_id}/attacks` through the normal cookie and CSRF
 client: the recorded campaign's settings with the proposal's attack set,
 norm, grid, reference and sample count in place of the parent's, and no
 server-owned key (`scoring`, `modality`, `target_id`, `attack_params`). The
+route is keyed by `config.target_id`, the Target row id the admission froze,
+not the registry id in the record's `target` block. The
 admission service does every check and writes the `attack.run` audit row,
 `success=False` on refusal, exactly as for any other request; the panel shows
 the refusal by code and links the admitted run. Nothing in the web process

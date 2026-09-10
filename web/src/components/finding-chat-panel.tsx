@@ -56,7 +56,11 @@ function ProposalCard({
     setPending(true);
     setRefusal(null);
     try {
-      const handle = await startCampaign(campaign.target.id, buildProposalRequest(campaign.config, proposal));
+      // The attacks route is keyed by the Target row id the admission froze into
+      // the config; the target block's id is the registry id (vehicles_cnn), which
+      // the API does not resolve.
+      const targetRowId = campaign.config.target_id || campaign.target.id;
+      const handle = await startCampaign(targetRowId, buildProposalRequest(campaign.config, proposal));
       onStarted(handle.run_id);
     } catch (error) {
       const detail = mlErrorDetail(error);
