@@ -69,7 +69,6 @@ vi.mock("@/hooks/useMlCatalog", () => ({
       },
     ],
   }),
-  useDefenses: () => ({ data: [] }),
   useCapabilities: () => ({
     data: {
       worker_ml_extra: true,

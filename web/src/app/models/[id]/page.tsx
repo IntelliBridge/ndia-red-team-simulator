@@ -10,13 +10,11 @@ import {
   type CampaignRequest,
   type CampaignHistory,
   type DatasetInfo,
-  type DefenseInfo,
 } from "@/lib/api";
 import { useModel } from "@/hooks/useModel";
 import {
   useAttacks,
   useDatasets,
-  useDefenses,
   useCapabilities,
 } from "@/hooks/useMlCatalog";
 import { useRoles } from "@/hooks/useRoles";
@@ -69,7 +67,6 @@ export default function ModelPage({
     authed,
   );
   const { data: datasets = [], error: datasetsError } = useDatasets(authed);
-  const { data: defenses = [], error: defensesError } = useDefenses(authed);
   const { data: capabilities, error: capabilitiesError } =
     useCapabilities(authed);
   const { roles } = useRoles();
@@ -132,7 +129,6 @@ export default function ModelPage({
     modelError ??
     attacksError ??
     datasetsError ??
-    defensesError ??
     capabilitiesError;
   const available =
     model?.status === "available" &&
@@ -615,12 +611,6 @@ export default function ModelPage({
                     include {model.modality}.
                   </p>
                 )}
-              {defenses.length > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Verify defenses available:{" "}
-                  {defenses.map((d: DefenseInfo) => d.name).join(", ")}
-                </p>
-              )}
               {err && <p className="text-sm text-destructive">{err}</p>}
             </div>
           </PanelSection>

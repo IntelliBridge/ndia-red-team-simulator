@@ -4,21 +4,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { LabelBadge, PanelSection } from "@redsim/design-system";
-import {
-  api,
-  type AttackInfo,
-  type DefenseInfo,
-  type ModelTarget,
-} from "@/lib/api";
+import { api, type AttackInfo, type ModelTarget } from "@/lib/api";
 import { useModels } from "@/hooks/useModels";
 import { rowLink } from "@/lib/row-link";
 import { useRoles } from "@/hooks/useRoles";
 
 /**
- * Adversarial-ML attack and defense catalogue (second tab of /tests).
+ * Adversarial-ML attack catalogue (second tab of /tests).
  *
- * Self-contained: fetches GET /v1/attacks, GET /v1/defenses and the model
- * registry itself. The useMlCatalog hooks are not reused here because they
+ * Self-contained: fetches GET /v1/attacks and the model registry itself. The useMlCatalog hooks are not reused here because they
  * discard the response envelope (the ATLAS citation lives there) and this tab
  * needs the full row shape (domains, atlas_*), so the SWR keys below are
  * deliberately distinct from the hooks' keys to keep the caches apart.
@@ -54,16 +48,6 @@ type AttacksResponse = {
   count?: number;
   plugins?: { enabled: boolean };
   atlas?: AtlasCitation | null;
-};
-type CatalogDefense = DefenseInfo & {
-  kind?: string;
-  description?: string;
-  modalities?: string[];
-};
-type DefensesResponse = {
-  defenses?: CatalogDefense[];
-  items?: CatalogDefense[];
-  count?: number;
 };
 type ModelRow = ModelTarget & {
   registered?: boolean;
@@ -113,18 +97,12 @@ export function AttacksCatalog() {
   } = useSWR(["/v1/attacks", "catalog"], () =>
     api<AttacksResponse>("/v1/attacks"),
   );
-  const { data: defensesResp, error: defensesError } = useSWR(
-    ["/v1/defenses", "catalog"],
-    () => api<DefensesResponse>("/v1/defenses"),
-  );
   const { data: modelRows = [], error: modelsError } = useModels(projectId);
 
   const attacks: CatalogAttack[] = useMemo(
     () => attacksResp?.attacks ?? attacksResp?.items ?? [],
     [attacksResp],
   );
-  const defenses: CatalogDefense[] =
-    defensesResp?.defenses ?? defensesResp?.items ?? [];
   const models = (modelRows as ModelRow[]).filter(isRunnable);
 
   const [search, setSearch] = useState("");
@@ -198,7 +176,7 @@ export function AttacksCatalog() {
   };
 
   const atlas = attacksResp?.atlas ?? null;
-  const catalogError = attacksError ?? defensesError;
+  const catalogError = attacksError;
 
   return (
     <div className="space-y-6">
@@ -562,74 +540,6 @@ export function AttacksCatalog() {
             {bulkNote ? <span className="text-destructive">{bulkNote}</span> : null}
           </div>
         ) : null}
-      </PanelSection>
-
-      <PanelSection
-        title="Defenses (hardening, applied from a run's candidate actions)"
-        eyebrow="catalogue · read only"
-      >
-        {defensesError ? (
-          <p className="text-sm text-destructive">Defense catalog unavailable.</p>
-        ) : defenses.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {defensesResp ? "No defenses registered." : "Loading defense catalog…"}
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="p-2">Defense</th>
-                  <th className="p-2">Kind</th>
-                  <th className="p-2">Phase</th>
-                  <th className="p-2">Modalities</th>
-                  <th className="p-2">Status</th>
-                  <th className="p-2">Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                {defenses.map((d) => (
-                  <tr key={d.id} className="border-b border-border align-top">
-                    <td className="p-2">
-                      <div className="text-sm font-medium">{d.name}</div>
-                      <div className="font-mono text-[11px] text-muted-foreground">
-                        {d.id}
-                      </div>
-                    </td>
-                    <td className="p-2">{d.kind ?? "—"}</td>
-                    <td className="p-2">
-                      {d.phase === "B" ? (
-                        <LabelBadge variant="phase-b" />
-                      ) : (
-                        `phase ${d.phase ?? "—"}`
-                      )}
-                    </td>
-                    <td className="p-2">
-                      <div className="flex flex-wrap gap-1">
-                        {(d.modalities ?? []).map((m) => (
-                          <Chip key={m}>{m}</Chip>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="p-2">
-                      <Chip>{d.status ?? "unknown"}</Chip>
-                    </td>
-                    <td className="p-2">
-                      <div className="max-w-[28rem] truncate" title={d.description}>
-                        {d.description ?? "—"}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="mt-3 text-xs text-muted-foreground">
-          Defenses are not launched from this catalogue. A completed campaign
-          proposes them as candidate actions; apply and re-measure from the
-          run&apos;s scorecard.
-        </p>
       </PanelSection>
     </div>
   );

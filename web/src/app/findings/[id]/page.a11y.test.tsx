@@ -10,7 +10,6 @@ vi.mock("@/hooks/useRoles", () => ({
 vi.mock("@/hooks/useFinding", () => ({
   useFinding: () => ({ data: fixture, mutate: vi.fn() }),
 }));
-vi.mock("@/hooks/useMlCatalog", () => ({ useDefenses: () => ({ data: [] }) }));
 import FindingPage from "./page";
 it("has no obvious accessibility violations", async () => {
   const view = render(

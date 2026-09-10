@@ -17,7 +17,6 @@ export const Default: Story = {
     severity: "critical",
     status: "open",
     target: "http://localhost:3000/login",
-    validationState: "poc_passed",
     children:
       "User-supplied email parameter flows directly into an unparameterised query.",
   },
@@ -30,6 +29,5 @@ export const Pending: Story = {
     severity: "high",
     status: "pending_apply",
     target: "http://localhost:3000/search",
-    validationState: "unvalidated",
   },
 };

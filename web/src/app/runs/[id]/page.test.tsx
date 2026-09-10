@@ -16,14 +16,12 @@ const mocks = vi.hoisted(() => ({
   useRequireAuth: vi.fn(),
   useRoles: vi.fn(),
   useRunEvents: vi.fn(),
-  useDefenses: vi.fn(),
   mutate: vi.fn(),
   cancelRun: vi.fn(),
   compareRuns: vi.fn(),
   dismissFinding: vi.fn(),
   patchReviewerNotes: vi.fn(),
   startCampaign: vi.fn(),
-  verifyFinding: vi.fn(),
 }));
 
 vi.mock("@/hooks/useCampaign", () => ({
@@ -38,9 +36,6 @@ vi.mock("@/hooks/useRoles", () => ({
 vi.mock("@/hooks/useRunEvents", () => ({
   useRunEvents: mocks.useRunEvents,
 }));
-vi.mock("@/hooks/useMlCatalog", () => ({
-  useDefenses: mocks.useDefenses,
-}));
 vi.mock("@/lib/api", async () => ({
   ...(await vi.importActual("@/lib/api")),
   cancelRun: mocks.cancelRun,
@@ -48,7 +43,6 @@ vi.mock("@/lib/api", async () => ({
   dismissFinding: mocks.dismissFinding,
   patchReviewerNotes: mocks.patchReviewerNotes,
   startCampaign: mocks.startCampaign,
-  verifyFinding: mocks.verifyFinding,
   artifactUrl: (id: string) => `/v1/artifacts/${id}`,
   reportUrl: (id: string, ext: string) => `/v1/runs/${id}/report.${ext}`,
 }));
@@ -89,32 +83,22 @@ beforeEach(() => {
   mocks.useRoles.mockReturnValue({
     roles: { default: "approver" },
   });
-  mocks.useDefenses.mockReturnValue({
-    data: [
-      {
-        id: "jpeg",
-        name: "JPEG preprocessing",
-        status: "available",
-        modalities: ["image"],
-      },
-    ],
-  });
   mocks.useRunEvents.mockImplementation(
     (_id: string | null, onEvent: (event: RunEvent) => void) => {
       eventHandler = onEvent;
     },
   );
   mocks.cancelRun.mockResolvedValue({});
-  mocks.verifyFinding.mockResolvedValue({});
   mocks.compareRuns.mockResolvedValue({
     compatible: true,
-    mode: "verify_delta",
-    delta_mri: 4.2,
-    delta_dimensions: { S_asr: 0.08 },
-    delta_families: [],
-    changed_variables: ["defense"],
-    unchanged_variables: ["seed", "n_samples", "eps_grid"],
-    caveats: ["Same campaign settings."],
+    mode: "side_by_side",
+    scorecards: [
+      { run_id: "fixture-run-001", mri: 58, grade: "C" },
+      { run_id: "prior-run", mri: 61, grade: "C" },
+    ],
+    changed_variables: ["seed"],
+    unchanged_variables: ["n_samples", "eps_grid"],
+    caveats: ["Two measurements side by side; no delta is derived."],
   });
   setCampaign(campaign());
 });
@@ -184,68 +168,14 @@ describe("/runs/[id] campaign review", () => {
     expect(screen.getByText("Reviewer notes are read-only for this role.")).toBeTruthy();
   });
 
-  it("verifies only recommendations linked to a real finding id", async () => {
-    const unlinked = campaign();
-    setCampaign(unlinked);
-    const first = renderPage();
-    expect(
-      screen.getByText(/no finding is linked to this recommendation/),
-    ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Verify" })).toHaveProperty(
-      "disabled",
-      true,
-    );
-
-    first.unmount();
-    const linked = campaign();
-    (linked.recommendations[0] as typeof linked.recommendations[0] & {
-      finding_id: string;
-    }).finding_id = "finding-1";
-    setCampaign(linked);
+  it("labels every recommendation as a candidate with its narrative source", () => {
     renderPage();
-    fireEvent.change(
-      screen.getByLabelText("Defense for Evaluate input preprocessing"),
-      { target: { value: "jpeg" } },
-    );
-    fireEvent.click(screen.getByRole("button", { name: "Verify" }));
-    await waitFor(() =>
-      expect(mocks.verifyFinding).toHaveBeenCalledWith(
-        "finding-1",
-        "jpeg",
-        {},
-        "r.1",
-      ),
-    );
-    expect(mocks.mutate).toHaveBeenCalled();
-  });
-
-  it("labels a recommendation as measured only when that candidate has a measured record", () => {
-    const measured = campaign();
-    const recommendation = measured.recommendations[0] as
-      (typeof measured.recommendations)[number] & {
-        measured?: {
-          delta_mri: number;
-          delta_asr: number;
-          baseline_run_id: string;
-          verify_run_id: string;
-        };
-      };
-    recommendation.validation = "measured";
-    recommendation.measured = {
-      delta_mri: 3.1,
-      delta_asr: -0.08,
-      baseline_run_id: "baseline-run",
-      verify_run_id: "verify-run",
-    };
-    setCampaign(measured);
-    renderPage();
-    expect(
-      screen.getByText(
-        "candidate · measured ΔMRI +3.1 at these settings",
-      ),
-    ).toBeTruthy();
-    expect(screen.queryByText("candidate · not evaluated")).toBeNull();
-    expect(screen.getByText(/Measured verification ΔMRI 3.1/)).toBeTruthy();
+    expect(screen.getByText("candidate")).toBeTruthy();
+    expect(screen.getByText(/· candidate · rules narrative/)).toBeTruthy();
+    expect(screen.queryByText(/not evaluated/)).toBeNull();
+    expect(screen.queryByText(/Measured verification/)).toBeNull();
+    expect(screen.queryByText(/ΔMRI/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Verify" })).toBeNull();
   });
 
   it("upserts repeated stage events and revalidates campaign evidence", () => {
@@ -287,16 +217,16 @@ describe("/runs/[id] campaign review", () => {
     expect(mocks.mutate).toHaveBeenCalled();
   });
 
-  it("renders measured comparison evidence rather than a compatibility label", async () => {
+  it("renders a side-by-side comparison with no delta", async () => {
     renderPage();
     fireEvent.change(screen.getByLabelText("Compare with run"), {
       target: { value: "prior-run" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Compare" }));
-    expect(
-      await screen.findByText("Measured verify comparison"),
-    ).toBeTruthy();
-    expect(screen.getByText("ΔMRI 4.2")).toBeTruthy();
-    expect(screen.getByText("S_asr: 0.08")).toBeTruthy();
+    expect(await screen.findByText("Scorecard 1 · fixture-run-001")).toBeTruthy();
+    expect(screen.getByText("Scorecard 2 · prior-run")).toBeTruthy();
+    expect(screen.getByText(/Changed variables: seed/)).toBeTruthy();
+    expect(screen.queryByText(/ΔMRI/)).toBeNull();
+    expect(screen.queryByText(/verify/i)).toBeNull();
   });
 });

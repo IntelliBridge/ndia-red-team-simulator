@@ -152,31 +152,6 @@ export type FindingReview = {
   at: string | null;
   notes: string | null;
 };
-export type DefenseConfig = {
-  name: string;
-  params: Record<string, number | boolean | string>;
-};
-export type MRIDelta = {
-  baseline_run_id: string;
-  mri_before: number;
-  mri_after: number;
-  delta: number;
-  delta_subscores: Record<
-    "S_acc" | "S_asr" | "S_eps" | "S_conf" | "S_expl",
-    number | null
-  >;
-  delta_acc_clean: {
-    before: { n_correct: number; n: number; accuracy: number | null };
-    after: { n_correct: number; n: number; accuracy: number | null };
-    delta: number | null;
-  };
-  delta_families: Array<{
-    measurement_id: string;
-    before: { n_correct: number; n: number; accuracy: number | null };
-    after: { n_correct: number; n: number; accuracy: number | null };
-    delta: number | null;
-  }>;
-};
 export type MLFindingDetail = {
   attack_id: string;
   attack_name: string;
@@ -195,12 +170,6 @@ export type MLFindingDetail = {
   limitations: string[];
   artifacts: Record<string, string>;
   review: FindingReview;
-  verify: {
-    run_id: string;
-    defense: DefenseConfig;
-    outcome: "verified" | "still_vulnerable" | "inconclusive";
-    delta: MRIDelta | null;
-  } | null;
   explanation_unavailable_reason?: string | null;
   audit?: {
     state: "verified" | "broken" | "pending";
@@ -216,8 +185,6 @@ export type Finding = {
   severity: string;
   status: string;
   source_tool: string | null;
-  /** Verify outcome of a classifier finding; absent on LLM probe findings. */
-  validation_state?: string | null;
   dedup_key: string | null;
   schema_blob: FindingSchemaBlob;
 };
@@ -366,16 +333,6 @@ export type DatasetInfo = {
   reachability: string;
   compatible_modalities: Array<"image" | "tabular" | "llm">;
 };
-export type DefenseInfo = {
-  id: string;
-  name: string;
-  art_class: string;
-  params_schema: ParamSpec[];
-  modalities: Array<"image" | "tabular">;
-  phase: "A" | "B";
-  status: "available" | "not_implemented";
-  reason?: string;
-};
 export type Capabilities = {
   modalities: Record<
     "image" | "tabular" | "llm" | "text" | "detection",
@@ -387,7 +344,6 @@ export type Capabilities = {
   pickle_accepted: false;
   architectures: Array<{ id: string; name: string } | string>;
   explainers: Record<string, unknown>;
-  defenses: string[];
   llm_narrative: {
     configured: boolean;
     gateway: "pythia";
@@ -440,7 +396,6 @@ export type CampaignConfig = CampaignRequest & {
     confidence?: Record<string, number>;
     interpretation?: Record<string, number>;
   };
-  defense?: DefenseConfig | null;
   target_snapshot?: Record<string, unknown>;
   attacks?: AttackInfo[];
 };
@@ -511,13 +466,6 @@ export type CandidateRecommendation = {
   rationale: string;
   triggered_by: string[];
   status: "candidate";
-  validation: "not evaluated" | "measured";
-  measured?: {
-    delta_mri?: number;
-    delta_asr?: number;
-    baseline_run_id?: string;
-    verify_run_id?: string;
-  } | null;
   references: string[];
   narrative?: string | null;
   narrative_source: "rules" | "llm";
@@ -526,13 +474,6 @@ export type MRIRecord = {
   run_id?: string;
   mri?: number;
   grade?: string;
-  delta?: {
-    baseline_run_id: string;
-    mri_before: number;
-    mri_after: number;
-    delta: number;
-    delta_acc_clean?: MRIDelta["delta_acc_clean"];
-  } | null;
   subscores?: Record<
     "S_acc" | "S_asr" | "S_eps" | "S_conf" | "S_expl",
     number | null
@@ -606,19 +547,7 @@ export type ArtifactRow = {
 };
 export type Comparison = {
   compatible: true;
-  mode: "verify_delta" | "side_by_side";
-  delta_mri?: number | null;
-  delta_dimensions?: Record<string, number>;
-  delta_acc_clean?: MRIDelta["delta_acc_clean"];
-  delta_families?: Array<{
-    family: string;
-    before: number | null;
-    after: number | null;
-    n_before: number;
-    n_after: number;
-    delta?: number | null;
-  }>;
-  delta?: null;
+  mode: "side_by_side";
   scorecards?: MRIRecord[];
   changed_variables: string[];
   unchanged_variables: string[];
@@ -701,22 +630,6 @@ export function hardenFinding(id: string, body: Record<string, unknown> = {}) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
-}
-export function verifyFinding(
-  id: string,
-  defense: string,
-  params: Record<string, unknown>,
-  recommendationId: string,
-) {
-  return api(`/v1/findings/${encodeURIComponent(id)}/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      defense,
-      params,
-      recommendation_id: recommendationId,
-    }),
   });
 }
 export function dismissFinding(
@@ -810,7 +723,7 @@ export function datasetManifestUrl(runId: string): string {
 }
 
 // ── Exports inventory (`GET /v1/exports`) ──────────────────────────
-// One row per campaign or verify run with the state of its report formats
+// One row per campaign run with the state of its report formats
 // and of its adversarial dataset export. Ids, digests, sizes and counts only;
 // never a score (spec 15.7). Read through the tRPC `exports` router.
 
@@ -860,7 +773,7 @@ export type ExportDataset = {
 export type ExportRow = {
   run_id: string;
   project_id: string;
-  kind: "campaign" | "verify";
+  kind: "campaign";
   status: string;
   terminal: boolean;
   created_at: string | null;

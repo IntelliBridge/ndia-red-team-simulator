@@ -30,7 +30,7 @@ const reportExtSchema = z.enum(["md", "json", "html", "pdf"]);
 const exportRowSchema: z.ZodType<ExportRow> = z.looseObject({
   run_id: z.string(),
   project_id: z.string(),
-  kind: z.enum(["campaign", "verify"]),
+  kind: z.literal("campaign"),
   status: z.string(),
   terminal: z.boolean(),
   created_at: z.string().nullable(),
@@ -110,7 +110,6 @@ export const exportsRouter = router({
       z
         .object({
           project: z.string().optional(),
-          kind: z.enum(["campaign", "verify"]).optional(),
           limit: z.number().int().positive().max(500).optional(),
         })
         .optional(),
@@ -121,7 +120,7 @@ export const exportsRouter = router({
         {
           method: "GET",
           segments: ["v1", "exports"],
-          query: { project: input?.project, kind: input?.kind, limit: input?.limit },
+          query: { project: input?.project, limit: input?.limit },
         },
         exportsListSchema,
       ),
