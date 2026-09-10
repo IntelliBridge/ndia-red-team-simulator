@@ -110,11 +110,12 @@ routers, services, tasks and tests of the wave B4 commits and fix pass.
 `org_cost`, the Phase B routers `batches`, `llm`, `integrations` (the dataset
 export, consume and manifest rows live in `datasets`), and the WebSocket
 router, with the `IdempotencyMiddleware` (wave B2) added innermost inside
-the tenant scope: 66 HTTP routes under `/v1` (37 Phase A, 15 built by wave B2
+the tenant scope: 68 HTTP routes under `/v1` (37 Phase A, 15 built by wave B2
 of which five replaced B0 stubs and ten are new paths, 13 built by wave B3 in
-place of the last B0 stubs, and `GET /v1/exports` of 2026-09-09; the four
-verify and defense routes left on 2026-09-09 with the verify paradigm; no
-route is a stub), plus `GET /health`,
+place of the last B0 stubs, `GET /v1/exports` of 2026-09-09, and
+`GET /v1/models/score-summaries` (#87) and `GET /v1/llm/models`, which the
+earlier count of 70 predated; the four verify and defense routes left on
+2026-09-09 with the verify paradigm; no route is a stub), plus `GET /health`,
 `/metrics`, `GET /v1/__settings` and `/docs` outside prod, and
 `WS /v1/runs/{id}/events`. `POST /v1/scans` was unmounted by P0 and answers
 404.

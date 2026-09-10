@@ -432,7 +432,7 @@ def test_removed_verify_routes_are_neither_mounted_nor_documented(docs_api: Simp
     if mounted:
         attributed_fail("redsim/api/app.py (the verify paradigm was removed on 2026-09-09)",
                         "removed routes still mounted: " + ", ".join(mounted))
-    documented = [f"{method} {path}" for method, path in _phase_b_table()
+    documented = [f"{method} {path}" for method, path, _status, _raw in _phase_b_table()
                   if any(_template_regex(removed).match(_concrete(path)) and method == m
                          for m, removed in REMOVED_VERIFY_ROUTES)]
     if documented:
