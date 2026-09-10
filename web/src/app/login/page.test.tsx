@@ -33,9 +33,10 @@ function submit() {
 }
 
 describe("LoginPage", () => {
-  it("renders the heading, an email field, a password field and one submit button", () => {
+  it("renders an email field, a password field and one submit button, with no heading", () => {
     render(React.createElement(LoginPage));
-    expect(screen.getByRole("heading", { name: "Sign in" })).toBeTruthy();
+    expect(screen.queryByRole("heading")).toBeNull();
+    expect(screen.getByRole("form", { name: "Sign in" })).toBeTruthy();
     const email = screen.getByLabelText("Email") as HTMLInputElement;
     const password = screen.getByLabelText("Password") as HTMLInputElement;
     expect(email.type).toBe("email");
@@ -44,6 +45,14 @@ describe("LoginPage", () => {
     expect(password.type).toBe("password");
     expect(password.autocomplete).toBe("current-password");
     expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
+  });
+
+  it("paints the hero as a decorative layer hidden from assistive technology", () => {
+    render(React.createElement(LoginPage));
+    const hero = screen.getByTestId("login-hero");
+    expect(hero.getAttribute("aria-hidden")).toBe("true");
+    expect(hero.className).toContain("redsim-login-hero");
+    expect(hero.textContent).toBe("");
   });
 
   it("offers no other way in and never names the identity provider", () => {

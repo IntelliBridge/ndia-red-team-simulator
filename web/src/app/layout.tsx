@@ -42,7 +42,10 @@ export default function RootLayout({
     // so the vendored shadcn primitives' `dark:` variants apply; there is no
     // light theme and no toggle.
     <html lang="en" className="dark" suppressHydrationWarning>
-      <body className="min-h-screen bg-background text-foreground antialiased">
+      {/* No background on body: globals.css paints the navy ground on the
+          root element, and a body fill would sit on top of the login page's
+          fixed hero layer, which stacks at z-index -1. */}
+      <body className="min-h-screen text-foreground antialiased">
         <TRPCReactProvider>
           {/* Skip link: first focusable element, visually hidden until
               keyboard-focused, so keyboard/screen-reader users can jump
