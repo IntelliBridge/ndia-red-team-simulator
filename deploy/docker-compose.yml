@@ -173,6 +173,15 @@ services:
       REDSIM_S3_ACCESS_KEY_ID: redsim
       REDSIM_S3_SECRET_ACCESS_KEY: redsim-secret
       REDSIM_DISABLE_LLM: "1"
+      # Sandbox child budget for a laptop QA run. The spec 20.3 defaults (900
+      # CPU seconds, 2 threads, 1200 s wall clock) are sized for the CI
+      # fixtures: a vehicles_cnn campaign with n_samples 50 reached the explain
+      # stage at about 470 s of wall clock on two threads and was SIGKILLed by
+      # the CPU rlimit. The wall clock stays below the Celery soft limit
+      # (1800 s). Export any of the three to override.
+      REDSIM_ML_SANDBOX_CPU_SECONDS: ${REDSIM_ML_SANDBOX_CPU_SECONDS:-3600}
+      REDSIM_ML_SANDBOX_THREADS: ${REDSIM_ML_SANDBOX_THREADS:-4}
+      REDSIM_ML_SANDBOX_TIMEOUT_S: ${REDSIM_ML_SANDBOX_TIMEOUT_S:-1700}
       # Pythia gateway passthrough (docs/ops/pythia.md). The worker also needs
       # REDSIM_DISABLE_LLM unset before the hardening narrative is produced.
       PYTHIA_BASE_URL: ${PYTHIA_BASE_URL:-}
