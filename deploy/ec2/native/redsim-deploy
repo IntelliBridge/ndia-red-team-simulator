@@ -89,7 +89,12 @@ fi
 # Restart the Python units only when something they load changed: a web-only
 # push must not take the API down. --build and a first deploy restart them.
 if [ "$BUILD" = 1 ] || [ -z "$changed" ] || grep -qE '^(redsim/|pyproject.toml|alembic.ini|deploy/ec2/native/(redsim-run|systemd/redsim-(api|scans|default|beat)))' <<<"$changed"; then
-  systemctl restart redsim-api redsim-scans redsim-default redsim-beat
+  systemctl restart redsim-api redsim-default redsim-beat
+  # The scans worker may hold a campaign that runs for many minutes. Queue its
+  # restart without waiting: systemd sends SIGTERM, Celery finishes the task in
+  # flight (warm shutdown, TimeoutStopSec=2400 in the unit), then the new code
+  # starts. Killing the worker mid-campaign left runs stuck in "running".
+  systemctl restart --no-block redsim-scans
 else
   echo "no Python change: api and workers keep running"
 fi
