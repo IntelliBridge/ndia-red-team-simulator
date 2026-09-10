@@ -53,7 +53,14 @@ vi.mock("@/hooks/useRoles", () => ({
 
 const upstream = new MockUpstream();
 
-const EMPTY = { exports: [], count: 0, report_formats: ["md", "json", "html", "pdf"], dataset_format: "croissant-parquet", limit: 50 };
+const EMPTY = {
+  exports: [],
+  count: 0,
+  report_formats: ["md", "json", "html", "pdf"],
+  dataset_format: "croissant-parquet",
+  limit: 50,
+  evidence_signing: { configured: false, algorithm: null, key_id: null },
+};
 
 function exportRow(runId: string) {
   return {
@@ -96,6 +103,7 @@ function exportRow(runId: string) {
       error: null,
       blockers: [],
     },
+    evidence: { available: false, path: null },
   };
 }
 

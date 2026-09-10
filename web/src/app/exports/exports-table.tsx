@@ -29,8 +29,10 @@ import {
 import {
   REPORT_EXTS,
   datasetManifestUrl,
+  evidencePackUrl,
   reportUrl,
   upstreamError,
+  type EvidenceSigning,
   type ExportDatasetBlocker,
   type ExportFoundryBlocker,
   type ExportRow,
@@ -226,6 +228,53 @@ function DatasetCell({
   );
 }
 
+/**
+ * The signed evidence pack of a run: one zip with the record, the reports,
+ * the audit chain and a manifest the API signs with its Ed25519 key. The
+ * signing state is a deployment fact the inventory reports once, so every
+ * row says the same thing about it.
+ */
+function EvidenceCell({
+  row,
+  role,
+  signing,
+}: {
+  row: ExportRow;
+  role: string | undefined;
+  signing: EvidenceSigning | undefined;
+}) {
+  if (!row.evidence.available) {
+    return <div className="text-xs text-muted-foreground">no record yet</div>;
+  }
+  const signed = signing?.configured === true;
+  return (
+    <div className="space-y-1 text-xs">
+      <RoleGated minRole="scanner" callerRole={role}>
+        <a
+          className="text-primary underline"
+          href={evidencePackUrl(row.run_id)}
+          title="Zip: run record, reports, audit chain, artifact index and a hashed manifest"
+        >
+          Download pack
+        </a>
+      </RoleGated>
+      <div className="text-muted-foreground">
+        {signed ? (
+          <>
+            <span className="text-success">signed</span>
+            {" · ed25519 "}
+            <span className="font-mono" title={signing?.key_id ?? undefined}>
+              {shortDigest(signing?.key_id ?? null)}
+            </span>
+          </>
+        ) : (
+          <span title={signing?.reason ?? "no evidence signing key is configured"}>unsigned</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FoundryCell({
   row,
   role,
@@ -386,6 +435,7 @@ export function ExportsTable({ project, limit }: ExportsTableProps) {
   }
 
   const rows = query.data?.exports ?? [];
+  const signing = query.data?.evidence_signing;
 
   const stale = query.error ? (
     <div
@@ -431,6 +481,7 @@ export function ExportsTable({ project, limit }: ExportsTableProps) {
               <TableHead scope="col">Reports</TableHead>
               <TableHead scope="col">Dataset</TableHead>
               <TableHead scope="col">Foundry</TableHead>
+              <TableHead scope="col">Evidence</TableHead>
               <TableHead scope="col">Created</TableHead>
             </TableRow>
           </TableHeader>
@@ -483,6 +534,9 @@ export function ExportsTable({ project, limit }: ExportsTableProps) {
                       pending={pending.has(`${row.run_id}:foundry`)}
                       onPush={() => startPush(row.run_id)}
                     />
+                  </TableCell>
+                  <TableCell>
+                    <EvidenceCell row={row} role={role} signing={signing} />
                   </TableCell>
                   <TableCell className="text-muted-foreground">
                     {formatDateTime(row.created_at)}

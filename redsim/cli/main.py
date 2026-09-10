@@ -177,6 +177,18 @@ def build_parser() -> argparse.ArgumentParser:
                             help="Output directory for the evidence pack")
     p_evidence.add_argument("--project", default=None,
                             help="Limit the pack to a single project's chain")
+    p_evidence.add_argument("--run", default=None, metavar="RUN_ID",
+                            help="Write one run's signed evidence pack (needs REDSIM_DB_URL)")
+
+    # evidence — verify a per-run pack offline, or generate the signing key
+    p_ev = sub.add_parser("evidence", help="Signed per-run evidence packs: verify, keygen")
+    ev_sub = p_ev.add_subparsers(dest="evidence_action", required=True)
+    p_ev_verify = ev_sub.add_parser("verify", help="Verify a redsim-evidence-<run>.zip offline")
+    p_ev_verify.add_argument("path", help="Path to the evidence pack zip")
+    p_ev_verify.add_argument("--public-key", dest="public_key", default=None, metavar="PEM",
+                             help="Pin the signer to this Ed25519 public key (PEM)")
+    p_ev_keygen = ev_sub.add_parser("keygen", help="Generate an Ed25519 evidence signing keypair")
+    p_ev_keygen.add_argument("--out", required=True, help="Directory for the two PEM files")
 
     # migrate (Phase 3 M11 — surface lands now, impl in M11)
     p_migrate = sub.add_parser("migrate", help="Move filesystem run data into Postgres (M11)")
@@ -249,6 +261,17 @@ def _cmd_evidence_pack_dispatch(args: argparse.Namespace, config: RedsimConfig) 
     cmd_evidence_pack(args, config)
 
 
+def _cmd_evidence_dispatch(args: argparse.Namespace, config: RedsimConfig) -> None:
+    from redsim.cli.evidence import cmd_evidence_keygen, cmd_evidence_verify
+    if args.evidence_action == "verify":
+        cmd_evidence_verify(args, config)
+    elif args.evidence_action == "keygen":
+        cmd_evidence_keygen(args, config)
+    else:
+        _console._err(f"Unknown evidence action: {args.evidence_action}")
+        sys.exit(2)
+
+
 def _cmd_plugins_dispatch(args: argparse.Namespace, config: RedsimConfig) -> None:
     from redsim.cli.plugins import cmd_plugins
     cmd_plugins(args, config)
@@ -272,6 +295,7 @@ _COMMANDS["status"] = _cmd_status_dispatch
 _COMMANDS["audit"] = _cmd_audit_dispatch
 _COMMANDS["migrate"] = _cmd_migrate_dispatch
 _COMMANDS["evidence-pack"] = _cmd_evidence_pack_dispatch
+_COMMANDS["evidence"] = _cmd_evidence_dispatch
 _COMMANDS["plugins"] = _cmd_plugins_dispatch
 _COMMANDS["tenants"] = _cmd_tenants_dispatch
 _COMMANDS["ml"] = _cmd_ml_dispatch

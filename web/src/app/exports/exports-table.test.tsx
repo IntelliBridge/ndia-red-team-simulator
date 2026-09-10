@@ -79,12 +79,15 @@ function row(over: Partial<ExportRow> = {}): ExportRow {
       error: null,
       blockers: [],
     },
+    evidence: { available: true, path: "/v1/runs/run-1/evidence-pack" },
     ...over,
   };
 }
 
-function list(rows: ExportRow[]): ExportsList {
-  return { exports: rows, count: rows.length, report_formats: ["md", "json", "html", "pdf"], dataset_format: "croissant-parquet", limit: 50 };
+const SIGNING_KEY_ID = "b".repeat(64);
+
+function list(rows: ExportRow[], signing: ExportsList["evidence_signing"] = { configured: true, algorithm: "ed25519", key_id: SIGNING_KEY_ID }): ExportsList {
+  return { exports: rows, count: rows.length, report_formats: ["md", "json", "html", "pdf"], dataset_format: "croissant-parquet", limit: 50, evidence_signing: signing };
 }
 
 function keyProxy(queryClient: QueryClient) {
@@ -183,7 +186,7 @@ describe("ExportsTable rows", () => {
     renderWithProviders(<ExportsTable project="proj-a" />, { dehydratedState });
 
     const headers = screen.getAllByRole("columnheader").map((h) => h.textContent);
-    expect(headers).toEqual(["Run", "Model", "Status", "Reports", "Dataset", "Foundry", "Created"]);
+    expect(headers).toEqual(["Run", "Model", "Status", "Reports", "Dataset", "Foundry", "Evidence", "Created"]);
 
     expect(screen.queryByRole("navigation", { name: "Export kind" })).toBeNull();
     expect(screen.getByText(/UTC$/).textContent).toBe("Jan 02, 2026, 03:04 UTC");
@@ -512,5 +515,37 @@ describe("ExportsTable Foundry column", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe("integration_disabled: Foundry is not configured");
     expect(screen.getByRole("link", { name: "run-1" })).toBeTruthy();
+  });
+});
+
+describe("ExportsTable evidence packs", () => {
+  it("links the signed pack for a scanner with the key id and hides the link from a viewer", async () => {
+    rolesMock.roles = { default: "scanner" };
+    const dehydratedState = await dehydratedList({ data: list([row()]) });
+    renderWithProviders(<ExportsTable />, { dehydratedState });
+    const link = await screen.findByRole("link", { name: "Download pack" });
+    expect(link.getAttribute("href")).toContain("/v1/runs/run-1/evidence-pack");
+    expect(screen.getByText("signed")).toBeTruthy();
+    expect(screen.getByText(`${SIGNING_KEY_ID.slice(0, 12)}…`)).toBeTruthy();
+
+    cleanup();
+    rolesMock.roles = { default: "viewer" };
+    renderWithProviders(<ExportsTable />, { dehydratedState });
+    await screen.findByText("signed");
+    expect(screen.queryByRole("link", { name: "Download pack" })).toBeNull();
+  });
+
+  it("says unsigned when the deployment holds no key and no record yet for a run without one", async () => {
+    rolesMock.roles = { default: "scanner" };
+    const dehydratedState = await dehydratedList({
+      data: list(
+        [row(), row({ run_id: "run-2", evidence: { available: false, path: null } })],
+        { configured: false, algorithm: null, key_id: null, reason: "no evidence signing key is configured" },
+      ),
+    });
+    renderWithProviders(<ExportsTable />, { dehydratedState });
+    expect(await screen.findByText("unsigned")).toBeTruthy();
+    expect(screen.getByText("no record yet")).toBeTruthy();
+    expect(screen.getAllByRole("link", { name: "Download pack" })).toHaveLength(1);
   });
 });
