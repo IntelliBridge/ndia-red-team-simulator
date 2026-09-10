@@ -2,37 +2,24 @@
 
 // TopBar: the banner landmark of the app shell. The fixture ribbon comes
 // first inside it, then the product name and the UNCLASSIFIED marker on the
-// left with the command-palette button and sign-out on the right, and below
-// the md breakpoint a compact row of the same nav links, because the
-// sidebar is not rendered there and every route has to stay reachable
+// left with the command-palette button and the account menu on the right,
+// and below the md breakpoint a compact row of the same nav links, because
+// the sidebar is not rendered there and every route has to stay reachable
 // without the palette.
 
-import { usePathname, useRouter } from "next/navigation";
-
-import { logout } from "@/lib/auth";
 import { NAV_LINKS } from "@/lib/nav";
 
 import { FixtureRibbon } from "./fixture-ribbon";
 import { NavLinks } from "./nav-links";
+import { UserMenu } from "./user-menu";
 
 export function TopBar() {
-  const router = useRouter();
-  const pathname = usePathname() ?? "";
-  const onLoginPage = pathname === "/login";
-
   // The palette owns its open state and listens for the chord on the
   // document, so the button replays the chord rather than reaching into it.
   const openPalette = () => {
     document.dispatchEvent(
       new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }),
     );
-  };
-
-  // Awaited, so the redirect follows both the Better Auth sign-out and the
-  // redsim cookie clear rather than racing them.
-  const signOut = async () => {
-    await logout();
-    router.push("/login");
   };
 
   return (
@@ -73,15 +60,7 @@ export function TopBar() {
             Go to…
             <kbd className="font-mono text-[10px]">⌘K</kbd>
           </button>
-          {onLoginPage ? null : (
-            <button
-              type="button"
-              onClick={signOut}
-              className="rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted"
-            >
-              Sign out
-            </button>
-          )}
+          <UserMenu />
         </div>
       </div>
       <nav

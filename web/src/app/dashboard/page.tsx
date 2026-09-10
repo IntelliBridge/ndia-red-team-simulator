@@ -1,10 +1,8 @@
 "use client";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { RunStatusBadge } from "@redsim/design-system";
 import { api, type Finding, type ModelTarget, type Run } from "@/lib/api";
-import { logout } from "@/lib/auth";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { FindingSummaryCard } from "@/components/finding-summary-card";
 import { rowLink } from "@/lib/row-link";
@@ -110,7 +108,6 @@ function Panel({ title, children, action }: { title: string; children: React.Rea
 }
 
 export default function DashboardPage() {
-  const router = useRouter();
   const authed = useRequireAuth();
   // Models and findings refresh on the same cadence as runs. The runs hook is
   // called last so its arguments are the ones a test reads back.
@@ -139,25 +136,9 @@ export default function DashboardPage() {
   const perDayMax = Math.max(1, ...perDay.map((d) => d.count));
   const recent = [...runs].slice(0, 10);
 
-  // Awaited, so the redirect follows the cookie clear rather than racing it.
-  const signOut = async () => {
-    await logout();
-    router.push("/login");
-  };
-
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <div className="flex items-center gap-3 text-sm">
-          <button
-            onClick={signOut}
-            className="rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted"
-          >
-            Sign out
-          </button>
-        </div>
-      </div>
+      <h1 className="text-2xl font-semibold">Dashboard</h1>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile

@@ -1,5 +1,5 @@
 import { createElement as h } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // NOTE: this workspace's vitest v4 transforms via oxc, and web/tsconfig.json
@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const useSWRMock = vi.hoisted(() => vi.fn());
 vi.mock("swr", () => ({ default: useSWRMock }));
 
-// Router push is asserted on sign-out.
+// The page itself never routes; the auth gate mock owns the redirect.
 const pushMock = vi.fn();
 const replaceMock = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -23,12 +23,6 @@ vi.mock("next/navigation", () => ({
 const useRequireAuthMock = vi.hoisted(() => vi.fn(() => true));
 vi.mock("@/hooks/useRequireAuth", () => ({
   useRequireAuth: useRequireAuthMock,
-}));
-
-// auth helper the page imports: logout (sign-out wiring).
-const logoutMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-vi.mock("@/lib/auth", () => ({
-  logout: logoutMock,
 }));
 
 // Isolate the page: stub the only design-system symbol it renders.
@@ -57,8 +51,6 @@ beforeEach(() => {
   useSWRMock.mockReset();
   pushMock.mockReset();
   replaceMock.mockReset();
-  logoutMock.mockReset();
-  logoutMock.mockResolvedValue(undefined);
   useRequireAuthMock.mockReturnValue(true);
 });
 
@@ -206,15 +198,11 @@ describe("DashboardPage", () => {
     expect(screen.getByRole("link", { name: "vehicles_cnn" }).getAttribute("href")).toBe("/models/vehicles_cnn-1234abcd");
   });
 
-  it("signs out: calls logout() then routes to /login", async () => {
+  it("carries no sign-out of its own: the account menu in the top bar owns it", () => {
     useSWRMock.mockReturnValue({ data: { runs: [], count: 0 }, error: undefined, isLoading: false });
 
     render(h(DashboardPage));
-    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
-    expect(logoutMock).toHaveBeenCalledTimes(1);
-    // logout() clears the cookies before it resolves, so the redirect lands a
-    // microtask later rather than on the click.
-    await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/login"));
+    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
   });
 });
