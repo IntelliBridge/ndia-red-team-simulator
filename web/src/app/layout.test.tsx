@@ -120,7 +120,9 @@ describe("RootLayout", () => {
       ),
     );
     const body = container.querySelector("body");
-    expect(body?.className).toContain("bg-background");
+    // The ground is painted by the root element in globals.css, not by body:
+    // a body fill would cover the login page's fixed hero layer.
+    expect(body?.className).not.toContain("bg-background");
     expect(body?.className).toContain("text-foreground");
     const header = container.querySelector("header");
     expect(header?.className).toContain("border-border");

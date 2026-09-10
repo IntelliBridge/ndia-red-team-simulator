@@ -66,8 +66,10 @@ function LoginForm({ next, reason }: { next: string; reason: string | undefined 
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-md flex-col justify-center py-10 sm:py-16">
-      <h1 className="mb-8 text-4xl font-semibold tracking-tight">Sign in</h1>
+    <div className="mx-auto flex w-full max-w-md flex-col justify-center py-10 sm:min-h-[calc(100svh-16rem)] sm:py-12">
+      {/* Decorative: the full-bleed render behind the form. Nothing here is
+          read, so it is hidden from assistive technology. */}
+      <div className="redsim-login-hero" aria-hidden="true" data-testid="login-hero" />
 
       {reason ? (
         <p
@@ -79,7 +81,8 @@ function LoginForm({ next, reason }: { next: string; reason: string | undefined 
       ) : null}
 
       <form
-        className="redsim-panel space-y-5 p-6 sm:p-7"
+        className="redsim-panel redsim-panel--solid space-y-5 p-6 sm:p-7"
+        aria-label="Sign in"
         onSubmit={submit}
         noValidate
         aria-busy={busy}
