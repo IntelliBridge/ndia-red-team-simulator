@@ -255,7 +255,7 @@ dev:<email>` as an admin of project `default` (refused when
 register the bundled models and launch a campaign:
 
 ```bash
-cd deploy && make seed && cd ..                        # default-org and project default (compose stack; rows only)
+cd deploy && make seed && cd ..                        # no-op after `make up`: redsim-api seeds on start
 .venv/bin/redsim ml seed --project default             # bundled models into the project (audit-first, one commit per model)
 TOKEN="Bearer dev:admin@redsim.local"
 curl -s -H "Authorization: $TOKEN" localhost:8000/v1/models | jq '.models[] | {id, status, modality}'
@@ -265,13 +265,14 @@ curl -s -H "Authorization: $TOKEN" localhost:8000/v1/runs/<run_id>/campaign | jq
 curl -s -H "Authorization: $TOKEN" "localhost:8000/v1/audit/verify?run=<run_id>"
 ```
 
-`deploy/Makefile`'s `seed` feeds `deploy/runtime/scripts/seed_project.py`
-to the compose `redsim-api` container and creates only the organisation and
-project rows; memberships are read from the `redsim_project_roles` token
-claim (the dev bearer is admin on `default`, and the realm's admin user
-carries the attribute). Without the compose API, run `python
-deploy/runtime/scripts/seed_project.py default-org default Default` with
-`REDSIM_DB_URL` exported. Admission fills `modality`, `eps_grid` (the spec 12.3
+The compose `redsim-api` runs `python -m redsim.db.seed` after the migration
+on every start: `default-org`, project `default` and the admin user under
+both subjects (the Keycloak id the realm export pins on its `admin` user and
+`dev:admin@redsim.local`), each an admin member of the project. A rerun
+prints `nothing new`, and `REDSIM_ENV=prod` refuses it. `deploy/Makefile`'s
+`seed` runs the same module in the container for rows dropped by hand.
+Without the compose API, run `python -m redsim.db.seed` with `REDSIM_DB_URL`
+exported. Admission fills `modality`, `eps_grid` (the spec 12.3
 default for the norm), `reference_eps` and `dataset_id` from the model's
 manifest when the body omits them, and refuses anything it cannot admit with
 a spec 17.3 code before any row is written. Without a bundled registration
@@ -293,8 +294,7 @@ Full stack in containers:
 
 ```bash
 make up                  # the session keypair, then docker compose -f deploy/docker-compose.yml up -d --build
-cd deploy && make seed   # organisation default-org and project default
-make down
+make down                # containers only; make clean also drops the volumes
 ```
 
 `make up` generates the RSA keypair the web app signs the `redsim_api_session`
@@ -303,8 +303,11 @@ both halves to compose on every run, mounts the repo's `assets/` read-only
 into `redsim-api` and both worker pools as `REDSIM_ML_ASSETS_DIR`, and
 `redsim-api` runs `alembic upgrade head` on start. Sign in at
 `http://localhost:3300` as `admin@redsim.local` / `adminpass`; the realm
-user carries `redsim_project_roles = {"default": "admin"}`, so the default
-project shows with the admin role once `make seed` has created it. Ports: web
+user carries `redsim_project_roles = {"default": "admin"}` and the seed
+gives it the matching membership row, so the default project shows with the
+admin role on the first sign-in. Keycloak imports `deploy/keycloak/` into its
+in-container database at start, so a realm change needs `docker compose up
+-d --force-recreate keycloak` or `make clean`, not a restart. Ports: web
 `3300`, API `8000`, Keycloak `8080`, Postgres `5432`, Redis `6379`, MinIO
 `9100` / `9101`, log ingest `4319`. `docker compose --profile obs up -d` adds
 OTel Collector, Loki and Jaeger. The worker image installs
@@ -565,8 +568,8 @@ Quickstart (`redsim ml attack`, `3ab9de7`).
 | `make install` | Venv, `uv pip install --native-tls -e ".[$(EXTRAS)]"` (or pip), `pnpm install` |
 | `make require-install` | Fails fast with one clear line when `.venv` or `node_modules` is missing. |
 | `make dev` | `dev-api` and `dev-web` under `make -j`. Runs no tests: use `make test`. |
-| `make dev-api` | `uvicorn redsim.api.app:create_app --factory --reload --port 8000` |
-| `make dev-web` | `pnpm --filter @redsim/web dev` on :3000 |
+| `make dev-api` | `uvicorn redsim.api.app:create_app --factory --reload --port 8000`, through `deploy/scripts/with-session-keypair.sh` so it verifies the cookies `dev-web` mints |
+| `make dev-web` | `pnpm --filter @redsim/web dev` on :3000, through the same wrapper. The realm comes from `make up`; `web/.env` names it with `KEYCLOAK_ISSUER` and `KEYCLOAK_CLIENT_ID` (see `web/.env.example`), and the compose API admits the `:3000` origin in `REDSIM_CORS_ORIGINS` so the page's browser fetches pass their preflight |
 | `make dev-worker` | `celery -A redsim.workers.celery_app worker -Q scans,default`. Not on the `dev` line, needs Redis and Postgres first. |
 | `make test` | `pytest -q` plus `pnpm --filter @redsim/web test` |
 | `make test-cov` | pytest with `--cov=redsim --cov-report=term-missing` |
@@ -574,6 +577,7 @@ Quickstart (`redsim ml attack`, `3ab9de7`).
 | `make typecheck` | `typecheck-py` (`mypy redsim`) then `typecheck-web` (`tsc --noEmit`) |
 | `make check` | lint, typecheck, test |
 | `make up` / `make down` | `deploy/scripts/with-session-keypair.sh docker compose -f deploy/docker-compose.yml up -d --build` (the session keypair generated under `deploy/certs/` on first run and exported, the built `assets/` mounted into the api and workers) / `down` |
+| `make clean` | `down -v --remove-orphans`: drops the Postgres, Redis and MinIO volumes so the next `make up` migrates, seeds and re-imports the realm from scratch. Keeps `deploy/certs/` and `assets/` |
 | `make docs-serve` / `docs-build` / `docs-build-strict` / `docs-clean` | MkDocs Material on :8001. The recipes call `mkdocs` from `PATH`, so activate the venv or pass `MKDOCS=.venv/bin/mkdocs`. |
 
 The CI contract is in [`docs/dev/ci.md`](docs/dev/ci.md).

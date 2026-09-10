@@ -1058,6 +1058,8 @@ loader's pin.
   line), `test`, `test-cov`, `lint`, `lint-py` (`ruff check` with the CI
   selection), `lint-web` (prints a skip line while `web/` has no ESLint config),
   `typecheck`, `typecheck-py`, `typecheck-web`, `check`, `up`, `down`,
+  `clean` (`down -v --remove-orphans`, so the next `up` migrates, seeds and
+  re-imports the realm from scratch; keeps `deploy/certs/` and `assets/`),
   `docs-serve`, `docs-build`, `docs-build-strict`, `docs-clean` (call
   `mkdocs` from `PATH`, so activate the venv or pass
   `MKDOCS=.venv/bin/mkdocs`).
@@ -1068,15 +1070,27 @@ loader's pin.
   `REDSIM_API_SESSION_PRIVATE_KEY` / `REDSIM_API_SESSION_PUBLIC_KEY`; the
   compose file mounts the repo's `assets/` read-only at `/app/assets` in
   `redsim-api` and both worker pools as `REDSIM_ML_ASSETS_DIR`
-  (`REDSIM_ML_ASSETS_HOST_DIR` overrides the host path). `deploy/Makefile`
-  has the finer helpers (`cd deploy && make seed` runs
-  `deploy/runtime/scripts/seed_project.py` in `redsim-api` and creates only
-  `default-org` and project `default`; memberships come from the
-  `redsim_project_roles` claim, which the realm export's `admin` user
-  (`admin@redsim.local` / `adminpass`, with `firstName`, `lastName` and the
-  attribute `{"default": "admin"}` declared in the realm's user profile)
-  carries. `token-for`, `whoami`, `psql`, `logs`, `rebuild`, `down`,
-  `down-clean`, `up-obs`). `REDSIM_AUTH_MODE=dev` dev tokens
+  (`REDSIM_ML_ASSETS_HOST_DIR` overrides the host path); `redsim-api` runs
+  `alembic upgrade head` and then `python -m redsim.db.seed` on every start
+  (2026-09-10: `default-org`, project `default` and the admin user under
+  both subjects, the Keycloak id `9e2f6f2a-0000-4a00-9000-000000000001`
+  that `deploy/keycloak/realm-export.json` pins on its `admin` user and
+  `dev:admin@redsim.local`, each an admin member; a rerun is a no-op and
+  `REDSIM_ENV=prod` refuses it; `tests/test_db_seed.py` pins the id against
+  the export). The realm's `admin` user (`admin@redsim.local` / `adminpass`)
+  carries `firstName`, `lastName` and the attribute `{"default": "admin"}`
+  declared in the realm's user profile, so the `redsim_project_roles` claim
+  agrees with the seeded row. Compose mounts the `deploy/keycloak/`
+  directory (a single-file bind mount keeps the old inode after git replaces
+  the file, which is how a stale realm kept refusing the login on
+  2026-09-10), and Keycloak imports it into its in-container database at
+  start, so a realm change takes `docker compose up -d --force-recreate
+  keycloak` or `make clean`. `deploy/Makefile` has the finer helpers
+  (`seed` runs the same module in the container, `token-for`, `whoami`,
+  `psql`, `logs`, `rebuild`, `down`, `down-clean`, `up-obs`). `make dev-api`
+  and `make dev-web` run through the same keypair wrapper, and the local web
+  needs `KEYCLOAK_ISSUER` and `KEYCLOAK_CLIENT_ID` in `web/.env`
+  (`web/.env.example`) to sign in against the compose realm. `REDSIM_AUTH_MODE=dev` dev tokens
   (`Bearer dev:<email>`, admin on project `default`) are allowed for the demo
   and refused when `REDSIM_ENV=prod`.
 
