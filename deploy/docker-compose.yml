@@ -35,8 +35,14 @@ services:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
     ports: ["8080:8080"]
+    # The directory, not the file: a single-file bind mount keeps the inode it
+    # was created on, so after git replaces realm-export.json the container
+    # still imports the old realm. Keycloak imports every file in the
+    # directory at start, into its in-container H2, so a realm change takes
+    # effect on `docker compose up -d --force-recreate keycloak` (or `make
+    # clean`), never on a restart.
     volumes:
-      - ./keycloak/realm-export.json:/opt/keycloak/data/import/redsim-realm.json:ro
+      - ./keycloak:/opt/keycloak/data/import:ro
     # redsim-web runs OIDC discovery at construction and drops the Keycloak
     # provider on a failed fetch, logging a line and then serving no login
     # provider at all. So the web service waits on this, and this needs a
@@ -86,6 +92,15 @@ services:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
       minio-init: { condition: service_completed_successfully }
+    # The image's CMD plus the development seed between migrate and serve:
+    # redsim.db.seed plants default-org, project default and the admin user's
+    # two identities with an admin membership, and is a no-op once they exist.
+    # It refuses with exit 1 under REDSIM_ENV=prod, which this dev stack pins
+    # to dev above, so the chain never blocks serving here.
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && python -m redsim.db.seed && uvicorn redsim.api.app:create_app --factory --host 0.0.0.0 --port 8000
     environment:
       REDSIM_ENV: dev
       REDSIM_AUTH_MODE: dev
@@ -97,10 +112,14 @@ services:
       REDSIM_S3_BUCKET: redsim
       REDSIM_S3_ACCESS_KEY_ID: redsim
       REDSIM_S3_SECRET_ACCESS_KEY: redsim-secret
-      REDSIM_CORS_ORIGINS: http://localhost:3300
-      # Hygiene, not a fix: the socket handshake is already admitted through
-      # REDSIM_CORS_ORIGINS above (redsim/api/ws.py accepts either). Declaring
-      # it stops the API from also admitting the unused port 3000 default.
+      # Both browser origins the API is called from: the compose web on :3300
+      # and a `make dev-web` process on :3000 against this API. The Models,
+      # Runs and Findings pages fetch the API directly from the browser, so an
+      # origin missing here fails every preflight, the role lookup comes back
+      # empty and the role-gated actions (Add model among them) never render.
+      REDSIM_CORS_ORIGINS: ${REDSIM_CORS_ORIGINS:-http://localhost:3300,http://localhost:3000}
+      # The socket handshake is admitted through REDSIM_CORS_ORIGINS above
+      # (redsim/api/ws.py accepts either); this names the compose web.
       REDSIM_WEB_ORIGIN: http://localhost:3300
       # Fernet key for AuthProfile secrets. Without it every create fails closed.
       REDSIM_AUTH_PROFILES_KEY: ${REDSIM_AUTH_PROFILES_KEY:-}
@@ -120,7 +139,8 @@ services:
       REDSIM_ML_ENDPOINT_MAX_ROWS: ${REDSIM_ML_ENDPOINT_MAX_ROWS:-}
       REDSIM_ML_ENDPOINT_MAX_REQUESTS: ${REDSIM_ML_ENDPOINT_MAX_REQUESTS:-}
       REDSIM_LLM_PROBE_MAX_PROMPTS_PER_PROBE: ${REDSIM_LLM_PROBE_MAX_PROMPTS_PER_PROBE:-}
-      REDSIM_LLM_PROBE_MAX_RUNS_PER_PROJECT_PER_DAY: ${REDSIM_LLM_PROBE_MAX_RUNS_PER_PROJECT_PER_DAY:-}
+      # Matches deploy/ec2/native/host.env; the code default of 10 spends itself in one demo session.
+      REDSIM_LLM_PROBE_MAX_RUNS_PER_PROJECT_PER_DAY: ${REDSIM_LLM_PROBE_MAX_RUNS_PER_PROJECT_PER_DAY:-500}
       REDSIM_LLM_PROBE_HF_DETECTORS: ${REDSIM_LLM_PROBE_HF_DETECTORS:-}
       REDSIM_ML_MAX_CONCURRENT_RUNS_PER_PROJECT: ${REDSIM_ML_MAX_CONCURRENT_RUNS_PER_PROJECT:-}
       REDSIM_ML_DAILY_RUN_BUDGET: ${REDSIM_ML_DAILY_RUN_BUDGET:-}

@@ -26,6 +26,7 @@
   },
   "users": [
     {
+      "id": "9e2f6f2a-0000-4a00-9000-000000000001",
       "username": "admin",
       "email": "admin@redsim.local",
       "firstName": "Redsim",
