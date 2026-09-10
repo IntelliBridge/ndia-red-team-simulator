@@ -22,8 +22,7 @@ Two limits, two different postures (owner requirement 5):
   (the backstop, ``redsim.ml_dispatch_deferred``).
 * **Daily budget** (``Project.ml_daily_run_budget``, default
   ``REDSIM_ML_DAILY_RUN_BUDGET``, unset = uncapped) counts *admissions* since UTC
-  midnight (``attack.run`` and ``verify.replay`` jobs; a cancelled run still
-  counts, deliberately). At or over the budget the admission is refused ``429
+  midnight (``attack.run`` jobs; a cancelled run still counts, deliberately). At or over the budget the admission is refused ``429
   daily_budget_exceeded`` with ``budget``, ``used``, ``requested``, ``resets_at``
   and ``retry_after``; the refusal writes its ``success=False`` audit row first
   when the caller hands in the writer.
@@ -62,14 +61,13 @@ DEFAULT_MAX_CONCURRENT_RUNS = 2
 DAILY_BUDGET_ENV = "REDSIM_ML_DAILY_RUN_BUDGET"
 DAILY_BUDGET_ENV_ALIAS = "REDSIM_ML_PROJECT_DAILY_RUN_BUDGET"
 
-#: Job types that count against the daily budget: the two admission boundaries (BULK-21).
-ML_ADMISSION_JOB_TYPES: tuple[str, ...] = ("attack.run", "verify.replay")
+#: Job types that count against the daily budget: the campaign admission boundary (BULK-21).
+ML_ADMISSION_JOB_TYPES: tuple[str, ...] = ("attack.run",)
 #: Job types that occupy a concurrency slot: everything ``redsim.ml_campaign_run`` executes.
-ML_CAMPAIGN_JOB_TYPES: tuple[str, ...] = ("attack.run", "verify.replay", "explain.run", "harden.recommend")
+ML_CAMPAIGN_JOB_TYPES: tuple[str, ...] = ("attack.run", "explain.run", "harden.recommend")
 #: ``kind`` values :func:`admit_or_defer` accepts, mapped onto the job type they admit.
 ADMISSION_KINDS: dict[str, str] = {
     "attack": "attack.run", "campaign": "attack.run", "attack.run": "attack.run",
-    "verify": "verify.replay", "verify.replay": "verify.replay",
     "explain": "explain.run", "explain.run": "explain.run",
     "harden": "harden.recommend", "harden.recommend": "harden.recommend",
 }
@@ -221,7 +219,7 @@ def count_active(session: Session, project_id: str, *, exclude_job_ids: Iterable
 
 
 def used_today(session: Session, project_id: str, *, now: datetime | None = None) -> int:
-    """Admissions (``attack.run`` + ``verify.replay`` jobs) created in ``project_id`` since UTC midnight."""
+    """Admissions (``attack.run`` jobs) created in ``project_id`` since UTC midnight."""
     from sqlalchemy import func, select
 
     from redsim.db.models import Job
@@ -588,7 +586,7 @@ def project_capacity(session: Session, project: Any, *, now: datetime | None = N
         "used_today": used,
         "budget_remaining": remaining,
         "resets_at": _iso(budget_resets_at(now)),
-        "budget_window": "admissions (attack.run + verify.replay jobs) since 00:00 UTC; cancelled runs count",
+        "budget_window": "admissions (attack.run jobs) since 00:00 UTC; cancelled runs count",
     }
 
 

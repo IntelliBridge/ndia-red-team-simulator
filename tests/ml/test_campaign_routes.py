@@ -79,7 +79,6 @@ def campaign_table(engine: Engine) -> Table:
         Column("provenance", JSON),
         Column("score", JSON),
         Column("limitations", JSON, nullable=False),
-        Column("baseline_run_id", String),
         Column("parent_run_id", String),
         Column("batch_id", String),
         Column("reviewer_notes", Text),
@@ -164,7 +163,7 @@ def build_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, with_api: 
     monkeypatch.setattr("redsim.db.session.get_session", session_cm)
     writer = RecordingAuditWriter(session_factory)
     for target in ("redsim.audit.chain.resolve_writer", "redsim.api.v1.attacks.resolve_writer",
-                   "redsim.api.v1.verify.resolve_writer", "redsim.api.v1.runs_cancel.resolve_writer"):
+                   "redsim.api.v1.runs_cancel.resolve_writer"):
         monkeypatch.setattr(target, lambda _config, _writer=writer: _writer)
     monkeypatch.setenv("REDSIM_CONFIG", str(tmp_path / "absent.yaml"))
     monkeypatch.delenv("REDSIM_DB_URL", raising=False)
@@ -521,11 +520,8 @@ def test_rerun_refuses_a_parent_on_another_model(api: Harness) -> None:
     assert response.json()["detail"]["field"] == "parent_run_id"
 
 
-def test_rerun_refuses_a_verify_parent_and_extra_config(api: Harness) -> None:
+def test_rerun_refuses_extra_config(api: Harness) -> None:
     seed_model(api)
-    seed_campaign_run(api, "run-parent-verify", status="failed", kind="verify", scanner="ml.verify")
-    response = launch(api, {"parent_run_id": "run-parent-verify"})
-    assert response.status_code == 422 and response.json()["detail"]["code"] == "params_out_of_range"
     seed_campaign_run(api, "run-parent-failed", status="failed")
     response = launch(api, {"parent_run_id": "run-parent-failed", "attack_ids": ["fgsm"]})
     assert response.status_code == 422, response.text

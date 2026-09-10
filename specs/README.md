@@ -75,7 +75,7 @@ Demo: create a campaign configuration, run it, inspect real evidence — per-fam
 
 F006 + F007 + the remaining F008 governance tools. Milestones: M3 (recommendations: rule layer + Pythia writer), M6 (verify loop with ΔMRI), M7 (Fargate; S3 Object Lock for WORM export).
 
-Demo: open a finding, read candidate recommendations labelled candidate / not evaluated, run verify-after-harden, see the measured ΔMRI on this model at these settings, export a report, inspect the audit chain. Compare a compatible rerun without claiming an unreviewed improvement; the measured delta is the only sanctioned form of "gain".
+Demo: open a finding, read the candidate recommendations (each labelled candidate, none evaluated against this model), export a report, inspect the audit chain. Compare a compatible rerun side by side without claiming an improvement. Since 2026-09-09 every run is a measurement in its own right and findings close by reviewer decision (the verify loop named in the milestones above is history, see `docs/project-brief.md`).
 
 ## Safe parallel work
 

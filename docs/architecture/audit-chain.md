@@ -2,7 +2,7 @@
 
 Every mutating operation Redsim takes (start a scan, cancel a run,
 manage a target, query the log mirror and, as the ML vertical lands,
-register a model, run an attack, explain, harden and verify) lands as an
+register a model, run an attack, explain and harden) lands as an
 event on a **hash-chained** audit log. Each event commits to the previous event's hash, so any
 tampering with history breaks every event downstream.
 
@@ -57,7 +57,7 @@ The chain has three load-bearing properties:
 ```
 
 The example is the planned `attack.run` admission event (spec section
-5.11). Today's events (`scan.start`, `verify.replay`, `run.cancel`,
+5.11). Today's events (`scan.start`, `run.cancel`,
 `target.manage` and the rest of the table below) carry the same envelope.
 For an in-boundary ML artifact the `target` argument is `None` and
 `allowlist_check` records `n/a`, because the allowlist is a network-scope
@@ -274,7 +274,6 @@ Live on `main` today:
 |---|---|
 | `scan.start` | `services.scans.create_scan_job` (admission) and `start_scan` (the offline `redsim scan` re-check) |
 | `scan.execute.<scanner>` | `workers.tasks.scan` before dispatching a scanner adapter |
-| `verify.replay` | `services.verify.create_verify_job` (admission) and `verify` (worker re-check) |
 | `run.cancel` | `services.runs.cancel_run` |
 | `target.manage` | `services.targets.create_target` / `delete_target` |
 | `auth_profile.create` / `auth_profile.delete` | `services.auth_profiles` |
@@ -302,15 +301,13 @@ rows, prompt text or secrets.
 | `model.register` | `POST /v1/models` admission (bundled pick or upload, `success=False` for a refused upload) | project |
 | `model.validate` | worker, from the sandboxed `model.validate` job | run (`ml.ingest`) |
 | `attack.run` | `POST /v1/models/{id}/attacks` admission, before any `Run` or `Job` row | project |
-| `model.load` | worker, at the start of every campaign or verify job | run |
+| `model.load` | worker, at the start of every campaign job | run |
 | `attack.execute.<attack_id>` | worker re-check before each attack (mirrors `scan.execute.<scanner>`) | run |
 | `explain.run` | `POST /v1/findings/{id}/explain` admission or the campaign chain | run |
 | `explain.execute` | worker | run |
 | `campaign.score` | worker, when the `MRIRecord` is written (carries the score record hash and `settings_hash`) | run |
 | `harden.recommend` | `POST /v1/findings/{id}/harden` admission or the campaign chain | run |
 | `harden.execute` | worker (rules fired, narrative outcome, redacted Pythia settings, prompt and completion digests, token counts) | run |
-| `verify.replay` (existing) | `POST /v1/findings/{id}/verify` admission | project, then the verify run |
-| `verify.execute` | worker (defense, outcome, ΔMRI and per-dimension deltas) | run (`ml.verify`) |
 | `job.complete` | worker, at the end of every ML task | run |
 | `finding.review` | `PATCH /v1/findings/{id}/status` | run |
 | `finding.annotate` | reviewer notes and finding notes routes | run |

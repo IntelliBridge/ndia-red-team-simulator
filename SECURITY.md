@@ -369,10 +369,10 @@ ML sandbox and upload rules (`redsim/ml/sandbox.py`,
   function. A URL that is displayed is escaped, non-clickable text labelled
   as dataset content, and it never enters the LLM payload. A test asserts
   the no-network property.
-- **Defenses touch only an evaluation copy.** The verify-after-harden loop
-  wraps a worker-side copy of the estimator with an ART preprocessor. It
-  never modifies or persists a defended model, never changes the target, and
-  is never triggered automatically.
+- **Hardening recommendations are text.** A candidate recommendation cites
+  ART classes and papers as plain text. The worker never applies a defense
+  to the target, never modifies or persists a defended model and never
+  changes the target.
 - **Attack ids are declarative references** to registered, bounded ART
   adapters. The repository stores no attack recipes, tactical instructions or
   executable payloads. LLM probe ids reference garak's catalogued probes; no

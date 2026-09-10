@@ -119,7 +119,7 @@ def _campaign_table(engine: Any) -> Table:
         Column("kind", String, nullable=False), Column("modality", String, nullable=False),
         Column("config", JSON, nullable=False), Column("settings_hash", String),
         Column("provenance", JSON), Column("score", JSON), Column("limitations", JSON, nullable=False),
-        Column("baseline_run_id", String), Column("parent_run_id", String),
+        Column("parent_run_id", String),
         Column("reviewer_notes", Text), Column("created_at", DateTime), Column("completed_at", DateTime),
     )
     table.create(engine)

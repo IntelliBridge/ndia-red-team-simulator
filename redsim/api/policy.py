@@ -13,7 +13,7 @@ class Action(str, Enum):
     """RBAC action vocabulary.
 
     Live callers in this fork: ``SCAN_START`` (the offline ``redsim scan``
-    admission path), ``VERIFY_REPLAY``, ``TARGET_MANAGE``,
+    admission path), ``TARGET_MANAGE``,
     ``AUTH_PROFILE_MANAGE``, ``AUDIT_VERIFY`` and ``RUN_CANCEL``. The seven
     ``MODEL_REGISTER`` to ``REPORT_EXPORT`` members are the adversarial-ML
     vertical's gates (spec section 7.4); their routes land in M1 to M6. The
@@ -22,13 +22,13 @@ class Action(str, Enum):
     answer ``501 not_implemented`` until the wave that builds them, but the
     gate is checked first so a refusal never leaks whether the route exists.
     The pentest-era members (agent, fix, tool, ticket) were pruned at M0 with
-    the routes that used them. The table is mirrored verbatim in
+    the routes that used them, and ``verify.replay`` with the verify loop on
+    2026-09-09. The table is mirrored verbatim in
     ``deploy/opa/redsim-authz.rego`` and ``deploy/cedar/redsim-policy.cedar``.
     Change all three together: an unknown action fails closed.
     """
 
     SCAN_START = "scan.start"
-    VERIFY_REPLAY = "verify.replay"
     TARGET_MANAGE = "target.manage"
     AUTH_PROFILE_MANAGE = "auth_profile.manage"
     AUDIT_VERIFY = "audit.verify"
@@ -64,7 +64,6 @@ _ROLE_RANK = {
 
 _ACTION_MIN_ROLE: dict[Action, str] = {
     Action.SCAN_START: "scanner",
-    Action.VERIFY_REPLAY: "remediator",
     Action.TARGET_MANAGE: "admin",
     # Auth profiles hold scan credentials — same bar as managing targets.
     Action.AUTH_PROFILE_MANAGE: "admin",

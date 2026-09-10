@@ -6,7 +6,7 @@
 import { Skeleton } from "@redsim/design-system/primitives/skeleton";
 
 const SKELETON_ROWS = 5;
-const COLUMNS = ["Run", "Model", "Kind", "Status", "Reports", "Dataset", "Created"];
+const COLUMNS = ["Run", "Model", "Status", "Reports", "Dataset", "Created"];
 
 export default function ExportsLoading() {
   return (

@@ -135,7 +135,7 @@ def _is_llm(target: Any) -> bool:
 def _mri_summary(session: Session, target_id: str) -> dict[str, Any] | None:
     from redsim.services.ml_models import _campaign_rows, _campaign_runs
 
-    runs = [r for r in _campaign_runs(session, target_id) if r.status == "succeeded" and r.scanner != "ml.verify"]
+    runs = [r for r in _campaign_runs(session, target_id) if r.status == "succeeded"]
     rows, available = _campaign_rows(session, [r.id for r in runs])
     if not available:
         return None

@@ -156,7 +156,7 @@ def test_registry_lists_bundled_targets_and_stub() -> None:
 
 
 def test_importing_targets_pulls_no_ml_library_into_the_process() -> None:
-    code = ("import sys; import redsim.ml.targets, redsim.ml.defenses; "
+    code = ("import sys; import redsim.ml.targets; "
             "print(sorted(m for m in ('torch','art','onnx','onnxruntime','sklearn','shap') if m in sys.modules))")
     env = {**os.environ, "PYTHONPATH": str(ROOT)}
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=ROOT, env=env, check=True)

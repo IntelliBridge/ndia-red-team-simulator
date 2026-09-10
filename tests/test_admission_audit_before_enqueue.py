@@ -25,7 +25,6 @@ from redsim.config import RedsimConfig
 from redsim.db.models import Organization, Project, Run
 from redsim.services.runs import cancel_run
 from redsim.services.scans import create_scan_job
-from redsim.services.verify import create_verify_job
 from tests.conftest import make_sqlite_session_factory as _make_session_factory
 
 # DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
@@ -111,33 +110,6 @@ class TestAdmissionAuditBeforeEnqueue(unittest.TestCase):
         # And no Run/Job rows were inserted
         with Session() as s:
             self.assertEqual(s.query(Run).count(), 0)
-
-    def test_verify_admission_emits_chain_row_before_celery(self):
-        session_cm, _, Session = _make_session_factory()
-        _seed_project(Session)
-        with Session() as s:
-            s.add(Run(id="run-1", project_id="proj-1",
-                      mode="api", status="queued", stage_table={}))
-            s.commit()
-
-        writer = InMemoryAuditWriter()
-        enqueue_calls: list[str] = []
-
-        def fake_delay(job_id):
-            self.assertEqual(len(writer.events), 1)
-            enqueue_calls.append(job_id)
-
-        with patch("redsim.db.session.get_session", session_cm), \
-             patch("redsim.workers.tasks.verify.verify_replay") as verify_replay:
-            verify_replay.delay = fake_delay
-            handle = create_verify_job(
-                finding_id="f-1", project_id="proj-1", run_id="run-1",
-                actor="user:test", config=RedsimConfig(),
-                audit_writer=writer,
-            )
-
-        self.assertEqual(writer.events[0].action, "verify.replay")
-        self.assertEqual(enqueue_calls, [handle.job_id])
 
     def test_cancel_emits_chain_row_then_marks_cancelled(self):
         session_cm, _, Session = _make_session_factory()

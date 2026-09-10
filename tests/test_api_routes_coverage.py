@@ -6,11 +6,10 @@ Covers:
   - redsim/api/v1/targets.py
   - redsim/api/v1/findings.py
   - redsim/api/v1/runs_cancel.py
-  - redsim/api/v1/verify.py
   - redsim/api/v1/runs.py
 
 (The pentest fix.py and exports.py route modules were removed with the
-pentest domain.)
+pentest domain, verify.py with the verify paradigm on 2026-09-09.)
 
 All tests run fully offline: no Postgres, no Redis, no Keycloak.
 Uses FastAPI dependency overrides for auth and unittest.mock.patch for
@@ -46,7 +45,6 @@ from redsim.api.auth import (
 from redsim.api.settings import APISettings
 from redsim.config import RedsimConfig
 from redsim.safety import AuthorizationError
-from redsim.services.scans import JobHandle
 from tests.conftest import make_sqlite_session_factory
 
 # DB-backed (sqlite harness); excluded from the CI unit job's "not integration".
@@ -1341,7 +1339,6 @@ def _seed_finding(sess):
         schema_blob={"id": "strix-001"},
         severity="high",
         source_tool="strix",
-        validation_state="unvalidated",
         status="open",
     ))
 
@@ -1424,7 +1421,7 @@ class TestFindingsApi(unittest.TestCase):
             s.add(Finding(
                 id=fid, scanner_finding_id="x1", run_id="run-f1",
                 project_id="proj-1", schema_blob={},
-                severity="high", validation_state="unvalidated", status="open",
+                severity="high", status="open",
             ))
             s.commit()
 
@@ -1461,7 +1458,7 @@ class TestFindingsApi(unittest.TestCase):
             s.add(Finding(
                 id=fid, scanner_finding_id="x2", run_id="run-f1",
                 project_id="proj-1", schema_blob={},
-                severity="high", validation_state="unvalidated", status="open",
+                severity="high", status="open",
             ))
             s.commit()
 
@@ -1839,89 +1836,6 @@ class TestRunsCancelApi(unittest.TestCase):
         client = _no_auth_client(app)
         with patch("redsim.db.session.get_session", session_cm):
             resp = client.post("/v1/runs/run-c1/cancel")
-        self.assertEqual(resp.status_code, 401)
-
-
-# ===========================================================================
-# verify.py
-# ===========================================================================
-
-def _seed_finding_for_verify(sess):
-    from redsim.db.models import Finding, Run
-    sess.add(Run(id="run-v1", project_id="proj-1", status="done",
-                 mode="live", stage_table={}))
-    sess.add(Finding(
-        id="find-v-001",
-        scanner_finding_id="strix-v-001",
-        run_id="run-v1",
-        project_id="proj-1",
-        schema_blob={"id": "strix-v-001"},
-        severity="medium",
-        validation_state="unvalidated",
-        status="open",
-    ))
-
-
-class TestVerifyApi(unittest.TestCase):
-
-    def _remediator(self):
-        return CurrentUser(
-            sub="dev:rem@test", email="rem@test",
-            project_memberships={"proj-1": "remediator"},
-        )
-
-    def test_verify_happy_path(self):
-        app, session_cm = _build_app(extra_rows_fn=_seed_finding_for_verify)
-        _override_user(app, self._remediator())
-        client = TestClient(app)
-
-        handle = JobHandle(run_id="run-v1", job_id="job-ver")
-        with patch("redsim.db.session.get_session", session_cm), \
-             patch("redsim.api.v1.verify.create_verify_job", return_value=handle), \
-             patch("redsim.api.v1.verify.resolve_writer", return_value=_DiscardWriter()), \
-             patch("redsim.api.v1.verify.load_config", return_value=RedsimConfig()):
-            resp = client.post("/v1/findings/find-v-001/verify")
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.json()["job_id"], "job-ver")
-
-    def test_verify_finding_not_found_404(self):
-        app, session_cm = _build_app()
-        _override_user(app, self._remediator())
-        client = TestClient(app)
-        with patch("redsim.db.session.get_session", session_cm), \
-             patch("redsim.api.v1.verify.resolve_writer", return_value=_DiscardWriter()), \
-             patch("redsim.api.v1.verify.load_config", return_value=RedsimConfig()):
-            resp = client.post("/v1/findings/nonexistent/verify")
-        self.assertEqual(resp.status_code, 404)
-
-    def test_verify_403_scanner_role(self):
-        """scanner cannot verify (requires remediator+)."""
-        app, session_cm = _build_app(extra_rows_fn=_seed_finding_for_verify)
-        _override_user(app, _scanner())
-        client = TestClient(app, raise_server_exceptions=False)
-        with patch("redsim.db.session.get_session", session_cm), \
-             patch("redsim.api.v1.verify.resolve_writer", return_value=_DiscardWriter()), \
-             patch("redsim.api.v1.verify.load_config", return_value=RedsimConfig()):
-            resp = client.post("/v1/findings/find-v-001/verify")
-        self.assertEqual(resp.status_code, 403)
-
-    def test_verify_authorization_error_403(self):
-        app, session_cm = _build_app(extra_rows_fn=_seed_finding_for_verify)
-        _override_user(app, self._remediator())
-        client = TestClient(app, raise_server_exceptions=False)
-        with patch("redsim.db.session.get_session", session_cm), \
-             patch("redsim.api.v1.verify.create_verify_job",
-                   side_effect=AuthorizationError("denied")), \
-             patch("redsim.api.v1.verify.resolve_writer", return_value=_DiscardWriter()), \
-             patch("redsim.api.v1.verify.load_config", return_value=RedsimConfig()):
-            resp = client.post("/v1/findings/find-v-001/verify")
-        self.assertEqual(resp.status_code, 403)
-
-    def test_verify_no_auth_401(self):
-        app, session_cm = _build_app()
-        client = _no_auth_client(app)
-        with patch("redsim.db.session.get_session", session_cm):
-            resp = client.post("/v1/findings/find-v-001/verify")
         self.assertEqual(resp.status_code, 401)
 
 

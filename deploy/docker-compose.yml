@@ -121,7 +121,7 @@ services:
       REDSIM_INTEGRATION_FOUNDRY_TIMEOUT_S: ${REDSIM_INTEGRATION_FOUNDRY_TIMEOUT_S:-}
     ports: ["8000:8000"]
 
-  # Long-running attack/explain/verify work (-Q scans).
+  # Long-running attack, explain and model-validate work (-Q scans).
   redsim-worker:
     image: redsim-worker:dev
     build:

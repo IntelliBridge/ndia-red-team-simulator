@@ -3,7 +3,7 @@
 Pinned offline over the shared sqlite harness with the real app in dev auth and
 the user dependency overridden:
 
-* one row per campaign or verify run of the caller's projects, newest first;
+* one row per campaign run of the caller's projects, newest first;
   follow-up export runs, probe runs and another project's runs never appear;
 * the report block names the formats the newest non-archived snapshot holds,
   falls back to the newest artifact row per format, lists what is missing and
@@ -82,8 +82,8 @@ def api(sqlite_session_factory: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: 
         # artifact, an exported dataset and a render in flight.
         sess.add(Run(id="run-1", project_id=PROJECT, target_id="tgt-vehicles", mode="api", scanner="ml.campaign",
                      status="succeeded", stage_table={}, created_at=_at(1), completed_at=_at(5)))
-        # run-2: a verify still running.
-        sess.add(Run(id="run-2", project_id=PROJECT, target_id="tgt-vehicles", mode="api", scanner="ml.verify",
+        # run-2: a campaign still running.
+        sess.add(Run(id="run-2", project_id=PROJECT, target_id="tgt-vehicles", mode="api", scanner="ml.campaign",
                      status="running", stage_table={}, created_at=_at(2)))
         # run-3: a finished campaign whose dataset export failed on its follow-up run.
         sess.add(Run(id="run-3", project_id=PROJECT, target_id="tgt-vehicles", mode="api", scanner="ml.campaign",
@@ -153,7 +153,7 @@ def _rows(resp: Any) -> dict[str, dict[str, Any]]:
     return {row["run_id"]: row for row in resp.json()["exports"]}
 
 
-def test_lists_campaign_and_verify_runs_newest_first_and_nothing_else(api: SimpleNamespace) -> None:
+def test_lists_campaign_runs_newest_first_and_nothing_else(api: SimpleNamespace) -> None:
     resp = api.get(ADMIN)
     body = resp.json()
     assert [row["run_id"] for row in body["exports"]] == ["run-4", "run-3", "run-2", "run-1", "run-5"]
@@ -161,8 +161,7 @@ def test_lists_campaign_and_verify_runs_newest_first_and_nothing_else(api: Simpl
     assert body["report_formats"] == ["md", "json", "html", "pdf"]
     assert body["dataset_format"] == "croissant-parquet"
     kinds = {row["run_id"]: row["kind"] for row in body["exports"]}
-    assert kinds == {"run-1": "campaign", "run-2": "verify", "run-3": "campaign", "run-4": "campaign",
-                     "run-5": "campaign"}
+    assert kinds == {run_id: "campaign" for run_id in ("run-1", "run-2", "run-3", "run-4", "run-5")}
 
 
 def test_report_block_reads_the_snapshot_then_falls_back_to_bare_artifacts(api: SimpleNamespace) -> None:
@@ -243,11 +242,11 @@ def test_dataset_blockers_name_why_an_export_cannot_start(api: SimpleNamespace) 
     assert rows["run-4"]["model"]["name"] == "cifar10_smallcnn"
 
 
-def test_kind_filter_and_limit(api: SimpleNamespace) -> None:
-    assert list(_rows(api.get(ADMIN, "/v1/exports?kind=verify"))) == ["run-2"]
-    assert list(_rows(api.get(ADMIN, "/v1/exports?kind=campaign"))) == ["run-4", "run-3", "run-1", "run-5"]
+def test_limit_and_no_kind_filter(api: SimpleNamespace) -> None:
     assert list(_rows(api.get(ADMIN, "/v1/exports?limit=2"))) == ["run-4", "run-3"]
-    for path in ("/v1/exports?kind=probe", "/v1/exports?limit=0", "/v1/exports?limit=501"):
+    # ``kind`` is not a parameter any more: an unknown query key is ignored, never a 422.
+    assert list(_rows(api.get(ADMIN, "/v1/exports?kind=verify"))) == ["run-4", "run-3", "run-2", "run-1", "run-5"]
+    for path in ("/v1/exports?limit=0", "/v1/exports?limit=501"):
         resp = api.get(ADMIN, path)
         assert resp.status_code == 422, resp.text
         assert resp.json()["detail"]["code"] == "params_out_of_range"

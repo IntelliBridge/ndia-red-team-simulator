@@ -342,7 +342,7 @@ def create_foundry_push(
                             "nothing is pushed to Foundry for it", run_id=run_id, scanner=str(run.scanner)))
         campaign = ml_campaign_row(sess, run_id)
         if campaign is None:
-            refuse(ApiError(NOT_FOUND, "campaign record not found: only a campaign or verify run has a scorecard "
+            refuse(ApiError(NOT_FOUND, "campaign record not found: only a campaign run has a scorecard "
                             "to push"))
         try:
             settings = FoundrySettings.from_env(environ, allowlist=allowlist)

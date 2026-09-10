@@ -74,7 +74,7 @@ class BudgetChecker(Protocol):
 
 
 _DEFAULT_TASKS = {
-    "patch", "harden", "verify_replay", "report_summarize",
+    "patch", "harden", "report_summarize",
     "recon", "exploit", "deps_bump", ML_HARDEN_NARRATIVE_TASK,
 }
 

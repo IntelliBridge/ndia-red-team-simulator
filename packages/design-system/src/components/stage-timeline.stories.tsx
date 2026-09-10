@@ -32,12 +32,6 @@ export const Mixed: Story = {
         detail: "vuln-0001 fixed via fixture",
       },
       {
-        name: "verify",
-        mode: "live",
-        success: true,
-        detail: "poc_passed for vuln-0001",
-      },
-      {
         name: "report",
         mode: "live",
         success: true,

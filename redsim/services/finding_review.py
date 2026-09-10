@@ -1,6 +1,6 @@
 """Finding review workflow: one transition table over the widened ``ReviewState``.
 
-Phase B (plan 12 wave B2, review-workflow track; REVIEW_REPORTS-02..07, -09,
+Phase B (plan 12 wave B2, review-workflow track; REVIEW_REPORTS-02..07,
 -11, -12 and -05). This module generalises the Phase A dismissal in
 :func:`redsim.services.ml_findings.review_finding` into a table of decisions
 over ``(Finding.status, schema_blob.<block>.review.state)`` without inventing a
@@ -12,29 +12,26 @@ decision                from                            to
 ``submit``              review ``draft``                review ``in_review``
 ``confirm``             review ``unreviewed|in_review`` review ``confirmed`` (status kept)
 ``request_changes``     review ``in_review``            review ``draft`` + new revision
-``dismiss``             status ``open|failed``          status ``false_positive``, review ``dismissed``
+``dismiss``             status ``open``                 status ``false_positive``, review ``dismissed``
 ``reopen``              status ``false_positive``       status ``open``, review ``unreviewed``
-``resolve``             review ``confirmed``            review ``resolved`` (status stays ``fixed``)
+``resolve``             review ``confirmed``            status ``fixed``, review ``resolved``
 ======================  ==============================  ============================
 
-``resolve`` is additionally gated on the measured record: ``validation_state ==
-poc_passed`` and ``Finding.status == fixed`` (both written by the verify worker,
-never here), a linked retest whose ``settings_hash`` equals the baseline
-campaign's, and a reviewer who is neither the campaign creator, the draft author,
-the retest requester nor a system principal. Anything unmet is a ``409
-resolution_blocked`` naming every unmet condition.
+Findings close by reviewer decision (product owner, 2026-09-09): ``resolve``
+needs a ``confirmed`` review and a reviewer who is neither the campaign creator,
+the draft author nor a system principal. Every run is a measurement in its own
+right, so nothing here waits on a second run: a review that is not ``confirmed``
+is a ``409 resolution_blocked`` with ``unmet: ["review_state_not_confirmed"]``.
 
 Every decision is audit-first (spec 6.7 invariant 4): the ``finding.review``
 (or ``finding.author`` for analyst operations) row carries ``decision``,
 ``from_status``/``to_status``, ``from_review_state``/``to_review_state``,
-``reason``, ``reviewer``, ``author``, ``campaign_creator``, ``revision`` and
-``verify_run_id``; refusals after lookup append a ``success=False`` row with
-``refusal`` and ``message``. The transition history is appended to
+``reason``, ``reviewer``, ``author``, ``campaign_creator`` and ``revision``;
+refusals after lookup append a ``success=False`` row with ``refusal`` and
+``message``. The transition history is appended to
 ``schema_blob.<block>.review.history`` and analyst revisions to
 ``schema_blob.<block>.review.revisions``; the rows stay readable through the
-frozen ``FindingReview`` schema. Retest links are read from
-``MLFindingDetail.retests`` (the worker appends them) with ``verify`` as the
-Phase A fallback.
+frozen ``FindingReview`` schema.
 
 The review block is ``schema_blob["ml"]`` for campaign findings and
 ``schema_blob["llm"]`` for LLM probe findings (both carry a ``FindingReview`` at
@@ -66,7 +63,6 @@ from redsim.ml.schema import (
     CampaignConfig,
     FindingReview,
     FindingRevision,
-    FindingVerify,
     Measurement,
     MLFindingDetail,
     Observation,
@@ -102,7 +98,7 @@ _MANUAL_NOTE = ("analyst-authored draft: severity declared by the author, not de
 
 _TERMINAL_RUN = frozenset({"succeeded", "failed", "cancelled"})
 _REVIEW_BLOCKS: tuple[str, ...] = ("ml", "llm")
-_CONFIRMABLE_STATUSES: frozenset[str] = frozenset({"open", "failed", "fixed"})
+_CONFIRMABLE_STATUSES: frozenset[str] = frozenset({"open"})
 
 
 @dataclass(frozen=True)
@@ -125,12 +121,12 @@ TRANSITIONS: dict[str, Transition] = {
                           "confirmed", None, REVIEW_ACTION),
     "request_changes": Transition("request_changes", frozenset({"in_review"}), None, "draft", None,
                                   REVIEW_ACTION),
-    # Spec 6.4 Phase A rule, unchanged: only ``open | failed`` may be dismissed.
+    # Spec 6.4 Phase A rule, unchanged: only ``open`` may be dismissed.
     "dismiss": Transition("dismiss", None, DISMISSABLE_FROM, "dismissed", DISMISSED_STATUS, REVIEW_ACTION),
     "reopen": Transition("reopen", frozenset({"dismissed"}), frozenset({"false_positive"}), "unreviewed",
                          "open", REVIEW_ACTION),
-    "resolve": Transition("resolve", frozenset({"confirmed"}), frozenset({"fixed"}), "resolved", None,
-                          REVIEW_ACTION),
+    # The reviewer's decision closes the finding: ``fixed`` is written here and nowhere else.
+    "resolve": Transition("resolve", frozenset({"confirmed"}), None, "resolved", "fixed", REVIEW_ACTION),
 }
 
 #: Decisions a finding without a review block (no ``ml`` / ``llm`` detail) still accepts.
@@ -239,15 +235,6 @@ def review_summary(schema_blob: dict[str, Any] | None) -> dict[str, Any] | None:
     }
 
 
-def latest_retest(detail: MLFindingDetail | None) -> FindingVerify | None:
-    """The newest retest link: ``retests[-1]`` (Phase B) or ``verify`` (Phase A)."""
-    if detail is None:
-        return None
-    if detail.retests:
-        return detail.retests[-1]
-    return detail.verify
-
-
 def revision_digest(*, observation: str | None, interpretation: str | None, candidate: str | None,
                     evidence_ids: Sequence[str]) -> str:
     """sha256 over the three texts and the cited ids, frozen on a revision at submission."""
@@ -262,13 +249,12 @@ def revision_digest(*, observation: str | None, interpretation: str | None, cand
 
 
 def independence_violations(*, actor: str, reviewer_is_system: bool, campaign_creator: str | None,
-                            revision_author: str | None, verify_requesters: Sequence[str] = ()) -> list[str]:
+                            revision_author: str | None) -> list[str]:
     """Spec 7.7, Phase B bullet (REVIEW_REPORTS-12): identity comparison, never role rank.
 
     ``system_principal``: the caller is a worker or service account. ``campaign_creator``:
     ``runs.created_by`` of the finding's run. ``revision_author``: the latest analyst
-    revision's author. ``verify_requester``: the actor who admitted the retest a
-    ``resolve`` rests on.
+    revision's author.
     """
     violations: list[str] = []
     if reviewer_is_system:
@@ -277,8 +263,6 @@ def independence_violations(*, actor: str, reviewer_is_system: bool, campaign_cr
         violations.append("campaign_creator")
     if revision_author is not None and revision_author == actor:
         violations.append("revision_author")
-    if actor in set(verify_requesters):
-        violations.append("verify_requester")
     return violations
 
 
@@ -295,74 +279,27 @@ def _campaign_row(session: Session, table: Any, run_id: str | None) -> dict[str,
     return None if row is None else dict(row)
 
 
-def verify_requesters(session: Session, verify_run_id: str | None) -> list[str]:
-    """Actors who admitted the retest: the verify run's creator and its ``verify.replay`` job creators."""
-    from sqlalchemy import select
-
-    from redsim.db.models import Job, Run
-
-    if not verify_run_id:
-        return []
-    out: list[str] = []
-    run = session.get(Run, verify_run_id)
-    if run is not None and run.created_by:
-        out.append(str(run.created_by))
-    jobs = session.execute(select(Job).where(Job.run_id == verify_run_id, Job.type == "verify.replay")).scalars()
-    for job in jobs:
-        if job.created_by and str(job.created_by) not in out:
-            out.append(str(job.created_by))
-    return out
-
-
 @dataclass(frozen=True)
 class ResolutionCheck:
-    """The measured conditions a ``resolve`` rests on (spec 6.4 resolved row, 15.6)."""
+    """The condition a ``resolve`` rests on: the review block says ``confirmed``."""
 
     unmet: list[str]
-    verify_run_id: str | None
-    baseline_settings_hash: str | None
-    verify_settings_hash: str | None
-    verify_requesters: list[str]
 
     @property
     def ok(self) -> bool:
         return not self.unmet
 
 
-def resolution_conditions(session: Session, *, finding: Any, carrier: ReviewCarrier) -> ResolutionCheck:
+def resolution_conditions(*, carrier: ReviewCarrier) -> ResolutionCheck:
     """Every condition ``resolve`` needs, evaluated independently of the transition table.
 
-    ``validation_state_not_poc_passed`` and ``status_not_fixed`` read the worker-written
-    columns; ``review_state_not_confirmed`` the review block; ``no_retest_linked``,
-    ``retest_outcome_not_verified`` and ``settings_hash_mismatch`` the latest retest link
-    against the two ``ml_campaigns`` rows. Nothing labels ``fixed`` as resolved without
-    all of them.
+    ``review_state_not_confirmed`` is the one condition: an independent reviewer has
+    confirmed the finding. The decision itself writes ``Finding.status = "fixed"``.
     """
     unmet: list[str] = []
-    if finding.validation_state != "poc_passed":
-        unmet.append("validation_state_not_poc_passed")
-    if finding.status != "fixed":
-        unmet.append("status_not_fixed")
     if carrier.state != "confirmed":
         unmet.append("review_state_not_confirmed")
-    retest = latest_retest(carrier.detail)
-    if retest is None:
-        unmet.append("no_retest_linked")
-        return ResolutionCheck(unmet, None, None, None, [])
-    if retest.outcome != "verified":
-        unmet.append("retest_outcome_not_verified")
-    table = _campaign_table(session)
-    baseline = _campaign_row(session, table, finding.run_id)
-    verify_row = _campaign_row(session, table, retest.run_id)
-    baseline_hash = baseline.get("settings_hash") if baseline else None
-    verify_hash = retest.settings_hash or (verify_row.get("settings_hash") if verify_row else None)
-    if not baseline_hash or not verify_hash or str(baseline_hash) != str(verify_hash):
-        unmet.append("settings_hash_mismatch")
-    if verify_row is not None and verify_row.get("baseline_run_id") not in (None, finding.run_id):
-        unmet.append("retest_baseline_mismatch")
-    requesters = verify_requesters(session, retest.run_id)
-    return ResolutionCheck(unmet, retest.run_id, str(baseline_hash) if baseline_hash else None,
-                           str(verify_hash) if verify_hash else None, requesters)
+    return ResolutionCheck(unmet)
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +364,7 @@ def decide(*, finding_id: str, decision: str, reason: str, expected_status: str,
             "from_review_state": from_state, "to_review_state": transition.to_review_state,
             "expected_status": expected_status, "expected_review_state": expected_review_state,
             "reason": reason, "reviewer": actor, "author": author, "campaign_creator": creator,
-            "revision": latest.revision if latest is not None else None, "verify_run_id": None,
+            "revision": latest.revision if latest is not None else None,
         }
 
         def refuse(refusal: str, message: str) -> None:
@@ -456,9 +393,7 @@ def decide(*, finding_id: str, decision: str, reason: str, expected_status: str,
                                  relations=["system_principal"])
         resolution: ResolutionCheck | None = None
         if decision == "resolve":
-            resolution = resolution_conditions(session, finding=finding, carrier=carrier)
-            detail["verify_run_id"] = resolution.verify_run_id
-            detail["verify_requesters"] = list(resolution.verify_requesters)
+            resolution = resolution_conditions(carrier=carrier)
         if transition.author_only:
             if author is None or author != actor:
                 message = "only the latest revision's author can submit the draft"
@@ -467,7 +402,6 @@ def decide(*, finding_id: str, decision: str, reason: str, expected_status: str,
         else:
             violations = independence_violations(
                 actor=actor, reviewer_is_system=False, campaign_creator=creator, revision_author=author,
-                verify_requesters=resolution.verify_requesters if resolution is not None else (),
             )
             if violations:
                 message = _independence_message(violations)
@@ -526,8 +460,7 @@ def decide(*, finding_id: str, decision: str, reason: str, expected_status: str,
             detail["unmet"] = list(resolution.unmet)
             refuse(codes.RESOLUTION_BLOCKED, message)
             raise codes.ApiError(codes.RESOLUTION_BLOCKED, message, unmet=list(resolution.unmet),
-                                 verify_run_id=resolution.verify_run_id, status=finding.status,
-                                 review_state=from_state, validation_state=finding.validation_state)
+                                 status=finding.status, review_state=from_state)
 
         # Audit before the row changes (spec 6.7 invariant 4).
         authorize(transition.action, None, allowlist=config.target_allowlist, actor=actor, writer=audit_writer,
@@ -557,7 +490,6 @@ def decide(*, finding_id: str, decision: str, reason: str, expected_status: str,
                 action=decision, to_state=to_state, actor=actor, at=now,
                 from_state=cast("ReviewState | None", from_state), reason=reason,
                 revision=latest.revision if latest is not None else None,
-                verify_run_id=resolution.verify_run_id if resolution is not None else None,
             )
             review.history = [*review.history, event]
             review.state = to_state
@@ -577,11 +509,9 @@ def decide(*, finding_id: str, decision: str, reason: str, expected_status: str,
             "id": finding_id, "decision": decision,
             "status": finding.status, "from_status": expected_status,
             "review_state": carrier.state, "from_review_state": from_state,
-            "validation_state": finding.validation_state,
             "review": review_out,
             "revision": new_revision.revision if new_revision is not None else (
                 latest.revision if latest is not None else None),
-            "verify_run_id": resolution.verify_run_id if resolution is not None else None,
         }
 
 
@@ -589,70 +519,9 @@ def _independence_message(violations: Sequence[str]) -> str:
     parts = {
         "campaign_creator": "campaign creator cannot review their own finding",
         "revision_author": "the draft's author cannot review their own revision",
-        "verify_requester": "the actor who requested the retest cannot resolve on it",
         "system_principal": "system principals cannot review findings",
     }
     return "; ".join(parts.get(v, v) for v in violations) + " (spec 7.7: an independent reviewer is required)"
-
-
-# ---------------------------------------------------------------------------
-# Retest links (REVIEW_REPORTS-09)
-# ---------------------------------------------------------------------------
-
-
-def list_retests(session: Session, finding: Any) -> dict[str, Any]:
-    """Every retest linked to a finding with its compatibility against the baseline.
-
-    Compatibility is equal ``settings_hash`` between the retest and the finding's
-    campaign; the MRI delta is reported only for a compatible retest whose outcome is
-    measured (not ``inconclusive``). An incompatible or partial retest carries no delta.
-    """
-    from sqlalchemy import select
-
-    from redsim.db.models import Job, Run
-
-    carrier = review_carrier(finding.schema_blob)
-    detail = carrier.detail
-    links: list[FindingVerify] = []
-    if detail is not None:
-        links = list(detail.retests) if detail.retests else ([detail.verify] if detail.verify is not None else [])
-    table = _campaign_table(session)
-    baseline = _campaign_row(session, table, finding.run_id)
-    baseline_hash = str(baseline["settings_hash"]) if baseline and baseline.get("settings_hash") else None
-    rows: list[dict[str, Any]] = []
-    for link in links:
-        verify_row = _campaign_row(session, table, link.run_id)
-        verify_hash = link.settings_hash or (
-            str(verify_row["settings_hash"]) if verify_row and verify_row.get("settings_hash") else None)
-        run = session.get(Run, link.run_id)
-        job = session.execute(select(Job).where(Job.run_id == link.run_id, Job.type == "verify.replay")
-                              .order_by(Job.created_at.desc())).scalars().first()
-        mismatched: list[str] = []
-        if not baseline_hash or not verify_hash or baseline_hash != verify_hash:
-            mismatched.append("settings_hash")
-        if verify_row is not None and verify_row.get("baseline_run_id") not in (None, finding.run_id):
-            mismatched.append("baseline_run_id")
-        compatible = not mismatched
-        measured = compatible and link.outcome != "inconclusive" and link.delta is not None
-        rows.append({
-            "run_id": link.run_id,
-            "defense": link.defense.model_dump(mode="json"),
-            "outcome": link.outcome,
-            "run_status": run.status if run is not None else None,
-            "job_status": job.status if job is not None else None,
-            "requested_by": (str(run.created_by) if run is not None and run.created_by else None),
-            "settings_hash": verify_hash,
-            "baseline_run_id": link.baseline_run_id or (verify_row.get("baseline_run_id") if verify_row else None),
-            "compatible": compatible,
-            "mismatched": mismatched,
-            "delta_mri": link.delta.delta if measured and link.delta is not None else None,
-            "delta": link.delta.model_dump(mode="json") if measured and link.delta is not None else None,
-        })
-    return {
-        "finding_id": finding.id, "baseline_run_id": finding.run_id, "baseline_settings_hash": baseline_hash,
-        "validation_state": finding.validation_state, "status": finding.status, "review_state": carrier.state,
-        "retests": rows, "count": len(rows),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -739,7 +608,7 @@ def draft_description(*, revision: FindingRevision, attack_name: str, run_id: st
     if revision.interpretation:
         parts.append(f"Interpretation: {revision.interpretation}")
     if revision.candidate:
-        parts.append(f"Candidate (not evaluated): {revision.candidate}")
+        parts.append(f"Candidate: {revision.candidate}")
     parts.append("Cites: " + ", ".join(f"[{e}]" for e in revision.evidence_ids) + ".")
     return " ".join(parts)
 
@@ -837,7 +706,7 @@ def create_draft_finding(*, run_id: str, attack_id: str, title: str, severity: s
             target=str(target.value) if target is not None else None,
             confidence=MANUAL_CONFIDENCE, status="open", created_at=now.isoformat(), updated_at=now.isoformat(),
             evidence=json.dumps(evidence_json, sort_keys=True), artifact_path=evidence.record_artifact_id,
-            remediation_steps=f"CANDIDATE (not evaluated): {candidate}" if candidate else None,
+            remediation_steps=f"CANDIDATE: {candidate}" if candidate else None,
         ).model_dump(mode="json")
         blob["ml"] = detail.model_dump(mode="json")
         audit_detail.update({"evidence_ids": ids, "revision": 1, "revision_sha256": digest,
@@ -849,14 +718,14 @@ def create_draft_finding(*, run_id: str, attack_id: str, title: str, severity: s
         finding = Finding(
             id=str(uuid4()), scanner_finding_id=scanner_id, run_id=run_id, project_id=project_id,
             schema_blob=blob, status="open", severity=severity, source_tool=MANUAL_SOURCE_TOOL,
-            validation_state="unvalidated", dedup_key=f"manual:{run_id}:{attack_id}:{digest[:16]}",
+            dedup_key=f"manual:{run_id}:{attack_id}:{digest[:16]}",
         )
         session.add(finding)
         session.flush()
         return {
             "id": finding.id, "run_id": run_id, "project_id": project_id, "scanner_finding_id": scanner_id,
             "status": "open", "review_state": "draft", "revision": 1, "revision_sha256": digest,
-            "finding_type": finding_type, "severity": severity, "validation_state": "unvalidated",
+            "finding_type": finding_type, "severity": severity,
             "schema_blob": blob,
         }
 
@@ -934,7 +803,7 @@ def revise_draft(*, finding_id: str, observation: str | None, interpretation: st
             "interpretation": [e for e in ids if e.startswith("i.")],
         }, sort_keys=True)
         if revision.candidate:
-            blob["remediation_steps"] = f"CANDIDATE (not evaluated): {revision.candidate}"
+            blob["remediation_steps"] = f"CANDIDATE: {revision.candidate}"
         blob["updated_at"] = now.isoformat()
         finding.schema_blob, finding.updated_at = blob, now
         session.flush()
@@ -946,7 +815,7 @@ def revise_draft(*, finding_id: str, observation: str | None, interpretation: st
 __all__ = [
     "AUTHOR_ACTION", "DECISIONS", "MANUAL_FINDING_TYPE", "MANUAL_SOURCE_TOOL", "REVIEW_ACTION", "REVIEW_STATES",
     "STATUS_ONLY_DECISIONS", "TRANSITIONS", "Decision", "ResolutionCheck", "ReviewCarrier", "Transition",
-    "create_draft_finding", "decide", "draft_description", "independence_violations", "latest_retest",
-    "list_retests", "manual_finding_type", "resolution_conditions", "review_carrier", "review_state_of",
-    "review_summary", "revise_draft", "revision_digest", "verify_requesters",
+    "create_draft_finding", "decide", "draft_description", "independence_violations", "manual_finding_type",
+    "resolution_conditions", "review_carrier", "review_state_of", "review_summary", "revise_draft",
+    "revision_digest",
 ]

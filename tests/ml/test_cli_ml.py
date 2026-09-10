@@ -50,7 +50,8 @@ def test_parser_has_ml_build_assets_with_defaults():
     assert args.prefer_xgboost is False, "sklearn_joblib is the default bundled format (spec 9.2)"
     assert args.arch == "small_cnn" and args.fixture is False and args.fixture_out is None
     assert args.fixture_sidecar is None and args.fixture_allow_synthetic is False
-    assert args.train_slice is True and args.train_slice_n == 1536 and args.attach_train_slice is None
+    for removed in ("train_slice", "train_slice_n", "attach_train_slice"):
+        assert not hasattr(args, removed), removed
     assert args.detection_image_size == 320 and args.detection_subset is None
     assert "ml" in cli_main._COMMANDS
 
@@ -103,12 +104,11 @@ def test_numeric_and_flag_options_parse():
                  "--fixture-synthetic-ok"])
     assert fx.fixture is True and fx.fixture_out == "/tmp/f.npz" and fx.fixture_sidecar == "/tmp/M.json"
     assert fx.fixture_allow_synthetic is True and fx.dataset is None
-    phase_b = _parse(["ml", "build-assets", "--no-train-slice", "--train-slice-n", "64", "--attach-train-slice",
-                      "vehicles_cnn", "--attach-train-slice", "cifar10_smallcnn", "--detection-image-size", "160",
-                      "--detection-subset", "/tmp/subset"])
-    assert phase_b.train_slice is False and phase_b.train_slice_n == 64
-    assert phase_b.attach_train_slice == ["vehicles_cnn", "cifar10_smallcnn"]
+    phase_b = _parse(["ml", "build-assets", "--detection-image-size", "160", "--detection-subset", "/tmp/subset"])
     assert phase_b.detection_image_size == 160 and phase_b.detection_subset == "/tmp/subset"
+    for gone in (["--no-train-slice"], ["--train-slice-n", "64"], ["--attach-train-slice", "vehicles_cnn"]):
+        with pytest.raises(SystemExit):
+            _parse(["ml", "build-assets", *gone])
 
 
 def test_ml_requires_an_action():
@@ -124,8 +124,8 @@ def test_help_text_describes_the_real_builder(capsys):
     for needle in ("MANIFEST.json", "--dataset", "--only", "--epochs", "KAGGLE_API_TOKEN", "REDSIM_ENV_FILE",
                    "KAGGLE_USERNAME", "KAGGLE_KEY", "MLModelManifest", DATASET_CACHE_ENV, "vehicles_cnn",
                    "cifar10_smallcnn", "url_trees", "url_classifier", "--fixture", "cifar10_test_500.npz", "--arch",
-                   "resnet18", "--xgboost", "sms_tfidf_lr", "assets_frcnn_mnv3", "SMS Spam", "train_slice.npz",
-                   "--attach-train-slice", "--no-train-slice", "--detection-subset", "military_assets_subset"):
+                   "resnet18", "--xgboost", "sms_tfidf_lr", "assets_frcnn_mnv3", "SMS Spam",
+                   "--detection-subset", "military_assets_subset"):
         assert needle in text, needle
     assert "not implemented" not in text.lower()
 
@@ -224,35 +224,25 @@ def test_build_options_come_from_args_and_the_cache_env(tmp_path, monkeypatch):
         cli_main.main(["ml", "build-assets", "--dataset", "tabular", "--out", str(tmp_path / "o")])
     assert captured["opts"].cache_dir == tmp_path / "o" / "cache"
 
-    # Phase B options reach the builder: the text / detection selections, the slice options, the subset location.
+    # Phase B options reach the builder: the text / detection selections and the subset location.
     with patch("redsim.config.load_config", return_value=None), \
             patch("redsim.ml.assets.build.build_assets", side_effect=fake_build):
         cli_main.main(["ml", "build-assets", "--dataset", "detection", "--detection-image-size", "160",
-                       "--detection-subset", str(tmp_path / "subset"), "--no-train-slice", "--train-slice-n", "32",
-                       "--out", str(tmp_path / "assets")])
+                       "--detection-subset", str(tmp_path / "subset"), "--out", str(tmp_path / "assets")])
     det = captured["opts"]
     assert det.selected == {"detection"} and det.detection_image_size == 160
-    assert det.detection_subset == tmp_path / "subset" and det.train_slice is False and det.train_slice_n == 32
-    assert det.train_slice_options.enabled is False and det.train_slice_options.n == 32
+    assert det.detection_subset == tmp_path / "subset"
+    assert not any(hasattr(det, name) for name in ("train_slice", "train_slice_n", "attach_train_slice"))
     with patch("redsim.config.load_config", return_value=None), \
             patch("redsim.ml.assets.build.build_assets", side_effect=fake_build):
         cli_main.main(["ml", "build-assets", "--only", "sms_tfidf_lr", "--out", str(tmp_path / "assets")])
     assert captured["opts"].selected == {"text"} and captured["opts"].only == ("sms_tfidf_lr",)
-    # ``--dataset all`` never includes the detector; ``--attach-train-slice`` alone builds nothing.
+    # ``--dataset all`` never includes the detector.
     with patch("redsim.config.load_config", return_value=None), \
             patch("redsim.ml.assets.build.build_assets", side_effect=fake_build):
         cli_main.main(["ml", "build-assets", "--out", str(tmp_path / "assets")])
     assert captured["opts"].selected == {"image", "cifar10", "tabular", "text"}
-    with patch("redsim.config.load_config", return_value=None), \
-            patch("redsim.ml.assets.build.build_assets", side_effect=fake_build):
-        cli_main.main(["ml", "build-assets", "--attach-train-slice", "vehicles_cnn", "--out", str(tmp_path / "assets")])
-    attach = captured["opts"]
-    assert attach.build_models is False and attach.selected == set() and attach.attach_train_slice == ("vehicles_cnn",)
-    with patch("redsim.config.load_config", return_value=None), \
-            patch("redsim.ml.assets.build.build_assets", side_effect=fake_build):
-        cli_main.main(["ml", "build-assets", "--attach-train-slice", "vehicles_cnn", "--dataset", "tabular",
-                       "--out", str(tmp_path / "assets")])
-    assert captured["opts"].build_models is True and captured["opts"].attach_train_slice == ("vehicles_cnn",)
+    assert captured["opts"].build_models is True
 
 
 def test_bad_options_exit_2(tmp_path, capsys):
@@ -261,25 +251,6 @@ def test_bad_options_exit_2(tmp_path, capsys):
         cli_main.main(["ml", "build-assets", "--dataset", "tabular", "--epochs", "0", "--out", str(tmp_path)])
     assert exc.value.code == 2
     assert "epochs must be >= 1" in capsys.readouterr().err
-    with patch("redsim.config.load_config", return_value=None), pytest.raises(SystemExit) as exc:
-        cli_main.main(["ml", "build-assets", "--attach-train-slice", "url_trees", "--out", str(tmp_path)])
-    assert exc.value.code == 2 and "non-image model" in capsys.readouterr().err
-
-
-def test_attach_train_slice_refusals_exit_1(tmp_path, capsys):
-    """A slice that is not there (or a model that was never built) is a refusal, not a traceback."""
-    pytest.importorskip("numpy")
-    from redsim.ml.assets.manifest import MANIFEST_NAME, AssetManifest, write_manifest
-
-    out = tmp_path / "assets"
-    write_manifest(AssetManifest.new(), out / MANIFEST_NAME)
-    with patch("redsim.config.load_config", return_value=None), \
-            patch("redsim.ml.assets.build.inject_truststore", return_value=False), pytest.raises(SystemExit) as exc:
-        cli_main.main(["ml", "build-assets", "--attach-train-slice", "vehicles_cnn", "--out", str(out)])
-    assert exc.value.code == 1
-    captured = capsys.readouterr()
-    assert "asset build failed" in captured.err and "no entry in the manifest" in captured.err
-    assert "attach-train-slice: recording vehicles_cnn" in captured.out
 
 
 # ---------------------------------------------------------------------------

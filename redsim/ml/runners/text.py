@@ -38,8 +38,8 @@ Nothing is faked: an adapter that raises ``AttackNotApplicable`` (no lexicon) is
 recorded ``not_run`` through the frame and leaves the in-scope set before scoring;
 an explainer failure is recorded per attack; every row carries ``n`` and its
 denominators. The MRI of a text campaign is its own number (``modality`` and
-``norm`` are in the settings hash and ``scoring.delta`` refuses a mismatch); it is
-never aggregated with image or tabular campaigns.
+``norm`` are in the settings hash and the comparison layer refuses a mismatch); it
+is never aggregated with image or tabular campaigns.
 """
 
 from __future__ import annotations

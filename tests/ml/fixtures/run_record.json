@@ -72,7 +72,6 @@
         "conf_gap_high": 0.5
       }
     },
-    "defense": null,
     "llm_narrative": false,
     "auto_recommend": true,
     "target_snapshot": {
@@ -178,9 +177,7 @@
     "dataset_split": "test",
     "sample_indices_sha256": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
     "settings_hash": "f1x7ure000000000000000000000000000000000000000000000000000000000",
-    "baseline_run_id": null,
     "parent_run_id": null,
-    "defense": null,
     "llm": null,
     "thread_env": {
       "OMP_NUM_THREADS": "2",
@@ -818,8 +815,6 @@
         "i.1"
       ],
       "status": "candidate",
-      "validation": "not evaluated",
-      "measured": null,
       "references": [
         "art.defences.trainer.AdversarialTrainerMadryPGD",
         "Madry et al. 2018"
@@ -836,8 +831,6 @@
         "m.evasion.pgd.eps0.03"
       ],
       "status": "candidate",
-      "validation": "not evaluated",
-      "measured": null,
       "references": [
         "art.defences.preprocessor.FeatureSqueezing",
         "art.defences.preprocessor.SpatialSmoothing"
@@ -855,8 +848,6 @@
         "i.4"
       ],
       "status": "candidate",
-      "validation": "not evaluated",
-      "measured": null,
       "references": [],
       "narrative": null,
       "narrative_source": "rules"
@@ -1044,7 +1035,6 @@
     "completeness": "complete",
     "missing": [],
     "reading": "The cheapest in-scope attack succeeded at the reference budget on a large share of the slice. Illustrative fixture value for a random-weight test double.",
-    "delta": null,
     "computed_at": "2026-09-08T12:04:30Z"
   },
   "limitations": [
@@ -1053,7 +1043,7 @@
     "SHAP attributions describe the model's sensitivity, not the cause of a failure; they are not causal proof.",
     "The evaluation slice is small; per-class numbers in particular have wide uncertainty.",
     "White-box gradient attacks assume full model access; black-box and physical-world attacks were not evaluated.",
-    "Recommendations are candidates. None has been validated against this model; that requires a separate evaluation.",
+    "Recommendations are candidates. None has been evaluated against this model; that requires a separate campaign.",
     "Passing or failing this suite does not establish safety, robustness in general, or deployment readiness.",
     "FIXTURE: every number in this record is illustrative and belongs to a random-weight test double. It is not a measurement of any model.",
     "8 flipped and 8 unflipped samples explained out of 200; explanations computed at ε=0.03 only."
@@ -1062,7 +1052,6 @@
   "kind": "attack",
   "completed_at": "2026-09-08T12:04:30Z",
   "settings_hash": "f1x7ure000000000000000000000000000000000000000000000000000000000",
-  "baseline_run_id": null,
   "parent_run_id": null,
   "curve": [
     {

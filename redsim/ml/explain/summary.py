@@ -101,10 +101,6 @@ def _score_lines(score: MRIRecord | None, reason: str | None) -> list[str]:
     lines = [header, f"MRI = {score.mri} (grade {score.grade}). Subscores: {available}. Weights: {weights}."]
     if score.reading:
         lines.append(f"Reading: {score.reading}")
-    if score.delta is not None:
-        d = score.delta
-        lines.append(f"Measured delta MRI vs baseline run {d.baseline_run_id}: {d.delta:+d} "
-                     f"({d.mri_before} -> {d.mri_after}).")
     lines.append(GRADE_STATEMENT)
     return lines
 

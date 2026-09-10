@@ -139,7 +139,7 @@ def build_controls_matrix() -> dict[str, Any]:
                 "status": "partial",
                 "evidence": [
                     "registry-dispatched scanner / attack adapter findings",
-                    "PoC-replay verification of findings (verify.replay)",
+                    "reviewer-decided finding lifecycle (finding.review)",
                 ],
                 "note": "dependency scanning, automated remediation and the "
                         "CI gate are not part of this build (removed with "
@@ -183,8 +183,8 @@ def build_controls_matrix() -> dict[str, Any]:
                 "name": "Flaw remediation",
                 "status": "partial",
                 "evidence": [
-                    "finding lifecycle + PoC-replay verification (verify.replay)",
-                    "hash-chained audit of every scan / verify decision",
+                    "finding lifecycle closed by an independent reviewer (finding.review)",
+                    "hash-chained audit of every campaign and review decision",
                 ],
                 "note": "automated patch generation and the CI gate are not "
                         "part of this build (removed with the pentest domain); "

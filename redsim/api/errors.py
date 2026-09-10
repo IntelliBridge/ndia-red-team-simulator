@@ -64,9 +64,7 @@ ARCHITECTURE_REQUIRED: Final = "architecture_required"
 ARCHITECTURE_NOT_ALLOWLISTED: Final = "architecture_not_allowlisted"
 DATASET_INCOMPATIBLE: Final = "dataset_incompatible"
 UNKNOWN_ATTACK: Final = "unknown_attack"
-UNKNOWN_DEFENSE: Final = "unknown_defense"
 ATTACK_MODALITY_MISMATCH: Final = "attack_modality_mismatch"
-DEFENSE_MODALITY_MISMATCH: Final = "defense_modality_mismatch"
 ATTACK_REQUIRES_GRADIENTS: Final = "attack_requires_gradients"
 EPS_GRID_INVALID: Final = "eps_grid_invalid"
 REFERENCE_EPS_NOT_IN_GRID: Final = "reference_eps_not_in_grid"
@@ -181,9 +179,7 @@ HTTP_STATUS: Final = MappingProxyType({
     ARCHITECTURE_NOT_ALLOWLISTED: 422,
     DATASET_INCOMPATIBLE: 422,
     UNKNOWN_ATTACK: 422,
-    UNKNOWN_DEFENSE: 422,
     ATTACK_MODALITY_MISMATCH: 422,
-    DEFENSE_MODALITY_MISMATCH: 422,
     ATTACK_REQUIRES_GRADIENTS: 422,
     EPS_GRID_INVALID: 422,
     REFERENCE_EPS_NOT_IN_GRID: 422,
@@ -278,13 +274,11 @@ _DEFAULT_MESSAGE: Final = MappingProxyType({
     ARCHITECTURE_NOT_ALLOWLISTED: "architecture_id is not in the catalog",
     DATASET_INCOMPATIBLE: "dataset shape or class count does not match the model manifest",
     UNKNOWN_ATTACK: "attack id is not in the registry",
-    UNKNOWN_DEFENSE: "defense id is not in the registry",
     ATTACK_MODALITY_MISMATCH: "attack domain differs from the model modality",
-    DEFENSE_MODALITY_MISMATCH: "defense domain differs from the model modality",
     ATTACK_REQUIRES_GRADIENTS: "attack needs loss gradients the target does not expose",
     EPS_GRID_INVALID: "eps_grid violates the grid rules",
     REFERENCE_EPS_NOT_IN_GRID: "reference_eps is not a member of eps_grid",
-    PARAMS_OUT_OF_RANGE: "attack or defense parameters are out of range",
+    PARAMS_OUT_OF_RANGE: "attack parameters are out of range",
     RATE_LIMITED: "rate limited",
     NOT_IMPLEMENTED: "not implemented in this phase",
     QUEUE_UNAVAILABLE: "job queue is unavailable",
@@ -440,7 +434,6 @@ __all__ = [
     "DATASET_TOO_LARGE",
     "DB_UNAVAILABLE",
     "DEFAULT_PHASE",
-    "DEFENSE_MODALITY_MISMATCH",
     "EGRESS_REFUSED",
     "ENDPOINT_AUTH_FAILED",
     "ENDPOINT_NOT_ALLOWLISTED",
@@ -493,7 +486,6 @@ __all__ = [
     "SNAPSHOT_NOT_FOUND",
     "STRING_DETAIL_CODES",
     "UNKNOWN_ATTACK",
-    "UNKNOWN_DEFENSE",
     "UNKNOWN_PROBE",
     "UNSUPPORTED_DATASET_FORMAT",
     "UNSUPPORTED_MODEL_FORMAT",

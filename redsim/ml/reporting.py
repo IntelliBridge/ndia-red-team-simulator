@@ -8,10 +8,10 @@ artifacts:
   reference-budget aggregates, the per-class table, and the MRI scorecard as a
   derived-summary sub-block carrying the five subscores with denominators, the
   scoring inputs, the robustness curve, the attack-scoped reading and the
-  standing grade statement, plus the ΔMRI block on verify runs); observations
-  labelled with their heuristic metric kind; interpretation labelled inferred
-  with its basis ids; candidate recommendations with their validation state;
-  and limitations followed by reviewer notes.
+  standing grade statement); observations labelled with their heuristic metric
+  kind; interpretation labelled inferred with its basis ids; candidate
+  recommendations, each labelled ``candidate``; and limitations followed by
+  reviewer notes.
 * ``report.json`` — ``CampaignRecord.model_dump(mode="json")``: the RunRecord
   dump plus its queryable projections, with the ``MRIRecord`` under ``score``.
 * ``report.html`` — built from the Markdown through the escaping helpers in
@@ -25,11 +25,10 @@ artifacts:
   recomputation, and the renderer is imported only when the format is asked for
   so the API process never loads reportlab.
 
-Phase B additions (REVIEW_REPORTS-18, -30; ATTACKS_HARDEN-13; MODALITIES-43):
+Phase B additions (REVIEW_REPORTS-18, -30; MODALITIES-43):
 section 1 prints ``schema_version`` and labels the budget axis from the norm
 literal; the scorecard carries a "non-default weights" line whenever the vector
-differs from ``MRIWeights()``; the ΔMRI block prints the derived-model lineage a
-training defense recorded in provenance; section 2 adds the text edit-budget
+differs from ``MRIWeights()``; section 2 adds the text edit-budget
 table (``Measurement.edit_fraction_mean``) and the detection scorecard
 (``Measurement.detection``, every rate with its box denominator) when a record
 carries them, and section 3 the per-modality observation evidence
@@ -55,7 +54,6 @@ from redsim.ml.schema import (
     GRADE_STATEMENT,
     AccuracyPoint,
     CampaignRecord,
-    CandidateRecommendation,
     Measurement,
     MRIRecord,
     RobustnessCurve,
@@ -83,7 +81,6 @@ SECTION_HEADINGS: tuple[str, ...] = (
     "## 6. Limitations",
 )
 SCORECARD_HEADING = "### MRI scorecard (derived summary)"
-DELTA_HEADING = "### ΔMRI (verify run against its baseline)"
 REVIEWER_NOTES_HEADING = "### Reviewer notes"
 LLM_HEADING = "### LLM probe results"
 LLM_EMBED_NOTE = ("The block below is the LLM track's probe scorecard fragment (`redsim.ml.llm.report_section`), "
@@ -107,14 +104,11 @@ BUDGET_LABELS: dict[str, str] = {
 #: Spec 15.3: the badge text when the weight vector is not the default one.
 NON_DEFAULT_WEIGHTS_BADGE = "**Non-default weights**"
 DEFAULT_WEIGHTS_NOTE = "Weights: the default vector"
-DERIVED_MODEL_HEADING = "**Derived model** (training defense; the verify run measures it)"
 #: F007 FR-005 while decision D006 is open (REVIEW_REPORTS-19): said in every rendered format.
 EXPORT_REDACTION_NOTE = ("No export-redaction policy was applied to this report (decision D006 is open); "
                          "it carries the record as measured.")
 LICENCE_UNRECORDED = "not recorded in the model or dataset manifest"
 
-# Spec 16.4 (3): the only wording for a gain that has not been measured.
-NOT_MEASURED = "Expected gain: not measured — run Verify"
 # Spec 14.2: never ``0%`` and never ``100%`` for a missing or zero denominator.
 NOT_COMPUTED_ZERO = "not computed (denominator 0)"
 NO_EVIDENCE = "no evidence recorded"
@@ -162,14 +156,6 @@ def _fmt(value: float | None, nd: int = 4) -> str:
 
 def _g(value: float | int | None) -> str:
     return UNAVAILABLE if value is None else f"{value:g}"
-
-
-def _signed(value: float | int | None, nd: int = 1) -> str:
-    if value is None:
-        return UNAVAILABLE
-    if isinstance(value, int):
-        return f"{value:+d}"
-    return f"{value:+.{nd}f}"
 
 
 def _when(value: datetime | None) -> str:
@@ -220,10 +206,6 @@ def _quoted(text: str, indent: str = "") -> list[str]:
     return [f"{indent}> {line.rstrip()}" for line in lines]
 
 
-def _is_verify(record: CampaignRecord) -> bool:
-    return record.kind == "verify" or record.baseline_run_id is not None
-
-
 def _budget_label(norm: Any) -> str:
     return BUDGET_LABELS.get(str(norm), f"budget in norm {_text(norm)}")
 
@@ -268,8 +250,6 @@ def _section_configuration(record: CampaignRecord, generated_at: datetime) -> li
         f"- **Completed:** {_when(record.completed_at)}",
         f"- **Generated at:** {generated_at.isoformat()}",
         f"- **Settings hash:** {_code(record.settings_hash) if record.settings_hash else UNAVAILABLE}",
-        (f"- **Baseline run:** {_code(record.baseline_run_id)}" if record.baseline_run_id
-         else "- **Baseline run:** none (not a verify run)"),
         (f"- **Parent run:** {_code(record.parent_run_id)}" if record.parent_run_id
          else "- **Parent run:** none (not a rerun)"),
     ]
@@ -319,14 +299,6 @@ def _section_configuration(record: CampaignRecord, generated_at: datetime) -> li
            f"asr_mid = {config.scoring.severity.asr_mid:g}; confidence n_high = "
            f"{config.scoring.confidence.n_high}, n_medium = {config.scoring.confidence.n_medium}"),
     ]
-    if config.defense is not None:
-        lines.append(
-            "- **Defense (the changed variable of a verify run):** "
-            f"{_code(config.defense.id)} — {_code(config.defense.art_class or 'ART class unrecorded')}, "
-            f"params {_code(_json_text(config.defense.params))}"
-        )
-    else:
-        lines.append("- **Defense:** none")
     lines += [
         f"- **LLM narrative:** {'requested' if config.llm_narrative else 'off'}",
         f"- **Auto-recommend:** {'on' if config.auto_recommend else 'off'}",
@@ -355,10 +327,7 @@ def _section_configuration(record: CampaignRecord, generated_at: datetime) -> li
             ("- **Sample indices sha256:** "
              + (_code(provenance.sample_indices_sha256) if provenance.sample_indices_sha256 else UNAVAILABLE)),
             f"- **Settings hash:** {_code(provenance.settings_hash) if provenance.settings_hash else UNAVAILABLE}",
-            f"- **Baseline run:** {_code(provenance.baseline_run_id) if provenance.baseline_run_id else 'none'}",
             f"- **Parent run:** {_code(provenance.parent_run_id) if provenance.parent_run_id else 'none'}",
-            ("- **Defense (verify runs):** "
-             + (_code(_json_text(provenance.defense)) if provenance.defense is not None else "none")),
             ("- **LLM (redacted settings and hashes, never the key):** "
              + (_code(_json_text(provenance.llm)) if provenance.llm is not None else "no narrative generated")),
             f"- **Thread environment:** {_code(_json_text(provenance.thread_env)) if provenance.thread_env else UNAVAILABLE}",
@@ -379,13 +348,13 @@ def _section_configuration(record: CampaignRecord, generated_at: datetime) -> li
 
 
 # ---------------------------------------------------------------------------
-# 2. Measurements (with the scorecard sub-block and the ΔMRI block)
+# 2. Measurements (with the scorecard sub-block)
 # ---------------------------------------------------------------------------
 
 
 def _asr_text(measurement: Measurement, clean: Measurement | None) -> str:
     if measurement.family == "clean":
-        return "n/a (baseline row)"
+        return "n/a (clean row)"
     if measurement.n_flipped_from_clean is None:
         return NO_EVIDENCE
     denominator = measurement.n_clean_correct
@@ -634,54 +603,6 @@ def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
-def _derived_model_lines(record: CampaignRecord) -> list[str]:
-    """ATTACKS_HARDEN-13: the lineage a training defense recorded on the verify run.
-
-    Read from ``provenance.defense`` (``kind: training`` with the parent and derived
-    digests and the training report the worker recorded) and from
-    ``provenance.model_manifest["derived_from"]`` (the ``DerivedFrom`` block of the
-    registered derived target). Nothing is inferred: a key that was not recorded
-    renders as unrecorded.
-    """
-    provenance = record.provenance
-    if provenance is None:
-        return []
-    defense = _mapping(provenance.defense)
-    derived_from = _mapping(provenance.model_manifest.get("derived_from"))
-    if defense.get("kind") != "training" and not derived_from:
-        return []
-    lines = ["", DERIVED_MODEL_HEADING, ""]
-    if defense.get("kind") == "training":
-        lines.append(
-            f"- Parent weights sha256: {_code(defense.get('parent_sha256') or 'unrecorded')}; derived weights sha256: "
-            f"{_code(defense.get('derived_sha256') or 'unrecorded')}; defense {_code(defense.get('id') or 'unrecorded')}."
-        )
-        report = _mapping(defense.get("training_report"))
-        if report:
-            epochs = f"{_g(report.get('epochs_run'))} of {_g(report.get('epochs_requested'))} epochs"
-            wall = f"wall time {_g(report.get('wall_time_s'))} s of a {_g(report.get('wall_budget_s'))} s budget"
-            changed = report.get("weights_changed")
-            changed_text = "unrecorded" if changed is None else ("yes" if changed else "no")
-            frozen = report.get("backbone_frozen")
-            frozen_text = "unrecorded" if frozen is None else ("yes" if frozen else "no")
-            lines.append(
-                f"- Training budget as run: {epochs}; {wall}; budget exhausted: "
-                f"{'yes' if report.get('budget_exhausted') else 'no'}; weights changed: {changed_text}; "
-                f"backbone frozen: {frozen_text}; n_train = {_g(report.get('n_train'))}."
-            )
-    if derived_from:
-        budget = _mapping(derived_from.get("training_budget"))
-        lines.append(
-            f"- Lineage (derived_from): parent target {_code(derived_from.get('parent_target_id') or 'unrecorded')}, "
-            f"parent sha256 {_code(derived_from.get('parent_sha256') or 'unrecorded')}, defense "
-            f"{_code(derived_from.get('defense_id') or 'unrecorded')}, training budget "
-            f"{_code(_json_text(budget)) if budget else 'unrecorded'}."
-        )
-    lines.append("- The derived model is a separate Target; its own campaigns measure it. This block records "
-                 "lineage and the budget the defense ran under, not a claim about the result.")
-    return lines
-
-
 def is_llm_probe_record(record: CampaignRecord) -> bool:
     """``True`` when the record is an LLM probe run (spec 11.6; LLM-24, LLM-28).
 
@@ -831,53 +752,6 @@ def _scorecard(record: CampaignRecord) -> list[str]:
     return lines
 
 
-def _delta_block(record: CampaignRecord) -> list[str]:
-    lines = [DELTA_HEADING, ""]
-    defense = record.config.defense
-    provenance_defense = record.provenance.defense if record.provenance is not None else None
-    if defense is not None:
-        lines.append(
-            f"Changed variable: defense {_code(defense.id)} ({_code(defense.art_class or 'ART class unrecorded')}), "
-            f"params {_code(_json_text(defense.params))}. The model, dataset revision, sample indices, attack set, "
-            "ε grid and scoring settings are those of the baseline run."
-        )
-    elif provenance_defense is not None:
-        lines.append(f"Changed variable: defense {_code(_json_text(provenance_defense))} (from provenance).")
-    else:
-        lines.append("Changed variable: no defense is recorded on this verify run.")
-    lines.extend(_derived_model_lines(record))
-    lines.append("")
-    score = record.score
-    delta = score.delta if score is not None else None
-    if score is None or delta is None:
-        reasons = [_text(lim) for lim in record.limitations if "MRI delta not computed" in lim]
-        lines.append("**ΔMRI not computed.** " + (" ".join(reasons) if reasons
-                                                  else "No delta was measured; see the limitations in section 6."))
-        return lines
-    lines += [
-        f"Baseline run {_code(delta.baseline_run_id)} → verify run {_code(record.run_id)}; settings hash "
-        f"{_code(score.settings_hash)} (a delta is only computed when both runs carry this same hash).",
-        "",
-        f"**ΔMRI {_signed(delta.delta)}** (MRI {delta.mri_before} → {delta.mri_after}).",
-        "",
-        f"Clean accuracy: {_point(delta.delta_acc_clean.before)} → {_point(delta.delta_acc_clean.after)} "
-        f"(Δ {_signed(delta.delta_acc_clean.delta, 4)}).",
-        "",
-        *_table(["Subscore", "Δ (points)"],
-                [[key, _signed(getattr(delta.delta_subscores, key))] for key in SUBSCORE_KEYS]),
-        "",
-    ]
-    if delta.delta_families:
-        lines.extend(_table(
-            ["Measurement", "Before (correct / n)", "After (correct / n)", "Δ accuracy"],
-            [[f.measurement_id, _point(f.before), _point(f.after), _signed(f.delta, 4)]
-             for f in delta.delta_families],
-        ))
-    else:
-        lines.append("No per-family deltas were recorded.")
-    return lines
-
-
 def _section_measurements(record: CampaignRecord) -> list[str]:
     config = record.config
     provenance = record.provenance
@@ -922,8 +796,6 @@ def _section_measurements(record: CampaignRecord) -> list[str]:
         lines.extend(_text_budget_block(record.measurements, clean))
         lines.extend(_detection_scorecard_block(record.measurements))
     lines += ["", *_scorecard(record)]
-    if _is_verify(record):
-        lines += ["", *_delta_block(record)]
     return lines
 
 
@@ -1009,40 +881,6 @@ def _section_interpretation(record: CampaignRecord) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _measured_sentence(recommendation: CandidateRecommendation, record: CampaignRecord) -> list[str]:
-    """Spec 16.4 (5): the measured figure always reads as a delta at settings, never a bare number."""
-    measured = recommendation.measured
-    assert measured is not None  # the schema validator pairs ``validation == "measured"`` with a block
-    score = record.score
-    delta = score.delta if score is not None else None
-    if (
-        delta is not None
-        and record.run_id == measured.verify_run_id
-        and delta.baseline_run_id == measured.baseline_run_id
-        and delta.delta == measured.delta_mri
-    ):
-        before_after = f"MRI {delta.mri_before} → {delta.mri_after}"
-    else:
-        before_after = f"MRI before/after are recorded on verify run {_text(measured.verify_run_id)}"
-    defense = (
-        f"{_text(measured.defense.art_class or measured.defense.id)}({_json_text(measured.defense.params)})"
-    )
-    clean = f"{_point(measured.delta_acc_clean.before)} → {_point(measured.delta_acc_clean.after)}"
-    sentence = (
-        f"Measured ΔMRI {_signed(measured.delta_mri)} ({before_after}; clean accuracy {clean}; verify run "
-        f"{_text(measured.verify_run_id)}, settings {_text(measured.settings_hash)[:12]}, defense {defense})"
-    )
-    settings = (
-        f"Settings: baseline run {_code(measured.baseline_run_id)} and verify run {_code(measured.verify_run_id)} "
-        f"share settings hash {_code(measured.settings_hash)} (before = after); measured at "
-        f"{_when(measured.measured_at)}."
-    )
-    dimensions = ", ".join(
-        f"{key} {_signed(getattr(measured.delta_subscores, key))}" for key in SUBSCORE_KEYS
-    )
-    return [f"  - {sentence}", f"  - {settings}", f"  - Per-dimension Δ: {dimensions}"]
-
-
 def _section_recommendations(record: CampaignRecord) -> list[str]:
     lines = [SECTION_HEADINGS[4], ""]
     if not record.recommendations:
@@ -1053,12 +891,7 @@ def _section_recommendations(record: CampaignRecord) -> list[str]:
             f"- **{_text(rec.id)}** [{rec.status}] {_text(rec.title)}",
             f"  - Rationale: {_text(rec.rationale)}",
             "  - Triggered by: " + ", ".join(_code(t) for t in rec.triggered_by),
-            f"  - Validation: {rec.validation}",
         ]
-        if rec.measured is None:
-            lines.append(f"  - {NOT_MEASURED}")
-        else:
-            lines.extend(_measured_sentence(rec, record))
         references = ", ".join(_code(r) for r in rec.references) or "none"
         lines.append(f"  - References (inert text, not links): {references}")
         if rec.narrative:
@@ -1176,8 +1009,6 @@ def render_campaign_reports(
 __all__ = [
     "BUDGET_LABELS",
     "DEFAULT_WEIGHTS_NOTE",
-    "DELTA_HEADING",
-    "DERIVED_MODEL_HEADING",
     "DETECTION_EVIDENCE_HEADING",
     "DETECTION_SCORECARD_HEADING",
     "EXPORT_REDACTION_NOTE",
@@ -1185,7 +1016,6 @@ __all__ = [
     "LLM_EMBED_NOTE",
     "LLM_HEADING",
     "NON_DEFAULT_WEIGHTS_BADGE",
-    "NOT_MEASURED",
     "REPORT_CONTENT_TYPES",
     "REPORT_FORMATS_ALL",
     "REPORT_FORMATS_TEXT",

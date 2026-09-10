@@ -37,7 +37,7 @@ permit (
   principal.role == "approver" || principal.role == "admin"
 };
 
-// --- remediator-min actions: verify.replay, run.cancel, model.register,
+// --- remediator-min actions: run.cancel, model.register,
 //     harden.recommend, finding.annotate; Phase B (spec 7.4 addendum,
 //     2026-09-09): llm.probe.run, dataset.register, dataset.export
 //     (spec 17.4 and 27.4: an export writes a slice other teams read),
@@ -45,7 +45,7 @@ permit (
 permit (
   principal,
   action in [
-    Action::"verify.replay", Action::"run.cancel", Action::"model.register",
+    Action::"run.cancel", Action::"model.register",
     Action::"harden.recommend", Action::"finding.annotate",
     Action::"llm.probe.run", Action::"dataset.register", Action::"dataset.export",
     Action::"finding.author"

@@ -112,7 +112,7 @@ SUPPORTED_ENDPOINT_AUTH_KINDS = frozenset({"bearer", "header"})
 DELETED_STATUS = "deleted"
 
 #: ``Run.scanner`` values that make up a model's campaign history (spec 5.2).
-CAMPAIGN_SCANNERS = ("ml.campaign", "ml.verify")
+CAMPAIGN_SCANNERS = ("ml.campaign",)
 #: Run scanners that count as a model's history for ``last_run_id`` (spec 17.2 list row): the campaign
 #: scanners plus the LLM probe scanner (``services.ml_llm.LLM_SCANNER``). Probe runs never join
 #: ``campaign_history`` (D9: no campaign row, no MRI); ``services.ml_llm.probe_history`` lists them.
@@ -1393,7 +1393,7 @@ def _campaign_runs(session: Session, target_id: str) -> list[Any]:
 def campaign_history(session: Session, target_id: str) -> list[dict[str, Any]]:
     """Campaigns that ran on a model, newest first (spec 17.2 ``GET /v1/models/{id}``).
 
-    One entry per ``ml.campaign`` / ``ml.verify`` Run with the attack ids,
+    One entry per ``ml.campaign`` Run with the attack ids,
     ``reference_eps`` and ``settings_hash`` from the campaign row and the MRI as
     a link into the full scorecard (``scorecard_url``), never as a bare number
     (spec 15.7). ``score_status`` is ``scored``, ``pending`` (run not terminal)
@@ -1415,14 +1415,13 @@ def campaign_history(session: Session, target_id: str) -> list[dict[str, Any]]:
             score_status = "unavailable"
         entry: dict[str, Any] = {
             "run_id": run.id,
-            "kind": "verify" if run.scanner == "ml.verify" else "attack",
+            "kind": "attack",
             "status": run.status,
             "created_at": run.created_at.isoformat() if run.created_at is not None else None,
             "completed_at": run.completed_at.isoformat() if run.completed_at is not None else None,
             "attack_ids": list(config.get("attack_ids") or []),
             "reference_eps": config.get("reference_eps"),
             "settings_hash": row.get("settings_hash"),
-            "baseline_run_id": row.get("baseline_run_id"),
             "score_status": score_status,
             "scorecard_url": f"/v1/runs/{run.id}/campaign" if scored else None,
             "status_url": f"/v1/runs/{run.id}",
@@ -1434,7 +1433,7 @@ def campaign_history(session: Session, target_id: str) -> list[dict[str, Any]]:
 
 
 def last_run_ids(session: Session, target_ids: Iterable[str]) -> dict[str, str]:
-    """``{target_id: newest campaign, verify or probe run id}`` for the given targets (spec 17.2 list row)."""
+    """``{target_id: newest campaign or probe run id}`` for the given targets (spec 17.2 list row)."""
     from sqlalchemy import select
 
     from redsim.db.models import Run

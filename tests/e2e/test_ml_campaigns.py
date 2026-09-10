@@ -13,8 +13,8 @@ nothing is stubbed beyond the harness's three infrastructure doubles.
    evasion row per attack per eps and one control row per eps, each with ``n``
    and ``n_correct`` and per-class counts; SHAP observations are ``heuristic``
    and the "not causal proof" limitation is present; interpretation is
-   ``inferred`` with basis ids; recommendations are ``candidate`` /
-   ``not evaluated`` with no expected-gain field; the standing limitations are
+   ``inferred`` with basis ids; recommendations are ``candidate`` with no
+   validation label and no expected-gain field; the standing limitations are
    present; the stage table has every ``STAGES`` entry in the spec 6.5 shape;
    the score is either a complete five-subscore MRI with an attack-scoped
    reading, or the honest partial state, and ``mri`` never appears without all
@@ -384,13 +384,13 @@ def test_image_campaign_completes_with_scorecard(
         assert item["basis"], item["id"]
         assert set(item["basis"]) <= known, (item["id"], sorted(set(item["basis"]) - known))
 
-    # -- candidate recommendations: candidate / not evaluated, no expected-gain field ---------------
+    # -- candidate recommendations: candidate and nothing more, no validation label, no expected-gain field --
     recommendations = campaign["recommendations"]
     assert recommendations, "the rule layer always fires R7 (spec 16.2)"
     allowed_keys = set(CandidateRecommendation.model_fields)
     for rec in recommendations:
-        assert rec["status"] == "candidate" and rec["validation"] == "not evaluated", rec["id"]
-        assert rec["measured"] is None, "a measured delta exists only after a verify run (spec 16.4)"
+        assert rec["status"] == "candidate", rec["id"]
+        assert "validation" not in rec and "measured" not in rec, "a candidate carries no label beyond its status"
         assert set(rec) <= allowed_keys, sorted(set(rec) - allowed_keys)
         assert not [k for k in rec if "gain" in k.lower() or "expected" in k.lower() or "estimate" in k.lower()]
         assert rec["triggered_by"] and set(rec["triggered_by"]) <= known, rec["id"]
@@ -414,8 +414,6 @@ def test_image_campaign_completes_with_scorecard(
     assert table["error"] is None and table["stage"] == "report"
     from_stages: list[str] = []
     for stage in STAGES:
-        if stage == "defense_apply":
-            continue  # Phase B: expected only when the campaign applies a training defense
         if stage == "attack":
             from_stages.extend(f"attack:{a}" for a in config["attack_ids"])
         else:
@@ -612,8 +610,8 @@ def test_narrative_on_and_off(
     assert recs, "nothing to narrate"
     assert {rec["narrative_source"] for rec in recs} == {"llm"}
     for rec in recs:
-        assert rec["narrative"] and rec["status"] == "candidate" and rec["validation"] == "not evaluated"
-        assert rec["measured"] is None
+        assert rec["narrative"] and rec["status"] == "candidate"
+        assert "validation" not in rec and "measured" not in rec
     assert len(pythia.requests) == 1, pythia.requests
     assert pythia.requests[0]["json"]["model"] == h.MOCK_PYTHIA_MODEL
     llm = campaign["provenance"]["llm"]
@@ -740,7 +738,7 @@ def test_rerun_links_parent_and_never_mutates_terminal(
     assert record["run_id"] == child_id and record["status"] == "succeeded"
     assert record["parent_run_id"] == parent_id, "lineage on the record (spec 26.1 item 3)"
     assert record["provenance"]["parent_run_id"] == parent_id, "lineage in provenance (spec 14.4)"
-    assert record["baseline_run_id"] is None, "a rerun is not a verify pairing"
+    assert "baseline_run_id" not in record, "a rerun is a measurement of its own; no pairing field exists"
     parent_row = _campaign_row(e2e_app, parent_id)
     child_row = _campaign_row(e2e_app, child_id)
     assert child_row["parent_run_id"] == parent_id and parent_row["parent_run_id"] is None

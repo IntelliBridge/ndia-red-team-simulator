@@ -23,7 +23,6 @@ function row(over: Partial<Finding> & { id: string }): Finding {
     severity: "medium",
     status: "open",
     source_tool: "ml-campaign",
-    validation_state: "unvalidated",
     dedup_key: null,
     schema_blob: {},
     ...over,

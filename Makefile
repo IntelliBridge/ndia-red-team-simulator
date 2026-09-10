@@ -201,7 +201,7 @@ down:
 	$(COMPOSE) down
 
 # Scripted spec-24 demo against a running `make up` stack (no UI): seed the
-# bundled models, run the image campaign, verify one finding, download the
+# bundled models, run the image campaign, read the first finding, download the
 # report and verify every audit chain. Reads REDSIM_DEMO_API (default
 # http://localhost:8000) and REDSIM_DEMO_TOKEN (default the dev bearer token
 # for admin@example.com, so the stack must run with REDSIM_AUTH_MODE=dev).

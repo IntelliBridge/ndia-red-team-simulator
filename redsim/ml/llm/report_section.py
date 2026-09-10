@@ -11,7 +11,7 @@ Seven sections in this order: configuration and provenance; probe scorecard
 (per family, per probe, per detector, ``k / n`` beside every rate, status and
 reason for rows that did not run, garak's CI when present); findings (ids,
 severity labelled as derived from the hit rate, ``k / n``); interpretation;
-candidate recommendations (``candidate`` / ``not evaluated``); limitations;
+candidate recommendations (``candidate``); limitations;
 stored artifacts (ids, kinds, digests; "prompts and responses are stored, not
 displayed"). The D9 sentence appears exactly once, in the scorecard header.
 
@@ -60,7 +60,7 @@ NO_SCORECARD_NOTE = ("No LLM probe scorecard is attached to this record; `GET /v
                      "the k / n table once the run has written one. Nothing is shown in its place.")
 INVALID_SCORECARD_NOTE = "An LLM scorecard is attached but does not validate against llm-probe-scorecard-1 ({error}); it is not shown."
 SEVERITY_BASIS_NOTE = "Severity is derived from the hit rate of one probe row (its own bands); it is not a score of the model."
-NOT_MEASURED = "Expected gain: not measured (redsim does not verify mitigations on an LLM target)"
+NOT_EVALUATED = "Not evaluated on this model: redsim does not measure mitigations on an LLM target"
 ARTIFACT_NOTE = "Prompts and responses are stored in garak's report.jsonl and hitlog.jsonl artifacts, not displayed."
 UNAVAILABLE = "—"
 _MRI_WORDS = re.compile(r"\b(MRI|grade|graded|grading)\b")
@@ -218,9 +218,9 @@ def _section_recommendations(recommendations: Sequence[CandidateRecommendation])
         lines.append("No candidate recommendation: no row crossed the threshold and no probe ran.")
         return lines
     for rec in recommendations:
-        lines += [f"### {_code(rec.id)} {_text(rec.title)} ({rec.status} · {rec.validation})", "",
+        lines += [f"### {_code(rec.id)} {_text(rec.title)} ({rec.status})", "",
                   f"- **Rationale:** {_text(rec.rationale)}",
-                  f"- **{NOT_MEASURED}**",
+                  f"- **{NOT_EVALUATED}**",
                   f"- **Triggered by:** {', '.join(_code(t) for t in rec.triggered_by)}",
                   f"- **References:** {', '.join(_code(r) for r in rec.references) or UNAVAILABLE}",
                   f"- **Source:** {rec.narrative_source}", ""]
@@ -468,7 +468,7 @@ __all__ = [
     "ARTIFACT_NOTE",
     "INVALID_SCORECARD_NOTE",
     "LLM_SECTION_HEADING",
-    "NOT_MEASURED",
+    "NOT_EVALUATED",
     "NO_SCORECARD_NOTE",
     "REPORT_TITLE",
     "SECTION_HEADINGS",

@@ -70,8 +70,8 @@ concrete redsim features that supply evidence:
 
     The ML vertical adds no control of its own to the crosswalk yet. Once
     campaigns run, the campaign audit events (`model.register`,
-    `attack.run`, `explain.run`, `harden.recommend`, `verify.replay`,
-    `finding.review`) land on the same chains and are exported with them.
+    `attack.run`, `explain.run`, `harden.recommend`, `finding.review`) land
+    on the same chains and are exported with them.
 
 ---
 

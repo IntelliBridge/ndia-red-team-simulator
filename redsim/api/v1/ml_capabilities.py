@@ -260,12 +260,6 @@ def capabilities(_user: CurrentUser = Depends(get_current_user)) -> dict[str, An
     except ImportError as exc:
         raise catalog_unavailable(exc, "architecture") from exc
     try:
-        from redsim.ml.defenses import list_defenses
-
-        defense_ids = [str(row["id"]) for row in list_defenses()]
-    except ImportError as exc:
-        raise catalog_unavailable(exc, "defense") from exc
-    try:
         from redsim.ml.targets import list_targets
 
         bundled = [
@@ -296,7 +290,6 @@ def capabilities(_user: CurrentUser = Depends(get_current_user)) -> dict[str, An
         "architectures": architectures,
         "explainers": explainers,
         "explainer_roster": explainer_roster,
-        "defenses": defense_ids,
         "llm_narrative": {
             "configured": pythia_ready,
             "gateway": "pythia",

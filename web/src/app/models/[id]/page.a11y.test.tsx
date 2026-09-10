@@ -11,7 +11,6 @@ vi.mock("@/hooks/useModel", () => ({ useModel: () => ({ data: undefined }) }));
 vi.mock("@/hooks/useMlCatalog", () => ({
   useAttacks: () => ({ data: [] }),
   useDatasets: () => ({ data: [] }),
-  useDefenses: () => ({ data: [] }),
   useCapabilities: () => ({ data: {} }),
 }));
 import ModelPage from "./page";

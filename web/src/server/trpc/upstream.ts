@@ -112,7 +112,7 @@ export type UpstreamRequest = {
   segments: readonly string[];
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
-  /** Widened to 120 s for campaign start and verify (KTD2). */
+  /** Widened to 120 s for campaign start (KTD2). */
   timeoutMs?: number;
 };
 

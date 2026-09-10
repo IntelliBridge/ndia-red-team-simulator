@@ -27,11 +27,9 @@ import {
   patchReviewerNotes,
   reportUrl,
   startCampaign,
-  verifyFinding,
   type ArtifactRow,
   type Campaign,
   type Comparison,
-  type DefenseInfo,
   type Finding,
   type RunDetail,
 } from "@/lib/api";
@@ -41,7 +39,6 @@ import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { rowLink } from "@/lib/row-link";
 import { useRoles } from "@/hooks/useRoles";
 import { useRunEvents } from "@/hooks/useRunEvents";
-import { useDefenses } from "@/hooks/useMlCatalog";
 import { LlmScorecardPanel } from "./llm-scorecard";
 
 // Run.scanner / stage_table.kind of a garak probe run (redsim/services/ml_llm.py
@@ -108,10 +105,6 @@ export default function RunPage({ params }: { params: { id: string } }) {
   const [compareResult, setCompareResult] = useState<Comparison | null>(null);
   const [compareError, setCompareError] = useState("");
   const [actionError, setActionError] = useState("");
-  const [defenseSelections, setDefenseSelections] = useState<
-    Record<string, string>
-  >({});
-  const { data: defenses = [] } = useDefenses(authed);
   useRunEvents(authed ? params.id : null, (event) => {
     if (event.type === "job") {
       void mutate();
@@ -167,7 +160,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
 
   if (isLlmRun) {
     // An LLM probe run: k/n scorecard, never an MRI (spec 15.9, D9). The
-    // campaign-only panels (MRI, eps curve, defenses, compare) do not apply.
+    // campaign-only panels (MRI, eps curve, compare) do not apply.
     const projectId = data?.project_id ?? runDetail?.project_id ?? "";
     const llmRole = roles[projectId];
     const stageTable = (runDetail?.stage_table ?? {}) as Record<
@@ -441,15 +434,6 @@ export default function RunPage({ params }: { params: { id: string } }) {
   const role = roles[campaign.project_id];
   const canAnnotate =
     role === "remediator" || role === "approver" || role === "admin";
-  const campaignModality = campaign.config.modality;
-  const availableDefenses =
-    campaignModality === "llm"
-      ? []
-      : defenses.filter(
-          (defense: DefenseInfo) =>
-            defense.status === "available" &&
-            defense.modalities.includes(campaignModality),
-        );
   const saveNotes = async () => {
     try {
       setNoteError("");
@@ -616,7 +600,6 @@ export default function RunPage({ params }: { params: { id: string } }) {
               accuracy: row.accuracy,
               n: row.n,
             }))}
-            measuredDelta={campaign.score?.delta?.delta}
             curve={campaign.curve}
             unavailableReason={
               campaign.score_status?.reason ??
@@ -678,14 +661,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
           <div className="space-y-3">
             {campaign.recommendations.map((item) => (
               <div key={item.id} className="border-border p-3 text-sm border">
-                <LabelBadge
-                  variant={item.measured ? "measured" : "candidate"}
-                  measuredDelta={
-                    item.measured
-                      ? (item.measured.delta_mri ?? null)
-                      : undefined
-                  }
-                />
+                <LabelBadge variant="candidate" />
                 <div className="mt-2 font-semibold">{item.title}</div>
                 <p className="mt-1">{item.rationale}</p>
                 <div className="text-xs text-muted-foreground">
@@ -699,63 +675,8 @@ export default function RunPage({ params }: { params: { id: string } }) {
                       {basis}
                     </a>
                   ))}{" "}
-                  · {item.narrative_source} narrative · {item.validation}
+                  · {item.status} · {item.narrative_source} narrative
                 </div>
-                {item.measured && (
-                  <p className="mt-1 text-xs">
-                    Measured verification ΔMRI {item.measured.delta_mri ?? "—"}{" "}
-                    · ΔASR {item.measured.delta_asr ?? "—"}
-                  </p>
-                )}
-                <RoleGated minRole="remediator" callerRole={role}>
-                  <select
-                    aria-label={`Defense for ${item.title}`}
-                    value={defenseSelections[item.id] ?? ""}
-                    onChange={(event) =>
-                      setDefenseSelections(
-                        (current: Record<string, string>) => ({
-                          ...current,
-                          [item.id]: event.target.value,
-                        }),
-                      )
-                    }
-                    className="mt-2 border-input bg-background p-1 border"
-                  >
-                    <option value="">Select defense</option>
-                    {availableDefenses.map((defense: DefenseInfo) => (
-                      <option key={defense.id} value={defense.id}>
-                        {defense.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={async () => {
-                      if (!item.finding_id) return;
-                      try {
-                        setActionError("");
-                        await verifyFinding(
-                          item.finding_id,
-                          defenseSelections[item.id] ?? "",
-                          {},
-                          item.id,
-                        );
-                        await mutate();
-                      } catch (cause) {
-                        setActionError(String(cause));
-                      }
-                    }}
-                    disabled={!item.finding_id || !defenseSelections[item.id]}
-                    className="ml-2 border-border px-2 py-1 border"
-                  >
-                    Verify
-                  </button>
-                  {!item.finding_id && (
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Verification unavailable: no finding is linked to this
-                      recommendation.
-                    </p>
-                  )}
-                </RoleGated>
               </div>
             ))}
           </div>,
@@ -792,7 +713,6 @@ export default function RunPage({ params }: { params: { id: string } }) {
                     modality: _modality,
                     dataset_split: _datasetSplit,
                     scoring: _scoring,
-                    defense: _defense,
                     target_snapshot: _targetSnapshot,
                     attacks: _attacks,
                     ...request
@@ -924,56 +844,6 @@ export default function RunPage({ params }: { params: { id: string } }) {
             >
               Compare
             </button>
-            {compareResult?.mode === "verify_delta" && (
-              <div className="mt-3 border-border p-3 text-sm border">
-                <strong>Measured verify comparison</strong>
-                <p>ΔMRI {compareResult.delta_mri ?? "not recorded"}</p>
-                {Object.entries(compareResult.delta_dimensions ?? {}).map(
-                  ([name, value]) => (
-                    <p key={name}>
-                      {name}: {value}
-                    </p>
-                  ),
-                )}
-                <p>
-                  Clean accuracy{" "}
-                  {compareResult.delta_acc_clean?.before.accuracy ??
-                    "not recorded"}{" "}
-                  (n={compareResult.delta_acc_clean?.before.n ?? "—"}) →{" "}
-                  {compareResult.delta_acc_clean?.after.accuracy ??
-                    "not recorded"}{" "}
-                  (n={compareResult.delta_acc_clean?.after.n ?? "—"}) · Δ{" "}
-                  {compareResult.delta_acc_clean?.delta ?? "not recorded"}
-                </p>
-                {!!compareResult.delta_families?.length && (
-                  <table className="mt-2 text-xs w-full text-left">
-                    <thead>
-                      <tr>
-                        <th>Family</th>
-                        <th>Before</th>
-                        <th>After</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {compareResult.delta_families.map((family) => (
-                        <tr
-                          key={family.family}
-                          className="border-border border-t"
-                        >
-                          <td>{family.family}</td>
-                          <td>
-                            {family.before} (n={family.n_before})
-                          </td>
-                          <td>
-                            {family.after} (n={family.n_after})
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            )}
             {compareResult?.mode === "side_by_side" && (
               <div className="mt-3 gap-3 md:grid-cols-2 grid">
                 {(compareResult.scorecards ?? []).map((scorecard, index) => (

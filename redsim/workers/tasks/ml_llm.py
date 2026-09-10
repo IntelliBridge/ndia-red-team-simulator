@@ -879,7 +879,7 @@ def _fallback_reports(
     lines += ["", "## 4. Candidate recommendations", ""]
     if recommendations:
         for rec in recommendations:
-            lines.append(f"- CANDIDATE ({rec.get('validation', 'not evaluated')}): {rec.get('title')}. "
+            lines.append(f"- CANDIDATE: {rec.get('title')}. "
                          f"{rec.get('rationale', '')}")
     else:
         lines.append("No candidate recommendations: the LLM rule layer (redsim.ml.llm.rules) is not on this tree.")

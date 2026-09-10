@@ -1,4 +1,4 @@
-"""Batch campaign and bulk verify routes (register BULK-05..08, -15; plan 12 wave B3).
+"""Batch campaign routes (register BULK-05..08; plan 12 wave B3).
 
 * ``POST /v1/campaigns/batch``: body ``{project_id, target_ids: [...], campaign: {<POST
   /v1/models/{id}/attacks body minus target_id>}, max_parallel?}`` (a flat body whose
@@ -19,10 +19,6 @@
 * ``POST /v1/campaigns/batch/{batch_id}/cancel``: gate ``run.cancel`` (remediator); one
   ``batch.cancel`` row, then ``cancel_run`` per live member; ``409 run_terminal`` when every
   member is terminal.
-* ``POST /v1/findings/{finding_id}/verify/bulk``: ``404``, gate ``verify.replay`` on the
-  finding's project, then :func:`redsim.services.ml_batches.create_verify_batch` (owner
-  decision BULK-16: one defended run per (defense, params) over every selected finding of
-  the finding's run).
 
 The bulk upload (``POST /v1/models/bulk``) and capacity (``GET /v1/ml/capacity``) routes
 live in ``redsim/api/v1/models_bulk.py`` (mounted once by ``redsim.api.app``); their wave B0
@@ -90,17 +86,6 @@ def project_required() -> HTTPException:
 
 def _actor(user: CurrentUser) -> str:
     return f"user:{user.sub}"
-
-
-def _finding_project(finding_id: str) -> str:
-    from redsim.db.models import Finding
-    from redsim.db.session import get_session
-
-    with get_session() as sess:
-        row = sess.get(Finding, finding_id)
-        if row is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="finding not found")
-        return str(row.project_id)
 
 
 def _batch_project(batch_id: str) -> str:
@@ -256,39 +241,6 @@ def cancel_batch(batch_id: str, user: CurrentUser = Depends(get_current_user)) -
         raise exc.as_http_exception() from exc
     except AuthorizationError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-
-
-# --------------------------------------------------------------------------- bulk verify
-
-
-@router.post("/findings/{finding_id}/verify/bulk", status_code=status.HTTP_202_ACCEPTED)
-async def bulk_verify(finding_id: str, request: Request,
-                      user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    """Bulk verify (BULK-15, owner decision BULK-16): 404, ``verify.replay``, then one defended run per defense."""
-    from redsim.audit.chain import resolve_writer
-    from redsim.config import load_config
-    from redsim.safety import AuthorizationError
-    from redsim.services.ml_batches import create_verify_batch
-
-    project_id = _finding_project(finding_id)
-    check(user, Action.VERIFY_REPLAY, project_id)
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001 - an empty or malformed body is the default request
-        body = None
-    if body is not None and not isinstance(body, dict):
-        raise api_error(PARAMS_OUT_OF_RANGE, "the request body must be an object", field="body")
-    config = load_config()
-    try:
-        handle = create_verify_batch(
-            finding_id=finding_id, actor=_actor(user), config=config, audit_writer=resolve_writer(config),
-            body=body or {}, idempotency_key=_idempotency_key(request),
-        )
-    except ApiError as exc:
-        raise exc.as_http_exception() from exc
-    except AuthorizationError as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    return handle.to_response()
 
 
 __all__ = ["BATCH_RUN", "project_field", "project_required", "router"]

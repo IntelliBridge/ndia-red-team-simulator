@@ -3,12 +3,10 @@
 ``interpret`` turns measurement / observation rows into ``Interpretation``
 sentences (``kind="inferred"``) whose ``basis`` cites the ids they rest on.
 ``recommend`` turns the same evidence into ``CandidateRecommendation`` rows
-(``status="candidate"``, ``validation="not evaluated"``, ``measured=None``)
-that cite the ids that triggered them and name the defense they map to as a
-``defense:<id>`` reference. ``<id>`` is a ``DefenseConfig.id`` the verify loop
-accepts (``feature_squeezing``, ``spatial_smoothing``, ``jpeg_compression``) or
-the Phase B apply step ``adversarial_training``. ``defense_configs`` turns
-those references back into ``DefenseConfig`` rows.
+(``status="candidate"``) that cite the ids that triggered them. Their
+``references`` are plain text: the ART class a candidate maps to and the paper
+that motivates it. A candidate names a direction; no measurement of its effect
+exists in the record.
 
 Both entry points take ``(measurements, observations, score: MRIRecord | None)``
 plus an optional fourth ``settings: ScoringConfig`` whose ``interpretation``
@@ -21,7 +19,7 @@ measurement, observation or interpretation the caller passed in, so a
 ``THRESHOLDS`` holds the default thresholds.
 
 No rule asserts a cause in the training data or architecture. No rule states a
-numeric gain: direction only, until a verify run measures a delta MRI.
+numeric gain: direction only.
 Thresholds are printed next to each statement. Rule ids are stable (``r.R3``
 means the same rule in every run).
 
@@ -44,7 +42,6 @@ from typing import Any
 
 from redsim.ml.schema import (
     CandidateRecommendation,
-    DefenseConfig,
     Interpretation,
     InterpretationThresholds,
     Measurement,
@@ -79,25 +76,19 @@ THRESHOLDS: dict[str, float] = {
     "top3_changed_fraction": 0.5,                     # R3t
 }
 
-# Defense ids a candidate may map to. The first three are DefenseConfig ids the verify loop applies
-# (redsim.ml.defenses); adversarial_training is the Phase B apply step.
-DEFENSE_IDS: tuple[str, ...] = ("feature_squeezing", "spatial_smoothing", "jpeg_compression", "adversarial_training")
-
-# defense id -> (ART class path, motivating reference, phase / runnable note)
-_DEFENSES: dict[str, tuple[str, str, str]] = {
+# Technique -> (ART class path, motivating reference). Plain-text references a candidate may cite.
+_TECHNIQUES: dict[str, tuple[str, str]] = {
     "adversarial_training": ("art.defences.trainer.AdversarialTrainerMadryPGD",
-                             "Madry et al. 2018, Towards Deep Learning Models Resistant to Adversarial Attacks",
-                             "Phase B apply step, not runnable by the Phase A verify loop"),
+                             "Madry et al. 2018, Towards Deep Learning Models Resistant to Adversarial Attacks"),
     "feature_squeezing": ("art.defences.preprocessor.FeatureSqueezing",
-                          "Xu, Evans, Qi 2018, Feature Squeezing", "Phase A verify loop"),
+                          "Xu, Evans, Qi 2018, Feature Squeezing"),
     "spatial_smoothing": ("art.defences.preprocessor.SpatialSmoothing",
-                          "Xu, Evans, Qi 2018, Feature Squeezing", "Phase A verify loop"),
+                          "Xu, Evans, Qi 2018, Feature Squeezing"),
     "jpeg_compression": ("art.defences.preprocessor.JpegCompression",
-                         "Dziugaite, Ghahramani, Roy 2016, A study of the effect of JPG compression on adversarial images",
-                         "Phase A verify loop (image)"),
+                         "Dziugaite, Ghahramani, Roy 2016, A study of the effect of JPG compression on adversarial images"),
 }
-_DIRECTION_ONLY = ("Intended direction only: expected gain is not measured until a verify run reports a "
-                   "measured delta MRI on this model at these settings.")
+_DIRECTION_ONLY = ("Intended direction only: this candidate names a direction, and no measurement of its effect "
+                   "on this model exists.")
 
 
 def effective_thresholds(thresholds: InterpretationThresholds | None,
@@ -469,46 +460,18 @@ def interpret(measurements: list[Measurement], observations: list[Observation], 
 
 # --------------------------------------------------------------------------- recommendations
 
-def _registered_defense_ids() -> set[str]:
-    try:
-        from redsim.ml.defenses import list_defenses  # lazy: owned by another module
-        ids = {str(d.get("id")) for d in list_defenses() if isinstance(d, dict) and d.get("id")}
-        if ids:
-            return ids | set(_DEFENSES)
-    except Exception as exc:  # noqa: BLE001 -- module may not exist yet; the built-in ids are the fallback
-        logger.debug("redsim.ml.defenses unavailable (%s), using built-in defense ids", type(exc).__name__)
-    return set(_DEFENSES)
-
-
-def _refs(defense_ids: Iterable[str], *extra: str, bypass: bool = False) -> list[str]:
-    known = _registered_defense_ids()
+def _refs(techniques: Iterable[str], *extra: str, bypass: bool = False) -> list[str]:
+    """Plain-text references for the named techniques: the ART class and the paper, then ``extra``."""
     refs: list[str] = []
-    for d in defense_ids:
-        refs.append(f"defense:{d}" if d in known else f"defense:{d} (not registered in redsim.ml.defenses)")
-        if d in _DEFENSES:
-            cls, paper, phase = _DEFENSES[d]
-            refs.append(f"{cls} ({phase})")
+    for name in techniques:
+        if name in _TECHNIQUES:
+            cls, paper = _TECHNIQUES[name]
+            refs.append(cls)
             refs.append(paper)
     refs.extend(extra)
     if bypass:
         refs.append("Athalye, Carlini, Wagner 2018, Obfuscated Gradients Give a False Sense of Security")
     return list(dict.fromkeys(refs))
-
-
-def defense_configs(rec: CandidateRecommendation) -> list[DefenseConfig]:
-    """The ``defense:<id>`` references of a candidate as ``DefenseConfig`` rows (params left to the verify request).
-
-    ``adversarial_training`` is returned too when cited. It is a Phase B apply step, so the verify loop must check
-    the id against ``redsim.ml.defenses`` before applying it.
-    """
-    out: list[DefenseConfig] = []
-    for ref in rec.references:
-        if not ref.startswith("defense:"):
-            continue
-        did = ref[len("defense:"):].split(" ", 1)[0]
-        cls = _DEFENSES[did][0] if did in _DEFENSES else None
-        out.append(DefenseConfig(id=did, art_class=cls))
-    return out
 
 
 def _rank_key(rec: CandidateRecommendation, by_id: dict[str, Measurement], ctx: _Ctx) -> tuple[float, float, float, str]:
@@ -563,7 +526,7 @@ def recommend(measurements: list[Measurement], observations: list[Observation], 
             return
         recs.append(CandidateRecommendation(
             id=f"r.{rule}", title=title, rationale=f"{rationale} {_DIRECTION_ONLY}", triggered_by=cited,
-            validation="not evaluated", measured=None, references=references))
+            references=references))
 
     # R1 / R1b -- single-step success at the smallest eps, split by the noise control.
     if clean is not None:
@@ -628,13 +591,13 @@ def recommend(measurements: list[Measurement], observations: list[Observation], 
             r3_txt.append(f"attributions under {a} at eps={ref_txt} shifted by {shift:.3f} on average (>= {t['expl_shift']:g})")
     r3_trig += r3_rows
     if r3_trig:
-        defenses = ["feature_squeezing", "spatial_smoothing"] if modality != "tabular" else ["feature_squeezing"]
+        techniques = ["feature_squeezing", "spatial_smoothing"] if modality != "tabular" else ["feature_squeezing"]
         add("R3", "Investigate reliance on peripheral or irrelevant features (input preprocessing, feature squeezing, "
                   "spatial smoothing, cropping/augmentation, retraining with masking)",
             "Heuristic: " + ", and ".join(r3_txt) + ". This is consistent with reliance on features a small perturbation "
             "can change. It is a heuristic reading of attribution maps, not a causal finding.",
             [*r3_trig, *_interp_ids(interpretation, "I4", obs_ids), *_interp_ids(interpretation, "I5", r3_rows)],
-            _refs(defenses, bypass=True))
+            _refs(techniques, bypass=True))
 
     # R3t -- tabular: driving features changed under attack (from the observations' feature rankings).
     frac, n_flip, changed_ids = _top3_changed(observations)
@@ -648,7 +611,7 @@ def recommend(measurements: list[Measurement], observations: list[Observation], 
             f"Heuristic: on {k_changed} of {n_flip} flipped rows the top-3 features driving the prediction changed under "
             f"attack (fraction {float(frac):.2f} >= {t['top3_changed_fraction']:g}). Validating and clipping feature "
             "ranges at inference bounds what an L-inf perturbation can reach.",
-            trig, _refs(["feature_squeezing"], "estimator clip_values (ART, Phase A verify)",
+            trig, _refs(["feature_squeezing"], "estimator clip_values (ART)",
                         "Known limit: bounds only what lies outside the valid range"))
 
     # R4 -- confidently wrong.
@@ -682,16 +645,16 @@ def recommend(measurements: list[Measurement], observations: list[Observation], 
     r6_rows = [m for m in ctx.evasion if clean is not None and float(m.accuracy) < acc_clean - t["any_drop"]]
     if r6_rows and clean is not None:
         worst = min(r6_rows, key=lambda m: float(m.accuracy))
-        defenses = (["jpeg_compression", "spatial_smoothing", "feature_squeezing"] if modality != "tabular"
-                    else ["feature_squeezing"])
-        add("R6", "Input preprocessing defenses as a cheap first experiment (JPEG compression, spatial smoothing, "
+        techniques = (["jpeg_compression", "spatial_smoothing", "feature_squeezing"] if modality != "tabular"
+                      else ["feature_squeezing"])
+        add("R6", "Input preprocessing as a cheap first experiment (JPEG compression, spatial smoothing, "
                   "feature squeezing)",
             f"Accuracy fell from {clean.n_correct}/{clean.n} ({acc_clean:.3f}) to {worst.n_correct}/{worst.n} "
             f"({float(worst.accuracy):.3f}) under {worst.attack_id} at eps={_eps_txt(_eps(worst))} (drop > "
-            f"{t['any_drop']:g}, {len(r6_rows)} evasion rows affected). Preprocessing defenses are cheap to test with "
-            "the verify loop. Caveat: defenses that work by masking gradients are often bypassed by adaptive attacks "
-            "(Athalye, Carlini, Wagner 2018), so a measured delta MRI here is an upper bound on their benefit.",
-            [m.id for m in r6_rows] + [clean.id], _refs(defenses, bypass=True))
+            f"{t['any_drop']:g}, {len(r6_rows)} evasion rows affected). Input preprocessing is cheap to test in a "
+            "separate campaign. Caveat: preprocessing that works by masking gradients is often bypassed by adaptive "
+            "attacks (Athalye, Carlini, Wagner 2018).",
+            [m.id for m in r6_rows] + [clean.id], _refs(techniques, bypass=True))
 
     # R7 -- always.
     anchor = clean.id if clean is not None else measurements[0].id

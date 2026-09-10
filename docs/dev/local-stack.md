@@ -49,7 +49,7 @@ manifest of the build in hand, never as a product claim.
 
 `deploy/docker-compose.yml` brings up, in the default profile: `postgres`
 (postgres 16 with pgaudit), `redis`, `keycloak`, `minio`, `redsim-api`,
-`redsim-worker` (`-Q scans`: campaigns, model validation, verify),
+`redsim-worker` (`-Q scans`: campaigns, model validation),
 `redsim-worker-default` (`-Q default`: report rendering, the reaper, tenant
 integrity, WORM export), `redsim-beat`, `redsim-web` and `redsim-log-ingest`.
 
@@ -162,9 +162,9 @@ curl -s -H "$H" "$API/v1/audit/verify?run=<run_id>" | jq '{verified, count}'
 
 Follow-ups on a finding: `POST /v1/findings/{id}/explain`,
 `POST /v1/findings/{id}/harden` (`{"llm_narrative": true}` only produces prose
-when Pythia is configured on the worker), `POST /v1/findings/{id}/verify`
-(`{"defense": "feature_squeezing"}`), then
-`GET /v1/runs/{verify_run}/compare?with={baseline_run}`. The tabular path is
+when Pythia is configured on the worker), then
+`GET /v1/runs/{run_a}/compare?with={run_b}`, which reads two campaign runs
+side by side (`mode: side_by_side`). The tabular path is
 the same with `bundled_id: "url_trees"` and `attack_ids: ["pgd",
 "hopskipjump"]`: `pgd` runs by surrogate transfer and is admitted since
 `dd2bbd4` (applicability by capability tag) and `58461cc` (the gradients
@@ -254,9 +254,8 @@ The files: `tests/e2e/test_harness_smoke.py` (wave 3, 8 cases through the
 real child) and, added in wave 4 as the completion-criteria evidence,
 `tests/e2e/test_ml_campaigns.py` (an image and a tabular campaign to
 `succeeded` with scorecard, findings, limitations and the narrative on and
-off), `tests/e2e/test_ml_verify_upload_reports.py` (verify-after-harden with
-a measured ΔMRI through `compare`, an ONNX upload accepted and a pickle
-refused, the report sections and `report.pdf` as 501) and
+off), `tests/e2e/test_ml_upload_reports.py` (an ONNX upload accepted and
+a pickle refused, the report sections and the report formats) and
 `tests/e2e/test_ml_governance.py` (the RBAC negative matrix, the RLS
 negatives on the Postgres lane, `audit verify --all` clean then broken, no
 Pythia secret in `/v1/ml/capabilities`).

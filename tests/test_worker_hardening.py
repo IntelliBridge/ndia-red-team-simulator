@@ -394,7 +394,6 @@ class TestQueueRouting(unittest.TestCase):
         routes = app.conf.task_routes
         for name in (
             "redsim.scan_start",
-            "redsim.verify_replay",
             "redsim.ml_campaign_run",
             "redsim.ml_model_validate",
         ):
@@ -411,17 +410,18 @@ class TestQueueRouting(unittest.TestCase):
 
     def test_removed_pentest_tasks_are_not_routed(self):
         # fix / agent / vuln-fixer / CI-gate / parallel_fix tasks were removed
-        # with the pentest domain; no dead routes linger in the table.
+        # with the pentest domain, verify_replay with the verify loop (2026-09-09);
+        # no dead routes linger in the table.
         from redsim.workers.celery_app import app
         routes = app.conf.task_routes
         for name in ("redsim.fix_generate", "redsim.agent_run",
                      "redsim.vulnfixer_render", "redsim.ci_gate",
-                     "redsim.parallel_fix"):
+                     "redsim.parallel_fix", "redsim.verify_replay"):
             self.assertNotIn(name, routes)
         # Every routed task name is one the app actually includes.
         self.assertEqual(
             set(routes),
-            {"redsim.scan_start", "redsim.verify_replay", "redsim.report_render",
+            {"redsim.scan_start", "redsim.report_render",
              "redsim.reap_stale_jobs", "redsim.verify_tenant_integrity",
              "redsim.export_chains_to_worm", "redsim.ml_campaign_run",
              "redsim.ml_model_validate", "redsim.ml_llm_probe_run"},

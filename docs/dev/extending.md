@@ -7,7 +7,7 @@ scanner registry in
 duplicate detection, a structural protocol check, opt-in entry-point
 discovery, an allowlist, Ed25519 signatures and an out-of-process sandbox.
 The **ML vertical** adds two protocols of its own, `Target` and
-`AttackAdapter`, plus explainers, recommendation rules and ART defenses, and
+`AttackAdapter`, plus explainers and recommendation rules, and
 registers into the same seam.
 
 This page says what exists on `main` and what the product spec assigns to the
@@ -25,9 +25,9 @@ described as "PR #8" or "planned" may be presented as working until it merges
 | Effect-class gate (`read` / `active` / `external`) | `redsim/effects.py` | exists, unused by any route today |
 | `Target` protocol and `Sample` | `redsim/ml/targets/base.py` | exists |
 | `AttackAdapter` protocol and `AttackOutput` | `redsim/ml/attacks/base.py` | exists |
-| `AttackInfo`, `ParamSpec`, `TargetInfo`, `DefenseConfig` and the rest of the evidence schema | `redsim/ml/schema.py` | exists, **frozen by P0** |
+| `AttackInfo`, `ParamSpec`, `TargetInfo` and the rest of the evidence schema | `redsim/ml/schema.py` | exists, **frozen by P0** |
 | `TinyTarget` test double | `tests/ml/fakes.py` | exists |
-| Concrete targets, attack adapters and their registries, `campaign.py`, `eval.py`, `scoring.py`, `defenses.py`, `datasets/`, explainers, recommendation rules | `redsim/ml/…` | PR #8 / #9, not on `main` |
+| Concrete targets, attack adapters and their registries, `campaign.py`, `eval.py`, `scoring.py`, `datasets/`, explainers, recommendation rules | `redsim/ml/…` | PR #8 / #9, not on `main` |
 
 ## The ML protocols
 
@@ -118,7 +118,7 @@ unavailable with the reason.
 5. Keep it deterministic for a given seed, and list every nondeterminism
    source in `AttackOutput.notes` so it lands in `Provenance`.
 
-## Explainers, rules and defenses
+## Explainers and rules
 
 - **Explainers** (`redsim/ml/explain/`, package exists empty on `main`):
   `shap_image.py` (`GradientExplainer` on `Target.torch_model()`),
@@ -132,22 +132,10 @@ unavailable with the reason.
   that cite measurement ids and produce `Interpretation` (`kind: "inferred"`)
   and `CandidateRecommendation` (`status: "candidate"`) records. The Pythia
   writer in `narrative.py` adds prose only, with `narrative_source = "rules"`
-  when Pythia is not configured. No expected gain appears on a recommendation
-  until verify measures it.
-- **Defenses** (`redsim/ml/defenses.py`, `DefenseConfig` in the schema): ART
-  preprocessors applied only to a worker-side evaluation copy inside the
-  verify-after-harden loop (spec section 16.5). Phase A set:
-
-| Defense id | ART class | Defaults | Modalities |
-|---|---|---|---|
-| feature squeezing | `art.defences.preprocessor.FeatureSqueezing` | `bit_depth=4`, `clip_values` from the target | image, tabular |
-| spatial smoothing | `art.defences.preprocessor.SpatialSmoothing` | `window_size=3` | image |
-| JPEG compression | `art.defences.preprocessor.JpegCompression` | `quality=50`, `clip_values` from the target | image |
-
-  A new defense declares its ART class, parameter schema and modalities, is
-  listed by the planned `GET /v1/defenses`, and never modifies or persists
-  the model artifact. Adversarial training and defensive distillation are
-  Phase B "apply" steps and stay disabled with a reason.
+  when Pythia is not configured. A recommendation carries `status:
+  "candidate"` and nothing more. It may cite ART classes and papers as plain
+  text. Nothing is applied to the model. The verify paradigm was removed on
+  2026-09-09 (product owner decision, `docs/project-brief.md`).
 
 ## The platform registry seam
 
@@ -244,5 +232,5 @@ models take the same path on every run. These files are not on `main` yet.
 and drives the approver gate (`requires_approval`). It was written for the
 pentest agents and tools ([ADR 0004](../adr/0004-unified-effect-class-gate.md))
 and no mounted route consults it today. The ML routes gate on the `Action`
-members in `redsim/api/policy.py` instead, and the verify-after-harden loop is
-the only "apply" step, always user-triggered.
+members in `redsim/api/policy.py` instead. No route applies anything to a
+model.

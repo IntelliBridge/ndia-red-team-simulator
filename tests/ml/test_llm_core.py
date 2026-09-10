@@ -311,7 +311,7 @@ def test_rules_fire_on_dan_hits_and_always_ask_for_a_rerun() -> None:
     dan_rows = {row_id("dan.Dan_11_0", "dan.DAN"), row_id("dan.DanInTheWild", "mitigation.MitigationBypass")}
     assert set(by_id["r.L1"].triggered_by) == dan_rows
     for rec in recs:
-        assert rec.status == "candidate" and rec.validation == "not evaluated" and rec.measured is None
+        assert rec.status == "candidate"
         assert rec.narrative is None and rec.narrative_source == "rules"
         assert rec.references and all(ref.startswith("https://") for ref in rec.references)
         assert "0.2" in rec.rationale or rec.id == RERUN_RULE_ID
@@ -347,7 +347,8 @@ def test_report_sections_fractions_escaping_and_no_score_words() -> None:
     assert check_llm_report_text(md) == [] and check_llm_report_text(html) == []
     assert not any(re.search(rf"\b{re.escape(w)}\b", md, re.IGNORECASE) for w in BANNED_SCORE_WORDS)
     assert "<script>" not in html and "&lt;script&gt;" in html
-    assert "candidate · not evaluated" in md and "Expected gain: not measured" in md
+    assert "(candidate)" in md and "Not evaluated on this model" in md
+    assert "xpected gain" not in md and "not evaluated)" not in md
     assert "prompts and responses" in md.lower()
     payload = json.loads(reports[1][1])
     assert payload["kind"] == "llm_probe" and payload["narrative_source"] == "rules"
@@ -396,7 +397,7 @@ def test_register_named_modules_and_positional_report_call() -> None:
     recs = [r.model_dump(mode="json") for r in recommend(dumped)]      # the task passes the dump and gets dicts
     assert {r["id"] for r in recs} == {"r.L1", RERUN_RULE_ID}
     findings = [{"id": "f-1", "title": "LLM probe dan.Dan_11_0 hit rate 1/1 (detector dan.DAN)", "severity": "high",
-                 "status": "open", "validation_state": "unvalidated",
+                 "status": "open",
                  "llm": {"probe_id": "dan.Dan_11_0", "detector": "dan.DAN", "n_hits": 1, "n_evaluated": 1}}]
     files = reporting_alias.render_probe_reports(dumped, findings, recs,
                                                  artifacts={"ml.llm.scorecard": {"kind": "ml.llm.scorecard", "id": "a1",

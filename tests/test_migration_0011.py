@@ -53,9 +53,11 @@ def _script_dir() -> ScriptDirectory:
     return ScriptDirectory.from_config(cfg)
 
 
-def test_0011_is_the_single_head_above_0010():
+def test_0011_sits_above_0010_on_a_single_head_chain():
+    # 0011 was the head until 0012_remove_verify_paradigm (2026-09-09) moved it
+    # once more; tests/test_migration_0012.py pins the exact head.
     script = _script_dir()
-    assert script.get_heads() == [REVISION]
+    assert len(script.get_heads()) == 1
     rev = script.get_revision(REVISION)
     assert rev.down_revision == DOWN_REVISION
 
@@ -278,7 +280,8 @@ def test_sqlite_upgrade_downgrade_round_trip(tmp_path: Path, monkeypatch: pytest
     cfg.set_main_option("script_location", str(ROOT / "redsim" / "db" / "migrations"))
 
     command.stamp(cfg, DOWN_REVISION)
-    command.upgrade(cfg, "head")
+    # To 0011 itself, not head: 0012 drops ml_campaigns.baseline_run_id and has its own round trip.
+    command.upgrade(cfg, REVISION)
     up = _sqlite_state(engine)
     for table in NEW_TABLES:
         assert table in up["tables"]
@@ -303,7 +306,7 @@ def test_sqlite_upgrade_downgrade_round_trip(tmp_path: Path, monkeypatch: pytest
     with engine.connect() as conn:
         assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == DOWN_REVISION
 
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REVISION)
     again = _sqlite_state(engine)
     again["tables"].discard("alembic_version")
     again["columns"].pop("alembic_version", None)

@@ -15,25 +15,12 @@ export interface FindingCardProps {
   severity: string;
   status: string;
   target?: string | null;
-  validationState?: string | null;
-  /** Right-hand actions slot (Apply Patch / Verify / etc.) */
+  /** Right-hand actions slot (Dismiss and the like). */
   actions?: ReactNode;
   /** Optional description / evidence preview */
   children?: ReactNode;
   className?: string;
 }
-
-// The validation chip shows only a verify outcome (poc_passed / poc_failed /
-// inconclusive). Every finding starts "unvalidated", which says nothing more
-// than "not re-tested yet", and LLM probe findings have no verify loop at all,
-// so that default state renders no chip (owner decision 2026-09-09).
-// `poc_failed` is orange, not red: red is the brand accent in this UI.
-const VALIDATION_TONES: Record<string, string> = {
-  poc_passed: "bg-emerald-400/10 text-emerald-300",
-  poc_failed: "bg-orange-500/20 text-orange-200",
-  inconclusive: "bg-amber-500/15 text-amber-200",
-  unvalidated: "bg-muted text-muted-foreground",
-};
 
 export function FindingCard({
   id,
@@ -41,15 +28,10 @@ export function FindingCard({
   severity,
   status,
   target,
-  validationState,
   actions,
   children,
   className,
 }: FindingCardProps) {
-  const validationTone =
-    validationState && VALIDATION_TONES[validationState]
-      ? VALIDATION_TONES[validationState]
-      : "bg-muted text-muted-foreground";
   return (
     <div
       className={cn(
@@ -80,16 +62,6 @@ export function FindingCard({
         <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-foreground/80">
           status: {status}
         </span>
-        {validationState && validationState !== "unvalidated" && (
-          <span
-            className={cn(
-              "inline-flex items-center rounded px-1.5 py-0.5",
-              validationTone,
-            )}
-          >
-            {validationState.replace("_", " ")}
-          </span>
-        )}
       </div>
       {children && (
         <div className="text-sm text-foreground/80">{children}</div>

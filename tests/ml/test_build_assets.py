@@ -25,10 +25,8 @@ from redsim.ml.assets.build import (
     DETECTION_PIPELINE_CAVEATS,
     FIXTURE_ONLY_CAVEAT,
     BuildOptions,
-    attach_train_slice,
     build_assets,
     build_cifar10_fixture,
-    build_cnn_asset,
     build_detection_asset,
     build_url_asset,
     resolve_detection_data,
@@ -91,7 +89,7 @@ def test_build_options_defaults_and_canonicalisation(tmp_path: Path):
         BuildOptions(dataset="bogus")
 
 
-def test_build_options_cover_the_phase_b_modalities_and_the_train_slice(tmp_path: Path):
+def test_build_options_cover_the_phase_b_modalities(tmp_path: Path):
     # The vocabulary: P0's three plus text and detection; detection is never part of ``all``.
     assert BUILD_DATASET_CHOICES == ("image", "tabular", "cifar10", "text", "detection", "all")
     assert BUILD_MODEL_IDS == {"image": "vehicles_cnn", "cifar10": "cifar10_smallcnn", "tabular": "url_trees",
@@ -102,22 +100,12 @@ def test_build_options_cover_the_phase_b_modalities_and_the_train_slice(tmp_path
     assert BuildOptions(dataset="text").selected == {"text"} and BuildOptions(dataset="detection").selected == {"detection"}
     assert BuildOptions(only=("sms_tfidf_lr",)).selected == {"text"}
     assert BuildOptions(only=("assets_frcnn_mnv3", "url_classifier")).selected == {"detection", "tabular"}
-    # The training slice is on by default, sized and seeded from the build; the detector reads its published subset.
+    # The detector reads its published subset.
     opts = BuildOptions(out=tmp_path, seed=4)
-    assert opts.train_slice is True and opts.train_slice_n == ds.DEFAULT_TRAIN_SLICE_N == 1536
-    assert opts.train_slice_options == ds.TrainSliceOptions(n=1536, seed=4, enabled=True)
-    assert BuildOptions(train_slice=False, train_slice_n=8).train_slice_options == ds.TrainSliceOptions(n=8, seed=0, enabled=False)
-    assert opts.detection_image_size == 320 and opts.detection_subset is None and opts.attach_train_slice == ()
+    assert opts.detection_image_size == 320 and opts.detection_subset is None
     assert BuildOptions(detection_subset="/x/subset").detection_subset == Path("/x/subset")
-    # ``--attach-train-slice`` alone builds nothing; the id must be an image model.
-    attach = BuildOptions(build_models=False, attach_train_slice=("vehicles_cnn", "cifar10_smallcnn"))
-    assert attach.selected == set() and attach.attach_train_slice == ("vehicles_cnn", "cifar10_smallcnn")
-    with pytest.raises(ValueError, match="non-image model"):
-        BuildOptions(attach_train_slice=("url_classifier",))
     with pytest.raises(ValueError, match="unknown model id"):
         BuildOptions(only=("resnet_from_upload",))
-    with pytest.raises(ValueError, match="train_slice_n"):
-        BuildOptions(train_slice_n=0)
     with pytest.raises(ValueError, match="holdout"):
         BuildOptions(holdout=1.0)
     with pytest.raises(ValueError, match="detection_image_size"):
@@ -458,7 +446,7 @@ def test_text_build_falls_back_to_the_committed_sample_offline(tmp_path: Path, m
     assert set(result.models) == {"sms_tfidf_lr"}
     model = result.models["sms_tfidf_lr"]
     assert model.modality == "text" and model.format == "sklearn_joblib" and model.fixture_only is True
-    assert model.gradients is False and model.train_slice_split is None
+    assert model.gradients is False
     entry = result.datasets[model.dataset_id]
     assert entry.fixture_only is True and FIXTURE_ONLY_CAVEAT in entry.caveats and model.dataset_caveats == entry.caveats
     sample = ds.committed_sms_sample_path()
@@ -634,60 +622,3 @@ def test_load_detection_subset_reads_the_published_layout_and_checks_digests(tmp
     assert ds.load_detection_subset(subset_root, image_size=16).split.n == 3
     with pytest.raises(ds.DatasetUnavailable, match="manifest not found"):
         ds.load_detection_subset(tmp_path / "nowhere", image_size=16)
-
-
-def test_attach_train_slice_records_an_out_of_band_slice(tmp_path: Path):
-    """The vehicles_cnn case: the model was built before the slice existed; the slice was drawn later with its
-    ``train_slice.json`` sidecar; ``--attach-train-slice`` records it with the digest unchanged, no retraining."""
-    root = tmp_path / "assets"
-    data = _synthetic_images()
-    img_ds, img_model = build_cnn_asset(data, model_id="vehicles_cnn", root=root, epochs=1, seed=0,
-                                        train_slice=ds.TrainSliceOptions(enabled=False), log=_quiet)
-    assert img_model.train_slice_split is None and "train_slice" not in img_ds.splits
-    manifest = AssetManifest.new()
-    manifest.datasets[img_ds.id] = img_ds
-    manifest.models[img_model.id] = img_model
-    write_manifest(manifest, root / MANIFEST_NAME)
-    slice_path = root / "bundled" / "vehicles_cnn" / ds.TRAIN_SLICE_NAME
-    sidecar_path = slice_path.parent / ds.TRAIN_SLICE_SIDECAR_NAME
-    _sub, split = ds.write_train_slice(data.train, slice_path, root, n=20, seed=0)
-    sidecar = ds.TrainSliceSidecar(model_id="vehicles_cnn", dataset_id=img_ds.id, revision=img_ds.revision,
-                                   source_split="train", split_entry=split, n_requested=20, seed=0, note="drawn later")
-    ds.write_train_slice_sidecar(sidecar_path, sidecar)
-    assert ds.read_train_slice_sidecar(sidecar_path) == sidecar
-
-    logs: list[str] = []
-    result = build_assets(BuildOptions(out=root, build_models=False, attach_train_slice=("vehicles_cnn",)),
-                          log=logs.append)
-    model = result.models["vehicles_cnn"]
-    assert model.train_slice_split == "train_slice" and result.datasets[img_ds.id].splits["train_slice"] == split
-    assert model.manifest_sha256 == img_model.manifest_sha256, "the pointer sits outside the frozen projection"
-    assert any("training slice(s) recorded: vehicles_cnn (train_slice)" in line for line in logs)
-    loaded = load_manifest(root / MANIFEST_NAME)
-    assert loaded.models["vehicles_cnn"].train_slice_split == "train_slice"
-    assert verify_manifest(loaded, root) == [] and not verify_model_assets(loaded, root, "vehicles_cnn")
-    reloaded = ds.load_train_slice(root / split.file.path, expected_sha256=split.file.sha256)  # type: ignore[union-attr]
-    assert reloaded.n == 20 and "train slice train_slice" in summarize(loaded)
-
-    # Refusals: another split, another dataset, a slice the sidecar does not vouch for, a model not built.
-    for update, needle in (({"source_split": "other"}, "training split"),
-                           ({"dataset_id": "hf:someone/else"}, "bound to"),
-                           ({"revision": "another-rev"}, "revision"),
-                           ({"model_id": "cifar10_smallcnn"}, "describes")):
-        ds.write_train_slice_sidecar(sidecar_path, sidecar.model_copy(update=update))
-        with pytest.raises(DatasetUnavailable, match=needle):
-            attach_train_slice(load_manifest(root / MANIFEST_NAME), root, "vehicles_cnn", log=_quiet)
-    ds.write_train_slice_sidecar(sidecar_path, sidecar)
-    with pytest.raises(DatasetUnavailable, match="no entry"):
-        attach_train_slice(load_manifest(root / MANIFEST_NAME), root, "cifar10_smallcnn", log=_quiet)
-    payload = bytearray(slice_path.read_bytes())
-    payload[-1] ^= 0xFF
-    slice_path.write_bytes(bytes(payload))
-    with pytest.raises(DatasetUnavailable, match="refusing to record"):
-        attach_train_slice(load_manifest(root / MANIFEST_NAME), root, "vehicles_cnn", log=_quiet)
-    slice_path.unlink()
-    with pytest.raises(DatasetUnavailable, match="missing"):
-        attach_train_slice(load_manifest(root / MANIFEST_NAME), root, "vehicles_cnn", log=_quiet)
-    with pytest.raises(ds.DatasetUnavailable, match="sidecar"):
-        attach_train_slice(load_manifest(root / MANIFEST_NAME), root, "vehicles_cnn", sidecar=tmp_path / "none.json",
-                           log=_quiet)

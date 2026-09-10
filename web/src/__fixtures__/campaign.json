@@ -41,7 +41,7 @@
   ],
   "observations": [{"id": "o.1", "sample_index": 3, "true_label": "car", "pred_clean": "car", "pred_adv": "truck", "flipped": true, "confidence_clean": 0.88, "confidence_adv": 0.71, "artifacts": {"original": "fixture-original", "adv": "fixture-adv", "perturbation": "fixture-perturbation", "control": "fixture-control", "shap_clean": "fixture-shap-clean", "shap_adv": "fixture-shap-adv"}, "artifact_sha256": {}, "center_mass_ratio_clean": 0.61, "center_mass_ratio_adv": 0.43, "metric_kind": "heuristic", "metric_note": "Illustrative center-mass ratio.", "expl_shift": 0.18, "modality": "image", "linf_norm": 0.03, "l2_norm": 0.42, "control_pred": "car", "control_confidence": 0.79}],
   "interpretation": [{"id": "i.1", "statement": "The evasion family reduced accuracy at the reference setting.", "basis": ["m.evasion.fgsm"], "kind": "inferred"}],
-  "recommendations": [{"id": "r.1", "title": "Evaluate input preprocessing", "rationale": "The measured evasion gap triggered a candidate rule.", "triggered_by": ["m.evasion.fgsm"], "status": "candidate", "validation": "not evaluated", "references": [], "narrative_source": "rules"}],
+  "recommendations": [{"id": "r.1", "title": "Evaluate input preprocessing", "rationale": "The measured evasion gap triggered a candidate rule.", "triggered_by": ["m.evasion.fgsm"], "status": "candidate", "references": [], "narrative_source": "rules"}],
   "limitations": ["FIXTURE — illustrative values are not evidence for a deployed model."],
   "provenance": {"dataset_id": "fixture-public-image", "dataset_revision": "fixture-revision", "seed": 7},
   "reviewer_notes": null,

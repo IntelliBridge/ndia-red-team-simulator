@@ -3,11 +3,10 @@
 Covers:
   redsim/workers/bootstrap.py
   redsim/workers/tasks/scan.py
-  redsim/workers/tasks/verify.py
   redsim/workers/tasks/report.py
 
 (The pentest fix / parallel_fix / exports / ci_gate task modules were removed
-with the pentest domain.)
+with the pentest domain, the verify task with the verify loop.)
 
 All tests are fully offline: Celery runs in eager/apply() mode; no real
 Redis, Postgres, or network connection is made.  The DB session, service
@@ -644,148 +643,6 @@ class TestScanStart(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# verify.py
-# ---------------------------------------------------------------------------
-
-class TestVerifyReplay(unittest.TestCase):
-
-    def _verify_task(self):
-        from redsim.workers.tasks.verify import verify_replay
-        return verify_replay
-
-    def _make_outcome(self, status="verified", strategy="poc"):
-        from redsim.services.verify import VerifyOutcome
-        return VerifyOutcome(
-            finding_id="find-001",
-            status=status,
-            strategy=strategy,
-            evidence={},
-            notes="ok",
-        )
-
-    def test_verified_maps_to_poc_passed(self):
-        _ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={"finding_id": "find-001", "repo_path": None},
-        )
-        finding_row = MagicMock()
-        finding_row.schema_blob = _make_finding_blob()
-        sess.get.side_effect = [job, finding_row]
-
-        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("redsim.config.load_config") as mock_cfg, \
-             patch("redsim.services.verify.verify",
-                   return_value=self._make_outcome("verified")):
-            mock_cfg.return_value = MagicMock(target_allowlist=[])
-            result = self._verify_task().apply(args=["job-ver-001"]).get()
-
-        self.assertEqual(result["validation_state"], "poc_passed")
-        self.assertEqual(finding_row.validation_state, "poc_passed")
-        self.assertIsNotNone(finding_row.validated_at)
-
-    def test_still_vulnerable_maps_to_poc_failed(self):
-        _ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={"finding_id": "find-002"},
-        )
-        finding_row = MagicMock()
-        finding_row.schema_blob = _make_finding_blob(id="find-002")
-        sess.get.side_effect = [job, finding_row]
-
-        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("redsim.config.load_config") as mock_cfg, \
-             patch("redsim.services.verify.verify",
-                   return_value=self._make_outcome("still_vulnerable")):
-            mock_cfg.return_value = MagicMock(target_allowlist=[])
-            result = self._verify_task().apply(args=["job-ver-002"]).get()
-
-        self.assertEqual(result["validation_state"], "poc_failed")
-
-    def test_inconclusive_maps_to_inconclusive(self):
-        _ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={"finding_id": "find-003"},
-        )
-        finding_row = MagicMock()
-        finding_row.schema_blob = _make_finding_blob(id="find-003")
-        sess.get.side_effect = [job, finding_row]
-
-        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("redsim.config.load_config") as mock_cfg, \
-             patch("redsim.services.verify.verify",
-                   return_value=self._make_outcome("inconclusive")):
-            mock_cfg.return_value = MagicMock(target_allowlist=[])
-            result = self._verify_task().apply(args=["job-ver-003"]).get()
-
-        self.assertEqual(result["validation_state"], "inconclusive")
-
-    def test_unknown_status_defaults_to_inconclusive(self):
-        """An unmapped outcome.status falls back to 'inconclusive'."""
-        _ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={"finding_id": "find-004"},
-        )
-        finding_row = MagicMock()
-        finding_row.schema_blob = _make_finding_blob(id="find-004")
-        sess.get.side_effect = [job, finding_row]
-
-        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("redsim.config.load_config") as mock_cfg, \
-             patch("redsim.services.verify.verify",
-                   return_value=self._make_outcome("totally_new_status")):
-            mock_cfg.return_value = MagicMock(target_allowlist=[])
-            result = self._verify_task().apply(args=["job-ver-004"]).get()
-
-        self.assertEqual(result["validation_state"], "inconclusive")
-
-    def test_repo_path_passed_to_verify_service(self):
-        _ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={"finding_id": "find-005", "repo_path": "/tmp/myrepo"},
-        )
-        finding_row = MagicMock()
-        finding_row.schema_blob = _make_finding_blob(id="find-005")
-        sess.get.side_effect = [job, finding_row]
-
-        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("redsim.config.load_config") as mock_cfg, \
-             patch("redsim.services.verify.verify",
-                   return_value=self._make_outcome()) as mock_ver:
-            mock_cfg.return_value = MagicMock(target_allowlist=[])
-            self._verify_task().apply(args=["job-ver-005"]).get()
-
-        call_kwargs = mock_ver.call_args[1]
-        self.assertEqual(str(call_kwargs["repo_path"]), "/tmp/myrepo")
-
-    def test_missing_finding_raises_runtime_error(self):
-        _ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={"finding_id": "find-missing"},
-        )
-        sess.get.side_effect = [job, None]  # finding is None
-
-        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("redsim.config.load_config") as mock_cfg:
-            mock_cfg.return_value = MagicMock(target_allowlist=[])
-            with self.assertRaises(RuntimeError):
-                self._verify_task().apply(args=["job-ver-missing"]).get()
-
-    def test_return_dict_includes_all_keys(self):
-        _ctx, sess, job, fake_tc = _make_task_ctx(
-            job_detail={"finding_id": "find-006"},
-        )
-        finding_row = MagicMock()
-        finding_row.schema_blob = _make_finding_blob(id="find-006")
-        sess.get.side_effect = [job, finding_row]
-
-        with patch("redsim.workers.bootstrap.task_context", side_effect=fake_tc), \
-             patch("redsim.config.load_config") as mock_cfg, \
-             patch("redsim.services.verify.verify",
-                   return_value=self._make_outcome(strategy="replay")):
-            mock_cfg.return_value = MagicMock(target_allowlist=[])
-            result = self._verify_task().apply(args=["job-ver-006"]).get()
-
-        for key in ("job_id", "finding_id", "status", "strategy",
-                    "validation_state"):
-            self.assertIn(key, result)
-        self.assertEqual(result["strategy"], "replay")
-
-
-# ---------------------------------------------------------------------------
 # report.py
 # ---------------------------------------------------------------------------
 
@@ -968,27 +825,12 @@ class TestCeleryAppBootstrap(unittest.TestCase):
         # celery_app now includes.
         expected_tasks = [
             "redsim.workers.tasks.scan",
-            "redsim.workers.tasks.verify",
             "redsim.workers.tasks.report",
         ]
         registered = list(m.app.conf.include)
         for module in expected_tasks:
             self.assertIn(module, registered)
-
-
-# ---------------------------------------------------------------------------
-# Additional edge-case coverage
-# ---------------------------------------------------------------------------
-
-class TestVerifyStateMapConstants(unittest.TestCase):
-    """Direct import / assertion on _STATE_MAP already covered by existing
-    test_worker_status_persistence; included here for completeness."""
-
-    def test_all_three_states_mapped(self):
-        from redsim.workers.tasks.verify import _STATE_MAP
-        self.assertEqual(_STATE_MAP["verified"], "poc_passed")
-        self.assertEqual(_STATE_MAP["still_vulnerable"], "poc_failed")
-        self.assertEqual(_STATE_MAP["inconclusive"], "inconclusive")
+        self.assertNotIn("redsim.workers.tasks.verify", registered)
 
 
 if __name__ == "__main__":

@@ -414,18 +414,10 @@ def _validate_upload(
         "ingest_run_id": _as_dict(original.get("validation")).get("ingest_run_id"),
     }
     # The loader describes the bytes it loaded (``source: uploaded``, a manifest built from the loaded model);
-    # the row's provenance is registration-time information the child cannot know. A derived model
-    # (ATTACKS_HARDEN-13, ``_register_derived_target``) keeps ``source: derived`` and its ``derived_from``
-    # lineage on the manifest so the parent -> derived link stays discoverable after validation.
-    row_source = original.get("source")
-    if row_source == "derived" and manifest.get("derived_from") is None:
-        lineage = registered_manifest.get("derived_from") or original.get("derived_from")
-        if lineage is not None:
-            manifest = {**manifest, "derived_from": lineage}
+    # the row's provenance is registration-time information the child cannot know.
     target.detail = {
         **original,
         **manifest,
-        **({"source": row_source} if row_source == "derived" else {}),
         "status": "available",
         "refusal_reason": None,
         "manifest": manifest,

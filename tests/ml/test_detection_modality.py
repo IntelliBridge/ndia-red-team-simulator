@@ -449,7 +449,8 @@ def test_control_toggle_and_recommendations_when_the_threshold_is_crossed(tmp_pa
                    "r.R8.multi_frame_consistency.dpatch", "r.R6.preprocessing.dpatch"]
     known = {m.id for m in low.measurements} | {i.id for i in low.interpretation}
     for rec in low.recommendations:
-        assert rec.status == "candidate" and rec.validation == "not evaluated" and rec.measured is None
+        assert rec.status == "candidate"
+        assert not any(ref.startswith("defense:") for ref in rec.references)
         assert set(rec.triggered_by) <= known and rec.narrative_source == "rules"
     assert any("Liu et al. 2019, DPatch" in ref for ref in low.recommendations[0].references)
     ref_row = next(m for m in low.measurements if m.id == f"m.evasion.dpatch.eps{REF:g}")

@@ -27,17 +27,15 @@ def _finding_to_dict(
     row: Finding,
     *,
     source_tool: bool = False,
-    validated_at: bool = False,
     dedup_key: bool = False,
     scanner_finding_id: bool = False,
 ) -> dict[str, Any]:
     """Serialize a ``Finding`` row to the API wire shape.
 
-    The seven-field core is identical across every finding route; the
+    The six-field core is identical across every finding route; the
     keyword flags opt in to the per-route extras (the list view exposes
-    ``source_tool``, the detail view ``validated_at``, the legacy
-    by-scanner-id lookup ``scanner_finding_id``) so the shared shape stays
-    the single source of truth.
+    ``source_tool``, the legacy by-scanner-id lookup ``scanner_finding_id``)
+    so the shared shape stays the single source of truth.
     """
     out: dict[str, Any] = {
         "id": row.id, "run_id": row.run_id,
@@ -45,14 +43,6 @@ def _finding_to_dict(
         "severity": row.severity, "status": row.status,
         "schema_blob": row.schema_blob,
     }
-    # Validation is the verify-after-harden outcome of a classifier finding.
-    # An LLM probe finding has no verify loop, so the field would only ever
-    # carry its "unvalidated" default; it is omitted for that kind (owner
-    # decision 2026-09-09) rather than shown as if it meant something.
-    if not is_llm_finding(row):
-        out["validation_state"] = row.validation_state
-        if validated_at:
-            out["validated_at"] = row.validated_at
     if source_tool:
         out["source_tool"] = row.source_tool
     if dedup_key:
@@ -102,4 +92,4 @@ def get_finding(finding_id: str,
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                                 detail=f"finding {finding_id} not found")
         ensure_project_access(user, row.project_id)
-        return _finding_to_dict(row, validated_at=True, dedup_key=True)
+        return _finding_to_dict(row, dedup_key=True)

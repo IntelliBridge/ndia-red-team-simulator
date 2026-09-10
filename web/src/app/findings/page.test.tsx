@@ -37,7 +37,6 @@ function finding(over: Record<string, unknown> = {}) {
     severity: "high",
     status: "open",
     source_tool: "trivy",
-    validation_state: "unvalidated",
     dedup_key: null,
     schema_blob: { title: "SQLi" },
     ...over,

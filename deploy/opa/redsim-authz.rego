@@ -43,7 +43,6 @@ role_rank := {
 # Minimum role per action (mirror redsim.api.policy._ACTION_MIN_ROLE).
 action_min_role := {
 	"scan.start": "scanner",
-	"verify.replay": "remediator",
 	"target.manage": "admin",
 	"auth_profile.manage": "admin",
 	"audit.verify": "admin",

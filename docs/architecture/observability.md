@@ -175,7 +175,6 @@ gauges (defined in `redsim.observability._make_counters`):
 |-----------------------------|---------|----------------|------------------------|
 | `redsim_scans_total`         | Counter | `status`       | admission              |
 | `redsim_fix_success_total`   | Counter | —              | execution              |
-| `redsim_verify_status_total` | Counter | `status`       | execution              |
 | `redsim_jobs_active`         | Gauge   | —              | bootstrap              |
 | `redsim_rate_limited_total`  | Counter | —              | rate-limit middleware  |
 | `redsim_log_ingest_buffered` | Gauge   | —              | log-ingest             |
@@ -246,7 +245,7 @@ worker pools don't contend:
 
 | Queue | Tasks | Why |
 |-------|-------|-----|
-| `scans` | `redsim.scan_start`, `redsim.verify_replay` today. The ML tasks `attack.run`, `explain.run` and `model.validate` join it with WS4. | Long attack / explain / verify work (minutes). |
+| `scans` | `redsim.scan_start` today. The ML tasks `attack.run`, `explain.run` and `model.validate` join it with WS4. | Long attack / explain work (minutes). |
 | `default` | `redsim.report_render`, `redsim.reap_stale_jobs`, `redsim.verify_tenant_integrity`, `redsim.export_chains_to_worm`. `harden.recommend` joins it with WS4, so the Pythia call never shares a pool with model loading. | Fast bookkeeping, kept off the `scans` pool so a long campaign cannot starve it. |
 
 [`deploy/docker-compose.yml`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/deploy/docker-compose.yml)
@@ -274,7 +273,7 @@ past their TTL to `failed`.
 ## Correlation: a worked example
 
 A user hits an admission route, for example
-`POST /v1/findings/{id}/verify`. The full chain of ids that lets you
+`POST /v1/models/{id}/attacks`. The full chain of ids that lets you
 follow that one call across services:
 
 ```mermaid
@@ -286,15 +285,15 @@ sequenceDiagram
     participant W as redsim-worker
     participant T as Jaeger
 
-    U->>API: POST /v1/findings/{id}/verify<br/>X-Redsim-Request-ID req-abc
+    U->>API: POST /v1/models/{id}/attacks<br/>X-Redsim-Request-ID req-abc
     Note over API: middleware sets ContextVar<br/>OTel span trace_id t1
-    API->>DB: INSERT audit_events<br/>action verify.replay<br/>request_id req-abc
+    API->>DB: INSERT audit_events<br/>action attack.run<br/>request_id req-abc
     API->>DB: INSERT application_logs<br/>request_id req-abc trace_id t1
     API-->>U: run_id, job_id
 
     W->>DB: SELECT FROM jobs<br/>request_id req-abc lifted
     Note over W: bootstrap sets the same ContextVar
-    W->>DB: INSERT audit_events<br/>action verify.replay (worker re-check)<br/>request_id req-abc
+    W->>DB: INSERT audit_events<br/>action attack.execute.<attack_id> (worker re-check)<br/>request_id req-abc
     W->>DB: INSERT application_logs<br/>request_id req-abc trace_id t2
     W->>T: emit traces for both spans
 ```

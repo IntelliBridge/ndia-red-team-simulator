@@ -7,7 +7,6 @@ export interface MriScorecardProps {
     subscores?: Record<string, number | null>;
   } | null;
   familyRows?: Array<{ family: string; accuracy: number; n: number }>;
-  measuredDelta?: number | null;
   curve?: unknown[];
   unavailableReason?: string;
 }
@@ -17,7 +16,6 @@ const dimensions = ["S_acc", "S_asr", "S_eps", "S_conf", "S_expl"];
 export function MriScorecard({
   score,
   familyRows,
-  measuredDelta,
   curve,
   unavailableReason = "required evidence is incomplete",
 }: MriScorecardProps) {
@@ -42,12 +40,6 @@ export function MriScorecard({
         <span className="mb-2 rounded-sm bg-muted px-2 py-1 text-xs font-semibold">
           {score.grade}
         </span>
-        {measuredDelta != null && (
-          <span className="mb-2 text-xs text-primary">
-            measured ΔMRI {measuredDelta > 0 ? "+" : ""}
-            {measuredDelta}
-          </span>
-        )}
       </div>
       <DimensionBars
         values={Object.fromEntries(

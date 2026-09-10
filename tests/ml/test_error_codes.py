@@ -21,7 +21,7 @@ _SPEC = (
 _ROW = re.compile(r"^\|\s*(?P<codes>(?:`[a-z_]+`(?:\s*\([^)]*\))?\s*/?\s*)+)\|\s*(?P<http>\d{3})\s*\|")
 
 #: The Phase A table as frozen at M0 (29 codes).
-_PHASE_A_COUNT = 29
+_PHASE_A_COUNT = 27  # 2026-09-09: unknown_defense and defense_modality_mismatch left with the defenses
 
 #: The 17.3 addendum of 2026-09-09 (plan 12 wave B0, actions-and-codes track): code -> HTTP.
 PHASE_B_CODES = {

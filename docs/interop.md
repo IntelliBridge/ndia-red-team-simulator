@@ -25,7 +25,7 @@ isolation.
 ## Contribute: a run's adversarial examples as a Croissant dataset
 
 `POST /v1/runs/{run_id}/dataset` (membership, `dataset.export`, remediator)
-turns one terminal campaign or verify run into an open, content-addressed
+turns one terminal campaign run into an open, content-addressed
 dataset. The admission (`redsim/services/ml_datasets_export.py::admit_export`)
 writes the `dataset.export` audit row before the follow-up `Run` (scanner
 `ml.dataset_export`) and `Job` (type `dataset.export`) exist and before the
@@ -37,8 +37,7 @@ queued or running (`409 export_in_flight`), and a broker outage (`503
 queue_unavailable`, the two rows rolled back). One export per run: a second
 call after the first completed answers the existing manifest (`status:
 "exists"` with `manifest_artifact_id` and `manifest_sha256`), never a second
-copy. A verify run exports with its `baseline_run_id` carried in the
-provenance and is never merged with its baseline.
+copy.
 
 The worker (`redsim/workers/tasks/dataset_export.py`) loads the source run's
 persisted slices (`ml.adv_slice`, and `ml.clean_slice` / `ml.control_slice`
@@ -69,7 +68,7 @@ where the run wrote them) and its `ml.flip_matrix`, and builds:
   licence with the coverage caveat, the frozen campaign configuration, the
   run's limitations verbatim, the ATLAS technique per attack through
   `redsim.ml.atlas.technique_for_attack` with `atlas_data` as the fallback,
-  the ATLAS release, and `baseline_run_id` for a verify run). The manifest's
+  the ATLAS release). The manifest's
   own sha256 is the dataset version. `croissant_validate` is the structural
   gate and also refuses banned tokens: no model or tensor file name, no
   `reviewer_notes`, no credential environment name, and no bare MRI (a
@@ -364,9 +363,17 @@ The push is proven against `tests/ml/fake_foundry_server.py` (a stdlib server
 speaking the v2 create, upload, commit and abort paths with a bearer check and
 a low-entropy JWT-shaped fake token assembled from three segments so no JWT
 literal sits in the source): the happy path, a 503 on commit with the abort,
-the fail-closed cases, and no token, JWT or URL in any audit row. No push to a
-real Foundry instance has been made (INTEROP-26: it needs an operator-configured
-non-operational instance), and the adversarial-dataset push "when exported"
+the fail-closed cases, and no token, JWT or URL in any audit row. On 2026-09-10
+the push reached a real developer-tier Foundry instance for the first time
+(INTEROP-26): the live lane `tests/e2e/test_ml_foundry_live.py` (skips unless `REDSIM_FOUNDRY_LIVE_URL`, `REDSIM_FOUNDRY_LIVE_RID` and `REDSIM_FOUNDRY_LIVE_TOKEN_FILE` are set)
+ran a real campaign, pushed through the API admission and the eager worker,
+and read the committed transaction and both files back through the Datasets
+v2 API with matching digests. First contact found one defect, fixed the same
+day: the real API reads `transactionType` from the JSON body and answers
+`400 MissingRequiredFields` to the query parameter the fake server had
+accepted; the fake server now refuses the query form too. The lane skips in
+CI until an operator supplies the three variables, so the fake server stays
+the CI proof. The adversarial-dataset push "when exported"
 (the second half of INTEROP-23) is not built: `PUSH_PAYLOADS` is `("scorecard",)`
 and the roster says so.
 
@@ -426,7 +433,8 @@ Still open, recorded in the README: the worker-parent
 `atlas_technique_id` key on finding list rows (the tag is in every finding's
 `schema_blob.ml.atlas_technique`); regenerate-in-child for a run whose slices
 were not retained (INTEROP-07, `export_unavailable` instead); the dataset push
-to Foundry (INTEROP-23, `PUSH_PAYLOADS` is `("scorecard",)`); a push against a
-real non-operational instance (INTEROP-26, the owner's call); and the
+to Foundry (INTEROP-23, `PUSH_PAYLOADS` is `("scorecard",)`); the live Foundry
+lane in CI (INTEROP-26 was proven by hand on 2026-09-10; the lane needs
+operator-supplied `REDSIM_FOUNDRY_LIVE_*` variables and skips without them); and the
 public-index fixture `tests/ml/fixtures/public_index.csv`, which snapshots the
 repository's `INDEX.csv` at `4048a209`, before the export rows.

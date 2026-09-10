@@ -58,11 +58,10 @@ def test_stages_has_score_after_explain():
     assert S.STAGES[-1] == "report"
 
 
-def test_stages_gain_defense_apply_after_load_target_and_keep_p0_order():
-    # Phase B (ATTACKS_HARDEN-15): spec 6.5 inserts defense_apply after load_target for verify runs.
-    assert S.STAGES.index("defense_apply") == S.STAGES.index("load_target") + 1
-    assert tuple(s for s in S.STAGES if s != "defense_apply") == P0_STAGES
-    assert len(S.STAGES) == len(set(S.STAGES)) == len(P0_STAGES) + 1
+def test_stages_are_the_p0_order_without_a_defense_stage():
+    # 2026-09-09: the verify paradigm left; ``defense_apply`` is gone and the P0 order stands.
+    assert S.STAGES == P0_STAGES and "defense_apply" not in S.STAGES
+    assert len(S.STAGES) == len(set(S.STAGES))
 
 
 def test_run_status_carries_cancelled_and_not_implemented():
@@ -144,26 +143,18 @@ def test_basis_and_triggered_by_need_at_least_one_id():
         S.CandidateRecommendation(id="r.1", title="t", rationale="r", triggered_by=[])
 
 
-def test_recommendation_measured_pairs_with_validation():
-    delta = S.MeasuredDelta(
-        verify_run_id="v", baseline_run_id="b", defense=S.DefenseConfig(id="feature_squeezing"),
-        delta_mri=7, delta_acc_clean=S.CleanAccuracyDelta(
-            before=S.AccuracyPoint(n=10, n_correct=8, accuracy=0.8),
-            after=S.AccuracyPoint(n=10, n_correct=7, accuracy=0.7), delta=-0.1),
-        settings_hash="h" * 64, measured_at=T)
-    ok = S.CandidateRecommendation(id="r.1", title="t", rationale="r", triggered_by=["m.clean"],
-                                   validation="measured", measured=delta)
-    assert ok.status == "candidate"
-    with pytest.raises(ValidationError, match="requires a measured block"):
-        S.CandidateRecommendation(id="r.1", title="t", rationale="r", triggered_by=["m.clean"],
-                                  validation="measured")
-    with pytest.raises(ValidationError, match="requires validation 'measured'"):
-        S.CandidateRecommendation(id="r.1", title="t", rationale="r", triggered_by=["m.clean"], measured=delta)
-
-
-def test_recommendation_has_no_expected_gain_field():
+def test_recommendation_is_a_candidate_and_nothing_more():
+    rec = S.CandidateRecommendation(id="r.1", title="t", rationale="r", triggered_by=["m.clean"])
+    assert rec.status == "candidate" and rec.narrative is None and rec.narrative_source == "rules"
     fields = set(S.CandidateRecommendation.model_fields)
-    assert not {f for f in fields if "gain" in f or "expected" in f}
+    assert fields == {"id", "title", "rationale", "triggered_by", "status", "references", "narrative",
+                      "narrative_source"}
+    assert not {f for f in fields if "gain" in f or "expected" in f or "valid" in f or "measured" in f}
+    for removed in ("validation", "measured", "expected_gain"):
+        assert removed not in S.CandidateRecommendation.model_json_schema()["properties"]
+    for name in ("DefenseConfig", "MeasuredDelta", "MRIDelta", "FamilyDelta", "CleanAccuracyDelta", "FindingVerify",
+                 "DerivedFrom"):
+        assert not hasattr(S, name), name
 
 
 # --- Measurement additions ---------------------------------------------------
@@ -261,9 +252,10 @@ def test_model_manifest_consistency_rules():
 def test_finding_detail_defaults():
     d = S.MLFindingDetail(attack_id="pgd", attack_name="PGD", norm="linf", eps_grid=[0.01, 0.03, 0.1],
                           reference_eps=0.03, threshold=0.2)
-    assert d.family == "evasion" and d.review.state == "unreviewed" and d.verify is None
+    assert d.family == "evasion" and d.review.state == "unreviewed"
     assert d.atlas_technique is None
-    assert d.retests == [] and d.review.history == [] and d.review.revisions == []
+    assert d.review.history == [] and d.review.revisions == []
+    assert "verify" not in S.MLFindingDetail.model_fields and "retests" not in S.MLFindingDetail.model_fields
 
 
 # --- RunRecord -----------------------------------------------------------------
@@ -326,10 +318,8 @@ PHASE_B_FIELDS = (
     (S.Measurement, "edit_fraction_mean"), (S.Measurement, "detection"),
     (S.Observation, "text"), (S.Observation, "detection"),
     (S.MLModelManifest, "text"), (S.MLModelManifest, "detection"),
-    (S.MLModelManifest, "endpoint"), (S.MLModelManifest, "derived_from"),
+    (S.MLModelManifest, "endpoint"),
     (S.FindingReview, "history"), (S.FindingReview, "revisions"),
-    (S.FindingVerify, "settings_hash"), (S.FindingVerify, "baseline_run_id"),
-    (S.MLFindingDetail, "retests"),
     (S.CampaignRecord, "schema_version"),
     (S.RunSummary, "kind"), (S.RunSummary, "probe_ids"),
 )
@@ -451,9 +441,10 @@ def test_observation_text_and_detection_blocks_optional():
         S.DetectionObservation(n_gt=5, n_matched_clean=5, n_matched_adv=2, patch_bbox=[10, 10, 42])
 
 
-def test_model_manifest_text_detection_and_lineage_blocks():
+def test_model_manifest_text_and_detection_blocks():
     plain = _manifest()
-    assert plain.text is None and plain.detection is None and plain.endpoint is None and plain.derived_from is None
+    assert plain.text is None and plain.detection is None and plain.endpoint is None
+    assert "derived_from" not in S.MLModelManifest.model_fields
     text = _manifest(modality="text", format="sklearn_joblib", text=S.TextModelSpec(
         token_pattern=r"(?u)\b\w\w+\b", lowercase=True, ngram_range=[1, 2], vocabulary_size=8000, max_words=64))
     assert S.MLModelManifest.model_validate(text.model_dump(mode="json")) == text
@@ -462,11 +453,6 @@ def test_model_manifest_text_detection_and_lineage_blocks():
                     detection=S.DetectionModelSpec(input_size=[320, 320], iou_threshold=0.5, score_threshold=0.3,
                                                    classes=["tank", "truck", "apc"], excluded_classes=["person"]))
     assert S.MLModelManifest.model_validate(det.model_dump(mode="json")) == det
-    derived = _manifest(format="torch_state_dict", architecture_id="resnet18", derived_from=S.DerivedFrom(
-        parent_target_id="vehicles_cnn-0a1b2c3d", parent_sha256="b" * 64, defense_id="adversarial_training",
-        training_budget={"epochs": 3, "wall_time_s": 600, "freeze_backbone": True, "eps": 0.03}))
-    assert S.MLModelManifest.model_validate(derived.model_dump(mode="json")) == derived
-    assert derived.derived_from is not None and derived.derived_from.training_budget["epochs"] == 3
     with pytest.raises(ValidationError):
         S.TextModelSpec(ngram_range=[1])
     with pytest.raises(ValidationError):
@@ -515,7 +501,7 @@ def test_phase_a_manifest_dump_and_digest_are_unchanged():
     assert set(with_block.model_dump(mode="json")) == P0_MANIFEST_KEYS | {"endpoint"}
     assert manifest_digest(with_block) != manifest_digest(plain)
     props = set(S.MLModelManifest.model_json_schema()["properties"])
-    assert props == P0_MANIFEST_KEYS | {"text", "detection", "endpoint", "derived_from"}
+    assert props == P0_MANIFEST_KEYS | {"text", "detection", "endpoint"}
     assert set(S.MLModelManifest.model_json_schema(mode="serialization")["properties"]) == props
 
 
@@ -526,14 +512,13 @@ def test_review_vocabulary_is_additive():
                            "notes": None}}
     detail = S.MLFindingDetail.model_validate(old_blob)
     assert detail.review.state == "dismissed" and detail.review.history == [] and detail.review.revisions == []
-    assert detail.retests == []
     assert detail.model_dump(mode="json", exclude_unset=True) == old_blob
     for state in ("unreviewed", "dismissed", "draft", "in_review", "confirmed", "resolved"):
         assert S.FindingReview(state=state).state == state
     with pytest.raises(ValidationError):
         S.FindingReview(state="approved")
     event = S.ReviewEvent(action="confirm", from_state="in_review", to_state="confirmed", actor="user:reviewer",
-                          at=T, reason="reproduced on the retest", revision=2, verify_run_id="run-v1")
+                          at=T, reason="reproduced on the retest", revision=2)
     revision = S.FindingRevision(revision=2, author="user:analyst", created_at=T, submitted_at=T,
                                  evidence_ids=["m.evasion.pgd.eps0.03", "o.003"], observation="obs",
                                  interpretation="interp", candidate="cand", sha256="c" * 64)
@@ -543,17 +528,6 @@ def test_review_vocabulary_is_additive():
         S.ReviewEvent(action="x", to_state="approved", actor="a", at=T)
     with pytest.raises(ValidationError):
         S.FindingRevision(revision=0, author="a", created_at=T)
-
-
-def test_retest_links_additive():
-    verify = S.FindingVerify(run_id="run-v1", defense=S.DefenseConfig(id="feature_squeezing"), outcome="verified")
-    assert verify.settings_hash is None and verify.baseline_run_id is None
-    linked = S.FindingVerify(run_id="run-v2", defense=S.DefenseConfig(id="feature_squeezing"),
-                             outcome="still_vulnerable", settings_hash="h" * 64, baseline_run_id="run-b")
-    detail = S.MLFindingDetail(attack_id="pgd", attack_name="PGD", norm="linf", eps_grid=[0.03], reference_eps=0.03,
-                               threshold=0.2, verify=linked, retests=[verify, linked])
-    again = S.MLFindingDetail.model_validate(detail.model_dump(mode="json"))
-    assert again == detail and again.verify == again.retests[-1] and len(again.retests) == 2
 
 
 def test_campaign_record_schema_version_defaults_and_is_disclosed():
@@ -575,9 +549,12 @@ def test_run_summary_kind_and_probe_ids_optional():
     probe = S.RunSummary(run_id="r", status="queued", stage=None, target_id="t", attack_ids=[], created_at=T,
                          kind="llm_probe", probe_ids=["dan.Dan_11_0", "encoding.InjectBase64"])
     assert probe.kind == "llm_probe" and len(probe.probe_ids) == 2
-    for kind in ("attack", "verify", "ingest"):
+    for kind in ("attack", "ingest"):
         assert S.RunSummary(run_id="r", status="queued", stage=None, target_id="t", attack_ids=["fgsm"],
                             created_at=T, kind=kind).kind == kind
+    with pytest.raises(ValidationError):
+        S.RunSummary(run_id="r", status="queued", stage=None, target_id="t", attack_ids=["fgsm"], created_at=T,
+                     kind="verify")
     with pytest.raises(ValidationError):
         S.RunSummary(run_id="r", status="queued", stage=None, target_id="t", attack_ids=[], created_at=T,
                      kind="campaign")

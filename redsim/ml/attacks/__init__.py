@@ -429,16 +429,12 @@ class TabularScaling:
 def surrogate_estimator(target: Any) -> tuple[Any, str | None]:
     """``(estimator, provenance_note)`` for a target that declares a build-time PGD surrogate (spec 12.9).
 
-    Looks for ``surrogate_art_classifier()`` on the target and, failing that, on a wrapped ``base``
-    (a defended target proxies neither). Returns ``(None, None)`` when no surrogate is declared or
-    the declared one exposes no ``loss_gradient``. The note carries kind, sha256 and the clean
-    agreement ``k/n`` from ``manifest()["surrogate"]`` so the row states what was attacked.
+    Looks for ``surrogate_art_classifier()`` on the target. Returns ``(None, None)`` when no
+    surrogate is declared or the declared one exposes no ``loss_gradient``. The note carries kind,
+    sha256 and the clean agreement ``k/n`` from ``manifest()["surrogate"]`` so the row states what
+    was attacked.
     """
     fn = getattr(target, "surrogate_art_classifier", None)
-    via_base = False
-    if not callable(fn):
-        fn = getattr(getattr(target, "base", None), "surrogate_art_classifier", None)
-        via_base = callable(fn)
     if not callable(fn):
         return None, None
     est = fn()
@@ -465,9 +461,7 @@ def surrogate_estimator(target: Any) -> tuple[Any, str | None]:
         parts.append(f"clean agreement with the target {k}/{n}" if k is not None else f"clean agreement n={n}")
     else:
         parts.append("clean agreement with the target not recorded in the manifest")
-    note = SURROGATE_TRANSFER_NOTE_PREFIX + "; ".join(parts) + (
-        " (surrogate taken from the undefended base target; the defense is not in the gradient path)"
-        if via_base else "") + "; every metric is measured on the real model"
+    note = SURROGATE_TRANSFER_NOTE_PREFIX + "; ".join(parts) + "; every metric is measured on the real model"
     return est, note
 
 

@@ -98,15 +98,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_findings = sub.add_parser("findings", help="List findings from a run")
     p_findings.add_argument("--run", help="Run ID (default: latest)", default=None)
 
-    # verify
-    p_verify = sub.add_parser("verify", help="Verify a finding by replaying its PoC")
-    p_verify.add_argument("finding_id", help="ID of the finding to verify")
-    p_verify.add_argument("--run", help="Run ID (default: latest)", default=None)
-    p_verify.add_argument("--repo", help="Repository path (required for SAST strategy)", default=None)
-    p_verify.add_argument("--no-provenance-check", dest="no_provenance_check",
-                          action="store_true",
-                          help="Skip the target/runtime.json rebuild check")
-
     # report
     p_report = sub.add_parser("report", help="Generate a Markdown security report")
     p_report.add_argument("--run", help="Run ID (default: latest)", default=None)
@@ -207,7 +198,7 @@ def build_parser() -> argparse.ArgumentParser:
 # Command re-exports + dispatch table
 #
 # Each command body now lives in its own per-command sibling module
-# (``redsim.cli.scan``, ``redsim.cli.verify``, …), mirroring the already-extracted
+# (``redsim.cli.scan``, ``redsim.cli.report``, …), mirroring the already-extracted
 # ``status`` / ``audit`` / ``migrate`` siblings. The bodies are
 # re-imported here so that ``redsim.cli.main.cmd_<name>`` keeps resolving for
 # external importers (``redsim.cli.__init__``) and for tests that import or
@@ -218,7 +209,6 @@ from redsim.cli.findings import cmd_findings
 from redsim.cli.init import cmd_init
 from redsim.cli.report import cmd_report
 from redsim.cli.scan import cmd_scan
-from redsim.cli.verify import cmd_verify
 
 # ---------------------------------------------------------------------------
 # Main
@@ -229,7 +219,6 @@ _COMMANDS = {
     "init": cmd_init,
     "scan": cmd_scan,
     "findings": cmd_findings,
-    "verify": cmd_verify,
     "report": cmd_report,
 }
 
