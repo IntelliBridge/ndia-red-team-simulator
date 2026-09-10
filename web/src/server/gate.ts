@@ -1,52 +1,11 @@
-// The cookie-presence gate and the sign-out hop token.
+// The sign-out hop token.
 //
-// Everything here has to run on the edge runtime, because Next 14.2 runs
-// middleware there and nowhere else. So: Web Crypto rather than node:crypto,
-// and no import of redsim-session.ts or redsim-cookies.ts, both of which pull
-// node:crypto in. The three cookie names come from env.js, which defaults them,
-// so the edge bundle and the node modules read one validated source (KTD7).
-import { DEV_ENVS, env } from "@/env";
-
-/** Paths that render without a credential. */
-const PUBLIC_PATHS = new Set(["/login"]);
-
-export type GateRequest = {
-  pathname: string;
-  /** Presence only. Middleware never validates a cookie; the API does (R12). */
-  hasSessionCookie: boolean;
-  hasDevTokenCookie: boolean;
-};
-
-export type GateDecision = { action: "pass" } | { action: "redirect"; to: string };
-
-/** Whether this deployment may honour a dev token or answer from fixtures. */
-export function devEnvironment(): boolean {
-  return DEV_ENVS.includes(env.REDSIM_ENV);
-}
-
-/**
- * Decide from cookie presence alone.
- *
- * Better Auth's own session cookie is deliberately not a pass: a Keycloak
- * login that failed to mint the redsim pair (signing key unset) has no API
- * access at all, and bouncing that case to /login is what lets R36 explain it.
- *
- * Fixture mode passes everything, because the fixture resolver answers without
- * a credential (KTD13).
- */
-export function gateDecision(request: GateRequest): GateDecision {
-  const authenticated =
-    request.hasSessionCookie ||
-    (request.hasDevTokenCookie && devEnvironment()) ||
-    (env.REDSIM_DEV_FIXTURES && devEnvironment());
-
-  if (PUBLIC_PATHS.has(request.pathname)) {
-    return authenticated ? { action: "redirect", to: "/dashboard" } : { action: "pass" };
-  }
-  return authenticated ? { action: "pass" } : { action: "redirect", to: "/login" };
-}
-
-// --- The sign-out hop token (KTD7) -------------------------------------------
+// The server prefetch cannot clear cookies, so when the API rejects the
+// browser's session it redirects to the sign-out route with a short-lived token
+// bound to the rejected cookie. The route verifies the token, clears the
+// credentials and lands on /login. Nothing else gates a request here: the
+// pages check for the session on the client and the API refuses what it does
+// not trust.
 
 /**
  * Seconds a hop token stays valid. Long enough for one redirect chain, short

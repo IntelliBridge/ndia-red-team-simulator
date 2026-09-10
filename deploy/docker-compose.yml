@@ -227,16 +227,18 @@ services:
       # variable, not baked into the image.
       REDSIM_API_URL: http://redsim-api:8000
       # Browser-facing origin, so the published port rather than the service
-      # name. BETTER_AUTH_SECRET must be at least 32 characters; this dev
-      # placeholder is not a secret and must be replaced outside local dev.
-      BETTER_AUTH_URL: http://localhost:3300
-      BETTER_AUTH_SECRET: dev-better-auth-secret-change-me-32chars
-      # The API's existing internal issuer. Discovery happens container to
-      # container; the browser reaches the realm on localhost:8080, which is
-      # the known hostname split recorded as deferred in the plan.
+      # name. The web secret seals the refresh cookie and must be at least 32
+      # characters; this dev placeholder is not a secret and must be replaced
+      # outside local dev.
+      REDSIM_WEB_ORIGIN: http://localhost:3300
+      REDSIM_WEB_SESSION_SECRET: dev-web-session-secret-change-me-32chars
+      # The realm the login route exchanges the email and password with,
+      # container to container. Tokens may carry either issuer spelling, so the
+      # published-port one is listed too.
       KEYCLOAK_ISSUER: http://keycloak:8080/realms/redsim
-      # The browser reaches Keycloak on the published host port.
       KEYCLOAK_PUBLIC_ISSUER: http://localhost:8080/realms/redsim
+      # The realm's redsim-web is a public client with direct access grants on,
+      # so no client secret.
       KEYCLOAK_CLIENT_ID: redsim-web
       # Operator-supplied. No keypair is committed, so a stack without it
       # completes the login and mints no redsim cookies, and API calls 401.

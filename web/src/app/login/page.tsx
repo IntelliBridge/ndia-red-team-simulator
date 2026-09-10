@@ -1,109 +1,167 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { Suspense, useId, useState, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
-import { env } from "@/env";
-import { signIn } from "@/lib/auth-client";
+import { signInWithPassword } from "@/lib/auth";
+import { loginMessage, reasonMessage, safeNextPath } from "@/lib/login-messages";
 
-// In prod the dev-token path is disabled server-side (the API rejects
-// `dev:*` bearers when REDSIM_ENV=prod), so we also hide it in the UI and
-// route everyone through Keycloak/OIDC. REDSIM_ENV is server-only; the
-// client reads the NEXT_PUBLIC_ mirror (see lib/api.ts for the same
-// convention). Anything other than "prod" keeps the dev path visible.
-const isProd = env.NEXT_PUBLIC_REDSIM_ENV === "prod";
-
+/**
+ * The sign-in page.
+ *
+ * One form, email and password, posted to this app's own login route. The
+ * route talks to the identity provider and sets the session cookies; the page
+ * only shows the outcome. There is no other way in: no dev token, no bypass,
+ * and nothing here names the provider behind the form.
+ *
+ * `useSearchParams` needs a Suspense boundary under static rendering, so the
+ * form sits inside one and the fallback is the same form with no parameters.
+ */
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginForm next="/dashboard" reason={undefined} />}>
+      <LoginFormWithParams />
+    </Suspense>
+  );
+}
+
+function LoginFormWithParams() {
+  const params = useSearchParams();
+  return (
+    <LoginForm
+      next={safeNextPath(params?.get("next"))}
+      reason={reasonMessage(params?.get("reason"))}
+    />
+  );
+}
+
+function LoginForm({ next, reason }: { next: string; reason: string | undefined }) {
   const router = useRouter();
-  const [email, setEmail] = useState("admin@redsim.local");
+  const ids = { email: useId(), password: useId(), error: useId() };
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const devLogin = () => {
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (busy) return;
+    const trimmed = email.trim();
+    if (!trimmed || !password) {
+      setError(loginMessage("invalid_request"));
+      return;
+    }
     setBusy(true);
-    const token = `dev:${email}`;
-    // The API runs in REDSIM_AUTH_MODE=dev (rejected when REDSIM_ENV=prod).
-    // Storing the bearer token in localStorage so every SWR call elsewhere
-    // can pick it up via api(...).
-    localStorage.setItem("redsim_token", token);
-    localStorage.setItem("redsim_email", email);
-    // The same credential as a cookie, because the tRPC layer runs on the
-    // server and never sees localStorage. server/trpc/context.ts turns this
-    // one cookie into the upstream bearer, and the middleware gate reads its
-    // presence, so without it the dev button lands on a 401 and bounces
-    // straight back here. The name is env.js's REDSIM_DEV_TOKEN_COOKIE
-    // default, spelled literally because that name is server-only and has no
-    // NEXT_PUBLIC mirror. Encoded because the reader decodes: the colon and
-    // the at sign would otherwise not survive the round trip.
-    document.cookie = `redsim_dev_token=${encodeURIComponent(token)}; path=/; samesite=lax`;
-    router.push("/dashboard");
-  };
-
-  const oidcLogin = () => {
-    setBusy(true);
-    // Better Auth runs the Keycloak code flow, and the after-hook on the
-    // callback mints the redsim_api_session + redsim_csrf cookies that the
-    // api() helper relies on. After the round-trip Better Auth returns here,
-    // so send the now-authenticated user on to the dashboard.
-    void signIn
-      .social({ provider: "keycloak", callbackURL: "/dashboard" })
-      .then((result) => {
-        // Clear the busy state on a rejected sign-in, or the button stays
-        // disabled with no explanation and no navigation.
-        if (result?.error) setBusy(false);
-      })
-      .catch(() => setBusy(false));
+    setError(null);
+    const outcome = await signInWithPassword(trimmed, password);
+    if (outcome.ok) {
+      // Replace, so Back from the dashboard does not return to a filled form.
+      router.replace(next);
+      return;
+    }
+    setPassword("");
+    setError(loginMessage(outcome.code));
+    setBusy(false);
   };
 
   return (
-    <div className="mx-auto max-w-xl space-y-8 pt-8">
-      <div className="space-y-3">
+    <div className="mx-auto flex w-full max-w-md flex-col justify-center py-10 sm:py-16">
+      <div className="mb-8 space-y-3">
         <div className="redsim-kicker">Adversarial ML Red-Team Simulator</div>
-        <h1 className="text-4xl">Sign in</h1>
-        <p className="text-muted-foreground">
+        <h1 className="text-4xl font-semibold tracking-tight">Sign in</h1>
+        <p className="text-sm leading-relaxed text-muted-foreground">
           Evaluate and harden ML classifiers under adversarial evasion. Open,
           unclassified public data only.
         </p>
       </div>
 
-      <div className="redsim-panel space-y-4 p-6">
-        <div className="redsim-kicker">Organization account</div>
-        <p className="text-sm text-muted-foreground">
-          Sign in with your organization account via Keycloak / OIDC.
-        </p>
-        <button
-          className="redsim-cta"
-          disabled={busy}
-          onClick={oidcLogin}
+      {reason ? (
+        <p
+          role="status"
+          className="mb-4 rounded border border-info/40 bg-info/10 px-3 py-2 text-sm text-foreground/90"
         >
-          Continue with Keycloak
-        </button>
-      </div>
+          {reason}
+        </p>
+      ) : null}
 
-      {!isProd && (
-        <div className="redsim-panel space-y-4 p-6">
-          <div className="redsim-kicker">Dev auth mode</div>
-          <p className="text-sm text-muted-foreground">
-            The stack is also running in dev auth mode. Pick the admin email to
-            continue as; the API rejects this token whenever{" "}
-            <code className="text-foreground/80">REDSIM_ENV=prod</code>.
-          </p>
-          <label className="block text-sm">
-            <span className="redsim-meta mb-1 block">Email</span>
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full max-w-sm rounded border border-input bg-navy-deepest/60 px-3 py-2 font-mono text-sm text-foreground focus-visible:border-ring focus-visible:outline-none"
-            />
+      <form
+        className="redsim-panel space-y-5 p-6 sm:p-7"
+        onSubmit={submit}
+        noValidate
+        aria-busy={busy}
+        aria-describedby={error ? ids.error : undefined}
+      >
+        <div className="space-y-1.5">
+          <label htmlFor={ids.email} className="redsim-meta block">
+            Email
           </label>
-          <button
-            className="redsim-ghost"
+          <input
+            id={ids.email}
+            name="email"
+            type="email"
+            inputMode="email"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            autoFocus
+            required
             disabled={busy}
-            onClick={devLogin}
-          >
-            Continue as dev admin
-          </button>
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            aria-invalid={error ? true : undefined}
+            className="redsim-input"
+          />
         </div>
-      )}
+
+        <div className="space-y-1.5">
+          <div className="flex items-baseline justify-between">
+            <label htmlFor={ids.password} className="redsim-meta block">
+              Password
+            </label>
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              aria-pressed={showPassword}
+              aria-controls={ids.password}
+              className="redsim-meta text-foreground/60 hover:text-foreground focus-visible:outline-none focus-visible:underline"
+            >
+              {showPassword ? "Hide" : "Show"}
+            </button>
+          </div>
+          <input
+            id={ids.password}
+            name="password"
+            type={showPassword ? "text" : "password"}
+            autoComplete="current-password"
+            required
+            disabled={busy}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            aria-invalid={error ? true : undefined}
+            className="redsim-input"
+          />
+        </div>
+
+        {error ? (
+          <p
+            id={ids.error}
+            role="alert"
+            className="rounded border border-destructive/60 bg-destructive/10 px-3 py-2 text-sm text-foreground"
+          >
+            {error}
+          </p>
+        ) : null}
+
+        <button type="submit" className="redsim-cta w-full py-2.5" disabled={busy}>
+          {busy ? "Signing in…" : "Sign in"}
+        </button>
+      </form>
+
+      <p className="mt-6 text-center text-xs leading-relaxed text-muted-foreground">
+        Access is provisioned by your administrator. Contact them for an
+        account or a password reset.
+      </p>
     </div>
   );
 }

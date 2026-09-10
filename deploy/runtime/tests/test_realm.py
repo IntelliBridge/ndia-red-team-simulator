@@ -66,7 +66,8 @@ class RealmProjectRolesClaimTests(unittest.TestCase):
         self.assertNotIn('users', self.realm)
         self.assertEqual(self.client['secret'], '${REDSIM_WEB_CLIENT_SECRET}')
         self.assertFalse(self.client['publicClient'])
-        self.assertFalse(self.client['directAccessGrantsEnabled'])
+        # The branded login page posts the password grant from the web server.
+        self.assertTrue(self.client['directAccessGrantsEnabled'])
 
 
 class ReadmeMembershipDocumentationTests(unittest.TestCase):

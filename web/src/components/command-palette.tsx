@@ -6,10 +6,10 @@
 // Escape to close) and opens the design-system CommandDialog with one item
 // per top-level route. Selecting an item navigates via next/navigation and
 // closes the dialog. Renders nothing visible while closed, so it is inert in
-// the page shell until summoned.
+// the page shell until summoned, and nothing at all on the login page.
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import {
   CommandDialog,
@@ -31,6 +31,7 @@ export interface CommandPaletteProps {
 
 export function CommandPalette({ links }: CommandPaletteProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [open, setOpen] = React.useState(false);
 
   React.useEffect(() => {
@@ -51,6 +52,8 @@ export function CommandPalette({ links }: CommandPaletteProps) {
     },
     [router],
   );
+
+  if (pathname === "/login") return null;
 
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>

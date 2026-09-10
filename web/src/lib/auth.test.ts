@@ -1,12 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The Better Auth browser client, stubbed at the module boundary: importing it
-// for real would build a client against no server, and the assertion here is
-// that logout() calls sign-out at all, which nothing checked before.
-const signOutMock = vi.hoisted(() => vi.fn().mockResolvedValue({ data: null }));
-vi.mock("./auth-client", () => ({ signOut: signOutMock }));
-
-import { getEmail, getToken, logout, requireAuth } from "./auth";
+import { isAuthenticated, loginPath, logout, requireAuth, signInWithPassword } from "./auth";
 
 function clearCookies(): void {
   for (const c of document.cookie.split(";")) {
@@ -17,80 +11,88 @@ function clearCookies(): void {
   }
 }
 
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 describe("auth client helpers", () => {
   beforeEach(() => {
-    localStorage.clear();
     clearCookies();
-    signOutMock.mockClear();
+    window.history.replaceState(null, "", "/");
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("getToken / getEmail read from localStorage", () => {
-    expect(getToken()).toBeUndefined();
-    expect(getEmail()).toBeUndefined();
-    localStorage.setItem("redsim_token", "tok");
-    localStorage.setItem("redsim_email", "a@b.c");
-    expect(getToken()).toBe("tok");
-    expect(getEmail()).toBe("a@b.c");
+  it("signInWithPassword posts the credentials to the login route and reports success", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(200, { ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(signInWithPassword("a@b.c", "pw")).resolves.toEqual({ ok: true });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/auth/login");
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("include");
+    expect(JSON.parse(String(init.body))).toEqual({ email: "a@b.c", password: "pw" });
   });
 
-  it("logout clears storage and pings the signout endpoint", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("fetch", fetchMock);
-    localStorage.setItem("redsim_token", "tok");
-    localStorage.setItem("redsim_email", "a@b.c");
-
-    await logout();
-
-    expect(localStorage.getItem("redsim_token")).toBeNull();
-    expect(localStorage.getItem("redsim_email")).toBeNull();
-    expect(fetchMock).toHaveBeenCalledWith("/api/auth/signout-redsim", {
-      method: "POST",
+  it("signInWithPassword returns the route's code on a refusal", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(401, { error: "invalid_credentials" })));
+    await expect(signInWithPassword("a@b.c", "pw")).resolves.toEqual({
+      ok: false,
+      code: "invalid_credentials",
     });
   });
 
-  it("logout signs out of Better Auth, not only the redsim cookies", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(undefined));
+  it("signInWithPassword reads a non-JSON refusal as unknown and a network failure as unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>", { status: 502 })));
+    await expect(signInWithPassword("a@b.c", "pw")).resolves.toEqual({ ok: false, code: "unknown" });
 
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("offline")));
+    await expect(signInWithPassword("a@b.c", "pw")).resolves.toEqual({ ok: false, code: "unavailable" });
+  });
+
+  it("isAuthenticated reads the non-httpOnly csrf cookie, the only visible half of the session", () => {
+    expect(isAuthenticated()).toBe(false);
+    document.cookie = "redsim_csrf=csrf-value";
+    expect(isAuthenticated()).toBe(true);
+  });
+
+  it("logout posts to the sign-out route and resolves even when that fails", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", fetchMock);
     await logout();
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/signout-redsim", { method: "POST" });
 
-    // Without this call the Better Auth cookie and the Keycloak SSO session
-    // both survive, and /login re-authenticates the same user on one click.
-    expect(signOutMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("logout resolves even when Better Auth sign-out rejects", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
-    signOutMock.mockRejectedValueOnce(new Error("idp unreachable"));
-    localStorage.setItem("redsim_token", "tok");
-
     await expect(logout()).resolves.toBeUndefined();
-
-    // The local credentials go regardless, so a failing sign-out cannot leave
-    // the user stranded on an authenticated page.
-    expect(localStorage.getItem("redsim_token")).toBeNull();
   });
 
-  it("requireAuth returns the token when present, without redirecting", () => {
-    localStorage.setItem("redsim_token", "tok");
-    const router = { push: vi.fn() };
-    expect(requireAuth(router)).toBe("tok");
-    expect(router.push).not.toHaveBeenCalled();
+  it("loginPath carries the current location as next, except from the root and the login page", () => {
+    window.history.replaceState(null, "", "/runs/abc?tab=curve");
+    expect(loginPath()).toBe(`/login?next=${encodeURIComponent("/runs/abc?tab=curve")}`);
+    window.history.replaceState(null, "", "/");
+    expect(loginPath()).toBe("/login");
+    window.history.replaceState(null, "", "/login?reason=rejected");
+    expect(loginPath()).toBe("/login");
   });
 
-  it("requireAuth accepts a cookie session via the non-httpOnly csrf cookie", () => {
+  it("requireAuth passes a cookie session without redirecting", () => {
     document.cookie = "redsim_csrf=csrf-value";
     const router = { push: vi.fn() };
-    expect(requireAuth(router)).toBe("(cookie)");
+    expect(requireAuth(router)).toBe(true);
     expect(router.push).not.toHaveBeenCalled();
   });
 
-  it("requireAuth redirects to /login when unauthenticated", () => {
+  it("requireAuth redirects to /login with the return path when unauthenticated", () => {
+    window.history.replaceState(null, "", "/findings");
     const router = { push: vi.fn() };
-    expect(requireAuth(router)).toBeUndefined();
-    expect(router.push).toHaveBeenCalledWith("/login");
+    expect(requireAuth(router)).toBe(false);
+    expect(router.push).toHaveBeenCalledWith("/login?next=%2Ffindings");
   });
 });

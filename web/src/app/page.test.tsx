@@ -9,16 +9,23 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: replaceMock }),
 }));
 
+function clearCookies(): void {
+  for (const c of document.cookie.split(";")) {
+    const name = c.split("=")[0]?.trim();
+    if (name) document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+  }
+}
+
 beforeEach(() => {
   replaceMock.mockReset();
-  localStorage.clear();
+  clearCookies();
 });
 
 afterEach(cleanup);
 
 describe("Home (root page)", () => {
-  it("redirects to /dashboard when a token is present in localStorage", async () => {
-    localStorage.setItem("redsim_token", "dev:admin@redsim.local");
+  it("redirects to /dashboard when the browser holds a session", async () => {
+    document.cookie = "redsim_csrf=csrf-value";
     render(React.createElement(Home));
     await waitFor(() => {
       expect(replaceMock).toHaveBeenCalledWith("/dashboard");
@@ -26,7 +33,7 @@ describe("Home (root page)", () => {
     expect(replaceMock).not.toHaveBeenCalledWith("/login");
   });
 
-  it("redirects to /login when no token is in localStorage", async () => {
+  it("redirects to /login when it holds none", async () => {
     render(React.createElement(Home));
     await waitFor(() => {
       expect(replaceMock).toHaveBeenCalledWith("/login");

@@ -58,8 +58,8 @@ fi
 # route, several more for the chunks) and served unoptimised bundles, which read
 # as the app re-running auth on every tab. Rebuild when the web tree, the design
 # system or the lockfile changed, or when no build exists yet. redsim-run web
-# supplies the build-time environment (NEXT_PUBLIC_REDSIM_API_URL and the Better
-# Auth values env.js validates) exactly as the running server sees it.
+# supplies the build-time environment (NEXT_PUBLIC_REDSIM_API_URL and the web
+# secret env.js validates) exactly as the running server sees it.
 if [ "$BUILD" = 1 ] || grep -qE '^(web/|packages/design-system/|pnpm-lock.yaml)' <<<"$changed" || [ ! -f "$SRC/web/.next/BUILD_ID" ]; then
   echo "web changed or no build present: next build"
   sudo -u redsim env HOME=/var/lib/redsim COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true /usr/local/bin/redsim-run web pnpm --filter @redsim/web build

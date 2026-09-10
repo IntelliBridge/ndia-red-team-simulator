@@ -7,11 +7,11 @@ import * as route from "./route";
 
 const fetchMock = vi.fn();
 
-/** The dev-token path, so the handler has a credential without a cookie pair. */
-const DEV_COOKIE = "redsim_dev_token=dev%3Aoperator%40example.test";
+/** The cookie session, the only credential the handler forwards. */
+const SESSION_COOKIE = "redsim_api_session=fake-session; redsim_csrf=fake-csrf";
 
 function get(path: string): Request {
-  return new Request(`http://localhost:3000${path}`, { headers: { cookie: DEV_COOKIE } });
+  return new Request(`http://localhost:3000${path}`, { headers: { cookie: SESSION_COOKIE } });
 }
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -124,7 +124,7 @@ describe("the tRPC route handler", () => {
     const request = new Request("http://localhost:3000/api/trpc/runs.cancel?batch=1", {
       method: "POST",
       headers: {
-        cookie: DEV_COOKIE,
+        cookie: SESSION_COOKIE,
         "content-type": "application/json",
         "sec-fetch-site": "cross-site",
       },

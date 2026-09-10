@@ -1,11 +1,12 @@
 {{/*
 redsim-web — Next.js 14 UI on :3000. Mirrors the redsim-web service in
-deploy/docker-compose.yml (NEXT_PUBLIC_REDSIM_API_URL / BETTER_AUTH_* /
-KEYCLOAK_*).
+deploy/docker-compose.yml (NEXT_PUBLIC_REDSIM_API_URL / KEYCLOAK_* and the
+web origin and secret). The chart still injects the names BETTER_AUTH_URL and
+BETTER_AUTH_SECRET; web/src/env.js reads them as fallbacks for
+REDSIM_WEB_ORIGIN and REDSIM_WEB_SESSION_SECRET.
 
-Recreate, not the default RollingUpdate, and one replica: Better Auth is
-stateless on the in-memory adapter, so a second web pod resolves no session
-past the cookie-cache window. See values.yaml web.replicaCount.
+Recreate, not the default RollingUpdate, and one replica; see values.yaml
+web.replicaCount.
 */}}
 {{- $component := "web" -}}
 apiVersion: apps/v1

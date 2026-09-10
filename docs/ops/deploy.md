@@ -166,14 +166,14 @@ the Postgres CI jobs, so a regression fails CI.
 | `REDSIM_OIDC_ISSUER` | api | Keycloak realm URL |
 | `REDSIM_OIDC_AUDIENCE` | api | Default `redsim` |
 | `REDSIM_OIDC_JWKS_URL` | api | Keycloak realm's `/protocol/openid-connect/certs` |
-| `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, `KEYCLOAK_ISSUER` | web | Better Auth Keycloak provider (`KEYCLOAK_ISSUER` equals `REDSIM_OIDC_ISSUER`). The realm's `redsim-web` is a public PKCE client, so `KEYCLOAK_CLIENT_SECRET` is empty |
-| `BETTER_AUTH_SECRET` | web | Better Auth's own session key, opaque to redsim. At least 32 characters. The web process refuses to boot without it |
-| `BETTER_AUTH_URL` | web | Public web URL. The web process refuses to boot without it |
+| `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`, `KEYCLOAK_ISSUER`, `KEYCLOAK_PUBLIC_ISSUER` | web | The realm the login route runs the password grant against (`KEYCLOAK_ISSUER` equals `REDSIM_OIDC_ISSUER`; the public issuer is accepted as a token issuer too). The `redsim-web` client needs direct access grants on. The compose realm's client is public (empty secret); the EC2 realm's is confidential and carries one |
+| `REDSIM_WEB_SESSION_SECRET` | web | Seals the refresh cookie and signs the sign-out hop token. At least 32 characters; rotating it signs every browser out. The web process refuses to boot without it. The retired `BETTER_AUTH_SECRET` is read as a fallback |
+| `REDSIM_WEB_ORIGIN` | web | Public web URL, the same-origin check on the auth routes. The web process refuses to boot without it. The retired `BETTER_AUTH_URL` is read as a fallback |
 
 ### redsim-signed cookie
 
-The Better Auth after-hook on the Keycloak callback signs with the private
-key, FastAPI verifies with the public key. Both halves are required. Supply
+The login route signs with the private key after the realm accepted the
+credentials, FastAPI verifies with the public key. Both halves are required. Supply
 only the private half and the login completes, then every API call answers 401.
 
 | Var | Where set | Value |
