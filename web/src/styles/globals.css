@@ -329,3 +329,42 @@ thead {
   font-family: var(--mono);
   letter-spacing: 0.08em;
 }
+
+/* Slide-out drawer (the finding chat). Radix stamps data-state on the
+   content and the overlay, so the enter and exit motions key off it. The
+   exit animation is what lets Radix keep the element mounted until the
+   drawer has left the screen. */
+@keyframes redsim-drawer-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes redsim-drawer-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+@keyframes redsim-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes redsim-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+.redsim-drawer[data-state="open"] {
+  animation: redsim-drawer-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.redsim-drawer[data-state="closed"] {
+  animation: redsim-drawer-out 160ms ease-in forwards;
+}
+.redsim-drawer-overlay[data-state="open"] {
+  animation: redsim-fade-in 200ms ease-out;
+}
+.redsim-drawer-overlay[data-state="closed"] {
+  animation: redsim-fade-out 160ms ease-in forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .redsim-drawer,
+  .redsim-drawer-overlay {
+    animation: none !important;
+  }
+}

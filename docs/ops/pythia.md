@@ -8,7 +8,9 @@ Every LLM call in redsim goes through `redsim/llm/pythia.py` (decision D5 in
 the product spec). There is no litellm and there are no provider keys anywhere
 in the stack.
 
-Status at `main` `703f8f6` plus Phase B wave B4 (2026-09-09): two consumers.
+Status at `main` `703f8f6` plus Phase B wave B4 (2026-09-09): two consumers
+in the Python services, plus the finding chat of the web process described
+under [Finding chat (web)](#finding-chat-web).
 The first is the optional hardening narrative, one plain, non-streaming chat
 completion per campaign with candidate recommendations, fed the rule outputs,
 the measurements and a SHAP text summary. Since wave 2 it runs in the
@@ -107,6 +109,53 @@ widened allowlist can never turn it into an LLM caller. Because
 `REDSIM_ENV_FILE` that is not a file means "no `.env`" rather than a fall
 through to `./.env` or the repo root.
 
+## Finding chat (web) {#finding-chat-web}
+
+The "Chat" button on `/findings/[id]` opens a slide-out drawer
+(`web/src/components/finding-chat-panel.tsx`) that talks to the web app's
+own route, `web/src/app/api/chat/finding/route.ts`. The route runs in the
+Next server, never in the browser and never in FastAPI:
+
+1. The same-origin gate of the tRPC layer runs first, then the session
+   cookie is required. `GET` answers `{configured, model}` so the panel can
+   say "unavailable" before the analyst types.
+2. `POST {finding_id, messages}` fetches `GET /v1/findings/{id}` and
+   `GET /v1/runs/{run_id}/campaign` through `upstreamFetch` with the caller's
+   own cookie, so the model sees exactly what the analyst may see. An API
+   refusal comes back with the API's status and code. A campaign record the
+   API refuses (`409 llm_target_required` on a probe finding, a `404`) leaves
+   the chat on the finding alone with the reason in the prompt.
+3. `web/src/server/chat/context.ts` builds one system message: the reporting
+   rules of the brief as instructions (labels kept, denominators quoted, no
+   expected gain before a verify, no readiness wording) plus a compact JSON
+   projection of the two records (measurements with `n` and `n_correct`, the
+   score with its subscores and weights, the curve, the candidates with their
+   validation state, the limitations; artifact ids and raw feature dumps
+   dropped, observations capped at 8, the whole capped at 60,000 characters
+   with the trims recorded).
+4. `web/src/server/chat/pythia.ts` posts `{model, messages, stream: true,
+   temperature: 0.2, max_tokens: 1200}` to `{PYTHIA_BASE_URL}/v1/chat/completions`
+   with `Authorization: Bearer` and `X-Pythia-Persona`, and reads the
+   server-sent events back. A gateway that answers a plain JSON completion is
+   read as one delta. The route relays the deltas to the browser as
+   newline-delimited JSON (`meta`, `delta`, `done`, `error`).
+
+The web process reads `PYTHIA_BASE_URL`, `PYTHIA_API_KEY`, `PYTHIA_PERSONA`
+and `PYTHIA_TIMEOUT_S` (default 120 here, the whole streamed answer) through
+`web/src/env.js`, plus `REDSIM_WEB_CHAT_MODEL` (default
+`anthropic/claude-opus-5`) for the model id. Without a base URL and a key the
+route answers `503 llm_not_configured` and the panel says so. TLS runs on
+Node's trust store: behind the corporate proxy set `NODE_EXTRA_CA_CERTS` to
+the Zscaler root (the Python `truststore` path does not apply to Node).
+
+What the chat does not do, recorded under the README's open items: no audit
+row and no `LLMUsage` row is written per turn, so the org cost view does not
+include chat traffic; no per-user rate limit beyond the gateway's own; the
+transcript lives in the browser's `sessionStorage` per finding and is sent
+whole on every turn, so the server keeps no conversation state. The panel's
+standing caveat says that an answer is a reading of recorded evidence and
+not a measurement, and the analyst keeps the evidence panels beside it.
+
 ## Corporate proxy (Zscaler) and TLS
 
 Behind the corporate proxy every HTTPS connection is re-signed by the Zscaler
@@ -167,6 +216,9 @@ or point compose at the file explicitly:
 ```bash
 docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 ```
+
+`redsim-web` receives `PYTHIA_BASE_URL`, `PYTHIA_API_KEY`, `PYTHIA_PERSONA`
+and `REDSIM_WEB_CHAT_MODEL` the same way, for the finding chat.
 
 The worker anchor also sets `REDSIM_DISABLE_LLM: "1"`, which the evidence
 pack reports as `llm_enabled: false`. The narrative runs on the `scans`

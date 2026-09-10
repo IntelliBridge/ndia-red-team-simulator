@@ -673,7 +673,14 @@ the format download links, the Croissant manifest link, and the `Render again`
 and `Export dataset` actions through `exports.renderReport` and
 `exports.exportDataset`, refusals shown beside the row; in the nav between
 Findings and Audit),
-`/findings`, `/findings/[id]`, `/projects`, `/projects/[slug]/settings`,
+`/findings`, `/findings/[id]` (2026-09-09: a `Chat` button beside `Dismiss`
+opens `FindingChatPanel`, a Radix Dialog slide-out drawer with six example
+prompts in the finding's terms, a streamed transcript kept per finding in
+`sessionStorage`, Stop and Clear, a standing "not a measurement" caveat, and
+an explicit unavailable state when the web server holds no Pythia settings;
+`web/src/lib/chat.ts`, `web/src/hooks/useFindingChat.ts`, the route
+`web/src/app/api/chat/finding/route.ts`), `/projects`,
+`/projects/[slug]/settings`,
 `/targets`, `/auth-profiles`, `/logs`, `/audit`, `/cost`, `/models`,
 `/models/[id]`, with `MriScorecard`, `DimensionBars`, `RobustnessCurve`,
 `MeasurementTable`, `ObservationCard`, `LabelBadge`, `PanelSection` and
@@ -1151,7 +1158,14 @@ with a probe key held in a bearer `AuthProfile` (never `PYTHIA_API_KEY`), a
 persona declared per LLM target and a `guardrail_mode` that lands in the
 scorecard limitations (owner default LLM-26: a separate persona and key,
 never the narrative writer's). `assert_no_litellm` checks that garak's
-litellm never enters the generator's MRO.
+litellm never enters the generator's MRO. A third consumer lives in the web
+process (2026-09-09): the finding chat, `web/src/app/api/chat/finding/route.ts`,
+reads the same `PYTHIA_*` names through `web/src/env.js` plus
+`REDSIM_WEB_CHAT_MODEL` (default `anthropic/claude-opus-5`), fetches the
+finding and campaign records with the caller's cookie, and streams the
+gateway's answer to the `/findings/[id]` drawer. No provider key, no
+`openai` package. It writes no audit or `LLMUsage` row (README open items).
+`docs/ops/pythia.md` "Finding chat (web)".
 
 | Variable | Meaning |
 |---|---|
