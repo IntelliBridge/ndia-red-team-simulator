@@ -43,7 +43,7 @@ import hashlib
 import importlib.metadata
 import json
 import platform
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -668,6 +668,7 @@ class ArtifactTarget:
         license: str | None = None,
         intra_op_threads: int = 2,
         input_preprocessing: Mapping[str, Any] | None = None,
+        dataset_caveats: Sequence[str] | None = None,
     ) -> None:
         if not isinstance(dataset_id, str) or not dataset_id.strip():
             raise ValueError("ArtifactTarget needs the dataset_id its evaluation split belongs to")
@@ -680,6 +681,8 @@ class ArtifactTarget:
         self._arch_id = architecture_id
         self._arch_kwargs = dict(architecture_kwargs or {})
         self._prep = parse_input_preprocessing(input_preprocessing)
+        # The bound dataset's spec 11.3 caveats; ``runners.base.dataset_caveats`` reads ``manifest()["caveats"]``.
+        self._dataset_caveats = [str(c) for c in (dataset_caveats or []) if str(c).strip()]
         self._state_dict_record: dict[str, Any] | None = None
         self._declared_input_shape = tuple(input_shape) if input_shape else None
         self._name = name or f"Uploaded model {self._path.name}"
@@ -869,6 +872,7 @@ class ArtifactTarget:
         m: dict[str, Any] = {
             "source": "uploaded", "file": self._path.name, "architecture_kwargs": self._arch_kwargs or None,
             "input_preprocessing": None if self._prep.is_identity and self._prep.layout is None else self._prep.record(),
+            "caveats": list(self._dataset_caveats),
             **(self._state_dict_record or {}),
             "eval_n": int(self._y.shape[0]), "eval_per_class": per_class_counts(self._y, self._class_names),
             "library_versions": {**library_versions(

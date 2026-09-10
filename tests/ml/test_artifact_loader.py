@@ -648,3 +648,21 @@ def test_sniff_input_layout() -> None:
     assert artifact.sniff_input_layout((3, 3, 3)) == "NCHW"
     assert artifact.sniff_input_layout((1, 28, 28)) == "NCHW"
     assert artifact.sniff_input_layout((30,)) == "NCHW"
+
+
+def test_bound_dataset_caveats_reach_the_upload_manifest(tmp_path: Path, tinynet_arch: str,
+                                                          eval_data: tuple[np.ndarray, np.ndarray]) -> None:
+    """The fixture-only sentence of the bound split lands under ``caveats``, the key
+    ``runners.base.dataset_caveats`` appends to every campaign's limitations (spec 11.1, 14.5)."""
+    from redsim.ml.runners.base import dataset_caveats
+
+    path, _ = _state_dict_file(tmp_path / "tiny.pt")
+    sentence = "synthetic/eval is a CI / fixture dataset (spec 11.1): never a demo target."
+    target = ArtifactTarget("t", path, class_names=CLASS_NAMES, eval_data=eval_data, dataset_id=DATASET,
+                            architecture_id=tinynet_arch, dataset_caveats=[sentence, "  ", ""])
+    manifest = target.manifest()
+    assert manifest["caveats"] == [sentence]
+    assert dataset_caveats(manifest, target.info().metadata) == [sentence]
+    bare = ArtifactTarget("u", path, class_names=CLASS_NAMES, eval_data=eval_data, dataset_id=DATASET,
+                          architecture_id=tinynet_arch)
+    assert bare.manifest()["caveats"] == [] and dataset_caveats(bare.manifest(), {}) == []
