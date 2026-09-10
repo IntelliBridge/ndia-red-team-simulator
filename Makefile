@@ -17,7 +17,14 @@ WEB     := @redsim/web
 # git dep), `docs`, `security` and `garak` are opt-in, for example:
 #   EXTRAS=api,worker,test,dev,ml,docs make install
 EXTRAS  ?= api,worker,test,dev,ml
-COMPOSE := docker compose -f deploy/docker-compose.yml
+# --env-file names the repo-root .env explicitly. Compose otherwise reads a
+# .env beside the compose file, so deploy/docker-compose.yml would resolve
+# every ${PYTHIA_*}, ${REDSIM_ML_LLM_MODEL} and ${REDSIM_DISABLE_LLM} to the
+# empty string and a gateway configured in .env would never reach a worker.
+# The flag is passed only when the file exists: compose exits 1 on a missing
+# env file, and a fresh clone has none (.env is gitignored).
+COMPOSE_ENV_FILE := $(if $(wildcard .env),--env-file .env,)
+COMPOSE := docker compose $(COMPOSE_ENV_FILE) -f deploy/docker-compose.yml
 
 # ---------------------------------------------------------------------
 # Setup

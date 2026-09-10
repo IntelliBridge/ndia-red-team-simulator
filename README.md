@@ -65,7 +65,7 @@ the UI.
 | Offline CLI, seeding, adapter, e2e harness, doctor and config (wave 3, `7556b22..58461cc`) | On main. `redsim ml attack` (`3ab9de7`), `redsim ml seed` (`3ab9de7`, `98a8733`), the `ml-campaign` scanner adapter and opt-in `redsim.ml.attacks` plugin discovery (`3ab9de7`), the `tests/e2e` harness and its 8-case smoke file (`35e71c7`, `a45a787`), `redsim doctor --worker-mode` rewritten around Pythia with Pythia-only `redsim.yaml` and `.env.example` (`7556b22`, `c3868e5`), `redsim audit verify --run-dir` with canonical audit timestamps (`aa9674e`), the `resnet18` fine-tune recipe (`39126ce`), and the defect fixes: `eps` and `norm_l2` no longer frozen into `attack_params` and applicability by capability tag (`dd2bbd4`), PGD by surrogate transfer admitted on `url_trees` (`58461cc`), the sandbox child pinned to an absent `.env` with `REDSIM_DISABLE_LLM=1` and attack plugins on `GET /v1/attacks` (`c3868e5`). |
 | Pythia LLM transport (`redsim/llm/pythia.py`, `python -m redsim.llm.pythia_check`) | Merged (#11) and reached from behind the corporate proxy on 2026-09-08. Reads `REDSIM_ML_LLM_MODEL`. The narrative is optional and degrades to rule text with `narrative_source = "rules"`. Since wave B2 the LLM probe traffic also goes through Pythia: garak's `PythiaGenerator` posts to `{gateway}/v1/chat/completions` with a probe key held in a bearer `AuthProfile` and a persona declared per target (owner default LLM-26: a separate persona and key, never the narrative writer's), and the worker checks the key's entitlement to the model before any probe is sent. No probe run against the live gateway has been recorded; the tests drive a fake OpenAI-compatible server. See [`docs/ops/pythia.md`](docs/ops/pythia.md). |
 | Web app `@redsim/web` (Next.js 14) and `@redsim/design-system` | Pages `/`, `/login`, `/dashboard`, `/runs`, `/runs/[id]`, `/findings`, `/findings/[id]`, `/projects`, `/projects/[slug]/settings`, `/targets`, `/auth-profiles`, `/logs`, `/audit`, `/cost`, `/models`, `/models/[id]`, with the MRI scorecard and evidence panels. PR #22 aligned the web contract with the mounted routes, PR #24 (`b93d9a9`) added tRPC and env management and PR #25 (`6cbb661`) the design reference. Wiring beyond that has not been exercised in a browser against a running stack with real campaign data; the web UI is the one deferral of the Phase B plan (open item). |
-| Deployment: `deploy/docker-compose.yml`, `deploy/helm/redsim`, `deploy/Dockerfile.*`, `deploy/terraform/`, `deploy/bootstrap/`, `deploy/runtime/`, `deploy-aws.yml` | Compose (postgres, redis, keycloak, minio, redsim-api, redsim-worker, redsim-worker-default, redsim-beat, redsim-web, redsim-log-ingest, optional opa / otel-collector / loki / jaeger / elasticsearch / kibana) and the Helm chart are named `redsim-*`. `Dockerfile.api` installs `.[api,worker]` and runs `alembic upgrade head`, `Dockerfile.worker` installs CPU torch then `.[worker,ml]`. `deploy/terraform/` (#19) is the Fargate foundation with mocked-plan tests; PR #23 (`10650da`, merged) adds `deploy/bootstrap/` and `deploy/runtime/`, a public HTTPS Fargate demo runtime at https://redsim.ndia.agiledefense.xyz that its author reports applied to the AWS account with workers at zero tasks, demo users and real assets outstanding (its completion is package E of [`docs/plans/10-remaining-work-brief.md`](docs/plans/10-remaining-work-brief.md), not a Phase B wave). The compose stack was not brought up end to end as part of these passes (package A of the brief). `deploy-aws.yml` builds and pushes the three images under OIDC and skips its deploy job while `ECS_CLUSTER` is unset. No campaign has been run on a deployed stack. |
+| Deployment: `deploy/docker-compose.yml`, `deploy/helm/redsim`, `deploy/Dockerfile.*`, `deploy/terraform/`, `deploy/bootstrap/`, `deploy/runtime/`, `deploy-aws.yml` | Compose (postgres, redis, keycloak, minio, redsim-api, redsim-worker, redsim-worker-default, redsim-beat, redsim-web, redsim-log-ingest, optional opa / otel-collector / loki / jaeger / elasticsearch / kibana) and the Helm chart are named `redsim-*`. `Dockerfile.api` installs `.[api,worker]` and runs `alembic upgrade head`, `Dockerfile.worker` installs CPU torch then `.[api,worker,ml]`. `deploy/terraform/` (#19) is the Fargate foundation with mocked-plan tests; PR #23 (`10650da`, merged) adds `deploy/bootstrap/` and `deploy/runtime/`, a public HTTPS Fargate demo runtime at https://redsim.ndia.agiledefense.xyz that its author reports applied to the AWS account with workers at zero tasks, demo users and real assets outstanding (its completion is package E of [`docs/plans/10-remaining-work-brief.md`](docs/plans/10-remaining-work-brief.md), not a Phase B wave). The compose stack was brought up end to end on 2026-09-10 (login, seed, a registered bundled model, a campaign; [`docs/dev/local-stack.md`](docs/dev/local-stack.md)). `deploy-aws.yml` builds and pushes the three images under OIDC and skips its deploy job while `ECS_CLUSTER` is unset. No campaign has been run on a deployed stack. |
 | Demo data | Decided and buildable. `redsim ml build-assets --dataset all` fetches the datasets by pinned revision and trains the bundled models on CPU (image, tabular, CIFAR-10 fixture and, since the B1 integration, the SMS spam text classifier; the detector is built only when `--dataset detection` is named because its input is the published subset). Everything it writes under `assets/` is gitignored, so a fresh clone has none until it runs the build. Clean accuracy per model is recorded in the asset manifest (see Datasets for the illustrative local numbers). Wave B0 published the Phase B datasets (SMS Spam Collection, the military-assets subset pending owner review) and the WordNet, ATLAS and garak reference entries to the public data repository at `4048a209`; wave B3 added the first Croissant export built with the new modules from a real offline `url_trees` PGD campaign (`data/exports/url_trees_sample/`, 3 Parquet shards, 600 rows of 16-feature vectors, no URL strings) at head `0dababc`. |
 | Docs site (`mkdocs.yml`, `make docs-*`) | `mkdocs build --strict` passes locally. GitHub Pages publishing is off (the plan has no private Pages). |
 | Phase B wave B2 (services, workers and routes over the B1 library) | Landed (integration `57da31f`): eight track commits plus `fix: integrate Phase B wave B2 tracks` (the endpoint connector, the Phase B admission rules, the worker's broker lifecycle, the LLM probe core and routes, the review workflow, reports with PDF, snapshots, N-run compare, weights and idempotency, the 13 codes). Its dedicated e2e evidence landed in wave B4 (`tests/e2e/test_ml_endpoint.py`, `test_ml_llm.py`, `test_ml_review_reports.py`, `test_ml_attacks_harden.py`). |
@@ -255,7 +255,7 @@ dev:<email>` as an admin of project `default` (refused when
 register the bundled models and launch a campaign:
 
 ```bash
-cd deploy && make seed && cd ..                        # default-org, project default, user admin (compose stack)
+cd deploy && make seed && cd ..                        # default-org and project default (compose stack; rows only)
 .venv/bin/redsim ml seed --project default             # bundled models into the project (audit-first, one commit per model)
 TOKEN="Bearer dev:admin@redsim.local"
 curl -s -H "Authorization: $TOKEN" localhost:8000/v1/models | jq '.models[] | {id, status, modality}'
@@ -265,9 +265,13 @@ curl -s -H "Authorization: $TOKEN" localhost:8000/v1/runs/<run_id>/campaign | jq
 curl -s -H "Authorization: $TOKEN" "localhost:8000/v1/audit/verify?run=<run_id>"
 ```
 
-`deploy/Makefile`'s `seed` runs inside the compose `redsim-api` container.
-Without the compose API, seed the rows with the same Python snippet against
-your `REDSIM_DB_URL`. Admission fills `modality`, `eps_grid` (the spec 12.3
+`deploy/Makefile`'s `seed` feeds `deploy/runtime/scripts/seed_project.py`
+to the compose `redsim-api` container and creates only the organisation and
+project rows; memberships are read from the `redsim_project_roles` token
+claim (the dev bearer is admin on `default`, and the realm's admin user
+carries the attribute). Without the compose API, run `python
+deploy/runtime/scripts/seed_project.py default-org default Default` with
+`REDSIM_DB_URL` exported. Admission fills `modality`, `eps_grid` (the spec 12.3
 default for the norm), `reference_eps` and `dataset_id` from the model's
 manifest when the body omits them, and refuses anything it cannot admit with
 a spec 17.3 code before any row is written. Without a bundled registration
@@ -288,18 +292,29 @@ target (`{"source": "endpoint", "endpoint_kind": "llm", "model_id":
 Full stack in containers:
 
 ```bash
-make up          # docker compose -f deploy/docker-compose.yml up -d --build
+make up                  # the session keypair, then docker compose -f deploy/docker-compose.yml up -d --build
+cd deploy && make seed   # organisation default-org and project default
 make down
 ```
 
-`redsim-api` runs `alembic upgrade head` on start. Ports: web `3300`, API
-`8000`, Keycloak `8080`, Postgres `5432`, Redis `6379`, MinIO `9100` / `9101`,
-log ingest `4319`. `docker compose --profile obs up -d` adds OTel Collector,
-Loki and Jaeger. The worker image installs `.[worker,ml]` (CPU-only torch
-wheels first), so expect it to be the slowest to build. The compose worker
-anchor sets `REDSIM_DISABLE_LLM=1`. Unset it on `redsim-worker-default`
-before expecting a narrative. Bringing the compose stack up end to end was
-not part of the completion pass (see Open items).
+`make up` generates the RSA keypair the web app signs the `redsim_api_session`
+cookie with into `deploy/certs/` on the first run (gitignored) and exports
+both halves to compose on every run, mounts the repo's `assets/` read-only
+into `redsim-api` and both worker pools as `REDSIM_ML_ASSETS_DIR`, and
+`redsim-api` runs `alembic upgrade head` on start. Sign in at
+`http://localhost:3300` as `admin@redsim.local` / `adminpass`; the realm
+user carries `redsim_project_roles = {"default": "admin"}`, so the default
+project shows with the admin role once `make seed` has created it. Ports: web
+`3300`, API `8000`, Keycloak `8080`, Postgres `5432`, Redis `6379`, MinIO
+`9100` / `9101`, log ingest `4319`. `docker compose --profile obs up -d` adds
+OTel Collector, Loki and Jaeger. The worker image installs
+`.[api,worker,ml]` (CPU-only torch wheels first; the `api` extra because the
+campaign task imports `redsim.api.errors`), so expect it to be the slowest to
+build. The
+compose worker anchor sets `REDSIM_DISABLE_LLM=1`. Unset it on
+`redsim-worker-default` before expecting a narrative. The stack, the sign-in
+and a campaign were brought up end to end on 2026-09-10
+([`docs/dev/local-stack.md`](docs/dev/local-stack.md)).
 
 ### 5. Run the tests
 
@@ -549,7 +564,7 @@ Quickstart (`redsim ml attack`, `3ab9de7`).
 |---|---|
 | `make install` | Venv, `uv pip install --native-tls -e ".[$(EXTRAS)]"` (or pip), `pnpm install` |
 | `make require-install` | Fails fast with one clear line when `.venv` or `node_modules` is missing. |
-| `make dev` | pytest, then `dev-api` and `dev-web` under `make -j` |
+| `make dev` | `dev-api` and `dev-web` under `make -j`. Runs no tests: use `make test`. |
 | `make dev-api` | `uvicorn redsim.api.app:create_app --factory --reload --port 8000` |
 | `make dev-web` | `pnpm --filter @redsim/web dev` on :3000 |
 | `make dev-worker` | `celery -A redsim.workers.celery_app worker -Q scans,default`. Not on the `dev` line, needs Redis and Postgres first. |
@@ -558,7 +573,7 @@ Quickstart (`redsim ml attack`, `3ab9de7`).
 | `make lint` | `lint-py` (`ruff check --select E4,E7,E9,F,I redsim tests`, the CI selection) then `lint-web` (printed as a skip line while `web/` has no ESLint config) |
 | `make typecheck` | `typecheck-py` (`mypy redsim`) then `typecheck-web` (`tsc --noEmit`) |
 | `make check` | lint, typecheck, test |
-| `make up` / `make down` | `docker compose -f deploy/docker-compose.yml up -d --build` / `down` |
+| `make up` / `make down` | `deploy/scripts/with-session-keypair.sh docker compose -f deploy/docker-compose.yml up -d --build` (the session keypair generated under `deploy/certs/` on first run and exported, the built `assets/` mounted into the api and workers) / `down` |
 | `make docs-serve` / `docs-build` / `docs-build-strict` / `docs-clean` | MkDocs Material on :8001. The recipes call `mkdocs` from `PATH`, so activate the venv or pass `MKDOCS=.venv/bin/mkdocs`. |
 
 The CI contract is in [`docs/dev/ci.md`](docs/dev/ci.md).
