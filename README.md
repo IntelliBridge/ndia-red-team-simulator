@@ -151,8 +151,8 @@ onnxruntime, scikit-learn, ART, onnx2torch, safetensors, SHAP, matplotlib,
 pillow, pyarrow, httpx), `llm` (the optional private `pythia-sdk`, not needed
 because `redsim/llm/pythia.py` falls back to an in-repo httpx client) and
 `garak` (the Phase B LLM domain, pinned `garak>=0.16,<0.17`, needed on the
-worker for probe runs; no deploy image installs it yet, the `garak offline`
-CI lane installs it for the 12 `garak`-marked tests under `tests/ml` and,
+worker for probe runs; `deploy/Dockerfile.worker` installs it, the `garak offline`
+CI lane installs it for the `garak`-marked tests under `tests/ml` (26 cases on this tree) and,
 since wave B4, the `e2e-python` lane installs it for the e2e-gated
 `tests/e2e/test_ml_llm.py`). The worker extra carries `reportlab` (the PDF
 projection) since wave B2 and the test extra `pypdf`.
@@ -359,9 +359,9 @@ default. The `integration` tests use the shared sqlite harness in
 `tests/conftest.py` and need no running services. `docker`, `e2e`, `slow`,
 `auth_required` and (since wave B0) `garak` are opt-in with `-m`; `garak`
 means "needs the garak extra, skipped when absent" and runs only in the
-`garak offline` CI job. It holds the 12 tests of
-`tests/ml/test_llm_core.py` and `tests/ml/test_llm_routes.py` (wave B2 and
-its integration) and, since wave B4, the four e2e-gated cases of
+`garak offline` CI job. It holds the 26 cases (parametrised cases counted) of
+`tests/ml/test_llm_core.py` and `tests/ml/test_llm_routes.py` (wave B2, its
+integration and the later additions) and, since wave B4, the four e2e-gated cases of
 `tests/e2e/test_ml_llm.py`, all running real garak 0.16.0 probes through
 `PythiaGenerator` against an in-process fake OpenAI-compatible server on the
 loopback interface, with the key file, the child environment and every

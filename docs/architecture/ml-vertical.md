@@ -582,7 +582,20 @@ with network on and `PYTHIA_*`, `AWS_*`, `KAGGLE*`, `OPENAI*`, `HF_TOKEN`,
 swept (`assert_child_env_minimal`), rlimits (`REDSIM_LLM_PROBE_TIMEOUT_S`
 1500 s, CPU 1200 s, 4096 MB, 1024 MB files, 64 processes), cancellation
 polling, process-group kill, the key file deleted in `finally`, and a typed
-`ChildOutcome`. `scorecard.py`: `DetectorResult` (`llm.<probe>.<detector>`,
+`ChildOutcome`. Since 2026-09-10 the child also rewrites a counts-only
+`progress.json` (`ProgressSnapshot`: `seq`, `event`, `probe`, `probes_done`,
+`n_probes`, `done`, `total`; one tick per generator return through the
+generator's `on_call` keyword, a blocked prompt included, a retry never; the
+`total` estimate only shrinks as probes load) by atomic replace, the runner
+reads it inside its poll loop and once more after the loop and hands each new
+`seq` to an `on_progress` callback (the file is in `discard`, never an
+artifact), and the probe task writes every snapshot it receives into
+`stage_table.progress` (`unit`, `done`, `total`, `percent`, the admitted
+probe's short id or null, `probes_done`, `n_probes`, `updated_at`), skipped
+once the run is terminal, `percent` 100 only from the success path, no frame
+published. The web run page reads the block from `GET /v1/runs/{id}`. A
+campaign run can adopt the same block shape with another `unit` later.
+`scorecard.py`: `DetectorResult` (`llm.<probe>.<detector>`,
 `n_evaluated`, `n_hits`, `n_passed`, `n_none`, `hit_rate` `None` exactly when
 `n_evaluated` is 0 and otherwise validated equal to k/n, garak's CI),
 `ProbeResult`, `ProbeFamilyResult` (probe counts, deliberately no family

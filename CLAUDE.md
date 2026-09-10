@@ -318,6 +318,15 @@ candidates from `redsim.ml.llm.rules`; `report.{md,json,html}` through
 `redsim.ml.llm.reporting.render_probe_reports`; `report.render` and
 `job.complete`. A failed or timed-out child keeps the evidence, projects
 nothing and fails the job (`probe_child_failed` / `probe_child_timeout`).
+Since 2026-09-10 the child rewrites a counts-only `progress.json` on every
+generator return and probe boundary, the runner tails it in its poll loop
+and hands each new snapshot to `on_progress`, and the task writes every
+snapshot into `stage_table.progress` (`unit`, `done`, `total`, `percent`,
+the admitted probe's short id or null, `probes_done`, `n_probes`,
+`updated_at`), skipped once the run is terminal and stamped `percent` 100
+only on success. No frame is published for it and the count never enters an
+artifact, a finding or an audit row; the web run page reads the block from
+`GET /v1/runs/{id}` on its existing poll and on reload.
 
 The wave B3 tasks (`docs/interop.md`, `docs/api/v1.md`):
 
@@ -1030,8 +1039,9 @@ loader's pin.
   (since wave B0) `garak`. `pytest -m ml` runs the tests that need the `ml`
   extra, `pytest -m integration` the sqlite or Postgres-backed ones,
   `pytest -m garak tests` the garak tier (needs the `garak` extra; skips
-  without it; 12 tests under `tests/ml` plus the four e2e-gated cases of
-  `tests/e2e/test_ml_llm.py`, all against the in-process fake gateway).
+  without it; 26 cases under `tests/ml` on this tree, parametrised cases
+  counted, plus the four e2e-gated cases of `tests/e2e/test_ml_llm.py`, all
+  against the in-process fake gateway).
   `make check-phase-b` runs every tier in the gate's order. Tiers in
   `docs/dev/testing.md`.
 - End-to-end tier: `REDSIM_E2E=1 .venv/bin/python -m pytest -q -m e2e

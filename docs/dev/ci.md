@@ -26,7 +26,7 @@ markers) see [Testing](testing.md), and for running the stack and the e2e tier s
 | Coverage gate | the full default suite (the `addopts` marker expression) against Postgres 16 and Redis 7 after `alembic upgrade head`, then `--cov-fail-under=$COV_FAIL_UNDER` | 3.12 | `api,worker,test,dev,ml` |
 | API integration (Postgres + Redis) | `tests/` with `-m "not e2e and not docker and not slow and not auth_required and not ml and not garak"` after `alembic upgrade head` | 3.12 | `api,worker,test` |
 | E2E tier (python, eager Celery) | `scripts/phase_b_gate.sh --only e2e` (the gate's e2e step: `REDSIM_E2E=1 pytest -q -p no:cacheprovider -rs -m e2e tests/e2e` with `REDSIM_E2E_POSTGRES_URL` set after `alembic upgrade head`, so the Postgres RLS lane runs rather than skips and the step fails if the harness still reports the lane off), then `scripts/phase_b_gate.sh --only docs-consistency` (`tests/test_docs_phase_b_consistency.py`). 30 minute timeout (wave B4; the tier grew by seven files), the pytest `--basetemp` (the harness directory) uploaded as an artifact on failure. See "The Python e2e job" and "Phase B gate" | 3.12 | `api,worker,test,dev,ml,garak` (the `garak` extra since wave B4, for the e2e-gated `tests/e2e/test_ml_llm.py`) |
-| garak offline | `python -c "import garak"`, then `scripts/phase_b_gate.sh --only garak` (`pytest -q -p no:cacheprovider -m garak tests`; the lane collects the 12 `garak`-marked tests under `tests/ml`; since wave B4 the step fails on exit code 5, on a run in which no test passed and on a missing extra). No gateway variable in the environment, the script removes every `PYTHIA_*` variable on top, garak's XDG directories under the runner temp. See "The garak offline job" and "Phase B gate" | 3.12 | `api,worker,test,dev,garak` (CPU torch first) |
+| garak offline | `python -c "import garak"`, then `scripts/phase_b_gate.sh --only garak` (`pytest -q -p no:cacheprovider -m garak tests`; the lane collects the `garak`-marked tests under `tests/ml`, 26 cases on this tree; since wave B4 the step fails on exit code 5, on a run in which no test passed and on a missing extra). No gateway variable in the environment, the script removes every `PYTHIA_*` variable on top, garak's XDG directories under the runner temp. See "The garak offline job" and "Phase B gate" | 3.12 | `api,worker,test,dev,garak` (CPU torch first) |
 | SAST (semgrep + bandit) | `p/python` + `p/security-audit` at ERROR plus `.semgrep.yml`, bandit `-ll -ii` with `.bandit` | 3.12 | `security` |
 | Dependency CVEs (pip-audit + trivy) | pip-audit over the resolved `api,worker,security` env, trivy `fs` at HIGH,CRITICAL | 3.12 | `api,worker,security` |
 | Helm chart lints + templates | `helm lint` and the `helm template` renders including the prod-secret guard | n/a | n/a |
@@ -49,7 +49,7 @@ excluded from this completion pass (it is never run automatically).
 | unit and ML unit | default (`-m` from `addopts`), and `ml`-marked tests need the extra | both unit lanes (3.13 without `ml`), Coverage gate, and the `ml`-marked tests alone in the ML tier job |
 | integration (sqlite harness locally, real Postgres and Redis in CI) | `integration` marker, stamped automatically on DB-touching tests | Coverage gate, API integration |
 | e2e (Python) | `tests/e2e/`, marked `e2e` by its `conftest.py`, skipped unless `REDSIM_E2E` is set. The Postgres RLS lane needs `REDSIM_E2E_POSTGRES_URL` | E2E tier (python, eager Celery), on every PR and push, with the Postgres lane on. Locally as described in [Local stack](local-stack.md#tests-including-the-e2e-tier) |
-| garak (Phase B) | `garak` marker: needs the `garak` extra, skipped when absent. Deselected by `addopts` and by every other lane's marker expression except `e2e-python`. 12 tests under `tests/ml` (`test_llm_core.py`, `test_llm_routes.py`) plus the four e2e-gated cases of `tests/e2e/test_ml_llm.py`, real garak against an in-process fake gateway | garak offline (`tests/ml`), E2E tier (the e2e file) |
+| garak (Phase B) | `garak` marker: needs the `garak` extra, skipped when absent. Deselected by `addopts` and by every other lane's marker expression except `e2e-python`. 26 cases under `tests/ml` (`test_llm_core.py`, `test_llm_routes.py`, parametrised cases counted) plus the four e2e-gated cases of `tests/e2e/test_ml_llm.py`, real garak against an in-process fake gateway | garak offline (`tests/ml`), E2E tier (the e2e file) |
 | browser e2e (Playwright) | `workflow_dispatch` with `run_e2e=true` | Stack E2E job, on demand only, excluded from this pass |
 
 ### The `ml` extra and the Python matrix
@@ -185,8 +185,9 @@ Two things about this lane are deliberate:
 - **Nothing is claimed that is not there.** From wave B0 to wave B1 the step
   mapped a pytest exit code of 5 (no tests collected) to success with a
   `::notice::` line, because no garak test existed. Since wave B2 the lane
-  collects 12 `garak`-marked tests (ten in `tests/ml/test_llm_core.py`, two
-  in `tests/ml/test_llm_routes.py`) that drive garak 0.16.0 through
+  collects the `garak`-marked tests (26 cases on this tree, parametrised
+  cases counted: 24 in `tests/ml/test_llm_core.py`, two in
+  `tests/ml/test_llm_routes.py`; 12 at wave B2) that drive garak 0.16.0 through
   `PythiaGenerator` against `tests/ml/fake_openai_server.py` on the loopback
   interface: the generator's headers and body, one real probe child run with
   its counts, the credential boundary, the scorecard, a version mismatch, the
@@ -699,7 +700,7 @@ $V -m ruff check --select E4,E7,E9,F,I redsim tests
 $V -m mypy redsim
 $V -m pytest -q --cov=redsim --cov-report=term | tail -5
 REDSIM_E2E=1 $V -m pytest -q -p no:cacheprovider -m e2e tests/e2e
-$V -m pytest -q -p no:cacheprovider -m garak tests   # the 12 garak-marked tests under tests/ml (needs the garak extra); REDSIM_E2E=1 adds the 4 of tests/e2e/test_ml_llm.py
+$V -m pytest -q -p no:cacheprovider -m garak tests   # the garak-marked tests under tests/ml, 26 cases on this tree (needs the garak extra); REDSIM_E2E=1 adds the 4 of tests/e2e/test_ml_llm.py
 $V -m pytest -q -p no:cacheprovider tests/ml/test_schema_compat.py   # the P0 schema tripwire
 $V -m mkdocs build --strict
 $V -m pytest -q -p no:cacheprovider -m ml tests   # the ML tier job

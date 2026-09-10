@@ -930,6 +930,18 @@ first campaign admitted on a Postgres deployment, the EC2 demo host, because
 sqlite never enforced it. The column, its index and the RLS stay;
 `AuditEvent.run_id` is a chain key. `tests/test_migration_0014.py` pins the head.
 
+2026-09-10, LLM probe live progress: `Run.stage_table` of an LLM probe run
+gains one additive key, `progress` (`unit`, `done`, `total`, `percent`,
+`probe`, `probes_done`, `n_probes`, `updated_at`; counts and a short probe id
+only), written by `redsim.ml_llm_probe_run` on every snapshot the garak
+child's `progress.json` reports and stamped `percent` 100 on success. No
+frozen contract changed: `redsim/ml/schema.py`, the migrations, the `Action`
+values, the error codes, the audit vocabulary, the artifact kinds and the
+WebSocket frame types are as before (no progress frame exists; the web page
+reads the block from `GET /v1/runs/{id}`). The spec 6.5 `stages`,
+`stages_done` and `jobs` keys are unchanged. A campaign run may adopt the
+same block shape with another `unit` later.
+
 - **Schema** (`redsim/ml/schema.py`): the `RunRecord`/`Measurement`/`Observation`/
   `Interpretation`/`CandidateRecommendation` evidence model stays. It is written
   as a sha256-addressed Artifact (`ml.run_record`) and **projected** onto

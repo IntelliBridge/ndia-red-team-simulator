@@ -465,6 +465,18 @@ def test_probe_run_end_to_end(
     assert DAN_REPLY not in json.dumps(body)
     assert_key_free(served.text, where="GET /v1/runs/{id}/llm-scorecard")
 
+    # -- 2026-09-10, live progress: the persisted block after the real child reads 100 of the normalised
+    #    completed-prompt count (the sum of n_prompts_sent, never the raw request count, which counts retries).
+    progress = table["progress"]
+    sent = sum(int(p["n_prompts_sent"] or 0) for fam in scorecard["families"] for p in fam["probes"])
+    assert progress["unit"] == "prompts" and progress["percent"] == 100, progress
+    assert progress["done"] == progress["total"] == sent > 0, (progress, sent)
+    assert progress["probes_done"] == progress["n_probes"] == 2 and progress["probe"] is None, progress
+    assert isinstance(progress["updated_at"], str) and progress["updated_at"], progress
+    # The count never enters evidence: no progress or percent key in the served scorecard.
+    scorecard_text = json.dumps(scorecard)
+    assert '"progress":' not in scorecard_text and '"percent":' not in scorecard_text
+
     # -- register LLM-15: findings with a severity derived from the hit rate and labelled so ---------------------
     with e2e_app.session() as sess:
         from sqlalchemy import select
