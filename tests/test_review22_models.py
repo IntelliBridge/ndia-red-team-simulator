@@ -57,6 +57,8 @@ IMAGE_DS = "hf:example/vehicles"
 TABULAR_DS = "kaggle:example/urls"
 IMAGE_SPLIT_REL = "datasets/hf--example--vehicles/rev1/test_coarse.npz"
 IMAGE_CLASSES = ["Air Defense", "BMP", "Tank"]
+IMAGE_CAVEATS = ("example/vehicles is a CI / fixture image dataset (spec 11.1): never a demo target.",
+                 "Ground-level photographs; no overhead or infrared imagery.")
 # First byte 0x08 with an .onnx name is what ``_sniff`` accepts as ONNX.
 ONNX_BYTES = b"\x08\x07\x12\x0eredsim-review22"
 
@@ -90,6 +92,7 @@ def assets_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             "train_coarse": SplitEntry(name="train_coarse", n=9),
         },
         preprocessing={"resolution": 128, "layout": "NCHW", "channel_order": "RGB"},
+        fixture_only=True, caveats=list(IMAGE_CAVEATS),
     )
     manifest.datasets[TABULAR_DS] = DatasetEntry(
         id=TABULAR_DS, source="kaggle", revision="rev2", license="CC0: Public Domain",
@@ -408,6 +411,13 @@ def test_evaluation_binding_resolves_through_the_datasets_mapping(assets_root: P
 
     # No declared split: the dataset's only bundled evaluation split is used.
     assert ml_models._evaluation_binding(IMAGE_DS, dataset_split=None)[3] == "test_coarse"
+
+    # The dataset entry's spec 11.3 caveats ride on the binding and reach an upload's manifest (spec 14.5).
+    binding = ml_models.resolve_dataset_binding(IMAGE_DS, dataset_split="test_coarse", root=assets_root)
+    assert binding.fixture_only is True and binding.caveats == list(IMAGE_CAVEATS)
+    assert ml_models.evaluation_caveats(IMAGE_DS, dataset_split="test_coarse") == list(IMAGE_CAVEATS)
+    assert ml_models.evaluation_caveats(TABULAR_DS, dataset_split=None) == []
+    assert ml_models.evaluation_caveats("hf:nobody/unknown", dataset_split=None) == []
     tabular = ml_models._evaluation_binding(TABULAR_DS, dataset_split="")
     assert tabular[3] == "eval" and tabular[1] == ["benign", "phishing"] and tabular[2] == "rev2"
 
