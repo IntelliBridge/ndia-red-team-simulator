@@ -174,6 +174,8 @@ describe("parseProposal", () => {
     expect(parseProposal(`T.\n${block({ ...PROPOSAL, norm: "l7" })}`).invalid).toMatch(/norm/);
     expect(parseProposal(`T.\n${block({ ...PROPOSAL, n_samples: 5000 })}`).invalid).toMatch(/n_samples/);
     expect(parseProposal(`T.\n${block({ ...PROPOSAL, eps_grid: [0.03, 0.03] })}`).invalid).toMatch(/repeat/);
+    // The admission refuses more than three grid members by default, so the panel does too.
+    expect(parseProposal(`T.\n${block({ ...PROPOSAL, eps_grid: [0.001, 0.002, 0.004, 0.03] })}`).invalid).toMatch(/1 to 3/);
     expect(validateProposal([]).invalid).toMatch(/JSON object/);
   });
 });

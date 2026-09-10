@@ -186,7 +186,8 @@ export type ParsedTurn = {
 const FENCE_OPEN = new RegExp("```" + PROPOSAL_FENCE + "[ \\t]*\\r?\\n");
 const FENCE_CLOSE = /\r?\n?```/;
 
-const MAX_GRID = 8;
+/** The admission's default grid limit (redsim.services.ml_campaigns DEFAULT_MAX_EPS_GRID_MEMBERS). */
+const MAX_GRID = 3;
 const MAX_N_SAMPLES = 500;
 
 function isFiniteNumber(value: unknown): value is number {
