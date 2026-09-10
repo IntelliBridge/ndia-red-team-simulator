@@ -6,7 +6,7 @@ import { rowLink } from "@/lib/row-link";
 
 /**
  * One finding as a card: severity, title and status on top, the plain-language
- * account as a wrapped paragraph, then the facts (finding and run ids, the
+ * account in a bordered inset box, then the facts (finding and run ids, the
  * attack or probe, the source). The whole card opens the finding; the title
  * and the id are real links for keyboard and screen-reader users. Shared by
  * /findings and the dashboard so both read the same way.
@@ -26,9 +26,14 @@ export function FindingSummaryCard({ finding: f, leadMax = 600 }: { finding: Fin
           {f.status}
         </span>
       </div>
-      {lead && <p className="mt-2 text-sm leading-relaxed text-foreground/90">{lead}</p>}
-      {!lead && f.schema_blob.description && (
-        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{f.schema_blob.description}</p>
+      {(lead || f.schema_blob.description) && (
+        <div className="mt-3 rounded-md border border-border bg-background/40 px-3 py-2">
+          {lead ? (
+            <p className="text-sm leading-relaxed text-foreground/90">{lead}</p>
+          ) : (
+            <p className="text-sm leading-relaxed text-muted-foreground">{f.schema_blob.description}</p>
+          )}
+        </div>
       )}
       <dl className="mt-3 flex flex-wrap gap-x-8 gap-y-2 text-xs">
         <div>
