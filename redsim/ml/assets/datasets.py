@@ -45,7 +45,6 @@ from urllib.parse import quote
 
 import httpx
 import numpy as np
-from pydantic import BaseModel, ConfigDict
 
 from redsim.llm.pythia import env_file_path, resolve_env
 from redsim.ml.assets.manifest import (
@@ -53,7 +52,6 @@ from redsim.ml.assets.manifest import (
     DatasetSource,
     FileEntry,
     SplitEntry,
-    file_entry,
     redsim_version,
     sha256_file,
 )
@@ -1614,129 +1612,6 @@ def detection_holdout(split: Any, *, holdout: float, seed: int) -> tuple[Any, An
     train.name, evaluation.name = "train", "eval"
     train.seed = evaluation.seed = int(seed)
     return train, evaluation
-
-
-# ---------------------------------------------------------------------------
-# Bundled training slice for the image dataset (ATTACKS_HARDEN-11)
-# ---------------------------------------------------------------------------
-
-TRAIN_SLICE_NAME = "train_slice.npz"
-DEFAULT_TRAIN_SLICE_N = 1536
-
-
-@dataclass
-class TrainSliceOptions:
-    """``build-assets`` option for the training slice (wiring into ``build.py`` is a follow-up in that file)."""
-
-    n: int = DEFAULT_TRAIN_SLICE_N
-    seed: int = 0
-    enabled: bool = True
-
-    def __post_init__(self) -> None:
-        if self.n < 1:
-            raise ValueError("train slice n must be >= 1")
-
-
-def train_slice_indices(y: np.ndarray, n: int, seed: int, *, exclude: np.ndarray | Sequence[int] | None = None
-                        ) -> np.ndarray:
-    """Positions into ``y`` of a seeded stratified slice of ``min(n, available)`` rows, disjoint from ``exclude``."""
-    y = np.asarray(y).reshape(-1)
-    mask = np.ones(y.shape[0], dtype=bool)
-    if exclude is not None:
-        ex = np.asarray(exclude, dtype=np.int64)
-        if ex.size:
-            mask[ex] = False
-    available = np.flatnonzero(mask)
-    if available.size == 0:
-        return np.empty(0, dtype=np.int64)
-    picked = stratified_indices(y[available], n, seed)
-    return np.sort(available[picked].astype(np.int64))
-
-
-def write_train_slice(split: ImageSplit, dest: Path, root: Path, *, n: int = DEFAULT_TRAIN_SLICE_N, seed: int = 0,
-                      exclude_indices: np.ndarray | Sequence[int] | None = None) -> tuple[ImageSplit, SplitEntry]:
-    """Write ``dest`` (``train_slice.npz``: uint8 NCHW ``x``, ``y``, source ``indices``, ``class_names``, ``seed``,
-    ``source_split``) from a seeded stratified draw of ``split`` and return the slice with its ``SplitEntry``.
-
-    ``exclude_indices`` are source-split indices that must not appear (the
-    evaluation rows when train and eval come from one pool); the slice is
-    disjoint from them by construction. ``SplitEntry.file`` is relative to the
-    assets ``root`` so ``verify_manifest`` checks the digest like any bundled
-    file, and ``indices_sha256`` pins the draw.
-    """
-    dest = Path(dest)
-    positions = train_slice_indices(split.y, n, seed, exclude=(
-        None if exclude_indices is None else np.flatnonzero(np.isin(split.indices, np.asarray(exclude_indices)))))
-    sub = ImageSplit(name=f"{split.name}_slice", x=split.x[positions], y=split.y[positions],
-                     indices=split.indices[positions], class_names=list(split.class_names))
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(dest, x=sub.x, y=sub.y, indices=sub.indices, class_names=np.asarray(sub.class_names),
-                        seed=np.asarray(seed), n_requested=np.asarray(n), source_split=np.asarray(split.name))
-    entry = SplitEntry(name=sub.name, n=sub.n, per_class=sub.per_class(), seed=seed,
-                       indices_sha256=indices_sha256(sub.indices), file=file_entry(Path(root), dest))
-    return sub, entry
-
-
-TRAIN_SLICE_SIDECAR_NAME = "train_slice.json"
-
-
-class TrainSliceSidecar(BaseModel):
-    """``bundled/<model>/train_slice.json``: what a training slice was drawn from and the ``SplitEntry`` it makes.
-
-    Written beside the slice by ``build_cnn_asset`` and read back by ``build.attach_train_slice`` when a slice
-    drawn out-of-band (the B0 draw for ``vehicles_cnn``) is recorded in an existing manifest: the model and
-    dataset it belongs to, the dataset revision and source split it was drawn from, the requested size and
-    seed, and the split entry (``file`` relative to the assets root) that goes under the dataset's ``splits``.
-    """
-
-    model_config = ConfigDict(extra="ignore", protected_namespaces=())
-
-    model_id: str
-    dataset_id: str
-    revision: str | None = None
-    source_split: str
-    split_entry: SplitEntry
-    n_requested: int
-    seed: int
-    note: str = ""
-
-
-def write_train_slice_sidecar(path: Path, sidecar: TrainSliceSidecar) -> Path:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(sidecar.model_dump(mode="json"), indent=2) + "\n", encoding="utf-8")
-    return path
-
-
-def read_train_slice_sidecar(path: Path) -> TrainSliceSidecar:
-    path = Path(path)
-    if not path.is_file():
-        raise DatasetUnavailable(f"training slice sidecar {path} is missing")
-    try:
-        return TrainSliceSidecar.model_validate_json(path.read_text(encoding="utf-8"))
-    except ValueError as exc:
-        raise DatasetUnavailable(f"training slice sidecar {path} is not readable: {exc}") from exc
-
-
-def load_train_slice(path: Path, *, expected_sha256: str | None = None) -> ImageSplit:
-    """Read a ``write_train_slice`` file back (digest-checked when ``expected_sha256`` is given)."""
-    path = Path(path)
-    if not path.is_file():
-        raise DatasetUnavailable(f"training slice {path} is missing")
-    if expected_sha256 and sha256_file(path) != expected_sha256:
-        raise DatasetUnavailable(f"training slice {path} does not match its recorded sha256")
-    with np.load(path, allow_pickle=False) as data:
-        try:
-            x = np.asarray(data["x"], dtype=np.uint8)
-            y = np.asarray(data["y"], dtype=np.int64)
-            indices = np.asarray(data["indices"], dtype=np.int64)
-            class_names = [str(c) for c in data["class_names"].tolist()]
-            source_split = str(data["source_split"]) if "source_split" in data else "train"
-        except KeyError as exc:
-            raise DatasetUnavailable(f"training slice {path} lacks key {exc}") from exc
-    if x.ndim != 4 or x.shape[0] != y.shape[0] or y.shape[0] != indices.shape[0]:
-        raise DatasetUnavailable(f"training slice {path} has inconsistent shapes {x.shape}, {y.shape}, {indices.shape}")
-    return ImageSplit(name=f"{source_split}_slice", x=x, y=y, indices=indices, class_names=class_names)
 
 
 def cached_imagefolder_split(cache_root: Path, split_dir: str, *, class_names: Sequence[str] | None = None,

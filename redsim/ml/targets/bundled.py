@@ -502,33 +502,6 @@ class BundledImageTarget:
         assert self._x is not None and self._y is not None
         return stratified_sample(self._x, self._y, n, seed, self._class_names, source_indices=self._indices)
 
-    def train_sample(self, n: int, seed: int) -> Sample:
-        """Seeded stratified draw over the build's training slice (``models[id].train_slice_split``, ATTACKS_HARDEN-11).
-
-        The slice is the ``train_slice.npz`` the image build wrote beside the weights and recorded as a split
-        of the dataset; it never overlaps the evaluation split. An entry that names no slice raises
-        ``LookupError``, which ``redsim.ml.harden.apply.load_train_slice`` reports as the typed
-        ``TrainingDefenseUnavailable`` (the defense recorded unavailable, score withheld).
-        """
-        self.load()
-        assert self._entry is not None and self._class_names is not None
-        slice_name = self._entry.get("train_slice_split")
-        if not isinstance(slice_name, str) or not slice_name:
-            raise LookupError(f"manifest entry {self.id!r} names no train_slice_split; rebuild with the training slice")
-        # Bind through the same splits table the evaluation split uses; the legacy ``eval_split`` fallback is
-        # removed so a missing slice is ``DatasetUnavailable`` rather than the evaluation data.
-        entry = {k: v for k, v in self._entry.items() if k != "eval_split"}
-        entry["dataset_split"] = slice_name
-        ref = resolve_eval_split(read_manifest(self.root), entry, self.id)
-        x, y, idx, names = load_eval_split(resolve_asset_path(self.root, ref.path), expected_sha256=ref.sha256)
-        if x.ndim != 4 or x.shape[0] != y.shape[0] or x.shape[0] == 0:
-            raise DatasetUnavailable(f"training slice {slice_name!r} must be non-empty NCHW, got {x.shape}")
-        if tuple(int(d) for d in x.shape[1:]) != tuple(int(d) for d in (self._x.shape[1:] if self._x is not None else x.shape[1:])):
-            raise DatasetUnavailable(f"training slice {slice_name!r} shape {x.shape[1:]} differs from the evaluation split")
-        if y.min() < 0 or y.max() >= len(self._class_names):
-            raise DatasetUnavailable(f"training slice {slice_name!r} labels fall outside the declared class list")
-        return stratified_sample(x, y, n, seed, self._class_names, source_indices=idx)
-
     def predict_proba(self, x: np.ndarray) -> np.ndarray:
         self.load()
         import torch

@@ -6,7 +6,7 @@ the pre-refactor function frozen byte for byte from ``main`` at ``7706950``; eve
 both and the records must agree on every non-volatile field: measurements (ids, denominators, counts,
 norms, notes), observations, interpretation, recommendations, curve, score, limitations, ``stages_done``,
 the artifact set and ``flip_matrix.json``. Both sides run in one process against the same tree, so a
-sibling change to an adapter, an explainer or a defense cannot produce a false mismatch. Volatile fields
+sibling change to an adapter or an explainer cannot produce a false mismatch. Volatile fields
 (run id, timestamps, wall times, hostname, library versions, thread env) are stripped by
 :func:`normalize`; floats compare within ``rel_tol=1e-6``.
 
@@ -32,7 +32,7 @@ pytest.importorskip("art")
 
 from redsim.ml.artifacts import FilesystemSink
 from redsim.ml.campaign import run_campaign
-from redsim.ml.schema import CampaignConfig, DefenseConfig
+from redsim.ml.schema import CampaignConfig
 from redsim.ml.targets.registry import TARGETS
 from tests.ml import _campaign_pre_refactor as pre_refactor
 from tests.ml.fakes import TABULAR_DATASET, TinyTabularTarget, TinyTarget
@@ -40,8 +40,10 @@ from tests.ml.test_campaign import EXPLAIN_MOD, RULES_MOD, SUMMARY_MOD, make_fak
 
 pytestmark = pytest.mark.ml
 
-#: sha256 of redsim/ml/campaign.py on main at 7706950, the function the frozen copy carries.
-PRE_REFACTOR_SHA256 = "3abbdcbe00fc4fef06482a8c9137e5ed4ea9d7552dcc0b58ec9c6b2b7a466580"
+#: sha256 of the frozen copy: redsim/ml/campaign.py on main at 7706950 minus the defense branches, which left
+#: with the verify paradigm on 2026-09-09 (``_defense_provenance``, ``DEFENSE_LIMITATION``, the ``apply_defense``
+#: calls, ``baseline_run_id`` and the ``MLError`` import they used; nothing else changed).
+PRE_REFACTOR_SHA256 = "fe86096a052a6cb8aaba656077a0f736a33b90ae7e538259f9029d3c853879ba"
 PRE_REFACTOR_HEADER_LINES = 4
 Runner = Callable[..., Any]
 GRID = [0.01, 0.03, 0.1]
@@ -93,11 +95,10 @@ SCENARIOS: dict[str, dict[str, Any]] = {
         "kwargs": lambda: {"explain": False, "target_override": TinyTabularTarget(seed=0, surrogate=False)},
         "modules": {RULES_MOD: None},
     },
-    # verify run with the real feature_squeezing defense, fgsm only, explain off
-    "image_verify_feature_squeezing": {
-        "config": lambda: _image_config(attack_ids=["fgsm"], attack_params={},
-                                        defense=DefenseConfig(id="feature_squeezing")),
-        "kwargs": lambda: {"explain": False, "baseline_run_id": "baseline-golden"},
+    # image, fgsm only, explain off, real rules: partial score, candidates from the rows alone
+    "image_fgsm_no_explain": {
+        "config": lambda: _image_config(attack_ids=["fgsm"], attack_params={}),
+        "kwargs": lambda: {"explain": False},
         "modules": {RULES_MOD: "__real__"},
     },
 }

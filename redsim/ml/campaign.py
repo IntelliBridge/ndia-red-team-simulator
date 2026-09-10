@@ -4,8 +4,8 @@ Pure Python: no Celery, database or HTTP. The worker task calls ``run_campaign``
 inside the sandboxed child and persists the returned record; tests call it on the
 ``TinyTarget`` double with a ``FilesystemSink``.
 
-``run_campaign`` is the shared frame (Phase B, MODALITIES-09): it resolves the target,
-the defense and the attack set, keeps the stage bookkeeping (``stages_done`` and the
+``run_campaign`` is the shared frame (Phase B, MODALITIES-09): it resolves the target
+and the attack set, keeps the stage bookkeeping (``stages_done`` and the
 live ``on_stage`` callback), owns the evidence lists, writes the curve and flip-matrix
 artifacts, scores, interprets, recommends and assembles the record with its
 provenance. The stages that depend on what a sample is (``sample``, ``clean_eval``,
@@ -17,8 +17,7 @@ and ``run_detection`` from their own modules, and a modality whose runner module
 absent is refused as ``ModalityRunnerUnavailable`` before any stage runs.
 
 Stage order follows ``redsim.ml.schema.STAGES`` (read at run time, never copied):
-load_target -> [defense_apply, when a training defense was applied] ->
-sample -> clean_eval -> attack (written per attack as ``attack:<attack_id>``, every eps
+load_target -> sample -> clean_eval -> attack (written per attack as ``attack:<attack_id>``, every eps
 in the grid) -> control (benign noise at every eps, the reference eps included) ->
 explain (at the reference budget; optional and tolerant of a missing or failing
 explainer) -> score -> interpret -> recommend -> report. The explain and recommend
@@ -31,7 +30,7 @@ and candidate recommendations stay in separate lists; every Measurement carries
 MRI is computed only when all five subscores exist and the score record is
 otherwise partial with the reason in ``missing`` and ``limitations``; a modality that
 declares no MRI (detection) gets a score status of ``unavailable`` with its reason;
-every citation resolves to a recorded id; candidates carry no measured delta.
+every citation resolves to a recorded id; candidates carry no measurement of their effect.
 
 An attack whose adapter raises ``AttackNotApplicable`` at run time (a white-box
 attack on a target without loss gradients, spec 9.5) is recorded ``not_run`` in an
@@ -41,15 +40,6 @@ finding, and the score describes only the attacks that ran. On a tabular target
 whose manifest declares a build-time surrogate, white-box adapters receive a view of
 the target whose ``art_classifier()`` is the surrogate estimator while predictions
 (and therefore every measurement) stay on the real model; the rows say so (12.9).
-
-A verify run applies the configured defense before anything is measured. A
-preprocessing defense goes through ``redsim.ml.defenses.apply_defense``; a defense
-whose catalog entry has ``kind: "training"`` (adversarial fine-tuning, distillation)
-goes through ``redsim.ml.harden.apply.apply_training_defense`` (ATTACKS_HARDEN-06),
-imported lazily. When that module is absent the defense is recorded as unavailable
-in the provenance, an ``Interpretation`` and the limitations, the attacks still run
-against the undefended model so the rows are real, and the score is withheld (status
-``unavailable``) so no delta can be read from a run whose defense never happened.
 
 The returned ``CampaignRecord`` is a ``RunRecord`` plus the queryable projections
 (``curve``, ``settings_hash``, ``completeness``, ``missing``, ``score_status``).
@@ -82,7 +72,7 @@ from redsim.ml.attacks import (
     attack_supports_norm,
     library_versions,
 )
-from redsim.ml.errors import AttackNotApplicable, ExplainUnavailable, MLError, TargetUnavailable
+from redsim.ml.errors import AttackNotApplicable, ExplainUnavailable, TargetUnavailable
 from redsim.ml.eval import eps_tag
 from redsim.ml.runners.base import (
     CONTROL_ATTACK_ID,
@@ -115,7 +105,6 @@ from redsim.ml.schema import (
     CampaignConfig,
     CampaignRecord,
     CandidateRecommendation,
-    DefenseConfig,
     Interpretation,
     Measurement,
     MRIRecord,
@@ -136,22 +125,6 @@ from redsim.ml.targets.registry import TARGETS
 
 logger = logging.getLogger(__name__)
 
-DEFENSE_LIMITATION = (
-    "The white-box attacks in this run used ART's straight-through gradient estimate through the "
-    "preprocessing defense. Adaptive attacks that account for the defense may succeed where these did "
-    "not, so the measured delta MRI is an upper bound on the defense's benefit against these attacks, "
-    "not a general robustness gain.")
-# ATTACKS_HARDEN-06: a training-time defense (adversarial fine-tuning, distillation) applied in the verify child.
-TRAINING_DEFENSE_LIMITATION = (
-    "The defense in this run is a training-time hardening of the model applied inside the verify child at the "
-    "declared budget; the attacks ran against the derived model with the same access as the baseline. The measured "
-    "delta describes robustness to the declared attack set, eps grid and slice only, not a general robustness gain, "
-    "and the derived model is a new artifact whose lineage is recorded, not a change to the registered model.")
-TRAINING_DEFENSE_MODULE = "redsim.ml.harden.apply"
-TRAINING_DEFENSE_HOOK = "apply_training_defense"
-TRAINING_DEFENSE_KIND = "training"
-#: ``code`` of the hook's typed refusal (``redsim.ml.harden.apply.TrainingDefenseUnavailable``).
-TRAINING_DEFENSE_UNAVAILABLE_CODE = "training_defense_unavailable"
 MRI_SCOPE_LIMITATION = (
     "The MRI summarises this campaign only (one model, one modality, the declared attack set, eps grid "
     "and reference budget); it is not comparable across campaigns with different settings and is never "
@@ -215,20 +188,6 @@ def _thread_env() -> dict[str, str]:
         import torch
         env["torch_threads"] = str(torch.get_num_threads())
     return env
-
-
-def _defense_provenance(target: Target, config: CampaignConfig) -> dict[str, Any] | None:
-    """``Provenance.defense`` for a verify run: the applied defense as the wrapper describes it (ART class,
-    resolved params, what it does not defend), else the requested ``DefenseConfig`` when the wrapper does
-    not describe itself. ``None`` for an attack run."""
-    if config.defense is None:
-        return None
-    describe = getattr(target, "describe", None)
-    if callable(describe):
-        described = describe()
-        if isinstance(described, dict):
-            return dict(described)
-    return config.defense.model_dump(mode="json")
 
 
 # --- robustness curve rendering (spec 12.3) --------------------------------------------------------------
@@ -308,80 +267,13 @@ def _check_target(target: Target, config: CampaignConfig) -> None:
 
 
 def _resolve_target(config: CampaignConfig) -> Target:
-    """The loaded, undefended target behind ``config`` (registry lookup, status and domain checks)."""
+    """The loaded target behind ``config`` (registry lookup, status and domain checks)."""
     target = TARGETS.maybe_get(_bundled_registry_id(config))
     if target is None:
         raise TargetUnavailable(f"unknown target {config.target_id!r}")
     _check_target(target, config)
     target.load()
     return target
-
-
-def _defense_kind(defense: DefenseConfig) -> str:
-    """``kind`` of the defense's catalog entry (``redsim.ml.defenses.get_defense``), ``"preprocessing"`` when the
-    catalog does not say (older catalogs, an injected test module) or the id is unknown to it."""
-    try:
-        defenses = importlib.import_module("redsim.ml.defenses")
-    except ImportError:
-        return "preprocessing"
-    get = getattr(defenses, "get_defense", None)
-    if not callable(get):
-        return "preprocessing"
-    try:
-        entry = get(defense.id)
-    except Exception:  # noqa: BLE001 - an unknown id is refused by apply_defense with its own message
-        return "preprocessing"
-    kind = entry.get("kind") if isinstance(entry, dict) else getattr(entry, "kind", None)
-    return kind if isinstance(kind, str) and kind else "preprocessing"
-
-
-def _apply_defense(target: Target, config: CampaignConfig, sink: ArtifactSink) -> tuple[Target, dict[str, Any] | None]:
-    """Apply ``config.defense`` to the loaded target. Returns ``(target, unavailable)``.
-
-    Preprocessing defenses go through ``redsim.ml.defenses.apply_defense`` and a missing module is refused
-    (never an undefended campaign in a defended run's place). A ``kind: training`` defense goes through the
-    ``apply_training_defense`` hook of ``redsim.ml.harden.apply``, called with the target and the
-    ``DefenseConfig`` plus ``config``, ``sink`` and ``seed`` when the hook accepts them; a missing module or hook
-    hands back the undefended target with an ``unavailable`` description the frame records (score withheld).
-    An attack run (no defense) returns the target untouched."""
-    if config.defense is None:
-        return target, None
-    if _defense_kind(config.defense) == TRAINING_DEFENSE_KIND:
-        requested = config.defense.model_dump(mode="json")
-        try:
-            harden = importlib.import_module(TRAINING_DEFENSE_MODULE)
-        except ImportError as exc:
-            return target, {"id": config.defense.id, "kind": TRAINING_DEFENSE_KIND, "status": "unavailable",
-                            "reason": f"module {TRAINING_DEFENSE_MODULE!r} not importable ({exc})",
-                            "requested": requested}
-        hook = getattr(harden, TRAINING_DEFENSE_HOOK, None)
-        if not callable(hook):
-            return target, {"id": config.defense.id, "kind": TRAINING_DEFENSE_KIND, "status": "unavailable",
-                            "reason": f"{TRAINING_DEFENSE_MODULE!r} defines no callable {TRAINING_DEFENSE_HOOK!r}",
-                            "requested": requested}
-        try:
-            defended = call_supported(hook, target, config.defense, config=config, sink=sink, seed=config.seed)
-        except MLError as exc:
-            if getattr(exc, "code", None) != TRAINING_DEFENSE_UNAVAILABLE_CODE:
-                raise
-            # The hook refused the defense for this target (no training slice, a tree ensemble): recorded as
-            # unavailable with its typed reason; the run measures the undefended model and withholds the score.
-            record = getattr(exc, "unavailable", None)
-            dump = getattr(record, "model_dump", None)
-            typed: dict[str, Any] = dict(dump(mode="json")) if callable(dump) else {}
-            return target, {**typed, "id": config.defense.id, "kind": TRAINING_DEFENSE_KIND,
-                            "status": "unavailable", "code": TRAINING_DEFENSE_UNAVAILABLE_CODE,
-                            "reason": str(typed.get("reason") or exc), "requested": requested}
-        if defended is None:
-            raise MLError(f"{TRAINING_DEFENSE_MODULE}.{TRAINING_DEFENSE_HOOK} returned no target for "
-                          f"{config.defense.id!r}")
-        return defended, None
-    try:
-        defenses = importlib.import_module("redsim.ml.defenses")
-    except ImportError as exc:
-        raise MLError("a defense was requested but redsim.ml.defenses is not available; "
-                      "refusing to run an undefended campaign in its place") from exc
-    return defenses.apply_defense(target, config.defense.id, dict(config.defense.params)), None
 
 
 def _resolve_attacks(config: CampaignConfig, domain: str) -> list[Any]:
@@ -445,23 +337,22 @@ def _attack_params(config: CampaignConfig, adapters: list[Any],
 
 
 def _stages() -> tuple[str, ...]:
-    """``schema.STAGES`` as it is at run time (never copied here); ``defense_apply`` follows ``load_target``."""
+    """``schema.STAGES`` as it is at run time (never copied here)."""
     return tuple(_schema.STAGES)
 
 
 # --- the run --------------------------------------------------------------------------------------------
 
 def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = True,
-                 narrative_settings: Any | None = None, baseline_run_id: str | None = None,
-                 parent_run_id: str | None = None,
+                 narrative_settings: Any | None = None, parent_run_id: str | None = None,
                  on_stage: Callable[[str], None] | None = None,
                  target_override: Target | None = None) -> CampaignRecord:
     """Run the campaign described by ``config`` and return its record (status ``succeeded``).
 
     Raises ``TargetUnavailable`` / ``AttackNotApplicable`` / ``ModalityRunnerUnavailable`` / ``ValueError``
     for configuration problems before any stage runs. Explain and recommend failures never fail the run:
-    they are recorded as unavailable (spec 14.7, 16.1). ``baseline_run_id`` (verify runs) and
-    ``parent_run_id`` (reruns) are copied onto the provenance and the record when given.
+    they are recorded as unavailable (spec 14.7, 16.1). ``parent_run_id`` (reruns) is copied onto the
+    provenance and the record when given.
 
     ``narrative_settings`` is an explicit, offline-only injection (CLI, tests): this function never
     reads ``PYTHIA_*`` from the environment. Inside the platform the sandbox child leaves it ``None``
@@ -473,12 +364,11 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
     so no runner can download a lexicon or a weight file (MODALITIES-10)."""
     with pinned_offline_env(sink_work_dir(sink)):
         return _run_campaign(config, sink, explain=explain, narrative_settings=narrative_settings,
-                             baseline_run_id=baseline_run_id, parent_run_id=parent_run_id, on_stage=on_stage,
-                             target_override=target_override)
+                             parent_run_id=parent_run_id, on_stage=on_stage, target_override=target_override)
 
 
 def _run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool,
-                  narrative_settings: Any | None, baseline_run_id: str | None, parent_run_id: str | None,
+                  narrative_settings: Any | None, parent_run_id: str | None,
                   on_stage: Callable[[str], None] | None, target_override: Target | None) -> CampaignRecord:
     started_at = utcnow()
     run_id = uuid.uuid4().hex
@@ -491,7 +381,6 @@ def _run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool,
         target.load()
     else:
         target = _resolve_target(config)
-    target, defense_unavailable = _apply_defense(target, config, sink)
     info = target.info()
     domain = info.domain
     manifest = dict(target.manifest() or {})
@@ -526,20 +415,6 @@ def _run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool,
     nondeterminism = frame.nondeterminism
     versions = frame.versions
     stage_done("load_target")
-    if (config.defense is not None and defense_unavailable is None
-            and _defense_kind(config.defense) == TRAINING_DEFENSE_KIND):
-        # Spec 6.5 / ATTACKS_HARDEN-15: a verify campaign whose defense trains or distils a derived model records
-        # ``defense_apply`` directly after ``load_target`` (STAGES order). A preprocessing defense wraps the loaded
-        # target inside ``load_target`` and has no stage of its own; a defense that could not be applied writes no
-        # such stage either, since nothing was applied. ``redsim.workers.tasks.ml_campaign.expected_stages``
-        # mirrors this rule.
-        stage_done("defense_apply")
-    if defense_unavailable is not None:
-        limitations.append(
-            f"Defense {defense_unavailable['id']!r} (kind {TRAINING_DEFENSE_KIND}) was not applied: "
-            f"{defense_unavailable['reason']}. The rows below measure the undefended model, the defense is "
-            "recorded as unavailable in the provenance and no score is computed, so this record carries no "
-            "verify result and no delta can be read from it.")
 
     # --- sample -> clean_eval -> attack:<id> -> control (the modality runner) ------------------
     result: ModalityResult = runner(config, target, frame=frame)
@@ -602,16 +477,12 @@ def _run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool,
     # --- score -------------------------------------------------------------------------------
     score: MRIRecord | None
     score_reason: str | None
-    if in_scope and result.mri and defense_unavailable is None:
+    if in_scope and result.mri:
         score, score_reason = score_run(config=scoring_config, measurements=measurements, settings_hash=shash,
                                         computed_at=utcnow())
     elif not in_scope:
         score, score_reason = None, ("MRI not computed: no declared attack ran against this target (not_run: "
                                      + "; ".join(f"{k}: {v}" for k, v in not_run.items()) + "). Nothing to score.")
-    elif defense_unavailable is not None:
-        score, score_reason = None, (f"MRI not computed: the requested defense {defense_unavailable['id']!r} was not "
-                                     f"applied ({defense_unavailable['reason']}); scoring the undefended model "
-                                     "as a verify result would fake a delta.")
     else:
         score, score_reason = None, (result.score_unavailable_reason
                                      or f"MRI not computed: the {domain!r} modality declares no MRI.")
@@ -714,9 +585,6 @@ def _run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool,
     finished_at = utcnow()
     limitations = standing + [D3_BOUNDS_LIMITATION] + limitations
     limitations.extend(result.trailing_limitations)
-    if config.defense is not None and defense_unavailable is None:
-        limitations.append(TRAINING_DEFENSE_LIMITATION if _defense_kind(config.defense) == TRAINING_DEFENSE_KIND
-                           else DEFENSE_LIMITATION)
     if score is not None and score.mri is not None:
         limitations.append(MRI_SCOPE_LIMITATION)
     if "explain" in frame.stages_done:
@@ -744,9 +612,7 @@ def _run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool,
         dataset_revision=None if dataset_revision is None else str(dataset_revision),
         dataset_split=config.dataset_split,
         sample_indices_sha256=sha256_indices(result.indices), settings_hash=shash,
-        baseline_run_id=baseline_run_id, parent_run_id=parent_run_id,
-        defense=defense_unavailable if defense_unavailable is not None else _defense_provenance(target, config),
-        llm=llm_provenance, thread_env=_thread_env(),
+        parent_run_id=parent_run_id, llm=llm_provenance, thread_env=_thread_env(),
         model_manifest={**manifest, "seed": config.seed, "n_samples": n, "library_versions": versions,
                         "python_executable": sys.executable},
         started_at=started_at, finished_at=finished_at,
@@ -760,8 +626,8 @@ def _run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool,
         config=config, target=info, attacks=[a.info() for a in in_scope], provenance=provenance,
         measurements=measurements, observations=observations, interpretation=interpretation,
         recommendations=recommendations, score=score, limitations=uniq(limitations),
-        kind="verify" if config.defense is not None else "attack", completed_at=finished_at,
-        settings_hash=shash, baseline_run_id=baseline_run_id, parent_run_id=parent_run_id, curve=curves,
+        kind="attack", completed_at=finished_at,
+        settings_hash=shash, parent_run_id=parent_run_id, curve=curves,
         completeness=score.completeness if score is not None else "partial",
         missing=list(score.missing) if score is not None else [score_reason or "score unavailable"],
         score_status=None if score is not None else ScoreStatus(state="unavailable", reason=score_reason),
@@ -824,7 +690,6 @@ __all__ = [
     "CURVE_PNG_NAME",
     "D3_BOUNDS_LIMITATION",
     "DEFAULT_MAX_ADV_ARTIFACT_MB",
-    "DEFENSE_LIMITATION",
     "MODALITY_RUNNERS",
     "MRI_SCOPE_LIMITATION",
     "NARRATIVE_DEFERRED_LIMITATION",
@@ -835,9 +700,6 @@ __all__ = [
     "SURROGATE_NOTE_PREFIX",
     "SURROGATE_TRANSFER_LIMITATION_TEMPLATE",
     "TABULAR_LIMITATION",
-    "TRAINING_DEFENSE_HOOK",
-    "TRAINING_DEFENSE_LIMITATION",
-    "TRAINING_DEFENSE_MODULE",
     "ArtifactSink",
     "AttackInfo",
     "CampaignFrame",

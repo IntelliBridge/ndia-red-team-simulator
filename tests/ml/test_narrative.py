@@ -98,7 +98,7 @@ def test_request_shape_and_attached_narrative():
     assert [r.triggered_by for r in out] == [r.triggered_by for r in recs]
     assert all(r.narrative_source == "llm" and r.narrative for r in out)
     assert out[0].narrative.startswith("Accuracy fell from 80/100") and out[1].narrative.startswith("This run evaluated")
-    assert all(r.status == "candidate" and r.validation == "not evaluated" for r in out)
+    assert all(r.status == "candidate" for r in out)
     # input recs untouched
     assert all(r.narrative is None and r.narrative_source == "rules" for r in recs)
 
@@ -301,7 +301,7 @@ def test_narrative_runs_in_parent_with_budget_and_usage(parent):
     record = harness.persisted_record(tasks.ATTACK_RUN_ID)
     assert all(r.narrative_source == "llm" and r.narrative for r in record.recommendations)
     assert record.recommendations[0].narrative.startswith("Adversarial training is a candidate")
-    assert all(r.validation == "not evaluated" and r.measured is None for r in record.recommendations)
+    assert all(r.status == "candidate" for r in record.recommendations)
     assert parent["deferred"] not in record.limitations
     assert any(lim.startswith("LLM narrative generated via Pythia (pythia/auto)") for lim in record.limitations)
     assert record.provenance is not None and record.provenance.llm is not None
@@ -482,25 +482,6 @@ def test_banned_word_completion_is_rejected_in_the_parent(parent):
 
     detail = _assert_rules_only(harness, tasks, reason_prefix="rejected by post-check", called=True)
     assert "banned words" in detail["skipped_reason"]
-
-
-@pytest.mark.integration
-def test_verify_jobs_never_narrate(parent):
-    harness, tasks, seen = parent["harness"], parent["tasks"], parent["seen"]
-    finding_id = harness.seed_baseline()
-    verify = tasks.verify_record()
-    verify = verify.model_copy(update={"config": verify.config.model_copy(update={"llm_narrative": True})})
-    harness.add_verify_job(finding_id)
-    harness.install_sandbox(verify)
-    parent["install"](lambda _r: _usage_reply(PARENT_NARRATIVE))
-    # the parent fixture installed the attack child last; re-install the verify child
-    harness.install_sandbox(verify)
-
-    harness.run_job(tasks.VERIFY_JOB_ID)
-
-    assert seen["requests"] == []
-    actions = [e["action"] for e in harness.events(tasks.VERIFY_RUN_ID)]
-    assert "harden.execute" not in actions and "verify.execute" in actions
 
 
 # --- router / config seeding --------------------------------------------------------------------

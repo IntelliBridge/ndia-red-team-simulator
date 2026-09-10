@@ -1,6 +1,6 @@
 """Adversarial-dataset interoperability: Croissant + Parquet export of a run (INTEROP-05..12).
 
-The export is a projection of a terminal campaign or verify record: one Parquet
+The export is a projection of a terminal campaign record: one Parquet
 shard per (attack, ε) plus the control family and the clean slice
 (:mod:`redsim.ml.interop.parquet`), a Croissant JSON-LD manifest whose own sha256
 is the dataset version with a projection-equality guard against the run's

@@ -4,8 +4,8 @@ Pins: the ``ScoringConfig`` weight vector (0.35/0.25/0.20/0.10/0.10 by default) 
 never renormalised; ``MRI == round(sum w*S)`` only when all five subscores exist, else a PARTIAL
 ``MRIRecord`` that names what is missing and carries no ``mri`` or ``grade``; grade bands come from
 ``schema.grade_for_mri``; readings are attack-scoped and free of banned wording; the severity table of
-section 15.5 reads ``SeverityThresholds``; ``delta`` builds an ``MRIDelta`` and refuses incompatible
-campaigns; one ``RobustnessCurve`` per attack is read back from the measurement table.
+section 15.5 reads ``SeverityThresholds``; ``IncompatibleCampaigns`` is the typed refusal of the
+comparison layer; one ``RobustnessCurve`` per attack is read back from the measurement table.
 """
 
 from __future__ import annotations
@@ -20,13 +20,10 @@ from redsim.ml.errors import MLError
 from redsim.ml.eval import eps_tag
 from redsim.ml.schema import (
     GRADE_STATEMENT,
-    AccuracyPoint,
     CampaignConfig,
     ConfidenceThresholds,
-    DefenseConfig,
     Measurement,
     MLFindingDetail,
-    MRIDelta,
     MRIRecord,
     MRIWeights,
     RobustnessCurve,
@@ -55,7 +52,6 @@ from redsim.ml.scoring import (
     control_preserves_accuracy,
     default_eps_grid,
     default_reference_eps,
-    delta,
     eps_bands,
     finding_inputs,
     first_success,
@@ -154,7 +150,7 @@ def test_perfectly_robust_campaign_scores_100_grade_a():
     assert pa.S_asr.n == N_CLEAN_CORRECT and pa.S_expl.n == 8 and pa.S_conf.n == N
     assert [(r.attack_id, r.eps) for r in s.inputs] == [("fgsm", e) for e in GRID]
     assert s.reading and not contains_banned_score_word(s.reading)
-    assert s.delta is None and s.computed_at == T
+    assert s.computed_at == T
     assert MRIRecord.model_validate(s.model_dump(mode="json")) == s
 
 
@@ -348,10 +344,9 @@ def test_finding_inputs_derive_severity_confidence_and_the_finding_detail_shape(
 
 # --- settings hash and inputs -----------------------------------------------------------------------
 
-def test_settings_hash_excludes_verify_only_fields_and_covers_the_model():
+def test_settings_hash_excludes_presentation_fields_and_covers_the_model():
     base = settings_hash(config())
     assert len(base) == 64 and int(base, 16) >= 0
-    assert settings_hash(config(defense=DefenseConfig(id="feature_squeezing"))) == base
     assert settings_hash(config(llm_narrative=True)) == base
     assert settings_hash(config(target_snapshot={"frozen": True})) == base
     assert settings_hash(config(eps_grid=[0.01, 0.03, 0.2])) != base
@@ -360,6 +355,31 @@ def test_settings_hash_excludes_verify_only_fields_and_covers_the_model():
     assert settings_hash(config(), model_sha256="a" * 64) != settings_hash(config(), model_sha256="b" * 64)
     payload = canonical_settings_json(config())
     assert '"defense"' not in payload and '"target_snapshot"' not in payload and '"llm_narrative"' not in payload
+
+
+@pytest.mark.parametrize("name", ["run_record.json", "run_record_phase_b.json"])
+def test_frozen_fixture_settings_hash_is_unchanged_by_the_smaller_exclude_set(name):
+    """2026-09-09: ``defense`` left ``CampaignConfig`` and the exclude set at the same time, so the canonical
+    payload (and the hash) of every stored record is byte-identical under the old and the new exclude set.
+    The frozen fixtures carry a placeholder hash (``f1x7ure…``), so the invariant is asserted on the payload."""
+    import hashlib
+    import json
+    from pathlib import Path
+
+    from redsim.ml.scoring import _SETTINGS_HASH_EXCLUDE
+
+    fixture = json.loads((Path(__file__).parent / "fixtures" / name).read_text(encoding="utf-8"))
+    assert "defense" not in fixture["config"]
+    cfg = CampaignConfig.model_validate(fixture["config"])
+    assert _SETTINGS_HASH_EXCLUDE == frozenset({"llm_narrative", "target_snapshot"})
+    old_exclude = set(_SETTINGS_HASH_EXCLUDE) | {"defense"}
+    old_payload = json.dumps(cfg.model_dump(mode="json", exclude=old_exclude), sort_keys=True, separators=(",", ":"))
+    new_payload = json.dumps(cfg.model_dump(mode="json", exclude=set(_SETTINGS_HASH_EXCLUDE)), sort_keys=True,
+                             separators=(",", ":"))
+    assert old_payload == new_payload == canonical_settings_json(cfg)
+    model_sha256 = (fixture.get("provenance") or {}).get("model_sha256")
+    old_hash = hashlib.sha256(old_payload.encode("utf-8") + str(model_sha256).encode("utf-8")).hexdigest()
+    assert settings_hash(cfg, model_sha256) == old_hash
 
 
 def test_input_rows_carry_denominators():
@@ -374,54 +394,6 @@ def test_input_rows_carry_denominators():
         input_rows(config(), ms[1:])
     with pytest.raises(ValueError, match="partial run"):
         input_rows(config(), ms[:3])
-
-
-# --- delta ------------------------------------------------------------------------------------
-
-def test_delta_builds_an_mri_delta_from_two_complete_records():
-    ms_b = [clean(), *rows("fgsm", [0.4, 0.3, 0.1], asr=0.6, conf_gap=0.5, expl_shift=0.5)]
-    ms_a = [clean(0.75), *rows("fgsm", [0.6, 0.5, 0.3], asr=0.3, conf_gap=0.2, expl_shift=0.2)]
-    before, _ = score_run(config=config(), measurements=ms_b, computed_at=T)
-    after, _ = score_run(config=config(), measurements=ms_a, computed_at=T)
-    d = delta(before, after, baseline_run_id="run-before", measurements_before=ms_b, measurements_after=ms_a)
-    assert isinstance(d, MRIDelta) and d.baseline_run_id == "run-before"
-    assert (d.mri_before, d.mri_after, d.delta) == (before.mri, after.mri, after.mri - before.mri)
-    for k in SUBSCORE_KEYS:
-        assert getattr(d.delta_subscores, k) == round(getattr(after.subscores, k) - getattr(before.subscores, k), 1)
-    assert d.delta_acc_clean.before.n_correct == 80 and d.delta_acc_clean.after.n_correct == 75
-    assert d.delta_acc_clean.delta == pytest.approx(-0.05)
-    assert [f.measurement_id for f in d.delta_families] == [f"m.evasion.fgsm.{eps_tag(e)}" for e in GRID]
-    assert d.delta_families[0].before.n_correct == 40 and d.delta_families[0].after.n_correct == 60
-    assert d.delta_families[0].delta == pytest.approx(0.2)
-    # the delta travels inside the verify run's score record and round-trips
-    verified = MRIRecord.model_validate({**after.model_dump(), "delta": d.model_dump()})
-    assert verified.delta == d
-    # without the measurement lists the family points are reconstructed from the inputs rows
-    d2 = delta(before, after, baseline_run_id="run-before")
-    assert d2.delta == d.delta and d2.delta_families[0].before.n_correct == 40
-    assert before.delta is None and after.delta is None
-
-
-def test_delta_refuses_incompatible_campaigns():
-    before, _ = score({"fgsm": rows("fgsm", [0.4, 0.3, 0.1])})
-    other_attacks, _ = score({"pgd": rows("pgd", [0.4, 0.3, 0.1])})
-    with pytest.raises(ValueError, match="incompatible campaigns.*attack set"):
-        delta(before, other_attacks, baseline_run_id="b")
-    one_point = row("fgsm", 0.03, 0.4, expl_shift=0.0)
-    other_grid, _ = score_run(config=config(eps_grid=[0.03], reference_eps=0.03), measurements=[clean(), one_point])
-    with pytest.raises(ValueError, match="eps grid"):
-        delta(before, other_grid, baseline_run_id="b")
-    other_weights, _ = score({"fgsm": rows("fgsm", [0.4, 0.3, 0.1])},
-                             scoring=ScoringConfig(weights=MRIWeights(acc=0.5, asr=0.2, eps=0.1, conf=0.1, expl=0.1)))
-    with pytest.raises(ValueError, match="weight vectors differ"):
-        delta(before, other_weights, baseline_run_id="b")
-    other_model, _ = score_run(config=config(), measurements=[clean(), *rows("fgsm", [0.4, 0.3, 0.1])],
-                               settings_hash="b" * 64)
-    with pytest.raises(ValueError, match="settings_hash differs"):
-        delta(before, other_model, baseline_run_id="b")
-    partial, _ = score({"fgsm": rows("fgsm", [0.4, 0.3, 0.1], expl_shift=None)})
-    with pytest.raises(ValueError, match="complete"):
-        delta(before, partial, baseline_run_id="b")
 
 
 # --- robustness curve ---------------------------------------------------------------------------------
@@ -541,78 +513,9 @@ def test_control_preserves_accuracy_is_a_binomial_predicate_with_a_two_point_flo
             control_preserves_accuracy(c100, ctrl_row(78, 100), alpha=bad)
 
 
-# --- delta: absent cells and the modality guard (register G-SCORE2, G-SCORE3) ------------------------------
-
-def _pair():
-    ms_b = [clean(), *rows("fgsm", [0.4, 0.3, 0.1], asr=0.6, conf_gap=0.5, expl_shift=0.5)]
-    ms_a = [clean(), *rows("fgsm", [0.6, 0.5, 0.3], asr=0.3, conf_gap=0.2, expl_shift=0.2)]
-    before, _ = score_run(config=config(), measurements=ms_b, computed_at=T)
-    after, _ = score_run(config=config(), measurements=ms_a, computed_at=T)
-    return ms_b, ms_a, before, after
-
-
-def test_delta_absent_cell_renders_unavailable_not_zero():
-    ms_b, ms_a, before, after = _pair()
-    # the verify record lost its eps 0.1 cell (input row and measurement): the family is still listed, with the
-    # absent side at n = 0 and no delta, so a report renders "no evidence recorded" rather than 0
-    after_missing = after.model_copy(update={"inputs": [r for r in after.inputs if not math.isclose(r.eps, 0.1)]})
-    ms_a_missing = [m for m in ms_a if not m.id.endswith(eps_tag(0.1))]
-    d = delta(before, after_missing, baseline_run_id="b", measurements_before=ms_b, measurements_after=ms_a_missing)
-    assert [f.measurement_id for f in d.delta_families] == [f"m.evasion.fgsm.{eps_tag(e)}" for e in GRID]
-    absent = d.delta_families[2]
-    assert absent.before == AccuracyPoint(n=N, n_correct=10, accuracy=0.1)
-    assert absent.after == AccuracyPoint(n=0, n_correct=0, accuracy=None)
-    assert absent.delta is None
-    assert d.delta_families[0].delta == pytest.approx(0.2) and d.delta_families[1].delta == pytest.approx(0.2)
-    assert all(f.before.n is not None and f.after.n is not None for f in d.delta_families)   # both denominators
-    assert MRIDelta.model_validate(d.model_dump(mode="json")) == d
-    # the same when the family points are reconstructed from the inputs rows
-    d2 = delta(before, after_missing, baseline_run_id="b")
-    assert d2.delta_families[2].after == AccuracyPoint(n=0, n_correct=0, accuracy=None)
-    assert d2.delta_families[2].delta is None and d2.delta_families[2].before.n_correct == 10
-    # a cell recorded only on the verify side is listed too, with the baseline side absent
-    d3 = delta(after_missing, before, baseline_run_id="b")
-    assert d3.delta_families[2].measurement_id == f"m.evasion.fgsm.{eps_tag(0.1)}"
-    assert d3.delta_families[2].before.n == 0 and d3.delta_families[2].before.accuracy is None
-    assert d3.delta_families[2].after.n_correct == 10 and d3.delta_families[2].delta is None
-    # an after row with n == 0 is no evidence either: accuracy None and delta None, never 0.0
-    zero = ms_a[3].model_copy(update={"n": 0, "n_correct": 0, "accuracy": 0.0})
-    d4 = delta(before, after, baseline_run_id="b", measurements_before=ms_b, measurements_after=[*ms_a[:3], zero])
-    assert d4.delta_families[2].after == AccuracyPoint(n=0, n_correct=0, accuracy=None)
-    assert d4.delta_families[2].delta is None
-    # nothing absent: every cell carries a numeric delta
-    full = delta(before, after, baseline_run_id="b", measurements_before=ms_b, measurements_after=ms_a)
-    assert all(f.delta is not None and f.before.n == N and f.after.n == N for f in full.delta_families)
-
-
-def test_delta_refuses_mixing_two_modalities():
-    _, _, before, after = _pair()
-    with pytest.raises(IncompatibleCampaigns, match="modality 'image' != 'tabular'") as info:
-        delta(before, after, baseline_run_id="b", modality_before="image", modality_after="tabular")
-    exc = info.value
-    assert isinstance(exc, ValueError) and isinstance(exc, MLError)        # existing callers keep catching it
-    assert exc.code == "incompatible_campaigns" == IncompatibleCampaigns.code   # the spec 17.3 409 code
-    assert exc.reasons == ["modality 'image' != 'tabular'; scores are never compared across modalities"]
-    assert str(exc).startswith("incompatible campaigns: modality")
-    # the guard is explicit: it fires before anything else is compared, even on a partial record
-    partial, _ = score({"fgsm": rows("fgsm", [0.4, 0.3, 0.1], expl_shift=None)})
-    with pytest.raises(IncompatibleCampaigns, match="modality"):
-        delta(before, partial, baseline_run_id="b", modality_before="tabular", modality_after="image")
-    # the same modality on both sides passes; an unknown side does not fire the guard
-    assert delta(before, after, baseline_run_id="b", modality_before="image", modality_after="image").delta == \
-        after.mri - before.mri
-    assert delta(before, after, baseline_run_id="b", modality_before="image").delta == after.mri - before.mri
-    assert delta(before, after, baseline_run_id="b", modality_after="tabular").delta == after.mri - before.mri
-    # the other spec 15.6 preconditions raise the same typed error, listing every failed one
-    other, _ = score_run(config=config(attack_ids=["pgd"], eps_grid=[0.03], reference_eps=0.03),
-                         measurements=[clean(), row("pgd", 0.03, 0.4, expl_shift=0.0)])
-    with pytest.raises(IncompatibleCampaigns) as info2:
-        delta(before, other, baseline_run_id="b")
-    assert info2.value.code == "incompatible_campaigns"
-    assert any(r.startswith("settings_hash") for r in info2.value.reasons)
-    assert any(r.startswith("eps grid") for r in info2.value.reasons)
-    assert any(r.startswith("attack set") for r in info2.value.reasons)
-    # a partial record on either side is "not comparable", not a cross-campaign mismatch
-    with pytest.raises(ValueError, match="complete") as info3:
-        delta(before, partial, baseline_run_id="b")
-    assert not isinstance(info3.value, IncompatibleCampaigns)
+def test_incompatible_campaigns_is_the_typed_409_refusal():
+    exc = IncompatibleCampaigns(["eps grid [0.01] != [0.03]", "attack set differs"])
+    assert isinstance(exc, ValueError) and isinstance(exc, MLError)
+    assert exc.code == "incompatible_campaigns" == IncompatibleCampaigns.code
+    assert exc.reasons == ["eps grid [0.01] != [0.03]", "attack set differs"]
+    assert str(exc).startswith("incompatible campaigns: eps grid")

@@ -1,7 +1,7 @@
 """``redsim.ml.reporting`` against spec 14.8 (G-REP1).
 
-Six sections in the fixed order; the MRI scorecard as a sub-block of section 2; the ΔMRI block on
-verify runs; HTML escaped once, through ``redsim.report``'s helpers, with the Markdown left raw;
+Six sections in the fixed order; the MRI scorecard as a sub-block of section 2; HTML escaped once,
+through ``redsim.report``'s helpers, with the Markdown left raw;
 ``report.json`` equal to the record dump (the RunRecord plus the MRIRecord); URL strings inert.
 Records are hand-built from the frozen schema, so the tests are offline and fast.
 """
@@ -14,8 +14,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from redsim.ml.reporting import (
-    DELTA_HEADING,
-    NOT_MEASURED,
     REVIEWER_NOTES_HEADING,
     SCORECARD_HEADING,
     SECTION_HEADINGS,
@@ -28,14 +26,9 @@ from redsim.ml.schema import (
     CampaignConfig,
     CampaignRecord,
     CandidateRecommendation,
-    CleanAccuracyDelta,
     CurvePoint,
-    DefenseConfig,
-    FamilyDelta,
     Interpretation,
-    MeasuredDelta,
     Measurement,
-    MRIDelta,
     MRIInputRow,
     MRIRecord,
     MRIWeights,
@@ -85,7 +78,7 @@ def _measurements(*, true_label: str = "circle") -> list[Measurement]:
     ]
 
 
-def _score(*, mri: int = 42, delta: MRIDelta | None = None) -> MRIRecord:
+def _score(*, mri: int = 42) -> MRIRecord:
     scored = {k: ScoredValue(value=v, n=n) for k, v, n in (
         ("S_acc", 35.5, 200), ("S_asr", 62.8, 172), ("S_eps", 51.0, 200), ("S_conf", 69.0, 200),
         ("S_expl", 58.0, 16),
@@ -100,7 +93,7 @@ def _score(*, mri: int = 42, delta: MRIDelta | None = None) -> MRIRecord:
         subscores=Subscores(S_acc=24.2, S_asr=54.4, S_eps=44.3, S_conf=61.0, S_expl=51.5),
         mri=mri, grade=grade_for_mri(mri), completeness="complete",
         reading="The cheapest in-scope attack succeeded at the reference budget on a large share of the slice.",
-        delta=delta, computed_at=NOW,
+        computed_at=NOW,
     )
 
 
@@ -114,11 +107,11 @@ def _curve() -> list[RobustnessCurve]:
     )]
 
 
-def _provenance(*, defense: dict[str, object] | None = None) -> dict[str, object]:
+def _provenance() -> dict[str, object]:
     return {
         "redsim_version": "0.13.0", "python": "3.12.12", "torch": "2.3.0", "art": "1.18.0", "shap": "0.46.0",
         "numpy": "1.26.4", "model_sha256": "d0" * 32, "dataset": "synthetic", "dataset_revision": "rev-1",
-        "dataset_split": "test", "sample_indices_sha256": "5a" * 32, "settings_hash": HASH, "defense": defense,
+        "dataset_split": "test", "sample_indices_sha256": "5a" * 32, "settings_hash": HASH,
         "thread_env": {"OMP_NUM_THREADS": "2"}, "model_manifest": {"model": "TinyNet", "source_url": URL},
         "started_at": NOW, "finished_at": NOW, "hostname": "test", "device": "cpu",
         "nondeterminism": ["CPU float32 reductions; results may differ across BLAS builds and thread counts"],
@@ -157,44 +150,15 @@ def _record(**overrides: object) -> CampaignRecord:
         )],
         "score": _score(), "curve": _curve(), "completeness": "complete",
         "limitations": ["synthetic is an open, unclassified public benchmark.",
-                        "Recommendations are candidates. None has been validated against this model."],
+                        "Recommendations are candidates. None has been evaluated against this model; that "
+                        "requires a separate campaign."],
     }
     base.update(overrides)
     return CampaignRecord.model_validate(base)
 
 
-def _verify_record() -> CampaignRecord:
-    defense = DefenseConfig(id="feature_squeezing", art_class="art.defences.preprocessor.FeatureSqueezing",
-                            params={"bit_depth": 4})
-    before = AccuracyPoint(n=200, n_correct=172, accuracy=0.86)
-    after = AccuracyPoint(n=200, n_correct=168, accuracy=0.84)
-    sub = Subscores(S_acc=1.0, S_asr=5.5, S_eps=3.0, S_conf=2.0, S_expl=0.5)
-    delta = MRIDelta(
-        baseline_run_id="run-attack-1", mri_before=40, mri_after=55, delta=15, delta_subscores=sub,
-        delta_acc_clean=CleanAccuracyDelta(before=before, after=after, delta=-0.02),
-        delta_families=[FamilyDelta(measurement_id="m.evasion.fgsm.eps0.03",
-                                    before=AccuracyPoint(n=200, n_correct=112, accuracy=0.56),
-                                    after=AccuracyPoint(n=200, n_correct=150, accuracy=0.75), delta=0.19)],
-    )
-    measured = MeasuredDelta(
-        verify_run_id="run-verify-1", baseline_run_id="run-attack-1", defense=defense, delta_mri=15,
-        delta_subscores=sub, delta_acc_clean=CleanAccuracyDelta(before=before, after=after, delta=-0.02),
-        settings_hash=HASH, measured_at=NOW,
-    )
-    config = CampaignConfig(
-        target_id="tiny", modality="image", attack_ids=["fgsm"], eps_grid=[0.03], reference_eps=0.03,
-        n_samples=200, seed=0, explain_k=8, dataset_id="synthetic", dataset_revision="rev-1", defense=defense,
-    )
-    return _record(
-        run_id="run-verify-1", kind="verify", baseline_run_id="run-attack-1", config=config,
-        provenance=_provenance(defense=defense.model_dump()), score=_score(mri=55, delta=delta),
-        recommendations=[CandidateRecommendation(
-            id="r.R2", title="Feature squeezing as an input preprocessor",
-            rationale="Intended to reduce ASR at small ε.", triggered_by=["m.evasion.fgsm.eps0.03"],
-            references=[defense.art_class or ""], validation="measured", measured=measured,
-        )],
-        reviewer_notes="Reviewed the flipped samples.\nThe centre-mass shift looks real on o.000.",
-    )
+def _record_with_notes() -> CampaignRecord:
+    return _record(reviewer_notes="Reviewed the flipped samples.\nThe centre-mass shift looks real on o.000.")
 
 
 def _reports(record: CampaignRecord) -> dict[str, str]:
@@ -224,11 +188,12 @@ def test_six_sections_in_order() -> None:
     assert "Reading (attack-scoped): The cheapest in-scope attack" in md
     assert "| S_asr | 0.25 | 54.4 | 62.8 (n=172) |" in md, "five subscores with denominators"
     assert "| 0.03 (reference) | 112/200 (0.5600) | 64/172 (0.3721) | 168/200 (0.8400) |" in md, "curve table"
-    assert DELTA_HEADING not in md, "an attack run carries no ΔMRI block"
+    assert "ΔMRI" not in md and "Baseline run" not in md, "a run is a measurement in its own right"
     # Section 1 carries the configuration, the provenance and the generation stamp.
     section_1 = md[positions[0]:positions[1]]
     assert f"**Generated at:** {NOW.isoformat()}" in section_1 and f"`{HASH}`" in section_1
-    assert "**Baseline run:** none (not a verify run)" in section_1 and "Nondeterminism sources" in section_1
+    assert "**Parent run:** none (not a rerun)" in section_1 and "Nondeterminism sources" in section_1
+    assert "Defense" not in section_1
     # Section 2: every rate travels with its fraction, and the row header is the one the worker tests pin.
     section_2 = md[positions[1]:positions[2]]
     assert "| Attack | Epsilon | N | Clean correct |" in section_2 and "| fgsm | 0.03 | 200 | 172 |" in section_2
@@ -243,8 +208,9 @@ def test_six_sections_in_order() -> None:
     assert "- **i.1** [inferred] Random noise" in section_4 and "basis: `m.clean`, `m.evasion.fgsm.eps0.03`" in section_4
     section_5 = md[positions[4]:positions[5]]
     assert "- **r.R2** [candidate] Feature squeezing" in section_5
-    assert "Validation: not evaluated" in section_5 and NOT_MEASURED in section_5
-    assert "Measured ΔMRI" not in section_5, "no gain figure before a verify run measured one"
+    assert "Rationale:" in section_5 and "Triggered by: `m.evasion.fgsm.eps0.03`" in section_5
+    assert "References (inert text, not links):" in section_5 and "Narrative: none (narrative_source: rules)" in section_5
+    assert "Validation" not in section_5 and "xpected gain" not in section_5 and "ΔMRI" not in section_5
     section_6 = md[positions[5]:]
     assert "- Recommendations are candidates." in section_6 and REVIEWER_NOTES_HEADING not in section_6
 
@@ -254,37 +220,14 @@ def test_six_sections_in_order() -> None:
     assert "<h3>MRI scorecard (derived summary)</h3>" in html and "<table>" in html
 
 
-def test_verify_run_renders_delta_block_and_measured_sentence() -> None:
-    record = _verify_record()
-    md = _reports(record)["report.md"]
+def test_reviewer_notes_render_after_the_limitations() -> None:
+    md = _reports(_record_with_notes())["report.md"]
     positions = _positions(md, SECTION_HEADINGS)
-
-    delta_at = md.find(DELTA_HEADING)
-    assert positions[1] < delta_at < positions[2], "the ΔMRI block lives inside section 2"
-    block = md[delta_at:positions[2]]
-    assert "Changed variable: defense `feature_squeezing` (`art.defences.preprocessor.FeatureSqueezing`)" in block
-    assert "**ΔMRI +15** (MRI 40 → 55)." in block
-    assert "Clean accuracy: 172/200 (0.8600) → 168/200 (0.8400) (Δ -0.0200)." in block
-    assert "| S_asr | +5.5 |" in block
-    assert "| m.evasion.fgsm.eps0.03 | 112/200 (0.5600) | 150/200 (0.7500) | +0.1900 |" in block
-    assert "Baseline run `run-attack-1` → verify run `run-verify-1`" in block and f"`{HASH}`" in block
-
-    section_5 = md[positions[4]:positions[5]]
-    assert "Validation: measured" in section_5 and NOT_MEASURED not in section_5
-    assert (
-        "Measured ΔMRI +15 (MRI 40 → 55; clean accuracy 172/200 (0.8600) → 168/200 (0.8400); "
-        f"verify run run-verify-1, settings {HASH[:12]}, defense "
-        'art.defences.preprocessor.FeatureSqueezing({"bit_depth": 4}))'
-    ) in section_5, "spec 16.4 (5): the full delta-at-settings sentence, never a bare +15"
-    assert f"share settings hash `{HASH}` (before = after)" in section_5
-    assert "Per-dimension Δ: S_acc +1.0, S_asr +5.5, S_eps +3.0, S_conf +2.0, S_expl +0.5" in section_5
-
-    section_1 = md[positions[0]:positions[1]]
-    assert "**Kind:** verify" in section_1 and "**Baseline run:** `run-attack-1`" in section_1
-    assert "Defense (the changed variable of a verify run)" in section_1
     section_6 = md[positions[5]:]
     assert section_6.find("- synthetic is an open") < section_6.find(REVIEWER_NOTES_HEADING)
     assert "> Reviewed the flipped samples." in section_6 and "> The centre-mass shift" in section_6
+    assert len(re.findall(r"^## ", md, re.MULTILINE)) == len(SECTION_HEADINGS), \
+        "reviewer notes are a sub-block, not a seventh section"
 
 
 def test_partial_and_unscored_records_refuse_to_invent_numbers() -> None:
@@ -350,7 +293,7 @@ def test_url_string_has_no_anchor() -> None:
 
 
 def test_json_round_trips_record() -> None:
-    for record in (_record(), _verify_record(), CampaignRecord.model_validate_json(FIXTURE.read_bytes())):
+    for record in (_record(), _record_with_notes(), CampaignRecord.model_validate_json(FIXTURE.read_bytes())):
         reports = {name: (data, content_type) for name, data, content_type in
                    render_campaign_reports(record, generated_at=NOW)}
         assert [name for name in reports] == ["report.md", "report.json", "report.html"]

@@ -20,14 +20,12 @@ limitations. Both are build-record fields outside the frozen projection, so
 before they existed still verify (they read back as ``[]`` / ``None``).
 
 Phase B (plan 12): ``DatasetSource`` gains ``uci`` (the SMS Spam Collection) and
-``github`` (the nltk_data WordNet zip); ``ModelEntry.train_slice_split`` names
-the bundled training slice an image model carries for the training defenses
-(ATTACKS_HARDEN-11: a ``SplitEntry`` under the dataset's ``splits`` whose
-``file`` is ``bundled/<model>/train_slice.npz``), again outside the frozen
-projection. The frozen ``MLModelManifest`` drops its optional Phase B blocks
-(``text``, ``detection``, ``endpoint``, ``derived_from``) while they are
+``github`` (the nltk_data WordNet zip). The frozen ``MLModelManifest`` drops its
+optional Phase B blocks (``text``, ``detection``, ``endpoint``) while they are
 ``None``, so an entry written before them keeps its digest (MODALITIES-05); a
-manifest that carries a block has it in the digest, as it should.
+manifest that carries a block has it in the digest, as it should. A manifest
+written before 2026-09-09 may still carry ``train_slice_split`` on a model entry
+and a ``<train split>_slice`` split; both are ignored (``extra="ignore"``).
 
 The Phase B bundled ids (``sms_tfidf_lr`` text, ``assets_frcnn_mnv3``
 detection) live here (``PHASE_B_MODEL_IDS`` and the ``BUILD_*`` tables) so the
@@ -205,9 +203,6 @@ class ModelEntry(MLModelManifest):
     # carries them into the campaign (spec 11.3, 13.4, 14.5). Outside the frozen projection: no digest change.
     dataset_caveats: list[str] = Field(default_factory=list)
     subject_centered: bool | None = None
-    # ATTACKS_HARDEN-11: the split (in the bound dataset's ``splits``) whose ``file`` is the bundled training
-    # slice a training defense fine-tunes on; ``None`` when the build wrote none. Build record, outside the digest.
-    train_slice_split: str | None = None
     status: ModelStatus = "available"
     bundled: bool = True
 
@@ -468,9 +463,7 @@ def verify_model_assets(manifest: AssetManifest, root: Path, model_id: str) -> M
 
     Scoped to the model so a missing slice of another dataset does not block this target; the loaders
     call this at every ``load()``. Problems with the split (missing, tampered, no such dataset or split
-    in ``datasets``) are reported separately from problems with the model's own files. The training slice
-    named by ``train_slice_split`` (ATTACKS_HARDEN-11) is checked the same way when the entry declares one,
-    so a training defense never fine-tunes on a slice the manifest does not vouch for.
+    in ``datasets``) are reported separately from problems with the model's own files.
     """
     entry = model_entry(manifest, model_id)
     if entry is None:
@@ -487,14 +480,6 @@ def verify_model_assets(manifest: AssetManifest, root: Path, model_id: str) -> M
                                     f"{entry.dataset_split!r}")
         else:
             dataset_problems.extend(_check_files(iter_split_files(entry.dataset_id, ds, entry.dataset_split), root))
-        if entry.train_slice_split is not None:
-            slice_split = ds.splits.get(entry.train_slice_split)
-            if slice_split is None or slice_split.file is None:
-                dataset_problems.append(f"model {model_id}: dataset {entry.dataset_id!r} has no bundled training "
-                                        f"slice {entry.train_slice_split!r}")
-            else:
-                dataset_problems.extend(
-                    _check_files(iter_split_files(entry.dataset_id, ds, entry.train_slice_split), root))
         if entry.dataset_revision is not None and ds.revision is not None and entry.dataset_revision != ds.revision:
             dataset_problems.append(f"model {model_id}: dataset_revision {entry.dataset_revision!r} differs from the "
                                     f"dataset entry's revision {ds.revision!r}")

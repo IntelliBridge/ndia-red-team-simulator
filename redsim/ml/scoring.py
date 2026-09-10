@@ -16,12 +16,10 @@ One campaign = one model x one modality x one declared attack set x one eps
 grid x one reference budget; nothing here aggregates across those boundaries
 (D9 i). ``severity_for`` derives the Finding-level severity from the first
 success budget and the ASR against ``SeverityThresholds`` (spec 15.5); nothing
-sets severity by hand and no ``Measurement`` carries one. ``delta`` builds the
-``MRIDelta`` of a verify run and refuses incompatible campaigns (spec 15.6)
-with ``IncompatibleCampaigns`` (the 409 ``incompatible_campaigns`` of spec
-17.3), including two campaigns of different modality. A (attack, eps) cell
-present on one side only is reported as a ``FamilyDelta`` whose absent side has
-``n = 0`` and whose ``delta`` is ``None``: no evidence is never a delta of 0.
+sets severity by hand and no ``Measurement`` carries one. ``IncompatibleCampaigns``
+(the 409 ``incompatible_campaigns`` of spec 17.3) is the typed refusal the
+comparison layer raises for two campaigns whose scores must not be placed side
+by side, including two campaigns of different modality.
 
 ``control_preserves_accuracy`` is the spec 12.4 predicate the rule layer's
 first rule reads: the benign control did not degrade accuracy when its
@@ -44,18 +42,15 @@ from itertools import pairwise
 from typing import Any, Literal
 
 from redsim.ml.errors import MLError
-from redsim.ml.eval import eps_of, eps_tag
+from redsim.ml.eval import eps_of
 from redsim.ml.schema import (
     GRADE_STATEMENT,
     AccuracyPoint,
     CampaignConfig,
-    CleanAccuracyDelta,
     ConfidenceThresholds,
     CurvePoint,
-    FamilyDelta,
     Grade,
     Measurement,
-    MRIDelta,
     MRIInputRow,
     MRIRecord,
     MRIWeights,
@@ -118,7 +113,7 @@ def default_reference_eps(norm: str = "linf") -> float:
 class IncompatibleCampaigns(MLError, ValueError):
     """Two campaigns whose scores must not be compared (spec 15.6 preconditions, 15.8 i).
 
-    A ``ValueError`` too, so callers that already catch ``ValueError`` from ``delta`` keep working. ``code``
+    A ``ValueError`` too, so callers that already catch ``ValueError`` keep working. ``code``
     is the spec 17.3 entry the API maps to ``409 incompatible_campaigns``; ``reasons`` lists every failed
     precondition so the UI can show "not comparable: <reason>".
     """
@@ -156,12 +151,12 @@ def weights_by_subscore(weights: MRIWeights) -> dict[str, float]:
 
 # --- settings hash (spec 5.6, 15.6) -----------------------------------------------------------
 
-_SETTINGS_HASH_EXCLUDE = frozenset({"defense", "llm_narrative", "target_snapshot"})
+_SETTINGS_HASH_EXCLUDE = frozenset({"llm_narrative", "target_snapshot"})
 
 
 def canonical_settings_json(config: CampaignConfig) -> str:
-    """Canonical JSON of the campaign config excluding ``defense``, ``llm_narrative`` and
-    ``target_snapshot`` (the fields a verify run is allowed to change)."""
+    """Canonical JSON of the campaign config excluding ``llm_narrative`` and ``target_snapshot``
+    (the fields that do not change what was measured)."""
     payload = config.model_dump(mode="json", exclude=set(_SETTINGS_HASH_EXCLUDE))
     return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
@@ -586,129 +581,6 @@ def score_run(*, config: CampaignConfig, measurements: Sequence[Measurement],
     return record, None
 
 
-# --- delta MRI on verify (spec 15.6) ----------------------------------------------------------------
-
-def _point(n: int, n_correct: int, accuracy: float | None) -> AccuracyPoint:
-    """An ``AccuracyPoint`` whose ``accuracy`` is ``None`` when the denominator is 0 (spec 14.2)."""
-    return AccuracyPoint(n=n, n_correct=n_correct, accuracy=None if n <= 0 else accuracy)
-
-
-def _absent_point() -> AccuracyPoint:
-    """The side of a family delta for which no row exists: ``n = 0``, nothing counted, no accuracy."""
-    return AccuracyPoint(n=0, n_correct=0, accuracy=None)
-
-
-def _clean_point(record: MRIRecord, measurements: Sequence[Measurement] | None) -> AccuracyPoint:
-    if measurements is not None:
-        m = clean_row(measurements)
-        if m is not None:
-            return _point(m.n, m.n_correct, m.accuracy)
-    if not record.inputs:
-        raise ValueError("score record has no inputs; cannot recover the clean accuracy")
-    row = record.inputs[0]
-    if row.n_correct_clean is None or row.acc_clean is None:
-        raise ValueError("score record inputs lack the clean denominators")
-    return _point(row.n, row.n_correct_clean, row.acc_clean)
-
-
-def _input_row(record: MRIRecord, attack_id: str, eps: float) -> MRIInputRow | None:
-    return next((r for r in record.inputs if r.attack_id == attack_id and _same_eps(r.eps, eps)), None)
-
-
-def _adv_point(attack_id: str, eps: float, row: MRIInputRow | None,
-               measurements: Sequence[Measurement] | None) -> AccuracyPoint:
-    """The (attack, eps) accuracy point: the measurement row when given, else the score input row, else
-    the absent point (``n = 0``, ``accuracy None``) when neither side recorded that cell."""
-    mid = f"m.evasion.{attack_id}.{eps_tag(eps)}"
-    if measurements is not None:
-        m = next((x for x in measurements if x.id == mid), None)
-        if m is not None:
-            return _point(m.n, m.n_correct, m.accuracy)
-    if row is None:
-        return _absent_point()
-    if row.acc_adv is None:
-        raise ValueError(f"score record input {mid} lacks acc_adv")
-    return _point(row.n, round(row.acc_adv * row.n), row.acc_adv)
-
-
-def _cells(record: MRIRecord) -> list[tuple[str, float]]:
-    """The distinct (attack, eps) cells of a score record's inputs, in input order."""
-    out: list[tuple[str, float]] = []
-    for r in record.inputs:
-        if not any(a == r.attack_id and _same_eps(e, r.eps) for a, e in out):
-            out.append((r.attack_id, float(r.eps)))
-    return out
-
-
-def delta(before: MRIRecord, after: MRIRecord, *, baseline_run_id: str,
-          measurements_before: Sequence[Measurement] | None = None,
-          measurements_after: Sequence[Measurement] | None = None,
-          modality_before: str | None = None,
-          modality_after: str | None = None) -> MRIDelta:
-    """The measured ΔMRI of a verify run against its baseline (spec 15.6).
-
-    Both records must be complete and share ``settings_hash``, scoring version, eps grid, reference
-    budget, norm, attack set and weight vector; otherwise ``IncompatibleCampaigns`` (a ``ValueError``
-    the API surfaces as 409 ``incompatible_campaigns``). Two modalities are never compared (spec 15.8 i):
-    pass ``modality_before`` / ``modality_after`` (the campaigns' ``config.modality``) and a mismatch is
-    refused before anything else is looked at; the guard is explicit because ``MRIRecord`` carries no
-    modality field and the settings hash is opaque. A partial record on either side is a plain
-    ``ValueError`` (not comparable, but not a cross-campaign mismatch).
-
-    The clean-accuracy change always travels with the delta. Family deltas are exact when the
-    measurement lists are given and are otherwise reconstructed from the ``inputs`` rows
-    (``n_correct = round(acc_adv * n)``). A (attack, eps) cell recorded on one side only is still
-    reported: the absent side is ``n = 0`` with no accuracy and the cell's ``delta`` is ``None``, so a
-    report renders "no evidence recorded" rather than a delta of 0 (spec 14.2, register G-SCORE2).
-    Both denominators are always present on every ``FamilyDelta``."""
-    if modality_before is not None and modality_after is not None and str(modality_before) != str(modality_after):
-        raise IncompatibleCampaigns([f"modality {str(modality_before)!r} != {str(modality_after)!r}; "
-                                     "scores are never compared across modalities"])
-    if before.mri is None or after.mri is None:
-        raise ValueError("delta needs two complete score records (mri computed on both)")
-    problems: list[str] = []
-    if before.settings_hash != after.settings_hash:
-        problems.append("settings_hash differs")
-    if before.scoring_version != after.scoring_version:
-        problems.append(f"scoring version {before.scoring_version!r} != {after.scoring_version!r}")
-    if [round(e, 12) for e in sorted(before.eps_grid)] != [round(e, 12) for e in sorted(after.eps_grid)]:
-        problems.append(f"eps grid {before.eps_grid} != {after.eps_grid}")
-    if not _same_eps(before.reference_eps, after.reference_eps):
-        problems.append(f"reference eps {before.reference_eps} != {after.reference_eps}")
-    if before.norm != after.norm:
-        problems.append(f"norm {before.norm!r} != {after.norm!r}")
-    if sorted(before.attack_ids) != sorted(after.attack_ids):
-        problems.append(f"attack set {before.attack_ids} != {after.attack_ids}")
-    if before.weights.as_dict() != after.weights.as_dict():
-        problems.append("weight vectors differ")
-    if problems:
-        raise IncompatibleCampaigns(problems)
-
-    sub_delta = Subscores(**{
-        k: round(float(getattr(after.subscores, k)) - float(getattr(before.subscores, k)), 1) for k in SUBSCORE_KEYS})
-    clean_b = _clean_point(before, measurements_before)
-    clean_a = _clean_point(after, measurements_after)
-    clean_delta = (None if clean_a.accuracy is None or clean_b.accuracy is None
-                   else float(clean_a.accuracy) - float(clean_b.accuracy))
-    cells = _cells(before)
-    for cell in _cells(after):
-        if not any(a == cell[0] and _same_eps(e, cell[1]) for a, e in cells):
-            cells.append(cell)
-    families: list[FamilyDelta] = []
-    for attack_id, eps in cells:
-        pb = _adv_point(attack_id, eps, _input_row(before, attack_id, eps), measurements_before)
-        pa = _adv_point(attack_id, eps, _input_row(after, attack_id, eps), measurements_after)
-        d = None if pa.accuracy is None or pb.accuracy is None else float(pa.accuracy) - float(pb.accuracy)
-        families.append(FamilyDelta(measurement_id=f"m.evasion.{attack_id}.{eps_tag(eps)}",
-                                    before=pb, after=pa, delta=d))
-    return MRIDelta(
-        baseline_run_id=baseline_run_id, mri_before=int(before.mri), mri_after=int(after.mri),
-        delta=int(after.mri) - int(before.mri), delta_subscores=sub_delta,
-        delta_acc_clean=CleanAccuracyDelta(before=clean_b, after=clean_a, delta=clean_delta),
-        delta_families=families,
-    )
-
-
 # --- robustness curve (spec 12.3): the ml.curve artifact and the /campaign ``curve`` field ------------------
 
 def control_rows(measurements: Sequence[Measurement]) -> dict[float, Measurement]:
@@ -780,7 +652,6 @@ __all__ = [
     "control_rows",
     "default_eps_grid",
     "default_reference_eps",
-    "delta",
     "eps_bands",
     "evasion_rows",
     "finding_inputs",

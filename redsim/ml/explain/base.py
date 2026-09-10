@@ -40,8 +40,8 @@ MEASUREMENT_FIELDS: tuple[str, ...] = (
     "expl_shift_mean", "expl_shift_n", "expl_shift_n_excluded", "expl_shift_noise_floor", "expl_shift_noise_floor_n",
 )
 
-# Spec 13.10: explanation results are cached by this tuple so ``explain.run`` and ``verify.replay`` reuse
-# identical clean attributions. ``background_size`` is an additive component (it changes the attributions
+# Spec 13.10: explanation results are cached by this tuple so two ``explain.run`` steps over the same
+# inputs reuse identical clean attributions. ``background_size`` is an additive component (it changes the attributions
 # of every sampled explainer); it only reduces hits, never widens them.
 CACHE_KEY_FIELDS: tuple[str, ...] = (
     "model_sha256", "dataset_revision", "sample_index", "attack_id", "eps", "explainer", "nsamples", "seed",
@@ -296,7 +296,7 @@ def resolve_cache_dir(sink: Any, cache_dir: str | Path | None) -> tuple[Path | N
 
     Order: an explicit ``cache_dir``; ``REDSIM_ML_EXPLAIN_CACHE``; ``<sink.work_dir>/explain_cache`` (the
     sandbox child's per-job work dir); ``<sink.root>/explain_cache`` (``FilesystemSink``); else disabled.
-    A worker that wants ``explain.run`` and ``verify.replay`` to share entries passes the shared directory
+    A worker that wants several ``explain.run`` steps to share entries passes the shared directory
     (``REDSIM_ML_WORK_DIR/explain_cache``) explicitly or through the environment variable.
     """
     if cache_dir is not None:

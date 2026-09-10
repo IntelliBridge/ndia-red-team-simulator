@@ -16,7 +16,7 @@ class is shown as a third, labelled map. Artifacts go through the ``ArtifactSink
 
 Per-sample attributions are cached on disk (``explain.base.ExplanationCache``, spec 13.10) under the
 run work dir, keyed by ``(model_sha256, dataset_revision, sample_index, attack_id, eps, explainer,
-nsamples, seed)`` and guarded by the input digests, so ``explain.run`` and ``verify.replay`` reuse
+nsamples, seed)`` and guarded by the input digests, so repeated ``explain.run`` steps reuse
 identical clean attributions; hits are recorded in ``meta["cache"]`` and each ``shap_meta.json``.
 
 Nothing here is faked: when SHAP cannot run on either path ``ExplainerUnavailable`` is raised and no

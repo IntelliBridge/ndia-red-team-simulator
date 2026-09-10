@@ -248,7 +248,6 @@ def _campaign(request: dict[str, Any], work_dir: Path) -> None:
             config,
             sink,
             explain=config.explain_k > 0,
-            baseline_run_id=request.get("baseline_run_id"),
             parent_run_id=request.get("parent_run_id"),
             on_stage=on_stage,
             target_override=target,
@@ -260,7 +259,6 @@ def _campaign(request: dict[str, Any], work_dir: Path) -> None:
             status="failed",
             error=message,
             stages_done=stages,
-            baseline_run_id=request.get("baseline_run_id"),
             parent_run_id=request.get("parent_run_id"),
         )
     _write_envelope(work_dir, _ok_envelope({"record": record.model_dump(mode="json")}))

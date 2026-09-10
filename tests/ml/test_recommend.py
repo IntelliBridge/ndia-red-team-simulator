@@ -12,9 +12,7 @@ from datetime import UTC, datetime
 import pytest
 
 from redsim.ml.recommend.rules import (
-    DEFENSE_IDS,
     THRESHOLDS,
-    defense_configs,
     effective_thresholds,
     interpret,
     recommend,
@@ -22,7 +20,6 @@ from redsim.ml.recommend.rules import (
 from redsim.ml.schema import (
     CampaignConfig,
     CandidateRecommendation,
-    DefenseConfig,
     Interpretation,
     InterpretationThresholds,
     Measurement,
@@ -363,7 +360,7 @@ def test_recommendation_rules_fire_and_cite_ids():
     interp = interpret(ms, obs, sc)
     recs = recommend(ms, obs, sc, interpretation=interp, seed=7)
     ids = _all_ids(ms, obs, interp)
-    assert recs and all(r.status == "candidate" and r.validation == "not evaluated" and r.measured is None for r in recs)
+    assert recs and all(r.status == "candidate" for r in recs)
     assert all(r.triggered_by and set(r.triggered_by) <= ids for r in recs)
     assert all(r.narrative is None and r.narrative_source == "rules" for r in recs)
     assert len({r.id for r in recs}) == len(recs)
@@ -374,7 +371,7 @@ def test_recommendation_rules_fire_and_cite_ids():
     assert _interp_ids(r1) and all(by_id[i].statement.startswith("I1:") and "m.evasion.fgsm.eps0.03" in by_id[i].basis
                                    for i in _interp_ids(r1))
     assert "30/80" in r1.rationale and any("AdversarialTrainerMadryPGD" in ref for ref in r1.references)
-    assert any(ref.startswith("defense:adversarial_training") for ref in r1.references)
+    assert any(ref.startswith("Madry et al. 2018") for ref in r1.references)
     assert _rec(recs, "R1b") is None
 
     r2 = _rec(recs, "R2")
@@ -387,7 +384,7 @@ def test_recommendation_rules_fire_and_cite_ids():
     assert _interp_ids(r3) == {i.id for i in _by_code(interp, "I4") + _by_code(interp, "I5")}
     assert "Heuristic" in r3.rationale
     assert any("FeatureSqueezing" in ref for ref in r3.references) and any("SpatialSmoothing" in ref for ref in r3.references)
-    assert any(ref.startswith("defense:feature_squeezing") for ref in r3.references)
+    assert any(ref.startswith("Xu, Evans, Qi 2018") for ref in r3.references)
 
     r4 = _rec(recs, "R4")
     assert r4 is not None and _measurement_ids(r4) in ({"m.evasion.fgsm.eps0.03"}, {"m.evasion.pgd.eps0.03"})
@@ -466,9 +463,12 @@ def test_no_numeric_expected_gain_and_no_banned_words_anywhere():
     for r in recs:
         dumped = r.model_dump()
         assert "expected_gain" not in dumped and "gain" not in {k.lower() for k in dumped}
-        assert r.validation == "not evaluated" and r.measured is None
+        assert set(dumped) == {"id", "title", "rationale", "triggered_by", "status", "references", "narrative",
+                               "narrative_source"}
         assert not gain_re.search(r.rationale) and not gain_re.search(r.title)
-        assert "not measured" in r.rationale
+        assert "no measurement of its effect" in r.rationale
+        assert "verify" not in r.rationale.lower() and "expected gain" not in r.rationale.lower()
+        assert not any(ref.startswith("defense:") for ref in r.references)
         assert not contains_banned_score_word(r.title) and not contains_banned_score_word(r.rationale)
         assert not any(contains_banned_score_word(ref) for ref in r.references)
     assert not any(contains_banned_score_word(i.statement) for i in interp)
@@ -495,31 +495,28 @@ def test_recommend_handles_empty_and_reference_override():
     assert _rec(recs, "R7") is not None
 
 
-def test_defense_references_use_registered_ids_when_module_present():
-    pytest.importorskip("redsim.ml.defenses")
-    from redsim.ml.defenses import list_defenses
-    registered = {d["id"] for d in list_defenses()}
+def test_references_are_plain_text_art_classes_and_papers():
     ms, obs, sc = _degraded(), _obs(), _score()
     recs = recommend(ms, obs, sc)
     r6 = _rec(recs, "R6")
-    cited = {ref.split(":", 1)[1].split(" ")[0] for ref in r6.references if ref.startswith("defense:")}
-    assert cited and cited <= registered  # every preprocessing candidate maps to an id apply_defense accepts
-    assert not any("not registered" in ref for ref in r6.references)
-
-
-def test_defense_configs_map_candidates_to_defense_config_ids():
-    ms, obs, sc = _degraded(), _obs(), _score()
-    recs = recommend(ms, obs, sc)
-    r6 = defense_configs(_rec(recs, "R6"))
-    assert r6 and all(isinstance(d, DefenseConfig) for d in r6)
-    assert [d.id for d in r6] == ["jpeg_compression", "spatial_smoothing", "feature_squeezing"]
-    assert all(d.id in DEFENSE_IDS and d.art_class and d.art_class.startswith("art.defences.") for d in r6)
-    assert all(d.params == {} for d in r6)   # params belong to the verify request, never guessed here
-    r1 = defense_configs(_rec(recs, "R1"))
-    assert [d.id for d in r1] == ["adversarial_training"] and "AdversarialTrainerMadryPGD" in r1[0].art_class
-    assert defense_configs(_rec(recs, "R7")) == []
-    # every defense id any rule can cite is one of the four DefenseConfig-compatible ids
-    assert {d.id for r in recs for d in defense_configs(r)} <= set(DEFENSE_IDS)
+    assert r6 is not None
+    assert r6.references[:6] == [
+        "art.defences.preprocessor.JpegCompression",
+        "Dziugaite, Ghahramani, Roy 2016, A study of the effect of JPG compression on adversarial images",
+        "art.defences.preprocessor.SpatialSmoothing",
+        "Xu, Evans, Qi 2018, Feature Squeezing",
+        "art.defences.preprocessor.FeatureSqueezing",
+    ][:6] or r6.references[:5] == [
+        "art.defences.preprocessor.JpegCompression",
+        "Dziugaite, Ghahramani, Roy 2016, A study of the effect of JPG compression on adversarial images",
+        "art.defences.preprocessor.SpatialSmoothing",
+        "Xu, Evans, Qi 2018, Feature Squeezing",
+        "art.defences.preprocessor.FeatureSqueezing",
+    ]
+    assert r6.references[-1] == "Athalye, Carlini, Wagner 2018, Obfuscated Gradients Give a False Sense of Security"
+    assert len(r6.references) == len(set(r6.references))
+    for r in recs:
+        assert all(isinstance(ref, str) and ":" not in ref.split(" ", 1)[0] for ref in r.references), r.references
 
 
 def test_rule_output_assembles_into_a_valid_run_record():
@@ -533,4 +530,4 @@ def test_rule_output_assembles_into_a_valid_run_record():
     rec = RunRecord(run_id="r", status="running", created_at=T, config=cfg, target=target, measurements=ms,
                     observations=obs, interpretation=interp, recommendations=recs, score=sc)
     assert RunRecord.model_validate(rec.model_dump(mode="json")) == rec
-    assert all(r.validation == "not evaluated" and r.measured is None for r in rec.recommendations)
+    assert all(r.status == "candidate" for r in rec.recommendations)

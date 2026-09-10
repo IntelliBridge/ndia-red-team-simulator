@@ -258,27 +258,27 @@ P0_PROJECTION_KEYS = {
 
 
 def test_legacy_entry_keeps_its_digest_without_the_phase_b_blocks():
-    """MODALITIES-05: a manifest written before ``text`` / ``detection`` / ``endpoint`` / ``derived_from`` existed
-    reads back with the same ``manifest_sha256``, so every asset tree built by P0 still verifies."""
+    """MODALITIES-05: a manifest written before ``text`` / ``detection`` / ``endpoint`` existed reads back with
+    the same ``manifest_sha256``, so every asset tree built by P0 still verifies. A row written while the training
+    slice existed (``train_slice_split``, gone 2026-09-09) loads too, the key ignored."""
     fake = FileEntry(path="bundled/x/weights.pt", sha256=sha256_bytes(b"weights"), size_bytes=7)
     entry = stamp_manifest_sha256(_entry(fake))
     raw = json.loads(json.dumps(entry.model_dump(mode="json")))
-    for block in ("text", "detection", "endpoint", "derived_from"):
+    for block in ("text", "detection", "endpoint"):
         assert block not in raw, f"an absent {block} block is dropped from the written entry, not written as null"
-    # The P0-era row: no block keys and no Phase B build-record field at all.
-    legacy = {k: v for k, v in raw.items() if k != "train_slice_split"}
-    loaded = ModelEntry.model_validate(legacy)
+    assert "train_slice_split" not in raw and "derived_from" not in raw
+    loaded = ModelEntry.model_validate(raw)
     assert loaded.manifest_sha256 == entry.manifest_sha256 == manifest_digest(loaded)
-    assert loaded.text is None and loaded.detection is None and loaded.endpoint is None and loaded.derived_from is None
-    assert loaded.train_slice_split is None
+    assert loaded.text is None and loaded.detection is None and loaded.endpoint is None
+    # A row from a tree built while the training slice existed still loads; the key is ignored, not kept.
+    with_slice = ModelEntry.model_validate({**raw, "train_slice_split": "train_slice"})
+    assert with_slice == loaded and not hasattr(with_slice, "train_slice_split")
     manifest = AssetManifest.new()
     manifest.models["x"] = loaded
     assert verify_entries(manifest) == []
     # The digest is a function of the P0 projection keys alone ...
     projection = model_manifest(loaded).model_dump(mode="json", exclude={"manifest_sha256"})
     assert set(projection) == P0_PROJECTION_KEYS
-    # ... so the Phase B build-record field never moves it ...
-    assert manifest_digest(loaded.model_copy(update={"train_slice_split": "train_slice"})) == loaded.manifest_sha256
     # ... while a block that is present is part of what the model declares and enters the digest, round-tripping.
     declared = stamp_manifest_sha256(_entry(fake, detection={"input_size": [8, 8], "classes": ["a", "b"]}))
     assert declared.manifest_sha256 != entry.manifest_sha256
@@ -367,25 +367,11 @@ def test_one_epoch_build_yields_manifest_and_hash_verifiable_weights(tmp_path: P
     slice_npz = np.load(root / ds_record.splits["test"].file.path, allow_pickle=False)
     assert slice_npz["x"].shape == (32, 3, 16, 16) and slice_npz["x"].dtype == np.uint8
     assert list(slice_npz["class_names"]) == [f"class_{i}" for i in range(4)]
-
-    # ATTACKS_HARDEN-11: the bundled training slice, drawn from the training split, is a split of the dataset
-    # named by the model entry (outside the digest), digest-checked with every other bundled file, and reads
-    # back as an ImageSplit for the training defenses. 64 rows are fewer than the 1536 requested, so all of them.
-    assert record.train_slice_split == "train_slice"
-    train_slice = ds_record.splits["train_slice"]
-    assert train_slice.n == 64 and train_slice.seed == 0 and train_slice.file is not None
-    assert train_slice.file.path == "bundled/synthetic_cnn/train_slice.npz"
-    assert train_slice.per_class == {f"class_{i}": 16 for i in range(4)}
-    assert train_slice.indices_sha256 == ds.indices_sha256(np.arange(64))
-    reloaded_slice = ds.load_train_slice(root / train_slice.file.path, expected_sha256=train_slice.file.sha256)
-    assert reloaded_slice.name == "train_slice" and reloaded_slice.x.shape == (64, 3, 16, 16)
-    assert np.array_equal(reloaded_slice.y, data.train.y) and reloaded_slice.class_names == data.train.class_names
-    sidecar = ds.read_train_slice_sidecar(root / "bundled" / "synthetic_cnn" / ds.TRAIN_SLICE_SIDECAR_NAME)
-    assert sidecar.model_id == "synthetic_cnn" and sidecar.dataset_id == ds_record.id and sidecar.source_split == "train"
-    assert sidecar.split_entry == train_slice and sidecar.n_requested == ds.DEFAULT_TRAIN_SLICE_N and sidecar.seed == 0
-    assert record.manifest_sha256 == manifest_digest(record.model_copy(update={"train_slice_split": None}))
+    # The build writes the weights and the evaluation slice only: no training slice, no sidecar (2026-09-09).
+    assert set(ds_record.splits) == {"train", "test"}
+    assert sorted(p.name for p in (root / "bundled" / "synthetic_cnn").iterdir()) == ["weights.pt"]
     assert not verify_model_assets(loaded, root, "synthetic_cnn")
-    assert "train slice train_slice" in summarize(loaded)
+    assert "train slice" not in summarize(loaded)
 
     # The weights reload into a fresh SmallCNN (tensors only) and reproduce the recorded accuracy.
     kwargs = {k: v for k, v in record.architecture.items() if k != "architecture_id"}
@@ -403,15 +389,13 @@ def test_one_epoch_build_yields_manifest_and_hash_verifiable_weights(tmp_path: P
     problems = verify_files(loaded, root)
     assert len(problems) == 1 and "sha256 mismatch" in problems[0] and record.file.path in problems[0]
     assert verify_manifest(loaded, root) == problems
-    # ... and so is a tampered training slice, reported on the dataset side of the model's verification.
-    slice_path = root / train_slice.file.path
+    # ... and so is a tampered evaluation slice, reported on the dataset side of the model's verification.
+    slice_path = root / ds_record.splits["test"].file.path
     slice_bytes = bytearray(slice_path.read_bytes())
     slice_bytes[-1] ^= 0xFF
     slice_path.write_bytes(bytes(slice_bytes))
     model_problems = verify_model_assets(loaded, root, "synthetic_cnn")
-    assert any("train_slice" in p and "sha256 mismatch" in p for p in model_problems.dataset)
-    with pytest.raises(ds.DatasetUnavailable, match="does not match"):
-        ds.load_train_slice(slice_path, expected_sha256=train_slice.file.sha256)
+    assert any("sha256 mismatch" in p for p in model_problems.dataset)
     weights.unlink()
     assert any("missing file" in p for p in verify_files(loaded, root))
 
@@ -420,24 +404,6 @@ def test_one_epoch_build_yields_manifest_and_hash_verifiable_weights(tmp_path: P
     edited["models"]["synthetic_cnn"]["class_names"] = ["class_1", "class_0", "class_2", "class_3"]
     (root / MANIFEST_NAME).write_text(json.dumps(edited))
     assert any("manifest_sha256 mismatch" in p for p in verify_entries(load_manifest(root / MANIFEST_NAME)))
-
-
-def test_build_without_a_train_slice_records_none(tmp_path: Path):
-    data = _synthetic_images(n=16, image_size=8, n_classes=2)
-    root = tmp_path / "assets"
-    entry, model = build_cnn_asset(data, model_id="synthetic_cnn", root=root, epochs=1, seed=0, fixture_only=True,
-                                   train_slice=ds.TrainSliceOptions(enabled=False), log=_quiet)
-    assert model.train_slice_split is None and "train_slice" not in entry.splits
-    assert not (root / "bundled" / "synthetic_cnn" / ds.TRAIN_SLICE_NAME).exists()
-    assert not (root / "bundled" / "synthetic_cnn" / ds.TRAIN_SLICE_SIDECAR_NAME).exists()
-    # An explicit size caps the draw, stratified over the classes and seeded.
-    entry2, model2 = build_cnn_asset(data, model_id="synthetic_cnn", root=tmp_path / "assets2", epochs=1, seed=0,
-                                     fixture_only=True, train_slice=ds.TrainSliceOptions(n=6, seed=3), log=_quiet)
-    assert model2.train_slice_split == "train_slice"
-    drawn = entry2.splits["train_slice"]
-    assert drawn.n == 6 and drawn.seed == 3 and drawn.per_class == {"class_0": 3, "class_1": 3}
-    with pytest.raises(ValueError, match="train slice n"):
-        ds.TrainSliceOptions(n=0)
 
 
 def test_split_entry_carries_the_rows_csv_beside_the_slice_and_scoped_verification(tmp_path: Path):

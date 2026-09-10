@@ -6,9 +6,8 @@ recomputation: every number, fraction, table and caveat is the Markdown's,
 converted line by line (headings to four levels, tables, bullets, block quotes,
 paragraphs; ``**bold**`` and ```code``` inline) into reportlab platypus
 flowables. Whatever the Markdown gains (the Phase B text edit-budget and
-detection scorecard tables, the per-modality observation evidence, the
-derived-model lineage of a training defense, the nested LLM probe block) is in
-the PDF by construction; the tests read it back with pypdf.
+detection scorecard tables, the per-modality observation evidence, the nested
+LLM probe block) is in the PDF by construction; the tests read it back with pypdf.
 
 Choices recorded by REVIEW_REPORTS-15:
 

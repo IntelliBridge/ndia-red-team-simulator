@@ -2,9 +2,8 @@
 
 Every statement cites the scorecard row it rests on (``llm.<probe>.<detector>``)
 and prints the threshold it used. Every recommendation is a
-``CandidateRecommendation`` with ``status="candidate"``,
-``validation="not evaluated"`` and ``measured=None``: redsim cannot verify a
-mitigation on an LLM target, and no rule states a gain. References are the
+``CandidateRecommendation`` with ``status="candidate"``: redsim does not measure
+a mitigation on an LLM target, and no rule states a gain. References are the
 probe's own ``doc_uri`` and the garak documentation page of its module; no
 number is invented. There is no narrative for this track
 (``narrative_source="rules"``; :data:`NARRATIVE_NOT_OFFERED_REASON`).
@@ -168,7 +167,7 @@ def recommend(scorecard: LLMProbeScorecard | Mapping[str, Any], *,
         out.append(CandidateRecommendation(
             id=rule.rule_id, title=rule.title,
             rationale=rule.rationale.format(rows=rows_text, threshold=f"{hit_threshold:g}")
-                      + " Intended direction only: no gain is measured; redsim does not verify mitigations on an LLM target.",
+                      + " Intended direction only: no gain is measured; redsim does not measure mitigations on an LLM target.",
             triggered_by=[d.row_id for _, d in hits],
             references=_references(p for p, _ in hits),
             narrative=None, narrative_source="rules",
