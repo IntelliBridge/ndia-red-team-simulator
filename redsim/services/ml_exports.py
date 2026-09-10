@@ -359,6 +359,10 @@ def list_exports(session: Session, *, project_ids: list[str] | None, limit: int,
                                       ready=foundry_ready.get(str(run.project_id), (False, False))[0],
                                       auto_push=foundry_ready.get(str(run.project_id), (False, False))[1],
                                       push_run=push_by_source.get(run_id)),
+            # The signed evidence pack (GET /v1/runs/{id}/evidence-pack): available as soon as the run has
+            # its record; whether the download is signed is a deployment fact the list reports once.
+            "evidence": {"available": run_id in has_record,
+                         "path": f"/v1/runs/{run_id}/evidence-pack" if run_id in has_record else None},
         })
     return rows
 

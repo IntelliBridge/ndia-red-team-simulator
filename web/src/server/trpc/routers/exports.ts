@@ -85,6 +85,10 @@ const exportRowSchema: z.ZodType<ExportRow> = z.looseObject({
     error: z.string().nullable(),
     blockers: z.array(z.enum(["not_terminal", "run_failed", "fixture_target", "score_unavailable"])),
   }),
+  evidence: z.looseObject({
+    available: z.boolean(),
+    path: z.string().nullable(),
+  }),
 });
 
 const exportsListSchema: z.ZodType<ExportsList> = z.looseObject({
@@ -93,6 +97,12 @@ const exportsListSchema: z.ZodType<ExportsList> = z.looseObject({
   report_formats: z.array(z.string()),
   dataset_format: z.string(),
   limit: z.number(),
+  evidence_signing: z.looseObject({
+    configured: z.boolean(),
+    algorithm: z.literal("ed25519").nullable(),
+    key_id: z.string().nullable(),
+    reason: z.string().optional(),
+  }),
 });
 
 /** `202` from `POST /v1/runs/{id}/dataset`: a fresh job, or the existing export (`status: exists`). */

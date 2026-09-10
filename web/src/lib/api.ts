@@ -716,6 +716,10 @@ export type ReportExt = (typeof REPORT_EXTS)[number];
 export function reportUrl(runId: string, ext: ReportExt): string {
   return `${BASE}/v1/runs/${encodeURIComponent(runId)}/report.${ext}`;
 }
+/** The signed evidence pack zip of a run: record, reports, audit chain, manifest and signature. */
+export function evidencePackUrl(runId: string): string {
+  return `${BASE}/v1/runs/${encodeURIComponent(runId)}/evidence-pack`;
+}
 
 /** The Croissant manifest of a run's adversarial dataset export (`GET /v1/datasets/{run_id}`, spec 27.1). */
 export function datasetManifestUrl(runId: string): string {
@@ -790,6 +794,20 @@ export type ExportFoundry = {
   blockers: ExportFoundryBlocker[];
 };
 
+/** The signed evidence pack of a run (GET /v1/runs/{id}/evidence-pack): available once the run has its record. */
+export type ExportEvidence = {
+  available: boolean;
+  path: string | null;
+};
+
+/** Whether this deployment signs evidence packs, and with which Ed25519 key id. Never a key. */
+export type EvidenceSigning = {
+  configured: boolean;
+  algorithm: "ed25519" | null;
+  key_id: string | null;
+  reason?: string;
+};
+
 export type ExportRow = {
   run_id: string;
   project_id: string;
@@ -808,6 +826,7 @@ export type ExportRow = {
   reports: ExportReports;
   dataset: ExportDataset;
   foundry: ExportFoundry;
+  evidence: ExportEvidence;
 };
 
 // --- Per-project Foundry settings (spec 27.3) ---
@@ -854,6 +873,7 @@ export type ExportsList = {
   report_formats: string[];
   dataset_format: string;
   limit: number;
+  evidence_signing: EvidenceSigning;
 };
 
 // --- Per-tenant cost (multi-tenancy) ---
