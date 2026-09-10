@@ -63,6 +63,20 @@ services:
     volumes:
       - minio-data:/data
 
+  # Creates the bucket the api and the workers write to (REDSIM_S3_BUCKET).
+  # MinIO ships no bucket and the blob store creates none, so a fresh stack
+  # answered 500 NoSuchBucket on the first model registration. One-shot: the
+  # api and the worker pools wait for it to complete, and a rerun is a no-op.
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio: { condition: service_started }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mc alias set local http://minio:9000 redsim redsim-secret >/dev/null 2>&1; do sleep 1; done
+        mc mb --ignore-existing local/redsim
+
   redsim-api:
     image: redsim-api:dev
     build:
@@ -71,7 +85,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-      minio: { condition: service_started }
+      minio-init: { condition: service_completed_successfully }
     environment:
       REDSIM_ENV: dev
       REDSIM_AUTH_MODE: dev
@@ -144,6 +158,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
     volumes: *assets-volume
     environment: &worker-env
       REDSIM_ENV: dev
@@ -196,6 +211,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
     volumes: *assets-volume
     environment:
       <<: *worker-env
