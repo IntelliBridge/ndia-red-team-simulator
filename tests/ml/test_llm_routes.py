@@ -68,6 +68,7 @@ from redsim.db.models import (
     Run,
     Target,
 )
+from redsim.ml.llm.probe_child import ProgressSnapshot
 from redsim.services import ml_llm
 from redsim.services.auth_profiles import create_auth_profile
 from redsim.services.ml_findings import LLM_SEVERITY_BASIS, LLM_SOURCE_TOOL, llm_severity_from_hit_rate
@@ -708,21 +709,52 @@ def fake_child_outcome(work: Path, *, probes: list[dict[str, Any]] | None = None
     return SimpleNamespace(status=status, exit_code=0 if status == "succeeded" else 5, work_dir=work,
                            wall_time_s=12.5, result=result,
                            files=files if files is not None else fake_child_files(work.parent / "child"),
-                           discard={"garak_log": work / "garak.log"}, error=error, cleaned=cleaned,
-                           cleanup=lambda **_k: cleaned.append(True))
+                           discard={"garak_log": work / "garak.log", "progress": work / "progress.json"},
+                           error=error, cleaned=cleaned, cleanup=lambda **_k: cleaned.append(True))
 
 
-def install_fake_child(monkeypatch: pytest.MonkeyPatch, outcome: Any, calls: list[dict[str, Any]]) -> None:
-    """Replace the runner module and the child call with a fake that returns ``outcome`` (records the call)."""
+def _snap(seq: int, event: str, probe: str | None = None, *, done: int = 0, total: int = 12,
+          probes_done: int = 0, n_probes: int = 3) -> ProgressSnapshot:
+    """A child progress snapshot the fake child hands the worker's ``on_progress`` (counts only)."""
+    return ProgressSnapshot(seq=seq, event=event, probe=probe, probes_done=probes_done, n_probes=n_probes,
+                            done=done, total=total)
+
+
+def install_fake_child(monkeypatch: pytest.MonkeyPatch, outcome: Any, calls: list[dict[str, Any]], *,
+                       progress: list[ProgressSnapshot] | None = None,
+                       after_snapshot: Any = None) -> None:
+    """Replace the runner module and the child call with a fake that returns ``outcome`` (records the call).
+
+    ``progress`` is delivered to the worker's ``on_progress`` callback in order before the outcome is
+    returned; ``after_snapshot(index, snapshot)`` runs after each delivery so a test can read the persisted
+    block mid-run or flip the run's status between two snapshots.
+    """
     monkeypatch.setattr(worker, "_runner_module", lambda: SimpleNamespace(run_probe_child=object()))
 
     def fake_run(runner: Any, **kwargs: Any) -> Any:
-        calls.append({k: v for k, v in kwargs.items() if k != "api_key"})
+        calls.append({k: v for k, v in kwargs.items() if k not in {"api_key", "on_progress"}})
         assert kwargs["api_key"] == FAKE_KEY
         assert FAKE_KEY not in json.dumps(kwargs["detail"])
+        deliver = kwargs.get("on_progress")
+        for index, snapshot in enumerate(progress or []):
+            if deliver is not None:
+                deliver(snapshot)
+            if after_snapshot is not None:
+                after_snapshot(index, snapshot)
         return outcome
 
     monkeypatch.setattr(worker, "_run_child", fake_run)
+
+
+def _json_keys(value: Any) -> Iterator[str]:
+    """Every key at every depth of a JSON-shaped value."""
+    if isinstance(value, dict):
+        for key, inner in value.items():
+            yield str(key)
+            yield from _json_keys(inner)
+    elif isinstance(value, (list, tuple)):
+        for inner in value:
+            yield from _json_keys(inner)
 
 
 class WorkerHarness:
@@ -771,6 +803,13 @@ class WorkerHarness:
         monkeypatch.setattr("redsim.storage.blobs.open_blob_store", lambda *_a, **_k: self.store)
         monkeypatch.setattr("redsim.config.load_config", lambda *_a, **_k: self.config)
         monkeypatch.setattr("redsim.workers.events._redis_client", lambda: None)
+        # Every frame the worker would publish (the stage and job frames); no progress frame exists.
+        self.frames: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            "redsim.workers.events.publish_job_event",
+            lambda run_id, job_id, status, **extra: self.frames.append(
+                {"type": extra.get("type", "job"), "run_id": run_id, "job_id": job_id, "status": status, **extra}),
+        )
         self.monkeypatch = monkeypatch
         self._seed()
 
@@ -816,9 +855,19 @@ class WorkerHarness:
     def child_files(self, *, with_key: bool = False) -> dict[str, Path]:
         return fake_child_files(self.tmp_path / "child", with_key=with_key)
 
-    def install_child(self, outcome: Any) -> None:
+    def install_child(self, outcome: Any, *, progress: list[ProgressSnapshot] | None = None,
+                      after_snapshot: Any = None) -> None:
         """Replace the runner module and the child call with a fake that returns ``outcome``."""
-        install_fake_child(self.monkeypatch, outcome, self.child_calls)
+        install_fake_child(self.monkeypatch, outcome, self.child_calls, progress=progress,
+                           after_snapshot=after_snapshot)
+
+    def progress_block(self, run_id: str) -> dict[str, Any] | None:
+        """``stage_table.progress`` as a fresh session reads it, or ``None`` before the first write."""
+        with self.sessions() as session:
+            run = session.get(Run, run_id)
+            assert run is not None
+            block = (run.stage_table or {}).get("progress")
+            return dict(block) if isinstance(block, dict) else None
 
     def child_outcome(self, *, probes: list[dict[str, Any]] | None = None, status: str = "succeeded",
                       error: str | None = None, files: dict[str, Path] | None = None) -> SimpleNamespace:
@@ -866,12 +915,28 @@ def harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WorkerHarness:
 # --------------------------------------------------------------------------- worker: the complete run
 
 
+def _scripted_progress() -> list[ProgressSnapshot]:
+    """start, probe_start, probe_loaded, four prompts, probe_end for the first admitted probe."""
+    dan = "dan.Dan_11_0"
+    return [
+        _snap(1, "start"), _snap(2, "probe_start", dan), _snap(3, "probe_loaded", dan),
+        _snap(4, "prompt", dan, done=1), _snap(5, "prompt", dan, done=2), _snap(6, "prompt", dan, done=3),
+        _snap(7, "prompt", dan, done=4), _snap(8, "probe_end", dan, done=4, probes_done=1),
+    ]
+
+
 def test_worker_run_writes_scorecard_findings_usage_and_audit(harness: WorkerHarness) -> None:
     target_id = harness.register()
     run_id, job_id = harness.admit(target_id)
     harness.install_entitlement([MODEL_ID, "pythia/auto"])
     outcome = harness.child_outcome()
-    harness.install_child(outcome)
+    mid: dict[str, Any] = {}
+
+    def after_snapshot(index: int, _snapshot: ProgressSnapshot) -> None:
+        if index == 6:
+            mid["block"] = harness.progress_block(run_id)
+
+    harness.install_child(outcome, progress=_scripted_progress(), after_snapshot=after_snapshot)
 
     result = harness.run_job(job_id)
 
@@ -932,6 +997,7 @@ def test_worker_run_writes_scorecard_findings_usage_and_audit(harness: WorkerHar
     assert dan_finding.severity == "high" and dan_finding.source_tool == LLM_SOURCE_TOOL
     assert dan_finding.status == "open" and not hasattr(dan_finding, "validation_state")
     blob = dan_finding.schema_blob
+    assert not {"progress", "percent"} & set(_json_keys(blob)), "the count never enters a finding"
     assert blob["finding_kind"] == "adversarial_llm" and blob["finding_type"] in ("adversarial_llm", "adversarial_ml")
     assert blob["title"] == "LLM probe dan.Dan_11_0 hit rate 4/4 (detector dan.DAN)"
     assert blob["llm"]["hit_rate"] == 1.0 and blob["llm"]["n_hits"] == 4 and blob["llm"]["n_evaluated"] == 4
@@ -955,7 +1021,26 @@ def test_worker_run_writes_scorecard_findings_usage_and_audit(harness: WorkerHar
     assert table["stages_done"] == ["load_target", "entitlement", "probe:Dan_11_0", "probe:InjectBase64",
                                     "probe:HijackHateHumans", "score", "findings", "report"]
     assert all(entry["status"] == "succeeded" for entry in table["stages"].values())
+
+    # Progress (AE4): the block written per snapshot while the child ran, and the final block on success.
+    assert mid["block"] is not None and mid["block"]["unit"] == "prompts" and mid["block"]["probe"] == "Dan_11_0"
+    assert (mid["block"]["done"], mid["block"]["total"], mid["block"]["percent"]) == (4, 12, 33)
+    assert (mid["block"]["probes_done"], mid["block"]["n_probes"]) == (0, 3) and mid["block"]["updated_at"]
+    final = table["progress"]
+    sent = sum(p["n_attempts_complete"] for p in harness.default_probes())
+    assert final["done"] == final["total"] == sent == 12
+    assert final["percent"] == 100 and final["probe"] is None and final["unit"] == "prompts"
+    assert final["probes_done"] == final["n_probes"] == 3 and final["updated_at"]
+    assert {f["type"] for f in harness.frames} <= {"job", "stage"}, "no progress frame is published"
+    assert not any("percent" in f or "progress" in json.dumps(f) for f in harness.frames)
+    # R13: the count never enters evidence. No progress or percent key in the scorecard, the reports, the
+    # findings or the audit rows, and the progress file is never stored as an artifact.
+    assert "progress" not in json.dumps(sorted(artifacts)) and outcome.discard["progress"].name == "progress.json"
+    for payload in (scorecard, json.loads(report_json)):
+        assert not {"progress", "percent"} & set(_json_keys(payload)), payload.keys()
     events = harness.events(f"run:{run_id}")
+    for event in events:
+        assert not {"progress", "percent"} & set(_json_keys(event["detail"])), event["action"]
     actions = [e["action"] for e in events]
     assert actions == ["llm.probe.entitlement", "llm.probe.execute.Dan_11_0", "llm.probe.execute.InjectBase64",
                        "llm.probe.execute.HijackHateHumans", "llm.probe.score", "report.render", "job.complete"]
@@ -1082,6 +1167,130 @@ def test_worker_keeps_partial_evidence_when_the_child_fails(harness: WorkerHarne
     assert by_action["job.complete"]["detail"]["error_class"] == "probe_child_failed"
     assert harness.row(Run, run_id).stage_table["completeness"] == "partial"
     assert harness.row(Job, job_id).status == "failed"
+
+
+def test_worker_keeps_the_last_progress_block_when_the_child_times_out(harness: WorkerHarness) -> None:
+    """AE3: the block written per snapshot stays at the last count; 100 appears only on success."""
+    target_id = harness.register()
+    run_id, job_id = harness.admit(target_id)
+    harness.install_entitlement([MODEL_ID])
+    seen: list[dict[str, Any] | None] = []
+    script = [_snap(1, "start", total=64), _snap(2, "probe_start", "dan.Dan_11_0", total=64),
+              _snap(3, "prompt", "dan.Dan_11_0", done=12, total=64)]
+    harness.install_child(
+        harness.child_outcome(status="timed_out", error="probe child exceeded 12s; process group killed"),
+        progress=script, after_snapshot=lambda _i, _s: seen.append(harness.progress_block(run_id)),
+    )
+
+    with pytest.raises(worker.LLMProbeRefused) as excinfo:
+        harness.run_job(job_id)
+
+    assert excinfo.value.code == "probe_child_timeout"
+    block = harness.progress_block(run_id)
+    assert block is not None and (block["done"], block["total"], block["percent"]) == (12, 64, 18)
+    assert block["probe"] == "Dan_11_0" and block["unit"] == "prompts"
+    assert [b["percent"] for b in seen if b] == [0, 0, 18] and all(b["percent"] < 100 for b in seen if b)
+    table = harness.row(Run, run_id).stage_table
+    assert table["completeness"] == "partial" and "probe_child_timeout" in str(table["error"])
+    assert any(entry["status"] == "timed_out" for entry in table["stages"].values())
+    assert harness.row(Job, job_id).status == "failed"
+
+
+def test_worker_progress_write_failure_never_fails_the_job(harness: WorkerHarness,
+                                                          caplog: pytest.LogCaptureFixture) -> None:
+    """R10: a commit that raises inside ``progress()`` is logged; the job and the next stage write go on."""
+    target_id = harness.register()
+    run_id, job_id = harness.admit(target_id)
+    harness.install_entitlement([MODEL_ID])
+    original = worker._ProbeStages.progress
+    failures: list[int] = []
+
+    def flaky_progress(self: Any, block: Any) -> None:
+        if not failures:
+            failures.append(1)
+            real_commit = self.session.commit
+
+            def boom() -> None:
+                self.session.commit = real_commit
+                raise RuntimeError("database went away for one commit")
+
+            self.session.commit = boom
+        original(self, block)
+
+    harness.monkeypatch.setattr(worker._ProbeStages, "progress", flaky_progress)
+    harness.install_child(harness.child_outcome(), progress=_scripted_progress())
+
+    with caplog.at_level("WARNING", logger="redsim.workers.tasks.ml_llm"):
+        result = harness.run_job(job_id)
+
+    assert result["status"] == "succeeded" and failures == [1]
+    assert any("progress write failed" in record.getMessage() for record in caplog.records)
+    table = harness.row(Run, run_id).stage_table
+    assert table["progress"]["percent"] == 100 and table["progress"]["done"] == 12
+    assert table["stages_done"][-1] == "report" and harness.row(Job, job_id).status == "succeeded"
+
+
+def test_worker_progress_block_nulls_a_probe_that_was_not_admitted(harness: WorkerHarness) -> None:
+    """R14: the block carries the short id of an admitted probe or null, never a foreign string."""
+    target_id = harness.register()
+    run_id, job_id = harness.admit(target_id)
+    harness.install_entitlement([MODEL_ID])
+    seen: list[dict[str, Any] | None] = []
+    harness.install_child(
+        harness.child_outcome(),
+        progress=[_snap(1, "start"), _snap(2, "probe_start", "nope.Nope"), _snap(3, "probe_start", "dan.Dan_11_0")],
+        after_snapshot=lambda _i, _s: seen.append(harness.progress_block(run_id)),
+    )
+    harness.run_job(job_id)
+    assert [b["probe"] for b in seen if b] == [None, None, "Dan_11_0"]
+
+
+def test_worker_stops_writing_progress_once_the_run_is_cancelled(harness: WorkerHarness) -> None:
+    """R10: a run cancelled between two snapshots takes no further write, and the stage table still closes."""
+    target_id = harness.register()
+    run_id, job_id = harness.admit(target_id)
+    harness.install_entitlement([MODEL_ID])
+    seen: list[dict[str, Any] | None] = []
+
+    def after_snapshot(index: int, _snapshot: ProgressSnapshot) -> None:
+        seen.append(harness.progress_block(run_id))
+        if index == 0:
+            with harness.get_session() as session:
+                run, job = session.get(Run, run_id), session.get(Job, job_id)
+                assert run is not None and job is not None
+                run.status = "cancelled"
+                job.status = "cancelled"
+
+    harness.install_child(
+        harness.child_outcome(status="cancelled", error="probe run cancelled; process group killed"),
+        progress=[_snap(1, "start"), _snap(2, "prompt", "dan.Dan_11_0", done=3)], after_snapshot=after_snapshot,
+    )
+    result = harness.run_job(job_id)
+    assert result["status"] == "cancelled"
+    assert seen[0] is not None and seen[0]["done"] == 0
+    assert seen[1] == seen[0], "the second snapshot landed on a terminal run and was skipped"
+    assert harness.progress_block(run_id) == seen[0]
+    table = harness.row(Run, run_id).stage_table
+    open_stage = table["stages"]["probe:Dan_11_0"]
+    assert open_stage["status"] == "cancelled" and open_stage["finished_at"]
+    assert table["completeness"] == "partial" and table["progress"]["percent"] < 100
+    assert any(f["type"] == "stage" and f["status"] == "cancelled" for f in harness.frames)
+
+
+def test_worker_success_block_is_100_of_zero_when_nothing_ran(harness: WorkerHarness) -> None:
+    """AE5: every admitted probe not_run, one start snapshot with total 0, percent 100 with 0 of 0 on success."""
+    target_id = harness.register()
+    run_id, job_id = harness.admit(target_id)
+    harness.install_entitlement([MODEL_ID])
+    probes = [{"probe_id": pid, "status": "not_run", "reason": "no importable primary detector", "detectors": []}
+              for pid in CORE_PROBES]
+    harness.install_child(harness.child_outcome(probes=probes),
+                          progress=[_snap(1, "start", total=0, n_probes=0)])
+    result = harness.run_job(job_id)
+    assert result["status"] == "succeeded" and result["n_findings"] == 0
+    block = harness.row(Run, run_id).stage_table["progress"]
+    assert (block["done"], block["total"], block["percent"]) == (0, 0, 100)
+    assert (block["probes_done"], block["n_probes"], block["probe"]) == (0, 0, None)
 
 
 def test_worker_withholds_a_garak_file_that_carries_the_key(harness: WorkerHarness) -> None:
@@ -1277,6 +1486,15 @@ def test_probe_run_through_the_route_with_the_real_child_against_the_fake_gatewa
         assert server.chat_requests, "garak sent probe prompts through the child"
         assert all(r["persona"] == PERSONA and r["auth_ok"] is True for r in server.chat_requests)
         assert scorecard["usage"]["n_requests"] == len(server.chat_requests)
+        # The persisted block after the real child: 100 of the normalised completed-prompt count (a retried
+        # prompt would be several requests and one tick, so the request count is not the reference).
+        sent = sum(int(p["n_prompts_sent"] or 0) for f in scorecard["families"] for p in f["probes"])
+        with api.Session() as sess:
+            run = sess.get(Run, handle["run_id"])
+            assert run is not None
+            block = run.stage_table["progress"]
+        assert block["percent"] == 100 and block["done"] == block["total"] == sent > 0
+        assert block["probes_done"] == block["n_probes"] == 1 and block["unit"] == "prompts"
 
 
 # --------------------------------------------------------------------------- garak: the real child against the fake gateway
@@ -1313,6 +1531,11 @@ def test_probe_run_against_the_fake_gateway_end_to_end(tmp_path: Path, monkeypat
     for row in rows:
         assert (row["hit_rate"] is None) == (row["n_evaluated"] == 0)
     assert scorecard["usage"]["n_requests"] == len(server.chat_requests)
+    sent = sum(int(p["n_prompts_sent"] or 0) for f in scorecard["families"] for p in f["probes"])
+    block = harness.row(Run, run_id).stage_table["progress"]
+    assert block["percent"] == 100 and block["done"] == block["total"] == sent > 0
+    assert block["probes_done"] == block["n_probes"] == 2 and block["probe"] is None
+    assert {f["type"] for f in harness.frames} <= {"job", "stage"}
     events = harness.events(f"run:{run_id}")
     assert verify_chain(events).verified is True
     assert FAKE_KEY not in json.dumps(events)

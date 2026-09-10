@@ -39,6 +39,12 @@ allowlisted environment. The child:
    test), scrubs the key shape from its own error messages, checks
    ``garak.log`` for the key and scrubs it in place if found (recorded).
 
+While it runs it also rewrites ``progress.json`` (:class:`ProgressSnapshot`,
+counts and probe ids only) on every generator return and probe boundary, by
+atomic replace, so the worker parent can tail one small file for a live
+"prompts sent" count. A failed write is logged at debug and never aborts the
+run; the file lives in the work directory the parent discards.
+
 Exit codes: 0 ran (possibly with every probe ``not_run``), 2 spec invalid,
 3 garak version mismatch, 4 probe key unavailable, 5 run failed. On every
 non-zero exit the child still tries to write ``child_result.json`` with
@@ -54,6 +60,7 @@ import os
 import random
 import re
 import sys
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -80,6 +87,7 @@ EXIT_RUN = 5
 SPEC_FILE = "probe_spec.json"
 KEY_FILE = "probe.key"
 RESULT_FILE = "child_result.json"
+PROGRESS_FILE = "progress.json"
 USAGE_FILE = "usage.json"
 ENV_KEYS_FILE = "env_keys.json"
 GARAK_CONFIG_FILE = "garak.yaml"
@@ -91,6 +99,7 @@ MAX_PROMPTS_PER_PROBE_CEILING = 256
 
 DetectorMode = Literal["offline", "hf"]
 ProbeRunStatus = Literal["run", "not_run", "failed"]
+ProgressEvent = Literal["start", "probe_start", "probe_loaded", "prompt", "probe_end"]
 
 #: Detector base classes that must not be instantiated without a cached model or a second LLM.
 _NON_OFFLINE_BASES = frozenset({"HFDetector", "ModelAsJudge", "EvaluationJudge"})
@@ -191,16 +200,78 @@ class ChildResult(BaseModel):
     key_leak_scrubbed: bool = False
 
 
+class ProgressSnapshot(BaseModel):
+    """The child's live progress, rewritten whole on every event: ids and counts only, never prompt text.
+
+    ``total`` estimates the prompts the run will send: the cap for every runnable
+    probe until it has loaded a non-empty prompt list, then its capped count, so
+    the estimate only shrinks while the child runs. ``done`` counts generator
+    returns (a blocked prompt included, a retry never).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    seq: int = Field(ge=1)
+    event: ProgressEvent
+    probe: str | None = None
+    probes_done: int = Field(0, ge=0)
+    n_probes: int = Field(0, ge=0)
+    done: int = Field(0, ge=0)
+    total: int = Field(0, ge=0)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+class _ProgressWriter:
+    """Rewrites ``progress.json`` by atomic replace on every event; a failed write never aborts the run."""
+
+    def __init__(self, work_dir: Path, runnable: Sequence[str], cap: int,
+                 counts: Mapping[str, tuple[int, int]]) -> None:
+        self.path = work_dir / PROGRESS_FILE
+        self.runnable = list(runnable)
+        self.cap = int(cap)
+        self.counts = counts               # the (n_loaded, n_after) per probe that _install_prompt_cap fills
+        self.seq = 0
+        self.done = 0
+        self.probes_done = 0
+
+    def total(self) -> int:
+        """The capped count for every probe that loaded a non-empty list, else the cap; it only shrinks."""
+        total = 0
+        for probe_id in self.runnable:
+            _loaded, after = self.counts.get(probe_id, (0, 0))
+            total += after if after > 0 else self.cap
+        return total
+
+    def write(self, event: ProgressEvent, probe: str | None) -> None:
+        self.seq += 1
+        if event == "prompt":
+            self.done += 1
+        elif event == "probe_end":
+            self.probes_done += 1
+        snapshot = ProgressSnapshot(seq=self.seq, event=event, probe=probe, probes_done=self.probes_done,
+                                    n_probes=len(self.runnable), done=self.done, total=self.total())
+        tmp = self.path.parent / (PROGRESS_FILE + ".tmp")
+        try:
+            tmp.write_text(snapshot.model_dump_json() + "\n", encoding="utf-8")
+            os.replace(tmp, self.path)
+        except (OSError, ValueError):
+            logging.getLogger(__name__).debug("progress snapshot not written (seq=%d)", self.seq, exc_info=True)
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _scrub(text: str, *secrets: str) -> str:
+def scrub_text(text: str, *secrets: str) -> str:
+    """Replace every supplied secret and every ``pk_…`` shape in ``text`` with ``<REDACTED>``.
+
+    Pure Python (no garak import), so the worker parent can scrub the child's
+    files with it as well.
+    """
     out = str(text)
     for secret in secrets:
         if secret:
@@ -329,7 +400,8 @@ def cap_probe_prompts(probe: Any, cap: int, rng: random.Random) -> tuple[int, in
     return (n_loaded, cap)
 
 
-def _install_prompt_cap(cap: int, seed: int, counts: dict[str, tuple[int, int]]) -> None:
+def _install_prompt_cap(cap: int, seed: int, counts: dict[str, tuple[int, int]],
+                        on_loaded: Callable[[str], None] | None = None) -> None:
     from garak import _config, _plugins
     from garak.probes.base import Probe
 
@@ -341,6 +413,8 @@ def _install_prompt_cap(cap: int, seed: int, counts: dict[str, tuple[int, int]])
         if isinstance(plugin, Probe) and str(path).startswith("probes."):
             probe_id = str(path)[len("probes."):]
             counts[probe_id] = cap_probe_prompts(plugin, cap, rng)
+            if on_loaded is not None:
+                on_loaded(probe_id)
         return plugin
 
     _plugins.load_plugin = capped
@@ -415,7 +489,7 @@ def _scrub_file_in_place(path: Path, secret: str) -> bool:
     needle = secret.encode("utf-8")
     if needle not in data and not _KEY_RE.search(data.decode("utf-8", "replace")):
         return False
-    text = _scrub(data.decode("utf-8", "replace"), secret)
+    text = scrub_text(data.decode("utf-8", "replace"), secret)
     path.write_text(text, encoding="utf-8")
     return True
 
@@ -450,7 +524,7 @@ def _fail(work_dir: Path, result: ChildResult, code: int, error_type: str, messa
     result.status = "failed"
     result.exit_code = code
     result.error_type = error_type
-    result.error = _scrub(message, *secrets)
+    result.error = scrub_text(message, *secrets)
     result.finished_at = _now()
     if result.started_at is not None:
         result.wall_time_s = round((result.finished_at - result.started_at).total_seconds(), 6)
@@ -547,23 +621,31 @@ def run(spec: LLMProbeChildSpec) -> int:
             runnable.remove(pid)
 
     counts: dict[str, tuple[int, int]] = {}
-    _install_prompt_cap(spec.max_prompts_per_probe, spec.seed, counts)
+    progress = _ProgressWriter(work_dir, runnable, spec.max_prompts_per_probe, counts)
+    _install_prompt_cap(spec.max_prompts_per_probe, spec.seed, counts,
+                        on_loaded=lambda probe_id: progress.write("probe_loaded", probe_id))
+    current: dict[str, str | None] = {"probe": None}
+    progress.write("start", None)
 
     report_path: Path | None = None
     run_error: tuple[str, str] | None = None
     generator: PythiaGenerator | None = None
     try:
-        generator = PythiaGenerator(name=spec.model_id, config_root=_config, api_key=api_key)
+        generator = PythiaGenerator(name=spec.model_id, config_root=_config, api_key=api_key,
+                                    on_call=lambda: progress.write("prompt", current["probe"]))
         del api_key
         assert_no_litellm()
         command.start_run()
         report_path = Path(str(_config.transient.report_filename))
         for pid in runnable:
+            current["probe"] = pid
+            progress.write("probe_start", pid)
             blocked_before = generator.ledger.gateway_blocked
             try:
                 command.probewise_run(generator, [f"probes.{pid}"], ThresholdEvaluator(spec.eval_threshold), [])
             finally:
                 rows[pid].n_outputs_blocked = generator.ledger.gateway_blocked - blocked_before
+                progress.write("probe_end", pid)
     except BaseException as exc:  # noqa: BLE001 - the whole run is reported, then re-raised as an exit code
         run_error = (type(exc).__name__, str(exc))
         if isinstance(exc, KeyboardInterrupt):
@@ -589,7 +671,7 @@ def run(spec: LLMProbeChildSpec) -> int:
         row.detectors = evals.get(pid, [])
         if run_error is not None and not row.detectors:
             row.status = "failed"
-            row.reason = _scrub(f"run aborted: {run_error[0]}", secret_for_scrub)
+            row.reason = scrub_text(f"run aborted: {run_error[0]}", secret_for_scrub)
     result.probes = [rows[pid] for pid in spec.probe_ids]
     result.probes_run = [pid for pid in runnable if rows[pid].status == "run"]
     result.usage = generator.ledger.to_dict() if generator is not None else {}
@@ -634,11 +716,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         spec = LLMProbeChildSpec.model_validate_json(spec_path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001 - reported as exit 2
-        sys.stderr.write(f"probe_child: invalid spec: {type(exc).__name__}: {_scrub(str(exc))}\n")
+        sys.stderr.write(f"probe_child: invalid spec: {type(exc).__name__}: {scrub_text(str(exc))}\n")
         work_dir = spec_path.parent
         try:
             _write_result(work_dir, ChildResult(status="failed", model_id="unknown", exit_code=EXIT_SPEC,
-                                                error_type="spec_invalid", error=_scrub(str(exc))))
+                                                error_type="spec_invalid", error=scrub_text(str(exc))))
         except OSError:
             pass
         return EXIT_SPEC

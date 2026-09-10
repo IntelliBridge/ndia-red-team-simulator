@@ -39,10 +39,13 @@ from redsim.ml.llm.catalog import (
 )
 from redsim.ml.llm.probe_child import (
     KEY_FILE,
+    PROGRESS_FILE,
     ChildDetectorCounts,
     ChildProbeResult,
     ChildResult,
     LLMProbeChildSpec,
+    ProgressSnapshot,
+    _ProgressWriter,
     cap_probe_prompts,
 )
 from redsim.ml.llm.report_section import (
@@ -60,6 +63,7 @@ from redsim.ml.llm.runner import (
     ChildOutcome,
     ProbeChildTimeout,
     ProbeRunnerConfig,
+    _read_progress,
     build_child_env,
     prepare_work_dir,
     run_probe_child,
@@ -447,6 +451,84 @@ def test_build_child_env_holds_no_credential(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Progress: the child's snapshot writer and the runner's reader (no garak needed)
+# ---------------------------------------------------------------------------
+
+
+def _snapshot_dict(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {"seq": 1, "event": "start", "probe": None, "probes_done": 0, "n_probes": 1,
+                            "done": 0, "total": 4}
+    base.update(overrides)
+    return base
+
+
+def test_progress_writer_shrinks_the_total_and_swallows_write_failures(tmp_path: Path) -> None:
+    counts: dict[str, tuple[int, int]] = {}
+    writer = _ProgressWriter(tmp_path, ["a.A", "b.B"], 4, counts)
+    path = tmp_path / PROGRESS_FILE
+    writer.write("start", None)
+    first = ProgressSnapshot.model_validate_json(path.read_text(encoding="utf-8"))
+    assert (first.seq, first.event, first.n_probes, first.done, first.total, first.probe) == (1, "start", 2, 0, 8, None)
+    counts["a.A"] = (8, 4)                       # capped at 4: the estimate for this probe was already 4
+    writer.write("probe_loaded", "a.A")
+    assert ProgressSnapshot.model_validate_json(path.read_text(encoding="utf-8")).total == 8
+    counts["b.B"] = (1, 1)                       # one prompt: the total shrinks
+    writer.write("probe_loaded", "b.B")
+    writer.write("probe_start", "a.A")
+    writer.write("prompt", "a.A")
+    snap = ProgressSnapshot.model_validate_json(path.read_text(encoding="utf-8"))
+    assert (snap.seq, snap.event, snap.done, snap.total, snap.probe, snap.probes_done) == (5, "prompt", 1, 5, "a.A", 0)
+    writer.write("probe_end", "a.A")
+    assert ProgressSnapshot.model_validate_json(path.read_text(encoding="utf-8")).probes_done == 1
+    assert not list(tmp_path.glob("*.tmp")), "the atomic replace leaves no temporary file behind"
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root ignores directory modes")
+    os.chmod(tmp_path, 0o500)
+    try:
+        writer.write("prompt", "a.A")            # the write fails silently; the run goes on
+    finally:
+        os.chmod(tmp_path, 0o700)
+    kept = ProgressSnapshot.model_validate_json(path.read_text(encoding="utf-8"))
+    assert kept.seq == 6 and kept.event == "probe_end"
+    assert writer.seq == 7 and writer.done == 2, "the counters still advance so the next write is exact"
+
+
+def test_read_progress_refuses_missing_truncated_oversized_and_foreign_files(tmp_path: Path) -> None:
+    assert _read_progress(tmp_path) is None
+    path = tmp_path / PROGRESS_FILE
+    path.write_text('{"seq": 3, "event": "prompt", "pro', encoding="utf-8")
+    assert _read_progress(tmp_path) is None
+    path.write_text(json.dumps(_snapshot_dict()) + " " * (64 * 1024), encoding="utf-8")
+    assert _read_progress(tmp_path) is None
+    path.write_text(json.dumps(_snapshot_dict(prompt="never here")), encoding="utf-8")
+    assert _read_progress(tmp_path) is None, "an unknown key is refused (extra=forbid)"
+    path.write_text(json.dumps(_snapshot_dict(probe=f"dan.Dan_11_0 {FAKE_KEY}")), encoding="utf-8")
+    snap = _read_progress(tmp_path, FAKE_KEY)
+    assert snap is not None and snap.seq == 1 and FAKE_KEY not in str(snap.probe)
+
+
+def test_runner_delivers_a_snapshot_written_after_the_last_poll(tmp_path: Path) -> None:
+    """Decision 6: a child that writes and exits between two polls still reaches the callback."""
+    work_dir = prepare_work_dir("job-llm-stub", root=tmp_path)
+    stub = tmp_path / "stub-python"
+    payload = json.dumps(_snapshot_dict())
+    stub.write_text(f"#!/bin/sh\nprintf '%s' '{payload}' > progress.json\nexit 0\n", encoding="utf-8")
+    stub.chmod(0o700)
+    spec = LLMProbeChildSpec(model_id=MODEL_ID, gateway_url="https://gateway.invalid", probe_ids=["test.Blank"],
+                             work_dir=str(work_dir), key_file=str(work_dir / KEY_FILE))
+    received: list[ProgressSnapshot] = []
+    outcome = run_probe_child(
+        spec, api_key=FAKE_KEY, config=ProbeRunnerConfig(timeout_s=30), python=str(stub),
+        environ={"PATH": os.environ.get("PATH", "/usr/bin"), "HOME": str(tmp_path)},
+        on_progress=received.append, poll_s=5.0,
+    )
+    assert [s.seq for s in received] == [1] and outcome.progress == received[0]
+    assert outcome.discard["progress"] == work_dir / PROGRESS_FILE
+    assert outcome.status == "failed" and outcome.result is None, "the stub wrote no child_result.json"
+    assert not Path(spec.key_file).exists()
+
+
+# ---------------------------------------------------------------------------
 # garak-marked: the generator in process, the child as a subprocess
 # ---------------------------------------------------------------------------
 
@@ -485,14 +567,15 @@ def test_pythia_generator_contract_with_a_mock_transport(garak_env: dict[str, st
     )
 
     seen: list[tuple[httpx.Request, dict[str, Any]]] = []
-    status_queue: list[int] = []
+    status_queue: list[int | tuple[int, dict[str, Any]]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content or b"{}")
         seen.append((request, body))
-        status = status_queue.pop(0) if status_queue else 200
+        item = status_queue.pop(0) if status_queue else 200
+        status, error = item if isinstance(item, tuple) else (item, {"error": {"message": "forced", "type": "server_error"}})
         if status != 200:
-            return httpx.Response(status, json={"error": {"message": "forced", "type": "server_error"}})
+            return httpx.Response(status, json=error)
         return httpx.Response(200, json={
             "id": "chatcmpl-1", "object": "chat.completion", "model": MODEL_ID,
             "choices": [{"index": 0, "message": {"role": "assistant", "content": "Pong."}, "finish_reason": "stop"}],
@@ -540,6 +623,21 @@ def test_pythia_generator_contract_with_a_mock_transport(garak_env: dict[str, st
     assert gen.ledger.retries == 2 and gen.ledger.to_dict()["transport_errors"] == {"InternalServerError": 3}
     assert gen.ledger.to_dict()["http_errors"] == {"401": 1, "500": 3}
     gen.close()
+    # One tick per prompt (KTD1): a 200, a gateway content-filter refusal, and a 200 after two retryable 503s.
+    ticks: list[int] = []
+    counted = PythiaGenerator(name=MODEL_ID, api_key=FAKE_KEY, uri=gateway_uri("https://gateway.invalid"),
+                              persona="redteam", http_client_factory=factory, on_call=lambda: ticks.append(1))
+    counted.transport_backoff_s = 0.001
+    blocked = {"error": {"code": "persona_denied", "type": "permission_error", "message": "Blocked by synthetic_filter"}}
+    status_queue[:] = [200, (403, blocked), 503, 503, 200]
+    assert [m.text for m in counted.generate(conv, 1)] == ["Pong."]
+    refused = counted.generate(conv, 1)
+    assert len(refused) == 1 and (refused[0] is None or getattr(refused[0], "text", None) is None)
+    assert [m.text for m in counted.generate(conv, 1)] == ["Pong."]
+    assert ticks == [1, 1, 1], "one tick per prompt: the blocked prompt counts, the retries do not"
+    assert counted.ledger.retries == 2 and counted.ledger.gateway_blocked == 1
+    assert "on_call" in PythiaGenerator._unsafe_attributes and counted.__getstate__()["on_call"] is None
+    counted.close()
 
 
 @pytest.mark.garak
@@ -573,9 +671,12 @@ def _reply_for(messages: list[dict[str, Any]]) -> str:
     return DAN_REPLY if "DAN" in text else REFUSAL_REPLY
 
 
+ChildRun = tuple[ChildOutcome, FakeOpenAIServer, LLMProbeChildSpec, list[ProgressSnapshot]]
+
+
 @pytest.fixture(scope="module")
-def child_run(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[ChildOutcome, FakeOpenAIServer, LLMProbeChildSpec]]:
-    """One real child run against the fake gateway, shared by the tests that read its files."""
+def child_run(tmp_path_factory: pytest.TempPathFactory) -> Iterator[ChildRun]:
+    """One real child run against the fake gateway, shared by the tests that read its files and snapshots."""
     pytest.importorskip("garak")
     root = tmp_path_factory.mktemp("llm-work")
     with pytest.MonkeyPatch.context() as mp:
@@ -588,21 +689,24 @@ def child_run(tmp_path_factory: pytest.TempPathFactory) -> Iterator[tuple[ChildO
             work_dir = prepare_work_dir("job-llm-1", root=root)
             spec = _spec(server, work_dir, ["test.Blank", "test.Test", "dan.Dan_11_0", "encoding.InjectBase64",
                                             "nope.Nope", "realtoxicityprompts.RTPBlank", "fitd.FITD"])
-            outcome = run_probe_child(spec, api_key=FAKE_KEY, config=ProbeRunnerConfig(timeout_s=600))
-            yield outcome, server, spec
+            snapshots: list[ProgressSnapshot] = []
+            outcome = run_probe_child(spec, api_key=FAKE_KEY, config=ProbeRunnerConfig(timeout_s=600),
+                                      on_progress=snapshots.append)
+            yield outcome, server, spec, snapshots
         finally:
             server.stop()
 
 
 @pytest.mark.garak
-def test_child_runs_garak_end_to_end_against_the_fake_gateway(child_run: tuple[ChildOutcome, FakeOpenAIServer, LLMProbeChildSpec]) -> None:
-    outcome, server, spec = child_run
+def test_child_runs_garak_end_to_end_against_the_fake_gateway(child_run: ChildRun) -> None:
+    outcome, server, spec, _snapshots = child_run
     assert outcome.status == "succeeded", (outcome.error, outcome.stderr_tail[-800:])
     assert outcome.exit_code == 0 and outcome.result is not None and outcome.succeeded
     result = outcome.result
     assert result.garak_version == EXPECTED_GARAK_VERSION
     for name in ("report_jsonl", "hitlog_jsonl", "digest_html", "usage_json", "child_result_json"):
         assert outcome.files[name] is not None and outcome.files[name].is_file(), name
+    assert set(outcome.files) == {"report_jsonl", "hitlog_jsonl", "digest_html", "usage_json", "child_result_json"}
     assert outcome.discard["garak_log"] is not None and outcome.discard["garak_log"].parent == outcome.work_dir
     rows = {p.probe_id: p for p in result.probes}
     assert result.probes_run == ["test.Blank", "test.Test", "dan.Dan_11_0", "encoding.InjectBase64"]
@@ -651,8 +755,39 @@ def test_child_runs_garak_end_to_end_against_the_fake_gateway(child_run: tuple[C
 
 
 @pytest.mark.garak
-def test_child_environment_and_files_never_carry_the_key_or_a_prompt(child_run: tuple[ChildOutcome, FakeOpenAIServer, LLMProbeChildSpec]) -> None:
-    outcome, _server, spec = child_run
+def test_child_progress_snapshots_count_prompts_and_shrink_the_total(child_run: ChildRun) -> None:
+    """AE1 on the real child: one tick per prompt, a total that only shrinks, the final count equal to garak's."""
+    outcome, _server, spec, snapshots = child_run
+    assert outcome.result is not None and snapshots, "the runner delivered the child's progress snapshots"
+    seqs = [s.seq for s in snapshots]
+    assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs), "seq strictly increases"
+    dones = [s.done for s in snapshots]
+    totals = [s.total for s in snapshots]
+    assert dones == sorted(dones), "done never decreases"
+    assert totals == sorted(totals, reverse=True), "total never grows while the child runs"
+    # The runner reports the latest snapshot per poll, so back-to-back writes coalesce: the first delivery
+    # is one of the pre-request events with nothing sent yet.
+    first = snapshots[0]
+    assert first.event in {"start", "probe_start", "probe_loaded"} and first.done == 0
+    assert first.total <= 4 * spec.max_prompts_per_probe, "the estimate starts at runnable probes times the cap"
+    if first.event != "probe_loaded":
+        assert first.total == 4 * spec.max_prompts_per_probe
+    runnable = set(outcome.result.probes_run)
+    assert all(s.probe is None or s.probe in runnable for s in snapshots)
+    assert all(s.n_probes == 4 for s in snapshots)
+    last = snapshots[-1]
+    assert last.done == sum(p.n_attempts_complete for p in outcome.result.probes) == 10
+    assert last.total == 10 and last.probes_done == last.n_probes == 4 and last.event == "probe_end"
+    assert outcome.progress == last
+    path = outcome.discard["progress"]
+    assert path is not None and path.parent == outcome.work_dir
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert set(data) == set(ProgressSnapshot.model_fields), "the file carries exactly the model's fields"
+
+
+@pytest.mark.garak
+def test_child_environment_and_files_never_carry_the_key_or_a_prompt(child_run: ChildRun) -> None:
+    outcome, _server, spec, _snapshots = child_run
     assert outcome.env_keys, "the child records the names of its environment variables"
     leaked = [k for k in outcome.env_keys if k.startswith(FORBIDDEN_CHILD_NAMES)]
     assert leaked == [], leaked
@@ -677,6 +812,12 @@ def test_child_environment_and_files_never_carry_the_key_or_a_prompt(child_run: 
     for name in ("child_result_json", "usage_json"):
         path = outcome.files[name]
         assert path is not None and fragment not in path.read_text(encoding="utf-8")
+    progress_path = outcome.discard["progress"]
+    assert progress_path is not None and progress_path.parent == outcome.work_dir
+    progress_text = progress_path.read_text(encoding="utf-8")
+    assert fragment not in progress_text and DAN_REPLY not in progress_text and "pk_" not in progress_text
+    # The progress callback lives on the generator instance only; its attribute name is the tripwire.
+    assert "on_call" not in report_path.read_text(encoding="utf-8")
     card = build_scorecard(outcome.result, run_id="run-1", target_id="tgt-1", guardrail_mode="permission_gate_only")
     reports = render_llm_reports(card)
     for _name, data, _ctype in reports:
@@ -688,8 +829,8 @@ def test_child_environment_and_files_never_carry_the_key_or_a_prompt(child_run: 
 
 
 @pytest.mark.garak
-def test_scorecard_from_the_real_child_run_has_denominators_and_no_mri(child_run: tuple[ChildOutcome, FakeOpenAIServer, LLMProbeChildSpec]) -> None:
-    outcome, _server, spec = child_run
+def test_scorecard_from_the_real_child_run_has_denominators_and_no_mri(child_run: ChildRun) -> None:
+    outcome, _server, spec, _snapshots = child_run
     assert outcome.result is not None
     selection = resolve_selection(load_catalog(), probe_ids=spec.probe_ids)
     card = build_scorecard(outcome.result, run_id="run-1", target_id="tgt-1", guardrail_mode="content_filtered",
@@ -736,9 +877,15 @@ def test_offline_mode_records_hf_detector_probes_as_not_run_without_a_request(tm
     with FakeOpenAIServer() as server:
         work_dir = prepare_work_dir("job-llm-offline", root=tmp_path)
         spec = _spec(server, work_dir, ["realtoxicityprompts.RTPBlank", "latentinjection.LatentJailbreak"])
-        outcome = run_probe_child(spec, api_key=FAKE_KEY, config=ProbeRunnerConfig(timeout_s=300))
+        snapshots: list[ProgressSnapshot] = []
+        outcome = run_probe_child(spec, api_key=FAKE_KEY, config=ProbeRunnerConfig(timeout_s=300),
+                                  on_progress=snapshots.append)
         assert outcome.status == "succeeded", (outcome.error, outcome.stderr_tail[-500:])
         assert outcome.result is not None and outcome.result.probes_run == []
+        # AE5: nothing runnable, so one start snapshot with n_probes 0 and total 0, and the child still exits 0.
+        assert [s.event for s in snapshots] == ["start"]
+        assert (snapshots[0].n_probes, snapshots[0].total, snapshots[0].done) == (0, 0, 0)
+        assert outcome.progress == snapshots[0] and outcome.exit_code == 0
         assert {p.reason for p in outcome.result.probes} == {DETECTOR_OFFLINE_REASON}
         assert server.chat_requests == []
         assert "HF_HUB_OFFLINE" in outcome.env_keys
@@ -755,7 +902,15 @@ def test_child_timeout_kills_the_process_group_and_removes_the_key(tmp_path: Pat
         work_dir = prepare_work_dir("job-llm-timeout", root=tmp_path)
         spec = _spec(server, work_dir, ["test.Test"], max_prompts_per_probe=8)
         started = time.monotonic()
-        outcome = run_probe_child(spec, api_key=FAKE_KEY, config=ProbeRunnerConfig(timeout_s=12), poll_s=0.2)
+        received: list[ProgressSnapshot] = []
+        stamps: list[float] = []
+
+        def on_progress(snapshot: ProgressSnapshot) -> None:
+            received.append(snapshot)
+            stamps.append(round(time.monotonic() - started, 2))
+
+        outcome = run_probe_child(spec, api_key=FAKE_KEY, config=ProbeRunnerConfig(timeout_s=12), poll_s=0.2,
+                                  on_progress=on_progress)
         elapsed = time.monotonic() - started
         assert outcome.status == "timed_out", (outcome.status, outcome.error)
         assert elapsed < 60
@@ -763,8 +918,35 @@ def test_child_timeout_kills_the_process_group_and_removes_the_key(tmp_path: Pat
         assert outcome.error is not None and "killed" in outcome.error and FAKE_KEY not in outcome.error
         with pytest.raises(ProbeChildTimeout):
             outcome.raise_for_status()
+        # AE3: the snapshots before the first (hung) request reached the parent (coalesced per poll) and the
+        # count froze at 0 of 8: no prompt completed, so no tick, and the block never moves.
+        events = [s.event for s in received]
+        assert events and set(events) <= {"start", "probe_start", "probe_loaded"}, (events, stamps)
+        assert all(s.done == 0 for s in received) and stamps[0] < 12, (events, stamps)
+        assert outcome.progress is not None and outcome.progress.done == 0 < outcome.progress.total
+        assert outcome.discard["progress"] is not None and outcome.discard["progress"].parent == work_dir
         outcome.cleanup(keep=False)
         assert not work_dir.exists()
+
+
+@pytest.mark.garak
+def test_progress_callback_errors_never_change_the_outcome(tmp_path: Path) -> None:
+    pytest.importorskip("garak")
+    with FakeOpenAIServer() as server:
+        work_dir = prepare_work_dir("job-llm-callback", root=tmp_path)
+        spec = _spec(server, work_dir, ["test.Blank"])
+        seen: list[ProgressSnapshot] = []
+
+        def flaky(snapshot: ProgressSnapshot) -> None:
+            seen.append(snapshot)
+            if len(seen) == 1:
+                raise RuntimeError("the first delivery fails")
+
+        outcome = run_probe_child(spec, api_key=FAKE_KEY, config=ProbeRunnerConfig(timeout_s=300), on_progress=flaky)
+        assert outcome.status == "succeeded", (outcome.error, outcome.stderr_tail[-500:])
+        assert len(seen) >= 2 and seen[-1].done == 1 and seen[-1].event == "probe_end"
+        assert outcome.progress == seen[-1]
+        outcome.cleanup(keep=False)
 
 
 @pytest.mark.garak

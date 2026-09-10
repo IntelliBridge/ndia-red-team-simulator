@@ -270,7 +270,7 @@ class PythiaGenerator(OpenAICompatible):
         "retry_json": True,
     }
 
-    _unsafe_attributes = ["client", "generator", "_http_client", "api_key", "http_client_factory"]
+    _unsafe_attributes = ["client", "generator", "_http_client", "api_key", "http_client_factory", "on_call"]
 
     def __init__(
         self,
@@ -282,7 +282,11 @@ class PythiaGenerator(OpenAICompatible):
         uri: str | None = None,
         persona: str | None = None,
         http_client_factory: HttpClientFactory | None = None,
+        on_call: Callable[[], None] | None = None,
     ) -> None:
+        """``on_call`` fires once per completed prompt (a blocked one included, a retry never): the child's
+        progress counter. Held on the instance only and listed in ``_unsafe_attributes`` so garak's
+        serialisation drops it."""
         if api_key is not None and key_file is not None:
             raise ProbeKeyUnavailable("give the probe key as api_key or key_file, not both")
         if key_file is not None:
@@ -294,6 +298,7 @@ class PythiaGenerator(OpenAICompatible):
         self.api_key = str(api_key).strip()
         self.ledger = UsageLedger()
         self.http_client_factory = http_client_factory
+        self.on_call = on_call
         self._http_client: httpx.Client | None = None
         if uri is not None:
             self.uri = uri
@@ -379,6 +384,16 @@ class PythiaGenerator(OpenAICompatible):
                 )
                 raise GatewayPromptBlocked("edge")
 
+    def _tick(self) -> None:
+        """One progress tick per completed prompt; a callback error is logged and never reaches garak."""
+        callback = getattr(self, "on_call", None)
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:  # noqa: BLE001 - progress is best effort
+            logger.debug("on_call progress callback failed", exc_info=True)
+
     def _call_model(self, prompt: Any, generations_this_call: int = 1) -> list[Any]:
         """garak's request logic with a bounded retry loop instead of its uncapped backoff."""
         max_tries = max(1, int(self.transport_max_tries))
@@ -386,11 +401,13 @@ class PythiaGenerator(OpenAICompatible):
         while True:
             try:
                 result: list[Any] = _UNDECORATED_CALL(self, prompt, generations_this_call)
+                self._tick()
                 return result
             except GatewayPromptBlocked as blocked:
                 self.ledger.gateway_blocked += generations_this_call
                 if blocked.source == "edge":
                     self.ledger.edge_blocked += generations_this_call
+                self._tick()
                 return [None] * generations_this_call
             except _RETRYABLE as exc:
                 tries += 1

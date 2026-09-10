@@ -50,15 +50,21 @@ from redsim.ml.llm.probe_child import (
     GARAK_DIR,
     GARAK_LOG_FILE,
     KEY_FILE,
+    PROGRESS_FILE,
     REPORT_PREFIX,
     RESULT_FILE,
     SPEC_FILE,
     USAGE_FILE,
     ChildResult,
     LLMProbeChildSpec,
+    ProgressSnapshot,
+    scrub_text,
 )
 
 logger = logging.getLogger(__name__)
+
+#: A ``progress.json`` larger than this is not the child's one-line snapshot and is read as absent.
+PROGRESS_MAX_BYTES = 64 * 1024
 
 ENV_TIMEOUT_S = "REDSIM_LLM_PROBE_TIMEOUT_S"
 ENV_CPU_SECONDS = "REDSIM_LLM_PROBE_CPU_SECONDS"
@@ -149,8 +155,9 @@ class ChildOutcome:
     work_dir: Path
     wall_time_s: float
     result: ChildResult | None = None
+    progress: ProgressSnapshot | None = None                         # the last snapshot the parent observed
     files: dict[str, Path | None] = field(default_factory=dict)      # storable: report, hitlog, digest, usage
-    discard: dict[str, Path | None] = field(default_factory=dict)    # never stored: garak.log, config, stdout/stderr
+    discard: dict[str, Path | None] = field(default_factory=dict)    # never stored: garak.log, config, stdout/stderr, progress
     stdout_tail: str = ""
     stderr_tail: str = ""
     env_keys: list[str] = field(default_factory=list)
@@ -283,9 +290,8 @@ def assert_child_env_minimal(env: Mapping[str, str]) -> None:
 
 
 def scrub_output(text: str, *secrets: str) -> str:
-    from redsim.ml.llm.generator import scrub_secrets
-
-    return scrub_secrets(text, *secrets)
+    """Replace every supplied secret and every ``pk_…`` shape; pure Python, so the parent needs no garak."""
+    return scrub_text(text, *secrets)
 
 
 def _tail(path: Path, *secrets: str, limit: int = 4000) -> str:
@@ -322,6 +328,19 @@ def _load_result(work_dir: Path, *secrets: str) -> ChildResult | None:
         return None
 
 
+def _read_progress(work_dir: Path, *secrets: str) -> ProgressSnapshot | None:
+    """The child's latest snapshot, or ``None`` when absent, mid-write, oversized or not the model's shape."""
+    path = work_dir / PROGRESS_FILE
+    try:
+        if not path.is_file() or path.stat().st_size > PROGRESS_MAX_BYTES:
+            return None
+        text = scrub_output(path.read_text(encoding="utf-8"), *secrets)
+        return ProgressSnapshot.model_validate_json(text)
+    except Exception:  # noqa: BLE001 - a snapshot the child is still writing is simply not there yet
+        logger.debug("progress.json unreadable", exc_info=True)
+        return None
+
+
 def _load_env_keys(work_dir: Path) -> list[str]:
     path = work_dir / ENV_KEYS_FILE
     if not path.is_file():
@@ -351,12 +370,16 @@ def run_probe_child(
     environ: Mapping[str, str] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
     poll_s: float = 0.5,
+    on_progress: Callable[[ProgressSnapshot], None] | None = None,
 ) -> ChildOutcome:
     """Run the child for ``spec`` (whose ``work_dir`` must exist, 0700) and return the outcome.
 
     ``api_key`` is written to the 0600 key file named by ``spec.key_file`` and never
     to the environment, the spec or a log. The caller stores what it needs from
-    ``outcome.files`` and then calls ``outcome.cleanup()``.
+    ``outcome.files`` and then calls ``outcome.cleanup()``. ``on_progress`` receives
+    the child's ``progress.json`` snapshot once per new ``seq`` on every poll and
+    once more after the loop; an exception it raises is logged and never changes
+    the outcome.
     """
     from redsim.scanners.sandbox import SandboxConfig, _rlimit_preexec
 
@@ -385,6 +408,22 @@ def run_probe_child(
     status: OutcomeStatus = "failed"
     exit_code: int | None = None
     error: str | None = None
+    last_progress: ProgressSnapshot | None = None
+
+    def deliver() -> None:
+        """Hand the newest snapshot to ``on_progress`` once per ``seq``; the callback never fails the run."""
+        nonlocal last_progress
+        snapshot = _read_progress(work_dir, api_key)
+        if snapshot is None or (last_progress is not None and snapshot.seq <= last_progress.seq):
+            return
+        last_progress = snapshot
+        if on_progress is None:
+            return
+        try:
+            on_progress(snapshot)
+        except Exception:  # noqa: BLE001 - progress is best effort
+            logger.warning("on_progress callback failed (seq=%d)", snapshot.seq, exc_info=True)
+
     write_key_file(work_dir, api_key)
     try:
         with stdout_path.open("wb") as out, stderr_path.open("wb") as err:
@@ -400,6 +439,7 @@ def run_probe_child(
                     break
                 except subprocess.TimeoutExpired:
                     pass
+                deliver()
                 if is_cancelled is not None and is_cancelled():
                     _kill_group(proc)
                     status, error = "cancelled", "probe run cancelled; process group killed"
@@ -411,6 +451,7 @@ def run_probe_child(
     finally:
         key_path.unlink(missing_ok=True)
     wall = time.monotonic() - started
+    deliver()  # a snapshot written after the last poll, on every exit of the loop
 
     result = _load_result(work_dir, api_key)
     if status == "failed":  # the child exited on its own
@@ -431,9 +472,11 @@ def run_probe_child(
         "garak_config": _existing(work_dir / "garak.yaml"),
         "stdout": _existing(stdout_path),
         "stderr": _existing(stderr_path),
+        "progress": _existing(work_dir / PROGRESS_FILE),
     }
     outcome = ChildOutcome(
         status=status, exit_code=exit_code, work_dir=work_dir, wall_time_s=round(wall, 3), result=result,
+        progress=last_progress,
         files=files, discard=discard, stdout_tail=_tail(stdout_path, api_key), stderr_tail=_tail(stderr_path, api_key),
         env_keys=_load_env_keys(work_dir), error=scrub_output(error, api_key) if error else None,
     )
@@ -448,6 +491,7 @@ __all__ = [
     "ENV_KEEP_WORK_DIR",
     "ENV_TIMEOUT_S",
     "FORBIDDEN_ENV_PREFIXES",
+    "PROGRESS_MAX_BYTES",
     "PROXY_ENV_KEYS",
     "TLS_ENV_KEYS",
     "ChildOutcome",

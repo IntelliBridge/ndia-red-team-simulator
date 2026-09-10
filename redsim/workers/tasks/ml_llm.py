@@ -38,6 +38,16 @@ order, every step a durable row or a typed failure and never a fake result:
    audit vocabulary ``llm.probe.entitlement``, ``llm.probe.execute.<probe>``,
    ``llm.probe.score``, ``report.render`` and ``job.complete`` (ids, digests
    and counts only). No ``ml_campaigns`` row is ever written (D9).
+7. **Progress** while the child runs: every ``progress.json`` snapshot the
+   runner hands ``on_progress`` becomes one ``stage_table.progress`` write
+   (:func:`progress_block`: ``unit``, ``done``, ``total``, ``percent``, the
+   admitted probe's short id or null, ``probes_done``, ``n_probes``,
+   ``updated_at``), best effort and skipped once the run is terminal. The
+   success path stamps ``percent`` 100 with ``done`` equal to ``total`` equal
+   to the normalised prompt count; every other end leaves the last written
+   block in place. No frame is published for it and the count never enters an
+   artifact, a finding or an audit row: the page reads it from
+   ``GET /v1/runs/{id}``.
 """
 
 from __future__ import annotations
@@ -79,6 +89,10 @@ ENTITLEMENT_TIMEOUT_S = 30.0
 HF_CACHE_ENV = "REDSIM_LLM_PROBE_HF_CACHE"
 #: Report formats the task writes (spec 14.8); the ``report.render`` row lists them.
 REPORT_FORMATS: tuple[str, ...] = ("md", "json", "html")
+#: ``stage_table.progress.unit`` of a probe run; a campaign run may write ``samples`` or ``attacks`` later.
+PROGRESS_UNIT = "prompts"
+#: Run statuses after which a progress write is skipped (the run is closed by another path).
+TERMINAL_RUN_STATUSES: frozenset[str] = frozenset({"succeeded", "failed", "cancelled"})
 #: Audit action prefix per probe (brief vocabulary ``llm.probe.execute.<probe>``; spec 5.11 <= 64 chars).
 PROBE_ACTION_PREFIX = "llm.probe.execute."
 AUDIT_ACTION_MAX = 64
@@ -178,6 +192,37 @@ def scorecard_forbidden_keys(value: Any, path: str = "") -> list[str]:
         for index, inner in enumerate(value):
             found.extend(scorecard_forbidden_keys(inner, f"{path}[{index}]"))
     return found
+
+
+def progress_percent(done: int, total: int, *, final: bool = False) -> int:
+    """0 to 99 while the child runs (0 when the estimate is 0); 100 comes only from the success path."""
+    if final:
+        return 100
+    if total <= 0:
+        return 0
+    return min(99, (100 * max(0, done)) // total)
+
+
+def progress_block(snapshot: Any, short_ids: Mapping[str, str], probe_ids: Sequence[str]) -> dict[str, Any]:
+    """``stage_table.progress`` from a child snapshot: counts and an admitted probe's short id, never text."""
+    probe = _get(snapshot, "probe")
+    admitted = probe is not None and str(probe) in probe_ids
+    done, total = _int(_get(snapshot, "done")), _int(_get(snapshot, "total"))
+    return {
+        "unit": PROGRESS_UNIT, "done": done, "total": total, "percent": progress_percent(done, total),
+        "probe": short_ids.get(str(probe), str(probe)) if admitted else None,
+        "probes_done": _int(_get(snapshot, "probes_done")), "n_probes": _int(_get(snapshot, "n_probes")),
+        "updated_at": _now().isoformat(timespec="milliseconds"),
+    }
+
+
+def final_progress_block(done: int, n_probes: int) -> dict[str, Any]:
+    """The success block: ``done`` equal to ``total`` (the normalised prompt count), ``percent`` 100."""
+    return {
+        "unit": PROGRESS_UNIT, "done": done, "total": done, "percent": progress_percent(done, done, final=True),
+        "probe": None, "probes_done": n_probes, "n_probes": n_probes,
+        "updated_at": _now().isoformat(timespec="milliseconds"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -447,11 +492,13 @@ def _runner_module() -> Any | None:
 
 
 def _run_child(runner: Any, *, detail: Mapping[str, Any], gateway_url: str, model_id: str, persona: str | None,
-               api_key: str, job_id: str, is_cancelled: Callable[[], bool]) -> Any:
+               api_key: str, job_id: str, is_cancelled: Callable[[], bool],
+               on_progress: Callable[[Any], None] | None = None) -> Any:
     """Build the ``LLMProbeChildSpec`` and run the credential-minimised child (LLM-10, -33).
 
     The key goes to the runner as a keyword only: it writes the 0600 key file
     the child reads once; the spec, the environment and every log stay free of it.
+    ``on_progress`` receives the child's progress snapshots from the runner's poll.
     """
     child = importlib.import_module(CHILD_MODULE)
     spec_model = child.LLMProbeChildSpec
@@ -476,7 +523,7 @@ def _run_child(runner: Any, *, detail: Mapping[str, Any], gateway_url: str, mode
     if fields["detector_mode"] == "hf" and hf_home:
         fields["hf_home"] = hf_home
     spec = spec_model(**fields)
-    return runner.run_probe_child(spec, api_key=api_key, is_cancelled=is_cancelled)
+    return runner.run_probe_child(spec, api_key=api_key, is_cancelled=is_cancelled, on_progress=on_progress)
 
 
 def _entitled_model_ids(*, gateway_url: str, api_key: str, persona: str | None, model_id: str,
@@ -564,7 +611,7 @@ class _ProbeStages:
         return run
 
     def _store(self, run: Any, stages: dict[str, Any], *, stage: str | None, completeness: Any = None,
-               error: Any = None, job_status: str = "running") -> None:
+               error: Any = None, job_status: str = "running", progress: Mapping[str, Any] | None = None) -> None:
         table = dict(run.stage_table or {})
         jobs = dict(table.get("jobs") or {})
         jobs[self.job_id] = {**dict(jobs.get(self.job_id) or {}), "type": self.job_type, "status": job_status,
@@ -577,8 +624,41 @@ class _ProbeStages:
             table["completeness"] = completeness
         if error is not None:
             table["error"] = error
+        if progress is not None:
+            table["progress"] = dict(progress)
         run.stage_table = table
         self.session.commit()
+
+    def progress(self, block: Mapping[str, Any]) -> None:
+        """Write ``stage_table.progress`` for one snapshot; skipped on a terminal run, never raises.
+
+        The status is a fresh column select on the task session and the row is
+        the identity-map ``Run`` (never refreshed: ``aborted()`` relies on its
+        stale status after a cancel). ``_store`` is not used because it rewrites
+        the stage cursor. A failed commit is rolled back and logged, so the next
+        stage write finds a usable session.
+        """
+        from sqlalchemy import select
+
+        from redsim.db.models import Run
+
+        try:
+            status = self.session.execute(select(Run.status).where(Run.id == self.run_id)).scalar_one_or_none()
+            if status is None or str(status) in TERMINAL_RUN_STATUSES:
+                return
+            run = self.session.get(Run, self.run_id)
+            if run is None:
+                return
+            table = dict(run.stage_table or {})
+            table["progress"] = dict(block)
+            run.stage_table = table
+            self.session.commit()
+        except Exception:  # noqa: BLE001 - progress is best effort; the job must go on
+            logger.warning("progress write failed (run=%s)", self.run_id, exc_info=True)
+            try:
+                self.session.rollback()
+            except Exception:  # noqa: BLE001
+                logger.debug("rollback after a failed progress write failed", exc_info=True)
 
     def _next(self, stage: str) -> str | None:
         if stage not in self.expected:
@@ -633,7 +713,9 @@ class _ProbeStages:
             _publish_stage(self.run_id, self.job_id, open_stage, status)
         return open_stage
 
-    def finish(self, completeness: str, error: str | None = None) -> None:
+    def finish(self, completeness: str, error: str | None = None, *, progress_done: int | None = None,
+               n_probes_run: int = 0) -> None:
+        """Close the table on success; ``progress_done`` stamps the final block (``percent`` 100)."""
         now = _iso(_now())
         run = self._live_run()
         if run is None:
@@ -645,8 +727,9 @@ class _ProbeStages:
         for name in self.expected:
             if name not in stages:
                 stages[name] = {"status": "skipped", "started_at": None, "finished_at": now, "job_id": self.job_id}
+        block = final_progress_block(progress_done, n_probes_run) if progress_done is not None else None
         self._store(run, stages, stage=self.done[-1] if self.done else None, completeness=completeness,
-                    error=error if error is not None else None)
+                    error=error if error is not None else None, progress=block)
 
 
 # ---------------------------------------------------------------------------
@@ -1114,13 +1197,17 @@ def ml_llm_probe_run(self: Task, job_id: str) -> dict[str, Any]:
                 return (live_job is None or live_run is None or live_job.status == "cancelled"
                         or live_run.status == "cancelled")
 
+        def on_progress(snapshot: Any) -> None:
+            stages.progress(progress_block(snapshot, short_ids, probe_ids))
+
         clock = time.monotonic()
         raw_outcome: Any = None
         work_dir: Path | None = None
         try:
             try:
                 raw_outcome = _run_child(runner, detail=detail, gateway_url=gateway_url, model_id=model_id,
-                                         persona=persona, api_key=api_key, job_id=job_id, is_cancelled=is_cancelled)
+                                         persona=persona, api_key=api_key, job_id=job_id, is_cancelled=is_cancelled,
+                                         on_progress=on_progress)
             except Exception as exc:  # noqa: BLE001 - the runner itself failed before or around the child
                 error_class = type(exc).__name__
                 for probe_id in probe_ids:
@@ -1236,7 +1323,8 @@ def ml_llm_probe_run(self: Task, job_id: str) -> dict[str, Any]:
             "sha256": {f"report.{ext}": sink._hashes.get(f"report.{ext}") for ext in written},
         }, success=bool(written))
         stages.completed("report")
-        stages.finish(outcome.completeness)
+        stages.finish(outcome.completeness, progress_done=sum(p.n_prompts_sent or 0 for p in probes),
+                      n_probes_run=sum(1 for p in probes if p.status == "run"))
         complete("succeeded", success=True, n_findings=len(finding_ids),
                  extra={"completeness": outcome.completeness, "n_probes_run": scorecard["counts"]["n_probes_run"]})
         logger.info("LLM probe run completed run=%s job=%s probes=%d findings=%d", ctx.run_id, job_id,
@@ -1255,6 +1343,7 @@ __all__ = [
     "HF_CACHE_ENV",
     "LLM_ARTIFACT_KINDS",
     "PROBE_ACTION_PREFIX",
+    "PROGRESS_UNIT",
     "REPORT_FORMATS",
     "RUNNER_MODULE",
     "TASK_NAME",
@@ -1265,10 +1354,13 @@ __all__ = [
     "ProbeCounts",
     "build_scorecard",
     "credential_in",
+    "final_progress_block",
     "llm_artifact_kind",
     "ml_llm_probe_run",
     "normalise_child_result",
     "probe_audit_action",
+    "progress_block",
+    "progress_percent",
     "render_reports",
     "scorecard_forbidden_keys",
     "store_child_files",
