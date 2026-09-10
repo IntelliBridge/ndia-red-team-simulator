@@ -64,11 +64,11 @@ def not_built(message: str, *, wave: str, track: str, **fields: Any) -> HTTPExce
     """The ``501 not_implemented`` envelope every Phase B stub raises after its gates.
 
     ``message`` says what is not implemented, ``reason`` names the wave and track
-    of the Phase B plan that builds it, and ``phase`` is always ``"B"``.
+    that builds it, and ``phase`` is always ``"B"``.
     """
     return api_error(
         NOT_IMPLEMENTED, message, phase="B",
-        reason=f"built in wave {wave} ({track} track) of docs/plans/12-phase-b-plan.md",
+        reason=f"built in wave {wave} ({track} track) of the Phase B plan",
         **fields,
     )
 

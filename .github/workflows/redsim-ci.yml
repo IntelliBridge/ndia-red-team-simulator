@@ -558,8 +558,8 @@ jobs:
           push: false
       # deploy/Dockerfile.web requires the browser API origin as a build
       # argument (no localhost default). This image is never pushed, so a
-      # placeholder https origin proves the build; deploy-aws.yml passes the
-      # real public origin after its guard.
+      # placeholder https origin proves the build; the EC2 host build passes
+      # the real public origin.
       - name: Build web
         uses: docker/build-push-action@v7
         with:
@@ -581,13 +581,6 @@ jobs:
   # from the process; Postgres here serves only the RLS lane, which the tier
   # reaches through REDSIM_E2E_POSTGRES_URL after the migrate step. No network,
   # no Pythia (the harness mocks the gateway in the worker parent), no Docker.
-  # The tier and the docs-consistency test run through scripts/phase_b_gate.sh
-  # (plan 12 wave B4, TESTS_DOCS-36), the same script `make check-phase-b` runs
-  # locally, so the two agree on the command, the scrubbed environment and the
-  # spec 26 criterion a failure is attributed to (docs/dev/ci.md "Phase B gate").
-  # The checkout here is the tree the editable install points at, so the
-  # PYTHONPATH the script sets for a git-worktree run is not needed (the
-  # script detects that and sets nothing).
   e2e-python:
     name: E2E tier (python, eager Celery)
     runs-on: ubuntu-latest
@@ -643,30 +636,23 @@ jobs:
         env:
           REDSIM_DB_URL: ${{ env.E2E_POSTGRES_URL }}
         run: alembic upgrade head
-      # The gate's e2e step sets REDSIM_E2E=1 itself and runs
-      # `pytest -q -p no:cacheprovider -rs -m e2e tests/e2e` with the Postgres
-      # lane on (REDSIM_E2E_POSTGRES_URL), failing if the harness still reports
-      # the lane as off. PHASE_B_PYTEST_ARGS carries the CI-only arguments:
-      # ``--basetemp`` pins the harness directory (assets, sqlite file, blobs,
-      # sandbox work dirs, CLI output) to a known path so it can be uploaded on
-      # failure (the harness sets REDSIM_ML_WORK_DIR under it and scrubs
-      # REDSIM_ML_KEEP_WORK_DIR, so the keep switch is not set here), and
-      # ``--durations`` prints the slowest items.
-      - name: Python end-to-end tier (scripts/phase_b_gate.sh --only e2e)
+      # REDSIM_E2E=1 turns the tier on and REDSIM_E2E_POSTGRES_URL turns the
+      # Postgres RLS lane on; the step fails if the harness still reports the
+      # lane as off. ``--basetemp`` pins the harness directory (assets, sqlite
+      # file, blobs, sandbox work dirs, CLI output) to a known path so it can be
+      # uploaded on failure, and ``--durations`` prints the slowest items.
+      - name: Python end-to-end tier
         env:
-          PY: python
+          REDSIM_E2E: "1"
           REDSIM_E2E_POSTGRES_URL: ${{ env.E2E_POSTGRES_URL }}
-          PHASE_B_PYTEST_ARGS: "--durations=15 --basetemp=${{ runner.temp }}/redsim-e2e"
-        run: scripts/phase_b_gate.sh --only e2e
-      # tests/test_docs_phase_b_consistency.py: the Phase B docs match the tree
-      # (the route table against the OpenAPI document, the named test files, the
-      # README open items, the mkdocs nav) and the gate's probe logic fails on a
-      # stack whose Phase B routes still answer 501. The default tier already
-      # runs its unit half in the unit lanes; this runs the whole file.
-      - name: Docs consistency (scripts/phase_b_gate.sh --only docs-consistency)
-        env:
-          PY: python
-        run: scripts/phase_b_gate.sh --only docs-consistency
+        run: |
+          set -o pipefail
+          python -m pytest -q -p no:cacheprovider -rs -m e2e tests/e2e \
+            --durations=15 --basetemp="${{ runner.temp }}/redsim-e2e" | tee e2e.log
+          if grep -q "Postgres lane is off" e2e.log; then
+            echo "::error::the harness skipped its Postgres lane although REDSIM_E2E_POSTGRES_URL is set"
+            exit 1
+          fi
       - name: Upload the harness directory (on failure)
         if: failure()
         uses: actions/upload-artifact@v4
@@ -679,15 +665,11 @@ jobs:
   # The garak tier (plan 12, TESTS_DOCS-02): installs the pinned garak extra on
   # top of the platform extras and runs the garak-marked tests with no gateway
   # variable in the environment, so a probe that reaches for a real endpoint
-  # fails loudly. The tier runs through scripts/phase_b_gate.sh --only garak
-  # (TESTS_DOCS-36), the same step `make check-phase-b` runs locally. Since
-  # wave B2 the tree carries garak-marked tests (twelve in tests/ml, run here;
-  # the four in tests/e2e/test_ml_llm.py are e2e-gated and run in e2e-python),
+  # fails loudly. The tree carries garak-marked tests (in tests/ml, run here;
+  # the ones in tests/e2e/test_ml_llm.py are e2e-gated and run in e2e-python),
   # so the step fails on pytest exit 5 (nothing collected: a marker or
   # collection regression), on a run in which no test passed (every item
-  # skipped) and on any test failure; the wave B0 rule that let an empty
-  # collection pass is gone. The script removes every PYTHIA_* variable from
-  # the pytest environment on top of this job exporting none.
+  # skipped) and on any test failure.
   garak-offline:
     name: garak offline
     runs-on: ubuntu-latest
@@ -721,13 +703,22 @@ jobs:
           XDG_CONFIG_HOME: ${{ runner.temp }}/garak-xdg/config
           XDG_CACHE_HOME: ${{ runner.temp }}/garak-xdg/cache
         run: python -c "import garak; print('garak', garak.__version__)"
-      - name: garak tier (scripts/phase_b_gate.sh --only garak)
+      - name: garak tier
         env:
-          PY: python
           XDG_DATA_HOME: ${{ runner.temp }}/garak-xdg/data
           XDG_CONFIG_HOME: ${{ runner.temp }}/garak-xdg/config
           XDG_CACHE_HOME: ${{ runner.temp }}/garak-xdg/cache
-        run: scripts/phase_b_gate.sh --only garak
+        run: |
+          set +e
+          python -m pytest -q -p no:cacheprovider -m garak tests | tee garak.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -eq 5 ]; then
+            echo "::error::pytest collected no garak-marked test"; exit 1
+          fi
+          if [ "$rc" -eq 0 ] && ! grep -Eq '(^|[^0-9])[1-9][0-9]* passed' garak.log; then
+            echo "::error::no garak-marked test passed (every item skipped: is the garak extra installed?)"; exit 1
+          fi
+          exit "$rc"
 
   e2e-stack:
     name: Stack E2E (Playwright, fixture-assisted)

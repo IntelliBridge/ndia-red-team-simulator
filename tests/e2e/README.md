@@ -7,19 +7,15 @@ CLI, against a tiny asset tree built with the **real** `redsim.ml.assets`
 builder. Nothing is stubbed on the redsim side except three things that need
 infrastructure the harness does not have: the Celery broker (eager mode), the
 Redis event publisher (no-op) and the Pythia gateway (an `httpx.MockTransport`,
-off unless a test switches it on). Register row: G-TESTS. Spec: sections 22.5
-(end-to-end and CI), 24 (demo script) and 26 (completion criteria).
+off unless a test switches it on).
 
 The fixtures live in `conftest.py`; the builders and plain helpers live in
 `harness.py`. `test_harness_smoke.py` is the harness's own smoke test against
 the tree (asset build, bundled registration, one role gate, an image campaign
 through the real child, tabular campaigns, `audit verify --all` clean then
-broken, the mocked narrative flipping `narrative_source`). Wave 4 added the
-completion-criteria files `test_ml_campaigns.py`,
-`test_ml_upload_reports.py` and `test_ml_governance.py` here (see
-"State at `58461cc` and the wave-4 files" below), and Phase B wave B4 added
-the seven files of "Phase B wave B4 files" below; none of them edits the
-fixtures.
+broken, the mocked narrative flipping `narrative_source`). The other files
+are described under "The campaign files" and "The Phase B files" below.
+None of them edits the fixtures.
 
 ## Running
 
@@ -37,11 +33,11 @@ REDSIM_E2E=1 REDSIM_ML_KEEP_WORK_DIR=1 pytest -q -m e2e tests/e2e/test_ml_campai
 # a child envelope when debugging; the child-process boundary is then not exercised)
 REDSIM_E2E=1 REDSIM_E2E_SANDBOX=inprocess pytest -q -m e2e tests/e2e
 
-# the tier as the Phase B gate and the e2e-python CI job run it: one invocation,
-# -rs, the stack and gateway variables scrubbed, the Postgres RLS lane on when
-# REDSIM_E2E_POSTGRES_URL names a migrated database (the step fails if the
-# harness still reports "Postgres lane is off"); `make check-phase-b` runs every step
-scripts/phase_b_gate.sh --only e2e
+# the tier as the e2e-python CI job runs it: one invocation with -rs, the Postgres
+# RLS lane on when REDSIM_E2E_POSTGRES_URL names a migrated database (the job fails
+# if the harness still reports "Postgres lane is off")
+REDSIM_E2E=1 REDSIM_E2E_POSTGRES_URL=postgresql+psycopg://redsim:redsim@localhost:5432/redsim_e2e \
+  .venv/bin/python -m pytest -q -p no:cacheprovider -rs -m e2e tests/e2e
 ```
 
 Requirements: the `ml` extra (torch, ART, scikit-learn, SHAP) plus the `api`
@@ -59,10 +55,9 @@ main checkout nothing is needed, while from a worktree they would silently run
 the *other* tree. Put the worktree first on `PYTHONPATH`
 (`PYTHONPATH=$PWD REDSIM_E2E=1 pytest -q -m e2e tests/e2e`); the sandbox
 allowlist forwards it to the child (`redsim/scanners/sandbox.py`
-`_SAFE_ENV_KEYS`) and `E2EApp.cli_env` prepends it for the CLI.
-`scripts/phase_b_gate.sh --only e2e` detects the mismatch itself (it resolves
-`redsim` from a neutral directory), prints a notice and sets the variable for
-the step.
+`_SAFE_ENV_KEYS`) and `E2EApp.cli_env` prepends it for the CLI. The CI job
+runs from the checkout the editable install points at and needs no such
+variable.
 
 Gating is automatic. Every item collected under `tests/e2e` is stamped `e2e`
 by `conftest.py`, so:
@@ -76,34 +71,32 @@ by `conftest.py`, so:
 neither the `api` nor the `ml` extra: `conftest.py` and `harness.py` import
 only the standard library and pytest at module level.
 
-## State at `58461cc` and the wave-4 files
+## The campaign files
 
-At `58461cc` (2026-09-09, the wave-3 integration commit)
-`REDSIM_E2E=1 pytest -q -m e2e tests/e2e` is 8 passed: the smoke file runs
-the asset build, bundled registration, the role gate, an image campaign and
-two tabular campaigns (PGD by surrogate transfer plus HopSkipJump plus the
-control, and HopSkipJump plus the control) through the real sandbox child,
-`audit verify --all` clean then broken, and the four narrative states.
-Without `REDSIM_E2E` the same command is 8 skipped, and `pytest -q tests/e2e`
-is 8 deselected.
+The smoke file runs the asset build, bundled registration, the role gate, an
+image campaign and two tabular campaigns (PGD by surrogate transfer plus
+HopSkipJump plus the control, and HopSkipJump plus the control) through the
+real sandbox child, `audit verify --all` clean then broken, and the four
+narrative states. Without `REDSIM_E2E` the same command skips every item, and
+`pytest -q tests/e2e` deselects them.
 
-The completion-criteria evidence of spec 26 is added in wave 4 as three files
-on this harness, written in parallel with this page:
+Three files prove the core campaign path on this harness:
 
-| File (added in wave 4) | What it asserts | Spec 26 items |
-|---|---|---|
-| `test_ml_campaigns.py` | an image campaign on `vehicles_cnn` (FGSM, PGD, the control, the default grid, `explain_k > 0`) reaches `succeeded` and the campaign body carries clean, evasion and control measurements with denominators, SHAP observations, a five-subscore scorecard with grade and per-family table, interpretation, recommendations and non-empty limitations. The tabular campaign on `url_trees` (PGD by surrogate, HopSkipJump, the control) has its own MRI, never compared with the image one, with the realizability caveat on every row. Each runs with the Pythia mock on and off and `narrative_source` flips between `llm` and `rules` | 4 to 9, 12 to 15 |
-| `test_ml_upload_reports.py` | a bundled campaign that yields no finding says so, and every candidate is `status: candidate` with no validation label and no gain word. An ONNX export uploads to `available` with gradients and a pickled `.pt` is `415 pickle_refused` with a `success=False` `model.register` row. `report.md`, `report.json` and `report.html` carry the six sections and the scorecard sub-block, and the completion path renders `report.pdf` as well and records snapshot version 1 (the pairwise `side_by_side` comparison lives in `test_ml_review_reports.py`, which has two runs with identical settings) | 2, 15, 17, 24 |
-| `test_ml_governance.py` | the RBAC negative matrix per mutating ML route (viewer, scanner and the campaign creator refused where the spec requires), the RLS negatives on the Postgres lane (a cross-organisation read of an `ml_campaigns` score returns nothing), `redsim audit verify --all` passing over a completed campaign chain and failing after one event is mutated, and `GET /v1/ml/capabilities` carrying neither the Pythia key nor the base URL | 20 to 22 |
+| File | What it asserts |
+|---|---|
+| `test_ml_campaigns.py` | an image campaign on `vehicles_cnn` (FGSM, PGD, the control, the default grid, `explain_k > 0`) reaches `succeeded` and the campaign body carries clean, evasion and control measurements with denominators, SHAP observations, a five-subscore scorecard with grade and per-family table, interpretation, recommendations and non-empty limitations. The tabular campaign on `url_trees` (PGD by surrogate, HopSkipJump, the control) has its own MRI, never compared with the image one, with the realizability caveat on every row. Each runs with the Pythia mock on and off and `narrative_source` flips between `llm` and `rules` |
+| `test_ml_upload_reports.py` | a bundled campaign that yields no finding says so, and every candidate is `status: candidate` with no validation label and no gain word. An ONNX export uploads to `available` with gradients and a pickled `.pt` is `415 pickle_refused` with a `success=False` `model.register` row. `report.md`, `report.json` and `report.html` carry the six sections and the scorecard sub-block, and the completion path renders `report.pdf` as well and records snapshot version 1 (the pairwise `side_by_side` comparison lives in `test_ml_review_reports.py`, which has two runs with identical settings) |
+| `test_ml_governance.py` | the RBAC negative matrix per mutating ML route (viewer, scanner and the campaign creator refused where the policy requires), the RLS negatives on the Postgres lane (a cross-organisation read of an `ml_campaigns` score returns nothing), `redsim audit verify --all` passing over a completed campaign chain and failing after one event is mutated, and `GET /v1/ml/capabilities` carrying neither the Pythia key nor the base URL |
 
 A partial score in any of these is the honest state (`score` absent,
 `score_status` present, `mri` null with the missing dimension named as a
 limitation), never a number to assert on.
 
-## Phase B wave B4 files
+## The Phase B files
 
-Plan 12 wave B4 (`docs/plans/12-phase-b-plan.md`) added the end-to-end
-evidence for everything waves B0 to B3 built, on the same fixtures. Each file
+Seven files cover the endpoint connector, the LLM probes, the text and
+detection modalities, the attack set, the review and report workflow,
+interoperability and bulk operations, on the same fixtures. Each file
 drives the production route, the admission service, the eager worker and the
 real sandbox child, then asserts on what those left behind; where a finding is
 needed, it comes from an **uploaded** `SmallCNN` that memorises the harness's
@@ -112,20 +105,17 @@ is a demo result. A test that meets a product defect fails with an
 attribution naming the module (`pytest.fail(..., pytrace=False)` prefixed
 "product defect, not a harness problem"), never with a weaker assertion.
 
-| File | What it drives | Spec / register |
-|---|---|---|
-| `test_ml_endpoint.py` | the black-box endpoint connector against `tests/ml/tiny_endpoint_server.py` on the loopback interface: `POST /v1/models` `source=endpoint` and its refusal codes, validation through the worker-parent broker to `available`, a black-box campaign, the refusal of a white-box attack, egress and credential boundaries, the audit chain | 9.1, 17.2, 17.3, 21.7, 26.2 item 7, 26.3 items 12 to 14, 26.4 items 17, 20, 21, 26.5 item 22; ENDPOINT-20..23 |
-| `test_ml_llm.py` | garak probe runs through the gateway contract against `tests/ml/fake_openai_server.py`: the probe catalog (HarmBench excluded), LLM target registration gates, the probe-run gates and one end-to-end run with k/n scorecards that never enter an MRI. `garak`-marked: needs the extra | 11.6, 15.9, 17.4, 21.7, 26.4 item 20, 26.5 item 22; LLM-30 |
-| `test_ml_text_detection.py` | text (`sms_tfidf_lr`, word substitution under an edit budget, the harness synonym table) and detection (`assets_frcnn_mnv3`, patch area) campaigns on tiny assets the module builds with the real builders; each modality's scorecard is its own and detection has no MRI | TESTS_DOCS-08, -09; MODALITIES-47 |
-| `test_ml_attacks_harden.py` | norm tags enforced at admission, an L2 campaign (PGD, CW-L2, DeepFool) with minimal-norm rows and the control, ZOO on `url_trees` keeping the frozen features, and the harden route's candidate recommendations with no validation label | TESTS_DOCS-10; ATTACKS_HARDEN-21, -23 |
-| `test_ml_review_reports.py` | the review workflow (states, independence, conflicts, resolution by reviewer decision: `fixed` and `resolved` once an independent approver has confirmed), `report.pdf` with immutable snapshots and archive, `GET /v1/runs/compare` over three attack campaigns with identical settings and the pairwise route in `side_by_side` mode, both with no delta and no aggregate, `Idempotency-Key` replay and reuse, per-project scoring weights on the next campaign | 6.4, 7.7, 14.8, 15.3, 15.6 to 15.8, 17.3, 26.3 items 12 to 15, 26.5 item 22; REVIEW_REPORTS-02..12, -16..22, -26, -30..32 |
-| `test_ml_interop.py` | Croissant export and shards, a consumed slice bound to a model and a campaign, ATLAS technique tags and coverage, the Foundry push against `tests/ml/fake_foundry_server.py`, `audit verify --all` over the lot | 27.1 to 27.5, 26.5 item 22; INTEROP-05..16, -18, -20..25, -27..29 |
-| `test_ml_bulk.py` | batches, bulk upload (two state_dicts and the file cap), capacity deferral, dispatch and batch cancel, single-run admission against the caps, the CLI matrix | owner requirement 5; BULK-03..09, -13..18, -20..22, -26, -30..32 |
+| File | What it drives |
+|---|---|
+| `test_ml_endpoint.py` | the black-box endpoint connector against `tests/ml/tiny_endpoint_server.py` on the loopback interface: `POST /v1/models` `source=endpoint` and its refusal codes, validation through the worker-parent broker to `available`, a black-box campaign, the refusal of a white-box attack, egress and credential boundaries, the audit chain |
+| `test_ml_llm.py` | garak probe runs through the gateway contract against `tests/ml/fake_openai_server.py`: the probe catalog (HarmBench excluded), LLM target registration gates, the probe-run gates and one end-to-end run with k/n scorecards that never enter an MRI. `garak`-marked: needs the extra |
+| `test_ml_text_detection.py` | text (`sms_tfidf_lr`, word substitution under an edit budget, the harness synonym table) and detection (`assets_frcnn_mnv3`, patch area) campaigns on tiny assets the module builds with the real builders; each modality's scorecard is its own and detection has no MRI |
+| `test_ml_attacks_harden.py` | norm tags enforced at admission, an L2 campaign (PGD, CW-L2, DeepFool) with minimal-norm rows and the control, ZOO on `url_trees` keeping the frozen features, and the harden route's candidate recommendations with no validation label |
+| `test_ml_review_reports.py` | the review workflow (states, independence, conflicts, resolution by reviewer decision: `fixed` and `resolved` once an independent approver has confirmed), `report.pdf` with immutable snapshots and archive, `GET /v1/runs/compare` over three attack campaigns with identical settings and the pairwise route in `side_by_side` mode, both with no delta and no aggregate, `Idempotency-Key` replay and reuse, per-project scoring weights on the next campaign |
+| `test_ml_interop.py` | Croissant export and shards, a consumed slice bound to a model and a campaign, ATLAS technique tags and coverage, the Foundry push against `tests/ml/fake_foundry_server.py`, `audit verify --all` over the lot |
+| `test_ml_bulk.py` | batches, bulk upload (two state_dicts and the file cap), capacity deferral, dispatch and batch cancel, single-run admission against the caps, the CLI matrix |
 
-The count of record for the tier is the gate's e2e step (`scripts/phase_b_gate.sh
---only e2e`, the `e2e-python` CI job); this page pins no pass count because the
-B4 files were written against the B3 tree and report product defects by
-attribution while those are being fixed.
+This page pins no pass count. The `e2e-python` CI job is the run of record.
 
 ## What the fixtures give you
 
@@ -158,7 +148,7 @@ from tests.e2e import harness as h
 result = h.run_campaign_via_api(e2e_org.client("scanner"), e2e_bundled["vehicles_cnn"], h.image_campaign())
 result.status          # "succeeded" | "failed" | "cancelled"  (from GET /v1/runs/{id})
 result.campaign        # GET /v1/runs/{id}/campaign body, or None when that route refused
-result.campaign_error  # the 17.3 detail of that refusal
+result.campaign_error  # the {code, message} detail of that refusal
 result.findings        # the projected Finding rows inside the campaign body
 result.stage_table     # the run's stage table
 ```
@@ -213,7 +203,7 @@ an absent file, and no `PYTHIA_*`, `KAGGLE_*`, `AWS_*`, `REDSIM_DB_URL`,
 The LLM writer runs in the **worker parent**
 (`redsim.workers.tasks.ml_campaign._parent_narrative`) after the child's
 envelope comes back; the child strips every `PYTHIA_*` variable, runs with
-`REDSIM_DISABLE_LLM=1` and never narrates (spec 10.8, 16.1). The mock therefore
+`REDSIM_DISABLE_LLM=1` and never narrates. The mock therefore
 lives in the test process and is observed in child mode; the sandbox mode is
 not touched. `pythia.on()`:
 
@@ -274,10 +264,10 @@ that refusal is the property to assert there.
 
 ## Excluded from this tier
 
-* **The browser UI.** Spec 22.5's Playwright campaign (`web/tests/ml_campaign.spec.ts`)
+* **The browser UI.** The Playwright campaign (`web/tests/ml_campaign.spec.ts`)
   needs the compose stack and lives with the web app; nothing here renders or
   drives a page.
-* **ECS Fargate / the compose stack.** No container, queue, S3/MinIO bucket or
+* **The compose stack.** No container, queue, S3/MinIO bucket or
   WORM export is started. `REDSIM_BLOB_BACKEND=fs`, Celery is eager, the Redis
   event publisher is a no-op.
 * **Real model assets and datasets.** The tree is synthetic (seeded random
@@ -288,31 +278,24 @@ that refusal is the property to assert there.
 
 ## Notes and caveats
 
-* **The PGD-by-surrogate admission defect this file once reported is fixed
-  at `58461cc`.** `test_tabular_campaign_runs_pgd_hopskipjump_and_control`
-  had been refused `422 attack_requires_gradients` ("attack 'pgd' needs loss
-  gradients the model does not expose (manifest gradients: false)") because
-  `redsim/services/ml_campaigns.py` read only `manifest.gradients` and
-  ignored the declared surrogate and the PGD adapter's `surrogate_transfer` +
-  `modality:tabular` capabilities. The integration commit admits a white-box
-  attack on a gradient-free model when the adapter declares
-  `surrogate_transfer` and the target declares a surrogate, the runner then
-  runs PGD by surrogate transfer and records it (spec 12.9, demo step 6), and
-  the test passes through the real child. `fgsm` on a gradient-free model
-  without a surrogate is still refused.
+* **PGD by surrogate transfer.** Admission admits a white-box attack on a
+  gradient-free model when the adapter declares `surrogate_transfer` and the
+  target declares a surrogate. The runner then runs PGD by surrogate transfer
+  and records it, and `test_tabular_campaign_runs_pgd_hopskipjump_and_control`
+  passes through the real child. `fgsm` on a gradient-free model without a
+  surrogate is refused with `422 attack_requires_gradients`.
   `test_tabular_hopskipjump_and_control_run_in_the_real_sandbox_child` stays
   as the independent proof of the tabular path (load, sample, HopSkipJump,
   control at every eps, score, report, audit rows).
-* **Two earlier cross-track defects are fixed on this tree** (`dd2bbd4`):
-  admission strips the grid-owned `eps` / `norm_l2` before freezing
-  `attack_params` (`_GRID_OWNED_PARAMS`), and applicability is decided from
-  the adapter's `modality:<domain>` capability tags rather than
-  `AttackInfo.domain`. The smoke test asserts both (`"eps" not in
-  config.attack_params.pgd`; the tabular launch is no longer
-  `attack_modality_mismatch`).
+* **Grid-owned parameters and applicability.** Admission strips the
+  grid-owned `eps` / `norm_l2` before freezing `attack_params`
+  (`_GRID_OWNED_PARAMS`), and applicability is decided from the adapter's
+  `modality:<domain>` capability tags rather than `AttackInfo.domain`. The
+  smoke test asserts both (`"eps" not in config.attack_params.pgd`; the
+  tabular launch is not `attack_modality_mismatch`).
 * **sqlite timestamps.** SQLAlchemy's sqlite `DateTime` storage format has no
   offset, so `AuditEvent.created_at` comes back naive. The audit module
-  (`aa9674e`) renders and re-derives `ts` through
+  renders and re-derives `ts` through
   `redsim.audit.chain.canonical_ts`, so
   the production `PostgresAuditWriter` round-trips and verifies on plain
   sqlite. The harness still guards against a regression:
@@ -336,7 +319,7 @@ that refusal is the property to assert there.
   per-task `init_engine(REDSIM_DB_URL)` keeps it. A failed campaign keeps the
   partial rows it wrote, which is what the tier records as evidence anyway.
 * **The harness datasets are not `fixture_only`.** `register_bundled_model`
-  refuses fixture-only entries (`404 unknown_bundled_model`, spec 5.5), and the
+  refuses fixture-only entries (`404 unknown_bundled_model`), and the
   builder copies the dataset flag onto the model entry, so the synthetic image
   set and the URL rows are declared as harness-owned, non-fixture-only entries
   with notes saying what they are. Nothing measured on them is a demo result.

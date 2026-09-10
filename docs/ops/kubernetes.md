@@ -185,8 +185,7 @@ When `sandbox.enabled=true`:
 When `sandbox.enabled=false` (the default) no RuntimeClass is rendered and
 the worker pods use the default OCI runtime. The in-process sandbox child
 (rlimits, process group, minimal env) applies either way, gVisor adds the
-kernel boundary on top. The ECS Fargate target has no equivalent, which the
-spec records as a risk.
+kernel boundary on top.
 
 ---
 

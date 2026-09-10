@@ -7,10 +7,6 @@ diagrams under `docs/architecture/diagrams/`. For production deployment, see
 [`docs/ops/deploy.md`](../ops/deploy.md). For the Python-only path (API and
 web without Docker, tests, lint) see the root `Makefile` and
 [`CONTRIBUTING.md`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CONTRIBUTING.md).
-State described here is `main` at `58461cc` (2026-09-09, waves 1 to 3 of the
-completion plan merged) plus the local-stack fixes of 2026-09-10 (the realm
-export, the seed, the session keypair, the asset mount and the pgaudit image
-build). The three e2e files of wave 4 are marked "added in wave 4".
 
 ## Prerequisites
 
@@ -100,7 +96,7 @@ answers 401.
 `redsim-api` runs `alembic upgrade head` on start (migrations `0001` to
 `0014`). The worker image installs the CPU torch wheels and then
 `.[api,worker,ml]` (the `api` extra because the campaign task raises the
-spec 17.3 codes from `redsim.api.errors`, whose package needs fastapi), so it
+error codes from `redsim.api.errors`, whose package needs fastapi), so it
 is the slowest image to build. The API image installs `.[api,worker]` only
 and never carries torch, ART, onnxruntime or SHAP. The
 postgres image adds pgaudit from the PGDG repository over https (the Docker
@@ -116,8 +112,8 @@ built elsewhere. Until the assets are built the mount holds only the README:
 bundled model answers `409 model_load_refused` with `refusal_reason:
 bundled_assets_missing`.
 
-`make seed` feeds `deploy/runtime/scripts/seed_project.py` (the script the
-Fargate runtime runs) to the `redsim-api` container and creates only the
+`make seed` feeds `deploy/runtime/scripts/seed_project.py` (the same script
+the demo host runs) to the `redsim-api` container and creates only the
 organisation and project rows. There is no User or ProjectMembership row to
 seed: the API reads the caller's memberships from the `redsim_project_roles`
 token claim, and the realm export gives its `admin` user that attribute as
@@ -126,7 +122,7 @@ token claim, and the realm export gives its `admin` user that attribute as
 The worker anchor also sets a laptop-sized sandbox budget
 (`REDSIM_ML_SANDBOX_CPU_SECONDS` 3600, `REDSIM_ML_SANDBOX_THREADS` 4,
 `REDSIM_ML_SANDBOX_TIMEOUT_S` 1700, each overridable from the shell): on the
-spec 20.3 defaults a `vehicles_cnn` campaign with `n_samples` 50 reached the
+default sandbox limits a `vehicles_cnn` campaign with `n_samples` 50 reached the
 explain stage after about 470 s on two threads and was killed by the 900
 CPU-second rlimit. The wall clock stays below the Celery soft limit.
 
@@ -220,8 +216,8 @@ surrogate). Every route and code is in the [API reference](../api/v1.md).
 
 A small `n_samples` and `explain_k` keep a laptop run short. On a small
 slice the MRI may legitimately be partial (`score` absent, `score_status`
-present) and a campaign may produce no finding. That is the honest state per
-spec 15.4, not an error.
+present) and a campaign may produce no finding. That is the honest state,
+not an error.
 
 `redsim ml seed [--project default] [--only <bundled_id>]` (`3ab9de7`,
 `98a8733`) registers every non-fixture bundled model through the same service
@@ -240,7 +236,7 @@ The four Pythia variables (`PYTHIA_BASE_URL`, `PYTHIA_API_KEY`,
 the worker pool as `${VAR:-}`. When they are not exported the container sees
 an empty string and the narrative stays off (`GET /v1/ml/capabilities`
 reports `llm_narrative.configured: false`). The worker anchor also sets
-`REDSIM_DISABLE_LLM: "1"`. Since wave 2 the narrative runs in the parent of
+`REDSIM_DISABLE_LLM: "1"`. The narrative runs in the parent of
 the `scans` worker (`redsim-worker`), so that is the service on which the
 variable has to be unset (a `docker-compose.override.yml` is the least
 invasive way) before a compose stack can produce a narrative. The sandbox
@@ -297,9 +293,8 @@ REDSIM_E2E=1 REDSIM_E2E_POSTGRES_URL=postgresql+psycopg://redsim:redsim@localhos
 REDSIM_E2E=1 REDSIM_E2E_SANDBOX=inprocess .venv/bin/python -m pytest -q -m e2e tests/e2e   # debugging only
 ```
 
-The files: `tests/e2e/test_harness_smoke.py` (wave 3, 8 cases through the
-real child) and, added in wave 4 as the completion-criteria evidence,
-`tests/e2e/test_ml_campaigns.py` (an image and a tabular campaign to
+The files: `tests/e2e/test_harness_smoke.py` (the harness through the
+real child), `tests/e2e/test_ml_campaigns.py` (an image and a tabular campaign to
 `succeeded` with scorecard, findings, limitations and the narrative on and
 off), `tests/e2e/test_ml_upload_reports.py` (an ONNX upload accepted and
 a pickle refused, the report sections and the report formats) and

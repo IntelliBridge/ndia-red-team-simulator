@@ -1,29 +1,49 @@
-"""G-ERR1: ``redsim.api.errors`` is the spec section 17.3 table, one constant per code.
+"""``redsim.api.errors`` is the error-code table, one constant per code.
 
-The table is read from the spec document itself (the 17.3 table plus its dated
-Phase B addendum and the addendum's second table of wave B2) so a code added or
-renamed there fails here rather than in the UI.
+The table is spelled out here in four dated blocks (the Phase A table frozen at
+M0 plus the three Phase B addenda) so a code added, renamed or moved to another
+HTTP status in ``redsim/api/errors.py`` fails here rather than in the UI.
 """
 
 from __future__ import annotations
-
-import re
-from pathlib import Path
 
 import pytest
 
 from redsim.api import errors
 
-_SPEC = (
-    Path(__file__).resolve().parents[2]
-    / "docs" / "superpowers" / "specs" / "2026-09-08-adversarial-ml-redteam-spec.md"
-)
-_ROW = re.compile(r"^\|\s*(?P<codes>(?:`[a-z_]+`(?:\s*\([^)]*\))?\s*/?\s*)+)\|\s*(?P<http>\d{3})\s*\|")
+#: The Phase A table as frozen at M0, minus the two defense codes that left with the defenses
+#: on 2026-09-09 (27 codes): code -> HTTP.
+PHASE_A_CODES = {
+    "use_models_route": 400,
+    "forbidden": 403,
+    "not_found": 404,
+    "already_registered": 409,
+    "campaign_in_flight": 409,
+    "campaign_not_terminal": 409,
+    "incompatible_campaigns": 409,
+    "job_in_flight": 409,
+    "model_load_refused": 409,
+    "run_terminal": 409,
+    "score_unavailable": 409,
+    "model_too_large": 413,
+    "pickle_refused": 415,
+    "unsupported_model_format": 415,
+    "architecture_not_allowlisted": 422,
+    "architecture_required": 422,
+    "attack_modality_mismatch": 422,
+    "attack_requires_gradients": 422,
+    "dataset_incompatible": 422,
+    "eps_grid_invalid": 422,
+    "params_out_of_range": 422,
+    "reference_eps_not_in_grid": 422,
+    "unknown_attack": 422,
+    "rate_limited": 429,
+    "not_implemented": 501,
+    "db_unavailable": 503,
+    "queue_unavailable": 503,
+}
 
-#: The Phase A table as frozen at M0 (29 codes).
-_PHASE_A_COUNT = 27  # 2026-09-09: unknown_defense and defense_modality_mismatch left with the defenses
-
-#: The 17.3 addendum of 2026-09-09 (plan 12 wave B0, actions-and-codes track): code -> HTTP.
+#: The first Phase B addendum (2026-09-09, wave B0): code -> HTTP.
 PHASE_B_CODES = {
     "capacity_deferred": 202,
     "endpoint_not_allowlisted": 403,
@@ -50,8 +70,7 @@ PHASE_B_CODES = {
     "endpoint_unreachable": 502,
 }
 
-#: The addendum's second table (wave B2, ``codes-b2`` track, 2026-09-09): code -> HTTP.
-#: The brief's statuses win over the register where they differ (see the spec note).
+#: The second Phase B addendum (2026-09-09, wave B2): code -> HTTP.
 PHASE_B2_CODES = {
     "reviewer_not_independent": 403,
     "auth_profile_in_use": 409,
@@ -67,10 +86,9 @@ PHASE_B2_CODES = {
     "fixture_not_exportable": 422,
     "query_budget_exceeded": 429,
 }
-_B2_MARKER = "17.3 addendum, second table (Phase B wave B2, `codes-b2` track, 2026-09-09)"
 
-#: The addendum's third table (wave B4, ``fix-api-services`` track, 2026-09-09): the codes the B2 routes
-#: resolved with ``getattr`` fallbacks (ENDPOINT-31, REVIEW_REPORTS-28, LLM-09/-12/-21, ENDPOINT-28 note).
+#: The third Phase B addendum (2026-09-09, wave B4): the codes the B2 routes had resolved with
+#: ``getattr`` fallbacks.
 PHASE_B4_CODES = {
     "attestation_required": 422,
     "scoring_weights_invalid": 422,
@@ -83,109 +101,45 @@ PHASE_B4_CODES = {
     "llm_probe_quota_exceeded": 429,
     "endpoint_auth_failed": 502,
 }
-_B4_MARKER = "17.3 addendum, third table (Phase B wave B4, `fix-api-services` track, 2026-09-09)"
 
 
-def _section_173() -> str:
-    text = _SPEC.read_text(encoding="utf-8")
-    start = text.index("### 17.3 Conventions and error codes")
-    end = text.index("### 17.4", start)
-    return text[start:end]
-
-
-def _spec_table() -> dict[str, int]:
-    """``{code: http}`` from the 17.3 table and its addendum; ``a / b`` rows yield two codes."""
+def _table() -> dict[str, int]:
+    """``{code: http}`` over the four blocks; the blocks are disjoint."""
+    blocks = (PHASE_A_CODES, PHASE_B_CODES, PHASE_B2_CODES, PHASE_B4_CODES)
     table: dict[str, int] = {}
-    for line in _section_173().splitlines():
-        match = _ROW.match(line)
-        if not match:
-            continue
-        for code in re.findall(r"`([a-z_]+)`", match.group("codes")):
-            assert code not in table, f"{code} has two rows in spec 17.3"
-            table[code] = int(match.group("http"))
-    expected = _PHASE_A_COUNT + len(PHASE_B_CODES) + len(PHASE_B2_CODES) + len(PHASE_B4_CODES)
-    assert len(table) >= expected, f"parsed only {len(table)} codes from the spec table"
+    for block in blocks:
+        for code, http in block.items():
+            assert code not in table, f"{code} appears in two blocks"
+            table[code] = http
+    assert len(PHASE_A_CODES) == 27
     return table
 
 
 def test_table_constants_present() -> None:
-    """Every code named in spec 17.3 is a constant whose name is the upper-cased code."""
-    table = _spec_table()
+    """Every code in the table is a constant whose name is the upper-cased code, with its status."""
+    table = _table()
     for code, http in table.items():
         constant = code.upper()
         assert hasattr(errors, constant), f"redsim.api.errors lacks {constant} for {code!r}"
         assert getattr(errors, constant) == code
-        assert errors.HTTP_STATUS[code] == http, f"{code}: spec says {http}, table says {errors.HTTP_STATUS[code]}"
+        assert errors.HTTP_STATUS[code] == http, f"{code}: table says {http}, errors says {errors.HTTP_STATUS[code]}"
         assert errors.http_status(code) == http
         assert constant in errors.__all__, f"{constant} is missing from errors.__all__"
-    # And nothing beyond the spec: the table is the whole vocabulary.
+    # And nothing beyond the table: it is the whole vocabulary.
     assert set(errors.ALL_CODES) == set(table)
     assert set(errors.HTTP_STATUS) == set(table)
 
 
-def test_phase_b_addendum_is_dated_and_parsed() -> None:
-    """The 17.3 addendum sits inside 17.3, carries its date, and lists exactly the Phase B codes."""
-    section = _section_173()
-    assert "17.3 addendum (Phase B, 2026-09-09)" in section
-    table = _spec_table()
-    for code, http in PHASE_B_CODES.items():
-        assert table.get(code) == http, f"{code}: addendum says {table.get(code)}, expected {http}"
-    # The Phase A rows are untouched: what is not in any addendum set is the original 29.
-    assert len(set(table) - set(PHASE_B_CODES) - set(PHASE_B2_CODES) - set(PHASE_B4_CODES)) == _PHASE_A_COUNT
-    # Every Phase B code sits after the original table and before 17.4.
-    addendum_at = section.index("17.3 addendum (Phase B, 2026-09-09)")
-    for code in PHASE_B_CODES:
-        assert section.index(f"| `{code}`") > addendum_at, code
-
-
-def test_b2_addendum_table_is_dated_and_parsed() -> None:
-    """The second addendum table sits after the first, inside 17.3, and lists exactly the B2 codes."""
-    section = _section_173()
-    assert _B2_MARKER in section
-    first_at = section.index("17.3 addendum (Phase B, 2026-09-09)")
-    second_at = section.index(_B2_MARKER)
-    assert second_at > first_at
-    table = _spec_table()
-    for code, http in PHASE_B2_CODES.items():
-        assert table.get(code) == http, f"{code}: spec says {table.get(code)}, expected {http}"
-        assert section.index(f"| `{code}`") > second_at, code
-    # The addendum sets are disjoint and none overlaps Phase A.
+def test_addendum_blocks_are_disjoint_and_in_status_order() -> None:
     assert set(PHASE_B2_CODES).isdisjoint(PHASE_B_CODES)
     assert set(PHASE_B4_CODES).isdisjoint(PHASE_B_CODES) and set(PHASE_B4_CODES).isdisjoint(PHASE_B2_CODES)
-    # The B0 rows stay where they were: every B0 code appears before the second table.
-    for code in PHASE_B_CODES:
-        assert section.index(f"| `{code}`") < second_at, code
-    # The rows are in status order, like the tables before them.
-    statuses = [http for _, http in PHASE_B2_CODES.items()]
-    assert statuses == sorted(statuses)
-    # The note records where the brief overrode the register, so a reader finds the rationale.
-    for phrase in ("`query_budget_exceeded` is `429`", "`idempotency_key_reused` is `409`",
-                   "`fixture_not_exportable` is `422`", "`idempotency_in_flight` is `idempotency_conflict`"):
-        assert phrase in section, phrase
-
-
-def test_b4_addendum_table_is_dated_and_parsed() -> None:
-    """The third table sits after the second, inside 17.3, lists exactly the B4 codes, in status order."""
-    section = _section_173()
-    assert _B4_MARKER in section
-    second_at = section.index(_B2_MARKER)
-    third_at = section.index(_B4_MARKER)
-    assert third_at > second_at
-    table = _spec_table()
-    for code, http in PHASE_B4_CODES.items():
-        assert table.get(code) == http, f"{code}: spec says {table.get(code)}, expected {http}"
-        assert section.index(f"| `{code}`") > third_at, code
-    for code in PHASE_B2_CODES:
-        assert section.index(f"| `{code}`") < third_at, code
-    statuses = [http for _, http in PHASE_B4_CODES.items()]
-    assert statuses == sorted(statuses)
-    # The row that named the register's working contract now names the built one.
-    row = next(line for line in section.splitlines() if line.startswith("| `endpoint_schema_mismatch`"))
-    assert "`endpoint-v1`" in row and "outside the `redsim-predict-proba/1` contract" not in row
+    for block in (PHASE_B2_CODES, PHASE_B4_CODES):
+        statuses = list(block.values())
+        assert statuses == sorted(statuses)
 
 
 def test_b4_codes_in_table_and_the_routes_no_longer_fall_back() -> None:
-    """ENDPOINT-31, REVIEW_REPORTS-28, LLM-12: constants, statuses, envelopes; the getattr fallbacks resolve."""
+    """Constants, statuses, envelopes; the getattr fallbacks of the B2 routes resolve to the table."""
     for code, http in PHASE_B4_CODES.items():
         constant = code.upper()
         assert getattr(errors, constant) == code
@@ -220,7 +174,7 @@ def test_b4_codes_in_table_and_the_routes_no_longer_fall_back() -> None:
 
 
 def test_b2_codes_in_table() -> None:
-    """Register ENDPOINT-06/-08/-18, LLM-03/-04, BULK-03/-10/-11/-13, INTEROP-10, REVIEW_REPORTS-06/-12/-22."""
+    """The B2 codes: constant, status, envelope."""
     for code, http in PHASE_B2_CODES.items():
         constant = code.upper()
         assert getattr(errors, constant) == code
@@ -252,7 +206,7 @@ def test_b2_codes_in_table() -> None:
 
 
 def test_b2_envelopes_carry_the_documented_fields() -> None:
-    """The spec rows name the context each refusal carries; the envelope passes it through untouched."""
+    """Each refusal carries its documented context; the envelope passes it through untouched."""
     members = [{"target_id": "t2", "code": "attack_requires_gradients", "message": "no gradients"}]
     batch = errors.ApiError(errors.BATCH_MEMBER_REFUSED, members=members)
     assert batch.status == 422 and batch.detail["members"] == members
@@ -280,7 +234,7 @@ def test_b2_envelopes_carry_the_documented_fields() -> None:
 
 
 def test_query_budget_code_matches_the_broker_error_class() -> None:
-    """ENDPOINT-06: the broker's ``QueryBudgetExceeded.code`` is the table spelling, so the two never drift."""
+    """The broker's ``QueryBudgetExceeded.code`` is the table spelling, so the two never drift."""
     try:
         from redsim.ml import endpoint_broker
     except Exception:  # noqa: BLE001 - the broker needs the ml extra; the table does not
@@ -292,7 +246,7 @@ def test_query_budget_code_matches_the_broker_error_class() -> None:
 
 
 def test_phase_b_codes_in_table() -> None:
-    """Register ENDPOINT-06 / INTEROP-03 / BULK-10 / REVIEW_REPORTS-04: constant, status, envelope."""
+    """The B0 codes: constant, status, envelope."""
     for code, http in PHASE_B_CODES.items():
         constant = code.upper()
         assert getattr(errors, constant) == code

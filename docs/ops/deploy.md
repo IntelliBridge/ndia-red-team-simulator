@@ -9,10 +9,10 @@ the deployment topology, image boundaries, and the rotation runbook.
 For a Kubernetes deploy via the Helm chart (hardened pod specs, gVisor
 sandbox, HA Keycloak), see [Kubernetes (Helm)](kubernetes.md). For the LLM
 gateway see [Pythia access](pythia.md). For the auditor-facing evidence
-bundle, see [Compliance evidence pack](compliance-evidence.md). The ECS
-Fargate target is section 20.4 of the
-[product spec](../superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md)
-and is not built yet (WS7, PR #19 is an open draft).
+bundle, see [Compliance evidence pack](compliance-evidence.md). The demo
+host is a single EC2 instance, deployed on every push to `main` by
+`.github/workflows/deploy-host.yml` over SSM. Its runbook is
+[`deploy/ec2/README.md`](../../deploy/ec2/README.md).
 
 ---
 
@@ -99,8 +99,8 @@ redsim.workers.celery_app beat` process. It drives `redsim.reap_stale_jobs`
 default 3600 s in `redsim.yaml`, as `failed`), `redsim.verify_tenant_integrity`
 (hourly) and `redsim.export_chains_to_worm` (`REDSIM_WORM_INTERVAL`). Compose
 runs it as `redsim-beat`. The Helm chart has no beat Deployment yet (see
-[Kubernetes](kubernetes.md#replicas)), and the Fargate plan runs it as a
-single-task service.
+[Kubernetes](kubernetes.md#replicas)). The EC2 host runs it as the
+`redsim-beat` unit.
 
 **LLM budget caps.** Per-project daily caps come from
 `Project.daily_llm_budget_cents` (unset = unlimited), per-org monthly caps
@@ -264,7 +264,7 @@ default off. S3 endpoint and credentials reuse the `REDSIM_S3_*` vars.
 
 | Var | Where | Notes |
 |---|---|---|
-| `REDSIM_AUTH_PROFILES_KEY` | api, worker | Fernet key encrypting auth-profile secrets at rest. Required to create a profile. Profiles are kept for the Phase B black-box endpoint connector and are unused in Phase A. |
+| `REDSIM_AUTH_PROFILES_KEY` | api, worker | Fernet key encrypting auth-profile secrets at rest. Required to create a profile. The black-box endpoint connector and the LLM probe runs read their credentials from profiles. |
 
 ### Pythia (LLM gateway)
 
@@ -309,11 +309,10 @@ signature check. It is not a network or filesystem jail. See `SECURITY.md`.
 | `REDSIM_PLUGIN_SANDBOX_NETWORK` | worker | Default `0`. |
 | `REDSIM_PLUGIN_SANDBOX_CPU_SECONDS` / `_MEMORY_MB` / `_FILESIZE_MB` | worker | `RLIMIT_CPU` (default `300`), `RLIMIT_AS` (`1024`), `RLIMIT_FSIZE` (`256`). |
 
-### ML vertical (planned, spec section 20.3)
+### ML vertical
 
-These are named by the spec for the code in the open ML PRs and WS4. Nothing
-on `main` reads them yet except `REDSIM_ML_DATASET_CACHE` (the default
-`--out` of the `build-assets` skeleton).
+The ML vertical reads these. `.env.example` documents every one with an
+empty value.
 
 | Var | Where | Meaning |
 |---|---|---|
@@ -355,14 +354,12 @@ docker build -t redsim-postgres   -f deploy/Dockerfile.postgres .   # postgres 1
 All Dockerfiles install from the repo root, so the build context must be the
 repo root. The web image consumes the pnpm workspace at the same root path.
 CI builds the four application images without pushing (`Build images` job).
-On 2026-09-08 the web image build is red on `main`: `deploy/Dockerfile.web`
-runs `corepack prepare pnpm` on the `node:26` base image, which no longer
-ships corepack.
 
-`deploy-aws.yml` builds the api, worker and web images and pushes them to ECR
-under `ndia-red-team/<name>:<sha>` using GitHub OIDC, then rolls whichever
-`ECS_SERVICE_*` repo variables are set. It currently fails at "Configure AWS
-credentials" (the AssumeRole is refused account-side).
+`deploy-host.yml` deploys every push to `main` to the EC2 demo host: one SSM
+command runs `redsim-deploy` on the instance named by the repository
+variable `EC2_INSTANCE_ID`, which fast-forwards the checkout, reinstalls what
+the diff touched, restarts the units and requires `/health` 200. No image
+build, no registry. See [`deploy/ec2/README.md`](../../deploy/ec2/README.md).
 
 ---
 
@@ -419,7 +416,7 @@ cosign verify-attestation --type cyclonedx \
    (below) if you enable the export.
 3. **Keycloak**: realm and client per `deploy/keycloak/realm-export.json`.
    The client must carry `redsim_project_roles` in the id_token. Add the
-   `viewer` realm role (spec section 7.2).
+   `viewer` realm role.
 4. **API session keypair**: run `generate_keypair()`, stash the private key in
    the web secret store, set the public key as API env.
 5. **Worker SA key**: generate a strong shared secret, set
@@ -617,10 +614,9 @@ Compose health checks are configured in `deploy/docker-compose.yml` for
 
 ## Out of scope for this doc
 
-- ECS Fargate specifics (task sizing for torch on CPU, ephemeral storage for
-  the dataset cache, the one-off migration task, Secrets Manager wiring):
-  spec section 20.4, built by WS7.
-- HA and multi-region: [ADR-0005](../adr/0005-worker-autoscaling-and-dr.md).
+- The single-host EC2 demo runtime (systemd units, Caddy, the SSM deploy):
+  [`deploy/ec2/README.md`](../../deploy/ec2/README.md).
+- HA and multi-region: an open spike.
 - Backup and restore: any standard Postgres backup tool works. The audit
   chain is hash-verifiable, so a partial restore is detectable via
   `redsim audit verify`.

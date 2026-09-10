@@ -1,14 +1,13 @@
 # Contributing to redsim
 
-This guide covers the dev setup, the branch and merge rules, the gates a
-change has to pass, and the spec-first workflow the team follows. The
-authoritative product documents are listed in [`CLAUDE.md`](CLAUDE.md) and
-the README.
+This guide covers the dev setup, the branch and merge rules, and the gates a
+change has to pass. The README describes the product, and the pages under
+`docs/` describe the architecture, the API and the operations.
 
 ## Dev setup
 
-Python 3.12 only. The venv is created with uv and has no `pip` module, so
-install with uv and run tools through the venv interpreter.
+Python 3.12. The venv is created with uv and has no `pip` module, so install
+with uv and run tools through the venv interpreter.
 
 ```bash
 make install                                   # .venv, uv pip install -e ".[api,worker,test,dev,ml]", pnpm install
@@ -18,17 +17,13 @@ uv pip install --native-tls -e ".[api,worker,test,dev,ml]"
 pnpm install
 ```
 
-`--native-tls` is required behind the corporate TLS proxy. Extras:
-`api`, `worker`, `test`, `dev`, `security`, `docs`, `ml`, `llm` (optional
-private `pythia-sdk`), `garak` (Phase B LLM domain, pinned `garak>=0.16,<0.17`,
-installed by the `garak offline` and `e2e-python` CI lanes and by a venv that
-opts in; no deploy image installs it). Add `docs` and `garak` for a full
-`make check-phase-b`. `pydantic>=2.7`
-and `PyYAML` are the only base dependencies. Never call `.venv/bin/pip`, and do not install
-packages into a venv that other agents or worktrees share.
+`--native-tls` is needed behind a corporate TLS proxy. Extras: `api`,
+`worker`, `test`, `dev`, `security`, `docs`, `ml` (torch, ART, SHAP, ONNX,
+scikit-learn), `llm` (the optional private `pythia-sdk`) and `garak` (the LLM
+probe domain, pinned `garak>=0.16,<0.17`). Never call `.venv/bin/pip`.
 
 The web side is one pnpm 10 workspace rooted at the repo (`web/` and
-`packages/design-system/`), with a single root `pnpm-lock.yaml`:
+`packages/design-system/`) with a single root `pnpm-lock.yaml`:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -47,52 +42,37 @@ system conventions.
 
 - Branch off `main` for every change. Never commit to `main` directly.
 - Branch names are `type/topic`, matching the commit prefix: `feat/ml-core`,
-  `fix/worker-queue-routing`, `docs/refresh`, `ci/aws-deploy`. Dependabot
-  and agent branches keep their own prefixes.
-- The repository allows **squash merges only** and deletes the branch on
-  merge. Rebase and merge commits are disabled. Write the PR title as the
-  squashed commit subject.
+  `fix/worker-queue-routing`, `docs/refresh`.
+- The repository allows squash merges only and deletes the branch on merge.
+  Write the PR title as the squashed commit subject.
 - Commits and PR titles are `type(topic): description` (`feat`, `fix`,
-  `docs`, `test`, `ci`, `build`, `style`, `refactor`, `chore`). Every commit
-  ends with the trailer
-  `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
-- Git worktrees are the normal way to work on several branches at once. Stay
-  inside your ownership list when other writers edit the same worktree.
+  `docs`, `test`, `ci`, `build`, `style`, `refactor`, `chore`).
 - Prose in docs, commit bodies and comments avoids em dashes and semicolons.
 
 ## Run the test suite
 
 ```bash
-.venv/bin/python -m pytest -q -p no:cacheprovider                 # default tier: 2634 passed, 35 skipped, 13 deselected at main 703f8f6
-.venv/bin/python -m pytest -q -p no:cacheprovider -m ml           # only the tests that need the ml extra: 433 passed, 1 skipped at 703f8f6
-.venv/bin/python -m pytest -q -p no:cacheprovider -m integration  # sqlite-backed integration tests
-REDSIM_E2E=1 .venv/bin/python -m pytest -q -p no:cacheprovider -m e2e tests/e2e   # 22 passed at 703f8f6, before the seven wave B4 files
-.venv/bin/python -m pytest -q -p no:cacheprovider -m garak tests  # 12 passed at 703f8f6 (needs the garak extra; skipped without it)
-make check-phase-b                                                # the Phase B gate: ruff, mypy, every tier, mkdocs, the docs-consistency test, the stack probes
+.venv/bin/python -m pytest -q -p no:cacheprovider                 # default tier: unit and sqlite-backed integration
+.venv/bin/python -m pytest -q -p no:cacheprovider -m ml           # the tests that need the ml extra
+.venv/bin/python -m pytest -q -p no:cacheprovider -m garak tests  # the LLM probe tier (needs the garak extra)
+REDSIM_E2E=1 .venv/bin/python -m pytest -q -p no:cacheprovider -m e2e tests/e2e   # end to end: real API, worker, sandbox child, CLI
 .venv/bin/python -m pytest -q --cov=redsim --cov-report=term | tail -5
 ```
 
-The counts are the wave B3 integration run at `703f8f6` (2026-09-09), local,
-not CI; they move with every wave, so re-run before quoting them. The wave B4
-tree's counts are the B4 assembler's to record; its e2e tier is not green (the
-B4 files report product defects by attribution, README "Open items and not
-implemented"). The four tiers (default, `ml`, `e2e`, `garak`) and the gate are
-described in [`docs/dev/testing.md`](docs/dev/testing.md). From a git worktree
-export `PYTHONPATH=<worktree>` before the e2e tier, or let the gate's e2e step
-do it.
+The tiers are described in [`docs/dev/testing.md`](docs/dev/testing.md). From
+a git worktree export `PYTHONPATH=<worktree>` before the e2e tier so the
+sandbox child imports the tree under test.
 
 Markers (defined in `pyproject.toml`):
 
 | Marker | What it gates |
 |---|---|
-| `unit` | Pure-Python. Runs by default. |
-| `integration` | May hit Postgres / Redis. Runs by default on the sqlite harness in `tests/conftest.py`, runs against real services in CI. |
-| `ml` | Needs the `ml` extra (torch, ART, SHAP). Deselected on the Python 3.13 CI lane. Guard heavy imports with `pytest.importorskip` so collection survives without the extra. |
-| `docker` | Needs Docker. Opt-in. |
-| `e2e` | `tests/e2e/`: the real API, admission, eager Celery, the real sandbox child and the CLI over sqlite on a synthetic asset tree. Opt-in via `REDSIM_E2E=1`; `REDSIM_E2E_POSTGRES_URL` (a migrated database) turns the RLS lane on. Eleven files since wave B4 (the smoke file, the three wave-4 files and the seven Phase B files). Runs in CI on every PR since wave B0 (`E2E tier (python, eager Celery)`, through `scripts/phase_b_gate.sh --only e2e`). A test that meets a product defect fails with `pytest.fail(..., pytrace=False)` naming the module, never with a weaker assertion. |
-| `garak` | Needs the `garak` extra; skipped when absent (wave B0). Deselected by `addopts` and by every other lane except `e2e-python`, so `garak`-marked tests run in the `garak offline` job (`tests/ml`) and, when also `e2e`-gated, in `e2e-python` (`tests/e2e/test_ml_llm.py`). Stamp it, and `importorskip("garak")`, on every test that imports garak. Since wave B4 the gate's garak step fails when nothing was collected or every item was skipped. |
-| `slow` | Long-running. Excluded by default. |
-| `auth_required` | Needs the Keycloak cookie flow. Skipped by default. |
+| `unit` | Pure Python. Runs by default. |
+| `integration` | May hit Postgres or Redis. Runs by default on the sqlite harness in `tests/conftest.py`, against real services in CI. |
+| `ml` | Needs the `ml` extra. Deselected on the Python 3.13 CI lane. Guard heavy imports with `pytest.importorskip` so collection survives without the extra. |
+| `garak` | Needs the `garak` extra and is skipped without it. Runs in the `garak offline` CI job against an in-process fake gateway. |
+| `e2e` | `tests/e2e/`: the real API, admission, eager Celery, the real sandbox child and the CLI over sqlite on a synthetic asset tree. Opt in with `REDSIM_E2E=1`. `REDSIM_E2E_POSTGRES_URL` (a migrated database) turns the row-level-security lane on. |
+| `docker`, `slow`, `auth_required` | Opt in. Excluded by default. |
 
 The default `pytest -q` must stay green with no services and no live LLM.
 Nothing under `redsim/ml/` may be presented as working until it runs, and no
@@ -101,19 +81,11 @@ presented as a result.
 
 ## Code style
 
-- `ruff check --select E4,E7,E9,F,I redsim tests`. That explicit selection
-  is the CI gate. `pyproject.toml` only declares `extend-select = ["I"]`, and
-  a bare `ruff check` applies ruff 0.16's much larger default set, which is
-  not the contract.
-- `mypy redsim` runs strict (`disallow_untyped_defs`,
-  `disallow_incomplete_defs`, `warn_return_any`, `warn_unused_ignores`) and
-  blocks merge, so new code is fully annotated. Note that
-  `warn_unused_ignores` together with `ignore_missing_imports` makes a
-  `# type: ignore[import-not-found]` on an optional import an error.
-- Run the local gate before pushing: `make check` (lint, typecheck, test),
-  or `make typecheck` while iterating. `make lint-web` prints a skip line
-  while `web/` has no ESLint config.
-- Frontend: TypeScript strict mode, Tailwind via `cn()` from
+- `ruff check --select E4,E7,E9,F,I redsim tests` is the lint contract. A
+  bare `ruff check` applies a much larger default set and is not the gate.
+- `mypy redsim` runs strict and blocks merge, so new code is fully annotated.
+- `make check` runs lint, typecheck and the default tier in one command.
+- Frontend: TypeScript strict mode, Tailwind through `cn()` from
   `@redsim/design-system`, no inline scripts (CSP).
 - Boundary code validates, internal code trusts framework guarantees. Do not
   add error handling for impossible cases.
@@ -123,146 +95,80 @@ presented as a result.
 `.github/workflows/redsim-ci.yml` runs on every PR and push to `main`. The
 full description is [`docs/dev/ci.md`](docs/dev/ci.md).
 
-- `Unit tests (py3.12)` and `(py3.13)`: ruff (CI selection), mypy, then
-  pytest without the `integration` tier. 3.12 installs the `ml` extra with
-  CPU torch, 3.13 deselects `ml`.
+- `Unit tests (py3.12)` and `(py3.13)`: ruff, mypy, then pytest without the
+  `integration` tier. 3.12 installs the `ml` extra with CPU torch, 3.13
+  deselects `ml`.
 - `Coverage gate`: the full default suite against Postgres 16 and Redis 7
-  with `--cov-fail-under=81`. The floor is the local measurement minus 2.
-  Raise it in the PR that merges each ML phase. Do not lower it without
-  recording the reason in `docs/dev/ci.md`.
+  with a coverage floor. Do not lower the floor without recording why in
+  `docs/dev/ci.md`.
 - `API integration (Postgres + Redis)`, `SAST (semgrep + bandit)`,
   `Dependency CVEs (pip-audit + trivy)`, `Helm chart lints + templates`,
   `OTel Collector config is valid`, `Secret scan (trufflehog)`,
   `redsim_output is not committed`.
-- `E2E tier (python, eager Celery)` (job `e2e-python`, wave B0 of the Phase B
-  plan): `scripts/phase_b_gate.sh --only e2e` (`REDSIM_E2E=1 pytest -rs -m e2e
-  tests/e2e`) against a migrated service Postgres so the RLS lane runs and the
-  step fails if it still reports off, then `--only docs-consistency`; the
-  `garak` extra installed for `tests/e2e/test_ml_llm.py`; 30 minute timeout,
-  harness directory uploaded on failure.
-- `garak offline` (job `garak-offline`, wave B0): installs the `garak` extra
-  on CPU torch, imports garak, runs `scripts/phase_b_gate.sh --only garak`
-  (`pytest -m garak tests`) with no gateway variable in the environment. Since
-  wave B4 the step fails on pytest exit 5 (nothing collected), on a run in
-  which no test passed and on a missing extra; the wave B0 rule that mapped
-  exit 5 to success is gone.
-- `make check-phase-b` (`scripts/phase_b_gate.sh`, wave B4) is the Phase B
-  definition of done: ruff, mypy, the default, `ml`, `garak` and `e2e` tiers,
-  `mkdocs build --strict`, `tests/test_docs_phase_b_consistency.py` and, with
-  `REDSIM_API_URL` and `REDSIM_API_TOKEN` set, the HTTP probes against a
-  running stack followed by `redsim audit verify --all`; the first failure
-  names its spec 26 criterion. `make check` keeps its Phase A meaning.
-- `Next.js build (pnpm, frozen lockfile)`: `pnpm install --frozen-lockfile`,
-  design-system and web typecheck, vitest, `next build`. When you change a
-  `package.json`, regenerate the root `pnpm-lock.yaml` in the same commit.
-- `Build images (no push)`: the four `deploy/Dockerfile.*`.
-- `Docs` (`docs.yml`): `mkdocs build --strict` when docs, the root markdown
-  files, `mkdocs.yml`, `hooks/` or `pyproject.toml` change. Every page under
-  `docs/` belongs in the `nav`. GitHub Pages publishing is off.
+- `E2E tier (python, eager Celery)`: the e2e tier against a migrated service
+  Postgres, with the `garak` extra installed for the LLM probe cases.
+- `garak offline`: the `garak` tier with no gateway variable in the
+  environment. It fails when nothing was collected or no test passed.
+- `Next.js build (pnpm, frozen lockfile)`: design-system and web typecheck,
+  vitest, `next build`. When you change a `package.json`, regenerate the root
+  `pnpm-lock.yaml` in the same commit.
+- `Build images (no push)`: the `deploy/Dockerfile.*` images.
+- `Docs` (`docs.yml`): `mkdocs build --strict`. Every page under `docs/`
+  belongs in the `nav`.
 
-`deploy-aws.yml` builds images under GitHub OIDC and rolls ECS services. It
-does not run the gates. Since the `58461cc` push the AssumeRole step succeeds
-and the three images are built and pushed; the deploy job is skipped while the
-repo variable `ECS_CLUSTER` is unset.
+`deploy-host.yml` deploys every push to `main` to the EC2 demo host over SSM.
+It does not run the gates.
 
-## Spec-first workflow
+## Frozen contracts
 
-Every change traces to the product spec or a feature file. The process is
-[`docs/spec-driven-workflow.md`](docs/spec-driven-workflow.md), the feature
-layer is [`specs/README.md`](specs/README.md) (F001 to F008 with `spec.md`,
-`plan.md`, `tasks.md`) and the readiness checklist in `specs/_shared/`. Where
-a feature file and the product spec conflict, the product spec wins. A
-changed requirement updates the spec before implementation continues.
+These are shared contracts. Change them additively, with a default value, and
+say so in the PR:
 
-Workstream ownership and status are in
-[`docs/plans/00-master-plan.md`](docs/plans/00-master-plan.md) section 4.
-Start work on a workstream only when its gate in section 7 is open.
+- every field name and type in `redsim/ml/schema.py`
+  (`tests/ml/test_schema_compat.py` pins the frozen fixture and refuses a
+  removed or retyped property),
+- the migration head and the `ml_campaigns` column set,
+- the `Action` values in `redsim/api/policy.py` and their minimum roles,
+  mirrored in `deploy/opa/redsim-authz.rego` and
+  `deploy/cedar/redsim-policy.cedar` (`tests/test_policy_ml_actions.py`
+  asserts the three agree),
+- the error codes in `redsim/api/errors.py` (`tests/ml/test_error_codes.py`
+  is the table),
+- the `GET /v1/runs/{id}/campaign` response shape in
+  `tests/ml/fixtures/run_record.json`.
 
-## Changing what P0 froze
-
-Milestone M0 (plan P0, PR #18) froze the shared contracts so parallel
-workstreams cannot break each other. Treat these as locked:
-
-- every field name and type in `redsim/ml/schema.py`, old and new
-  (`CampaignConfig`, `MRIRecord`, `MLModelManifest` and `MLFindingDetail`
-  are the shared contracts),
-- the migration head and the `ml_campaigns` column set. The head moved twice
-  under the protocol: from `0010_ml_vertical` to `0011_phase_b_platform`
-  (wave B0 of the Phase B plan, additive, announced in master plan section 5;
-  `ml_campaigns` gained only the nullable `batch_id`), then to
-  `0012_remove_verify_paradigm`, which removed the two finding validation
-  columns and the campaign baseline column on 2026-09-09 and adds no table,
-- the `Action` values in `redsim/api/policy.py` and their minimum roles, and
-  the `viewer` rank,
-- the `GET /v1/runs/{id}/campaign` response shape encoded by
-  `tests/ml/fixtures/run_record.json`,
-- the environment variable name `REDSIM_ML_LLM_MODEL`.
-
-The change protocol (section 8 of
-[`docs/plans/01-p0-contracts-api-skeleton.md`](docs/plans/01-p0-contracts-api-skeleton.md)):
-
-1. Do not rename a schema field, a column, an `Action` value or a response
-   key silently.
-2. Announce any change as a one-line note in master plan section 5, plus a
-   heads-up to the team.
-3. Prefer an additive, default-valued field over a change to an existing
-   one. Additive fields do not break a parallel slice, renames and type
-   changes do.
-
-A schema change ships with its Alembic migration, its test update and the
-master-plan note in the same PR.
-
-Wave B0 of [`docs/plans/12-phase-b-plan.md`](docs/plans/12-phase-b-plan.md)
-exercised the protocol once (2026-09-09): every Phase B field of its section 3
-landed in `redsim/ml/schema.py` additive and default-valued, announced in
-master plan sections 0 and 5, with the frozen fixture validating
-byte-identical. `tests/ml/test_schema_compat.py` is the tripwire that keeps it
-so: it pins the fixture's sha256, requires every property added since P0 to
-have a default, and refuses a removed or retyped P0 property or a narrowed
-vocabulary. Any further change to `redsim/ml/schema.py` has to keep that test
-green, and the docs writer for the wave records it in master plan section 0.
+A schema change ships with its Alembic migration and its test update in the
+same PR.
 
 ## Service-layer contract
 
-API write routes call admission services only (`services.scans`,
-`services.targets`, `services.auth_profiles`,
-`services.ml_models`, `services.ml_campaigns`, `services.ml_findings`, and
-since Phase B waves B2 and B3 `services.ml_llm`, `services.finding_review`,
-`services.reports`, `services.ml_batches`, `services.ml_datasets`,
-`services.ml_datasets_export`, `services.ml_capacity` and the
-`redsim.integrations` admission boundary), and Celery tasks call execution
-services only. Every Phase B route wave B0 mounted as a `501 not_implemented`
-stub was replaced by its handler in waves B2 and B3
-(`tests/ml/test_phase_b_stubs.py` pins the surface); the `501`s that remain
-are by decision with a reason (`docs/api/v1.md` "Phase B answers"). See
+API write routes call admission services only (`redsim/services/`), and
+Celery tasks call execution services only. See
 [`docs/architecture/overview.md`](docs/architecture/overview.md) under
 "Layered service architecture".
 
 Audit-before-enqueue is the load-bearing invariant: `safety.authorize()` runs
-and emits the chain row **before** the `Run` and `Job` rows are inserted and
-**before** Celery is touched. `tests/test_admission_audit_before_enqueue.py`
-asserts the order. A worker crash mid-enqueue must never produce a DB row
-without a matching chain event.
+and emits the chain row before the `Run` and `Job` rows are inserted and
+before Celery is touched. `tests/test_admission_audit_before_enqueue.py`
+asserts the order.
 
 Two more rules for the ML vertical:
 
 - The API process never imports torch, ART, onnxruntime, SHAP, scikit-learn,
   garak, openai, litellm, reportlab, pyarrow or mlcroissant.
   `tests/test_api_process_has_no_ml.py` builds the app with those modules
-  blocked. Model bytes, inference calls and dataset parsing happen only on the
-  worker: inside the sandbox child, or in the worker parent for the endpoint
-  predict broker, which is the only outbound HTTP of the vertical.
+  blocked. Model bytes, inference calls and dataset parsing happen only on
+  the worker, inside the sandbox child, or in the worker parent for the
+  endpoint predict broker.
 - Measurements, observations, interpretation and candidate recommendations
   stay separate fields and separate panels. The `Literal` labels in
   `redsim/ml/schema.py` are part of the contract.
 
-## Pre-commit hook (Aikido)
+## Secrets
 
-`git config core.hooksPath` points at `~/.git-hooks`, whose `pre-commit` runs
-the Aikido secret scanner. Some restored test fixtures carry deliberately fake
-secrets and trip it. Use `AIKIDO_SKIP_PRE_COMMIT=1` only for commits that touch
-those fixtures, say so in the commit message, and never add a real credential
-to make a test pass. `.env` is gitignored and dockerignored.
+`.env` is gitignored and dockerignored. Never commit a credential, and never
+add a real one to make a test pass. Some test fixtures carry deliberately fake
+secrets for the redaction tests.
 
 ## Security
 
@@ -273,14 +179,4 @@ For changes to the auth, audit, cookie, CSRF or WebSocket path, the PR
 description should reference the relevant section of
 [`docs/architecture/auth.md`](docs/architecture/auth.md) or
 [`docs/architecture/audit-chain.md`](docs/architecture/audit-chain.md) so
-reviewers can confirm the invariant the change preserves. For changes to
-model loading, the sandbox or the upload path, reference section 9 of the
-product spec.
-
-## Where to ask questions
-
-- Architecture or design: open a discussion thread, or draft an ADR under
-  `docs/adr/`.
-- Behaviour bug: open an issue with a reproducer (or a failing test, even
-  better).
-- Process: this doc and the docs it links to.
+reviewers can confirm the invariant the change preserves.

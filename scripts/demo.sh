@@ -31,10 +31,8 @@
 # Numbers printed by the report are from the run in hand and are illustrative.
 # No readiness or certification reading is made here or anywhere else.
 #
-# STATUS 2026-09-09: written for package C item C9 of
-# docs/plans/10-remaining-work-brief.md and checked with `bash -n` only. It
-# has NOT been run against a live stack yet. Run it against `make up` and
-# record the result in that brief before quoting it as evidence.
+# STATUS 2026-09-09: checked with `bash -n` only. It has NOT been run against
+# a live stack yet. Run it against `make up` before quoting it as evidence.
 
 set -euo pipefail
 

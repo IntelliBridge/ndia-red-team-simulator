@@ -43,9 +43,9 @@ P0_FIXTURE = FIXTURES / "run_record.json"
 PHASE_B_FIXTURE = FIXTURES / "run_record_phase_b.json"
 
 #: sha256 of the frozen P0 fixture. Changing the file changes the frozen
-#: ``GET /v1/runs/{id}/campaign`` shape and follows plan 01 section 8.
-# Regenerated 2026-09-09 when the verify paradigm was removed (product owner decision;
-# docs/plans/00-master-plan.md section 5): the defense, baseline, delta, validation and
+#: ``GET /v1/runs/{id}/campaign`` shape and follows the change protocol (additive, default-valued fields only).
+# Regenerated 2026-09-09 when the verify paradigm was removed (product owner
+# decision): the defense, baseline, delta, validation and
 # measured keys left the record.
 P0_FIXTURE_SHA256 = "25be404fca91eb5b11d75795b1f34076be39603a106666f35abf1fc9698f1ca6"
 

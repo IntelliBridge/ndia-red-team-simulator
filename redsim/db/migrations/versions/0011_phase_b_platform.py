@@ -1,11 +1,10 @@
 """Phase B platform tables and columns, one additive revision.
 
-Plan: docs/plans/12-phase-b-plan.md (wave B0, track ``migration-0011``).
-Register: docs/plans/11-phase-b-register-2026-09-09.md items REVIEW_REPORTS-44,
+Phase B wave B0, track ``migration-0011``. Register items REVIEW_REPORTS-44,
 BULK-01, BULK-20 and INTEROP-14. Spec: sections 5.3 (additive migrations),
 7.6 (RLS on every new table), 17.4, 27.1 and F004/F007.
 
-The P0 freeze (docs/plans/01 section 8) froze the migration head at
+The P0 freeze froze the migration head at
 ``0010_ml_vertical``. This is the single announced move of that head for
 Phase B; every Phase B DDL lands here so the head moves once.
 

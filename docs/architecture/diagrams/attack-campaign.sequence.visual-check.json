@@ -6,7 +6,7 @@
   "status": "pass",
   "visualReview": "pending",
   "artifact": {
-    "path": "/Users/noah.behrick/NDIA Hackathon/wt/docs-refresh/docs/architecture/diagrams/attack-campaign.sequence.html",
+    "path": "docs/architecture/diagrams/attack-campaign.sequence.html",
     "sha256": "bf78bfcc958533ee8ce098cae4ef309639a58fb59b5ab28c31f5102311a2a6cc",
     "bytes": 814003
   },

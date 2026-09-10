@@ -152,7 +152,7 @@ A verified plugin shows `status=loaded` with a `yes:<key_id>` SIGNED
 cell. An unsigned plugin is `rejected` ("no signature found") and never
 registered. The ML attack adapters under `redsim/ml/attacks/` will
 register through the same generic registry (entry-point group
-`redsim.ml.attacks`, spec section 8.3), so the same allowlist and
+`redsim.ml.attacks`), so the same allowlist and
 signature gates apply to third-party attacks.
 
 ---
@@ -236,9 +236,9 @@ the gate before `docker compose up` / `kubectl apply`, see the
 
 ---
 
-## garak and the LLM probe domain (Phase B, decision D5)
+## garak and the LLM probe domain
 
-The Phase B LLM red-teaming track (`redsim/ml/llm/`, waves B2 and B4) drives
+The LLM red-teaming track (`redsim/ml/llm/`) drives
 NVIDIA garak 0.16 through its OpenAI-compatible generator pointed at the
 Pythia gateway. The `garak` extra (`pyproject.toml`, pinned `garak>=0.16,<0.17`)
 pulls in the `openai` and `litellm` client libraries and their own transitive
@@ -268,17 +268,15 @@ tree. What that means for the supply chain, and how it is bounded:
   developer's `.env`; and `tests/test_api_process_has_no_ml.py` builds the
   API with `garak`, `openai` and `litellm` blocked.
 - **Offline by construction in CI.** The two lanes export no gateway
-  variable, the gate script removes every `PYTHIA_*` variable on top, and the
-  tests point the generator at `tests/ml/fake_openai_server.py` on the
-  loopback interface with a low-entropy fake token. Since wave B4 the gate's
-  garak step fails when nothing was collected, when every item was skipped or
-  when the extra is missing, so an absent dependency can never read as a
-  green lane.
+  variable and the tests point the generator at
+  `tests/ml/fake_openai_server.py` on the loopback interface with a
+  low-entropy fake token. The `garak offline` job fails when nothing was
+  collected, when no test passed or when the extra is missing, so an absent
+  dependency can never read as a green lane.
 - **What garak ships.** garak loads its bundled probe corpora from the
   installed package; redsim re-packages none of them and commits no prompt
   text. The public data repository carries a copy of that directory with the
-  licence recorded per subset (spec 11.6 addendum, owner decision
-  TESTS_DOCS-33). Prompts are untrusted data sent only to an explicitly
+  licence recorded per subset. Prompts are untrusted data sent only to an explicitly
   entitled Pythia persona under the permission-gate-only guardrail default.
 - **Scanning.** `pip-audit` audits the resolved `api,worker,security`
   environment, which excludes the `garak` and `ml` extras; the release
@@ -288,8 +286,7 @@ tree. What that means for the supply chain, and how it is bounded:
 
 ## Signed release images: what's still deferred
 
-**Nix reproducible builds** remain deferred (see [ADR-0008](../adr/0008-nix-reproducible-builds.md);
-the upstream aegis roadmap page is not carried in this fork) as the last remaining piece of supply-chain hardening, bit-for-bit
+**Nix reproducible builds** remain deferred as the last remaining piece of supply-chain hardening, bit-for-bit
 reproducible builds so the published image can be independently rebuilt and
 compared. Signed plugins, sigstore image signing, the SBOM attestation, and
 SLSA provenance have all shipped.

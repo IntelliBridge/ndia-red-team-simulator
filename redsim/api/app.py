@@ -130,7 +130,7 @@ def create_app(settings: APISettings | None = None) -> FastAPI:
     app.include_router(projects.router, prefix="/v1")
     app.include_router(logs.router, prefix="/v1")
     app.include_router(org_cost.router, prefix="/v1")
-    # Phase B routes (docs/plans/12-phase-b-plan.md): mounted as truthful 501 stubs in wave B0, real
+    # Phase B routes: mounted as truthful 501 stubs in wave B0, real
     # handlers since waves B2 and B3 (batch campaigns; ATLAS coverage, the roster and
     # the Foundry push; the LLM probes). tests/ml/test_phase_b_stubs.py pins the surface.
     app.include_router(batches.router, prefix="/v1")

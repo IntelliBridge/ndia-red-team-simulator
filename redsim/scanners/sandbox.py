@@ -40,8 +40,7 @@ process isolation + resource limits + a wall-clock kill + a minimal environment
 filesystem jail — a hostile plugin can still open sockets or touch files the
 worker's UID can reach. Stripping proxy env reduces accidental egress but is not
 an egress control. Kernel-level isolation (network/mount namespaces, seccomp, or
-a gVisor/Firecracker-per-plugin runtime) is tracked as a follow-up spike (see
-``docs/adr``); until then, only run plugins you have vetted and signed.
+a gVisor/Firecracker-per-plugin runtime) is a follow-up spike; until then, only run plugins you have vetted and signed.
 
 Any failure mode — the worker crashing, exceeding a limit, timing out, emitting
 unparseable output — is converted into a clean ``ScanResult`` carrying an

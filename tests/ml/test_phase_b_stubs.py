@@ -1,7 +1,6 @@
 """Phase B route surface: every route wave B0 stubbed is mounted, gated and answers with a real handler.
 
-Register row INTEROP-01 and the wave B0 ``route-stubs`` track of
-``docs/plans/12-phase-b-plan.md``: the tree is truthful about Phase B from the
+Register row INTEROP-01 and the wave B0 ``route-stubs`` track: the tree is truthful about Phase B from the
 first push. Wave B0 mounted every route as a ``501 not_implemented`` stub; wave
 B2 replaced the LLM probe, report.render and snapshot stubs and wave B3 replaced
 the rest (interop-contribute / interop-consume: the dataset export and the
@@ -123,8 +122,7 @@ ADMISSION_ROWS_BEFORE_REFUSAL = {"batch.create"}
 
 #: Phase B routes that still answer ``501 not_implemented`` after wave B3, as ``(method, path)`` rows of
 #: ``ROUTES``. Empty: every B0 stub has a real handler. A wave that stubs a new route adds it here with
-#: the plan row that builds it, and the wave B4 gate (plan 12 section 5, ``make check-phase-b``) fails
-#: while the list is non-empty. ``test_remaining_stubs_are_exactly_the_routes_answering_501`` keeps
+#: the wave that builds it. ``test_remaining_stubs_are_exactly_the_routes_answering_501`` keeps
 #: the list truthful in both directions.
 REMAINING_STUBS: list[tuple[str, str]] = []
 
