@@ -56,7 +56,6 @@ class TestMetricsEndpoint(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             body = resp.text
             for counter in ("redsim_scans_total", "redsim_fix_success_total",
-                            "redsim_verify_status_total",
                             "redsim_ml_campaigns_total",
                             "redsim_ml_stage_seconds"):
                 self.assertIn(counter, body)

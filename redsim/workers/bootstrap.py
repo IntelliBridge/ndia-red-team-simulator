@@ -79,8 +79,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: Celery task names whose terminal outcomes are counted on
-#: ``redsim_ml_campaigns_total{status}``. Pentest-era tasks (``scan_start``,
-#: ``verify_replay``, ``report_render``) are untouched — default-off for them.
+#: ``redsim_ml_campaigns_total{status}``. Platform tasks (``scan_start``,
+#: ``report_render``) are untouched, default-off for them.
 ML_CAMPAIGN_TASK_NAMES: frozenset[str] = frozenset({"redsim.ml_campaign_run"})
 
 #: Terminal job statuses (mirrors ``job_state.ALLOWED``'s sinks).

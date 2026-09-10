@@ -368,7 +368,6 @@ _NoopCounter = _NoopMetric
 METRIC_NAMES: tuple[str, ...] = (
     "redsim_scans_total",
     "redsim_fix_success_total",
-    "redsim_verify_status_total",
     "redsim_jobs_active",
     "redsim_rate_limited_total",
     "redsim_ml_campaigns_total",
@@ -394,9 +393,6 @@ def _make_counters() -> dict[str, Any]:
         "redsim_fix_success_total": Counter(
             "redsim_fix_success_total", "Successful fixes",
         ),
-        "redsim_verify_status_total": Counter(
-            "redsim_verify_status_total", "Verify outcomes", ["status"],
-        ),
         "redsim_jobs_active": Gauge(
             "redsim_jobs_active", "Active jobs"
         ),
@@ -421,7 +417,7 @@ def _make_counters() -> dict[str, Any]:
         ),
         "redsim_ml_daily_budget_used": Gauge(
             "redsim_ml_daily_budget_used",
-            "ML run admissions (attack.run + verify.replay) since 00:00 UTC per project",
+            "ML run admissions (attack.run) since 00:00 UTC per project",
             ["project"],
         ),
     }
