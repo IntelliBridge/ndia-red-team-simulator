@@ -16,15 +16,12 @@ import {
   dismissFinding,
   explainFinding,
   hardenFinding,
-  verifyFinding,
-  type DefenseInfo,
   type CandidateRecommendation,
   type Measurement,
   type Observation,
 } from "@/lib/api";
 import { FindingChatPanel } from "@/components/finding-chat-panel";
 import { useFinding } from "@/hooks/useFinding";
-import { useDefenses } from "@/hooks/useMlCatalog";
 import { describeFinding } from "@/lib/finding-description";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { useRoles } from "@/hooks/useRoles";
@@ -127,14 +124,11 @@ function DescriptionBoxes({ description }: { description: string | undefined }) 
 export default function FindingPage({ params }: { params: { id: string } }) {
   const authed = useRequireAuth();
   const { data, error, mutate } = useFinding(authed ? params.id : null);
-  const { data: defenses = [] } = useDefenses(authed);
   const { roles } = useRoles();
   const [pending, setPending] = useState<
-    "" | "explain" | "harden" | "verify" | "dismiss"
+    "" | "explain" | "harden" | "dismiss"
   >("");
   const [feedback, setFeedback] = useState("");
-  const [defenseId, setDefenseId] = useState("");
-  const [defenseParams, setDefenseParams] = useState("{}");
   const [chatOpen, setChatOpen] = useState(false);
 
   if (!authed) return <p>Signing in…</p>;
@@ -171,13 +165,6 @@ export default function FindingPage({ params }: { params: { id: string } }) {
       row.attack_id === ml.attack_id &&
       Number(row.params.eps) === ml.reference_eps,
   );
-  const recommendationForDefense = ml?.recommendations.find(
-    (recommendation: CandidateRecommendation) =>
-      recommendation.references.includes(
-        defenses.find((defense: DefenseInfo) => defense.id === defenseId)
-          ?.art_class ?? "",
-      ),
-  );
   const act = async (
     name: typeof pending,
     action: () => Promise<unknown>,
@@ -197,13 +184,6 @@ export default function FindingPage({ params }: { params: { id: string } }) {
       );
     } finally {
       setPending("");
-    }
-  };
-  const parsedParams = () => {
-    try {
-      return JSON.parse(defenseParams) as Record<string, unknown>;
-    } catch {
-      throw new Error("Defense parameters must be valid JSON.");
     }
   };
   const curve =
@@ -226,7 +206,6 @@ export default function FindingPage({ params }: { params: { id: string } }) {
         severity={data.severity}
         status={data.status}
         target={data.schema_blob.target}
-        validationState={data.validation_state ?? null}
         actions={
           <div className="flex items-center gap-2">
             <button
@@ -395,10 +374,7 @@ export default function FindingPage({ params }: { params: { id: string } }) {
                       <strong>
                         {index + 1}. {candidate.title}
                       </strong>
-                      <span>
-                        candidate ·{" "}
-                        {candidate.measured ? "measured" : "not evaluated"}
-                      </span>
+                      <span>{candidate.status}</span>
                     </div>
                     <p className="mt-1">{candidate.rationale}</p>
                     <p className="text-xs text-muted-foreground">
@@ -410,102 +386,22 @@ export default function FindingPage({ params }: { params: { id: string } }) {
               )}
             </div>
             <RoleGated minRole="remediator" callerRole={role}>
-              <div className="mt-4 space-y-2">
-                <select
-                  aria-label="Defense"
-                  value={defenseId}
-                  onChange={(e) => setDefenseId(e.target.value)}
-                  className="w-full border border-input bg-background p-2"
+              <div className="mt-4">
+                <button
+                  disabled={!!pending}
+                  onClick={() =>
+                    void act(
+                      "harden",
+                      () => hardenFinding(data.id, { llm_narrative: false }),
+                      "Candidate generation accepted; results pending.",
+                    )
+                  }
+                  className="border border-border px-3 py-2"
                 >
-                  <option value="">Select defense</option>
-                  {defenses.map((defense: DefenseInfo) => (
-                    <option key={defense.id} value={defense.id}>
-                      {defense.name}
-                    </option>
-                  ))}
-                </select>
-                <label className="block text-xs">
-                  Defense parameters
-                  <textarea
-                    value={defenseParams}
-                    onChange={(e) => setDefenseParams(e.target.value)}
-                    className="mt-1 min-h-16 w-full border border-input bg-background p-2 font-mono"
-                  />
-                </label>
-                <div className="flex gap-2">
-                  <button
-                    disabled={!!pending}
-                    onClick={() =>
-                      void act(
-                        "harden",
-                        () => hardenFinding(data.id, { llm_narrative: false }),
-                        "Candidate generation accepted; results pending.",
-                      )
-                    }
-                    className="border border-border px-3 py-2"
-                  >
-                    Harden
-                  </button>
-                  <button
-                    disabled={
-                      !!pending || !defenseId || !recommendationForDefense
-                    }
-                    onClick={() => {
-                      try {
-                        if (!recommendationForDefense) return;
-                        const values = parsedParams();
-                        void act(
-                          "verify",
-                          () =>
-                            verifyFinding(
-                              data.id,
-                              defenseId,
-                              { ...values },
-                              recommendationForDefense.id,
-                            ),
-                          "Verification accepted; measured results pending.",
-                        );
-                      } catch (cause) {
-                        setFeedback(String(cause));
-                      }
-                    }}
-                    className="bg-primary px-3 py-2 text-primary-foreground"
-                  >
-                    Verify
-                  </button>
-                </div>
+                  {pending === "harden" ? "Requesting…" : "Harden"}
+                </button>
               </div>
             </RoleGated>
-            {ml.verify?.delta && (
-              <div className="mt-4 border-t border-border pt-3 text-xs">
-                <strong>Recorded measured verification</strong>
-                <p>ΔMRI {ml.verify.delta.delta}</p>
-                {Object.entries(ml.verify.delta.delta_subscores).map(
-                  ([key, value]) => (
-                  <p key={key}>
-                    {key}: {value ?? "not recorded"}
-                  </p>
-                ))}
-                <p>
-                  Clean accuracy{" "}
-                  {ml.verify.delta.delta_acc_clean.before.accuracy ??
-                    "not recorded"}{" "}
-                  (n={ml.verify.delta.delta_acc_clean.before.n}) →{" "}
-                  {ml.verify.delta.delta_acc_clean.after.accuracy ??
-                    "not recorded"}{" "}
-                  (n={ml.verify.delta.delta_acc_clean.after.n})
-                </p>
-                {ml.verify.delta.delta_families.map((family) => (
-                  <p key={family.measurement_id}>
-                    {family.measurement_id}{" "}
-                    {family.before.accuracy ?? "not recorded"} (n=
-                    {family.before.n}) →{" "}
-                    {family.after.accuracy ?? "not recorded"} (n=
-                    {family.after.n}) · Δ {family.delta ?? "not recorded"}
-                  </p>
-                ))}
-              </div>
-            )}
           </PanelSection>
         </div>
       )}

@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 #: Heading the UI and the ``ml.harden.narrative`` artifact print above LLM prose (spec 16.3).
 NARRATIVE_LABEL_TEMPLATE = "LLM-generated narrative of rule outputs (via Pythia, {model})"
 
-# The frozen score-word ban (schema.BANNED_SCORE_WORDS) plus the writer's own validation words.
+# The frozen score-word ban (schema.BANNED_SCORE_WORDS) plus the writer's own certainty words.
 BANNED_WORDS: tuple[str, ...] = tuple(dict.fromkeys(
     ("validated", "proven", "guaranteed", *BANNED_SCORE_WORDS, "deployment ready")))
 
@@ -48,8 +48,8 @@ SYSTEM_PROMPT = """You rewrite the rule outputs of an adversarial-ML robustness 
 Contract, in order of priority:
 1. Keep every number identical to the input and cite no number that is not present in the input. Do not convert fractions to percentages, do not round, do not estimate.
 2. Add no recommendation, cause, claim, or comparison that is not present in the input. Do not speculate about training data, architecture, or deployment.
-3. Describe every recommendation as a candidate and state that none has been evaluated on this model unless the input includes a measured delta MRI.
-4. Never state or estimate an expected gain, improvement range, or magnitude; direction only, as the input states it.
+3. Describe every recommendation as a candidate and state that none has been evaluated on this model.
+4. Never state or estimate a gain, improvement range, or magnitude; direction only, as the input states it.
 5. Do not use the words "validated", "proven", "guaranteed", "hardened", "deployment-ready", "certified", or "safe".
 6. SHAP attributions describe the model's sensitivity, not the cause of a failure; keep that framing.
 
@@ -63,7 +63,7 @@ _REC_MARK = re.compile(r"\[(r\.[A-Za-z0-9_]+)\]")
 def build_payload(recs: list[CandidateRecommendation], summary_text: str) -> str:
     """The user message: the deterministic text summary plus the ranked rule rows. Text only."""
     lines = ["EVALUATION SUMMARY (measurements, scorecard, explanation aggregates, limitations):", summary_text.strip(),
-             "", "RANKED CANDIDATE RECOMMENDATIONS (rule outputs; status candidate, validation not evaluated):"]
+             "", "RANKED CANDIDATE RECOMMENDATIONS (rule outputs; status candidate, none evaluated on this model):"]
     for i, r in enumerate(recs, 1):
         lines.append(f"{i}. [{r.id}] {r.title}")
         lines.append(f"   rationale: {r.rationale}")

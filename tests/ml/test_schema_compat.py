@@ -44,7 +44,10 @@ PHASE_B_FIXTURE = FIXTURES / "run_record_phase_b.json"
 
 #: sha256 of the frozen P0 fixture. Changing the file changes the frozen
 #: ``GET /v1/runs/{id}/campaign`` shape and follows plan 01 section 8.
-P0_FIXTURE_SHA256 = "e5266f1873dc3fcd0d784acf3bf9e97463595d3bbff351edf7560ca1716d9c1a"
+# Regenerated 2026-09-09 when the verify paradigm was removed (product owner decision;
+# docs/plans/00-master-plan.md section 5): the defense, baseline, delta, validation and
+# measured keys left the record.
+P0_FIXTURE_SHA256 = "25be404fca91eb5b11d75795b1f34076be39603a106666f35abf1fc9698f1ca6"
 
 #: Name the walker gives the root definition (the JSON schema's own title).
 ROOT = "CampaignRecord"
@@ -57,7 +60,7 @@ P0_ENUMS: dict[str, frozenset[str]] = {
     "CampaignRecord.status": frozenset(
         {"queued", "running", "succeeded", "failed", "cancelled", "not_implemented"}
     ),
-    "CampaignRecord.kind": frozenset({"attack", "verify", "ingest"}),
+    "CampaignRecord.kind": frozenset({"attack", "ingest"}),
     "CampaignRecord.completeness": frozenset({"complete", "partial"}),
     "TargetInfo.domain": frozenset({"image", "tabular", "llm"}),
     "TargetInfo.status": frozenset({"available", "not_implemented"}),
@@ -70,12 +73,12 @@ P0_ENUMS: dict[str, frozenset[str]] = {
     "MRIRecord.grade": frozenset({"A", "B", "C", "D", "F"}),
     "MRIRecord.completeness": frozenset({"complete", "partial"}),
     "ScoreStatus.state": frozenset({"pending", "unavailable"}),
-    "CandidateRecommendation.validation": frozenset({"not evaluated", "measured"}),
     "CandidateRecommendation.narrative_source": frozenset({"rules", "llm"}),
 }
 
-#: ``STAGES`` at the freeze. Plan 12 section 3 inserts ``defense_apply``; the P0
-#: names keep their relative order so stored ``stages_done`` lists still read.
+#: ``STAGES`` at the freeze. Plan 12 section 3 inserted ``defense_apply`` and the
+#: 2026-09-09 removal of the verify paradigm took it out again; the P0 names keep
+#: their relative order so stored ``stages_done`` lists still read.
 P0_STAGES: tuple[str, ...] = (
     "load_target", "sample", "clean_eval", "attack", "control", "explain", "score",
     "interpret", "recommend", "report",
@@ -433,4 +436,5 @@ def test_phase_b_section_3_lands_as_one_set(json_schema: dict[str, Any]) -> None
     assert _missing_phase_b_fields(json_schema) == []
     for dotted, value in PHASE_B_ENUM_ADDITIONS:
         assert value in _enum_values(json_schema, dotted), f"{dotted} lacks {value!r}"
-    assert "defense_apply" in S.STAGES, "STAGES lacks defense_apply (ATTACKS_HARDEN-15)"
+    # 2026-09-09: the defense_apply stage left with the verify paradigm; the P0 order is the whole tuple.
+    assert S.STAGES == P0_STAGES

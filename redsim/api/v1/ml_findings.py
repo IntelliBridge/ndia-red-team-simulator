@@ -15,8 +15,6 @@ Phase B (plan 12 wave B2, review-workflow track) adds:
   ``review_state`` and ``review`` keys and the list filters on
   ``status``, ``review_state`` and ``source_tool`` (REVIEW_REPORTS-07). The
   routes are supersets of the core findings routes and reuse their serializer.
-* ``GET /v1/findings/{id}/retests`` lists the linked retests with their
-  compatibility against the baseline (REVIEW_REPORTS-09).
 * ``POST /v1/findings`` creates an analyst-authored draft and
   ``PATCH /v1/findings/{id}/draft`` appends a revision (REVIEW_REPORTS-05,
   gate ``finding.author``).
@@ -49,7 +47,6 @@ from redsim.services.finding_review import (
     TRANSITIONS,
     create_draft_finding,
     decide,
-    list_retests,
     review_state_of,
     review_summary,
     revise_draft,
@@ -239,21 +236,7 @@ def get_finding(finding_id: str, user: CurrentUser = Depends(get_current_user)) 
         if row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"finding {finding_id} not found")
         ensure_project_access(user, row.project_id)
-        return _with_review(row, validated_at=True, dedup_key=True)
-
-
-@router.get("/{finding_id}/retests")
-def retests(finding_id: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
-    """Linked retests with compatibility (equal ``settings_hash``) and a delta only when compatible."""
-    from redsim.db.models import Finding
-    from redsim.db.session import get_session
-
-    with get_session() as sess:
-        row = sess.get(Finding, finding_id)
-        if row is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="finding not found")
-        ensure_project_access(user, row.project_id)
-        return list_retests(sess, row)
+        return _with_review(row, dedup_key=True)
 
 
 # ---------------------------------------------------------------------------
@@ -328,13 +311,13 @@ def dismiss(finding_id: str, body: ReviewBody,
             user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """Review decisions through the Phase A status route (spec 6.4, 7.7, 17.1).
 
-    ``status="false_positive"`` dismisses (Phase A rules unchanged: ``open | failed``
+    ``status="false_positive"`` dismisses (Phase A rules unchanged: ``open``
     only, stale ``expected_status`` and a disallowed source are ``409 run_terminal``),
     ``status="open"`` reopens a dismissed finding, and ``decision`` names any other
     transition. The gate is ``FINDING_REVIEW`` (``FINDING_AUTHOR`` for ``submit``);
-    the campaign creator, the draft author, the retest requester and system principals
-    are refused with 403; ``resolve`` answers ``409 resolution_blocked`` with the
-    unmet conditions. The audit row precedes the write; refusals write
+    the campaign creator, the draft author and system principals are refused with
+    403; ``resolve`` needs a ``confirmed`` review and answers ``409
+    resolution_blocked`` otherwise. The audit row precedes the write; refusals write
     ``success=False`` rows.
     """
     return _decide(finding_id, decision=body.resolved_decision, reason=body.reason,

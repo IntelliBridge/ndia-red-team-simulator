@@ -72,7 +72,6 @@ OTHER_COVERED_ROUTES: tuple[tuple[str, str], ...] = (
     ("DELETE", "/v1/models/{model_id}"),
     ("POST", "/v1/findings/{finding_id}/explain"),
     ("POST", "/v1/findings/{finding_id}/harden"),
-    ("POST", "/v1/findings/{finding_id}/verify"),
     ("PATCH", "/v1/findings/{finding_id}/status"),
     ("PATCH", "/v1/runs/{run_id}/reviewer-notes"),
     ("POST", "/v1/runs/{run_id}/cancel"),
@@ -81,7 +80,6 @@ OTHER_COVERED_ROUTES: tuple[tuple[str, str], ...] = (
     ("POST", "/v1/campaigns/batch"),
     ("POST", "/v1/campaigns/batch/{batch_id}/cancel"),
     ("POST", "/v1/models/bulk"),
-    ("POST", "/v1/findings/{finding_id}/verify/bulk"),
     ("POST", "/v1/datasets"),
 )
 

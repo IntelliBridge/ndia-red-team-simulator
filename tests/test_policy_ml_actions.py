@@ -55,7 +55,8 @@ EXPECTED_PHASE_B = {
     Action.REPORT_RENDER: ("report.render", "scanner"),
     Action.FINDING_AUTHOR: ("finding.author", "remediator"),
 }
-PRUNED = ("AGENT_RUN", "AGENT_EXECUTE", "FIX_GENERATE", "FIX_APPLY", "TOOL_INVOKE", "TICKET_SYNC")
+# The pentest members left at M0; VERIFY_REPLAY left with the verify loop on 2026-09-09.
+PRUNED = ("AGENT_RUN", "AGENT_EXECUTE", "FIX_GENERATE", "FIX_APPLY", "TOOL_INVOKE", "TICKET_SYNC", "VERIFY_REPLAY")
 ROLES = ("viewer", "scanner", "remediator", "approver", "admin")
 
 
@@ -105,7 +106,8 @@ def test_pruned_members_are_gone():
     for name in PRUNED:
         assert name not in names
     values = {a.value for a in Action}
-    for value in ("agent.run", "agent.execute", "fix.generate", "fix.apply", "tool.invoke", "ticket.sync"):
+    for value in ("agent.run", "agent.execute", "fix.generate", "fix.apply", "tool.invoke", "ticket.sync",
+                  "verify.replay"):
         assert value not in values
 
 

@@ -11,10 +11,12 @@
 #   2. GET /v1/models, pick the first registered, available image model.
 #   3. POST /v1/models/{id}/attacks with fgsm and pgd, 64 samples, seed 0.
 #   4. Poll GET /v1/runs/{id} to a terminal status.
-#   5. GET /v1/findings?project=default, pick the first finding.
-#   6. POST /v1/findings/{id}/verify with feature_squeezing, poll it.
-#   7. GET /v1/runs/{id}/report.md for the campaign run, save it to a file.
-#   8. `redsim audit verify --all` inside the redsim-api container.
+#   5. GET /v1/findings?project=default, read the first finding.
+#   6. GET /v1/runs/{id}/report.md for the campaign run, save it to a file.
+#   7. `redsim audit verify --all` inside the redsim-api container.
+#
+# Every run is a measurement in its own right. The script applies no defense
+# and runs no verify campaign (product owner decision of 2026-09-09).
 #
 # Environment:
 #   REDSIM_DEMO_API        API base URL (default http://localhost:8000)
@@ -168,7 +170,7 @@ RUN_STATUS="$(wait_terminal "$RUN_ID")"
 printf 'run_id=%s status=%s\n' "$RUN_ID" "$RUN_STATUS"
 [ "$RUN_STATUS" = "succeeded" ] || die "campaign run $RUN_ID ended '$RUN_STATUS'"
 
-say "5. List findings and pick the first one from this run"
+say "5. List findings and read the first one from this run"
 findings="$(api GET "/v1/findings?project=$PROJECT&run=$RUN_ID")"
 expect_status 200 "GET /v1/findings" "$findings"
 FINDING_COUNT="$(json_get count <<< "$findings")"
@@ -176,45 +178,26 @@ printf 'finding_count=%s\n' "$FINDING_COUNT"
 FINDING_ID="$(json_get findings 0 id <<< "$findings")"
 if [ -z "$FINDING_ID" ]; then
     printf 'No finding crossed the threshold on this run. That is a valid result, not an error.\n'
-    printf 'Skipping the verify step.\n'
 else
-    printf 'finding_id=%s\n' "$FINDING_ID"
-
-    say "6. Verify the finding with feature_squeezing"
-    verify_body='{"defense":"feature_squeezing"}'
-    vhandle="$(api POST "/v1/findings/$FINDING_ID/verify" "$verify_body")"
-    expect_status 202 "POST /v1/findings/$FINDING_ID/verify" "$vhandle"
-    VERIFY_RUN_ID="$(json_get run_id <<< "$vhandle")"
-    [ -n "$VERIFY_RUN_ID" ] || die "verify handle carried no run_id: $vhandle"
-    printf 'verify_run_id=%s\n' "$VERIFY_RUN_ID"
-    VERIFY_STATUS="$(wait_terminal "$VERIFY_RUN_ID")"
-    printf 'verify_run_id=%s status=%s\n' "$VERIFY_RUN_ID" "$VERIFY_STATUS"
-
     finding="$(api GET "/v1/findings/$FINDING_ID")"
     expect_status 200 "GET /v1/findings/$FINDING_ID" "$finding"
-    printf 'finding_id=%s status=%s\n' "$FINDING_ID" "$(json_get status <<< "$finding")"
+    printf 'finding_id=%s status=%s severity=%s\n' "$FINDING_ID" \
+        "$(json_get status <<< "$finding")" "$(json_get severity <<< "$finding")"
 fi
 
-say "7. Download the campaign report (Markdown)"
+say "6. Download the campaign report (Markdown)"
 REPORT_PATH="$OUT_DIR/$RUN_ID-report.md"
 HTTP_STATUS="$(curl -sS -o "$REPORT_PATH" -w '%{http_code}' \
     -H "Authorization: Bearer $TOKEN" "$API/v1/runs/$RUN_ID/report.md")"
 expect_status 200 "GET /v1/runs/$RUN_ID/report.md" "$(head -c 400 "$REPORT_PATH")"
 printf 'report_path=%s\n' "$REPORT_PATH"
-if [ -n "${VERIFY_RUN_ID:-}" ]; then
-    VERIFY_REPORT_PATH="$OUT_DIR/$VERIFY_RUN_ID-report.md"
-    HTTP_STATUS="$(curl -sS -o "$VERIFY_REPORT_PATH" -w '%{http_code}' \
-        -H "Authorization: Bearer $TOKEN" "$API/v1/runs/$VERIFY_RUN_ID/report.md")"
-    expect_status 200 "GET /v1/runs/$VERIFY_RUN_ID/report.md" "$(head -c 400 "$VERIFY_REPORT_PATH")"
-    printf 'verify_report_path=%s\n' "$VERIFY_REPORT_PATH"
-fi
 
-say "8. Verify every audit chain (redsim audit verify --all)"
+say "7. Verify every audit chain (redsim audit verify --all)"
 compose_exec redsim audit verify --all
 
 say "Done"
 printf 'model_id=%s\nrun_id=%s\n' "$MODEL_ID" "$RUN_ID"
 if [ -n "${FINDING_ID:-}" ]; then
-    printf 'finding_id=%s\nverify_run_id=%s\n' "$FINDING_ID" "${VERIFY_RUN_ID:-}"
+    printf 'finding_id=%s\n' "$FINDING_ID"
 fi
 printf 'report_path=%s\n' "$REPORT_PATH"

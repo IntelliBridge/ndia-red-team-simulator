@@ -219,7 +219,7 @@ def _seed_gate_finding(e2e_app: E2EApp, run: h.CampaignRun) -> str:
         row = Finding(
             id=str(uuid4()), scanner_finding_id=f"e2e-gate.{attack_id}", run_id=run.run_id,
             project_id=str(run.campaign["project_id"]), schema_blob=blob, status="open", severity=severity,
-            source_tool="tests/e2e/test_ml_governance.py", validation_state="unvalidated",
+            source_tool="tests/e2e/test_ml_governance.py",
         )
         sess.add(row)
         sess.flush()
@@ -339,7 +339,7 @@ def campaigns(e2e_app: E2EApp, e2e_org: E2EOrg, e2e_bundled: dict[str, str], pyt
 def test_rbac_negatives(
     e2e_app: E2EApp, e2e_org: E2EOrg, e2e_bundled: dict[str, str], campaigns: Campaigns,
 ) -> None:
-    from redsim.api.errors import NOT_FOUND, RUN_TERMINAL, SCORE_UNAVAILABLE
+    from redsim.api.errors import NOT_FOUND, RUN_TERMINAL
 
     model_id = e2e_bundled[h.IMAGE_MODEL_ID]
     tabular_id = e2e_bundled[h.TABULAR_MODEL_ID]
@@ -397,10 +397,6 @@ def test_rbac_negatives(
                                                          json={"llm_narrative": False}),
         "scanner POST /findings/{id}/harden": scanner.post(f"/v1/findings/{scanner_finding}/harden",
                                                            json={"llm_narrative": False}),
-        # verify.replay: remediator and above
-        "viewer POST /findings/{id}/verify": viewer.post(f"/v1/findings/{scanner_finding}/verify", json={}),
-        "scanner POST /findings/{id}/verify": scanner.post(f"/v1/findings/{scanner_finding}/verify", json={}),
-        "outsider POST /findings/{id}/verify": outsider.post(f"/v1/findings/{scanner_finding}/verify", json={}),
         # finding.review: approver and above, plus the independence rule (below)
         "viewer PATCH /findings/{id}/status": viewer.patch(f"/v1/findings/{admin_finding}/status", json=review_body),
         "scanner PATCH /findings/{id}/status": scanner.patch(f"/v1/findings/{admin_finding}/status",
@@ -439,6 +435,13 @@ def test_rbac_negatives(
         # A 403 is a plain string detail (spec 17.3 ``forbidden``), never a typed ML refusal and never
         # a leak of the resource: it does not carry a run, finding or model id of the other project.
         assert isinstance(response.json()["detail"], str), label
+    # The verify loop left the product on 2026-09-09: its routes are not mounted, so every role gets a 404,
+    # no gate answers, and nothing is written (asserted with the gate refusals below).
+    for who in (viewer, scanner, remediator, approver, admin, outsider, stranger):
+        assert who.post(f"/v1/findings/{scanner_finding}/verify", json={}).status_code == 404
+        assert who.post(f"/v1/findings/{scanner_finding}/verify/bulk", json={}).status_code == 404
+        assert who.get(f"/v1/findings/{scanner_finding}/retests").status_code == 404
+        assert who.get("/v1/defenses").status_code == 404
     # Role gates sit in front of the admission services: no audit row and no Run was written.
     assert _total_audit_events(e2e_app) == events_before, "a role refusal must not append to any chain (spec 7.8)"
     assert _count_runs(e2e_app) == runs_before
@@ -522,24 +525,11 @@ def test_rbac_negatives(
     harden_admission = _events(e2e_app, f"run:{hardened.json()['run_id']}", "harden.recommend")
     assert harden_admission and harden_admission[0]["actor"] == e2e_org.actor("remediator")
 
-    # verify.replay (remediator): admitted when the baseline carries a score record; when the baseline
-    # has none the honest answer is a typed 409 score_unavailable, never a 403 and never a number.
-    assert scanner_run.campaign is not None
-    baseline_score = scanner_run.campaign.get("score")
-    verify = remediator.post(f"/v1/findings/{scanner_finding}/verify", json={})
-    if baseline_score is None:
-        assert verify.status_code == 409, verify.text
-        assert _detail_code(verify) == SCORE_UNAVAILABLE
-    else:
-        assert verify.status_code == 202, verify.text
-        verify_run = h.wait_for_run(remediator, verify.json()["run_id"])
-        assert verify_run["status"] in h.TERMINAL_RUN_STATUSES and verify_run["scanner"] == "ml.verify"
-        verify_admission = _events(e2e_app, f"run:{verify.json()['run_id']}", "verify.replay")
-        assert verify_admission and verify_admission[0]["actor"] == e2e_org.actor("remediator")
-        if baseline_score.get("completeness") == "partial":
-            assert baseline_score["mri"] is None and baseline_score["missing"], baseline_score
-        else:
-            assert isinstance(baseline_score["mri"], int) and 0 <= baseline_score["mri"] <= 100
+    # The harden follow-on merges rule candidates onto the finding: candidates and nothing more (2026-09-09).
+    hardened_finding = remediator.get(f"/v1/findings/{scanner_finding}").json()
+    for rec in hardened_finding["schema_blob"]["ml"]["recommendations"]:
+        assert rec["status"] == "candidate" and "validation" not in rec and "measured" not in rec, rec["id"]
+    assert "validation_state" not in hardened_finding and "validated_at" not in hardened_finding
 
     # finding.review (approver) with the independence rule of spec 7.7: the creator is refused whatever
     # its rank (the admin launched this campaign), an independent approver dismisses.
@@ -777,7 +767,7 @@ def test_capabilities_and_unsupported_paths(
         assert row["modality"] in ("text", "detection"), row
         assert row["status"] in ("available", "not_implemented"), row
         assert row["status"] == "available" or row["reason"], row
-    assert body["defenses"], "the defense roster comes from the registry, never an empty list"
+    assert "defenses" not in body, "the defense catalog left the product on 2026-09-09; the roster does not name it"
 
     # -- gateway not configured (mock off): configured=False with the reason, still nothing secret ---
     body = assert_secret_free(viewer.get("/v1/ml/capabilities"))
@@ -848,10 +838,6 @@ def test_capabilities_and_unsupported_paths(
         patch.setitem(sys.modules, "redsim.ml.attacks", None)
         assert_unavailable(viewer.get("/v1/attacks"), "GET /v1/attacks")
     with monkeypatch.context() as patch:
-        patch.setitem(sys.modules, "redsim.ml.defenses", None)
-        assert_unavailable(viewer.get("/v1/defenses"), "GET /v1/defenses")
-        assert_unavailable(viewer.get("/v1/ml/capabilities"), "GET /v1/ml/capabilities (defenses)")
-    with monkeypatch.context() as patch:
         patch.setitem(sys.modules, "redsim.ml.targets", None)
         assert_unavailable(viewer.get("/v1/models", params={"project": e2e_org.project_id}), "GET /v1/models")
         assert_unavailable(viewer.get("/v1/ml/capabilities"), "GET /v1/ml/capabilities (targets)")
@@ -864,8 +850,7 @@ def test_capabilities_and_unsupported_paths(
     attacks = viewer.get("/v1/attacks")
     assert attacks.status_code == 200 and {row["id"] for row in attacks.json()["attacks"]} >= {
         "fgsm", "pgd", "hopskipjump", "noise_control"}
-    defenses = viewer.get("/v1/defenses")
-    assert defenses.status_code == 200 and defenses.json()["count"] >= 3
+    assert viewer.get("/v1/defenses").status_code == 404, "no defense catalog route is mounted"
     models = viewer.get("/v1/models", params={"project": e2e_org.project_id})
     assert models.status_code == 200 and models.json()["count"] >= 2
     assert_secret_free(viewer.get("/v1/ml/capabilities"))
@@ -1109,7 +1094,6 @@ def _seed_tenant(sess: Any, tenant: _Tenant, *, bundled_id: str) -> None:
     sess.flush()
     sess.add(Finding(id=tenant.finding, scanner_finding_id=f"e2e-rls-{tenant.run}", run_id=tenant.run,
                      project_id=tenant.project, status="open", severity="medium", source_tool="ml-campaign",
-                     validation_state="unvalidated",
                      schema_blob={"id": tenant.finding, "finding_type": "adversarial_ml",
                                   "title": "e2e RLS seed (no measurement)"}))
     payload = b"{}"

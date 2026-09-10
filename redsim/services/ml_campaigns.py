@@ -3,7 +3,7 @@
 Every refusal is a typed :class:`redsim.api.errors.ApiError` carrying a spec
 section 17.3 code, so the routes convert it into the ``{"detail": {"code",
 "message", ...}}`` envelope without parsing prose. The admission order is fixed
-(spec 10.5): the ``attack.run`` / ``verify.replay`` audit row is written through
+(spec 10.5): the ``attack.run`` audit row is written through
 :func:`redsim.safety.authorize` **before** any ``Run`` / ``Job`` / ``ml_campaigns``
 row exists and before ``task.delay``; a refused admission writes a
 ``success=False`` row with the code and the ids it refused, never the request
@@ -13,7 +13,7 @@ queue_unavailable`` (spec 17.2), with a second ``success=False`` row recording
 the roll-back.
 
 Capacity (BULK-20, -21; ``redsim.services.ml_capacity``): after the request has
-been validated and before the admission row, both boundaries call
+been validated and before the admission row, the boundary calls
 ``admit_or_defer``. A spent daily budget is ``429 daily_budget_exceeded`` (the
 capacity service writes the ``success=False`` row); over the project's
 concurrency cap the admission is *deferred*: the rows are written as usual, the
@@ -71,8 +71,8 @@ Scoring (REVIEW_REPORTS-29): the ``scoring`` block is server-owned. Admission re
 ``projects.ml_scoring`` (the per-project override written by the settings route),
 validates it through ``ScoringConfig`` without renormalising and freezes it onto
 the campaign; a request that sends ``scoring`` is ``422 params_out_of_range``. A
-rerun keeps its parent's frozen block and a verify run keeps its baseline's, so
-lineage pairs stay comparable. The 202 response and the ``attack.run`` audit detail
+rerun keeps its parent's frozen block, so lineage pairs stay comparable. The
+202 response and the ``attack.run`` audit detail
 disclose ``scoring_source`` (``project`` / ``default`` / ``parent``),
 ``scoring_weights`` and ``non_default_weights``.
 
@@ -97,20 +97,10 @@ name evasion adapters only (the benign control runs automatically at every grid
 member when ``include_control`` is true, spec 12.4, and is not an attack), and
 an attack may only run under a norm it supports. Both are ``422
 params_out_of_range`` with the field that has to change.
-
-Verify runs (spec 16.5): a training defense (``kind: training`` in the catalog,
-ATTACKS_HARDEN-12) is admitted for the modalities its row declares on a model
-that exposes gradients (the proxy for a torch module the trainer can fine-tune);
-on a tabular tree ensemble it is ``422 defense_modality_mismatch`` with the
-register ATTACKS_HARDEN-20 reason, and on a model without gradients ``422
-params_out_of_range`` with the trainer's reason. Nothing is faked: the
-``defense_apply`` stage runs in the verify child and records the defense as
-unavailable, with the score withheld, when it cannot train.
 """
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -123,21 +113,17 @@ from redsim.api.errors import (
     ATTACK_REQUIRES_GRADIENTS,
     CAMPAIGN_NOT_TERMINAL,
     DATASET_INCOMPATIBLE,
-    DEFENSE_MODALITY_MISMATCH,
     EPS_GRID_INVALID,
-    JOB_IN_FLIGHT,
     MODEL_LOAD_REFUSED,
     NOT_FOUND,
     NOT_IMPLEMENTED,
     PARAMS_OUT_OF_RANGE,
     QUEUE_UNAVAILABLE,
     REFERENCE_EPS_NOT_IN_GRID,
-    SCORE_UNAVAILABLE,
     UNKNOWN_ATTACK,
-    UNKNOWN_DEFENSE,
     ApiError,
 )
-from redsim.ml.schema import CampaignConfig, CandidateRecommendation, MRIWeights, ScoringConfig
+from redsim.ml.schema import CampaignConfig, MRIWeights, ScoringConfig
 from redsim.ml.scoring import (
     DEFAULT_EPS_GRID_L2,
     DEFAULT_EPS_GRID_LINF,
@@ -163,16 +149,13 @@ _RERUN_PARENT_STATUSES = frozenset({"failed", "cancelled"})
 _TERMINAL_RUN_STATUSES = frozenset({"succeeded", "failed", "cancelled"})
 #: Config keys the server owns; a request or a copied parent config never sets them. ``scoring`` is
 #: refused when a request sends it (REVIEW_REPORTS-29); the others are dropped silently as before.
-_SERVER_OWNED_CONFIG_KEYS = frozenset({"target_snapshot", "attacks", "defense", "scoring"})
+_SERVER_OWNED_CONFIG_KEYS = frozenset({"target_snapshot", "attacks", "scoring"})
 _CLIENT_REFUSED_CONFIG_KEYS = frozenset({"scoring"})
 #: Attack parameters the campaign runner derives from the grid and the norm, never from
 #: ``attack_params`` (``redsim.ml.campaign._attack_params`` refuses them). The same set as
 #: ``redsim.ml.campaign_adapter._GRID_OWNED_PARAMS`` on the offline path; kept as a literal here
 #: because that name is module-private.
 _GRID_OWNED_PARAMS = frozenset({"eps", "norm_l2"})
-#: Spec 16.5 default for ``POST /v1/findings/{id}/verify`` when the body names no defense: feature
-#: squeezing is the one Phase A preprocessor that applies to both image and tabular targets.
-DEFAULT_VERIFY_DEFENSE_ID = "feature_squeezing"
 #: The one attack family ``attack_ids`` may name (spec 12.2 catalog). ``control`` adapters run
 #: automatically (``redsim.ml.campaign.CONTROL_ATTACK_ID``) and the runner refuses them in the set.
 _ATTACK_FAMILY = "evasion"
@@ -410,8 +393,8 @@ class CampaignJobHandle:
     """A handle that remains compatible when campaign admission grows jobs.
 
     The scoring keys (REVIEW_REPORTS-29/-30) are additive: ``scoring_source`` says where the frozen block
-    came from (``project`` override, deployment ``default``, the rerun's ``parent`` or the verify's
-    ``baseline``), ``non_default_weights`` is ``True`` when the frozen weight vector differs from
+    came from (``project`` override, deployment ``default`` or the rerun's ``parent``),
+    ``non_default_weights`` is ``True`` when the frozen weight vector differs from
     ``MRIWeights()`` (such a campaign is comparable only with campaigns under the same vector) and
     ``scoring_weights`` is that vector. They are omitted when the handle does not carry them.
     """
@@ -1159,7 +1142,6 @@ def create_attack_campaign(
                 )
             target_snapshot["endpoint"] = endpoint_provenance
         snapshot["target_snapshot"] = target_snapshot
-        snapshot.pop("defense", None)
         try:
             frozen = CampaignConfig.model_validate(snapshot)
         except ValueError as exc:   # pydantic.ValidationError subclasses ValueError
@@ -1264,29 +1246,6 @@ def create_attack_campaign(
                              capacity=capacity.marker() if capacity is not None and deferred else None)
 
 
-def recommendation_defense_ids(recommendation: CandidateRecommendation) -> set[str]:
-    """The catalog defense ids a candidate recommendation names.
-
-    Rule-generated candidates (``redsim.ml.recommend.rules``) cite a defense as
-    a ``defense:<id>`` reference next to ``<ART class> (Phase A verify loop)``
-    and the motivating paper, so the ids are read back through
-    ``rules.defense_configs`` rather than by matching the bare class string.
-    Hand-authored evidence (the frozen ``run_record.json`` fixture shape) names
-    the bare ART class instead, which resolves to the catalog id that owns it
-    (preprocessing and training rows alike).
-    """
-    from redsim.ml import defenses as _defenses
-    from redsim.ml.recommend.rules import defense_configs
-
-    catalog_rows: tuple[dict[str, Any], ...] = getattr(_defenses, "ALL_DEFENSES", _defenses.DEFENSES)
-    cited = {cfg.id for cfg in defense_configs(recommendation)}
-    cited |= {
-        str(spec["id"]) for spec in catalog_rows
-        if spec["art_class"] in recommendation.references
-    }
-    return cited
-
-
 def persist_campaign_record(session: Session, run_id: str, record: Any) -> None:
     """Project a completed CampaignRecord onto the queryable campaign row."""
     from sqlalchemy import update
@@ -1304,367 +1263,11 @@ def persist_campaign_record(session: Session, run_id: str, record: Any) -> None:
     )
 
 
-# ---------------------------------------------------------------------------
-# verify.replay admission
-# ---------------------------------------------------------------------------
-
-
-def _defense_catalog() -> tuple[set[str], set[str]]:
-    """``(catalog ids, training ids)`` from the defenses catalog (both kinds when the tree has them)."""
-    from redsim.ml import defenses as _defenses
-
-    rows: tuple[dict[str, Any], ...] = getattr(_defenses, "ALL_DEFENSES", _defenses.DEFENSES)
-    catalog = {str(spec["id"]) for spec in rows}
-    training = {str(spec["id"]) for spec in rows if spec.get("kind") == "training"}
-    return catalog, training
-
-
-def _resolve_verify_defense(
-    defense_id: str | None, recommendation: CandidateRecommendation | None,
-) -> str:
-    """The defense a verify request applies (spec 16.5 default; the recommendation's own when it names one).
-
-    * ``defense_id`` given: it must be a catalog defense; when a recommendation is named it must be
-      one the recommendation cites (``params_out_of_range`` on ``defense`` otherwise).
-    * omitted with a recommendation: the sole runnable defense the recommendation cites; several
-      cited defenses need an explicit choice; a defense the catalog does not carry (a Phase B apply
-      step on a tree without the training rows) is ``not_implemented``; a recommendation naming no
-      defense cannot be verified.
-    * omitted without a recommendation: :data:`DEFAULT_VERIFY_DEFENSE_ID`.
-
-    Whether a training defense can run on *this* model (modality, gradients) is checked by the caller
-    once the baseline is known (:func:`_check_training_defense`).
-    """
-    from redsim.ml.recommend.rules import DEFENSE_IDS
-
-    catalog, _training = _defense_catalog()
-    phase_b = set(DEFENSE_IDS) - catalog
-    cited = recommendation_defense_ids(recommendation) if recommendation is not None else set()
-    if defense_id is None:
-        if recommendation is None:
-            return DEFAULT_VERIFY_DEFENSE_ID
-        runnable = sorted(cited & catalog)
-        if len(runnable) == 1:
-            return runnable[0]
-        if runnable:
-            raise ApiError(PARAMS_OUT_OF_RANGE,
-                           f"recommendation {recommendation.id!r} names several defenses {runnable}; "
-                           "pass defense to choose one", field="defense", reasons=runnable)
-        if cited & phase_b:
-            raise ApiError(NOT_IMPLEMENTED,
-                           f"recommendation {recommendation.id!r} names {sorted(cited & phase_b)}: a Phase B "
-                           "apply step this tree's verify loop cannot run", phase="B", field="defense")
-        raise ApiError(PARAMS_OUT_OF_RANGE,
-                       f"recommendation {recommendation.id!r} names no defense the verify loop can apply",
-                       field="defense", reasons=sorted(cited))
-    if defense_id in phase_b:
-        raise ApiError(NOT_IMPLEMENTED, f"defense {defense_id!r} is a Phase B apply step this tree's verify "
-                       "loop cannot run", phase="B", field="defense")
-    if defense_id not in catalog:
-        raise ApiError(UNKNOWN_DEFENSE, f"unknown defense {defense_id!r}; known: {sorted(catalog)}",
-                       field="defense")
-    if recommendation is not None and defense_id not in cited:
-        named = sorted(cited)
-        raise ApiError(
-            PARAMS_OUT_OF_RANGE,
-            f"recommendation {recommendation.id!r} names {named if named else 'no defense'}, not {defense_id!r}",
-            field="defense", reasons=named,
-        )
-    return defense_id
-
-
-def _check_training_defense(defense_id: str, spec: Mapping[str, Any], *, modality: str, gradients: Any) -> None:
-    """Refuse a training defense the verify child could not apply to this model (ATTACKS_HARDEN-12, -20).
-
-    The modality must be one the catalog row declares (a tabular tree ensemble carries the register
-    ATTACKS_HARDEN-20 reason) and the model must expose gradients, the admission-time proxy for a torch
-    module the trainer can fine-tune (an ONNX graph without a conversion, or an endpoint, has none).
-    """
-    if spec.get("kind") != "training":
-        return
-    from redsim.ml.harden import apply as _harden
-
-    if modality not in spec["domains"]:
-        reason = (getattr(_harden, "TREE_ENSEMBLE_REASON", "tree ensembles have no gradient-based adversarial "
-                                                             "training in ART")
-                  if modality == "tabular"
-                  else f"training defenses apply to {list(spec['domains'])} targets, not {modality!r}")
-        raise ApiError(DEFENSE_MODALITY_MISMATCH,
-                       f"defense {defense_id!r} applies to {list(spec['domains'])} targets, not {modality!r}: "
-                       f"{reason}", field="defense", reasons=[reason])
-    if gradients is False:
-        reason = getattr(_harden, "NO_TORCH_MODULE_REASON", "the target exposes no torch module")
-        raise ApiError(PARAMS_OUT_OF_RANGE,
-                       f"defense {defense_id!r} fine-tunes a torch module and the model exposes none "
-                       f"(manifest gradients: false): {reason}", field="defense",
-                       reasons=["training_defense_unavailable", reason])
-
-
-def create_verify_campaign(
-    *,
-    finding_id: str,
-    defense_id: str | None = None,
-    params: Mapping[str, Any] | None = None,
-    recommendation_id: str | None = None,
-    actor: str,
-    config: RedsimConfig,
-    audit_writer: AuditWriter,
-    enqueue: bool = True,
-    capacity_check: bool = True,
-    before_enqueue: Callable[[str, list[str]], None] | None = None,
-) -> CampaignJobHandle:
-    """Audit and admit a defense evaluation as a separate ML campaign (spec 16.5, 17.2).
-
-    ``capacity_check`` as in :func:`create_attack_campaign`: the project's capacity is consulted before the
-    admission row (``429 daily_budget_exceeded`` refuses; over the concurrency cap the verify is written
-    deferred and not enqueued, the finding still flips to ``fixing`` since the verify is admitted).
-    ``before_enqueue(run_id, job_ids)`` runs after the rows exist and before the broker message: a bulk
-    verify (owner decision BULK-16) binds ``Job.detail.finding_ids`` and writes its per-finding
-    ``verify.replay`` rows there, so the worker projects onto every selected finding whenever it runs.
-
-    ``recommendation_id`` is optional: when given, the defense must be one the
-    recommendation names (through the ``defense:<id>`` references of
-    ``redsim.ml.recommend.rules`` or the bare ART class). ``defense_id`` is
-    optional too; see :func:`_resolve_verify_defense` for the default. Refusals
-    are :class:`ApiError` with ``not_found``, ``campaign_not_terminal``,
-    ``score_unavailable`` (baseline without a usable score record),
-    ``job_in_flight``, ``unknown_defense``, ``defense_modality_mismatch`` (also a
-    training defense on a tabular tree ensemble), ``params_out_of_range`` (also a
-    training defense on a model without gradients), ``not_implemented`` or
-    ``queue_unavailable``; each writes a ``success=False`` ``verify.replay`` audit
-    row. The frozen ``scoring`` block is the baseline's (REVIEW_REPORTS-29), so
-    the pair stays comparable whatever the project override says today.
-    """
-    from sqlalchemy import select
-
-    from redsim.db.models import Artifact, Finding, Job, Run
-    from redsim.db.session import get_session
-    from redsim.ml.defenses import get_defense, resolve_defense_params
-    from redsim.ml.schema import CampaignRecord, MLFindingDetail
-    from redsim.storage.blobs import open_blob_store
-
-    project_id: str | None = None
-    audit_context: dict[str, Any] = {"finding_id": finding_id, "recommendation_id": recommendation_id,
-                                     "defense_id": defense_id}
-
-    def refuse(exc: ApiError, **more: Any) -> NoReturn:
-        _refuse(audit_writer, action="verify.replay", actor=actor, project_id=project_id, exc=exc,
-                **{**audit_context, **more})
-
-    try:
-        with get_session() as sess:
-            finding = sess.get(Finding, finding_id)
-            if finding is None:
-                raise ApiError(NOT_FOUND, "finding not found")
-            project_id = finding.project_id
-            previous_status = finding.status
-            schema_blob = dict(finding.schema_blob or {})
-            ml_blob = schema_blob.get("ml")
-            if not isinstance(ml_blob, dict) or not ml_blob:
-                raise ApiError(NOT_FOUND, "finding carries no ML campaign evidence to verify")
-            ml_detail = MLFindingDetail.model_validate(ml_blob)
-            recommendation: CandidateRecommendation | None = None
-            if recommendation_id is not None:
-                recommendation = next((r for r in ml_detail.recommendations if r.id == recommendation_id), None)
-                if recommendation is None:
-                    raise ApiError(PARAMS_OUT_OF_RANGE,
-                                   f"recommendation {recommendation_id!r} does not belong to this finding",
-                                   field="recommendation_id")
-            baseline = sess.get(Run, finding.run_id)
-            if baseline is None:
-                raise ApiError(NOT_FOUND, "baseline campaign not found")
-            if baseline.status not in _TERMINAL_RUN_STATUSES:
-                raise ApiError(CAMPAIGN_NOT_TERMINAL, "the baseline campaign has not reached a terminal status",
-                               status=baseline.status)
-            if baseline.status != "succeeded":
-                raise ApiError(SCORE_UNAVAILABLE,
-                               f"the baseline campaign {baseline.status}; it carries no score to measure against",
-                               status=baseline.status)
-            active = sess.execute(select(Job).where(
-                Job.project_id == finding.project_id,
-                Job.type == "verify.replay",
-                Job.status.in_(["queued", "running"]),
-            )).scalars()
-            if any((job.detail or {}).get("finding_id") == finding_id for job in active):
-                raise ApiError(JOB_IN_FLIGHT, "a verify.replay job is already queued or running for this finding")
-            table = _campaign_table(sess)
-            baseline_campaign = sess.execute(
-                table.select().where(table.c.run_id == baseline.id)
-            ).mappings().one_or_none()
-            if baseline_campaign is None:
-                raise ApiError(NOT_FOUND, "baseline campaign record not found")
-            baseline_artifact = sess.execute(select(Artifact).where(
-                Artifact.run_id == baseline.id,
-                Artifact.kind == "ml.run_record",
-            )).scalar_one_or_none()
-            if baseline_artifact is None:
-                raise ApiError(NOT_FOUND, "baseline campaign record not found")
-            baseline_location = str(baseline_artifact.location)
-            baseline_sha256 = str(baseline_artifact.sha256)
-            baseline_id = baseline.id
-        audit_context["baseline_run_id"] = baseline_id
-
-        baseline_bytes = open_blob_store().get(baseline_location)
-        if isinstance(baseline_bytes, str):
-            baseline_bytes = baseline_bytes.encode("utf-8")
-        if hashlib.sha256(baseline_bytes).hexdigest() != baseline_sha256:
-            raise ApiError(SCORE_UNAVAILABLE, "baseline evidence digest mismatch: the recorded ml.run_record "
-                           "does not match its sha256", reasons=["artifact_digest_mismatch"])
-        baseline_record = CampaignRecord.model_validate_json(baseline_bytes)
-        if baseline_record.run_id != baseline_id or baseline_record.score is None:
-            raise ApiError(SCORE_UNAVAILABLE, "baseline evidence is incomplete: no score record to measure "
-                           "a delta against", reasons=["baseline_score_missing"])
-        snapshot = baseline_record.config.model_dump(mode="json")
-        resolved_defense_id = _resolve_verify_defense(defense_id, recommendation)
-        audit_context["defense_id"] = resolved_defense_id
-        spec = get_defense(resolved_defense_id)
-        modality = str(snapshot.get("modality") or "")
-        if modality not in spec["domains"] and spec.get("kind") != "training":
-            raise ApiError(DEFENSE_MODALITY_MISMATCH,
-                           f"defense {resolved_defense_id!r} applies to {list(spec['domains'])} targets, "
-                           f"not {modality!r}", field="defense")
-        snapshot_target = _as_mapping(snapshot.get("target_snapshot"))
-        snapshot_detail = _as_mapping(snapshot_target.get("detail"))
-        snapshot_manifest = _target_manifest(snapshot_detail)
-        baseline_gradients = (False if snapshot_target.get("kind") == _ENDPOINT_KIND
-                              else snapshot_detail.get("gradients", snapshot_manifest.get("gradients")))
-        _check_training_defense(resolved_defense_id, spec, modality=modality, gradients=baseline_gradients)
-        try:
-            resolved_params = resolve_defense_params(resolved_defense_id, dict(params or {}))
-        except ValueError as exc:
-            raise ApiError(PARAMS_OUT_OF_RANGE, f"invalid parameters for {resolved_defense_id!r}: {exc}",
-                           field="params") from exc
-        snapshot["defense"] = {
-            "id": resolved_defense_id, "art_class": spec["art_class"], "params": resolved_params,
-        }
-        try:
-            frozen = CampaignConfig.model_validate(snapshot)
-        except ValueError as exc:
-            raise _validation_error(exc) from exc
-    except ApiError as exc:
-        refuse(exc)
-
-    # BULK-20/-21: the capacity decision precedes the admission row; a budget refusal wrote its own row.
-    assert project_id is not None
-    capacity = (_capacity_admission(project_id=project_id, kind="verify.replay", actor=actor,
-                                    audit_writer=audit_writer, finding_id=finding_id, baseline_run_id=baseline_id,
-                                    defense_id=resolved_defense_id)
-                if capacity_check else None)
-    deferred = bool(capacity is not None and capacity.deferred)
-    enqueue = enqueue and not deferred
-
-    frozen_json = frozen.model_dump(mode="json")
-    run_id = f"run-{uuid4().hex[:12]}"
-    job_id = f"job-{uuid4().hex[:12]}"
-    target_id = frozen.target_id
-    scoring_weights = frozen.scoring.weights.as_dict()
-    non_default_weights = not is_default_weights(frozen.scoring)
-
-    authorize(
-        "verify.replay",
-        None,
-        allowlist=config.target_allowlist,
-        actor=actor,
-        writer=audit_writer,
-        project_id=project_id,
-        run_id=run_id,
-        detail={
-            "actor": actor,
-            "finding_id": finding_id,
-            "recommendation_id": recommendation_id,
-            "baseline_run_id": baseline_id,
-            "model_sha256": (
-                baseline_record.provenance.model_sha256
-                if baseline_record.provenance is not None else None
-            ),
-            "settings_hash": baseline_record.settings_hash,
-            "defense": frozen_json["defense"],
-            "defense_kind": spec.get("kind", "preprocessing"),
-            "scoring_source": "baseline",
-            "scoring_weights": scoring_weights,
-            "non_default_weights": non_default_weights,
-        },
-    )
-    with get_session() as sess:
-        finding = sess.get(Finding, finding_id)
-        if finding is None:
-            raise ApiError(NOT_FOUND, "finding not found")
-        finding.status = "fixing"
-        sess.add(Run(
-            id=run_id,
-            project_id=project_id,
-            target_id=target_id,
-            mode="api",
-            status="queued",
-            scanner="ml.verify",
-            created_by=actor,
-            stage_table={
-                "stage": None,
-                "stages_done": [],
-                "baseline_run_id": baseline_id,
-                "jobs": {},
-            },
-        ))
-        sess.flush()
-        sess.add(Job(
-            id=job_id,
-            run_id=run_id,
-            project_id=project_id,
-            type="verify.replay",
-            status="queued",
-            created_by=actor,
-            detail={
-                "finding_id": finding_id,
-                "recommendation_id": recommendation_id,
-                "baseline_run_id": baseline_id,
-                "campaign_config": frozen_json,
-            },
-        ))
-        sess.flush()
-        table = _campaign_table(sess)
-        sess.execute(table.insert().values(
-            run_id=run_id,
-            project_id=project_id,
-            target_id=target_id,
-            kind="verify",
-            modality=frozen.modality,
-            baseline_run_id=baseline_id,
-            settings_hash=baseline_record.settings_hash,
-            config=frozen_json,
-            limitations=[],
-        ))
-    if deferred:
-        _mark_deferred(run_id=run_id, job_id=job_id, decision=capacity)
-    if before_enqueue is not None:
-        before_enqueue(run_id, [job_id])
-    if enqueue:
-        try:
-            task_id = _enqueue_campaign(job_id)
-        except Exception as exc:  # noqa: BLE001 - any broker failure is the same refusal
-            logger.warning("enqueue failed for ML verify job %s; rolling the admission back", job_id,
-                           exc_info=True)
-            _delete_campaign_rows(run_id, [job_id])
-            with get_session() as sess:
-                finding = sess.get(Finding, finding_id)
-                if finding is not None and finding.status == "fixing":
-                    finding.status = previous_status
-            refuse(ApiError(QUEUE_UNAVAILABLE, "job queue is unavailable; the verification was not admitted",
-                            reason=type(exc).__name__),
-                   rolled_back_run_id=run_id, rolled_back_job_ids=[job_id])
-        _stamp_task_id(job_id, task_id)
-    # The verify handle keeps the Phase A response shape (run_id, job_ids, status_url): the frozen block is
-    # the baseline's and the audit row above discloses it; the attack handle carries the scoring keys. Only a
-    # deferral adds ``deferred`` and the capacity marker.
-    return CampaignJobHandle(run_id=run_id, job_ids=[job_id],
-                             deferred=deferred if capacity is not None else None,
-                             capacity=capacity.marker() if capacity is not None and deferred else None)
-
-
 __all__ = [
     "BUDGET_LABELS", "DEFAULT_EDIT_GRID", "DEFAULT_EDIT_REFERENCE", "DEFAULT_MAX_EPS_GRID_MEMBERS",
-    "DEFAULT_PATCH_AREA_GRID", "DEFAULT_PATCH_AREA_REFERENCE", "DEFAULT_VERIFY_DEFENSE_ID",
-    "DETECTION_N_SAMPLES_CAP", "DETECTION_N_SAMPLES_DEFAULT", "KNOWN_NORMS", "NOT_IMPLEMENTED_MODALITIES",
+    "DEFAULT_PATCH_AREA_GRID", "DEFAULT_PATCH_AREA_REFERENCE", "DETECTION_N_SAMPLES_CAP",
+    "DETECTION_N_SAMPLES_DEFAULT", "KNOWN_NORMS", "NOT_IMPLEMENTED_MODALITIES",
     "SUPPORTED_MODALITIES", "CampaignJobHandle", "ModalitySpec", "check_norm_for_modality",
-    "create_attack_campaign", "create_verify_campaign", "default_eps_grid_for", "default_reference_eps_for",
-    "is_default_weights", "modality_norms", "persist_campaign_record", "recommendation_defense_ids",
+    "create_attack_campaign", "default_eps_grid_for", "default_reference_eps_for", "is_default_weights",
+    "modality_norms", "persist_campaign_record",
 ]

@@ -17,9 +17,6 @@ vi.mock("@/hooks/useCampaign", () => ({
 vi.mock("@/hooks/useRunEvents", () => ({
   useRunEvents: () => undefined,
 }));
-vi.mock("@/hooks/useMlCatalog", () => ({
-  useDefenses: () => ({ data: [] }),
-}));
 vi.mock("@/lib/api", async () => ({
   ...(await vi.importActual("@/lib/api")),
   artifactUrl: (id: string) => `/v1/artifacts/${id}`,

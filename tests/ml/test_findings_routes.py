@@ -61,9 +61,6 @@ FIXTURE = Path(__file__).parent / "fixtures" / "run_record.json"
 PROJECT = "project-1"
 OTHER_PROJECT = "project-2"
 BASELINE = "run-fixture-0001"
-VERIFY = "run-verify-0001"
-VERIFY_UNSCORED_DELTA = "run-verify-0002"
-VERIFY_HASH_DRIFT = "run-verify-0003"
 OTHER_MODEL = "run-other-model"
 OTHER_SEED = "run-other-seed"
 PARTIAL = "run-partial"
@@ -91,7 +88,6 @@ def _campaign_table(engine: Any) -> Table:
         Column("provenance", JSON),
         Column("score", JSON),
         Column("limitations", JSON, nullable=False),
-        Column("baseline_run_id", String),
         Column("parent_run_id", String),
         Column("reviewer_notes", Text),
         Column("created_at", DateTime),
@@ -154,36 +150,8 @@ def _user(sub: str, role: str, project: str = PROJECT, *, system: bool = False) 
                        is_system=system)
 
 
-def _delta_block(baseline_run_id: str) -> dict[str, Any]:
-    return {
-        "baseline_run_id": baseline_run_id, "mri_before": 42, "mri_after": 55, "delta": 13,
-        "delta_subscores": {"S_acc": 10.0, "S_asr": 20.0, "S_eps": 5.0, "S_conf": 0.0, "S_expl": 1.0},
-        "delta_acc_clean": {"before": {"n": 200, "n_correct": 172, "accuracy": 0.86},
-                            "after": {"n": 200, "n_correct": 170, "accuracy": 0.85}, "delta": -0.01},
-        "delta_families": [{"measurement_id": "m.evasion.fgsm.eps0.03",
-                            "before": {"n": 200, "n_correct": 112, "accuracy": 0.56},
-                            "after": {"n": 200, "n_correct": 150, "accuracy": 0.75}, "delta": 0.19}],
-    }
-
-
 def _variants(base: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Campaign records derived from the frozen fixture, one per comparison case."""
-    defense = {"id": "feature_squeezing", "art_class": "art.defences.preprocessor.FeatureSqueezing",
-               "params": {"bit_depth": 4}}
-
-    def verify(run_id: str) -> dict[str, Any]:
-        rec = copy.deepcopy(base)
-        rec.update({"run_id": run_id, "kind": "verify", "baseline_run_id": BASELINE})
-        rec["provenance"]["baseline_run_id"] = BASELINE
-        rec["config"]["defense"] = defense
-        return rec
-
-    with_delta = verify(VERIFY)
-    with_delta["score"].update({"mri": 55, "grade": "D", "delta": _delta_block(BASELINE)})
-    no_delta = verify(VERIFY_UNSCORED_DELTA)
-    drift = verify(VERIFY_HASH_DRIFT)
-    drift["score"]["settings_hash"] = "d" * 64
-
     other_model = copy.deepcopy(base)
     other_model.update({"run_id": OTHER_MODEL, "settings_hash": "c" * 64})
     other_model["provenance"].update({"model_sha256": "e1" * 32, "settings_hash": "c" * 64})
@@ -204,13 +172,12 @@ def _variants(base: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
     foreign = copy.deepcopy(base)
     foreign["run_id"] = FOREIGN
-    return {BASELINE: base, VERIFY: with_delta, VERIFY_UNSCORED_DELTA: no_delta, VERIFY_HASH_DRIFT: drift,
-            OTHER_MODEL: other_model, OTHER_SEED: other_seed, PARTIAL: partial, FOREIGN: foreign}
+    return {BASELINE: base, OTHER_MODEL: other_model, OTHER_SEED: other_seed, PARTIAL: partial, FOREIGN: foreign}
 
 
 @pytest.fixture
 def ml_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """A dev-mode app over sqlite with eight seeded campaigns and an in-memory audit writer."""
+    """A dev-mode app over sqlite with five seeded campaigns and an in-memory audit writer."""
     patch_jsonb_for_sqlite()
     engine = create_engine(f"sqlite:///{tmp_path / 'ml_api.db'}")
     Base.metadata.create_all(engine)
@@ -245,8 +212,7 @@ def ml_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             location = f"memory://{project}/{run_id}/run_record.json/{_sha(raw)}"
             store.blobs[location] = raw
             session.add(Run(id=run_id, project_id=project, target_id=record.config.target_id, mode="api",
-                            scanner="ml.verify" if record.kind == "verify" else "ml.campaign",
-                            status="succeeded", created_by=CREATOR, stage_table={}))
+                            scanner="ml.campaign", status="succeeded", created_by=CREATOR, stage_table={}))
             session.flush()
             session.add(Artifact(id=f"artifact-{run_id}-record", run_id=run_id, project_id=project,
                                  kind="ml.run_record", sha256=_sha(raw), location=location,
@@ -257,7 +223,7 @@ def ml_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
                 settings_hash=record.settings_hash,
                 provenance=record.provenance.model_dump(mode="json") if record.provenance else None,
                 score=record.score.model_dump(mode="json") if record.score else None,
-                limitations=list(record.limitations), baseline_run_id=record.baseline_run_id,
+                limitations=list(record.limitations),
             ))
         # A run that is not a campaign at all.
         session.add(Run(id=PLAIN, project_id=PROJECT, mode="api", status="succeeded", stage_table={}))
@@ -328,7 +294,8 @@ def test_finding_fields_and_dismissal_matrix(ml_api: dict[str, Any]) -> None:
     assert blob["target"] == "bundled:tiny"
     assert blob["references"] == ["Goodfellow et al. 2015, arXiv:1412.6572"]
     assert blob["artifact_path"] == f"artifact-{BASELINE}-record"
-    assert blob["remediation_steps"].startswith("CANDIDATE (not evaluated): ")
+    assert blob["remediation_steps"].startswith("CANDIDATE: ")
+    assert "expected gain" not in blob["remediation_steps"].lower()
     assert "Measured:" in blob["description"] and "LLM" not in blob["description"]
     for cited in ("[m.evasion.fgsm.eps0.03]", "[m.clean]", "[m.control.noise.eps0.03]"):
         assert cited in blob["description"]
@@ -385,7 +352,7 @@ def test_finding_fields_and_dismissal_matrix(ml_api: dict[str, Any]) -> None:
     assert system.status_code == 403 and writer.last("finding.review").success is False
 
     reviewer = ml_api["as_user"](_user("reviewer", "approver"))
-    stale = reviewer.patch(path, json={**body, "expected_status": "fixing"})
+    stale = reviewer.patch(path, json={**body, "expected_status": "fixed"})
     assert stale.status_code == 409
     assert stale.json()["detail"]["code"] == "run_terminal" and stale.json()["detail"]["status"] == "open"
     assert writer.last("finding.review").success is False
@@ -418,17 +385,14 @@ def test_finding_fields_and_dismissal_matrix(ml_api: dict[str, Any]) -> None:
     # false_positive is terminal in Phase A.
     terminal = reviewer.patch(path, json={**body, "expected_status": "false_positive"})
     assert terminal.status_code == 409 and terminal.json()["detail"]["code"] == "run_terminal"
-    assert terminal.json()["detail"]["allowed_from"] == ["failed", "open"]
+    assert terminal.json()["detail"]["allowed_from"] == ["open"]
 
-    # Only open | failed may be dismissed: fixing is refused, failed is accepted.
+    # Only open may be dismissed: a fixed finding (closed by a reviewer's resolve) is refused.
     pgd_path = f"/v1/findings/{findings['pgd']}/status"
-    _set_status(ml_api, findings["pgd"], "fixing")
-    fixing = reviewer.patch(pgd_path, json={**body, "expected_status": "fixing"})
-    assert fixing.status_code == 409 and fixing.json()["detail"]["code"] == "run_terminal"
-    _set_status(ml_api, findings["pgd"], "failed")
-    failed = reviewer.patch(pgd_path, json={**body, "expected_status": "failed"})
-    assert failed.status_code == 200 and failed.json()["status"] == "false_positive"
-    assert writer.last("finding.review").detail["from_status"] == "failed"
+    _set_status(ml_api, findings["pgd"], "fixed")
+    fixed = reviewer.patch(pgd_path, json={**body, "expected_status": "fixed"})
+    assert fixed.status_code == 409 and fixed.json()["detail"]["code"] == "run_terminal"
+    assert writer.last("finding.review").success is False
     assert reviewer.patch("/v1/findings/nope/status", json=body).status_code == 404
 
 
@@ -552,9 +516,8 @@ def test_ml_report_render_rerenders_from_run_record(ml_api: dict[str, Any], monk
     from redsim.workers.tasks.report import report_render
 
     findings = _project(ml_api)
-    _set_status(ml_api, findings["pgd"], "failed")
+    _set_status(ml_api, findings["pgd"], "fixed")
     with ml_api["get_session"]() as session:
-        session.get(Finding, findings["pgd"]).validation_state = "poc_failed"
         table = ml_api["campaigns"]
         session.execute(table.update().where(table.c.run_id == BASELINE).values(
             reviewer_notes="Notes added after the run finished."))
@@ -591,8 +554,7 @@ def test_ml_report_render_rerenders_from_run_record(ml_api: dict[str, Any], monk
     assert result["source"] == "ml.run_record" and result["formats"] == ["md", "json", "html", "pdf"]
     assert result["record_sha256"] == _sha(ml_api["records"][BASELINE].model_dump_json().encode())
     assert result["reviewer_notes_present"] is True
-    assert result["finding_states"]["ml.pgd"]["validation_state"] == "poc_failed"
-    assert result["finding_states"]["ml.pgd"]["status"] == "failed"
+    assert result["finding_states"]["ml.pgd"] == {"status": "fixed"}, "the review outcome only, nothing measured"
     assert result["markdown_path"] and result["json_path"] and result["html_path"]
 
     with sessions() as session:
@@ -609,7 +571,8 @@ def test_ml_report_render_rerenders_from_run_record(ml_api: dict[str, Any], monk
     event = writer.last("report.render")
     assert event.run_id == BASELINE and event.project_id == PROJECT and event.success is True
     assert event.detail["formats"] == ["md", "json", "html", "pdf"] and event.detail["source"] == "ml.run_record"
-    assert event.detail["finding_states"] == {"ml.fgsm": "unvalidated", "ml.pgd": "poc_failed"}
+    assert event.detail["finding_status"] == {"ml.fgsm": "open", "ml.pgd": "fixed"}
+    assert "finding_states" not in event.detail and "validation_state" not in json.dumps(event.detail)
     assert event.detail["reviewer_notes_sha256"] == _sha(b"Notes added after the run finished.")
     assert "Notes added" not in json.dumps(event.detail)
 

@@ -18,7 +18,6 @@ import {
   resolveOrgId,
   startCampaign,
   startScan,
-  verifyFinding,
   type CampaignRequest,
   type ProjectMembership,
 } from "./api";
@@ -190,22 +189,6 @@ describe("typed client helpers", () => {
     expect(lastInit().body).toBe(JSON.stringify(request));
     expect(lastInit().body).not.toContain("scoring_weights");
     expect(lastInit().body).not.toContain("sample_size");
-  });
-
-  it("verifyFinding nests defense params under params", async () => {
-    fetchMock.mockResolvedValue(ok("{}"));
-    await verifyFinding("finding/1", "jpeg", { quality: 80 }, "r.R2");
-    expect(lastUrl()).toBe(
-      "http://localhost:8000/v1/findings/finding%2F1/verify",
-    );
-    expect(lastInit().method).toBe("POST");
-    expect(lastInit().body).toBe(
-      JSON.stringify({
-        defense: "jpeg",
-        params: { quality: 80 },
-        recommendation_id: "r.R2",
-      }),
-    );
   });
 
   it("dismissFinding PATCHes status with reason and optimistic status", async () => {

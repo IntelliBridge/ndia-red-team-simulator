@@ -22,7 +22,6 @@ from redsim.cli.main import (
     cmd_findings,
     cmd_report,
     cmd_scan,
-    cmd_verify,
     main,
 )
 from redsim.config import RedsimConfig
@@ -194,10 +193,11 @@ class TestBuildParser(unittest.TestCase):
         args = parser.parse_args(["findings"])
         self.assertEqual(args.command, "findings")
 
-    def test_parser_has_verify_subcommand(self):
+    def test_parser_has_no_verify_subcommand(self):
+        # ``redsim verify`` left with the verify paradigm (2026-09-09); ``audit verify`` stays.
         parser = build_parser()
-        args = parser.parse_args(["verify", "finding-x"])
-        self.assertEqual(args.command, "verify")
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["verify", "finding-x"])
 
     def test_parser_has_report_subcommand(self):
         parser = build_parser()
@@ -636,87 +636,6 @@ class TestCmdFindings(unittest.TestCase):
             args = Namespace(run="specific-run")
             with patch("builtins.print"):
                 cmd_findings(args, config)
-
-
-class TestCmdVerify(unittest.TestCase):
-
-    def test_verify_finding_not_found_exits_1(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            args = Namespace(
-                finding_id="nonexistent", run=None, repo=None,
-                no_provenance_check=False, global_api=False,
-            )
-            with patch("redsim.cli.api_client.is_api_mode", return_value=False), \
-                 self.assertRaises(SystemExit) as ctx:
-                cmd_verify(args, config)
-            self.assertEqual(ctx.exception.code, 1)
-
-    def test_verify_ok(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            result = MagicMock()
-            result.finding_id = "test-finding-001"
-            result.strategy = "http_replay"
-            result.status = "verified"
-            result.notes = "ok"
-            args = Namespace(
-                finding_id="test-finding-001", run=None, repo=None,
-                no_provenance_check=False, global_api=False,
-            )
-            with patch("redsim.cli.api_client.is_api_mode", return_value=False), \
-                 patch("redsim.services.verify.verify", return_value=result), \
-                 patch("builtins.print"):
-                cmd_verify(args, config)
-
-    def test_verify_inconclusive_status(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            config = _make_config(tmp)
-            _seed_state(tmp)
-            result = MagicMock()
-            result.finding_id = "test-finding-001"
-            result.strategy = "sast"
-            result.status = "inconclusive"
-            result.notes = None
-            args = Namespace(
-                finding_id="test-finding-001", run=None, repo="/tmp/r",
-                no_provenance_check=True, global_api=False,
-            )
-            with patch("redsim.cli.api_client.is_api_mode", return_value=False), \
-                 patch("redsim.services.verify.verify", return_value=result), \
-                 patch("builtins.print"):
-                cmd_verify(args, config)
-
-    def test_verify_via_api(self):
-        with patch("redsim.cli.api_client.is_api_mode", return_value=True), \
-             patch("redsim.cli.api_client.build_client") as mock_bc:
-            mock_client = MagicMock()
-            mock_client.verify.return_value = {"job_id": "j1"}
-            mock_bc.return_value = mock_client
-            args = Namespace(
-                finding_id="test-finding-001", run=None, repo=None,
-                no_provenance_check=False, global_api=True,
-            )
-            cmd_verify(args, RedsimConfig())
-            mock_client.verify.assert_called_once()
-
-    def test_verify_api_error_exits_1(self):
-        from redsim.cli.api_client import ApiError
-
-        with patch("redsim.cli.api_client.is_api_mode", return_value=True), \
-             patch("redsim.cli.api_client.build_client") as mock_bc:
-            mock_client = MagicMock()
-            mock_client.verify.side_effect = ApiError(503, "unavailable")
-            mock_bc.return_value = mock_client
-            args = Namespace(
-                finding_id="test-finding-001", run=None, repo=None,
-                no_provenance_check=False, global_api=True,
-            )
-            with self.assertRaises(SystemExit) as ctx:
-                cmd_verify(args, RedsimConfig())
-            self.assertEqual(ctx.exception.code, 1)
 
 
 # ---------------------------------------------------------------------------

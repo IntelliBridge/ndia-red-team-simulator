@@ -6,18 +6,17 @@ writer, dependency-overridden caller) plus the hand-built records of
 ``test_report.py`` for the pure renderers.
 
 * PDF: ``%PDF-`` magic, byte-identical for identical inputs, the six spec 14.8
-  sections in order with the ``ε`` / ``Δ`` glyphs, ``MRI not computed`` on a
-  partial record, the ΔMRI block on a verify record, the non-default-weights
-  badge, ``schema_version`` in section 1; ``render_campaign_reports`` adds the
-  PDF only when asked.
+  sections in order with the ``ε`` glyph, ``MRI not computed`` on a partial
+  record, the non-default-weights badge, ``schema_version`` in section 1;
+  ``render_campaign_reports`` adds the PDF only when asked.
 * Snapshots: the render admission is audit-first and refuses a second render in
   flight; the worker task writes one immutable ``report_snapshots`` row per
   render whose artifact ids and digests equal the ``Artifact`` rows; a second
   render leaves the first untouched; ``?snapshot=`` serves the old bytes; the
   admin archive flag is audited, hides nothing from the list, refuses a
   non-admin fetch and restores.
-* N-run compare: request-order rows, a delta only on the verify row against its
-  own baseline, no mean or rank key anywhere, ``409`` on an incompatible pair
+* N-run compare: request-order rows, one scorecard per row and no delta, mean
+  or rank key anywhere, ``409`` on an incompatible pair
   (naming the pair) or a partial score, ``403`` before any body for a foreign
   run, ``422`` outside 2..10 ids, ``scoring.weights`` named for a differing vector.
 * Weights: ``GET`` default, admin ``PUT`` of a full vector, partial or non-unit
@@ -51,8 +50,6 @@ from redsim.ml import compare as cmp
 from redsim.ml.pdf import PDF_MAGIC, PDF_SECTION_HEADINGS, render_pdf
 from redsim.ml.reporting import (
     DEFAULT_WEIGHTS_NOTE,
-    DELTA_HEADING,
-    DERIVED_MODEL_HEADING,
     DETECTION_EVIDENCE_HEADING,
     DETECTION_SCORECARD_HEADING,
     EXPORT_REDACTION_NOTE,
@@ -92,14 +89,13 @@ from tests.ml.test_findings_routes import (  # noqa: F401 - fixture import
     PARTIAL,
     PLAIN,
     PROJECT,
-    VERIFY,
     MemoryBlobStore,
     RecordingAuditWriter,
     _sha,
     _user,
     ml_api,
 )
-from tests.ml.test_report import NOW, _record, _score, _verify_record
+from tests.ml.test_report import NOW, _record, _score
 
 pytestmark = pytest.mark.integration
 
@@ -217,23 +213,6 @@ def _detection_record() -> CampaignRecord:
     )
 
 
-def _training_verify_record() -> CampaignRecord:
-    """The verify record of a training defense: provenance.defense kind training plus the derived_from block."""
-    data = _verify_record().model_dump(mode="json")
-    data["provenance"]["defense"] = {
-        "kind": "training", "id": "adversarial_training", "art_class": "art.defences.trainer.AdversarialTrainer",
-        "params": {"epochs": 3}, "parent_sha256": "a1" * 32, "derived_sha256": "b2" * 32,
-        "training_report": {"epochs_run": 3, "epochs_requested": 3, "wall_time_s": 41.5, "wall_budget_s": 600,
-                            "weights_changed": True, "backbone_frozen": False, "budget_exhausted": False,
-                            "n_train": 1536},
-    }
-    data["provenance"]["model_manifest"]["derived_from"] = {
-        "parent_target_id": "vehicles_cnn-1a2b3c4d", "parent_sha256": "a1" * 32,
-        "defense_id": "adversarial_training", "training_budget": {"epochs": 3, "wall_s": 600},
-    }
-    return CampaignRecord.model_validate(data)
-
-
 def _llm_probe_record() -> CampaignRecord:
     """A probe run carried as a CampaignRecord: an LLM endpoint target and the scorecard dump in the manifest."""
     from redsim.ml.llm.scorecard import (
@@ -256,7 +235,7 @@ def _llm_probe_record() -> CampaignRecord:
         limitations=llm_standing_limitations(guardrail_mode="permission_gate_only", max_prompts_per_probe=16,
                                              seed=0, garak_version="0.16.0"),
     )
-    provenance = {**_verify_record().provenance.model_dump(mode="json"), "defense": None, "baseline_run_id": None}  # type: ignore[union-attr]
+    provenance = _record().provenance.model_dump(mode="json")  # type: ignore[union-attr]
     provenance["model_manifest"] = {"endpoint": {"kind": "llm"}, "llm_scorecard": card.model_dump(mode="json")}
     return _record(
         run_id="run-probe-1", provenance=provenance, measurements=[], observations=[],
@@ -297,7 +276,7 @@ def test_pdf_is_deterministic_and_carries_the_six_sections_with_glyphs() -> None
     assert render_pdf(record, generated_at=datetime(2026, 9, 10, tzinfo=UTC)) != first
 
 
-def test_pdf_partial_record_says_mri_not_computed_and_verify_record_has_delta_block() -> None:
+def test_pdf_partial_record_says_mri_not_computed() -> None:
     partial = json.loads(FIXTURE.read_text())
     partial["completeness"] = "partial"
     partial["missing"] = ["S_expl unavailable (explainer failed)"]
@@ -306,13 +285,8 @@ def test_pdf_partial_record_says_mri_not_computed_and_verify_record_has_delta_bl
     partial["score"]["subscores"]["S_expl"] = None
     text = _pdf_text(render_pdf(CampaignRecord.model_validate(partial), generated_at=NOW))
     assert "MRI not computed" in text and "grade D" not in text and "MRI 42" not in text
-
-    verify_text = _pdf_text(render_pdf(_verify_record(), generated_at=NOW))
-    assert "ΔMRI" in verify_text, "the Δ glyph and the verify block render"
-    assert DELTA_HEADING.removeprefix("### ") in verify_text
-    assert "+15" in verify_text and "40" in verify_text and "55" in verify_text
     attack_text = _pdf_text(render_pdf(_record(), generated_at=NOW))
-    assert DELTA_HEADING.removeprefix("### ") not in attack_text
+    assert "ΔMRI" not in attack_text and "Expected gain" not in attack_text, "one measurement, no delta"
 
 
 def test_non_default_weights_badge_in_markdown_and_pdf(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -436,7 +410,7 @@ def test_render_admission_is_audit_first_and_refuses_a_second_render_in_flight(
     assert _call(ml_api, scanner, "POST", "/v1/runs/run-missing/report.render").status_code == 404
     plain = _call(ml_api, scanner, "POST", f"/v1/runs/{PLAIN}/report.render")
     assert plain.status_code == 404, "a run that is not a campaign has no record to render"
-    bad = _call(ml_api, scanner, "POST", f"/v1/runs/{VERIFY}/report.render", json={"formats": ["docx"]})
+    bad = _call(ml_api, scanner, "POST", f"/v1/runs/{OTHER_SEED}/report.render", json={"formats": ["docx"]})
     assert bad.status_code == 422 and bad.json()["detail"]["code"] == "params_out_of_range"
     assert bad.json()["detail"]["field"] == "formats"
     # A live run is refused with campaign_not_terminal and a success=False row.
@@ -656,25 +630,6 @@ def test_text_and_detection_scorecards_render_in_markdown_and_pdf() -> None:
     assert CampaignRecord.model_validate(payload) == detection
 
 
-def test_derived_model_lineage_renders_in_the_delta_block_and_the_pdf() -> None:
-    """ATTACKS_HARDEN-13: the training defense's lineage the worker recorded reaches the verify report and PDF."""
-    record = _training_verify_record()
-    md = render_markdown(record, generated_at=NOW)
-    assert DERIVED_MODEL_HEADING in md
-    assert md.index(DELTA_HEADING) < md.index(DERIVED_MODEL_HEADING) < md.index("**ΔMRI +15**")
-    assert f"Parent weights sha256: `{'a1' * 32}`; derived weights sha256: `{'b2' * 32}`" in md
-    assert "3 of 3 epochs; wall time 41.5 s of a 600 s budget; budget exhausted: no; weights changed: yes" in md
-    assert "backbone frozen: no; n_train = 1536." in md
-    assert "Lineage (derived_from): parent target `vehicles_cnn-1a2b3c4d`" in md
-    assert "not a claim about the result" in md
-    pdf_text = _flat(_pdf_text(render_pdf(record, generated_at=NOW)))
-    assert "Derived model (training defense; the verify run measures it)" in pdf_text
-    assert "3 of 3 epochs" in pdf_text and "weights changed: yes" in pdf_text and "vehicles_cnn-1a2b3c4d" in pdf_text
-    # A verify record without a training defense keeps the block out (nothing inferred).
-    plain_verify = render_markdown(_verify_record(), generated_at=NOW)
-    assert DERIVED_MODEL_HEADING not in plain_verify and "Lineage (derived_from)" not in plain_verify
-
-
 # --------------------------------------------------------------------------- N-run compare (REVIEW_REPORTS-26, -30)
 
 
@@ -702,7 +657,7 @@ def _seed_variant(api: dict[str, Any], run_id: str, mutate: Any) -> None:
             modality="image", config=record.config.model_dump(mode="json"), settings_hash=record.settings_hash,
             provenance=record.provenance.model_dump(mode="json") if record.provenance else None,
             score=record.score.model_dump(mode="json") if record.score else None,
-            limitations=list(record.limitations), baseline_run_id=record.baseline_run_id,
+            limitations=list(record.limitations),
         ))
 
 
@@ -726,47 +681,42 @@ def _walk_keys(payload: Any) -> set[str]:
     return keys
 
 
-def test_n_run_table_rows_in_request_order_with_delta_only_on_the_verify_row(ml_api: dict[str, Any]) -> None:  # noqa: F811
+def test_n_run_table_rows_in_request_order_without_a_delta(ml_api: dict[str, Any]) -> None:  # noqa: F811
     viewer = _user("reader", "viewer")
-    resp = _call(ml_api, viewer, "GET", "/v1/runs/compare", params={"ids": f"{OTHER_MODEL},{BASELINE},{VERIFY}"})
+    resp = _call(ml_api, viewer, "GET", "/v1/runs/compare", params={"ids": f"{OTHER_MODEL},{BASELINE}"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["mode"] == "table" and body["compatible"] is True
-    assert [row["run_id"] for row in body["rows"]] == [OTHER_MODEL, BASELINE, VERIFY], "request order"
-    by_id = {row["run_id"]: row for row in body["rows"]}
-    assert by_id[OTHER_MODEL]["delta"] is None and by_id[BASELINE]["delta"] is None
-    verify_row = by_id[VERIFY]
-    assert verify_row["baseline_run_id"] == BASELINE and verify_row["delta_source"] == "persisted"
-    assert verify_row["delta"]["delta_mri"] == 13 and verify_row["delta"]["mri_before"] == 42
-    assert verify_row["delta"]["delta_families"][0]["n_before"] == 200
+    assert [row["run_id"] for row in body["rows"]] == [OTHER_MODEL, BASELINE], "request order"
     for row in body["rows"]:
         assert row["mri"] is not None and row["grade"] and row["subscores"] and row["per_attack"]
         assert row["curve"] and row["families"] and row["limitations"], "never an MRI without its tables (15.8 ii)"
         assert all({"n", "n_correct"} <= set(f) for f in row["families"])
         assert row["weights"] == MRIWeights().as_dict() and row["non_default_weights"] is False
+        assert row["kind"] == "attack"
     assert body["changed_variables_per_row"][OTHER_MODEL] == []
     assert body["changed_variables_per_row"][BASELINE] == ["model", "target"]
     assert "seed" in body["unchanged_variables"] and "model_sha256" not in body["unchanged_variables"]
     assert body["ignored_variables"] == list(cmp.IGNORED_VARIABLES) and body["caveats"] == sorted(body["caveats"])
     keys = _walk_keys(body)
     assert not (keys & {"mean", "rank", "average", "aggregate", "ranking"}), "no aggregate column (D9 i)"
-    # Two runs is the minimum; the same pair through the table agrees with the pairwise route's delta.
-    pair = _call(ml_api, viewer, "GET", "/v1/runs/compare", params={"ids": f"{VERIFY},{BASELINE}"}).json()
-    assert [r["run_id"] for r in pair["rows"]] == [VERIFY, BASELINE] and pair["rows"][0]["delta"]["delta_mri"] == 13
-    # A verify row whose baseline is not in the set carries no delta, and says why.
-    alone = _call(ml_api, viewer, "GET", "/v1/runs/compare", params={"ids": f"{VERIFY},{OTHER_MODEL}"}).json()
-    assert alone["rows"][0]["delta"] is None and BASELINE in alone["rows"][0]["delta_note"]
+    assert not {k for k in keys if k.startswith("delta") or k.startswith("baseline")}, "every run is its own measurement"
+    # The same pair through the pairwise route: side by side, two scorecards, no delta.
+    pair = _call(ml_api, viewer, "GET", f"/v1/runs/{BASELINE}/compare", params={"with": OTHER_MODEL}).json()
+    assert pair["mode"] == "side_by_side" and len(pair["scorecards"]) == 2
+    assert not {k for k in _walk_keys(pair) if k.startswith("delta") or k.startswith("baseline")}
+    assert "defense" not in pair["changed_variables"]
 
 
 def test_n_run_table_refusals(ml_api: dict[str, Any]) -> None:  # noqa: F811
     viewer = _user("reader", "viewer")
     # One incompatible pair refuses the whole table and names the pair.
-    resp = _call(ml_api, viewer, "GET", "/v1/runs/compare", params={"ids": f"{BASELINE},{VERIFY},{OTHER_SEED}"})
+    resp = _call(ml_api, viewer, "GET", "/v1/runs/compare", params={"ids": f"{BASELINE},{OTHER_MODEL},{OTHER_SEED}"})
     assert resp.status_code == 409, resp.text
     detail = resp.json()["detail"]
     assert detail["code"] == "incompatible_campaigns"
     assert detail["reasons"] == ["n_samples", "seed", "sample_indices_sha256"]
-    assert {tuple(p["runs"]) for p in detail["pairs"]} == {(BASELINE, OTHER_SEED), (VERIFY, OTHER_SEED)}
+    assert {tuple(p["runs"]) for p in detail["pairs"]} == {(BASELINE, OTHER_SEED), (OTHER_MODEL, OTHER_SEED)}
     assert all(p["reasons"] == detail["reasons"] for p in detail["pairs"])
     # A partial score refuses the table naming the run; compatibility is checked first.
     partial = _call(ml_api, viewer, "GET", "/v1/runs/compare", params={"ids": f"{BASELINE},{PARTIAL}"})
@@ -785,7 +735,8 @@ def test_n_run_table_refusals(ml_api: dict[str, Any]) -> None:  # noqa: F811
     assert _call(ml_api, viewer, "GET", "/v1/runs/compare", params={"ids": f"{BASELINE},{BASELINE}"}).status_code == 422
     assert _call(ml_api, viewer, "GET", "/v1/runs/compare").status_code == 422, "ids is required"
     # The pairwise route is unchanged by the new path.
-    assert _call(ml_api, viewer, "GET", f"/v1/runs/{BASELINE}/compare", params={"with": VERIFY}).json()["delta_mri"] == 13
+    pair = _call(ml_api, viewer, "GET", f"/v1/runs/{BASELINE}/compare", params={"with": OTHER_SEED})
+    assert pair.status_code == 409 and pair.json()["detail"]["code"] == "incompatible_campaigns"
 
 
 def test_differing_weight_vectors_are_incomparable_and_the_campaign_carries_the_badge(ml_api: dict[str, Any]) -> None:  # noqa: F811
@@ -810,26 +761,25 @@ def test_differing_weight_vectors_are_incomparable_and_the_campaign_carries_the_
 
 def test_comparison_table_is_pure_and_refuses_aggregate_keys() -> None:
     base = json.loads(FIXTURE.read_text())
-    verify = copy.deepcopy(base)
-    verify.update({"run_id": "run-v", "kind": "verify", "baseline_run_id": base["run_id"]})
-    verify["provenance"]["baseline_run_id"] = base["run_id"]
-    table = cmp.comparison_table([(base["run_id"], base, None), ("run-v", verify, None)])
-    assert [r["run_id"] for r in table["rows"]] == [base["run_id"], "run-v"]
-    assert table["rows"][1]["delta"] is not None and table["rows"][1]["delta_source"] == "computed"
-    assert table["rows"][1]["delta"]["delta_mri"] == 0, "identical records measure a zero delta"
+    twin = copy.deepcopy(base)
+    twin["run_id"] = "run-twin"
+    table = cmp.comparison_table([(base["run_id"], base, None), ("run-twin", twin, None)])
+    assert [r["run_id"] for r in table["rows"]] == [base["run_id"], "run-twin"]
+    assert "delta" not in table["rows"][1] and "delta_source" not in table["rows"][1], "no delta column"
     with pytest.raises(ValueError, match="at least 2"):
         cmp.comparison_table([(base["run_id"], base, None)])
     with pytest.raises(ValueError, match="only once"):
         cmp.comparison_table([(base["run_id"], base, None), (base["run_id"], base, None)])
     with pytest.raises(ValueError, match="aggregate key"):
         cmp.assert_no_aggregate_keys({"rows": [{"mean": 1}]})
-    # A verify run on a different model than its baseline is refused as a pairing rule.
-    other_model = copy.deepcopy(verify)
-    other_model["provenance"]["model_sha256"] = "e1" * 32
+    # A differing seed is refused as a variable-level mismatch naming the pair.
+    other_seed = copy.deepcopy(twin)
+    other_seed["config"]["seed"] = 7
+    other_seed["settings_hash"] = other_seed["provenance"]["settings_hash"] = "b" * 64
     with pytest.raises(cmp.Incompatible) as excinfo:
-        cmp.comparison_table([(base["run_id"], base, None), ("run-v", other_model, None)])
-    assert any(reason.startswith("model_sha256") for reason in excinfo.value.reasons)
-    assert excinfo.value.pairs[0]["runs"] == [base["run_id"], "run-v"]
+        cmp.comparison_table([(base["run_id"], base, None), ("run-twin", other_seed, None)])
+    assert "seed" in excinfo.value.reasons
+    assert excinfo.value.pairs[0]["runs"] == [base["run_id"], "run-twin"]
 
 
 # --------------------------------------------------------------------------- per-project weights (REVIEW_REPORTS-28)

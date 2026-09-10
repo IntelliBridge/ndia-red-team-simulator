@@ -152,16 +152,15 @@ describe("ExportsPage server component", () => {
     expect(dehydratedQuery(dehydrated).state.status).toBe("success");
   });
 
-  it("passes project, kind and limit through to the query it prefetches", async () => {
-    await renderPage({ project: "proj-alpha", kind: "verify", limit: "25" });
+  it("passes project and limit through to the query it prefetches", async () => {
+    await renderPage({ project: "proj-alpha", limit: "25" });
     const url = upstream.calls[0]?.url ?? "";
     expect(url).toContain("project=proj-alpha");
-    expect(url).toContain("kind=verify");
     expect(url).toContain("limit=25");
   });
 
-  it("drops a kind that is not campaign or verify rather than sending it", async () => {
-    await renderPage({ kind: "probe" });
+  it("never forwards a kind query parameter", async () => {
+    await renderPage({ kind: "campaign" });
     expect(upstream.calls[0]?.url ?? "").not.toContain("kind=");
   });
 

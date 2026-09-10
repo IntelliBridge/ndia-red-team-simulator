@@ -33,7 +33,7 @@ FindingType = Literal[
     # Additive: every stored ``adversarial_ml`` blob still validates.
     "adversarial_llm", "adversarial_ml_manual",
 ]
-Status = Literal["open", "fixing", "fixed", "failed", "false_positive"]
+Status = Literal["open", "fixed", "false_positive"]
 Confidence = Literal["high", "medium", "low"]
 
 

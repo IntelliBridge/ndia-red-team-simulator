@@ -1,18 +1,15 @@
 """``redsim.ml.campaign.run_campaign`` on the TinyTarget double against the frozen M0 contract (``ml`` tier).
 
-The explain, recommend, summary, narrative, defenses and hardening modules are injected or removed through
-``sys.modules`` so these tests hold whether or not the concurrent builders' modules are present. The
-Phase B frame (``redsim.ml.runners``): runners are dispatched by modality from ``MODALITY_RUNNERS`` and a
-missing runner refuses before any stage; a ``kind: training`` defense goes through
-``redsim.ml.harden.apply.apply_training_defense`` and a missing module records the defense unavailable
-with the score withheld; ``defense_apply`` is emitted only for an applied training defense; the run
-pins ``NLTK_DATA`` and ``TORCH_HOME`` offline for its duration.
+The explain, recommend, summary and narrative modules are injected or removed through ``sys.modules`` so
+these tests hold whether or not the concurrent builders' modules are present. The Phase B frame
+(``redsim.ml.runners``): runners are dispatched by modality from ``MODALITY_RUNNERS`` and a missing runner
+refuses before any stage; the run pins ``NLTK_DATA`` and ``TORCH_HOME`` offline for its duration.
 
 Pins: ``CampaignConfig`` in, ``CampaignRecord`` (a ``RunRecord``) out with the ``score`` stage;
 ``RunRecord.score`` is an ``MRIRecord`` that is PARTIAL (no ``mri``, no ``grade``) whenever the explain
 stage gave ``S_expl`` no input; ``RunRecord.attacks`` carries the registry snapshots; the limitations
 start with ``schema.standing_limitations``; the P0 provenance fields are filled; every citation
-resolves; candidates carry no measured delta; the benign control runs at the same eps as the attacks.
+resolves; candidates carry no measurement of their effect; the benign control runs at the same eps as the attacks.
 """
 
 from __future__ import annotations
@@ -25,7 +22,7 @@ import types
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 pytest.importorskip("torch")
 pytest.importorskip("art")
@@ -38,13 +35,10 @@ from redsim.ml.attacks.base import AttackOutput
 from redsim.ml.campaign import (
     CURVE_PNG_NAME,
     D3_BOUNDS_LIMITATION,
-    DEFENSE_LIMITATION,
     REALIZABILITY_CAVEAT,
     SHAP_SUMMARY_TEXT_NAME,
     SUBJECT_CENTERED_CAVEAT,
     TABULAR_LIMITATION,
-    TRAINING_DEFENSE_LIMITATION,
-    TRAINING_DEFENSE_MODULE,
     run_campaign,
 )
 from redsim.ml.errors import AttackNotApplicable, ExplainUnavailable, MLError, TargetUnavailable
@@ -64,7 +58,6 @@ from redsim.ml.schema import (
     CampaignConfig,
     CampaignRecord,
     CandidateRecommendation,
-    DefenseConfig,
     Interpretation,
     Measurement,
     MLFindingDetail,
@@ -81,7 +74,6 @@ from redsim.ml.schema import (
 from redsim.ml.scoring import (
     SUBSCORE_KEYS,
     confidence_for,
-    delta,
     finding_inputs,
     severity_for,
     weights_by_subscore,
@@ -95,7 +87,6 @@ EXPLAIN_MOD = "redsim.ml.explain.shap_image"
 RULES_MOD = "redsim.ml.recommend.rules"
 SUMMARY_MOD = "redsim.ml.explain.summary"
 NARRATIVE_MOD = "redsim.ml.recommend.narrative"
-DEFENSES_MOD = "redsim.ml.defenses"
 GRID = [0.01, 0.03, 0.1]
 REF = 0.03
 EPS_TAGS = ("0.01", "0.03", "0.1")
@@ -206,19 +197,6 @@ def make_fake_narrative_stack():
     narrative.add_narrative = add_narrative
     narrative.calls = calls
     return summary, narrative
-
-
-def make_fake_defenses():
-    defenses = types.ModuleType(DEFENSES_MOD)
-    seen: dict = {}
-
-    def apply_defense(target, defense_id, params):
-        seen["args"] = (target.id, defense_id, params)
-        return target
-
-    defenses.apply_defense = apply_defense
-    defenses.seen = seen
-    return defenses
 
 
 @pytest.fixture
@@ -344,7 +322,7 @@ def test_stages_provenance_and_limitations(record_no_explain):
     assert p.dataset == "synthetic" and p.dataset_split == "test" and p.dataset_revision is None
     assert p.sample_indices_sha256 == hashlib.sha256(np.arange(16, dtype=np.int64).tobytes()).hexdigest()
     assert p.settings_hash == rec.settings_hash == rec.score.settings_hash
-    assert p.baseline_run_id is None and p.parent_run_id is None and p.defense is None and p.llm is None
+    assert p.parent_run_id is None and p.llm is None
     assert p.thread_env.get("torch_threads") and p.shap
     assert p.finished_at is not None and p.finished_at >= p.started_at and p.device == "cpu"
     assert "CPU float32 reductions; results may differ across BLAS builds and thread counts" in p.nondeterminism
@@ -429,7 +407,7 @@ def test_injected_explain_yields_a_complete_score_with_five_subscores(monkeypatc
     assert len(ref_inputs) == 2
     assert all(r.expl_shift == 0.4 and r.n_explained == 4 for r in ref_inputs)
     assert all(r.n_correct_clean == rec.measurements[0].n_correct for r in ref_inputs)
-    assert s.delta is None and rec.completeness == "complete" and rec.missing == []
+    assert rec.completeness == "complete" and rec.missing == []
     # observations from both attacks kept, colliding ids namespaced by attack
     assert len(rec.observations) == 8
     assert {o.id for o in rec.observations} == {f"o.{i:03d}" for i in range(4)} | {f"o.{i:03d}.pgd" for i in range(4)}
@@ -497,7 +475,7 @@ def test_rules_and_narrative_wiring(monkeypatch, sink):
     assert seen["recommend"]["seed"] == 0 and seen["recommend"]["thresholds"] == cfg.scoring.interpretation
     assert [r.id for r in rec.recommendations] == ["r.R1"]
     r = rec.recommendations[0]
-    assert r.status == "candidate" and r.validation == "not evaluated" and r.measured is None
+    assert r.status == "candidate"
     assert r.triggered_by == ["m.evasion.fgsm.eps0.03", "i.1"]
     assert r.narrative is None and r.narrative_source == "rules"
     assert narrative.calls == []                       # settings None -> no LLM call
@@ -510,7 +488,7 @@ def test_rules_and_narrative_wiring(monkeypatch, sink):
     assert summary.calls[-1]["norm"] == "linf" and summary.calls[-1]["limitations"]
     r2 = rec2.recommendations[0]
     assert r2.narrative_source == "llm" and r2.narrative
-    assert r2.validation == "not evaluated" and r2.measured is None      # still no measured gain
+    assert r2.status == "candidate"                                       # the narrative changes no label
     assert any(n_.startswith("LLM narrative is nondeterministic") for n_ in rec2.provenance.nondeterminism)
     assert rec2.provenance.llm is not None
 
@@ -576,7 +554,7 @@ def test_finding_derivation_on_a_larger_slice(no_optional_modules, sink):
                              reference_eps=REF, first_success_eps=fi.first_success_eps,
                              asr_at_reference=fi.asr_at_reference, asr_by_eps=fi.asr_by_eps,
                              threshold=fi.threshold, measurements=list(rows.values()), limitations=rec.limitations)
-    assert detail.atlas_technique is None and detail.review.state == "unreviewed" and detail.verify is None
+    assert detail.atlas_technique is None and detail.review.state == "unreviewed"
     assert len(rec.attacks) == 1 and rec.attacks[0].id == "fgsm"
 
 
@@ -679,54 +657,6 @@ def test_per_project_target_id_resolves_the_bundled_registry_id(no_optional_modu
 def test_frozen_config_rejects_invalid_campaigns_at_construction(overrides):
     with pytest.raises(ValidationError):
         base_config(**overrides)
-
-
-def test_defense_without_defenses_module_refuses_to_run_undefended(no_optional_modules, monkeypatch, sink):
-    monkeypatch.setitem(sys.modules, DEFENSES_MOD, None)
-    with pytest.raises(MLError):
-        run_campaign(base_config(defense=DefenseConfig(id="feature_squeezing")), sink, explain=False)
-
-
-def test_verify_run_applies_the_defense_and_measures_a_delta_against_its_baseline(monkeypatch, sink, tmp_path):
-    monkeypatch.setitem(sys.modules, EXPLAIN_MOD, make_fake_explain(shift=0.3))
-    monkeypatch.setitem(sys.modules, RULES_MOD, None)
-    defenses = make_fake_defenses()
-    monkeypatch.setitem(sys.modules, DEFENSES_MOD, defenses)
-    baseline = run_campaign(base_config(), sink)
-    defense = DefenseConfig(id="spatial_smoothing", params={"window_size": 3})
-    verify = run_campaign(base_config(defense=defense), FilesystemSink(tmp_path / "verify"),
-                          baseline_run_id=baseline.run_id)
-    assert defenses.seen["args"] == ("tiny", "spatial_smoothing", {"window_size": 3})
-    assert verify.kind == "verify" and verify.baseline_run_id == baseline.run_id
-    assert verify.provenance.baseline_run_id == baseline.run_id
-    assert verify.provenance.defense == defense.model_dump(mode="json")
-    assert any("straight-through gradient estimate" in lim for lim in verify.limitations)
-    # the settings hash ignores the defense, so the two campaigns are comparable
-    assert verify.settings_hash == baseline.settings_hash and verify.score.mri is not None
-    d = delta(baseline.score, verify.score, baseline_run_id=baseline.run_id,
-              measurements_before=baseline.measurements, measurements_after=verify.measurements)
-    assert d.baseline_run_id == baseline.run_id and d.mri_before == baseline.score.mri
-    assert d.delta == 0 and d.delta_acc_clean.delta == 0.0            # identity defense: nothing changed
-    assert [f.measurement_id for f in d.delta_families] == [
-        f"m.evasion.{a}.eps{e}" for a in ("fgsm", "pgd") for e in EPS_TAGS]
-    # the campaign itself never writes a delta or a measured gain: that is the verify task's job
-    assert baseline.score.delta is None and verify.score.delta is None
-    assert all(r.measured is None and r.validation == "not evaluated" for r in verify.recommendations)
-
-
-def test_verify_run_records_the_applied_defense_as_the_wrapper_describes_it(no_optional_modules, sink):
-    """With the real ``redsim.ml.defenses``, ``Provenance.defense`` carries the ART class and the resolved
-    params (spec 14.4), not just the requested ``DefenseConfig``."""
-    pytest.importorskip("art.defences.preprocessor")
-    record = run_campaign(base_config(defense=DefenseConfig(id="feature_squeezing")), sink, explain=False)
-    prov = record.provenance.defense
-    assert record.kind == "verify" and prov is not None
-    assert prov["id"] == "feature_squeezing"
-    assert prov["art_class"] == "art.defences.preprocessor.FeatureSqueezing"
-    assert prov["params"] == {"bit_depth": 4}                # the catalog default, resolved and recorded
-    assert prov["torch_model_defended"] is False              # what the wrapper does not defend, stated
-    assert record.target.name.endswith("+ Feature squeezing (bit-depth reduction)")
-    assert record.target.metadata["defense"] == prov
 
 
 # --- tabular campaign end to end (spec 12.9, register G-ATK-TAB, G-CAVEAT) ---------------------------
@@ -1197,180 +1127,6 @@ def test_frame_runs_the_runner_explain_closure_after_the_curve_artifacts(monkeyp
     assert rec.score is not None and rec.score.attack_ids == ["fgsm"]           # scored over the in-scope set
     assert [c.attack_id for c in rec.curve] == ["fgsm"] and (Path(sink.root) / "artifacts" / CURVE_PNG_NAME).exists()
     assert not any(i.id.startswith("i.explain.unavailable") for i in rec.interpretation)
-
-
-# --- Phase B frame: the training-defense hook (ATTACKS_HARDEN-06) ---------------------------------------------
-
-HARDEN_MOD = TRAINING_DEFENSE_MODULE
-
-
-def make_fake_defenses_catalog(kind: str = "training"):
-    """A defenses catalog whose ``adv_train`` entry carries ``kind`` and whose preprocessing hook must not run."""
-    defenses = types.ModuleType(DEFENSES_MOD)
-    seen: dict = {}
-
-    def get_defense(defense_id):
-        if defense_id == "adv_train":
-            return {"id": "adv_train", "kind": kind, "art_class": "art.defences.trainer.AdversarialTrainer"}
-        raise ValueError(f"unknown defense: {defense_id!r}")
-
-    def apply_defense(target, defense_id, params):
-        seen["preprocessing_args"] = (target.id, defense_id, params)
-        return target
-
-    defenses.get_defense = get_defense
-    defenses.apply_defense = apply_defense
-    defenses.seen = seen
-    return defenses
-
-
-class _HardenedView:
-    """What apply_training_defense hands back: the derived model, describing itself for the provenance."""
-
-    def __init__(self, target, defense):
-        self._target = target
-        self._defense = defense
-        self.id = target.id
-
-    def describe(self):
-        return {"id": self._defense.id, "kind": "training", "params": dict(self._defense.params),
-                "epochs_run": 1, "derived_sha256": "0" * 64}
-
-    def __getattr__(self, name):
-        return getattr(self._target, name)
-
-
-def make_fake_harden():
-    harden = types.ModuleType(HARDEN_MOD)
-    seen: dict = {}
-
-    def apply_training_defense(target, defense, *, config, sink, seed):
-        seen["args"] = {"target": target.id, "defense": defense, "config": config, "sink": sink, "seed": seed}
-        return _HardenedView(target, defense)
-
-    harden.apply_training_defense = apply_training_defense
-    harden.seen = seen
-    return harden
-
-
-def test_training_defense_is_applied_through_the_harden_hook(no_optional_modules, monkeypatch, sink):
-    defenses = make_fake_defenses_catalog()
-    harden = make_fake_harden()
-    monkeypatch.setitem(sys.modules, DEFENSES_MOD, defenses)
-    monkeypatch.setitem(sys.modules, HARDEN_MOD, harden)
-    defense = DefenseConfig(id="adv_train", params={"epochs": 1})
-    cfg = base_config(attack_ids=["fgsm"], attack_params={}, defense=defense)
-    rec = run_campaign(cfg, sink, explain=False, baseline_run_id="baseline-1")
-    args = harden.seen["args"]
-    assert args["target"] == "tiny" and args["defense"] == defense and args["config"] == cfg
-    assert args["sink"] is sink and args["seed"] == 0
-    assert "preprocessing_args" not in defenses.seen                    # kind: training never goes through apply_defense
-    assert rec.kind == "verify" and rec.baseline_run_id == "baseline-1"
-    assert rec.provenance.defense == {"id": "adv_train", "kind": "training", "params": {"epochs": 1}, "epochs_run": 1,
-                                      "derived_sha256": "0" * 64}
-    assert rec.score is not None                                         # measured on the derived model, scored
-    assert TRAINING_DEFENSE_LIMITATION in rec.limitations and DEFENSE_LIMITATION not in rec.limitations
-    assert rec.stages_done[:3] == ["load_target", "defense_apply", "sample"]   # spec 6.5: right after load_target
-
-
-def test_training_defense_without_harden_module_is_recorded_unavailable_and_unscored(no_optional_modules, monkeypatch,
-                                                                                    sink):
-    """The hook module is absent: the run completes with real rows on the undefended model, the defense is recorded
-    unavailable in the provenance and the limitations, and the score is withheld so no delta can be read."""
-    monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses_catalog())
-    monkeypatch.setitem(sys.modules, HARDEN_MOD, None)
-    rec = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="adv_train")), sink,
-                       explain=False)
-    assert rec.status == "succeeded" and rec.kind == "verify"
-    prov = rec.provenance.defense
-    assert prov["status"] == "unavailable" and prov["kind"] == "training" and prov["id"] == "adv_train"
-    assert HARDEN_MOD in prov["reason"] and prov["requested"] == {"id": "adv_train", "art_class": None, "params": {}}
-    assert rec.score is None and rec.score_status is not None and rec.score_status.state == "unavailable"
-    assert "was not applied" in rec.score_status.reason and "fake a delta" in rec.score_status.reason
-    assert any(lim.startswith("Defense 'adv_train' (kind training) was not applied") for lim in rec.limitations)
-    assert DEFENSE_LIMITATION not in rec.limitations and TRAINING_DEFENSE_LIMITATION not in rec.limitations
-    assert [m.family for m in rec.measurements] == ["clean", "evasion", "evasion", "evasion", "control", "control", "control"]
-    assert not (Path(sink.root) / "artifacts" / "score.json").exists()
-    assert "defense_apply" not in rec.stages_done                       # nothing was applied, so no such stage
-    RunRecord.model_validate(rec.model_dump())
-
-
-class _TrainingUnavailableRecord(BaseModel):
-    """The shape of ``redsim.ml.harden.apply.TrainingUnavailable`` the hook attaches to its typed refusal."""
-
-    defense_id: str
-    target_id: str
-    code: str = "training_defense_unavailable"
-    reason: str
-    infeasible: bool
-    register_item: str | None = None
-
-
-class _FakeTrainingDefenseUnavailable(MLError):
-    code = "training_defense_unavailable"
-
-    def __init__(self, unavailable: _TrainingUnavailableRecord) -> None:
-        super().__init__(f"{unavailable.defense_id} on {unavailable.target_id!r}: {unavailable.reason}")
-        self.unavailable = unavailable
-
-
-def test_training_defense_refused_by_the_hook_is_recorded_unavailable_and_unscored(no_optional_modules, monkeypatch,
-                                                                                   sink):
-    """The hook raises its typed ``training_defense_unavailable`` (no training slice, a tree ensemble): the run measures
-    the undefended model, records the typed reason in the provenance and withholds the score; any other MLError from
-    the hook still fails the run."""
-    monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses_catalog())
-    harden = make_fake_harden()
-
-    def refuse(target, defense, *, config, sink, seed):
-        raise _FakeTrainingDefenseUnavailable(_TrainingUnavailableRecord(
-            defense_id=defense.id, target_id=target.id, reason="no training slice is bundled for this target",
-            infeasible=False, register_item="ATTACKS_HARDEN-11"))
-
-    harden.apply_training_defense = refuse
-    monkeypatch.setitem(sys.modules, HARDEN_MOD, harden)
-    rec = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="adv_train")), sink,
-                       explain=False)
-    assert rec.status == "succeeded" and rec.kind == "verify"
-    prov = rec.provenance.defense
-    assert prov["status"] == "unavailable" and prov["code"] == "training_defense_unavailable"
-    assert prov["reason"] == "no training slice is bundled for this target" and prov["infeasible"] is False
-    assert prov["register_item"] == "ATTACKS_HARDEN-11" and prov["target_id"] == "tiny" and prov["id"] == "adv_train"
-    assert rec.score is None and rec.score_status is not None and rec.score_status.state == "unavailable"
-    assert any(lim.startswith("Defense 'adv_train' (kind training) was not applied") for lim in rec.limitations)
-    assert "defense_apply" not in rec.stages_done and [m.family for m in rec.measurements][0] == "clean"
-
-    def crash(target, defense, *, config, sink, seed):
-        raise MLError("the trainer fell over")
-
-    harden.apply_training_defense = crash
-    with pytest.raises(MLError, match="fell over"):
-        run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="adv_train")),
-                     FilesystemSink(Path(sink.root).parent / "crash"), explain=False)
-
-
-def test_defense_apply_stage_follows_load_target_on_a_training_verify_run_only(no_optional_modules, monkeypatch,
-                                                                              sink, tmp_path):
-    """Spec 6.5 / ATTACKS_HARDEN-15: a verify campaign whose defense trains records ``defense_apply`` directly after
-    ``load_target`` (the ``schema.STAGES`` order, read at run time); a preprocessing defense wraps the target inside
-    ``load_target`` and writes no such stage (the worker's ``expected_stages`` mirrors this); an attack run never
-    writes it and is otherwise stage-for-stage identical."""
-    assert STAGES.index("defense_apply") == STAGES.index("load_target") + 1 and STAGES[-1] == "report"
-    monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses_catalog())
-    monkeypatch.setitem(sys.modules, HARDEN_MOD, make_fake_harden())
-    verify = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="adv_train")),
-                          sink, explain=False)
-    assert verify.stages_done[:3] == ["load_target", "defense_apply", "sample"]
-    assert all(s.split(":")[0] in STAGES for s in verify.stages_done)
-    attack = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}), FilesystemSink(tmp_path / "attack"),
-                          explain=False)
-    assert "defense_apply" not in attack.stages_done
-    assert verify.stages_done[2:] == attack.stages_done[1:]
-    monkeypatch.setitem(sys.modules, DEFENSES_MOD, make_fake_defenses())
-    squeezed = run_campaign(base_config(attack_ids=["fgsm"], attack_params={}, defense=DefenseConfig(id="feature_squeezing")),
-                            FilesystemSink(tmp_path / "squeezed"), explain=False)
-    assert squeezed.kind == "verify" and "defense_apply" not in squeezed.stages_done
-    assert squeezed.stages_done == attack.stages_done
 
 
 # --- Phase B frame: offline pins for the child (MODALITIES-10) ----------------------------------------------

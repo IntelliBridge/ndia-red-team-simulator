@@ -24,9 +24,8 @@ artifact), launches an attack campaign (ART evasion attacks such as FGSM,
 PGD and HopSkipJump across an ε sweep, each paired with a benign
 random-noise control), and reads the SHAP explanations, the Model
 Robustness Index and the candidate hardening recommendations side by side,
-with every mutating step recorded on a hash-chained audit log. A verify
-campaign measures a preprocessing defense on an evaluation copy and reports
-the delta. Nothing is ever applied to the stored model.
+with every mutating step recorded on a hash-chained audit log. Every run is
+a measurement in its own right. Nothing is ever applied to the stored model.
 
 It is a non-operational proof of concept on open, unclassified, public
 data. It evaluates and hardens the robustness of a classifier and nothing
@@ -58,7 +57,7 @@ flowchart LR
   subgraph redsim["redsim"]
     web["redsim-web<br/>@redsim/web, Next.js 14"]
     api["redsim-api<br/>FastAPI: RBAC, admission,<br/>audit, read/stream"]
-    worker["redsim-worker (-Q scans)<br/>scan, verify today<br/>attack, explain, validate (WS4)"]
+    worker["redsim-worker (-Q scans)<br/>scan today<br/>attack, explain, validate (WS4)"]
     wdef["redsim-worker-default (-Q default)<br/>reports, reaper, tenant check,<br/>WORM export, harden narrative (WS4)"]
     beat["redsim-beat"]
     li["redsim-log-ingest<br/>OTLP / JSON logs to Postgres"]
@@ -166,7 +165,7 @@ runbook (env vars, key rotation, image build) see
 | Service | Language | What it owns |
 |---|---|---|
 | `redsim-api` | Python | FastAPI app factory `redsim.api.app:create_app`: RBAC, admission services, read and stream routes, the run-events WebSocket. Never imports torch, ART, onnxruntime or SHAP. |
-| `redsim-worker` | Python | Celery `-Q scans`: `redsim.scan_start` and `redsim.verify_replay` today. The ML `attack.run`, `explain.run` and `model.validate` tasks land here with WS4. Installs the `ml` extra. |
+| `redsim-worker` | Python | Celery `-Q scans`: `redsim.scan_start` today. The ML `attack.run`, `explain.run` and `model.validate` tasks land here with WS4. Installs the `ml` extra. |
 | `redsim-worker-default` | Python | Celery `-Q default`: `redsim.report_render`, `redsim.reap_stale_jobs`, `redsim.verify_tenant_integrity`, `redsim.export_chains_to_worm`. `harden.recommend` (rules plus the optional Pythia narrative) lands here with WS4. |
 | `redsim-beat` | Python | Fires the beat schedule: the stale-job reaper every 5 minutes, the tenant integrity check hourly, the WORM export daily. |
 | `redsim-log-ingest` | Python | OTLP/Logs and JSON batch receiver writing `application_logs` rows. |
@@ -178,11 +177,11 @@ the same admission and execution code runs regardless of who invoked it.
 
 ## Campaign lifecycle
 
-The product loop is **campaign, attacks, explain, score, recommend, verify
-after harden**. The sequence below is the target design of spec sections
+The product loop is **campaign, attacks, explain, score, recommend**. The
+sequence below is the target design of spec sections
 10.2 and 10.3. What exists on `main` is the admission pattern (audit
 before enqueue, shown for the live services in
-`services/scans.py`, `services/verify.py`, `services/runs.py`), the job
+`services/scans.py` and `services/runs.py`), the job
 state machine in `redsim/workers/job_state.py`, the `task_context`
 wrapper in `redsim/workers/bootstrap.py`, the run-event publisher, the
 `ml_campaigns` table and the frozen `redsim/ml/schema.py` contracts. The
@@ -239,15 +238,14 @@ Rules that govern the chain:
   job transitions the platform already emits, and the WebSocket
   `GET /v1/runs/{run_id}/events` streams them to the browser.
 
-**Verify after harden.** A recommendation whose ART link is a Phase A
-preprocessing defense (feature squeezing, spatial smoothing, JPEG
-compression) can be verified. `POST /v1/findings/{id}/verify` enqueues
-`verify.replay` with `baseline_run_id` and the defense, the worker
-re-runs the identical attack set, ε grid, seed and slice with the ART
-preprocessor in front of an evaluation copy, and the verify run's score
-record carries the measured ΔMRI beside the change in clean accuracy. The
-`MeasuredDelta` attaches to the one recommendation whose defense was
-applied. The stored model is never modified and nothing is deployed. The
+**Recommendations are candidates.** `POST /v1/findings/{id}/harden`
+returns rule candidates plus the optional Pythia narrative. Each
+recommendation carries `status: candidate` and no gain figure. It may
+cite ART classes and papers as plain text. None is evaluated against the
+model, and that requires a separate campaign. Two campaign runs are read
+side by side through `GET /v1/runs/{id}/compare?with=`. The stored model
+is never modified and nothing is deployed. The verify paradigm was removed
+on 2026-09-09 (product owner decision, `docs/project-brief.md`). The
 details are in [ml-vertical.md](ml-vertical.md).
 
 ## Data model (Postgres)
@@ -281,9 +279,8 @@ erDiagram
     ml_campaigns {
         STRING run_id PK "also FK runs.id"
         STRING target_id FK
-        STRING kind "attack, verify, ingest"
+        STRING kind "attack, ingest"
         STRING modality "image, tabular"
-        STRING baseline_run_id "verify runs"
         STRING parent_run_id "reruns"
         STRING settings_hash "comparability key"
         JSONB config "CampaignConfig"
@@ -299,7 +296,6 @@ erDiagram
         STRING run_id FK
         JSONB schema_blob "ml sub-object for ML findings"
         STRING status
-        STRING validation_state
     }
     audit_events {
         STRING chain_id "run, project or system scoped"
@@ -356,7 +352,7 @@ flowchart TB
   subgraph Services["redsim/services/ (admission + execution)"]
     direction LR
     create["create_*_job<br/>admission"]
-    execute["start_scan / verify /<br/>render_reports<br/>execution"]
+    execute["start_scan /<br/>render_reports<br/>execution"]
   end
 
   subgraph Primitives["Primitives"]
@@ -473,5 +469,4 @@ Not on `main` as of 2026-09-08:
   PR #19).
 - Datasets and bundled models: none fetched or trained yet.
 - Phase B of the spec: black-box endpoint targets, further attacks and
-  modalities, adversarial-training defenses, ATLAS tagging and the
-  interoperability work of section 27.
+  modalities, ATLAS tagging and the interoperability work of section 27.

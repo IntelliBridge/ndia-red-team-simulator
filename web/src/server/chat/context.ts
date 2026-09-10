@@ -109,8 +109,6 @@ function compactRecommendation(row: CandidateRecommendation): Json {
     title: row.title,
     rationale: row.rationale,
     status: row.status,
-    validation: row.validation,
-    measured: row.measured ?? null,
     triggered_by: row.triggered_by,
     references: row.references,
     narrative_source: row.narrative_source,
@@ -128,7 +126,6 @@ export function findingSummary(finding: Finding): Json {
     project_id: finding.project_id,
     severity: finding.severity,
     status: finding.status,
-    validation_state: finding.validation_state ?? null,
     source_tool: finding.source_tool ?? null,
     title: blob.title ?? null,
     description: blob.description ?? null,
@@ -154,7 +151,6 @@ export function findingSummary(finding: Finding): Json {
           recommendations: (ml.recommendations ?? []).map(compactRecommendation),
           limitations: ml.limitations ?? [],
           review: ml.review ?? null,
-          verify: ml.verify ?? null,
           explanation_unavailable_reason: ml.explanation_unavailable_reason ?? null,
           audit: ml.audit ? { state: ml.audit.state, events: ml.audit.events ?? null } : null,
         }
@@ -192,7 +188,6 @@ export function campaignSummary(campaign: Campaign): Json {
       seed: (config as { seed?: unknown }).seed ?? null,
       norm: (config as { norm?: unknown }).norm ?? null,
       dataset_split: config.dataset_split ?? null,
-      defense: config.defense ?? null,
       scoring: config.scoring ?? null,
     },
     score: score
@@ -206,7 +201,6 @@ export function campaignSummary(campaign: Campaign): Json {
           reference_eps: score.reference_eps ?? null,
           eps_grid: score.eps_grid ?? null,
           attack_ids: score.attack_ids ?? null,
-          delta: score.delta ?? null,
         }
       : null,
     score_status: campaign.score_status ?? null,

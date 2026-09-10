@@ -445,10 +445,10 @@ carries one stale pin (`tests/ml/test_audit_campaign.py:113`, the
 extra installed (12 passed, 4 skipped without `REDSIM_E2E`, 35 s) and fails
 without it by design; `e2e` is not green: the B4 files fail by attribution on
 the product defects listed in the README's open items (the unscaled endpoint
-probe, no training slice exposed to the child, the worker-parent
-consumed-slice call, `architecture_kwargs` for `state_dict` uploads) and two
-report pins are stale (`tests/e2e/test_ml_verify_upload_reports.py`,
-`tests/e2e/test_ml_review_reports.py`); `docs` passes; `probes` has not been
+probe, the worker-parent consumed-slice call, `architecture_kwargs` for
+`state_dict` uploads) and two report pins are stale
+(`tests/e2e/test_ml_upload_reports.py`, the uploads and report formats
+file, and `tests/e2e/test_ml_review_reports.py`); `docs` passes; `probes` has not been
 run against `make up` (brief package A). The CI runs for `29db42c`,
 `1439f92`, `57da31f`, `703f8f6` and the B4 push have not been read.
 ## State of `main` at `703f8f6` and the CI parity PR (2026-09-09)
@@ -547,8 +547,8 @@ together with the wave B2 push that follows it. Facts, in order:
 - The B2 integration commit moved the e2e pins that B2 made stale
   (`tests/e2e/test_ml_governance.py`: `report.pdf` is `404 report not yet
   rendered` and an endpoint body without a profile is `422
-  auth_profile_required`; `tests/e2e/test_ml_verify_upload_reports.py::test_reports_sections_and_pdf_404`:
-  the same `404`, and the projection's weights keys beside the record), so
+  auth_profile_required`; `tests/e2e/test_ml_upload_reports.py::test_reports_sections_and_completion_pdf`
+  now proves the completion path renders `report.pdf`, and the projection's weights keys beside the record), so
   the `e2e-python` job has nothing known-red.
 - The wave B2 tests need `reportlab` and `pillow` (worker extra) and `pypdf`
   (test extra), declared in `pyproject.toml` by B2; every lane installs
@@ -587,8 +587,9 @@ in order:
   tier `pytest -q -p no:cacheprovider --ignore=tests/e2e` 2081 passed, 35
   skipped, 1 deselected (106 s), the e2e tier with the Postgres lane at
   `localhost:5433` 22 passed (136 s), `mkdocs build --strict` exit 0, the
-  frozen fixture `tests/ml/fixtures/run_record.json` unchanged (sha256
-  `e5266f18…` matching the tripwire pin). The Postgres-gated cases of
+  frozen fixture `tests/ml/fixtures/run_record.json` unchanged (its sha256
+  matched the tripwire pin of that tree. The fixture was regenerated on
+  2026-09-09 and the pin is now `25be404f…`). The Postgres-gated cases of
   `tests/test_migration_0011.py` and `tests/test_tenant_rls.py` skip without
   `REDSIM_DB_URL` and were not run locally; the Coverage gate is where they
   run.
@@ -636,13 +637,14 @@ this tree on 2026-09-09 rather than assumed:
   overlap the `Campaign` type) and `pnpm --filter @redsim/web test` failed 11 of
   274 tests in 3 files (the run page read `campaign.target.metadata.framework_versions`
   and the fixture's `target` had no `metadata`). `#23` fixed the fixture:
-  measured after rebasing onto `8e3083a`, `typecheck` passes and `test` fails 1
-  of 274 (`src/app/findings/[id]/page.test.tsx` "submits selected defense and
-  editable params": the page only enables Verify when a candidate
-  recommendation references the selected defense's `art_class` and passes the
-  recommendation id as a fourth argument, while the test's `useDefenses` mock
-  has no `art_class` and expects a three-argument call). Expect this job red
-  on that one test until the test and page agree; `next build` was not reached.
+  measured after rebasing onto `8e3083a`, `typecheck` passes and `test` failed
+  1 of 274 on the findings detail page test of a control that no longer
+  exists. The verify paradigm was removed on 2026-09-09 (product owner
+  decision, `docs/project-brief.md`). The web has no such button, no defense
+  chooser and no validation chip, the Exports table has no Kind column, and
+  each recommendation reads "candidate" with no validation word. The vitest
+  count is to be re-run after the removal. `next build` was not reached in
+  the run above.
 - **Build images**: not run locally. The four Dockerfiles last built green at
   `ea39f97` on the same `python:3.14-slim` / `node:26` bases; the only new
   runtime dependency since then that the api image installs is

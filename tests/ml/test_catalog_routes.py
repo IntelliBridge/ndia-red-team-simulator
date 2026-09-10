@@ -134,9 +134,7 @@ def test_capabilities_never_leak_pythia(api: SimpleNamespace, monkeypatch: pytes
     ("/v1/models?project=proj-1", "redsim.ml.targets", "models"),
     ("/v1/models/vehicles_cnn?project=proj-1", "redsim.ml.targets", "id"),
     ("/v1/ml/capabilities", "redsim.ml.targets", "bundled_models"),
-    ("/v1/ml/capabilities", "redsim.ml.defenses", "defenses"),
     ("/v1/ml/capabilities", "redsim.ml.attacks", "modalities"),
-    ("/v1/defenses", "redsim.ml.defenses", "defenses"),
 ])
 def test_catalog_503_not_empty(
     api: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, path: str, package: str, payload_key: str,

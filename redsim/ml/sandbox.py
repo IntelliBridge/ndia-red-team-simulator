@@ -364,7 +364,6 @@ def partial_campaign_record(
     status: str,
     error: str,
     stages_done: list[str],
-    baseline_run_id: str | None,
     parent_run_id: str | None,
 ) -> CampaignRecord:
     """Create authoritative failure/cancellation evidence without loading a model."""
@@ -373,7 +372,7 @@ def partial_campaign_record(
     model_sha256 = detail.get("sha256") or manifest.get("sha256")
     return CampaignRecord.model_validate({
         "run_id": "sandbox-partial",
-        "kind": "verify" if baseline_run_id else "attack",
+        "kind": "attack",
         "status": status,
         "stage": stages_done[-1] if stages_done else None,
         "stages_done": stages_done,
@@ -389,7 +388,6 @@ def partial_campaign_record(
             "reason": "campaign did not reach a complete score",
         },
         "settings_hash": settings_hash(config, model_sha256),
-        "baseline_run_id": baseline_run_id,
         "parent_run_id": parent_run_id,
         "completeness": "partial",
         "missing": ["campaign did not reach a complete score"],
@@ -832,13 +830,11 @@ def _persist_partial_record(
     outcome: _ChildOutcome,
     *,
     error: str,
-    baseline_run_id: str | None,
     parent_run_id: str | None,
 ) -> None:
     """Write the partial campaign record beside the child's partial files, best effort."""
     record = partial_campaign_record(
-        config, status="failed", error=error, stages_done=outcome.stages,
-        baseline_run_id=baseline_run_id, parent_run_id=parent_run_id,
+        config, status="failed", error=error, stages_done=outcome.stages, parent_run_id=parent_run_id,
     )
     try:
         sink.put(
@@ -856,7 +852,6 @@ def run_campaign_sandboxed(
     *,
     target_file: Path | None = None,
     target_detail: dict[str, Any] | None = None,
-    baseline_run_id: str | None = None,
     parent_run_id: str | None = None,
     on_stage: Callable[[str], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
@@ -887,7 +882,6 @@ def run_campaign_sandboxed(
                 "config": config.model_dump(mode="json"),
                 "target_file": str(target_file) if target_file is not None else None,
                 "target_detail": target_detail,
-                "baseline_run_id": baseline_run_id,
                 "parent_run_id": parent_run_id,
             },
             sink=sink,
@@ -905,7 +899,7 @@ def run_campaign_sandboxed(
             # evidence that exists (the config and target snapshot), never a model outcome.
             _persist_partial_record(
                 sink, config, _ChildOutcome(status="failed", stages=[]), error=f"{type(exc).__name__}: {exc}",
-                baseline_run_id=baseline_run_id, parent_run_id=parent_run_id,
+                parent_run_id=parent_run_id,
             )
         raise
     if outcome.status == "cancelled":
@@ -914,7 +908,6 @@ def run_campaign_sandboxed(
             status="cancelled",
             error=str(outcome.error or "campaign cancelled while sandbox child was running"),
             stages_done=outcome.stages,
-            baseline_run_id=baseline_run_id,
             parent_run_id=parent_run_id,
         )
     if outcome.status in {"timed_out", "killed"}:
@@ -926,8 +919,7 @@ def run_campaign_sandboxed(
             message = (f"{message}; endpoint broker served {outcome.broker_stats.get('rows', 0)} rows in "
                        f"{outcome.broker_stats.get('requests', 0)} requests")
         _persist_partial_record(
-            sink, config, outcome, error=f"{failure.__name__}: {message}",
-            baseline_run_id=baseline_run_id, parent_run_id=parent_run_id,
+            sink, config, outcome, error=f"{failure.__name__}: {message}", parent_run_id=parent_run_id,
         )
         raise failure(message)
     assert outcome.result is not None

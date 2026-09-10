@@ -418,7 +418,6 @@ def run_campaign_inprocess(
     *,
     target_file: Path | None = None,
     target_detail: dict[str, Any] | None = None,
-    baseline_run_id: str | None = None,
     parent_run_id: str | None = None,
     on_stage: Callable[[str], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
@@ -452,13 +451,13 @@ def run_campaign_inprocess(
             target = artifact_target_from_path(config.target_id, Path(target_file), dict(target_detail or {}))
         return run_campaign(
             config, sink, explain=config.explain_k > 0,
-            baseline_run_id=baseline_run_id, parent_run_id=parent_run_id,
+            parent_run_id=parent_run_id,
             on_stage=_on_stage, target_override=target,
         )
     except Exception as exc:  # noqa: BLE001 - failure is evidence, as in the child
         return partial_campaign_record(
             config, status="failed", error=f"{type(exc).__name__}: {exc}", stages_done=stages,
-            baseline_run_id=baseline_run_id, parent_run_id=parent_run_id,
+            parent_run_id=parent_run_id,
         )
 
 
@@ -604,7 +603,6 @@ def campaign_table(metadata: Any) -> Any:
         Column("target_id", String(64), nullable=False, index=True),
         Column("kind", String(16), nullable=False),
         Column("modality", String(16), nullable=False),
-        Column("baseline_run_id", String(64), nullable=True),
         Column("parent_run_id", String(64), nullable=True),
         Column("batch_id", String(64), nullable=True, index=True),
         Column("settings_hash", String(64), nullable=True, index=True),

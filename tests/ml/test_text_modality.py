@@ -501,10 +501,10 @@ def test_text_campaign_end_to_end_through_the_frame(tmp_path: Path, target):
     assert any(s.startswith("The edit-budget grid is a share of words") and "sha256=" in s for s in rec.limitations)
     if rec.score.mri is not None:
         assert campaign_mod.MRI_SCOPE_LIMITATION in rec.limitations
-    # Every citation resolves; candidates carry no measured delta.
+    # Every citation resolves; candidates carry no measurement of their effect.
     known = {m.id for m in rec.measurements} | {o.id for o in rec.observations} | {i.id for i in rec.interpretation}
     assert all(b in known for i in rec.interpretation for b in i.basis)
-    assert all(r.validation == "not evaluated" and r.measured is None for r in rec.recommendations)
+    assert all(r.status == "candidate" for r in rec.recommendations)
     assert rec.observations and all(o.top_features_clean == [] for o in rec.observations)
     # Artifacts.
     run_dir = tmp_path / "run"

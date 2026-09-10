@@ -5,7 +5,6 @@
   "severity": "high",
   "status": "open",
   "source_tool": "aegis.ml/fgsm",
-  "validation_state": "unvalidated",
   "dedup_key": null,
   "schema_blob": {
     "title": "FGSM flips predictions at ε=0.03",
@@ -88,8 +87,6 @@
           "rationale": "The rule fired from recorded ASR.",
           "triggered_by": ["m1"],
           "status": "candidate",
-          "validation": "not evaluated",
-          "measured": null,
           "references": ["JpegCompression"],
           "narrative_source": "rules"
         }
@@ -105,7 +102,6 @@
         "at": null,
         "notes": null
       },
-      "verify": null,
       "audit": {
         "state": "verified",
         "events": 7,

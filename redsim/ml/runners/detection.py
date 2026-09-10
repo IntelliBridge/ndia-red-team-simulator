@@ -579,9 +579,6 @@ def run_detection(config: CampaignConfig, target: Target, *, frame: CampaignFram
     if not is_detection_target(tgt):
         raise ValueError(f"target {tgt.id!r} is not an object detector (domain {info.domain!r}); use the "
                          "classification runner")
-    if config.defense is not None:
-        raise AttackNotApplicable("defense_modality_mismatch: preprocessing defenses on detectors are a Phase B2 "
-                                  "item (MODALITIES-39); no verify run on a detection target yet")
     score_thr, iou_thr = _thresholds(tgt, manifest)
     shash = settings_hash(config, None if manifest_get(manifest, "model_sha256", "weights_sha256", "sha256") is None
                           else str(manifest_get(manifest, "model_sha256", "weights_sha256", "sha256")))
@@ -848,7 +845,7 @@ def detection_recommendations(config: CampaignConfig, measurements: Sequence[Mea
 
     Emitted per attack whose suppression rate crossed ``finding_asr_threshold`` at some patch area with a
     denominator of at least ``MIN_CLEAN_CORRECT_FOR_FINDING`` clean-matched boxes. Direction only: no gain
-    is stated until a verify run measures a recall delta. The rule layer's detection branch can call this."""
+    is stated and no measurement of any candidate's effect exists. The rule layer's detection branch can call this."""
     known = {m.id for m in measurements} | {i.id for i in interpretation}
     out: list[CandidateRecommendation] = []
     for aid in dict.fromkeys(config.attack_ids):
@@ -867,9 +864,10 @@ def detection_recommendations(config: CampaignConfig, measurements: Sequence[Mea
                 id=f"r.R8.patch_adversarial_training.{aid}", title="Patch-aware adversarial training (candidate)",
                 rationale=(f"{aid} crossed the suppression threshold {fi.threshold:g} at patch area "
                            f"{fi.first_success_eps:g} (suppression {asr_txt}). Fine-tuning on patched images is the "
-                           "direction the DPatch literature reports; no gain is claimed until a verify run measures "
-                           "the recall delta."),
-                triggered_by=basis, references=[R8_REFERENCES[0], R8_REFERENCES[1], "defense:adversarial_training"]),
+                           "direction the DPatch literature reports; no gain is claimed and no measurement of its "
+                           "effect exists."),
+                triggered_by=basis, references=[R8_REFERENCES[0], R8_REFERENCES[1],
+                                                "art.defences.trainer.AdversarialTrainerMadryPGD"]),
             CandidateRecommendation(
                 id=f"r.R8.occlusion_detection.{aid}", title="Input anomaly or occlusion detection (candidate)",
                 rationale=("A localised high-saliency patch is detectable as an input anomaly before inference; "
@@ -883,11 +881,12 @@ def detection_recommendations(config: CampaignConfig, measurements: Sequence[Mea
                            "sequences. Not evaluated here."),
                 triggered_by=basis, references=[R8_REFERENCES[1]]),
             CandidateRecommendation(
-                id=f"r.R6.preprocessing.{aid}", title="Input preprocessing defenses (candidate)",
-                rationale=("Recall dropped under the patch attack; ART preprocessing defenses (JPEG compression, "
-                           "spatial smoothing) attach to the detector and can be measured in a verify run (Phase "
-                           "B2). Direction only."),
-                triggered_by=basis, references=["defense:jpeg_compression", "defense:spatial_smoothing"]),
+                id=f"r.R6.preprocessing.{aid}", title="Input preprocessing (candidate)",
+                rationale=("Recall dropped under the patch attack; ART input preprocessing (JPEG compression, "
+                           "spatial smoothing) attaches to the detector. Direction only; not evaluated on this "
+                           "model."),
+                triggered_by=basis, references=["art.defences.preprocessor.JpegCompression",
+                                                "art.defences.preprocessor.SpatialSmoothing"]),
         ])
     return out
 
@@ -896,7 +895,7 @@ def detection_recommendations(config: CampaignConfig, measurements: Sequence[Mea
 
 def run_detection_campaign(config: CampaignConfig, sink: ArtifactSink, *, target: Target | None = None,
                            explain: bool = True, on_stage: Callable[[str], None] | None = None,
-                           baseline_run_id: str | None = None, parent_run_id: str | None = None,
+                           parent_run_id: str | None = None,
                            target_override: Target | None = None) -> CampaignRecord:
     """Run one detection campaign end to end and return its ``CampaignRecord`` (status ``succeeded``, no MRI).
 
@@ -989,8 +988,7 @@ def run_detection_campaign(config: CampaignConfig, sink: ArtifactSink, *, target
         model_sha256=None if model_sha256 is None else str(model_sha256), dataset=str(dataset_name),
         dataset_revision=None if dataset_revision is None else str(dataset_revision), dataset_split=config.dataset_split,
         sample_indices_sha256=sha256_indices(result.indices), settings_hash=shash,
-        baseline_run_id=baseline_run_id, parent_run_id=parent_run_id, defense=None, llm=None,
-        thread_env={},
+        parent_run_id=parent_run_id, llm=None, thread_env={},
         model_manifest={**manifest, "seed": config.seed, "n_samples": int(result.n),
                         "n_gt_boxes": result.flip_matrix_extra.get("n_gt_boxes"), "library_versions": versions,
                         "python_executable": sys.executable, "modality": MODALITY},
@@ -1003,7 +1001,7 @@ def run_detection_campaign(config: CampaignConfig, sink: ArtifactSink, *, target
         config=config, target=info, attacks=[a.info() for a in in_scope], provenance=provenance,
         measurements=measurements, observations=frame.observations, interpretation=frame.interpretation,
         recommendations=recommendations, score=None, limitations=uniq(all_limitations), kind="attack",
-        completed_at=finished_at, settings_hash=shash, baseline_run_id=baseline_run_id, parent_run_id=parent_run_id,
+        completed_at=finished_at, settings_hash=shash, parent_run_id=parent_run_id,
         curve=curves, completeness="partial",
         missing=["S_conf unavailable (conf_gap undefined for detection)",
                  f"S_expl unavailable ({EXPLAINER_UNAVAILABLE_REASON})",

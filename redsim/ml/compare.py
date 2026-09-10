@@ -1,9 +1,9 @@
 """Pure N-run comparison over persisted campaign records (spec 15.6, 15.8; F007 US3).
 
 Register rows REVIEW_REPORTS-26 and -30. Everything here is a function of the
-``ml.run_record`` JSON of the compared runs (plus the mutable ``baseline_run_id``
-overlay a campaign row may carry); nothing is recomputed from samples, nothing
-touches a database or the web stack, so the pairwise route
+``ml.run_record`` JSON of the compared runs (plus the overlay a campaign row may
+carry); nothing is recomputed from samples, nothing touches a database or the
+web stack, so the pairwise route
 (``GET /v1/runs/{id}/compare``), the N-run table (``GET /v1/runs/compare``) and
 the batch compare of wave B3 share one definition of "comparable".
 
@@ -16,14 +16,10 @@ The rules, in the order they are applied:
   campaigns with different weight vectors are incomparable);
 * a run whose score is absent or partial (``mri`` is ``None``) is refused,
   never compared on the subscores that do exist;
-* a verify run and its baseline must share the model; the measured ΔMRI is the
-  delta the worker persisted on the verify run or, failing that, the same
-  ``redsim.ml.scoring.delta`` over the two stored records;
 * the same settings on a different model is the side-by-side case: full
-  scorecards, ``delta: None``;
-* an N-run table lists rows in request order, carries a delta only on verify
-  rows whose own baseline is in the set, and has no mean, rank, average or
-  cross-model delta (D9 i).
+  scorecards, nothing computed between them;
+* an N-run table lists rows in request order and has no mean, rank, average or
+  cross-run delta (D9 i). Every run is a measurement in its own right.
 
 The typed refusals :class:`Incompatible` and :class:`ScoreUnavailable` carry
 the ``reasons`` list the API puts in the 17.3 envelope.
@@ -38,11 +34,14 @@ from redsim.ml.schema import MRIWeights
 
 # Config fields outside the comparison. ``target_id`` is the Target row, whose model
 # identity is compared through ``provenance.model_sha256`` instead (a side-by-side
-# comparison is exactly "same settings, different model"); ``defense`` is the variable
-# a verify run changes; the rest do not affect a measurement.
+# comparison is exactly "same settings, different model"); the rest do not affect a
+# measurement.
 IGNORED_CONFIG_FIELDS: tuple[str, ...] = (
-    "target_id", "defense", "llm_narrative", "auto_recommend", "target_snapshot", "attacks",
+    "target_id", "llm_narrative", "auto_recommend", "target_snapshot", "attacks",
 )
+# Config keys a record written before 2026-09-09 may still carry and no current
+# ``CampaignConfig`` has. They are skipped, never compared and never named.
+_LEGACY_CONFIG_FIELDS: frozenset[str] = frozenset({"defense"})
 IGNORED_VARIABLES: tuple[str, ...] = (
     "llm_narrative", "auto_recommend", "target_snapshot", "attacks", "reviewer_notes",
 )
@@ -117,7 +116,7 @@ def compared_config(record: Mapping[str, Any]) -> dict[str, Any]:
     """The config fields that take part in the comparison, nested blocks flattened to ``block.key``."""
     out: dict[str, Any] = {}
     for key, value in config(record).items():
-        if key in IGNORED_CONFIG_FIELDS:
+        if key in IGNORED_CONFIG_FIELDS or key in _LEGACY_CONFIG_FIELDS:
             continue
         if key in NESTED_CONFIG_FIELDS and isinstance(value, Mapping):
             for sub_key, sub_value in value.items():
@@ -199,26 +198,17 @@ def compatibility(left: Mapping[str, Any], right: Mapping[str, Any]) -> tuple[li
     return mismatched, unchanged
 
 
-def is_verify_pairing(left_id: str, left: Mapping[str, Any], left_overlay: Mapping[str, Any] | None,
-                      right_id: str, right: Mapping[str, Any], right_overlay: Mapping[str, Any] | None) -> bool:
-    """``True`` when one run is the other's verify run (``baseline_run_id`` names it)."""
-    return bool(baseline_of(left, left_overlay) == right_id or baseline_of(right, right_overlay) == left_id)
-
-
-def baseline_of(record: Mapping[str, Any], overlay: Mapping[str, Any] | None = None) -> Any:
-    return record.get("baseline_run_id") or (overlay or {}).get("baseline_run_id")
-
-
 def pair_reasons(left_id: str, left: Mapping[str, Any], left_overlay: Mapping[str, Any] | None,
                  right_id: str, right: Mapping[str, Any], right_overlay: Mapping[str, Any] | None,
                  ) -> tuple[list[str], list[str]]:
-    """The full pairwise verdict: compatibility plus the verify-pairing model rule."""
-    mismatched, unchanged = compatibility(left, right)
-    pairing = is_verify_pairing(left_id, left, left_overlay, right_id, right, right_overlay)
-    same_model = model_hash(left) is not None and model_hash(left) == model_hash(right)
-    if pairing and not same_model:
-        mismatched.append(f"{MODEL_VARIABLE} (a verify run and its baseline must share the model)")
-    return mismatched, unchanged
+    """The pairwise verdict for two runs: :func:`compatibility` over their records.
+
+    The ids and overlays are accepted so every caller (the pairwise route, the N-run
+    table, the batch grouping) passes one triple shape; nothing in them changes the
+    verdict.
+    """
+    del left_id, left_overlay, right_id, right_overlay
+    return compatibility(left, right)
 
 
 def require_complete_score(run_id: str, record: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]:
@@ -241,8 +231,6 @@ def changed_variables(left: Mapping[str, Any], right: Mapping[str, Any]) -> list
         changed.append("model")
     if config(left).get("target_id") != config(right).get("target_id"):
         changed.append("target")
-    if config(left).get("defense") != config(right).get("defense"):
-        changed.append("defense")
     if not changed and (
         left.get("parent_run_id") == right.get("run_id")
         or right.get("parent_run_id") == left.get("run_id")
@@ -269,26 +257,6 @@ def scorecard_projection(record: Mapping[str, Any], score_value: Mapping[str, An
         "limitations": list(record.get("limitations", [])),
         "non_default_weights": non_default_weights(record),
     }
-
-
-def comparison_families(delta: Mapping[str, Any]) -> list[dict[str, Any]]:
-    flattened: list[dict[str, Any]] = []
-    for item in delta.get("delta_families", []):
-        if not isinstance(item, Mapping):
-            continue
-        before_value = item.get("before")
-        after_value = item.get("after")
-        before: dict[str, Any] = dict(before_value) if isinstance(before_value, Mapping) else {}
-        after: dict[str, Any] = dict(after_value) if isinstance(after_value, Mapping) else {}
-        flattened.append({
-            "family": item.get("measurement_id"),
-            "before": before.get("accuracy"),
-            "after": after.get("accuracy"),
-            "n_before": before.get("n"),
-            "n_after": after.get("n"),
-            "delta": item.get("delta"),
-        })
-    return flattened
 
 
 def family_rows(record: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -319,47 +287,12 @@ def family_rows(record: Mapping[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def measured_delta(
-    *, verify: Mapping[str, Any], verify_score: Mapping[str, Any], baseline: Mapping[str, Any],
-    baseline_score: Mapping[str, Any],
-) -> tuple[dict[str, Any], str]:
-    """The verify run's ΔMRI as a JSON dict and where it came from.
-
-    Prefers the delta the worker persisted on the verify run's score record. Without
-    one, the same ``redsim.ml.scoring.delta`` runs over the two stored records: it is a
-    deterministic function of measured rows, so the result is still a measured delta.
-    Its typed refusals become :class:`Incompatible` and :class:`ScoreUnavailable`.
-    """
-    persisted = verify_score.get("delta")
-    if isinstance(persisted, Mapping):
-        return dict(persisted), "persisted"
-    from redsim.ml.schema import Measurement, MRIRecord
-    from redsim.ml.scoring import IncompatibleCampaigns, delta
-
-    try:
-        before = MRIRecord.model_validate(dict(baseline_score))
-        after = MRIRecord.model_validate(dict(verify_score))
-        measured = delta(
-            before, after, baseline_run_id=str(baseline.get("run_id")),
-            measurements_before=[Measurement.model_validate(m) for m in baseline.get("measurements", [])],
-            measurements_after=[Measurement.model_validate(m) for m in verify.get("measurements", [])],
-            modality_before=config(baseline).get("modality"),
-            modality_after=config(verify).get("modality"),
-        )
-    except IncompatibleCampaigns as exc:
-        raise Incompatible(list(exc.reasons)) from exc
-    except ValueError as exc:
-        raise ScoreUnavailable([f"the verify delta could not be measured: {exc}"]) from exc
-    return measured.model_dump(mode="json"), "computed"
-
-
 # ---------------------------------------------------------------------------
 # The N-run table (REVIEW_REPORTS-26)
 # ---------------------------------------------------------------------------
 
 
-def _table_row(run_id: str, record: Mapping[str, Any], score_value: Mapping[str, Any],
-               overlay: Mapping[str, Any] | None) -> dict[str, Any]:
+def _table_row(run_id: str, record: Mapping[str, Any], score_value: Mapping[str, Any]) -> dict[str, Any]:
     target = record.get("target")
     subscores = score_value.get("subscores")
     return {
@@ -381,11 +314,6 @@ def _table_row(run_id: str, record: Mapping[str, Any], score_value: Mapping[str,
         "non_default_weights": non_default_weights(record),
         "families": family_rows(record),
         "curve": list(record.get("curve", [])),
-        "baseline_run_id": baseline_of(record, overlay),
-        "defense": config(record).get("defense"),
-        "delta": None,
-        "delta_source": None,
-        "delta_note": None,
         "limitations": list(record.get("limitations", [])),
     }
 
@@ -397,9 +325,8 @@ def comparison_table(
 
     Rows come back in the order given. Every pair must be compatible (else
     :class:`Incompatible` with per-pair ``pairs``) and every run must carry a
-    complete MRI (else :class:`ScoreUnavailable` naming the runs). A verify row
-    whose own baseline is in the set carries its measured delta; every other
-    row has ``delta: None``. No mean, rank or aggregate of any kind is computed.
+    complete MRI (else :class:`ScoreUnavailable` naming the runs). Each row is
+    one run's scorecard. No delta, mean, rank or aggregate of any kind is computed.
     """
     if len(runs) < MIN_TABLE_RUNS:
         raise ValueError(f"a comparison table needs at least {MIN_TABLE_RUNS} runs")
@@ -436,30 +363,7 @@ def comparison_table(
     if missing:
         raise ScoreUnavailable(missing)
 
-    by_id = {run_id: (record, overlay) for run_id, record, overlay in runs}
-    rows: list[dict[str, Any]] = []
-    for run_id, record, overlay in runs:
-        row = _table_row(run_id, record, scores[run_id], overlay)
-        baseline_id = row["baseline_run_id"]
-        if baseline_id in by_id and baseline_id != run_id:
-            baseline_record, _baseline_overlay = by_id[baseline_id]
-            delta_value, source = measured_delta(
-                verify=record, verify_score=scores[run_id], baseline=baseline_record,
-                baseline_score=scores[baseline_id],
-            )
-            row["delta"] = {
-                "baseline_run_id": baseline_id,
-                "mri_before": delta_value.get("mri_before"),
-                "mri_after": delta_value.get("mri_after"),
-                "delta_mri": delta_value.get("delta"),
-                "delta_dimensions": delta_value.get("delta_subscores"),
-                "delta_acc_clean": delta_value.get("delta_acc_clean"),
-                "delta_families": comparison_families(delta_value),
-            }
-            row["delta_source"] = source
-        elif baseline_id:
-            row["delta_note"] = f"baseline run {baseline_id} is not in the compared set; no delta is shown"
-        rows.append(row)
+    rows = [_table_row(run_id, record, scores[run_id]) for run_id, record, _overlay in runs]
 
     first_id, first, _first_overlay = runs[0]
     changed_per_row = {
@@ -478,7 +382,7 @@ def comparison_table(
         "ignored_variables": list(IGNORED_VARIABLES),
         "caveats": caveats,
         "statement": ("Rows are listed in request order. Each MRI is shown with its subscores, denominators "
-                      "and curve; no mean, rank or cross-model delta is computed (spec 15.8)."),
+                      "and curve; no delta, mean or rank is computed (spec 15.8)."),
     }
     assert_no_aggregate_keys(table)
     return table
@@ -514,9 +418,7 @@ def comparability_groups(
     shares and the ``key`` it was formed on (the compared config plus the
     sample digest of its first member). Nothing is computed across members or
     across groups: no delta, no mean, no rank, no aggregate (spec 15.8 i; D9),
-    and :func:`assert_no_aggregate_keys` guards the payload. A verify member
-    carries the delta the worker persisted on its own score record (inside the
-    scorecard's ``delta`` key when present); none is computed here.
+    and :func:`assert_no_aggregate_keys` guards the payload.
     """
     ids = [run_id for run_id, _record, _overlay in runs]
     if len(set(ids)) != len(ids):
@@ -613,18 +515,14 @@ __all__ = [
     "Incompatible",
     "ScoreUnavailable",
     "assert_no_aggregate_keys",
-    "baseline_of",
     "changed_variables",
     "comparability_groups",
     "compared_config",
-    "comparison_families",
     "comparison_table",
     "compatibility",
     "config",
     "family_rows",
     "is_default_weights",
-    "is_verify_pairing",
-    "measured_delta",
     "model_hash",
     "non_default_weights",
     "pair_reasons",

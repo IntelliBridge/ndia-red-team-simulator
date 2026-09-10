@@ -2,7 +2,7 @@
 
 // The client leaf of /exports.
 //
-// One row per campaign or verify run with the state of its report formats and
+// One row per campaign run with the state of its report formats and
 // of its adversarial dataset export, read in one query from the `exports`
 // router. The actions on a row call the API's own gated routes through the
 // router (`report.render` for a re-render, `dataset.export` for a dataset) and
@@ -42,11 +42,8 @@ import { useRoles } from "@/hooks/useRoles";
 /** The poll for a list whose rows change while jobs run, in milliseconds. */
 export const EXPORTS_POLL_MS = 15_000;
 
-export type ExportKind = "campaign" | "verify";
-
 export type ExportsTableProps = {
   project?: string;
-  kind?: ExportKind;
   limit?: number;
 };
 
@@ -57,20 +54,6 @@ const BLOCKER_TEXT: Record<ExportDatasetBlocker, string> = {
   fixture_target: "fixture target, never exported",
   no_slices: "no adversarial slices retained",
 };
-
-const KIND_FILTERS: { kind: ExportKind | undefined; label: string }[] = [
-  { kind: undefined, label: "All" },
-  { kind: "campaign", label: "Campaigns" },
-  { kind: "verify", label: "Verifies" },
-];
-
-function filterHref(project: string | undefined, kind: ExportKind | undefined): string {
-  const params = new URLSearchParams();
-  if (project) params.set("project", project);
-  if (kind) params.set("kind", kind);
-  const query = params.toString();
-  return query ? `/exports?${query}` : "/exports";
-}
 
 function shortDigest(sha256: string | null): string {
   if (!sha256) return "—";
@@ -227,10 +210,10 @@ function DatasetCell({
   );
 }
 
-export function ExportsTable({ project, kind, limit }: ExportsTableProps) {
+export function ExportsTable({ project, limit }: ExportsTableProps) {
   const trpc = useTRPC();
   const query = useQuery({
-    ...trpc.exports.list.queryOptions({ project, kind, limit }),
+    ...trpc.exports.list.queryOptions({ project, limit }),
     refetchInterval: EXPORTS_POLL_MS,
   });
   const { roles } = useRoles();
@@ -309,31 +292,12 @@ export function ExportsTable({ project, kind, limit }: ExportsTableProps) {
     </div>
   ) : null;
 
-  const filters = (
-    <nav aria-label="Export kind" className="flex flex-wrap gap-2 text-sm">
-      {KIND_FILTERS.map((filter) => {
-        const current = filter.kind === kind;
-        return (
-          <Link
-            key={filter.label}
-            href={filterHref(project, filter.kind)}
-            aria-current={current ? "page" : undefined}
-            className={`border px-3 py-1 ${current ? "border-primary bg-primary/10" : "border-border"}`}
-          >
-            {filter.label}
-          </Link>
-        );
-      })}
-    </nav>
-  );
-
   if (rows.length === 0) {
     return (
       <div className="space-y-3">
-        {filters}
         {stale}
         <p className="text-muted-foreground">
-          Nothing to export yet. A finished campaign or verify run appears here with its
+          Nothing to export yet. A finished campaign appears here with its
           report formats and its dataset export. Start one from{" "}
           <Link className="text-primary underline" href="/models">
             /models
@@ -346,7 +310,6 @@ export function ExportsTable({ project, kind, limit }: ExportsTableProps) {
 
   return (
     <div className="space-y-3">
-      {filters}
       {stale}
       <div className="overflow-x-auto rounded-md border border-border bg-card">
         <Table>
@@ -355,7 +318,6 @@ export function ExportsTable({ project, kind, limit }: ExportsTableProps) {
             <TableRow>
               <TableHead scope="col">Run</TableHead>
               <TableHead scope="col">Model</TableHead>
-              <TableHead scope="col">Kind</TableHead>
               <TableHead scope="col">Status</TableHead>
               <TableHead scope="col">Reports</TableHead>
               <TableHead scope="col">Dataset</TableHead>
@@ -385,7 +347,6 @@ export function ExportsTable({ project, kind, limit }: ExportsTableProps) {
                       {row.model.fixture ? " · fixture" : null}
                     </div>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{row.kind}</TableCell>
                   <TableCell>
                     <RunStatusBadge status={row.status} />
                   </TableCell>

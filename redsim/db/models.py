@@ -193,19 +193,6 @@ class FixJobDetail(TypedDict):
     override_authorized: NotRequired[bool]
 
 
-class VerifyJobDetail(TypedDict):
-    """Shape of ``Job.detail`` for ``verify.replay`` jobs.
-
-    Admission (``services.verify.create_verify_job``) writes only
-    ``finding_id``; the worker (``workers.tasks.verify``) also reads
-    ``repo_path``, which is ``NotRequired`` because admission never sets
-    it (the worker defaults to the cwd).
-    """
-
-    finding_id: str
-    repo_path: NotRequired[str | None]
-
-
 class Finding(Base):
     """Phase 4 v0.3.1 F9: ``id`` is now an internal UUID; the scanner's
     upstream identifier lives in ``scanner_finding_id`` and is uniquely
@@ -229,8 +216,6 @@ class Finding(Base):
     status: Mapped[str] = mapped_column(String(32), default="open", index=True)
     severity: Mapped[str] = mapped_column(String(16), index=True)
     source_tool: Mapped[str | None] = mapped_column(String(64), index=True)
-    validation_state: Mapped[str] = mapped_column(String(32), default="unvalidated")
-    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     dedup_key: Mapped[str | None] = mapped_column(String(256), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -458,8 +443,8 @@ class IdempotencyKey(Base):
 class MlBatch(Base):
     """A bulk operation (BULK-01): N linked runs or uploads under one id.
 
-    ``kind`` is ``campaign`` (one ``CampaignConfig`` over N models),
-    ``verify`` (bulk verify) or ``upload`` (bulk model upload). ``config`` is
+    ``kind`` is ``campaign`` (one ``CampaignConfig`` over N models) or
+    ``upload`` (bulk model upload). ``config`` is
     the request as admitted (target ids, campaign body, refused members and
     their reasons). ``status`` is the batch's own lifecycle (``accepted``,
     then ``cancelled`` once ``cancelled_at`` is stamped); the member roll-up
@@ -473,7 +458,7 @@ class MlBatch(Base):
     # Denormalized tenant key for RLS (0011); trigger-backfilled, see Target.
     org_id: Mapped[str | None] = mapped_column(
         ForeignKey("organizations.id"), nullable=True, index=True)
-    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # campaign|verify|upload
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # campaign|upload
     config: Mapped[dict] = mapped_column(
         JSONB, nullable=False, default=dict, server_default=text("'{}'"))
     status: Mapped[str] = mapped_column(

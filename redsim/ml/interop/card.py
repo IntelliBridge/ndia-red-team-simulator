@@ -39,7 +39,6 @@ def render_card(manifest: dict[str, Any], *, limitations: list[str], license: st
     atlas = provenance.get("atlas", {}) if isinstance(provenance, dict) else {}
     run_id = provenance.get("source_run_id", "")
     kind = provenance.get("kind", "attack")
-    baseline = provenance.get("baseline_run_id")
     dataset_id = provenance.get("dataset_id", "")
     dataset_revision = provenance.get("dataset_revision")
     model_sha = provenance.get("model_sha256")
@@ -67,8 +66,6 @@ def render_card(manifest: dict[str, Any], *, limitations: list[str], license: st
         "",
         f"- Source run: `{run_id}` ({kind} run)",
     ]
-    if baseline:
-        lines.append(f"- Baseline run: `{baseline}` (this is a verify-run export; not merged with its baseline)")
     lines += [
         f"- Source dataset: `{dataset_id}`" + (f" @ `{dataset_revision}`" if dataset_revision else ""),
         f"- License: {license}",

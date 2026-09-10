@@ -1,13 +1,13 @@
 """The Croissant (MLCommons JSON-LD) manifest over the Parquet shards (INTEROP-05, -06, -12).
 
-``build_manifest`` projects a terminal campaign or verify record and its shards
+``build_manifest`` projects a terminal campaign record and its shards
 into an MLCommons Croissant 1.0 document: ``@context`` / ``conformsTo``, ``name``,
 ``description``, ``license``, a ``FileObject`` per shard carrying its ``sha256``
 and ``contentSize``, one ``RecordSet`` per family with typed ``Field`` entries,
 and a ``redsim:provenance`` block carrying the model and settings digests, the
 source dataset id/revision/licence with the coverage caveat, the campaign
-configuration, the limitations verbatim, the ATLAS technique per attack and (for
-a verify run) the baseline run id. The document is serialised with sorted keys
+configuration, the limitations verbatim and the ATLAS technique per attack. The
+document is serialised with sorted keys
 so two builds of the same record are byte-identical, and its own ``sha256`` is
 the dataset version.
 
@@ -195,7 +195,6 @@ def build_manifest(record: CampaignRecord, shards: list[Shard], *, dataset_licen
     redsim_block: dict[str, Any] = {
         "source_run_id": record.run_id,
         "kind": record.kind,
-        "baseline_run_id": record.baseline_run_id,
         "settings_hash": record.settings_hash,
         "model_sha256": provenance.model_sha256 if provenance else None,
         "dataset_id": record.config.dataset_id,

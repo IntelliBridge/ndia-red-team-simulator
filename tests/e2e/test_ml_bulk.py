@@ -1,10 +1,11 @@
-"""Bulk operations end to end: batches, bulk upload, capacity, bulk verify, the CLI matrix (wave B4).
+"""Bulk operations end to end: batches, bulk upload, capacity, the CLI matrix (wave B4).
 
 Plan 12 wave B4, track ``e2e-review-reports-interop-bulk`` (register BULK-03..09,
--13..18, -20..22, -26, -30..32). Owner requirement 5 (per-project caps and the
-daily budget) and owner decision BULK-16 (bulk verify is one defended run per
-defense projected onto every selected finding), on the shared harness of
-``tests/e2e/conftest.py`` / ``tests/e2e/harness.py``.
+-13..14, -17..18, -20..22, -26, -30..32). Owner requirement 5 (per-project caps
+and the daily budget) on the shared harness of ``tests/e2e/conftest.py`` /
+``tests/e2e/harness.py``. Batches are of kind ``campaign`` or ``upload``: the
+bulk verify of the earlier owner decision BULK-16 left the product with the
+verify paradigm on 2026-09-09 (every run is a measurement in its own right).
 
 Every test drives the production route, the admission service, the eager worker
 and the real sandbox child, then asserts on what those left behind. Two facts
@@ -34,12 +35,9 @@ measured on the tiny assets is a demo result.
    ``Project.ml_daily_run_budget`` refuses the member with ``daily_budget_exceeded``
    (a ``429`` code) and a ``success=False`` audit row; ``GET /v1/ml/capacity``
    reports the numbers throughout.
-6. ``test_bulk_verify_projects_one_defended_run``: ``POST /v1/findings/{id}/verify/bulk``
-   admits one defended run whose ``finding_ids`` list every selected finding and
-   projects its outcome onto them.
-7. ``test_single_run_admission_enforces_capacity``: the single-run route under the
+6. ``test_single_run_admission_enforces_capacity``: the single-run route under the
    same cap.
-8. ``test_cli_matrix_one_verifiable_chain_per_cell``: ``redsim ml attack --matrix``
+7. ``test_cli_matrix_one_verifiable_chain_per_cell``: ``redsim ml attack --matrix``
    in-process over the two tiny targets writes one run directory and one
    verifiable ``audit.jsonl`` chain per cell and no cross-cell aggregate.
 
@@ -75,8 +73,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.e2e
 
 N_EVAL = h.N_IMAGES // 2
-FINDING_THRESHOLD = 0.2
-FEATURE_SQUEEZING = "feature_squeezing"
 LICENSE_STATEMENT = "e2e harness double: seeded random pixels, no licence restriction applies"
 FORBIDDEN_TABLE_KEYS = frozenset({"mean", "rank", "average", "aggregate", "ranking"})
 BATCH_ROUTE = "/v1/campaigns/batch"
@@ -87,19 +83,9 @@ _SINGLE_ROUTE_CAPACITY_DEFECT = (
     "With Project.ml_max_concurrent_runs = 1 and one live attack.run job, POST /v1/models/{{id}}/attacks answered "
     "{status} with body keys {keys} and the run ended {run_status!r} at once: no deferred=true, no "
     "capacity_deferred marker (redsim.api.errors.MARKER_CODES), no Job.detail.deferred. BULK-20/-21 bind the "
-    "single attack and verify routes as well as batch members: redsim/services/ml_campaigns.py "
-    "create_attack_campaign / create_verify_campaign must call redsim/services/ml_capacity.py admit_or_defer "
-    "before the admission row and mark_deferred on an over-cap admission, and the 202 body must carry the marker."
-)
-_BULK_VERIFY_PROJECTION_DEFECT = (
-    "product defect, not a harness problem: owner decision BULK-16 is one defended run per (baseline, defense, "
-    "params) projected onto EVERY selected finding, and the batch admission wrote Job.detail.finding_ids={finding_ids} "
-    "with one verify.replay row per finding, but the worker projected the shared record onto the primary finding "
-    "only: {unprojected} still carry no ml.verify block naming run {run_id} (projected=false in the batch view). "
-    "redsim/workers/tasks/ml_campaign.py:_project_verify (line 943) reads detail.get('finding_id') alone and "
-    "never loops detail['finding_ids'] (redsim/services/ml_batches.py docstring: 'Projecting the shared record "
-    "onto each finding is the worker's (_project_verify loops finding_ids); until that lands the batch view "
-    "reports per finding whether its ml.verify block names the shared run')."
+    "single attack route as well as batch members: redsim/services/ml_campaigns.py create_attack_campaign must "
+    "call redsim/services/ml_capacity.py admit_or_defer before the admission row and mark_deferred on an over-cap "
+    "admission, and the 202 body must carry the marker."
 )
 
 
@@ -300,7 +286,7 @@ def _project_caps(e2e_app: E2EApp, project_id: str, *, max_concurrent: int | Non
 
 
 # ---------------------------------------------------------------------------
-# Module fixtures: the upload doubles, the registered ONNX, a campaign with findings
+# Module fixtures: the upload doubles and the registered ONNX
 # ---------------------------------------------------------------------------
 
 
@@ -382,22 +368,6 @@ def onnx_model(e2e_app: E2EApp, e2e_org: E2EOrg, e2e_bundled: dict[str, str],
         pytest.fail(f"product defect outside this file: the ONNX upload was refused by the validate child: "
                     f"{record.get('refusal_reason')}: {record.get('reason')}", pytrace=False)
     return {"model_id": model_id, "record": record}
-
-
-@pytest.fixture(scope="module")
-def finding_campaign(e2e_org: E2EOrg, onnx_model: dict[str, Any]) -> h.CampaignRun:
-    """FGSM + PGD (or HopSkipJump alone without gradients) on the memorising upload, launched by the scanner."""
-    manifest = onnx_model["record"].get("manifest") or {}
-    if manifest.get("gradients"):
-        body = h.image_campaign(n_samples=N_EVAL, finding_asr_threshold=FINDING_THRESHOLD)
-    else:
-        body = h.image_campaign(n_samples=N_EVAL, finding_asr_threshold=FINDING_THRESHOLD, attack_ids=["hopskipjump"],
-                                attack_params={"hopskipjump": h.tabular_campaign()["attack_params"]["hopskipjump"]})
-    result = h.run_campaign_via_api(e2e_org.client("scanner"), onnx_model["model_id"], body, timeout_s=30.0)
-    assert result.status == "succeeded", f"run {result.run_id}: {result.stage_table}"
-    assert result.campaign is not None, result.campaign_error
-    assert result.findings, "the memorising upload produced no finding to verify in bulk"
-    return result
 
 
 # ---------------------------------------------------------------------------
@@ -813,97 +783,7 @@ def test_daily_budget_refuses_with_an_audited_row(
 
 
 # ---------------------------------------------------------------------------
-# 6. Bulk verify per the owner decision BULK-16 (BULK-15)
-# ---------------------------------------------------------------------------
-
-
-def test_bulk_verify_projects_one_defended_run(
-    e2e_app: E2EApp, e2e_org: E2EOrg, finding_campaign: h.CampaignRun,
-) -> None:
-    from redsim.workers.tasks.ml_campaign import VERIFY_STATUS_MAP
-    from redsim.workers.tasks.verify import _STATE_MAP
-
-    scanner, remediator, viewer = e2e_org.client("scanner"), e2e_org.client("remediator"), e2e_org.client("viewer")
-    run_id = finding_campaign.run_id
-    baseline = finding_campaign.campaign
-    assert baseline is not None
-    finding_ids = [str(f["id"]) for f in finding_campaign.findings if f["status"] == "open"]
-    anchor = finding_ids[0]
-    project_chain = f"project:{e2e_org.project_id}"
-    route = f"/v1/findings/{anchor}/verify/bulk"
-    body = {"defenses": [{"defense": FEATURE_SQUEEZING, "params": {"bit_depth": 6}}, {"defense": FEATURE_SQUEEZING,
-                                                                                       "params": {"bit_depth": 6}}]}
-
-    assert scanner.post(route, json=body).status_code == 403, "verify.replay is remediator+"
-    assert viewer.post(route, json=body).status_code == 403
-    assert remediator.post("/v1/findings/finding-does-not-exist/verify/bulk", json=body).status_code == 404
-    response = remediator.post(route, json=body)
-    assert response.status_code == 202, response.text
-    handle = response.json()
-    batch_id = str(handle["batch_id"])
-    assert handle["kind"] == "verify" and handle["baseline_run_id"] == run_id and handle["modality"] == "image"
-    assert handle["finding_ids"] == finding_ids and handle["primary_finding_id"] == anchor and handle["skipped"] == []
-    assert len(handle["members"]) == 1 and handle["refused"] == [], "the duplicate defense collapsed"
-    member = handle["members"][0]
-    assert member["defense"]["id"] == FEATURE_SQUEEZING and member["defense"]["params"] == {"bit_depth": 6}
-    assert member["primary_finding_id"] == anchor and member["deferred"] is False
-    _assert_no_aggregate(handle)
-
-    # one defended run, kind verify, at the baseline's settings, listing every selected finding
-    verify_run = h.wait_for_run(viewer, str(member["run_id"]), timeout_s=30.0)
-    assert verify_run["status"] == "succeeded", verify_run.get("stage_table")
-    assert verify_run["stage_table"]["batch_id"] == batch_id and verify_run["stage_table"]["finding_ids"] == finding_ids
-    record = _campaign(viewer, str(member["run_id"]))
-    assert record["kind"] == "verify" and record["baseline_run_id"] == run_id
-    assert record["settings_hash"] == baseline["settings_hash"] and record["config"]["defense"]["id"] == FEATURE_SQUEEZING
-    job = _job(e2e_app, str(member["job_ids"][0]))
-    assert job["type"] == "verify.replay" and job["status"] == "succeeded"
-    assert job["detail"]["finding_ids"] == finding_ids and job["detail"]["finding_id"] == anchor
-    assert job["detail"]["batch_id"] == batch_id and job["detail"]["baseline_run_id"] == run_id
-
-    # audit: batch.create, then the single route's verify.replay row plus one per additional finding
-    batch_rows = [ev for ev in _events(e2e_app, project_chain, "batch.create") if ev["detail"].get("batch_id") == batch_id]
-    assert len(batch_rows) == 1 and batch_rows[0]["success"] is True and batch_rows[0]["detail"]["kind"] == "verify"
-    assert batch_rows[0]["detail"]["finding_ids"] == finding_ids and batch_rows[0]["detail"]["defense_ids"] == [FEATURE_SQUEEZING]
-    replay_rows = _events(e2e_app, f"run:{member['run_id']}", "verify.replay")
-    assert [ev["detail"]["finding_id"] for ev in replay_rows] == finding_ids
-    assert all(ev["success"] and ev["actor"] == e2e_org.actor("remediator") for ev in replay_rows)
-    for extra in replay_rows[1:]:
-        assert extra["detail"]["shared_run_id"] == member["run_id"] and extra["detail"]["batch_id"] == batch_id
-        assert extra["detail"]["projection"] == "shared defended run (BULK-16)"
-    actions = _actions(e2e_app, f"run:{member['run_id']}")
-    assert actions[0] == "verify.replay" and "verify.execute" in actions and "job.complete" in actions
-    # With eager Celery the member ran inside its own admission, so the rows binding the other findings land
-    # after the worker's job.complete; the chain is one sequence either way (verified by test_audit_verify_all).
-    assert actions.index("verify.execute") < actions.index("job.complete")
-
-    # the projection onto the selected findings (owner decision BULK-16)
-    view = _batch_view(viewer, batch_id)
-    assert view["kind"] == "verify" and view["status"] == "succeeded"
-    assert view["requested"]["finding_ids"] == finding_ids and view["requested"]["baseline_run_id"] == run_id
-    shown = view["members"][0]
-    assert shown["kind"] == "verify" and shown["defense"]["id"] == FEATURE_SQUEEZING and shown["finding_ids"] == finding_ids
-    projected = {row["finding_id"]: row for row in shown["findings"]}
-    assert set(projected) == set(finding_ids)
-    primary = projected[anchor]
-    assert primary["projected"] is True and primary["outcome"] in _STATE_MAP
-    anchor_row = viewer.get(f"/v1/findings/{anchor}").json()
-    assert anchor_row["schema_blob"]["ml"]["verify"]["run_id"] == member["run_id"]
-    assert anchor_row["status"] == VERIFY_STATUS_MAP[primary["outcome"]]
-    assert anchor_row["validation_state"] == _STATE_MAP[primary["outcome"]]
-    assert anchor_row["schema_blob"]["ml"]["retests"][-1]["settings_hash"] == baseline["settings_hash"]
-    unprojected = [fid for fid in finding_ids if projected[fid]["projected"] is not True]
-    if unprojected:
-        pytest.fail(_BULK_VERIFY_PROJECTION_DEFECT.format(finding_ids=finding_ids, unprojected=unprojected,
-                                                          run_id=member["run_id"]), pytrace=False)
-    for fid in finding_ids:
-        row = viewer.get(f"/v1/findings/{fid}").json()
-        assert row["schema_blob"]["ml"]["verify"]["run_id"] == member["run_id"]
-        assert row["status"] == VERIFY_STATUS_MAP[projected[fid]["outcome"]]
-
-
-# ---------------------------------------------------------------------------
-# 7. The single-run admission under the same concurrency cap (BULK-20, -21)
+# 6. The single-run admission under the same concurrency cap (BULK-20, -21)
 # ---------------------------------------------------------------------------
 
 
@@ -944,7 +824,7 @@ def test_single_run_admission_enforces_capacity(
 
 
 # ---------------------------------------------------------------------------
-# 8. The CLI matrix: one offline run and one verifiable chain per cell (BULK-17, -18)
+# 7. The CLI matrix: one offline run and one verifiable chain per cell (BULK-17, -18)
 # ---------------------------------------------------------------------------
 
 

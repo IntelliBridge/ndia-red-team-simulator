@@ -73,7 +73,6 @@ def _campaign_table(engine: Any) -> Table:
         Column("provenance", JSON),
         Column("score", JSON),
         Column("limitations", JSON, nullable=False),
-        Column("baseline_run_id", String),
         Column("parent_run_id", String),
         Column("reviewer_notes", Text),
         Column("created_at", DateTime),
@@ -164,7 +163,6 @@ def test_p4_routes_are_materialized_in_openapi() -> None:
         "/v1/models",
         "/v1/attacks",
         "/v1/datasets",
-        "/v1/defenses",
         "/v1/runs/{run_id}/campaign",
         "/v1/runs/{run_id}/compare",
         "/v1/runs/{run_id}/reviewer-notes",
@@ -172,7 +170,6 @@ def test_p4_routes_are_materialized_in_openapi() -> None:
         "/v1/artifacts/{artifact_id}",
         "/v1/findings/{finding_id}/explain",
         "/v1/findings/{finding_id}/harden",
-        "/v1/findings/{finding_id}/verify",
     }
     assert expected <= paths.keys()
 
@@ -250,48 +247,4 @@ def test_finding_actions_admit_real_child_campaigns(
         assert row["config"]["auto_recommend"] is True
         assert row["config"]["llm_narrative"] is False
 
-
-def test_verify_admission_audits_before_rows_and_freezes_baseline(
-    orchestration_db: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from redsim.services.ml_campaigns import create_verify_campaign
-
-    record = orchestration_db["record"]
-    sessions = orchestration_db["sessions"]
-    campaigns = orchestration_db["campaigns"]
-    with sessions.begin() as session:
-        finding_id = project_campaign_findings(session, record)[0]
-    writer = _AuditWriter(sessions)
-    monkeypatch.setattr("redsim.workers.tasks.ml_campaign.ml_campaign_run.delay", lambda _id: _Task())
-
-    handle = create_verify_campaign(
-        finding_id=finding_id,
-        actor="reviewer-1",
-        defense_id="feature_squeezing",
-        params={"bit_depth": 4},
-        recommendation_id="r.R2",
-        config=RedsimConfig(),
-        audit_writer=writer,
-    )
-    run_id = handle.run_id
-    job_id = handle.job_ids[0]
-
-    assert writer.events[0]["action"] == "verify.replay"
-    with sessions() as session:
-        run = session.get(Run, run_id)
-        job = session.get(Job, job_id)
-        row = session.execute(campaigns.select().where(campaigns.c.run_id == run_id)).mappings().one()
-    assert run is not None
-    assert job is not None
-    assert job.id == job_id
-    assert job.celery_task_id == "celery-task-1"
-    assert row["baseline_run_id"] == record.run_id
-    assert row["parent_run_id"] is None
-    assert row["config"]["attack_ids"] == record.config.attack_ids
-    assert row["config"]["eps_grid"] == record.config.eps_grid
-    assert row["config"]["seed"] == record.config.seed
-    assert row["config"]["defense"]["id"] == "feature_squeezing"
-    assert row["config"]["defense"]["params"] == {"bit_depth": 4}
-    assert job.detail["recommendation_id"] == "r.R2"
 

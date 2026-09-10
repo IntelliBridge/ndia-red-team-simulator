@@ -17,7 +17,7 @@ entity User {
 
 entity Project;
 
-action "scan.start", "verify.replay", "target.manage", "auth_profile.manage",
+action "scan.start", "target.manage", "auth_profile.manage",
        "audit.verify", "run.cancel", "model.register", "attack.run",
        "explain.run", "harden.recommend", "finding.review", "finding.annotate",
        "report.export"

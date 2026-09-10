@@ -150,8 +150,8 @@ function parseEvent(text: string): ChatStreamEvent {
  * Starter questions in the finding's own terms.
  *
  * Every prompt asks for something the recorded context can answer with its
- * labels intact: measurements with denominators, candidates with their
- * validation state, limitations. None asks for advice on fielding the model.
+ * labels intact: measurements with denominators, candidates as candidates,
+ * limitations. None asks for advice on fielding the model.
  */
 export function examplePrompts(finding: Finding): string[] {
   const ml = finding.schema_blob?.ml ?? null;
@@ -163,7 +163,7 @@ export function examplePrompts(finding: Finding): string[] {
     "Explain this finding in plain language for a reviewer who has not seen the campaign.",
     `Which measurements support the ${severity}severity, and what are their denominators?`,
     `How does the noise control compare with ${attack}${atEps}?`,
-    "Which candidate recommendations apply here, and which of them has a measured verify result?",
+    "Which candidate recommendations apply here, and what evidence triggered each of them?",
     "What limitations should I cite before I act on this finding?",
     "What does the explanation shift show, and what does it not show?",
   ];

@@ -92,7 +92,7 @@ function keyProxy(queryClient: QueryClient) {
 
 async function dehydratedList(
   outcome: { data: ExportsList } | { error: unknown },
-  input: { project?: string; kind?: "campaign" | "verify"; limit?: number } = {},
+  input: { project?: string; limit?: number } = {},
 ): Promise<DehydratedState> {
   const queryClient = makeQueryClient();
   const options = keyProxy(queryClient).exports.list.queryOptions(input);
@@ -115,7 +115,7 @@ afterEach(() => {
 
 describe("ExportsTable hydration and polling", () => {
   it("renders hydrated rows synchronously and issues no fetch inside the stale window", async () => {
-    const dehydratedState = await dehydratedList({ data: list([row({ run_id: "run-7" }), row({ run_id: "run-8", kind: "verify" })]) });
+    const dehydratedState = await dehydratedList({ data: list([row({ run_id: "run-7" }), row({ run_id: "run-8" })]) });
 
     vi.useFakeTimers();
     const { trpcFetch } = renderWithProviders(<ExportsTable />, { dehydratedState });
@@ -169,20 +169,14 @@ describe("ExportsTable hydration and polling", () => {
 });
 
 describe("ExportsTable rows", () => {
-  it("renders the columns, the kind filter links and the UTC timestamp", async () => {
-    const dehydratedState = await dehydratedList({ data: list([row()]) }, { project: "proj-a", kind: "campaign" });
-    renderWithProviders(<ExportsTable project="proj-a" kind="campaign" />, { dehydratedState });
+  it("renders the columns without a kind filter and the UTC timestamp", async () => {
+    const dehydratedState = await dehydratedList({ data: list([row()]) }, { project: "proj-a" });
+    renderWithProviders(<ExportsTable project="proj-a" />, { dehydratedState });
 
     const headers = screen.getAllByRole("columnheader").map((h) => h.textContent);
-    expect(headers).toEqual(["Run", "Model", "Kind", "Status", "Reports", "Dataset", "Created"]);
+    expect(headers).toEqual(["Run", "Model", "Status", "Reports", "Dataset", "Created"]);
 
-    const nav = screen.getByRole("navigation", { name: "Export kind" });
-    const links = Array.from(nav.querySelectorAll("a")).map((a) => [a.textContent, a.getAttribute("href"), a.getAttribute("aria-current")]);
-    expect(links).toEqual([
-      ["All", "/exports?project=proj-a", null],
-      ["Campaigns", "/exports?project=proj-a&kind=campaign", "page"],
-      ["Verifies", "/exports?project=proj-a&kind=verify", null],
-    ]);
+    expect(screen.queryByRole("navigation", { name: "Export kind" })).toBeNull();
     expect(screen.getByText(/UTC$/).textContent).toBe("Jan 02, 2026, 03:04 UTC");
     expect(screen.getByText("Vehicles CNN")).toBeTruthy();
   });

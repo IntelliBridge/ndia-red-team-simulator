@@ -6,7 +6,7 @@ Phase 4 v0.3.1 F6 split:
   against the supplied ``audit_writer``, persists Run+Job rows, and
   enqueues the Celery task. Called from API write routes and the CLI's
   ``--api`` dispatch.
-- **Execution** (``start_scan`` / ``verify``):
+- **Execution** (``start_scan``):
   long-running. Called from Celery workers and (for backward compat)
   the offline CLI.
 
@@ -25,18 +25,14 @@ scope. See the mirror note in ``redsim.workers.tasks``.
 from redsim.services.reports import ReportOutcome, render_reports
 from redsim.services.runs import CancelOutcome, cancel_run
 from redsim.services.scans import JobHandle, ScanOutcome, create_scan_job, start_scan
-from redsim.services.verify import VerifyOutcome, create_verify_job, verify
 
 __all__ = [
     "CancelOutcome",
     "JobHandle",
     "ReportOutcome",
     "ScanOutcome",
-    "VerifyOutcome",
     "cancel_run",
     "create_scan_job",
-    "create_verify_job",
     "render_reports",
     "start_scan",
-    "verify",
 ]

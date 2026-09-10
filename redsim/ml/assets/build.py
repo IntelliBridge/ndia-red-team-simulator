@@ -17,12 +17,7 @@ registry ids (``vehicles_cnn``, ``cifar10_smallcnn``, ``url_trees``, and since
 Phase B ``sms_tfidf_lr`` for ``--dataset text`` and ``assets_frcnn_mnv3`` for
 ``--dataset detection``; the vocabulary is ``manifest.BUILD_*``).
 
-Phase B additions (plan 12): the image builds also write the bundled training
-slice a training defense fine-tunes on (``bundled/<model>/train_slice.npz``,
-recorded as a split of the dataset and named by ``models[id].train_slice_split``,
-ATTACKS_HARDEN-11) with a sidecar ``train_slice.json``; ``attach_train_slice``
-records a slice drawn out-of-band from that sidecar (``--attach-train-slice``)
-without retraining. The text build (``build_text_asset`` in
+Phase B additions (plan 12): the text build (``build_text_asset`` in
 ``train_text_classifier``) reads the cached UCI corpus, falling back to the
 committed fixture as the tabular build does; the detection build reads the
 published capped subset under ``<assets>/cache/military_assets_subset`` and is
@@ -81,8 +76,6 @@ from redsim.ml.assets.manifest import (
     library_versions,
     load_manifest,
     load_or_new,
-    manifest_digest,
-    model_entry,
     sha256_file,
     stamp_manifest_sha256,
     with_dataset_caveats,
@@ -105,7 +98,7 @@ __all__ = [
     "CIFAR10_CAVEATS", "DATASET_CAVEATS", "DATASET_CHOICES", "DEFAULT_FIXTURE_PATH", "DETECTION_MODEL_ID",
     "DETECTION_PIPELINE_CAVEATS", "EXPLICIT_ONLY_DATASETS", "FIXTURE_ONLY_CAVEAT", "KAGGLE_URL_CAVEATS", "MODEL_IDS",
     "MODEL_NAMES", "SUBJECT_CENTERED", "TEXT_MODEL_ID", "URL_PIPELINE_CAVEATS", "VEHICLES_CAVEATS",
-    "VEHICLES_DATASET_ID", "BuildOptions", "FixtureBuild", "attach_train_slice", "build_assets",
+    "VEHICLES_DATASET_ID", "BuildOptions", "FixtureBuild", "build_assets",
     "build_cifar10_fixture", "build_cnn_asset", "build_detection_asset", "build_url_asset", "dataset_caveats",
     "inject_truststore", "resolve_detection_data", "resolve_detection_subset_root", "resolve_sms_table",
     "subject_centered_for", "summarize", "write_url_eval_slice",
@@ -269,7 +262,6 @@ def inject_truststore() -> bool:
 
 
 # Dataset selections whose model is trained on an image split and so carries a training slice.
-_IMAGE_DATASETS: frozenset[str] = frozenset({"image", "cifar10"})
 
 
 @dataclass
@@ -290,16 +282,11 @@ class BuildOptions:
     prefer_xgboost: bool = False         # sklearn_joblib is what every worker image can load (spec 9.2)
     holdout: float = 0.2
     arch: str = "small_cnn"              # image architecture for the CNN builds (``--arch``)
-    build_models: bool = True            # False: ``--fixture`` / ``--attach-train-slice`` alone, no training
+    build_models: bool = True            # False: ``--fixture`` alone, no training
     fixture: bool = False                # also write the committed CIFAR-10 test slice
     fixture_out: Path = DEFAULT_FIXTURE_PATH
     fixture_sidecar: Path | None = None  # default: MANIFEST.json beside ``fixture_out``
     fixture_allow_synthetic: bool = False
-    # ATTACKS_HARDEN-11: the image builds write ``bundled/<model>/train_slice.npz`` (``--no-train-slice`` skips it).
-    train_slice: bool = True
-    train_slice_n: int = ds.DEFAULT_TRAIN_SLICE_N
-    # Image model ids whose out-of-band slice (``train_slice.json`` sidecar) is recorded in the manifest.
-    attach_train_slice: tuple[str, ...] = ()
     # MODALITIES-29: the detector build reads the published subset (default: ``<cache>/military_assets_subset``,
     # else ``<out>/cache/military_assets_subset``) at this square input size.
     detection_image_size: int = 320
@@ -312,16 +299,8 @@ class BuildOptions:
         unknown = [m for m in self.only if m not in BUILD_ASSET_IDS]
         if unknown:
             raise ValueError(f"unknown model id(s) {unknown}; known: {sorted(BUILD_ASSET_IDS)}")
-        self.attach_train_slice = tuple(canonical_model_id(m) for m in self.attach_train_slice)
-        not_image = [m for m in self.attach_train_slice
-                     if BUILD_ASSET_IDS.get(m) not in _IMAGE_DATASETS]
-        if not_image:
-            raise ValueError(f"attach_train_slice names non-image model id(s) {not_image}; a training slice belongs "
-                             f"to an image model: {sorted(m for m, d in BUILD_ASSET_IDS.items() if d in _IMAGE_DATASETS)}")
         if self.epochs < 1:
             raise ValueError("epochs must be >= 1")
-        if self.train_slice_n < 1:
-            raise ValueError("train_slice_n must be >= 1")
         if self.detection_image_size < 8:
             raise ValueError("detection_image_size must be >= 8")
         if not 0.0 < self.holdout < 1.0:
@@ -351,10 +330,6 @@ class BuildOptions:
             return {BUILD_ASSET_IDS[m] for m in self.only}
         return all_build_datasets() if self.dataset == "all" else {self.dataset}
 
-    @property
-    def train_slice_options(self) -> ds.TrainSliceOptions:
-        return ds.TrainSliceOptions(n=self.train_slice_n, seed=self.seed, enabled=self.train_slice)
-
 
 # ---------------------------------------------------------------------------
 # Pure build steps (no network)
@@ -382,48 +357,21 @@ def _clean_accuracy(metrics: dict[str, object], split: str) -> CleanAccuracy:
     return CleanAccuracy(value=float(value), n=n, split=split)
 
 
-def write_image_train_slice(data: ds.ImageDataset, root: Path, entry: DatasetEntry, model_id: str, *,
-                            options: ds.TrainSliceOptions) -> SplitEntry:
-    """Draw the bundled training slice of ``model_id`` from ``data.train`` and record it on ``entry`` (ATTACKS_HARDEN-11).
-
-    The slice goes to ``bundled/<model_id>/train_slice.npz`` with its ``train_slice.json`` sidecar and the
-    ``SplitEntry`` (named ``<train split>_slice``) under ``entry.splits``. When train and eval come from one
-    pool (same split name) the evaluation rows are excluded so the slice never overlaps what is measured.
-    """
-    same_pool = data.train.name == data.eval.name
-    dest = Path(root) / "bundled" / model_id / ds.TRAIN_SLICE_NAME
-    _sub, slice_entry = ds.write_train_slice(data.train, dest, root, n=options.n, seed=options.seed,
-                                             exclude_indices=data.eval.indices if same_pool else None)
-    entry.splits[slice_entry.name] = slice_entry
-    ds.write_train_slice_sidecar(dest.parent / ds.TRAIN_SLICE_SIDECAR_NAME, ds.TrainSliceSidecar(
-        model_id=model_id, dataset_id=entry.id, revision=entry.revision, source_split=data.train.name,
-        split_entry=slice_entry, n_requested=options.n, seed=options.seed,
-        note=(f"seeded stratified draw over the {data.train.name} split (redsim.ml.assets.datasets.write_train_slice); "
-              + ("disjoint from the evaluation rows by construction" if same_pool
-                 else f"train and evaluation ({data.eval.name}) are distinct source splits")),
-    ))
-    return slice_entry
-
-
 def build_cnn_asset(data: ds.ImageDataset, *, model_id: str, root: Path, epochs: int, seed: int,
                     arch: str = "small_cnn", fixture_only: bool = False, notes: Sequence[str] = (),
                     caveats: Sequence[str] = (), subject_centered: bool | None = None,
-                    name: str | None = None, train_slice: ds.TrainSliceOptions | None = None,
-                    log: Log = print) -> tuple[DatasetEntry, ModelEntry]:
+                    name: str | None = None, log: Log = print) -> tuple[DatasetEntry, ModelEntry]:
     """Train the catalog architecture ``arch`` on ``data``; write weights, eval slice and manifest entries.
 
     The dataset entry gets its spec 11.3 caveats (``dataset_caveats``: the table row for its id, the fixture-only
     statement, then ``caveats``) and its ``subject_centered`` flag (``subject_centered`` when given, else the table
-    value, else ``None``); both are copied onto the model entry (spec 13.4, 14.5). The bundled training slice
-    (``train_slice``; the defaults when ``None``, ``TrainSliceOptions(enabled=False)`` to skip) is written beside
-    the weights and named by the model entry's ``train_slice_split`` (ATTACKS_HARDEN-11).
+    value, else ``None``); both are copied onto the model entry (spec 13.4, 14.5).
     """
     from redsim.ml.assets.train_cnn import save_state_dict, train_cnn
     from redsim.ml.targets.architectures import canonical_architecture_id
 
     root = Path(root).resolve()
     arch = canonical_architecture_id(arch)
-    slice_options = train_slice if train_slice is not None else ds.TrainSliceOptions(seed=seed)
     class_names = list(data.train.class_names)
     log(f"{model_id}: training {arch} for {epochs} epoch(s), seed {seed}, "
         f"n_train={data.train.n}, n_eval={data.eval.n}, image_size={data.train.x.shape[-1]}")
@@ -439,12 +387,6 @@ def build_cnn_asset(data: ds.ImageDataset, *, model_id: str, root: Path, epochs:
     eval_file = write_image_eval_slice(data.eval, root, entry)
     entry.splits[data.train.name] = ds.split_entry(data.train)
     entry.splits[data.eval.name] = ds.split_entry(data.eval, file=eval_file)
-    slice_name: str | None = None
-    if slice_options.enabled:
-        slice_entry = write_image_train_slice(data, root, entry, model_id, options=slice_options)
-        slice_name = slice_entry.name
-        log(f"{model_id}: training slice {slice_entry.name} n={slice_entry.n} (requested {slice_options.n}, seed "
-            f"{slice_options.seed}) at {slice_entry.file.path}")  # type: ignore[union-attr]
 
     init_note = str(result.training.get("backbone_init", "random (seeded)"))
     model = ModelEntry(
@@ -457,7 +399,7 @@ def build_cnn_asset(data: ds.ImageDataset, *, model_id: str, root: Path, epochs:
         license=entry.license, source_url=entry.url,
         seed=seed, epochs=epochs, training=result.training, metrics=result.metrics,
         library_versions=library_versions(("torch", "torchvision", "numpy")),
-        fixture_only=entry.fixture_only, train_slice_split=slice_name,
+        fixture_only=entry.fixture_only,
         notes=["Input contract: float32 [0, 1] NCHW; channel normalisation is inside the model.",
                "Clean accuracy is measured on the full bundled evaluation split at build time.",
                f"Initialisation: {init_note}."],
@@ -467,59 +409,6 @@ def build_cnn_asset(data: ds.ImageDataset, *, model_id: str, root: Path, epochs:
         f"weights sha256 {model.sha256[:12]}..., {len(entry.caveats)} dataset caveat(s), "
         f"subject_centered={entry.subject_centered}")
     return entry, model
-
-
-def attach_train_slice(manifest: AssetManifest, root: Path, model_id: str, *, sidecar: Path | None = None,
-                       log: Log = print) -> SplitEntry:
-    """Record a training slice drawn out-of-band in ``manifest`` from its ``train_slice.json`` sidecar.
-
-    For a model the manifest already holds (``vehicles_cnn`` built before the slice existed): the sidecar must
-    name this model, its dataset, revision and training split; the slice file must be where the sidecar says
-    and hash to its recorded digest. The ``SplitEntry`` then joins the dataset's ``splits`` and the model entry
-    gets ``train_slice_split``, which sits outside the frozen projection, so ``manifest_sha256`` is unchanged
-    and nothing is retrained. Returns the split entry recorded.
-    """
-    root = Path(root).resolve()
-    model_id = canonical_model_id(model_id)
-    entry = model_entry(manifest, model_id)
-    if entry is None:
-        raise SliceUnavailable(f"{model_id!r} has no entry in the manifest; build it before attaching a training slice")
-    sidecar_path = Path(sidecar) if sidecar is not None else root / "bundled" / model_id / ds.TRAIN_SLICE_SIDECAR_NAME
-    record = ds.read_train_slice_sidecar(sidecar_path)
-    if record.model_id != model_id:
-        raise SliceUnavailable(f"{sidecar_path} describes {record.model_id!r}, not {model_id!r}")
-    if record.dataset_id != entry.dataset_id:
-        raise SliceUnavailable(f"{sidecar_path}: the slice was drawn from {record.dataset_id!r}; {model_id!r} is bound "
-                               f"to {entry.dataset_id!r}")
-    if record.revision is not None and entry.dataset_revision is not None and record.revision != entry.dataset_revision:
-        raise SliceUnavailable(f"{sidecar_path}: the slice was drawn from revision {record.revision!r}; the model was "
-                               f"trained on {entry.dataset_revision!r}")
-    if record.source_split != entry.train_split:
-        raise SliceUnavailable(f"{sidecar_path}: the slice was drawn from split {record.source_split!r}; the model's "
-                               f"training split is {entry.train_split!r}")
-    split = record.split_entry
-    if split.file is None:
-        raise SliceUnavailable(f"{sidecar_path}: the split entry names no file")
-    path = root / split.file.path
-    if not path.is_file():
-        raise SliceUnavailable(f"training slice {path} is missing (named by {sidecar_path})")
-    actual = sha256_file(path)
-    if actual != split.file.sha256 or path.stat().st_size != split.file.size_bytes:
-        raise SliceUnavailable(f"training slice {path} has sha256 {actual[:12]}... and {path.stat().st_size} bytes; "
-                               f"{sidecar_path} records {split.file.sha256[:12]}... and {split.file.size_bytes}; "
-                               "refusing to record a slice the sidecar does not vouch for")
-    dataset = manifest.datasets.get(entry.dataset_id)
-    if dataset is None:
-        raise SliceUnavailable(f"dataset {entry.dataset_id!r} of {model_id!r} is not in the manifest")
-    dataset.splits[split.name] = split
-    updated = entry.model_copy(update={"train_slice_split": split.name})
-    if manifest_digest(updated) != manifest_digest(entry):  # pragma: no cover - the field is outside the projection
-        raise RuntimeError("train_slice_split changed the frozen projection; refusing to write")
-    key = model_id if model_id in manifest.models else next(k for k, v in manifest.models.items() if v is entry)
-    manifest.models[key] = updated
-    log(f"{model_id}: recorded training slice {split.name} (n={split.n}, seed {split.seed}) at {split.file.path}; "
-        f"manifest_sha256 unchanged")
-    return split
 
 
 def _per_class(labels: np.ndarray, idx: np.ndarray, class_names: Sequence[str]) -> dict[str, int]:
@@ -994,9 +883,7 @@ def build_assets(opts: BuildOptions, log: Log = print, warn: Log | None = None) 
     this run built are replaced, so re-runs and two builds into the same root
     (say ``--dataset image`` beside ``--dataset tabular``) keep each other's
     entries. A legacy entry (``url_classifier``) is dropped once its current id
-    (``url_trees``) has been built. ``opts.attach_train_slice`` records the
-    named models' out-of-band training slices in the manifest after the builds
-    (``attach_train_slice``; no training). With ``opts.fixture`` the committed
+    (``url_trees``) has been built. With ``opts.fixture`` the committed
     CIFAR-10 slice is written afterwards from local files only. A detection
     selection checks that the published subset is present before any model is
     trained.
@@ -1020,7 +907,6 @@ def build_assets(opts: BuildOptions, log: Log = print, warn: Log | None = None) 
     selected = opts.selected
     if "detection" in selected:
         resolve_detection_subset_root(opts)      # refuse now, before hours of CPU go into the other selections
-    slice_options = opts.train_slice_options
     client = ds.make_client() if selected & {"image", "cifar10", "text"} else None
     try:
         if "image" in selected and client is not None:
@@ -1030,8 +916,7 @@ def build_assets(opts: BuildOptions, log: Log = print, warn: Log | None = None) 
                                         workers=opts.workers, log=log, license_note=VEHICLES_LICENSE_NOTE,
                                         notes=VEHICLES_NOTES)
             entry, model = build_cnn_asset(data, model_id=BUILD_MODEL_IDS["image"], root=root, epochs=opts.epochs,
-                                           seed=opts.seed, arch=opts.arch, notes=cap_notes, train_slice=slice_options,
-                                           log=log)
+                                           seed=opts.seed, arch=opts.arch, notes=cap_notes, log=log)
             built_datasets[entry.id] = entry
             built_models[model.id] = model
             built.append(model.id)
@@ -1040,7 +925,7 @@ def build_assets(opts: BuildOptions, log: Log = print, warn: Log | None = None) 
                                     max_eval=opts.max_eval, seed=opts.seed, log=log)
             entry, model = build_cnn_asset(data, model_id=BUILD_MODEL_IDS["cifar10"], root=root, epochs=opts.epochs,
                                            seed=opts.seed, arch=opts.arch, fixture_only=True, notes=cap_notes,
-                                           train_slice=slice_options, log=log)
+                                           log=log)
             built_datasets[entry.id] = entry
             built_models[model.id] = model
             built.append(model.id)
@@ -1080,19 +965,10 @@ def build_assets(opts: BuildOptions, log: Log = print, warn: Log | None = None) 
             if current in built_models and legacy in manifest.models:
                 del manifest.models[legacy]
                 log(f"dropped the legacy manifest entry {legacy!r}; {current!r} replaces it")
-    attached: list[str] = []
-    for model_id in opts.attach_train_slice:
-        split = attach_train_slice(manifest, root, model_id, log=log)
-        attached.append(f"{model_id} ({split.name})")
-    if built or attached:
+    if built:
         manifest.touch()
         write_manifest(manifest, manifest_path)
-        what = []
-        if built:
-            what.append(f"{len(built)} model(s) built: {', '.join(built)}")
-        if attached:
-            what.append(f"training slice(s) recorded: {', '.join(attached)}")
-        log(f"wrote {manifest_path} ({'; '.join(what)})")
+        log(f"wrote {manifest_path} ({len(built)} model(s) built: {', '.join(built)})")
     else:
         log("no model selected for this run; the manifest is unchanged")
     if opts.fixture:
@@ -1112,8 +988,7 @@ def summarize(manifest: AssetManifest) -> str:
         acc_s = f"{acc.value:.4f} (n={acc.n}, {acc.split})" if acc is not None else "n/a"
         flag = "  [fixture only]" if model.fixture_only else ""
         caveats = f", {len(model.dataset_caveats)} dataset caveat(s)" if model.dataset_caveats else ""
-        train_slice = f", train slice {model.train_slice_split}" if model.train_slice_split else ""
         lines.append(f"  {model.id}: {model.format} ({model.architecture_id}, {model.modality}) on "
                      f"{model.dataset_id}@{rev}, {acc_label} {acc_s}, sha256 {model.sha256[:12]}..."
-                     f"{caveats}{train_slice}{flag}")
+                     f"{caveats}{flag}")
     return "\n".join(lines)

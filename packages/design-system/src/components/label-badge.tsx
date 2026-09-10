@@ -3,35 +3,23 @@ export type LabelBadgeVariant =
   | "candidate"
   | "inferred"
   | "heuristic"
-  | "measured"
   | "illustrative"
   | "partial"
   | "phase-b";
 export interface LabelBadgeProps {
   variant: LabelBadgeVariant;
   className?: string;
-  measuredDelta?: number | null;
 }
 const words: Record<LabelBadgeVariant, string> = {
-  candidate: "candidate · not evaluated",
+  candidate: "candidate",
   inferred: "inferred",
   heuristic: "heuristic",
-  measured: "measured",
   illustrative: "FIXTURE — illustrative",
   partial: "partial evidence",
   "phase-b": "Phase B · unavailable",
 };
-export function LabelBadge({
-  variant,
-  className,
-  measuredDelta,
-}: LabelBadgeProps) {
-  const text =
-    variant === "measured" && measuredDelta !== undefined
-      ? measuredDelta == null
-        ? "candidate · measured at these settings · ΔMRI unavailable"
-        : `candidate · measured ΔMRI ${measuredDelta > 0 ? "+" : ""}${measuredDelta} at these settings`
-      : words[variant];
+export function LabelBadge({ variant, className }: LabelBadgeProps) {
+  const text = words[variant];
   return (
     <span
       className={cn(

@@ -39,9 +39,9 @@ green after the pass; the default tier carries one stale pin
 (`tests/ml/test_audit_campaign.py:113`, `formats` now includes `pdf` because
 the completion path renders four formats); the e2e tier is not green: the B4
 files fail by attribution on the product defects listed in the README's open
-items (the unscaled endpoint probe, no training slice exposed to the child,
-the worker-parent consumed-slice call, `architecture_kwargs` for `state_dict`
-uploads) and two report-format pins in `tests/e2e/test_ml_verify_upload_reports.py`
+items (the unscaled endpoint probe, the worker-parent consumed-slice call,
+`architecture_kwargs` for `state_dict` uploads) and two report-format pins in
+`tests/e2e/test_ml_upload_reports.py`
 and `tests/e2e/test_ml_review_reports.py` are stale for the same reason. The
 venv was created with uv and has no `pip`, so always run through
 `.venv/bin/python -m …`. The default `-m` from `addopts` in `pyproject.toml`
@@ -61,8 +61,8 @@ mismatch and sets it (`tests/e2e/README.md` "Running from a git worktree").
 | Tier | Selected by | What it proves | Where it runs |
 |---|---|---|---|
 | default (unit and integration) | no `-m` flag (`addopts`) | pure-Python units plus the sqlite-harness integration tests, including every `ml`-marked test when the extra is installed | both unit lanes (3.13 without `ml`), Coverage gate, API integration (without `ml`) |
-| `ml` | `-m ml`, needs the `ml` extra | the vertical's library layer: targets, attacks, runners, explainers, defenses, sandbox child, endpoint broker, hardening, since wave B2 the endpoint registration and validate path, the Phase B admission rules, the worker's broker lifecycle and derived-target registration, the review workflow, the PDF and snapshot path (`tests/ml/test_endpoint_routes.py`, `test_admission_phase_b.py`, `test_tasks_phase_b.py`, `test_review_workflow.py`, `test_reports_phase_b.py`, `test_llm_routes.py`, `test_llm_core.py` default-tier cases), and since wave B3 the Croissant export against a TinyTarget-shaped run with eager Celery (`test_interop_export.py`: a valid manifest whose FileObject digests and shard columns check out, rows equal to the flip matrix, a mutated row refused with a failed job and no artifacts, idempotent re-export, the refusals, a fixture never exported, the template-only card), the consumed-slice admission and the real parse child (`test_interop_consume.py`: 25 static refusals audited and persisting nothing, the size cap, the child's digest, class, range and row-cap refusals, a substituted blob refused in the parent, the child spawned credential-free, the API and worker modules importing with pyarrow blocked), ATLAS and Foundry (`test_atlas_foundry.py`: the stamp table against the vendored data, the number-free coverage view, the roster with no value leaking, the payload guard refusing a bare MRI and every forbidden content, admission order and the broker rollback, the happy-path push and the 503-on-commit abort against the fake server with no token, JWT or URL in any row), batches (`test_batches.py`: the roll-up vocabulary, a two-model batch through the single boundary, collected refusals, deferral through the capacity service, cancel, RBAC negatives, grouped compare, bulk verify), bulk upload and capacity (`test_bulk_upload_capacity.py`) and the CLI matrix (`test_cli_matrix.py`, one real-child matrix run) | Unit tests (py3.12), Coverage gate, E2E tier |
-| `e2e` | `tests/e2e/`, stamped `e2e` by its `conftest.py`, run only with `REDSIM_E2E=1` | the completion criteria end to end: real API, admission, eager Celery, the real sandbox child and the real CLI over sqlite on a synthetic asset tree; the Postgres RLS lane with `REDSIM_E2E_POSTGRES_URL`. Phase A in `test_harness_smoke.py`, `test_ml_campaigns.py`, `test_ml_verify_upload_reports.py`, `test_ml_governance.py` (22 cases); since wave B4 the Phase B scopes in `test_ml_endpoint.py`, `test_ml_llm.py` (also `garak`-marked), `test_ml_text_detection.py`, `test_ml_attacks_harden.py`, `test_ml_review_reports.py`, `test_ml_interop.py` and `test_ml_bulk.py`, each failing with an attribution naming the module when it meets a product defect (`tests/e2e/README.md` "Phase B wave B4 files"); the harness's `ml_campaigns` mirror carries `batch_id` | `E2E tier (python, eager Celery)` on every PR and push through `scripts/phase_b_gate.sh --only e2e` (the step fails if the Postgres lane still reports off), and locally |
+| `ml` | `-m ml`, needs the `ml` extra | the vertical's library layer: targets, attacks, runners, explainers, recommendation rules, sandbox child, endpoint broker, since wave B2 the endpoint registration and validate path, the Phase B admission rules, the worker's broker lifecycle, the review workflow, the PDF and snapshot path (`tests/ml/test_endpoint_routes.py`, `test_admission_phase_b.py`, `test_tasks_phase_b.py`, `test_review_workflow.py`, `test_reports_phase_b.py`, `test_llm_routes.py`, `test_llm_core.py` default-tier cases), and since wave B3 the Croissant export against a TinyTarget-shaped run with eager Celery (`test_interop_export.py`: a valid manifest whose FileObject digests and shard columns check out, rows equal to the flip matrix, a mutated row refused with a failed job and no artifacts, idempotent re-export, the refusals, a fixture never exported, the template-only card), the consumed-slice admission and the real parse child (`test_interop_consume.py`: 25 static refusals audited and persisting nothing, the size cap, the child's digest, class, range and row-cap refusals, a substituted blob refused in the parent, the child spawned credential-free, the API and worker modules importing with pyarrow blocked), ATLAS and Foundry (`test_atlas_foundry.py`: the stamp table against the vendored data, the number-free coverage view, the roster with no value leaking, the payload guard refusing a bare MRI and every forbidden content, admission order and the broker rollback, the happy-path push and the 503-on-commit abort against the fake server with no token, JWT or URL in any row), batches (`test_batches.py`: the roll-up vocabulary, a two-model batch through the single boundary, collected refusals, deferral through the capacity service, cancel, RBAC negatives, grouped compare), bulk upload and capacity (`test_bulk_upload_capacity.py`) and the CLI matrix (`test_cli_matrix.py`, one real-child matrix run) | Unit tests (py3.12), Coverage gate, E2E tier |
+| `e2e` | `tests/e2e/`, stamped `e2e` by its `conftest.py`, run only with `REDSIM_E2E=1` | the completion criteria end to end: real API, admission, eager Celery, the real sandbox child and the real CLI over sqlite on a synthetic asset tree; the Postgres RLS lane with `REDSIM_E2E_POSTGRES_URL`. Phase A in `test_harness_smoke.py`, `test_ml_campaigns.py`, `test_ml_upload_reports.py`, `test_ml_governance.py` (22 cases); since wave B4 the Phase B scopes in `test_ml_endpoint.py`, `test_ml_llm.py` (also `garak`-marked), `test_ml_text_detection.py`, `test_ml_attacks_harden.py`, `test_ml_review_reports.py`, `test_ml_interop.py` and `test_ml_bulk.py`, each failing with an attribution naming the module when it meets a product defect (`tests/e2e/README.md` "Phase B wave B4 files"); the harness's `ml_campaigns` mirror carries `batch_id` | `E2E tier (python, eager Celery)` on every PR and push through `scripts/phase_b_gate.sh --only e2e` (the step fails if the Postgres lane still reports off), and locally |
 | `garak` | `-m garak`, needs the `garak` extra (`garak>=0.16,<0.17`) | the Phase B LLM domain: the 12 tests of `tests/ml/test_llm_core.py` and `tests/ml/test_llm_routes.py` (wave B2 and its integration) plus, since wave B4, the four e2e-gated cases of `tests/e2e/test_ml_llm.py`, all running real garak 0.16.0 through `PythiaGenerator` against the in-process fake gateway `tests/ml/fake_openai_server.py`: headers, body keys and ledger against an `httpx.MockTransport`, the key-file mode check, one real child run (exit 0, counts equal garak's eval records, the hard cap, the persona on every request, no `/v1/models` call, token sums), the credential boundary (no `PYTHIA_`/`AWS_`/`KAGGLE` name in the child env, the key in no file, a DAN prompt fragment only in garak's own `report.jsonl`), the scorecard, rules and report from that run, a version mismatch (exit 3, zero requests), offline mode with HF-detector probes (all `not_run`, zero requests), the wall-clock kill, the committed catalog equal to a fresh regeneration, and the route-to-worker end-to-end case; the e2e file adds the catalog with HarmBench excluded, the registration and probe-run gates per role and one end-to-end run whose k/n scorecard carries no MRI key | `garak offline` on every PR and push (`tests/ml`) and `E2E tier (python, eager Celery)` (the e2e file, the lane installs the extra since wave B4); since wave B4 the gate's garak step fails on pytest exit 5, on an all-skipped run and on a missing extra, so nothing collected is a regression, never a pass. Whether the tests pass on the runner is proven by a run after the B4 push, which has not been read |
 | browser e2e | Playwright, `workflow_dispatch` with `run_e2e=true` | the web app against the compose stack | on demand only, not part of the Phase B waves |
 
@@ -133,11 +133,13 @@ extra is absent. A bare `import torch` in a test module fails collection on
   lists. `DEFAULT_TOKEN` is a low-entropy JWT-shaped fake assembled from
   three segments at import, so the redaction is exercised and no JWT literal
   sits in the source for the Aikido hook to find. `tests/ml/test_atlas_foundry.py`
-  runs the push task eagerly against it; no test reaches a real Foundry
-  instance (INTEROP-26).
+  runs the push task eagerly against it. The live lane
+  `tests/e2e/test_ml_foundry_live.py` (skips unless `REDSIM_FOUNDRY_LIVE_URL`, `REDSIM_FOUNDRY_LIVE_RID` and `REDSIM_FOUNDRY_LIVE_TOKEN_FILE` are set)
+  is the only test that reaches a real Foundry instance: it passed on
+  2026-09-10 against a developer-tier stack (INTEROP-26) and skips in CI.
 - `fixtures/run_record.json`: the frozen `GET /v1/runs/{id}/campaign` shape
   with a full `score` block, sha256
-  `e5266f1873dc3fcd0d784acf3bf9e97463595d3bbff351edf7560ca1716d9c1a`.
+  `25be404fca91eb5b11d75795b1f34076be39603a106666f35abf1fc9698f1ca6`.
   `test_fixture.py` validates it and `test_schema_compat.py` pins its digest.
   Any P0 contract change goes through the change protocol in
   `docs/plans/01`, section 8.
@@ -180,11 +182,13 @@ Fixture data never appears in the demo catalog or as a result.
   orders and fails on the first cycle.
 - `test_admission_audit_before_enqueue.py`: the chain row exists before the
   `Run` and `Job` rows and before Celery.
-- `test_migration_0010.py` and `test_migration_0011.py`: `0010_ml_vertical`
-  sits above `0009` on a single head chain, `0011_phase_b_platform` is the
-  single head above `0010`, the offline SQL creates the four Phase B tables
-  with RLS parity copied token for token from `0010`, and the sqlite round
-  trip upgrades and downgrades cleanly.
+- `test_migration_0010.py`, `test_migration_0011.py` and
+  `test_migration_0012.py`: `0010_ml_vertical` sits above `0009` on a single
+  head chain, `0011_phase_b_platform` sits above `0010`, the offline SQL
+  creates the four Phase B tables with RLS parity copied token for token from
+  `0010`, the sqlite round trip upgrades and downgrades cleanly, and
+  `0012_remove_verify_paradigm` is the single head above `0011`: it drops
+  three columns, creates nothing, and its downgrade re-adds them.
 - `test_policy_ml_actions.py`: the seven ML `Action` members, the seven
   Phase B members, their minimum roles, the `viewer` rank, and the OPA and
   Cedar mirrors parsed and asserted equal to the Python table.
@@ -231,9 +235,8 @@ Fixture data never appears in the demo catalog or as a result.
   `test_coverage_lists_membership_without_a_single_number` pins the
   number-free coverage view.
 - `tests/test_worker_hardening.py::TestQueueRouting`: the routed-set pin is
-  the nine `task_routes` entries; the four B3 tasks register through the
-  Celery `include` list with their queue on the decorator or at enqueue, so
-  the pin held without an edit.
+  the eight `task_routes` entries. The four B3 tasks register through the
+  Celery `include` list with their queue on the decorator or at enqueue.
 - `tests/test_idempotency.py` (wave B2): the `Idempotency-Key` middleware
   replays a stored 2xx with `Idempotency-Replayed: true` and no second row or
   enqueue, refuses a reused key with a different body
@@ -244,9 +247,9 @@ Fixture data never appears in the demo catalog or as a result.
   both mirrors.
 - **e2e pins moved by the B2 integration and by wave B4.** The B2 integration
   moved `tests/e2e/test_ml_governance.py` and
-  `tests/e2e/test_ml_verify_upload_reports.py` to the B2 answers (`report.pdf`
-  `404` before a render, `422 auth_profile_required`, the projection's
-  `weights` keys). The wave B4 fix pass moved `test_ml_governance.py` again
+  `tests/e2e/test_ml_upload_reports.py` (uploads and report formats)
+  to the B2 answers (`report.pdf` `404` before a render, `422
+  auth_profile_required`, the projection's `weights` keys). The wave B4 fix pass moved `test_ml_governance.py` again
   (the capabilities body reports the Phase B rows as `available` from the
   tree and the non-builds `not_implemented` with a reason) and fixed four
   test-isolation defects in the B4 files (`test_ml_interop.py` tolerates the
@@ -254,7 +257,7 @@ Fixture data never appears in the demo catalog or as a result.
   subscore check; the detection scorecard artifact kind; the capacity
   dispatch order under eager Celery). Two pins the four-format completion
   render made stale are still to be moved by their owners:
-  `test_ml_verify_upload_reports.py` (`report.pdf` is rendered at completion)
+  `test_ml_upload_reports.py` (`report.pdf` is rendered at completion)
   and `test_ml_review_reports.py` (the completion snapshot is version 1, the
   on-demand render version 2).
 - `tests/test_docs_phase_b_consistency.py` (wave B4, `phase-b-gate`): the docs

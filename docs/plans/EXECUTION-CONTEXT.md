@@ -52,7 +52,7 @@ pass, pushed together). Everything below was read from that tree.
   `redsim` namespace on 2026-09-08 with the pentest domain removed). The ML
   vertical `redsim/ml/` is on `main` end to end: `schema.py` (frozen by P0,
   extended once additively by wave B0), `registry.py`, `artifacts.py`,
-  `errors.py`, `defenses.py`, `eval.py`, `scoring.py`, `campaign.py` (the
+  `errors.py`, `eval.py`, `scoring.py`, `campaign.py` (the
   frame), `runners/` (`base`, `classification`, `text`, `detection`),
   `reporting.py`, `pdf.py`, `compare.py`, `atlas.py`, `atlas_data.py`,
   `endpoint_broker.py`, `endpoint_egress.py`, `sandbox.py` and
@@ -63,8 +63,7 @@ pass, pushed together). Everything below was read from that tree.
   `deepfool`, `zoo`, `word_substitution`, `dpatch`), `datasets/` (`cifar10`,
   `image_hub`, `sampling`, `url_features`, `sms_spam`, `military_assets`),
   `explain/` (`base`, `shap_image`, `shap_tabular`, `shap_text`, `stability`,
-  `summary`), `harden/` (`apply`, `adversarial_training`, `distillation`),
-  `recommend/` (`rules`, `narrative`), `llm/` (garak through Pythia:
+  `summary`), `recommend/` (`rules`, `narrative`), `llm/` (garak through Pythia:
   `catalog`, `generator`, `probe_child`, `runner`, `scorecard`, `rules`,
   `report_section`, `schema`, `reporting`), `interop/` (`parquet`, `croissant`,
   `card`, `consume`) and `assets/` (`datasets`, `build`, `train_cnn`,
@@ -75,16 +74,16 @@ pass, pushed together). Everything below was read from that tree.
   `vehicles_cnn` and the attacks `cw_l2`, `deepfool`, `dpatch`, `fgsm`,
   `hopskipjump`, `noise_control`, `patch_noise_control`, `pgd`,
   `word_substitution`, `zoo`.
-- The platform side: 69 HTTP routes under `/v1` on
+- The platform side: 66 HTTP routes under `/v1` on
   `redsim/api/app.py:create_app` (routers `health`, `ml_capabilities`,
-  `attacks`, `datasets`, `defenses`, `models`, `models_bulk`, `artifacts`,
+  `attacks`, `datasets`, `models`, `models_bulk`, `artifacts`,
   `compare`, `ml_findings`, `runs`, `runs_cancel`, `findings`, `audit`,
-  `reports`, `scanners`, `verify`, `targets`, `auth_profiles`, `projects`,
+  `reports`, `scanners`, `targets`, `auth_profiles`, `projects`,
   `logs`, `org_cost`, `batches`, `llm`, `integrations`, the WebSocket), the
   `IdempotencyMiddleware`, `redsim/api/errors.py` (the spec 17.3 table plus
   three dated addenda, 23 + 13 + 10 codes), the services
   `redsim/services/{ml_models,ml_campaigns,ml_findings,ml_llm,finding_review,reports,ml_datasets,ml_datasets_export,ml_batches,ml_capacity}.py`,
-  `redsim/integrations/`, and thirteen Celery tasks in `redsim/workers/tasks/`
+  `redsim/integrations/`, and twelve Celery tasks in `redsim/workers/tasks/`
   (`ml_campaign`, `ml_model`, `ml_llm`, `dataset_export`, `dataset_validate`,
   `integration_push`, `capacity`, `report`, `reaper`, the platform tasks).
   `redsim.ml_campaign_run`, `redsim.ml_model_validate`, `redsim.dataset_export`
@@ -110,10 +109,12 @@ pass, pushed together). Everything below was read from that tree.
   first failure naming its spec 26 criterion). CI is
   `.github/workflows/redsim-ci.yml` (state in master plan section 4.1 and
   `docs/dev/ci.md`); `docs.yml` runs `mkdocs build --strict`.
-- Migrations `0001` to `0011`. `0011_phase_b_platform` (wave B0) is the head:
+- Migrations `0001` to `0012`. `0011_phase_b_platform` (wave B0) added
   `report_snapshots`, `idempotency_keys`, `ml_batches`, `ml_datasets` with RLS
   parity, `projects.ml_scoring` / `ml_max_concurrent_runs` /
-  `ml_daily_run_budget`, `ml_campaigns.batch_id`. Waves B1 to B4 added no
+  `ml_daily_run_budget`, `ml_campaigns.batch_id`. `0012_remove_verify_paradigm`
+  (2026-09-09) is the head: it drops three verify-era columns, two on
+  `findings` and one on `ml_campaigns`, and adds no table. Waves B1 to B4 added no
   migration.
 - Corporate TLS proxy (Zscaler): Python clients need the OS trust store.
   `redsim/llm/pythia.py` defaults to `truststore` (`REDSIM_TLS_TRUSTSTORE`),
@@ -132,16 +133,13 @@ On `main` at `703f8f6` (`redsim/cli/main.py`, `redsim/cli/ml.py`):
 - `redsim ml build-assets [--dataset image|tabular|cifar10|text|detection|all]
   [--only ID] [--epochs N] [--arch small_cnn|resnet18] [--image-size N]
   [--seed N] [--out DIR] [--cache-dir DIR] [--max-train N] [--max-eval N]
-  [--xgboost|--no-xgboost] [--no-train-slice] [--train-slice-n N]
-  [--attach-train-slice ID] [--detection-image-size N]
+  [--xgboost|--no-xgboost] [--detection-image-size N]
   [--detection-subset DIR] [--fixture ...]`. Network access happens only here
   (HuggingFace hub by pinned revision, Kaggle with `KAGGLE_API_TOKEN` or the
   older `KAGGLE_USERNAME` / `KAGGLE_KEY` pair, else the committed CI sample;
   the SMS corpus from UCI by pinned sha256; WordNet from `nltk_data`).
   `--dataset all` builds image, cifar10, tabular and text; `--dataset
   detection` is named explicitly because its input is the published subset.
-  The image builds write `bundled/<model>/train_slice.npz` for the training
-  defenses.
 - `redsim ml attack <target_id> [<target_id> ...] | --matrix FILE.yaml
   [--fail-fast] [--attacks IDS] [--eps GRID] [--reference-eps E]
   [--n-samples N] [--seed N] [--explain-k K] [--no-control]
@@ -166,7 +164,7 @@ On `main` at `703f8f6` (`redsim/cli/main.py`, `redsim/cli/ml.py`):
   worker mode), the `ml-campaign` roster check. No provider key is checked.
 - `redsim init`, `redsim status`, `redsim tenants verify`,
   `redsim plugins list|sign`, `redsim evidence-pack`, `redsim migrate`, and the
-  pentest-era `redsim scan`, `findings`, `verify`, `report` (`redsim scan
+  pentest-era `redsim scan`, `findings`, `report` (`redsim scan
   --scanner X` exits 1 unless the adapter is `ml-campaign`).
 
 ## Environment variables (spec 20.3, all read by code on the tree)
@@ -176,7 +174,7 @@ On `main` at `703f8f6` (`redsim/cli/main.py`, `redsim/cli/ml.py`):
 | Pythia | `PYTHIA_BASE_URL`, `PYTHIA_API_KEY`, `PYTHIA_PERSONA`, `PYTHIA_TIMEOUT_S`, `REDSIM_ML_LLM_MODEL` (deprecated aliases `REDSIM_LLM_MODEL`, `AEGIS_ML_LLM_MODEL`), `REDSIM_DISABLE_LLM`, `REDSIM_ENV_FILE`, `REDSIM_TLS_TRUSTSTORE`, `REDSIM_CA_BUNDLE`, `SSL_CERT_FILE` | the worker parent (narrative); `PYTHIA_BASE_URL` is also the default gateway of an LLM target that names none. The probe key is never an environment variable: it lives in a bearer `AuthProfile` |
 | ML sandbox | `REDSIM_ML_ASSETS_DIR`, `REDSIM_ML_WORK_DIR`, `REDSIM_ML_KEEP_WORK_DIR`, `REDSIM_ML_SANDBOX_TIMEOUT_S` (1200), `_CPU_SECONDS` (900), `_MEMORY_MB` (4096), `_FILESIZE_MB` (1024), `_THREADS` (2), `REDSIM_ML_DATASET_CACHE`, `REDSIM_ML_EXPLAIN_CACHE`, `REDSIM_ML_MAX_ADV_ARTIFACT_MB` (64, forwarded to the child since wave B4 when set to a positive number) | worker, sandbox child |
 | API caps | `REDSIM_ML_UPLOAD_MAX_MB` (512), `REDSIM_ML_BULK_UPLOAD_MAX_FILES` (10), `REDSIM_ML_BULK_UPLOAD_MAX_MB` (1024), `REDSIM_ML_DATASET_UPLOAD_MAX_MB` (256), `REDSIM_ML_BATCH_MAX_MEMBERS` (20), `REDSIM_ML_ENDPOINT_MAX_ROWS` (500000), `REDSIM_ML_ENDPOINT_MAX_REQUESTS` (20000), `REDSIM_LLM_PROBE_MAX_PROMPTS_PER_PROBE` (64), `REDSIM_LLM_PROBE_MAX_RUNS_PER_PROJECT_PER_DAY` (10), `REDSIM_LLM_PROBE_HF_DETECTORS` | api (admission) |
-| Capacity | `REDSIM_ML_MAX_CONCURRENT_RUNS_PER_PROJECT` (2, the default for `projects.ml_max_concurrent_runs`), `REDSIM_ML_DAILY_RUN_BUDGET` (unset is uncapped) | api (every attack, verify, batch and bulk-verify admission since wave B4), the beat dispatcher |
+| Capacity | `REDSIM_ML_MAX_CONCURRENT_RUNS_PER_PROJECT` (2, the default for `projects.ml_max_concurrent_runs`), `REDSIM_ML_DAILY_RUN_BUDGET` (unset is uncapped) | api (every attack, batch and bulk-upload admission since wave B4), the beat dispatcher |
 | Endpoint broker | `REDSIM_ML_ENDPOINT_RPS` (10), `REDSIM_ML_ENDPOINT_BATCH_ROWS` (32 image / 256 tabular, at most 1024), `REDSIM_ML_ENDPOINT_TIMEOUT_S` (30) | worker parent |
 | Probe child | `REDSIM_LLM_PROBE_HF_CACHE`, `REDSIM_LLM_PROBE_TIMEOUT_S` (1500), `REDSIM_LLM_PROBE_CPU_SECONDS`, `_MEMORY_MB`, `_FILESIZE_MB`, `_MAX_PROCESSES` | worker (default pool) |
 | Consume | `REDSIM_ML_DATASET_MAX_ROWS` (200000) | the parse child |
@@ -281,8 +279,8 @@ Account `140381642432`, region `us-east-1`:
   CIFAR-10 is a CI fixture only.
 - The MRI is per campaign and per modality only. Detection campaigns and LLM
   probe runs never carry one. Never show it without its five subscores, the
-  per-family table and the eps curve. No expected gain on a recommendation
-  until a verify run measures it.
+  per-family table and the eps curve. A recommendation is a candidate and
+  carries no gain figure.
 - One job runs a whole campaign (`redsim.ml_campaign_run`). Do not build
   against the per-attack chain of spec 10.3.
 - Every LLM call goes through Pythia: the narrative from the worker parent,
@@ -299,10 +297,6 @@ not implemented" is the single list):
   probe as unscaled uint8 values, refused by the `float32_nchw` rule, so no
   endpoint reaches `available` through the tiny server (three cases of
   `tests/e2e/test_ml_endpoint.py`).
-- No bundled image target exposes a training slice to the child
-  (`train_sample`), so every training verify records the defense unavailable
-  with the score withheld and no derived target or `MeasuredDelta` exists
-  (`tests/e2e/test_ml_attacks_harden.py`; ATTACKS_HARDEN-11/-13).
 - The worker parent does not call `materialize_consumed_slice` when it builds
   the target detail, so a campaign on a consumed-bound model does not run end
   to end (`tests/e2e/test_ml_interop.py`; INTEROP-16 remainder).
@@ -315,8 +309,9 @@ not implemented" is the single list):
   on such a record.
 - Three stale pins the completion render made stale, to be moved by their
   owners: `tests/ml/test_audit_campaign.py:113` (`formats` now includes
-  `pdf`), `tests/e2e/test_ml_verify_upload_reports.py` (`report.pdf` is no
-  longer `404` after a campaign), `tests/e2e/test_ml_review_reports.py` (the
+  `pdf`), `tests/e2e/test_ml_upload_reports.py` (uploads and report
+  formats: `report.pdf` is no longer `404` after a campaign),
+  `tests/e2e/test_ml_review_reports.py` (the
   completion snapshot is version 1, the on-demand render version 2).
 
 Platform gaps unchanged from earlier passes: the `audit_events` table is not
@@ -336,7 +331,7 @@ carries pentest-era sections.
   token assembled from segments). There is no attack fake: the tests run the
   real adapters on the tiny targets.
 - `tests/ml/fixtures/`: `run_record.json` (the frozen campaign response shape,
-  sha256 `e5266f18…`), `run_record_phase_b.json`, `MANIFEST.json`,
+  sha256 `25be404f…`), `run_record_phase_b.json`, `MANIFEST.json`,
   `malicious_urls_sample.csv`, `cifar10_test_500.npz`, `sms_spam_sample.tsv`,
   `synonyms_tiny.json`, `public_index.csv`. `tests/ml/_campaign_pre_refactor.py`
   is the frozen pre-refactor `run_campaign` for the golden test. Fixture data
@@ -351,7 +346,7 @@ carries pentest-era sections.
   per role, a parent-side mocked Pythia transport, the real `redsim audit
   verify --all` as a subprocess and `REDSIM_E2E_POSTGRES_URL` for the RLS
   lane. Files: `test_harness_smoke.py` (wave 3), `test_ml_campaigns.py`,
-  `test_ml_verify_upload_reports.py`, `test_ml_governance.py` (wave 4),
+  `test_ml_upload_reports.py`, `test_ml_governance.py` (wave 4),
   `test_ml_endpoint.py`, `test_ml_llm.py`, `test_ml_text_detection.py`,
   `test_ml_attacks_harden.py`, `test_ml_review_reports.py`,
   `test_ml_interop.py`, `test_ml_bulk.py` (wave B4). `tests/e2e/README.md`

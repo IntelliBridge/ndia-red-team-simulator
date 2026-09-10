@@ -51,8 +51,11 @@ tables: `targets`, `runs`, `jobs`, `findings`, `llm_usage`, `artifacts`,
 adds a ninth scoped table, `ml_campaigns`, with the same column, triggers
 and policy (section 4 below), and migration `0011_phase_b_platform` (Phase B
 wave B0) adds four more, `report_snapshots`, `idempotency_keys`,
-`ml_batches` and `ml_datasets`, again with the same rails (section 5). The
-Alembic chain is `0001` to `0011`; `0011` is the single head.
+`ml_batches` and `ml_datasets`, again with the same rails (section 5).
+Migration `0012_remove_verify_paradigm` sits above `0011`. It removed the two
+finding validation columns and the campaign baseline column on 2026-09-09 and
+adds no table. The Alembic chain is `0001` to `0012`, and `0012` is the single
+head.
 
 ### 1. Denormalized `org_id` + a backfill trigger
 
@@ -160,7 +163,7 @@ REVIEW_REPORTS-44). Six DDL groups, each guarded so a database built by
 | `idempotency_keys` | primary key `(project_id, key)` (`pk_idempotency_keys`), `org_id`, `route`, `request_sha256`, `response_status`, `response_body` JSONB, `created_at` | wave B2 (`Idempotency-Key` on mutating routes) |
 | `projects` columns | `ml_scoring` JSONB, `ml_max_concurrent_runs` int, `ml_daily_run_budget` int, all nullable | B2 per-project scoring weights, B3 capacity and daily budget |
 | `ml_campaigns.batch_id` | `String(64)` nullable plus `ix_ml_campaigns_batch_id`, no FK | wave B3 `bulk-service-routes` |
-| `ml_batches` | `id`, `project_id`, `org_id`, `kind` (`campaign`, `verify`, `upload`), `config` JSONB, `status` (`accepted`, then `cancelled`; the member roll-up derives from the runs), `created_by`, `created_at`, `cancelled_at`, `idempotency_key`, `request_sha256` | wave B3 |
+| `ml_batches` | `id`, `project_id`, `org_id`, `kind` (`campaign`, `upload`), `config` JSONB, `status` (`accepted`, then `cancelled`, the member roll-up derives from the runs), `created_by`, `created_at`, `cancelled_at`, `idempotency_key`, `request_sha256` | wave B3 |
 | `ml_datasets` | `id`, `project_id`, `org_id`, `status` (`validating`, `available`, `refused`), `refusal_reason`, `license`, `modality`, `class_names` JSONB, `manifest_sha256` (indexed), `blob_location`, `detail` JSONB, `created_by`, `created_at` | wave B3 `interop-consume` |
 
 RLS parity on all four new tables is the `0010` recipe with only the table

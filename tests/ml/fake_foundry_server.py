@@ -2,7 +2,8 @@
 
 Test helper only. It serves, on 127.0.0.1 in a daemon thread:
 
-* ``POST /api/v2/datasets/{rid}/transactions?transactionType=APPEND`` -> ``{"rid": ...}``
+* ``POST /api/v2/datasets/{rid}/transactions`` with body ``{"transactionType": "APPEND"}`` -> ``{"rid": ...}``
+  (the type in the query string is ``400 MissingRequiredFields``, as on a real stack)
 * ``POST /api/v2/datasets/{rid}/files/{path}/upload?transactionRid=...`` (body bytes)
 * ``POST /api/v2/datasets/{rid}/transactions/{txn}/commit`` -> 204
 * ``POST /api/v2/datasets/{rid}/transactions/{txn}/abort`` -> 204
@@ -132,8 +133,21 @@ class FakeFoundryServer:
                     self._send(outer.fail_status, {"errorCode": "FORCED", "errorName": "ForcedFailure"})
                     return
                 if entry["step"] == "create":
+                    # The real Datasets v2 API reads the type from the JSON body only.
+                    try:
+                        parsed = json.loads(body.decode("utf-8")) if body else {}
+                    except (UnicodeDecodeError, ValueError):
+                        parsed = {}
+                    transaction_type = parsed.get("transactionType") if isinstance(parsed, dict) else None
+                    if not transaction_type:
+                        entry["status"] = 400
+                        self._send(400, {"errorCode": "INVALID_ARGUMENT", "errorName": "MissingRequiredFields",
+                                         "parameters": {"schemaName": "CreateTransactionRequest",
+                                                        "missingFields": ["transactionType"]}})
+                        return
+                    entry["transaction_type"] = transaction_type
                     entry["status"] = 200
-                    self._send(200, {"rid": outer.transaction_rid, "transactionType": query.get("transactionType"),
+                    self._send(200, {"rid": outer.transaction_rid, "transactionType": transaction_type,
                                      "status": "OPEN"})
                 elif entry["step"] == "upload":
                     entry["status"] = 200

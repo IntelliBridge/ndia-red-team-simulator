@@ -1,13 +1,12 @@
-"""Batch admission, roll-up and cancel for adversarial-ML campaigns (register BULK-03..09, -15).
+"""Batch admission, roll-up and cancel for adversarial-ML campaigns (register BULK-03..09).
 
 Plan 12 wave B3, ``bulk-service-routes``. A batch is N single-run admissions
 under one id, never a new kind of run: every member goes through the same
-boundary the single routes use (:func:`redsim.services.ml_campaigns.create_attack_campaign`
-for a ``campaign`` batch, :func:`redsim.services.ml_campaigns.create_verify_campaign`
-for a ``verify`` batch), so each member writes its own ``attack.run`` /
-``verify.replay`` admission row before its ``Run`` / ``Job`` / ``ml_campaigns``
-rows exist and refuses with the same spec 17.3 codes. The batch adds, in this
-order: a write-free pre-check of what the batch can see without admitting
+boundary the single route uses
+(:func:`redsim.services.ml_campaigns.create_attack_campaign`), so each member
+writes its own ``attack.run`` admission row before its ``Run`` / ``Job`` /
+``ml_campaigns`` rows exist and refuses with the same spec 17.3 codes. The
+batch adds, in this order: a write-free pre-check of what the batch can see without admitting
 anything (member cap, target resolution, one modality per batch), one
 ``batch.create`` audit row on the project chain, the ``ml_batches`` row, then
 the members. Per-member refusals are collected (the member's own
@@ -37,21 +36,6 @@ the single routes; the batch passes ``capacity_check=False`` so each member is
 decided exactly once, here. ``max_parallel`` on the request is a client-side
 bound on top of that: members beyond it are admitted deferred.
 
-Bulk verify (BULK-15; owner decision BULK-16): ONE defended verify run per
-(baseline run, defense, params) whose ``Job.detail.finding_ids`` lists every
-selected finding of the baseline run, admitted through ``create_verify_campaign``
-on the first selected finding (which flips to ``fixing`` and owns
-``Job.detail.finding_id``), with one ``verify.replay`` row per additional finding
-naming the shared run; both are written through the boundary's ``before_enqueue``
-hook, after the Run / Job rows exist and before the broker message, so the worker
-(eager in tests, from the broker in a deployment) never sees the job without them.
-The worker projects the shared record onto each listed
-finding from that finding's own attack rows
-(``redsim.workers.tasks.ml_campaign._project_verify`` loops ``finding_ids``, one
-``verify.execute`` row per finding); the batch view reports per finding whether
-its ``ml.verify`` block names the shared run (``projected``), so a member that
-is still queued or that failed shows exactly what was written.
-
 Status roll-up (BULK-06): ``queued`` (every member queued), ``running`` (any
 member running, or a mix of queued and terminal), ``succeeded`` (every member
 succeeded and none refused), ``failed`` (every admitted member failed, or
@@ -59,6 +43,9 @@ nothing was admitted), ``cancelled`` (every member cancelled) and ``partial``
 (any other terminal mix, including succeeded members beside refused ones). The
 ``ml_batches.status`` column holds the roll-up as last written by admission or
 cancel; the view recomputes it from the member runs on every read.
+
+A bulk model upload (``POST /v1/models/bulk``, ``redsim.api.v1.models_bulk``) writes an
+``ml_batches`` row of kind ``upload``; the batch reads here serve it too.
 
 Nothing here imports an ML library.
 """
@@ -86,12 +73,7 @@ from redsim.api.errors import (
     ApiError,
 )
 from redsim.safety import authorize
-from redsim.services.ml_campaigns import (
-    _campaign_table,
-    _refuse,
-    create_attack_campaign,
-    create_verify_campaign,
-)
+from redsim.services.ml_campaigns import _campaign_table, _refuse, create_attack_campaign
 from redsim.services.runs import TERMINAL_RUN_STATUSES, TerminalRunError, cancel_run
 
 if TYPE_CHECKING:
@@ -102,10 +84,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: ``ml_batches.kind`` values this service writes (``upload`` is the bulk-upload track's).
+#: ``ml_batches.kind`` values: ``campaign`` is written here, ``upload`` by the bulk model upload route.
 BATCH_KIND_CAMPAIGN = "campaign"
-BATCH_KIND_VERIFY = "verify"
-BATCH_KINDS: frozenset[str] = frozenset({BATCH_KIND_CAMPAIGN, BATCH_KIND_VERIFY})
+BATCH_KIND_UPLOAD = "upload"
+BATCH_KINDS: frozenset[str] = frozenset({BATCH_KIND_CAMPAIGN, BATCH_KIND_UPLOAD})
 #: Roll-up vocabulary (BULK-06).
 BATCH_STATUSES: tuple[str, ...] = ("queued", "running", "succeeded", "partial", "failed", "cancelled")
 #: Member cap (BULK-03); ``REDSIM_ML_BATCH_MAX_MEMBERS`` raises or lowers it per deployment.
@@ -115,14 +97,6 @@ BATCH_MAX_MEMBERS_ENV = "REDSIM_ML_BATCH_MAX_MEMBERS"
 _ML_KINDS = frozenset({"ml_model_artifact", "ml_model_endpoint"})
 #: Campaign body keys a batch request must not carry (the batch supplies the target; reruns are single-run).
 _BATCH_FORBIDDEN_CAMPAIGN_KEYS = frozenset({"target_id", "parent_run_id"})
-#: Finding statuses a bulk verify selects by default (spec 6.4: open or failed findings are re-measured).
-_VERIFY_SELECTABLE_STATUSES = frozenset({"open", "failed"})
-_VERIFY_SKIP_REASONS: dict[str, str] = {
-    "fixing": "a verify is already in flight for this finding",
-    "false_positive": "dismissed as a false positive",
-    "dismissed": "dismissed",
-    "fixed": "already fixed; pass include_fixed to re-measure",
-}
 
 
 def batch_max_members() -> int:
@@ -178,9 +152,7 @@ class BatchMember:
     run_id: str
     job_ids: list[str]
     target_id: str | None = None
-    defense: dict[str, Any] | None = None
     deferred: bool = False
-    primary_finding_id: str | None = None
 
     def to_response(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -189,10 +161,6 @@ class BatchMember:
         }
         if self.target_id is not None:
             out["target_id"] = self.target_id
-        if self.defense is not None:
-            out["defense"] = dict(self.defense)
-        if self.primary_finding_id is not None:
-            out["primary_finding_id"] = self.primary_finding_id
         return out
 
 
@@ -398,7 +366,7 @@ def _check_member_cap(n_members: int, max_members: int, *, what: str) -> None:
         raise ApiError(
             BATCH_TOO_LARGE,
             f"a batch admits at most {max_members} {what} ({BATCH_MAX_MEMBERS_ENV}); {n_members} requested",
-            field="target_ids" if what == "models" else "defenses", cap=max_members, requested=n_members,
+            field="target_ids", cap=max_members, requested=n_members,
         )
 
 
@@ -562,295 +530,19 @@ def create_campaign_batch(
                        status=status, members=members, refused=refused, config_hash=config_hash)
 
 
-# ---------------------------------------------------------------------------
-# Verify batches (BULK-15; owner decision BULK-16)
-# ---------------------------------------------------------------------------
-
-
-def _normalise_defenses(body: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """``[{defense, params}]`` from ``defenses`` or the single ``defense`` / ``params`` shorthand, deduplicated."""
-    raw = body.get("defenses")
-    entries: list[Any]
-    if raw is None:
-        entries = [{"defense": body.get("defense"), "params": body.get("params") or {}}]
-    elif isinstance(raw, list) and raw:
-        entries = list(raw)
-    else:
-        raise ApiError(PARAMS_OUT_OF_RANGE, "defenses must be a non-empty list of {defense, params}",
-                       field="defenses")
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for entry in entries:
-        if isinstance(entry, str):
-            entry = {"defense": entry, "params": {}}
-        if not isinstance(entry, Mapping):
-            raise ApiError(PARAMS_OUT_OF_RANGE, "each defenses entry is {defense, params}", field="defenses")
-        defense = entry.get("defense", entry.get("id"))
-        params = entry.get("params") or {}
-        if defense is not None and not isinstance(defense, str):
-            raise ApiError(PARAMS_OUT_OF_RANGE, "defense must be a catalog defense id", field="defense")
-        if not isinstance(params, Mapping):
-            raise ApiError(PARAMS_OUT_OF_RANGE, "params must be an object", field="params")
-        key = _canonical_sha256({"defense": defense, "params": dict(params)})
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append({"defense": defense, "params": dict(params)})
-    return out
-
-
-def _select_findings(sess: Session, *, run_id: str, anchor_id: str, requested: Any, include_fixed: bool,
-                     ) -> tuple[list[str], list[dict[str, Any]]]:
-    """``(selected finding ids, skipped [{finding_id, status, reason}])`` for the run's ML findings."""
-    from sqlalchemy import select
-
-    from redsim.db.models import Finding
-
-    rows = list(sess.execute(
-        select(Finding).where(Finding.run_id == run_id).order_by(Finding.created_at.asc(), Finding.id.asc())
-    ).scalars().all())
-    ml_rows = {row.id: row for row in rows
-               if isinstance(row.schema_blob, dict) and isinstance(row.schema_blob.get("ml"), dict)
-               and row.schema_blob.get("ml")}
-    if requested is not None:
-        if (not isinstance(requested, list) or not requested
-                or not all(isinstance(f, str) and f for f in requested)):
-            raise ApiError(PARAMS_OUT_OF_RANGE, "finding_ids must be a non-empty list of finding ids",
-                           field="finding_ids")
-        outside = sorted(f for f in requested if f not in ml_rows)
-        if outside:
-            raise ApiError(PARAMS_OUT_OF_RANGE,
-                           f"finding_ids names findings that are not ML findings of run {run_id}: {outside}",
-                           field="finding_ids", reasons=outside)
-        candidates = [anchor_id] + [f for f in requested if f != anchor_id]
-    else:
-        candidates = [anchor_id] + [fid for fid in ml_rows if fid != anchor_id]
-    selectable = set(_VERIFY_SELECTABLE_STATUSES) | ({"fixed"} if include_fixed else set())
-    selected: list[str] = []
-    skipped: list[dict[str, Any]] = []
-    for fid in candidates:
-        row = ml_rows.get(fid)
-        if row is None:
-            skipped.append({"finding_id": fid, "status": None, "reason": "not an ML finding of this run"})
-            continue
-        if row.status in selectable:
-            selected.append(fid)
-        else:
-            skipped.append({"finding_id": fid, "status": row.status,
-                            "reason": _VERIFY_SKIP_REASONS.get(str(row.status), f"status {row.status}")})
-    return selected, skipped
-
-
-def create_verify_batch(
-    *,
-    finding_id: str,
-    actor: str,
-    config: RedsimConfig,
-    audit_writer: AuditWriter,
-    body: Mapping[str, Any] | None = None,
-    idempotency_key: str | None = None,
-    max_members: int | None = None,
-) -> BatchHandle:
-    """Bulk verify per the owner decision BULK-16 (module docstring).
-
-    ``finding_id`` anchors the baseline run; the body may carry ``finding_ids`` (a subset of
-    that run's ML findings, the anchor always included), ``include_fixed``, and either
-    ``defense`` / ``params`` or ``defenses: [{defense, params}]``. One member per distinct
-    (defense, params); each member is ``create_verify_campaign`` on the first selected finding
-    with ``Job.detail.finding_ids`` listing every selected one. Refusals of the single route
-    (``unknown_defense``, ``defense_modality_mismatch``, ``job_in_flight``, ...) are collected
-    per member; ``422 batch_member_refused`` when no member was admitted.
-    """
-    from redsim.db.models import Finding, MlBatch, Run
-    from redsim.db.session import get_session
-
-    batch_id = new_batch_id()
-    cap = max_members if max_members is not None else batch_max_members()
-    request = _as_mapping(body)
-    project_id: str | None = None
-    audit_context: dict[str, Any] = {"batch_id": batch_id, "kind": BATCH_KIND_VERIFY, "finding_id": finding_id}
-
-    def refuse(exc: ApiError, **more: Any) -> NoReturn:
-        _refuse(audit_writer, action="batch.create", actor=actor, project_id=project_id, exc=exc,
-                **{**audit_context, **_envelope_fields(exc), **more})
-
-    try:
-        with get_session() as sess:
-            anchor = sess.get(Finding, finding_id)
-            if anchor is None:
-                raise ApiError(NOT_FOUND, "finding not found")
-            project_id = str(anchor.project_id)
-            baseline_id = str(anchor.run_id)
-            baseline = sess.get(Run, baseline_id)
-            if baseline is None:
-                raise ApiError(NOT_FOUND, "baseline campaign not found")
-            audit_context["baseline_run_id"] = baseline_id
-            include_fixed = bool(request.get("include_fixed", False))
-            selected, skipped = _select_findings(sess, run_id=baseline_id, anchor_id=finding_id,
-                                                 requested=request.get("finding_ids"), include_fixed=include_fixed)
-            target_id = str(baseline.target_id) if baseline.target_id is not None else None
-            modality = None
-            table = _campaign_table(sess)
-            campaign_row = sess.execute(table.select().where(table.c.run_id == baseline_id)).mappings().one_or_none()
-            if campaign_row is not None:
-                modality = str(campaign_row["modality"]) if campaign_row["modality"] else None
-        audit_context["finding_ids"] = selected
-        audit_context["skipped"] = [s["finding_id"] for s in skipped]
-        if not selected:
-            raise ApiError(
-                PARAMS_OUT_OF_RANGE,
-                "no finding of the baseline run is verifiable: every candidate is in flight, dismissed or fixed "
-                "(pass include_fixed to re-measure fixed findings)",
-                field="finding_ids", skipped=skipped,
-            )
-        defenses = _normalise_defenses(request)
-        _check_member_cap(len(defenses), cap, what="defenses")
-        parallel = _validate_max_parallel(request.get("max_parallel"))
-    except ApiError as exc:
-        refuse(exc)
-
-    defense_ids = [d["defense"] for d in defenses]
-    config_hash = _canonical_sha256({"defenses": defenses, "finding_ids": selected})
-    key_digest = hashlib.sha256(idempotency_key.encode()).hexdigest() if idempotency_key else None
-    # Each member is admitted on one selected finding (the single route's ``finding_id``, which flips
-    # to ``fixing`` and may carry one verify in flight); several defenses in one request take the
-    # first selected finding that no earlier member of this batch already owns.
-    primary = selected[0]
-    busy_primaries: set[str] = set()
-
-    authorize(
-        "batch.create", None, allowlist=config.target_allowlist, actor=actor, writer=audit_writer,
-        project_id=project_id, run_id=None,
-        detail={
-            "actor": actor, "batch_id": batch_id, "kind": BATCH_KIND_VERIFY, "baseline_run_id": baseline_id,
-            "target_id": target_id, "finding_ids": selected, "n_findings": len(selected),
-            "primary_finding_id": primary, "skipped": skipped, "defense_ids": defense_ids,
-            "n_members": len(defenses), "config_hash": config_hash, "max_parallel": parallel, "max_members": cap,
-            "idempotency_key_sha256": key_digest,
-        },
-    )
-    with get_session() as sess:
-        sess.add(MlBatch(
-            id=batch_id, project_id=project_id, kind=BATCH_KIND_VERIFY, status="queued", created_by=actor,
-            idempotency_key=key_digest,
-            config={
-                "baseline_run_id": baseline_id, "target_id": target_id, "modality": modality,
-                "finding_ids": selected, "primary_finding_id": primary, "skipped": skipped,
-                "defenses": defenses, "config_hash": config_hash, "max_parallel": parallel,
-                "members": [], "refused": [],
-            },
-        ))
-
-    members: list[BatchMember] = []
-    refused: list[dict[str, Any]] = []
-    queue_down = False
-    for index, entry in enumerate(defenses):
-        label = {"defense": entry["defense"], "params": entry["params"]}
-        if queue_down:
-            refused.append({**label, "code": QUEUE_UNAVAILABLE,
-                            "message": "not attempted: the job queue is unavailable", "attempted": False})
-            continue
-        deferred, capacity_refusal, decision = _capacity_decision(
-            project_id, "verify.replay", actor=actor, audit_writer=audit_writer, batch_id=batch_id,
-            baseline_run_id=baseline_id, defense_id=entry["defense"])
-        if capacity_refusal is not None:
-            refused.append({**label, "code": capacity_refusal.code, "message": str(capacity_refusal),
-                            "attempted": True, **_envelope_fields(capacity_refusal)})
-            continue
-        if parallel is not None and len(members) >= parallel:
-            deferred = True
-        member_primary = next((fid for fid in selected if fid not in busy_primaries), primary)
-        frozen_defense: dict[str, Any] | None = None
-
-        def bind_findings(run_id: str, job_ids: list[str], *, index: int = index, deferred: bool = deferred,
-                          decision: Any | None = decision, member_primary: str = member_primary,
-                          label: dict[str, Any] = label) -> None:
-            # Runs inside the single boundary after its Run / Job rows exist and BEFORE the broker message:
-            # the shared run's Job.detail.finding_ids and the one verify.replay row per additional finding
-            # (spec 5.11 per finding) are in place whenever the worker runs, eagerly or from the broker, so
-            # the projection (BULK-16) reaches every selected finding.
-            nonlocal frozen_defense
-            from redsim.db.models import Job
-
-            with get_session() as sess:
-                job = sess.get(Job, job_ids[0]) if job_ids else None
-                if job is not None:
-                    frozen_defense = _as_mapping(_as_mapping(job.detail).get("campaign_config")).get("defense")
-            for other in selected:
-                if other == member_primary:
-                    continue
-                authorize(
-                    "verify.replay", None, allowlist=config.target_allowlist, actor=actor, writer=audit_writer,
-                    project_id=project_id, run_id=run_id,
-                    detail={
-                        "actor": actor, "finding_id": other, "baseline_run_id": baseline_id, "batch_id": batch_id,
-                        "shared_run_id": run_id, "primary_finding_id": member_primary,
-                        "defense": frozen_defense or label, "projection": "shared defended run (BULK-16)",
-                    },
-                )
-            with get_session() as sess:
-                if deferred:
-                    _mark_deferred(sess, run_id=run_id, job_id=job_ids[0], decision=decision)
-                _stamp_batch_on_member(
-                    sess, batch_id=batch_id, run_id=run_id, job_ids=job_ids, deferred=deferred,
-                    extra_job_detail={"finding_ids": list(selected), "batch_member_index": index},
-                    extra_stage={"finding_ids": list(selected)},
-                )
-
-        try:
-            handle = create_verify_campaign(
-                finding_id=member_primary, defense_id=entry["defense"], params=entry["params"], actor=actor,
-                config=config, audit_writer=audit_writer, enqueue=not deferred, capacity_check=False,
-                before_enqueue=bind_findings,
-            )
-        except ApiError as exc:
-            refused.append({**label, "code": exc.code, "message": str(exc), "attempted": True,
-                            "primary_finding_id": member_primary, **_envelope_fields(exc)})
-            if exc.code == QUEUE_UNAVAILABLE:
-                queue_down = True
-            continue
-        busy_primaries.add(member_primary)
-        members.append(BatchMember(run_id=handle.run_id, job_ids=list(handle.job_ids),
-                                   defense=frozen_defense or label, deferred=deferred,
-                                   primary_finding_id=member_primary))
-
-    status = rollup_status(["queued"] * len(members), n_refused=len(refused))
-    with get_session() as sess:
-        row = _load_batch(sess, batch_id)
-        row.status = status
-        row.config = {**dict(row.config or {}), "members": [m.to_response() for m in members], "refused": refused}
-    if not members:
-        refuse(ApiError(BATCH_MEMBER_REFUSED,
-                        "every verify member failed admission; nothing was enqueued (see members)",
-                        members=refused, batch_id=batch_id),
-               refused_codes=sorted({str(r["code"]) for r in refused}))
-    assert project_id is not None
-    return BatchHandle(
-        batch_id=batch_id, kind=BATCH_KIND_VERIFY, project_id=project_id, modality=modality, status=status,
-        members=members, refused=refused, config_hash=config_hash,
-        extra={"baseline_run_id": baseline_id, "finding_ids": selected, "primary_finding_id": primary,
-               "skipped": skipped},
-    )
-
-
 def create_batch(*, kind: str, project_id: str | None = None, actor: str, config: RedsimConfig,
                  audit_writer: AuditWriter, campaign: Mapping[str, Any] | None = None,
-                 target_ids: Sequence[str] | None = None, finding_id: str | None = None,
-                 body: Mapping[str, Any] | None = None, max_parallel: int | None = None,
+                 target_ids: Sequence[str] | None = None, max_parallel: int | None = None,
                  idempotency_key: str | None = None) -> BatchHandle:
-    """Dispatch on ``kind``: :func:`create_campaign_batch` or :func:`create_verify_batch`."""
+    """Dispatch on ``kind``: :func:`create_campaign_batch` (``upload`` batches are written by the bulk upload route)."""
     if kind == BATCH_KIND_CAMPAIGN:
         if project_id is None:
             raise ApiError(PARAMS_OUT_OF_RANGE, "project_id is required", field="project_id")
         return create_campaign_batch(project_id=project_id, actor=actor, config=config, audit_writer=audit_writer,
                                      target_ids=list(target_ids or []), campaign=campaign or {},
                                      max_parallel=max_parallel, idempotency_key=idempotency_key)
-    if kind == BATCH_KIND_VERIFY:
-        if not finding_id:
-            raise ApiError(PARAMS_OUT_OF_RANGE, "finding_id is required for a verify batch", field="finding_id")
-        return create_verify_batch(finding_id=finding_id, actor=actor, config=config, audit_writer=audit_writer,
-                                   body=body, idempotency_key=idempotency_key)
-    raise ApiError(PARAMS_OUT_OF_RANGE, f"unknown batch kind {kind!r}; known: {sorted(BATCH_KINDS)}", field="kind")
+    raise ApiError(PARAMS_OUT_OF_RANGE, f"a batch is admitted with kind {BATCH_KIND_CAMPAIGN!r}, got {kind!r}",
+                   field="kind")
 
 
 # ---------------------------------------------------------------------------
@@ -862,7 +554,7 @@ def batch_member_rows(session: Session, batch_id: str) -> list[dict[str, Any]]:
     """The members of a batch, oldest first: per-run status, stage, score link and lineage, never an MRI."""
     from sqlalchemy import select
 
-    from redsim.db.models import Finding, Job, Run
+    from redsim.db.models import Job, Run
 
     table = _campaign_table(session)
     campaign_rows = list(session.execute(
@@ -904,31 +596,12 @@ def batch_member_rows(session: Session, batch_id: str) -> list[dict[str, Any]]:
             "deferred": bool(job_detail.get("deferred", False)),
             "attack_ids": list(config_json.get("attack_ids") or []),
             "settings_hash": row["settings_hash"],
-            "baseline_run_id": row["baseline_run_id"],
             "score_status": score_status,
             "scorecard_url": f"/v1/runs/{run_id}/campaign" if scored else None,
             "status_url": f"/v1/runs/{run_id}",
             "created_at": _iso(getattr(run, "created_at", None)),
             "completed_at": _iso(getattr(run, "completed_at", None)),
         }
-        if str(row["kind"]) == "verify":
-            member["defense"] = config_json.get("defense")
-            finding_ids = [str(f) for f in (job_detail.get("finding_ids") or [])]
-            if not finding_ids and job_detail.get("finding_id"):
-                finding_ids = [str(job_detail["finding_id"])]
-            findings: list[dict[str, Any]] = []
-            for fid in finding_ids:
-                finding = session.get(Finding, fid)
-                blob = _as_mapping(getattr(finding, "schema_blob", None))
-                verify_block = _as_mapping(_as_mapping(blob.get("ml")).get("verify"))
-                findings.append({
-                    "finding_id": fid,
-                    "status": getattr(finding, "status", None),
-                    "projected": verify_block.get("run_id") == run_id,
-                    "outcome": verify_block.get("outcome") if verify_block.get("run_id") == run_id else None,
-                })
-            member["finding_ids"] = finding_ids
-            member["findings"] = findings
         members.append(member)
     # Admission order first (the index the batch stamped on the Job), then the run's creation time, then id:
     # the migration-owned ``ml_campaigns.created_at`` is server-defaulted and the sqlite mirrors leave it null.
@@ -950,8 +623,7 @@ def batch_view(session: Session, batch_id: str) -> dict[str, Any]:
         status = "cancelled"
     terminal = all(s in TERMINAL_RUN_STATUSES for s in statuses)
     requested: dict[str, Any] = {}
-    for key in ("target_ids", "finding_ids", "primary_finding_id", "baseline_run_id", "defenses", "skipped",
-                "max_parallel"):
+    for key in ("target_ids", "max_parallel"):
         if key in config_json:
             requested[key] = config_json[key]
     return {
@@ -1075,7 +747,7 @@ def cancel_batch(*, batch_id: str, actor: str, config: RedsimConfig, audit_write
 __all__ = [
     "BATCH_KINDS",
     "BATCH_KIND_CAMPAIGN",
-    "BATCH_KIND_VERIFY",
+    "BATCH_KIND_UPLOAD",
     "BATCH_MAX_MEMBERS_ENV",
     "BATCH_STATUSES",
     "DEFAULT_BATCH_MAX_MEMBERS",
@@ -1089,7 +761,6 @@ __all__ = [
     "cancel_batch",
     "create_batch",
     "create_campaign_batch",
-    "create_verify_batch",
     "list_batches",
     "new_batch_id",
     "rollup_status",

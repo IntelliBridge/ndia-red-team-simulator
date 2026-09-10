@@ -4,8 +4,7 @@ The record keeps four things in separate fields, never blended in prose:
 measurements (what was counted), observations (per-sample evidence),
 interpretation (inferred statements) and candidate recommendations. The
 Literal types make the labels part of the contract: a recommendation cannot
-be anything but ``candidate``, and its validation can only be
-``not evaluated`` or ``measured``.
+be anything but ``candidate``.
 
 This module is the frozen M0 contract (spec sections 5.3 to 5.7, 12.5, 13.3,
 14, 15, 16.4). Later milestones add behaviour, not fields. A field change
@@ -18,9 +17,18 @@ under that protocol, every one additive and default-valued and each announced in
 vocabularies, the ``edit`` and ``patch_area`` budgets, the per-modality blocks on
 ``Measurement``, ``Observation`` and ``MLModelManifest``, the endpoint and lineage
 blocks on the manifest, the widened review vocabulary with its history and
-revisions, retest links, ``CampaignRecord.schema_version``, ``RunSummary.kind``
-and ``probe_ids``, and the ``defense_apply`` stage. A record written before
-Phase B validates unchanged and, viewed with ``exclude_unset``, dumps unchanged.
+revisions, ``CampaignRecord.schema_version``, ``RunSummary.kind`` and
+``probe_ids``. A record written before Phase B validates unchanged and, viewed
+with ``exclude_unset``, dumps unchanged.
+
+2026-09-09 (product owner decision, ``docs/project-brief.md`` "Decisions
+taken"; announced in ``docs/plans/00-master-plan.md`` section 5): the verify
+paradigm was removed under the same protocol. Every run is a measurement in
+its own right, so the ``verify`` campaign and run kinds, ``DefenseConfig``,
+``CampaignConfig.defense``, the ``defense_apply`` stage, ``MRIDelta``,
+``MeasuredDelta``, ``CandidateRecommendation.validation`` / ``measured``,
+``FindingVerify``, the retest links, ``DerivedFrom`` and the baseline fields
+are gone. The frozen fixture was regenerated without those keys.
 """
 
 from __future__ import annotations
@@ -59,7 +67,7 @@ MeasurementFamily = Literal["clean", "evasion", "control"]
 # patch per image with side sqrt(ε·H·W). Scorecards label the axis from the
 # literal ("edit budget", "patch area"), never as a norm.
 Norm = Literal["linf", "l2", "edit", "patch_area"]
-CampaignKind = Literal["attack", "verify", "ingest"]
+CampaignKind = Literal["attack", "ingest"]
 Completeness = Literal["complete", "partial"]
 Grade = Literal["A", "B", "C", "D", "F"]
 ModelFormat = Literal[
@@ -70,24 +78,19 @@ RefusalReason = Literal[
     "pickle_refused", "unsupported_format", "architecture_missing", "load_failed",
     "shape_mismatch", "size_limit", "timeout",
 ]
-VerifyOutcome = Literal["verified", "still_vulnerable", "inconclusive"]
 # ``unreviewed`` and ``dismissed`` are Phase A. Phase B (REVIEW_REPORTS-01) adds
 # the analyst and reviewer workflow states; the transition table lives in the
 # review service and a stored row never changes state by schema default.
 ReviewState = Literal["unreviewed", "dismissed", "draft", "in_review", "confirmed", "resolved"]
 # Run kinds a run list may label (Phase B, LLM-24). An ``llm_probe`` run carries
 # ``probe_ids`` and an empty ``attack_ids``; its results never enter an MRI.
-RunKind = Literal["attack", "verify", "ingest", "llm_probe"]
+RunKind = Literal["attack", "ingest", "llm_probe"]
 
 # Pipeline stages, in order. The worker writes ``stage`` as it progresses so
 # the UI timeline can render progress. ``attack`` is written per attack as
 # ``attack:<attack_id>``. ``score`` runs at the end of the explain stage.
-# ``defense_apply`` (Phase B, ATTACKS_HARDEN-15) sits after ``load_target`` where
-# spec 6.5 places it and is expected only on a verify run whose defense trains
-# or distils a derived model; every other run skips it, so the Phase A stages
-# keep their relative order and ``report`` stays last.
 STAGES: tuple[str, ...] = (
-    "load_target", "defense_apply", "sample", "clean_eval", "attack", "control", "explain", "score",
+    "load_target", "sample", "clean_eval", "attack", "control", "explain", "score",
     "interpret", "recommend", "report",
 )
 
@@ -229,20 +232,11 @@ class ScoringConfig(BaseModel):
     interpretation: InterpretationThresholds = Field(default_factory=InterpretationThresholds)
 
 
-class DefenseConfig(BaseModel):
-    """An ART preprocessing defense applied to an evaluation copy in a verify run."""
-
-    id: str                               # id from GET /v1/defenses, e.g. "feature_squeezing"
-    art_class: str | None = None          # e.g. "art.defences.preprocessor.FeatureSqueezing"
-    params: dict[str, Any] = Field(default_factory=dict)
-
-
 class CampaignConfig(BaseModel):
     """One campaign: one model, one modality, a declared attack set, an ε grid, a reference budget.
 
     Immutable after admission. The ``settings_hash`` of spec 5.6 is computed
-    over this object excluding ``defense``, ``llm_narrative`` and
-    ``target_snapshot``.
+    over this object excluding ``llm_narrative`` and ``target_snapshot``.
     """
 
     target_id: str
@@ -261,7 +255,6 @@ class CampaignConfig(BaseModel):
     dataset_revision: str | None = None
     dataset_split: str = "test"
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
-    defense: DefenseConfig | None = None                 # verify campaigns only
     llm_narrative: bool = False                          # opt-in; needs REDSIM_ML_LLM_MODEL
     auto_recommend: bool = True
     target_snapshot: dict[str, Any] = Field(default_factory=dict)   # frozen target row + manifest
@@ -307,9 +300,7 @@ class Provenance(BaseModel):
     dataset_split: str | None = None
     sample_indices_sha256: str | None = None
     settings_hash: str | None = None
-    baseline_run_id: str | None = None   # verify runs
     parent_run_id: str | None = None     # reruns
-    defense: dict[str, Any] | None = None            # verify runs: ART class and resolved params
     llm: dict[str, Any] | None = None                # PythiaSettings.redacted() + hashes, never the key
     thread_env: dict[str, str] = Field(default_factory=dict)
     model_manifest: dict[str, Any] = Field(default_factory=dict)
@@ -481,63 +472,15 @@ class Subscores(BaseModel):
         return [name for name, value in self.model_dump().items() if value is None]
 
 
-class CleanAccuracyDelta(BaseModel):
-    before: AccuracyPoint
-    after: AccuracyPoint
-    delta: float | None = None
-
-
-class FamilyDelta(BaseModel):
-    measurement_id: str
-    before: AccuracyPoint
-    after: AccuracyPoint
-    delta: float | None = None
-
-
-class MRIDelta(BaseModel):
-    """ΔMRI between a verify run and its baseline (spec 15.6). Verify runs only."""
-
-    baseline_run_id: str
-    mri_before: int
-    mri_after: int
-    delta: int
-    delta_subscores: Subscores = Field(default_factory=Subscores)
-    delta_acc_clean: CleanAccuracyDelta
-    delta_families: list[FamilyDelta] = Field(default_factory=list)
-
-
-class MeasuredDelta(BaseModel):
-    """The measured ΔMRI attached to the one recommendation whose defense a verify run applied."""
-
-    verify_run_id: str
-    baseline_run_id: str
-    defense: DefenseConfig
-    delta_mri: int
-    delta_subscores: Subscores = Field(default_factory=Subscores)
-    delta_acc_clean: CleanAccuracyDelta
-    settings_hash: str
-    measured_at: datetime
-
-
 class CandidateRecommendation(BaseModel):
     id: str
     title: str
     rationale: str
     triggered_by: list[str] = Field(min_length=1)   # measurement / observation ids
     status: Literal["candidate"] = "candidate"
-    validation: Literal["not evaluated", "measured"] = "not evaluated"
-    measured: MeasuredDelta | None = None
     references: list[str] = Field(default_factory=list)
     narrative: str | None = None         # optional LLM prose; labelled in UI
     narrative_source: Literal["rules", "llm"] = "rules"
-
-    @model_validator(mode="after")
-    def _measured_pairs_with_validation(self) -> CandidateRecommendation:
-        if self.validation == "measured" and self.measured is None:
-            raise ValueError("validation 'measured' requires a measured block")
-        if self.validation == "not evaluated" and self.measured is not None:
-            raise ValueError("a measured block requires validation 'measured'")
-        return self
 
 
 # ---------------------------------------------------------------------------
@@ -596,7 +539,6 @@ class MRIRecord(BaseModel):
     completeness: Completeness
     missing: list[str] = Field(default_factory=list)   # "<dimension> unavailable (<reason>)"
     reading: str | None = None                          # attack-scoped grade text
-    delta: MRIDelta | None = None                       # verify runs only
     computed_at: datetime
 
     @model_validator(mode="after")
@@ -700,24 +642,8 @@ class EndpointSpec(BaseModel):
         return v
 
 
-class DerivedFrom(BaseModel):
-    """Lineage of a model produced by a training defense (Phase B, ATTACKS_HARDEN-15).
-
-    A hardened model is registered as a new Target; this block ties it to the
-    parent it was trained from and to the defense that produced it.
-    ``training_budget`` records the bounds the defense ran under (epochs, wall
-    time, frozen backbone, ...) as resolved values, not a claim about the
-    result: the verify run measures that.
-    """
-
-    parent_target_id: str
-    parent_sha256: str
-    defense_id: str                                   # id from GET /v1/defenses, kind "training"
-    training_budget: dict[str, float | int | bool | str] = Field(default_factory=dict)
-
-
 # The Phase B blocks ``MLModelManifest`` omits from a dump while they are None.
-_MANIFEST_PHASE_B_BLOCKS: tuple[str, ...] = ("text", "detection", "endpoint", "derived_from")
+_MANIFEST_PHASE_B_BLOCKS: tuple[str, ...] = ("text", "detection", "endpoint")
 
 
 class MLModelManifest(BaseModel):
@@ -743,13 +669,12 @@ class MLModelManifest(BaseModel):
     license: str | None = None
     source_url: str | None = None
     manifest_sha256: str | None = None
-    # Phase B (plan 12 section 3): per-modality, endpoint and lineage blocks, all
+    # Phase B (plan 12 section 3): per-modality and endpoint blocks, all
     # optional. They are omitted from dumps while None (see the serializer below)
     # so a manifest written before Phase B serialises, and digests, byte-identically.
     text: TextModelSpec | None = None                 # MODALITIES-05
     detection: DetectionModelSpec | None = None       # MODALITIES-05
     endpoint: EndpointSpec | None = None              # ENDPOINT-03
-    derived_from: DerivedFrom | None = None           # ATTACKS_HARDEN-15
 
     @model_validator(mode="after")
     def _consistency(self) -> MLModelManifest:
@@ -772,7 +697,7 @@ class MLModelManifest(BaseModel):
 
     @model_serializer(mode="wrap")
     def _omit_unset_blocks(self, handler: SerializerFunctionWrapHandler):  # type: ignore[no-untyped-def]
-        """Drop ``text``, ``detection``, ``endpoint`` and ``derived_from`` while they are None.
+        """Drop ``text``, ``detection`` and ``endpoint`` while they are None.
 
         ``manifest_sha256`` (``redsim.ml.assets.manifest.manifest_digest``) is the sha256 of this
         dump, so built asset trees and stored ``targets.detail`` rows written before Phase B keep
@@ -795,8 +720,7 @@ class ReviewEvent(BaseModel):
     """One transition in a finding's review history (Phase B, REVIEW_REPORTS-01).
 
     The transition table lives in the review service; the record only stores
-    what happened, in order. ``verify_run_id`` names the retest a ``resolved``
-    transition rests on; ``revision`` names the analyst revision that was judged.
+    what happened, in order. ``revision`` names the analyst revision that was judged.
     """
 
     action: str                          # dismiss, submit, confirm, request_changes, reopen, resolve, ...
@@ -806,7 +730,6 @@ class ReviewEvent(BaseModel):
     from_state: ReviewState | None = None
     reason: str | None = None
     revision: int | None = Field(None, ge=1)
-    verify_run_id: str | None = None
 
 
 class FindingRevision(BaseModel):
@@ -839,17 +762,6 @@ class FindingReview(BaseModel):
     revisions: list[FindingRevision] = Field(default_factory=list)
 
 
-class FindingVerify(BaseModel):
-    run_id: str
-    defense: DefenseConfig
-    outcome: VerifyOutcome
-    delta: MRIDelta | None = None
-    # Phase B (REVIEW_REPORTS-08): the verify run's settings hash and baseline, so
-    # a retest link says whether it was comparable without re-reading the campaign.
-    settings_hash: str | None = None
-    baseline_run_id: str | None = None
-
-
 class AtlasTechnique(BaseModel):
     """MITRE ATLAS tag. Phase B2 only, never back-filled by guesswork."""
 
@@ -876,9 +788,6 @@ class MLFindingDetail(BaseModel):
     limitations: list[str] = Field(default_factory=list)
     artifacts: dict[str, str] = Field(default_factory=dict)   # name -> Artifact.id
     review: FindingReview = Field(default_factory=FindingReview)
-    verify: FindingVerify | None = None                        # the latest retest
-    # Phase B (REVIEW_REPORTS-08): every retest in order; ``verify`` stays the latest.
-    retests: list[FindingVerify] = Field(default_factory=list)
     atlas_technique: AtlasTechnique | None = None
 
 
@@ -970,7 +879,6 @@ class CampaignRecord(RunRecord):
     kind: CampaignKind = "attack"
     completed_at: datetime | None = None
     settings_hash: str | None = None
-    baseline_run_id: str | None = None
     parent_run_id: str | None = None
     curve: list[RobustnessCurve] = Field(default_factory=list)
     completeness: Completeness = "partial"
@@ -1017,7 +925,7 @@ STANDING_LIMITATIONS: tuple[str, ...] = (
     "SHAP attributions describe the model's sensitivity, not the cause of a failure; they are not causal proof.",
     "The evaluation slice is small; per-class numbers in particular have wide uncertainty.",
     "White-box gradient attacks assume full model access; black-box and physical-world attacks were not evaluated.",
-    "Recommendations are candidates. None has been validated against this model; that requires a separate evaluation.",
+    "Recommendations are candidates. None has been evaluated against this model; that requires a separate campaign.",
     "Passing or failing this suite does not establish safety, robustness in general, or deployment readiness.",
 )
 

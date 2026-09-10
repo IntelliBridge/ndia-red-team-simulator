@@ -21,7 +21,7 @@ and candidate recommendations stay in separate lists; every Measurement carries
 ``n`` and its denominators; a control accompanies the attacks at the same eps; the
 MRI is computed only when all five subscores exist and the score record is
 otherwise partial with the reason in ``missing`` and ``limitations``; every
-citation resolves to a recorded id; candidates carry no measured delta.
+citation resolves to a recorded id; candidates carry no measurement of their effect.
 
 An attack whose adapter raises ``AttackNotApplicable`` at run time (a white-box
 attack on a target without loss gradients, spec 9.5) is recorded ``not_run`` in an
@@ -66,7 +66,7 @@ from redsim.ml.attacks import (
     NONDETERMINISM_PREFIX,
     library_versions,
 )
-from redsim.ml.errors import AttackNotApplicable, ExplainUnavailable, MLError, TargetUnavailable
+from redsim.ml.errors import AttackNotApplicable, ExplainUnavailable, TargetUnavailable
 from redsim.ml.eval import eps_tag, measure, per_sample_norm, pert_first_success
 from redsim.ml.schema import (
     AttackInfo,
@@ -99,11 +99,6 @@ CONTROL_ATTACK_ID = "noise_control"
 DEFAULT_MAX_ADV_ARTIFACT_MB = 64.0                   # spec 12.8
 
 REALIZABILITY_CAVEAT = "feature-space perturbation; realizability not established"
-DEFENSE_LIMITATION = (
-    "The white-box attacks in this run used ART's straight-through gradient estimate through the "
-    "preprocessing defense. Adaptive attacks that account for the defense may succeed where these did "
-    "not, so the measured delta MRI is an upper bound on the defense's benefit against these attacks, "
-    "not a general robustness gain.")
 TABULAR_LIMITATION = (
     "Tabular evasion rows are feature-space perturbations; a perturbed feature vector is evidence about "
     "the decision surface and is a realizable attack only if it maps back to a constructible input, which "
@@ -262,20 +257,6 @@ def _as_float(v: Any) -> float | None:
     if isinstance(v, bool) or not isinstance(v, (int, float, np.integer, np.floating)):
         return None
     return float(v)
-
-
-def _defense_provenance(target: Target, config: CampaignConfig) -> dict[str, Any] | None:
-    """``Provenance.defense`` for a verify run: the applied defense as the wrapper describes it (ART class,
-    resolved params, what it does not defend), else the requested ``DefenseConfig`` when the wrapper does
-    not describe itself. ``None`` for an attack run."""
-    if config.defense is None:
-        return None
-    describe = getattr(target, "describe", None)
-    if callable(describe):
-        described = describe()
-        if isinstance(described, dict):
-            return dict(described)
-    return config.defense.model_dump(mode="json")
 
 
 # The reference-row Measurement fields the explain stage supplies (spec 13.5; ``explain.base.MEASUREMENT_FIELDS``).
@@ -514,13 +495,6 @@ def _resolve_target(config: CampaignConfig) -> Target:
     if info.domain != config.modality:
         raise ValueError(f"config.modality {config.modality!r} does not match the target domain {info.domain!r}")
     target.load()
-    if config.defense is not None:
-        try:
-            defenses = importlib.import_module("redsim.ml.defenses")
-        except ImportError as exc:
-            raise MLError("a defense was requested but redsim.ml.defenses is not available; "
-                          "refusing to run an undefended campaign in its place") from exc
-        target = defenses.apply_defense(target, config.defense.id, dict(config.defense.params))
     return target
 
 
@@ -569,16 +543,15 @@ def _attack_params(config: CampaignConfig, adapters: list[Any]) -> dict[str, dic
 # --- the run --------------------------------------------------------------------------------------------
 
 def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = True,
-                 narrative_settings: Any | None = None, baseline_run_id: str | None = None,
-                  parent_run_id: str | None = None,
+                 narrative_settings: Any | None = None, parent_run_id: str | None = None,
                   on_stage: Callable[[str], None] | None = None,
                   target_override: Target | None = None) -> CampaignRecord:
     """Run the campaign described by ``config`` and return its record (status ``succeeded``).
 
     Raises ``TargetUnavailable`` / ``AttackNotApplicable`` / ``ValueError`` for configuration
     problems before any stage runs. Explain and recommend failures never fail the run: they are
-    recorded as unavailable (spec 14.7, 16.1). ``baseline_run_id`` (verify runs) and
-    ``parent_run_id`` (reruns) are copied onto the provenance and the record when given.
+    recorded as unavailable (spec 14.7, 16.1). ``parent_run_id`` (reruns) is copied onto the
+    provenance and the record when given.
 
     ``narrative_settings`` is an explicit, offline-only injection (CLI, tests): this function never
     reads ``PYTHIA_*`` from the environment. Inside the platform the sandbox child leaves it ``None``
@@ -616,11 +589,6 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
                 f"the target domain {info.domain!r}"
             )
         target.load()
-        if config.defense is not None:
-            defenses = importlib.import_module("redsim.ml.defenses")
-            target = defenses.apply_defense(
-                target, config.defense.id, dict(config.defense.params),
-            )
     info = target.info()
     domain = info.domain
     manifest = dict(target.manifest() or {})
@@ -1068,8 +1036,6 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
     if via_surrogate:
         limitations.append(SURROGATE_TRANSFER_LIMITATION_TEMPLATE.format(attacks=", ".join(via_surrogate),
                                                                          surrogate=surrogate_desc))
-    if config.defense is not None:
-        limitations.append(DEFENSE_LIMITATION)
     if score is not None and score.mri is not None:
         limitations.append(MRI_SCOPE_LIMITATION)
     if "explain" in stages_done:
@@ -1097,9 +1063,7 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
         dataset_revision=None if dataset_revision is None else str(dataset_revision),
         dataset_split=config.dataset_split,
         sample_indices_sha256=_sha256_indices(sample.indices), settings_hash=shash,
-        baseline_run_id=baseline_run_id, parent_run_id=parent_run_id,
-        defense=_defense_provenance(target, config),
-        llm=llm_provenance, thread_env=_thread_env(),
+        parent_run_id=parent_run_id, llm=llm_provenance, thread_env=_thread_env(),
         model_manifest={**manifest, "seed": config.seed, "n_samples": n, "library_versions": versions,
                         "python_executable": sys.executable},
         started_at=started_at, finished_at=finished_at,
@@ -1113,8 +1077,8 @@ def run_campaign(config: CampaignConfig, sink: ArtifactSink, *, explain: bool = 
         config=config, target=info, attacks=[a.info() for a in adapters], provenance=provenance,
         measurements=measurements, observations=observations, interpretation=interpretation,
         recommendations=recommendations, score=score, limitations=_uniq(limitations),
-        kind="verify" if config.defense is not None else "attack", completed_at=finished_at,
-        settings_hash=shash, baseline_run_id=baseline_run_id, parent_run_id=parent_run_id, curve=curves,
+        kind="attack", completed_at=finished_at,
+        settings_hash=shash, parent_run_id=parent_run_id, curve=curves,
         completeness=score.completeness if score is not None else "partial",
         missing=list(score.missing) if score is not None else [score_reason or "score unavailable"],
         score_status=None if score is not None else ScoreStatus(state="unavailable", reason=score_reason),

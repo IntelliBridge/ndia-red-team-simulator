@@ -1,6 +1,6 @@
 """Run-state resolution helpers shared by the read-side command modules.
 
-``export`` / ``fix`` / ``report`` / ``verify`` all begin by resolving a
+``export`` / ``fix`` / ``report`` all begin by resolving a
 ``RunState`` (specific run id or latest) and loading its findings as
 ``RedsimFinding`` objects. Those two helpers lived on ``redsim.cli.main`` and
 were reached via ``_main._resolve_run_state(...)``; hosting them on this peer

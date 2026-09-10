@@ -705,39 +705,6 @@ def _image_split(n_per_class: int = 30, n_classes: int = 3, size: int = 6, seed:
                          class_names=[f"c{i}" for i in range(n_classes)])
 
 
-def test_write_train_slice_is_seeded_stratified_disjoint_and_digested(tmp_path: Path) -> None:
-    split = _image_split()
-    root = tmp_path / "assets"
-    dest = root / "bundled" / "vehicles_cnn" / ds.TRAIN_SLICE_NAME
-    eval_like = np.arange(0, 90, 3)                                   # pretend these rows are held out
-    sub, entry = ds.write_train_slice(split, dest, root, n=30, seed=0, exclude_indices=eval_like)
-    assert sub.n == entry.n == 30 and entry.per_class == {"c0": 10, "c1": 10, "c2": 10}
-    assert not set(sub.indices.tolist()) & set(eval_like.tolist())
-    assert entry.seed == 0 and entry.indices_sha256 == ds.indices_sha256(sub.indices)
-    assert entry.file is not None and entry.file.path == "bundled/vehicles_cnn/train_slice.npz"
-    assert entry.file.sha256 == sha256_file(dest) and entry.name == "train_coarse_slice"
-    again, again_entry = ds.write_train_slice(split, tmp_path / "b" / "t.npz", tmp_path, n=30, seed=0,
-                                              exclude_indices=eval_like)
-    assert np.array_equal(again.indices, sub.indices) and again_entry.indices_sha256 == entry.indices_sha256
-    other, _ = ds.write_train_slice(split, tmp_path / "c" / "t.npz", tmp_path, n=30, seed=1, exclude_indices=eval_like)
-    assert not np.array_equal(other.indices, sub.indices)
-    back = ds.load_train_slice(dest, expected_sha256=entry.file.sha256)
-    assert np.array_equal(back.x, sub.x) and np.array_equal(back.y, sub.y) and np.array_equal(back.indices, sub.indices)
-    assert back.class_names == split.class_names and back.name == "train_coarse_slice"
-    assert np.array_equal(back.x, split.x[sub.indices])              # source indices point at the source rows
-    with pytest.raises(ds.DatasetUnavailable, match="sha256"):
-        ds.load_train_slice(dest, expected_sha256="00" * 32)
-    with pytest.raises(ds.DatasetUnavailable, match="missing"):
-        ds.load_train_slice(tmp_path / "absent.npz")
-    np.savez(tmp_path / "bad.npz", x=np.zeros((2, 3)), y=np.zeros(2))
-    with pytest.raises(ds.DatasetUnavailable):
-        ds.load_train_slice(tmp_path / "bad.npz")
-    assert ds.train_slice_indices(split.y, 5, 0, exclude=np.arange(90)).size == 0
-    assert ds.TrainSliceOptions().n == ds.DEFAULT_TRAIN_SLICE_N
-    with pytest.raises(ValueError):
-        ds.TrainSliceOptions(n=0)
-
-
 def test_cached_imagefolder_split_follows_the_hub_sorted_order(tmp_path: Path) -> None:
     root = tmp_path / "hf--x--y" / "sha"
     paths = ["train_coarse/Tank/b.png", "train_coarse/BMD/a.png", "train_coarse/Tank/a.png", "train_coarse/README.md",

@@ -214,7 +214,7 @@ def uniq(items: list[str]) -> list[str]:
 
 def call_supported(fn: Any, *args: Any, **optional: Any) -> Any:
     """Call ``fn`` with the positional contract plus only those optional keywords its signature
-    accepts. The explain / recommend / harden modules may extend the base contract with extra keywords
+    accepts. The explain / recommend modules may extend the base contract with extra keywords
     (``x_ctrl``, ``reference_eps``, ...); a callee that lacks them still gets a valid call."""
     try:
         params = inspect.signature(fn).parameters

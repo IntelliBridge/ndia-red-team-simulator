@@ -1,4 +1,4 @@
-"""Verify loop, upload boundary and reports through the e2e harness (spec 26.2-26.4; demo steps 5, 8, 9).
+"""Upload boundary and reports through the e2e harness (spec 26.2-26.4; demo steps 8, 9).
 
 Everything below drives the production route, the admission service, the eager
 worker and the real sandbox child, then asserts on what those left behind: rows,
@@ -16,11 +16,11 @@ rather than worked around silently:
   for every image), and ``redsim.ml.scoring.MIN_CLEAN_CORRECT_FOR_FINDING`` is
   10, so no ``finding_asr_threshold`` or ``n_samples`` can produce a finding from
   it. :func:`test_bundled_tiny_cnn_yields_no_finding_and_says_so` asserts that
-  honest zero-finding state. The verify loop therefore runs against an
-  **uploaded** SmallCNN that the test trains to memorise the same seeded images
-  (:func:`upload_files`), registered through the real upload path and validated
-  in the real child, so demo steps 5 (verify) and the upload row of 26.4 are
-  exercised on one model.
+  honest zero-finding state. The campaign whose reports are checked therefore
+  runs against an **uploaded** SmallCNN that the test trains to memorise the same
+  seeded images (:func:`upload_files`), registered through the real upload path
+  and validated in the real child, so the upload row of 26.4 and the report row
+  of 26.3 are exercised on one model.
 * **``torch.onnx.export`` cannot export ``SmallCNN`` natively at 8x8.** Its
   ``AdaptiveAvgPool2d(4)`` receives a 2x2 map at that size and the legacy
   exporter refuses "output size that are not factor of input size"; the dynamo
@@ -29,20 +29,18 @@ rather than worked around silently:
   with an 8x8x3 input: the real catalog architecture and its weights, one Resize
   node in front. Both facts are recorded in the module's structured report.
 
-One product defect makes the measured-ΔMRI criterion (spec 26.3 item 15, demo
-step 5) unreachable on this tree, and :func:`test_verify_measures_delta_mri`
-fails with that attribution rather than passing on the partial-score branch: the
-explainers hash their artifacts through ``sink.sha256(<value returned by
-sink.put()>)`` while the sandbox child's sink returns a ``sandbox:<name>:<digest>``
-reference and keys ``sha256`` by name, so every observation build raises
-``KeyError``, ``S_expl`` is unavailable and no MRI is ever computed through the
-worker (:data:`_EXPLAIN_SINK_DEFECT`). Everything else the verify loop must do --
-admission, ``fixing``, the frozen settings, the state pairing, the honest
-inconclusive outcome, the audit trail -- is asserted before that point.
+Every run is a measurement in its own right (product decision of 2026-09-09):
+there is no verify campaign, no measured delta and no validation label on a
+recommendation. A candidate is ``status: candidate`` and nothing more, and the
+standing limitation says so. The two runs this module already has (the bundled
+CNN at a 0.05 threshold and the upload at 0.2) differ in ``finding_asr_threshold``
+and are therefore not a side-by-side pair; the pairwise comparison in
+``side_by_side`` mode is asserted in ``tests/e2e/test_ml_review_reports.py`` on
+two campaigns with identical settings.
 
 Run with::
 
-    REDSIM_E2E=1 pytest -q -p no:cacheprovider -m e2e tests/e2e/test_ml_verify_upload_reports.py
+    REDSIM_E2E=1 pytest -q -p no:cacheprovider -m e2e tests/e2e/test_ml_upload_reports.py
 
 Heavy imports happen inside fixtures and tests, after the session fixtures have
 checked the extras, so collection stays green without them.
@@ -56,7 +54,6 @@ import re
 import subprocess
 import sys
 import warnings
-from dataclasses import dataclass
 from html import unescape
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -76,45 +73,16 @@ pytestmark = pytest.mark.e2e
 N_EVAL = h.N_IMAGES // 2
 #: The default finding threshold of spec 15.3; the memorising upload crosses it at eps 0.1.
 FINDING_THRESHOLD = 0.2
-#: The spec 16.5 Phase A defense the demo verifies with (also the route's default).
-FEATURE_SQUEEZING = "feature_squeezing"
 LICENSE_STATEMENT = "e2e harness double trained on seeded random pixels; no licence restriction applies"
 
-#: A bare "+N" (spec 16.4 (3), (5)): never in a recommendation's own text, never as an expected gain.
+#: A bare "+N": never in a recommendation's own text and nowhere in a report; no gain is ever claimed.
 _BARE_GAIN = re.compile(r"(?<![\w.\-])\+\d")
 _URL = re.compile(r"https?://\S+")
 #: Modules the API process must never import (tests/test_api_process_has_no_ml.py, spec 8.4).
 _BLOCKED_ML_MODULES = ("torch", "torchvision", "art", "onnx", "onnxruntime", "onnx2torch", "shap", "sklearn",
                        "xgboost", "safetensors")
-
-#: The explain-stage failure that leaves every campaign's score partial through the production child.
-_EXPLAIN_SINK_DEFECT = (
-    "product defect, not a harness problem: the explain stage fails inside the sandbox child for every modality. "
-    "The ArtifactSink protocol (redsim/ml/artifacts.py:18-19) says put() returns the run-relative path, and the "
-    "explainers rely on that when they hash their files with sink.sha256(<value put() returned>) "
-    "(redsim/ml/explain/shap_image.py:521 and :590, shap_tabular.py:470 and :551). The child's sink "
-    "(redsim/ml/sandbox_worker.py:119) instead returns a 'sandbox:<name>:<digest>' reference while keying sha256() "
-    "by artifact name only (:137-138), so building the first observation raises KeyError. The record then carries "
-    "'Explain stage unavailable for <attack>: KeyError: sandbox:...' with zero observations, S_expl is unavailable, "
-    "the MRI is not computed (spec 15.4) and no verify run can measure a delta MRI or attach a MeasuredDelta "
-    "(spec 15.6, 16.4, 26.3 item 15; demo step 5). The parent's DatabaseArtifactSink double-keys its hashes by the "
-    "returned id (redsim/workers/tasks/ml_campaign.py:323) and the ml tier's sinks return the name, which is why "
-    "neither sees it. Until the child sink honours the protocol (or also keys sha256() by its reference), this "
-    "test fails here."
-)
-_EXPLAIN_UNAVAILABLE_PREFIX = "Explain stage unavailable for "
-
-
-def _explain_stage_defect(campaign: dict[str, Any]) -> str | None:
-    """The explain-stage limitation when explanations were requested, the stage ran and nothing was observed."""
-    if int(campaign["config"].get("explain_k") or 0) <= 0 or "explain" not in campaign.get("stages_done", []):
-        return None
-    if campaign.get("observations"):
-        return None
-    for limitation in campaign.get("limitations", []):
-        if str(limitation).startswith(_EXPLAIN_UNAVAILABLE_PREFIX):
-            return f"run {campaign['run_id']}: {limitation}"
-    return None
+#: Keys and words that left the recommendation contract with the verify paradigm (2026-09-09).
+_RETIRED_RECOMMENDATION_KEYS = frozenset({"validation", "measured", "expected_gain", "delta", "delta_mri"})
 
 
 # ---------------------------------------------------------------------------
@@ -130,31 +98,11 @@ def _actions(e2e_app: E2EApp, chain_id: str) -> list[str]:
     return [str(ev["action"]) for ev in e2e_app.read_chain(chain_id)]
 
 
-def _finding(client: TestClient, finding_id: str) -> dict[str, Any]:
-    response = client.get(f"/v1/findings/{finding_id}")
-    assert response.status_code == 200, response.text
-    body: dict[str, Any] = response.json()
-    return body
-
-
 def _campaign(client: TestClient, run_id: str) -> dict[str, Any]:
     response = client.get(f"/v1/runs/{run_id}/campaign")
     assert response.status_code == 200, response.text
     body: dict[str, Any] = response.json()
     return body
-
-
-def _compare(client: TestClient, run_id: str, other: str) -> Any:
-    return client.get(f"/v1/runs/{run_id}/compare", params={"with": other})
-
-
-def _run_scanner(e2e_app: E2EApp, run_id: str) -> str:
-    from redsim.db.models import Run
-
-    with e2e_app.session() as sess:
-        run = sess.get(Run, run_id)
-        assert run is not None, f"Run {run_id} is missing"
-        return str(run.scanner)
 
 
 def _count_targets(e2e_app: E2EApp) -> int:
@@ -175,25 +123,25 @@ def _recs(detail: dict[str, Any]) -> list[dict[str, Any]]:
     return list(recs) if isinstance(recs, list) else []
 
 
-def _defense_ids(rec: dict[str, Any]) -> set[str]:
-    """The catalog defense ids a candidate names, resolved by the product's own helper."""
-    from redsim.ml.schema import CandidateRecommendation
-    from redsim.services.ml_campaigns import recommendation_defense_ids
-
-    return recommendation_defense_ids(CandidateRecommendation.model_validate(rec))
-
-
 def _rec_text(rec: dict[str, Any]) -> str:
     return " ".join(str(rec.get(k) or "") for k in ("title", "rationale", "narrative")) + " " + " ".join(
         str(r) for r in rec.get("references") or [])
 
 
-def _assert_no_bare_gain(recs: list[dict[str, Any]]) -> None:
-    """Spec 16.4 (3)-(5): a candidate's own text never carries a bare '+N'; the delta lives in ``measured``."""
+def _assert_candidates_only(recs: list[dict[str, Any]]) -> None:
+    """A recommendation is ``status: candidate`` and nothing more: no validation label, no gain, no delta."""
+    from redsim.ml.schema import CandidateRecommendation
+
+    assert recs, "the rule layer always produces R7"
+    allowed = set(CandidateRecommendation.model_fields)
     for rec in recs:
+        assert rec["status"] == "candidate", rec.get("id")
+        assert not (set(rec) & _RETIRED_RECOMMENDATION_KEYS), sorted(set(rec) & _RETIRED_RECOMMENDATION_KEYS)
+        assert set(rec) <= allowed, sorted(set(rec) - allowed)
         text = _rec_text(rec)
         assert not _BARE_GAIN.search(text), f"bare gain in recommendation {rec.get('id')}: {text[:200]}"
-        assert "expected gain" not in text.lower() or "not measured" in text.lower(), text[:200]
+        assert "expected gain" not in text.lower() and "not evaluated" not in text.lower(), text[:200]
+        assert not [r for r in rec.get("references") or [] if str(r).startswith("defense:")], rec["references"]
 
 
 def _upload(client: TestClient, project_id: str, path: Path, **overrides: Any) -> Any:
@@ -250,90 +198,6 @@ def _artifact_bytes(client: TestClient, run_id: str, kind: str) -> tuple[bytes, 
     response = client.get(f"/v1/artifacts/{row['id']}")
     assert response.status_code == 200, response.text
     return response.content, row
-
-
-# ---------------------------------------------------------------------------
-# Driving a verify through the API
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class VerifyRun:
-    """What one ``POST /v1/findings/{id}/verify`` left behind."""
-
-    finding_id: str
-    body: dict[str, Any] | None
-    launch: dict[str, Any]
-    run_id: str
-    run: dict[str, Any]
-    campaign: dict[str, Any]
-    #: ``Finding.status`` as read by a fresh session at the moment the admitted job was enqueued (spec 6.4 ``fixing``).
-    status_at_enqueue: str | None
-    #: ``schema_blob.ml`` of the finding as read right after this verify finished.
-    campaign_finding_detail: dict[str, Any] | None = None
-
-    @property
-    def outcome(self) -> str:
-        verify = (self.campaign_finding_detail or {}).get("verify") or {}
-        return str(verify.get("outcome"))
-
-
-def _verify_via_api(e2e_app: E2EApp, client: TestClient, finding_id: str,
-                    body: dict[str, Any] | None) -> VerifyRun:
-    """POST the verify, observe the admission's ``fixing`` write at enqueue time, wait for the eager run.
-
-    The observation wraps the service's own ``_enqueue_campaign`` (a test-local
-    hook around the real call, undone on exit): with eager Celery the response
-    only arrives after the worker has finished, so the intermediate spec 6.4
-    ``open -> fixing`` write is otherwise invisible to a client.
-    """
-    import redsim.services.ml_campaigns as ml_campaigns
-    from redsim.db.models import Finding
-
-    seen: list[str | None] = []
-    original = ml_campaigns._enqueue_campaign
-
-    def observing(job_id: str) -> Any:
-        with e2e_app.session() as sess:
-            row = sess.get(Finding, finding_id)
-            seen.append(None if row is None else str(row.status))
-        return original(job_id)
-
-    with pytest.MonkeyPatch.context() as mp:
-        mp.setattr(ml_campaigns, "_enqueue_campaign", observing)
-        if body is None:
-            response = client.post(f"/v1/findings/{finding_id}/verify")
-        else:
-            response = client.post(f"/v1/findings/{finding_id}/verify", json=body)
-    assert response.status_code == 202, response.text
-    launch: dict[str, Any] = response.json()
-    run_id = str(launch["run_id"])
-    run = h.wait_for_run(client, run_id, timeout_s=30.0)
-    campaign = _campaign(client, run_id)
-    finding = _finding(client, finding_id)
-    return VerifyRun(finding_id=finding_id, body=body, launch=launch, run_id=run_id, run=run, campaign=campaign,
-                     status_at_enqueue=seen[-1] if seen else None,
-                     campaign_finding_detail=(finding.get("schema_blob") or {}).get("ml"))
-
-
-def _assert_verify_state_pairing(finding: dict[str, Any], verify: VerifyRun) -> str:
-    """Spec 6.4 / 15.6: ``validation_state`` through ``verify._STATE_MAP`` and ``status`` through the outcome map.
-
-    Returns the outcome the worker recorded (``verified`` / ``still_vulnerable`` / ``inconclusive``).
-    """
-    from redsim.workers.tasks.ml_campaign import VERIFY_STATUS_MAP
-    from redsim.workers.tasks.verify import _STATE_MAP
-
-    detail = finding["schema_blob"]["ml"]
-    stamped = detail["verify"]
-    assert stamped["run_id"] == verify.run_id
-    outcome = str(stamped["outcome"])
-    assert outcome in _STATE_MAP, outcome
-    assert finding["validation_state"] == _STATE_MAP[outcome], (finding["validation_state"], outcome)
-    assert finding["status"] == VERIFY_STATUS_MAP[outcome], (finding["status"], outcome)
-    assert finding["schema_blob"]["status"] == finding["status"]
-    assert finding["validated_at"] is not None
-    return outcome
 
 
 # ---------------------------------------------------------------------------
@@ -466,26 +330,8 @@ def finding_campaign(e2e_org: E2EOrg, onnx_model: dict[str, Any]) -> h.CampaignR
     return result
 
 
-@pytest.fixture(scope="module")
-def named_verify(e2e_app: E2EApp, e2e_org: E2EOrg, finding_campaign: h.CampaignRun) -> VerifyRun:
-    """Verify #1: explicit ``feature_squeezing`` with explicit params, scoped to one named recommendation."""
-    finding_id = str(finding_campaign.findings[0]["id"])
-    detail = _finding(e2e_org.client("viewer"), finding_id)["schema_blob"]["ml"]
-    naming = [rec for rec in _recs(detail) if FEATURE_SQUEEZING in _defense_ids(rec)]
-    assert naming, f"no candidate on finding {finding_id} names {FEATURE_SQUEEZING}: " + ", ".join(
-        f"{r['id']}={sorted(_defense_ids(r))}" for r in _recs(detail))
-    body = {"defense": FEATURE_SQUEEZING, "params": {"bit_depth": 6}, "recommendation_id": naming[0]["id"]}
-    return _verify_via_api(e2e_app, e2e_org.client("remediator"), finding_id, body)
-
-
-@pytest.fixture(scope="module")
-def default_verify(e2e_app: E2EApp, e2e_org: E2EOrg, named_verify: VerifyRun) -> VerifyRun:
-    """Verify #2: no body at all, so the route's spec 16.5 default defense is what runs."""
-    return _verify_via_api(e2e_app, e2e_org.client("remediator"), named_verify.finding_id, None)
-
-
 # ---------------------------------------------------------------------------
-# 1a. The bundled tiny CNN: the honest zero-finding state
+# 1. The bundled tiny CNN: the honest zero-finding state
 # ---------------------------------------------------------------------------
 
 
@@ -497,8 +343,9 @@ def test_bundled_tiny_cnn_yields_no_finding_and_says_so(
     ``MIN_CLEAN_CORRECT_FOR_FINDING`` (10) is the spec 12.6 denominator floor; the
     build-time metric the tree recorded and the campaign's clean row agree on 8
     clean-correct rows out of 24, so ``crosses_threshold`` is irrelevant and no
-    ``Finding`` row may exist. Every candidate stays ``not evaluated``.
+    ``Finding`` row may exist. Every candidate is a candidate and nothing more.
     """
+    from redsim.ml.schema import STANDING_LIMITATIONS
     from redsim.ml.scoring import MIN_CLEAN_CORRECT_FOR_FINDING
 
     result = bundled_zero_finding_campaign
@@ -522,248 +369,11 @@ def test_bundled_tiny_cnn_yields_no_finding_and_says_so(
     rows = listing.json()
     rows = rows.get("findings", rows) if isinstance(rows, dict) else rows
     assert rows == []
-    # No finding, so nothing to verify: the honest state is still a complete evidence record.
+    # No finding: the honest state is still a complete evidence record with candidates and limitations.
     assert campaign["limitations"], "limitations are non-empty on every succeeded run (spec 14.5)"
-    recs = _recs(campaign)
-    assert recs, "the rule layer always produces R7"
-    assert {rec["validation"] for rec in recs} == {"not evaluated"} and all(rec["measured"] is None for rec in recs)
-    _assert_no_bare_gain(recs)
+    assert STANDING_LIMITATIONS[3] in campaign["limitations"], "the standing sentence: candidates, none evaluated"
+    _assert_candidates_only(_recs(campaign))
     assert _events(e2e_app, f"run:{result.run_id}", "job.complete")[-1]["detail"]["n_findings"] == 0
-
-
-# ---------------------------------------------------------------------------
-# 1b. The verify loop measures a delta and moves the finding through spec 6.4
-# ---------------------------------------------------------------------------
-
-
-def test_verify_measures_delta_mri(
-    e2e_app: E2EApp, e2e_org: E2EOrg, finding_campaign: h.CampaignRun, named_verify: VerifyRun,
-    default_verify: VerifyRun,
-) -> None:
-    from redsim.api.errors import SCORE_UNAVAILABLE
-    from redsim.services.ml_campaigns import DEFAULT_VERIFY_DEFENSE_ID
-    from redsim.workers.tasks.ml_campaign import DELTA_UNAVAILABLE_LIMITATION
-
-    viewer = e2e_org.client("viewer")
-    baseline = finding_campaign
-    baseline_record = baseline.campaign
-    assert baseline_record is not None
-    finding_id = named_verify.finding_id
-    baseline_settings = baseline_record["settings_hash"]
-    assert baseline_settings
-
-    # -- the finding as attack.run created it (spec 5.7, 6.4 "open", 16.4 "not evaluated") -------------------
-    seed_row = baseline.findings[0]
-    assert seed_row["status"] == "open" and seed_row["validation_state"] == "unvalidated"
-    seed_detail = seed_row["schema_blob"]["ml"]
-    assert seed_detail["verify"] is None and seed_detail["threshold"] == FINDING_THRESHOLD
-    assert seed_row["schema_blob"]["remediation_steps"].startswith("CANDIDATE (not evaluated)")
-    seed_recs = _recs(seed_detail)
-    assert seed_recs and {r["validation"] for r in seed_recs} == {"not evaluated"}
-    _assert_no_bare_gain(seed_recs)
-    assert seed_row["schema_blob"]["finding_type"] == "adversarial_ml"
-    assert seed_row["schema_blob"]["source_tool"] == f"redsim.ml/{seed_detail['attack_id']}"
-
-    # -- admission: open -> fixing before the job ran; the verify.replay row heads the verify run's chain -----
-    for verify in (named_verify, default_verify):
-        assert verify.status_at_enqueue == "fixing", verify.status_at_enqueue
-        assert verify.run["status"] == "succeeded", f"verify {verify.run_id}: {verify.run.get('stage_table')}"
-        assert _run_scanner(e2e_app, verify.run_id) == "ml.verify"
-        assert verify.campaign["kind"] == "verify"
-        assert verify.campaign["baseline_run_id"] == baseline.run_id
-        assert verify.campaign["config"]["defense"]["id"] == FEATURE_SQUEEZING
-        assert verify.campaign["config"]["defense"]["art_class"] == "art.defences.preprocessor.FeatureSqueezing"
-        assert verify.campaign["settings_hash"] == baseline_settings, "the defense is outside the settings hash"
-        assert verify.campaign["provenance"]["model_sha256"] == baseline_record["provenance"]["model_sha256"]
-        assert verify.campaign["provenance"]["sample_indices_sha256"] == baseline_record["provenance"][
-            "sample_indices_sha256"]
-        assert verify.campaign["provenance"]["defense"]["id"] == FEATURE_SQUEEZING
-        # The defended clean accuracy is a first-class m.clean row (spec 14.2), measured on the same n.
-        clean = [m for m in verify.campaign["measurements"] if m["family"] == "clean"]
-        assert len(clean) == 1 and clean[0]["n"] == N_EVAL
-        actions = _actions(e2e_app, f"run:{verify.run_id}")
-        assert actions[0] == "verify.replay", actions
-        admission = _events(e2e_app, f"run:{verify.run_id}", "verify.replay")[0]
-        assert admission["success"] is True and admission["actor"] == e2e_org.actor("remediator")
-        assert admission["detail"]["finding_id"] == finding_id
-        assert admission["detail"]["baseline_run_id"] == baseline.run_id
-        assert admission["detail"]["defense"]["id"] == FEATURE_SQUEEZING
-        for action in ("model.load", "campaign.score", "verify.execute", "job.complete"):
-            assert action in actions, (action, actions)
-        assert any(a.startswith("attack.execute.") for a in actions)
-        assert actions.index("campaign.score") < actions.index("verify.execute") < actions.index("job.complete")
-        assert "harden.execute" not in actions, "a verify job re-measures and never narrates (spec 10.8)"
-        assert any("straight-through" in lim for lim in verify.campaign["limitations"]), verify.campaign["limitations"]
-
-    # Verify #1 carried explicit params; verify #2 had no body and resolved the route default.
-    assert named_verify.campaign["config"]["defense"]["params"] == {"bit_depth": 6}
-    assert DEFAULT_VERIFY_DEFENSE_ID == FEATURE_SQUEEZING
-    assert default_verify.campaign["config"]["defense"]["params"] == {"bit_depth": 4}, "spec 16.5 default"
-
-    # -- the finding after the second verify: spec 6.4 pairing, and the worker's row says the same ------------
-    finding = _finding(viewer, finding_id)
-    outcome = _assert_verify_state_pairing(finding, default_verify)
-    execute = _events(e2e_app, f"run:{default_verify.run_id}", "verify.execute")[-1]
-    assert execute["detail"]["outcome"] == outcome
-    assert execute["detail"]["validation_state"] == finding["validation_state"]
-    assert execute["detail"]["finding_status"] == finding["status"]
-    assert execute["success"] is (outcome != "inconclusive")
-    assert execute["detail"]["defense"]["id"] == FEATURE_SQUEEZING
-    named_execute = _events(e2e_app, f"run:{named_verify.run_id}", "verify.execute")[-1]
-    assert named_execute["detail"]["finding_id"] == finding_id
-
-    # -- the remediation log on the finding (spec 10.2) and the baseline left untouched ------------------------
-    from sqlalchemy import select
-
-    from redsim.db.models import RemediationAttempt
-
-    with e2e_app.session() as sess:
-        attempts = sess.execute(select(RemediationAttempt).where(RemediationAttempt.finding_id == finding_id)
-                                .order_by(RemediationAttempt.id)).scalars().all()
-        assert len(attempts) == 2 and {a.action for a in attempts} == {f"ml.verify.{FEATURE_SQUEEZING}"}
-    assert _campaign(viewer, baseline.run_id)["score"] == baseline_record["score"], "a terminal run is never mutated"
-    assert _run_scanner(e2e_app, baseline.run_id) == "ml.campaign"
-    assert h.MOCK_PYTHIA_API_KEY not in json.dumps(finding)
-
-    detail = finding["schema_blob"]["ml"]
-    recs = _recs(detail)
-    _assert_no_bare_gain(recs)
-    naming = {rec["id"] for rec in recs if FEATURE_SQUEEZING in _defense_ids(rec)}
-    named_id = str((named_verify.body or {})["recommendation_id"])
-    assert named_id in naming
-    for rec in recs:
-        assert (rec["measured"] is not None) is (rec["validation"] == "measured"), rec["id"]
-
-    # -- a measured ΔMRI needs a complete score on both runs; a partial score caused by the explain stage failing
-    #    inside the child is a product defect and fails here with its attribution (never a weaker assertion) ----
-    defect = (_explain_stage_defect(baseline_record) or _explain_stage_defect(named_verify.campaign)
-              or _explain_stage_defect(default_verify.campaign))
-    if defect is not None:
-        pytest.fail(f"{defect}\n\n{_EXPLAIN_SINK_DEFECT}", pytrace=False)
-
-    # -- ΔMRI through the comparison route (spec 15.6, 17.2) ------------------------------------------------
-    for verify in (named_verify, default_verify):
-        response = _compare(viewer, verify.run_id, baseline.run_id)
-        score = verify.campaign["score"]
-        both_complete = (score is not None and score.get("mri") is not None
-                         and baseline_record["score"] is not None and baseline_record["score"].get("mri") is not None)
-        if both_complete:
-            assert response.status_code == 200, response.text
-            body = response.json()
-            assert body["compatible"] is True and body["mode"] == "verify_delta"
-            assert body["verify_run_id"] == verify.run_id and body["baseline_run_id"] == baseline.run_id
-            assert body["changed_variables"] == ["defense"] and body["defense"]["id"] == FEATURE_SQUEEZING
-            for variable in ("settings_hash", "model_sha256", "sample_indices_sha256", "seed", "n_samples", "eps_grid"):
-                assert variable in body["unchanged_variables"], (variable, body["unchanged_variables"])
-            assert body["mri_before"] == baseline_record["score"]["mri"] and body["mri_after"] == score["mri"]
-            # The delta is whatever was measured: negative, zero or positive, never filtered by sign.
-            assert isinstance(body["delta_mri"], int) and body["delta_mri"] == body["mri_after"] - body["mri_before"]
-            assert body["delta_source"] == "persisted", "the worker wrote the delta onto the verify score record"
-            delta = score["delta"]
-            assert delta["baseline_run_id"] == baseline.run_id and delta["delta"] == body["delta_mri"]
-            assert delta["delta_acc_clean"]["before"]["n"] == delta["delta_acc_clean"]["after"]["n"] == N_EVAL
-            assert set(body["delta_dimensions"]) == {"S_acc", "S_asr", "S_eps", "S_conf", "S_expl"}
-            # Symmetric: asking from the baseline side names the same pairing and the same delta.
-            mirrored = _compare(viewer, baseline.run_id, verify.run_id)
-            assert mirrored.status_code == 200 and mirrored.json()["delta_mri"] == body["delta_mri"]
-        else:
-            # A partial score on either side is refused as such, never compared on the subscores that exist.
-            assert response.status_code == 409, response.text
-            assert response.json()["detail"]["code"] == SCORE_UNAVAILABLE
-            assert any(lim.startswith(DELTA_UNAVAILABLE_LIMITATION.split("{", 1)[0])
-                       for lim in verify.campaign["limitations"]), verify.campaign["limitations"]
-
-    # -- MeasuredDelta attaches to the named recommendation only, and only for a measured delta (spec 16.4) --
-    measured = {rec["id"]: rec for rec in recs if rec["validation"] == "measured"}
-    default_delta = (default_verify.campaign["score"] or {}).get("delta")
-    if outcome != "inconclusive" and default_delta is not None:
-        # Verify #2 had no recommendation_id: every candidate naming the defense carries its measurement.
-        assert set(measured) == naming, (sorted(measured), sorted(naming))
-        for rec in measured.values():
-            block = rec["measured"]
-            assert block["verify_run_id"] == default_verify.run_id and block["baseline_run_id"] == baseline.run_id
-            assert block["defense"]["id"] == FEATURE_SQUEEZING and block["defense"]["params"] == {"bit_depth": 4}
-            assert block["settings_hash"] == baseline_settings == default_verify.campaign["settings_hash"]
-            assert block["delta_mri"] == default_delta["delta"]
-            assert block["delta_acc_clean"]["before"]["n"] == N_EVAL
-        assert execute["detail"]["measured_for"] == sorted(measured, key=[r["id"] for r in recs].index)
-    else:
-        assert not measured, f"an inconclusive verify must not attach a measured delta: {sorted(measured)}"
-        assert execute["detail"]["inconclusive_reason"]
-        assert finding["status"] == "open" and finding["validation_state"] == "inconclusive"
-
-    # Verify #1 named one recommendation: right after it, that one alone carried the measurement (or none did).
-    named_detail = named_verify.campaign_finding_detail or {}
-    named_measured = {rec["id"] for rec in _recs(named_detail) if rec["validation"] == "measured"}
-    named_delta = (named_verify.campaign["score"] or {}).get("delta")
-    if named_verify.outcome != "inconclusive" and named_delta is not None:
-        assert named_measured == {named_id}, (named_measured, named_id)
-        block = next(rec for rec in _recs(named_detail) if rec["id"] == named_id)["measured"]
-        assert block["verify_run_id"] == named_verify.run_id and block["defense"]["params"] == {"bit_depth": 6}
-        assert block["delta_mri"] == named_delta["delta"] and block["settings_hash"] == baseline_settings
-        assert named_execute["detail"]["measured_for"] == [named_id]
-    else:
-        assert named_measured == set()
-        assert named_execute["detail"]["inconclusive_reason"]
-
-
-# ---------------------------------------------------------------------------
-# 1c. A verify whose defended score is partial leaves the finding inconclusive -> open
-# ---------------------------------------------------------------------------
-
-
-def test_verify_with_partial_defended_score_is_inconclusive_and_open(
-    e2e_app: E2EApp, e2e_org: E2EOrg, onnx_model: dict[str, Any],
-) -> None:
-    """Spec 6.4: ``score.completeness = "partial"`` on the verify run is ``inconclusive`` -> ``open``.
-
-    ``explain_k = 0`` makes ``S_expl`` unavailable on both runs (spec 15.4), so
-    the baseline still admits a verify (it has a score record) while the verify
-    run's score is partial: no MRI, no delta, no measured block, the finding open
-    with ``validation_state = inconclusive`` and the reason on the audit row.
-    """
-    from redsim.api.errors import SCORE_UNAVAILABLE
-    from redsim.workers.tasks.ml_campaign import DELTA_UNAVAILABLE_LIMITATION
-
-    manifest = onnx_model["record"].get("manifest") or {}
-    if not manifest.get("gradients"):
-        pytest.skip("the ONNX upload exposed no gradients; this path needs FGSM to produce the finding quickly")
-    body = h.image_campaign(n_samples=N_EVAL, finding_asr_threshold=FINDING_THRESHOLD, explain_k=0)
-    baseline = h.run_campaign_via_api(e2e_org.client("scanner"), onnx_model["model_id"], body, timeout_s=30.0)
-    assert baseline.status == "succeeded", f"run {baseline.run_id}: {baseline.stage_table}"
-    assert baseline.campaign is not None, baseline.campaign_error
-    assert baseline.findings, "the memorising upload flips under FGSM at eps 0.1"
-    score = baseline.campaign["score"]
-    assert score is not None and score["mri"] is None and score["completeness"] == "partial"
-    assert any("S_expl" in item for item in score["missing"]), score["missing"]
-    assert baseline.campaign["config"]["explain_k"] == 0
-
-    finding_id = str(baseline.findings[0]["id"])
-    verify = _verify_via_api(e2e_app, e2e_org.client("remediator"), finding_id, None)
-    assert verify.status_at_enqueue == "fixing"
-    assert verify.run["status"] == "succeeded", f"verify {verify.run_id}: {verify.run.get('stage_table')}"
-    verify_score = verify.campaign["score"]
-    assert verify_score is not None and verify_score["mri"] is None and verify_score["completeness"] == "partial"
-    assert verify_score["delta"] is None
-    assert any(lim.startswith(DELTA_UNAVAILABLE_LIMITATION.split("{", 1)[0]) for lim in verify.campaign["limitations"])
-
-    finding = _finding(e2e_org.client("viewer"), finding_id)
-    outcome = _assert_verify_state_pairing(finding, verify)
-    assert outcome == "inconclusive"
-    assert finding["status"] == "open" and finding["validation_state"] == "inconclusive"
-    assert finding["schema_blob"]["ml"]["verify"]["delta"] is None
-    recs = _recs(finding["schema_blob"]["ml"])
-    assert recs and all(rec["validation"] == "not evaluated" and rec["measured"] is None for rec in recs)
-    _assert_no_bare_gain(recs)
-    execute = _events(e2e_app, f"run:{verify.run_id}", "verify.execute")[-1]
-    assert execute["success"] is False and execute["detail"]["outcome"] == "inconclusive"
-    assert "partial" in str(execute["detail"]["inconclusive_reason"])
-    assert execute["detail"]["delta_mri"] is None and execute["detail"]["measured_for"] == []
-
-    compare = _compare(e2e_org.client("viewer"), verify.run_id, baseline.run_id)
-    assert compare.status_code == 409, compare.text
-    assert compare.json()["detail"]["code"] == SCORE_UNAVAILABLE
-    assert any("MRI not computed" in reason for reason in compare.json()["detail"]["reasons"])
 
 
 # ---------------------------------------------------------------------------
@@ -1033,19 +643,14 @@ def test_api_process_admits_uploads_without_importing_ml(
 
 
 # ---------------------------------------------------------------------------
-# 3. Reports: six sections in order, the scorecard sub-block, inert URLs, JSON == record, headers, PDF 501
+# 3. Reports: six sections in order, the scorecard sub-block, inert URLs, JSON == record, headers, the PDF
 # ---------------------------------------------------------------------------
 
 
 def _assert_markdown_report(md: str, campaign: dict[str, Any]) -> None:
-    """Spec 14.8 / 15.7 / 16.4 on one rendered Markdown report."""
-    from redsim.ml.reporting import (
-        DELTA_HEADING,
-        NOT_MEASURED,
-        SCORECARD_HEADING,
-        SECTION_HEADINGS,
-    )
-    from redsim.ml.schema import GRADE_STATEMENT
+    """Spec 14.8 / 15.7 on one rendered Markdown report: six sections, the scorecard sub-block, candidates only."""
+    from redsim.ml.reporting import SCORECARD_HEADING, SECTION_HEADINGS
+    from redsim.ml.schema import GRADE_STATEMENT, STANDING_LIMITATIONS
 
     positions = [md.index(heading) for heading in SECTION_HEADINGS]
     assert positions == sorted(positions), "the six sections are in the spec 14.8 order"
@@ -1059,11 +664,8 @@ def _assert_markdown_report(md: str, campaign: dict[str, Any]) -> None:
     score = campaign.get("score")
     if score is not None and score.get("mri") is not None:
         assert f"**MRI {score['mri']} — grade {score['grade']}**" in measurements
-        # The subscore rows live in the scorecard sub-block; a verify run's ΔMRI block (same section, after
-        # the scorecard) repeats the subscore names with per-subscore deltas and is asserted separately.
+        # The subscore rows live in the scorecard sub-block and nowhere else in the section.
         scorecard = measurements[measurements.index(SCORECARD_HEADING):]
-        if DELTA_HEADING in scorecard:
-            scorecard = scorecard[:scorecard.index(DELTA_HEADING)]
         for key in ("S_acc", "S_asr", "S_eps", "S_conf", "S_expl"):
             rows = [line for line in scorecard.splitlines() if line.startswith(f"| {key} |")]
             assert len(rows) == 1 and "(n=" in rows[0], f"{key}: {rows}"
@@ -1079,32 +681,19 @@ def _assert_markdown_report(md: str, campaign: dict[str, Any]) -> None:
     if recs:
         for rec in recs:
             assert f"**{rec['id']}** [candidate]" in candidates, rec["id"]
-            if rec["validation"] == "not evaluated":
-                assert "Validation: not evaluated" in candidates
-            else:
-                assert "Validation: measured" in candidates and "Measured ΔMRI" in candidates
-        assert candidates.count(NOT_MEASURED) == sum(1 for rec in recs if rec["measured"] is None)
     else:
         assert "No candidate recommendations were produced." in candidates
-    for match in re.finditer(r"Expected gain:[^\n]*", candidates):
-        assert match.group(0).startswith(NOT_MEASURED), match.group(0)
-    # Every row of a verify run's ΔMRI block is a measured delta (its tables carry the Δ in the header, not
-    # on each row), so the bare-gain scan skips that block and covers everything else in the report.
-    delta_block = ""
-    if DELTA_HEADING in md:
-        delta_block = md[md.index(DELTA_HEADING):]
-        next_section = delta_block.find("\n## ")
-        if next_section != -1:
-            delta_block = delta_block[:next_section]
-    delta_lines = set(delta_block.splitlines())
+    # A candidate is a candidate and nothing more: no validation label, no gain line, no delta block anywhere.
+    assert "Validation:" not in candidates and "not evaluated" not in candidates.lower(), candidates[:400]
+    assert "Expected gain" not in md and "ΔMRI" not in md and "Measured" not in candidates, "no gain is claimed"
     for line in md.splitlines():
-        if _BARE_GAIN.search(line) and line not in delta_lines:
-            assert "ΔMRI" in line or "Δ" in line or line.startswith("| S_"), f"bare gain outside a measured delta: {line}"
+        assert not _BARE_GAIN.search(line), f"bare gain in the report: {line}"
 
     limitations = _section(md, 5)
     bullets = [line for line in limitations.splitlines() if line.startswith("- ")]
     assert bullets and len(bullets) >= len(campaign["limitations"]) >= 1
     assert "No limitations were recorded" not in limitations
+    assert STANDING_LIMITATIONS[3] in limitations, "the standing sentence: candidates, none evaluated"
     if campaign.get("observations"):
         assert "heuristic" in _section(md, 2), "centre-mass ratios are labelled heuristic wherever they appear"
     if campaign.get("interpretation"):
@@ -1173,27 +762,42 @@ def _assert_report_routes(e2e_app: E2EApp, e2e_org: E2EOrg, run_id: str) -> tupl
         # URL strings are data: rendered as inert (escaped) text and never linked.
         assert url in unescape(html), url
 
-    # Wave B4 (REVIEW_REPORTS-16): the completion path renders every format; report.pdf is a worker-written
-    # artifact, served when reportlab rendered it, else 404 (never a filesystem fallback) with the failure
-    # named under ``pdf_unavailable`` on the report.render row.
+    # The completion path renders every format (REVIEW_REPORTS-16/-20): report.pdf is a worker-written artifact
+    # served straight after completion, and the run's first snapshot (version 1) lists the formats it wrote. A
+    # PDF the renderer could not typeset degrades to the three text formats with the failure named under
+    # ``pdf_unavailable`` on the report.render row and a 404 on the route (never a filesystem fallback).
     render_rows = _events(e2e_app, f"run:{run_id}", "report.render")
     assert render_rows, "the completion path wrote a report.render row"
+    completion_row = render_rows[0]["detail"]
+    rendered_formats = list(completion_row["formats"])
+    assert rendered_formats[:3] == ["md", "json", "html"], rendered_formats
     pdf = _report(scanner, run_id, "pdf")
-    if "pdf" in render_rows[-1]["detail"]["formats"]:
+    if "pdf" in rendered_formats:
+        assert rendered_formats == ["md", "json", "html", "pdf"], rendered_formats
+        assert "pdf_unavailable" not in completion_row
         assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF-"), pdf.status_code
+        assert pdf.headers["content-type"] == "application/pdf"
+        digests["pdf"] = pdf.headers["etag"].strip('"')
+        assert digests["pdf"] == hashlib.sha256(pdf.content).hexdigest()
     else:
         assert pdf.status_code == 404, pdf.text
         assert pdf.json()["detail"] == "report not yet rendered"
-        assert render_rows[-1]["detail"]["pdf_unavailable"], "a missing PDF names its failure"
+        assert completion_row["pdf_unavailable"], "a missing PDF names its failure"
+    snapshots = scanner.get(f"/v1/runs/{run_id}/snapshots")
+    assert snapshots.status_code == 200, snapshots.text
+    assert snapshots.json()["count"] >= 1
+    completion = snapshots.json()["snapshots"][-1]
+    assert completion["version"] == 1 and completion["archived"] is False, completion
+    assert set(completion["formats"]) == set(rendered_formats), (sorted(completion["formats"]), rendered_formats)
+    for ext, digest in digests.items():
+        assert completion["formats"][ext]["sha256"] == digest, ext
 
     # The export gate (spec 7.3, 17.1): membership alone does not export; the other project sees nothing.
     assert _report(viewer, run_id, "md").status_code == 403
     assert _report(e2e_org.client(h.OUTSIDER), run_id, "md").status_code in (403, 404)
     assert _report(e2e_org.client(h.STRANGER), run_id, "html").status_code in (403, 404)
 
-    render = _events(e2e_app, f"run:{run_id}", "report.render")
-    assert render and render[-1]["detail"]["formats"] in (["md", "json", "html", "pdf"], ["md", "json", "html"])
-    assert {ext: render[-1]["detail"]["sha256"][f"report.{ext}"] for ext in digests} == digests
+    assert {ext: completion_row["sha256"][f"report.{ext}"] for ext in digests} == digests
     listing = viewer.get(f"/v1/runs/{run_id}/artifacts").json()["artifacts"]
     kinds = {row["kind"]: row["sha256"] for row in listing}
     for ext, digest in digests.items():
@@ -1201,34 +805,24 @@ def _assert_report_routes(e2e_app: E2EApp, e2e_org: E2EOrg, run_id: str) -> tupl
     return md, campaign
 
 
-def test_reports_sections_and_pdf_404(
+def test_reports_sections_and_completion_pdf(
     e2e_app: E2EApp, e2e_org: E2EOrg, e2e_bundled: dict[str, str], finding_campaign: h.CampaignRun,
-    named_verify: VerifyRun,
 ) -> None:
-    """Demo step 9: the rendered reports of an image campaign, its verify run and a tabular campaign."""
-    from redsim.ml.reporting import DELTA_HEADING
-
+    """Demo step 9: the rendered reports of the image campaign that produced a finding and of a tabular campaign."""
     # -- the image campaign that produced the finding --------------------------------------------------------
     md, campaign = _assert_report_routes(e2e_app, e2e_org, finding_campaign.run_id)
     _assert_markdown_report(md, campaign)
-    assert DELTA_HEADING not in md, "an attack run has no ΔMRI block"
     configuration = _section(md, 0)
     assert campaign["settings_hash"] in configuration and campaign["provenance"]["model_sha256"] in configuration
     assert campaign["config"]["dataset_id"] in configuration
-
-    # -- its verify run: the ΔMRI block inside section 2 names the changed variable (spec 14.8, F007 FR-007) --
-    md_verify, verify_campaign = _assert_report_routes(e2e_app, e2e_org, named_verify.run_id)
-    _assert_markdown_report(md_verify, verify_campaign)
-    measurements = _section(md_verify, 1)
-    assert DELTA_HEADING in measurements and md_verify.count(DELTA_HEADING) == 1
-    delta_block = measurements[measurements.index(DELTA_HEADING):]
-    assert "Changed variable: defense" in delta_block and FEATURE_SQUEEZING in delta_block
-    if (verify_campaign["score"] or {}).get("delta") is not None:
-        delta = verify_campaign["score"]["delta"]
-        assert f"(MRI {delta['mri_before']} → {delta['mri_after']})" in delta_block
-        assert finding_campaign.run_id in delta_block
-    else:
-        assert "**ΔMRI not computed.**" in delta_block
+    assert "defense" not in campaign["config"] and "defense" not in campaign["provenance"], "no defense block"
+    _assert_candidates_only(_recs(campaign))
+    for finding in finding_campaign.findings:
+        assert finding["status"] == "open" and "validation_state" not in finding and "validated_at" not in finding
+        detail = finding["schema_blob"]["ml"]
+        assert "verify" not in detail and "retests" not in detail, sorted(detail)
+        steps = str(finding["schema_blob"]["remediation_steps"])
+        assert steps.startswith("CANDIDATE: ") and "not evaluated" not in steps, steps[:120]
 
     # -- a tabular campaign (HopSkipJump + control on the URL trees): URL strings stay inert text ---------------
     body = h.tabular_campaign(attack_ids=["hopskipjump"])

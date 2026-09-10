@@ -95,7 +95,7 @@ None of them is on `main`.
 | `/`, `/login` | landing and sign-in |
 | `/dashboard` | run and finding overview |
 | `/runs`, `/runs/[id]` | run list and detail, **Cancel run** (`POST /v1/runs/{id}/cancel`, `remediator`), `report.json` / `report.md` / `report.html` links, stage timeline from `WS /v1/runs/{id}/events` |
-| `/findings`, `/findings/[id]` | finding list and detail, **Verify** (`POST /v1/findings/{id}/verify`, `remediator`) |
+| `/findings`, `/findings/[id]` | finding list and detail, with the explain and harden follow-ups (`POST /v1/findings/{id}/explain`, `POST /v1/findings/{id}/harden`) |
 | `/targets` | target list, **Delete target** (`DELETE /v1/targets/{id}`, `admin`, confirm dialog). The Start scan control is disabled behind a notice because no adapter is registered. |
 | `/auth-profiles` | auth-profile list, create and delete (`admin`) |
 | `/audit` | audit-chain visualization, each chain as linked blocks with valid / broken status and per-event hashes |
