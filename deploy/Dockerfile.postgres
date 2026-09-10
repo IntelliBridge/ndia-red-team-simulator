@@ -7,10 +7,26 @@ FROM postgres:16
 #
 # Extra CA trust (Zscaler / corporate proxy) before apt hits the network. The
 # deploy/certs/ dir may be empty off-corp; update-ca-certificates then no-ops.
+#
+# The PGDG source is fetched over https, and ca-certificates is installed from
+# the Debian mirror first so that fetch can verify the server. Over plain http
+# the Docker Desktop proxy (http.docker.internal:3128) hands apt a
+# gzip-compressed InRelease for apt.postgresql.org, which apt rejects with
+# "Clearsigned file isn't valid, got 'NOSPLIT'" and the build fails. The base
+# image's pgdg.list is moved aside for the first update so that same fetch is
+# never attempted before ca-certificates is present.
 COPY deploy/certs/ /usr/local/share/ca-certificates/redsim-extra/
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates postgresql-16-pgaudit \
+RUN mv /etc/apt/sources.list.d/pgdg.list /tmp/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && sed 's#http://apt.postgresql.org#https://apt.postgresql.org#' /tmp/pgdg.list \
+         > /etc/apt/sources.list.d/pgdg.list \
+    && rm /tmp/pgdg.list \
+    && find /usr/local/share/ca-certificates/redsim-extra/ -type f \( -name "*.pem" -o -name "*.crt" \) \
+         -exec sh -c 'cp "$1" "/usr/local/share/ca-certificates/$(basename "${1%.*}").crt"' _ {} \; \
     && update-ca-certificates \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends postgresql-16-pgaudit \
     && rm -rf /var/lib/apt/lists/*
 
 # pgaudit must be preloaded and its log classes set. Migration 0004 runs

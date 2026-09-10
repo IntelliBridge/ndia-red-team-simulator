@@ -38,6 +38,9 @@ node_modules/
 # Corporate proxy CA bundles — machine/org-specific, never commit.
 deploy/certs/*.pem
 deploy/certs/*.crt
+# The local API session keypair deploy/scripts/with-session-keypair.sh generates.
+deploy/certs/redsim-api-session.key
+deploy/certs/redsim-api-session.pub
 
 # desloppify local state
 .desloppify/

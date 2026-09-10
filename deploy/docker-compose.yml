@@ -63,6 +63,20 @@ services:
     volumes:
       - minio-data:/data
 
+  # Creates the bucket the api and the workers write to (REDSIM_S3_BUCKET).
+  # MinIO ships no bucket and the blob store creates none, so a fresh stack
+  # answered 500 NoSuchBucket on the first model registration. One-shot: the
+  # api and the worker pools wait for it to complete, and a rerun is a no-op.
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio: { condition: service_started }
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mc alias set local http://minio:9000 redsim redsim-secret >/dev/null 2>&1; do sleep 1; done
+        mc mb --ignore-existing local/redsim
+
   redsim-api:
     image: redsim-api:dev
     build:
@@ -71,7 +85,7 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-      minio: { condition: service_started }
+      minio-init: { condition: service_completed_successfully }
     environment:
       REDSIM_ENV: dev
       REDSIM_AUTH_MODE: dev
@@ -88,6 +102,8 @@ services:
       # REDSIM_CORS_ORIGINS above (redsim/api/ws.py accepts either). Declaring
       # it stops the API from also admitting the unused port 3000 default.
       REDSIM_WEB_ORIGIN: http://localhost:3300
+      # Fernet key for AuthProfile secrets. Without it every create fails closed.
+      REDSIM_AUTH_PROFILES_KEY: ${REDSIM_AUTH_PROFILES_KEY:-}
       REDSIM_OIDC_ISSUER: http://keycloak:8080/realms/redsim
       REDSIM_OIDC_JWKS_URL: http://keycloak:8080/realms/redsim/protocol/openid-connect/certs
       # The public half of the keypair redsim-web signs redsim_api_session
@@ -122,7 +138,17 @@ services:
       # The Ed25519 key that signs evidence packs (GET /v1/runs/{id}/evidence-pack). Empty leaves packs unsigned.
       REDSIM_EVIDENCE_SIGNING_KEY_FILE: ${REDSIM_EVIDENCE_SIGNING_KEY_FILE:-}
       REDSIM_EVIDENCE_SIGNING_KEY: ${REDSIM_EVIDENCE_SIGNING_KEY:-}
+      # The built asset tree (`redsim ml build-assets`): GET /v1/models and
+      # /v1/datasets read MANIFEST.json here, and registering a bundled model
+      # answers 409 bundled_assets_missing without it.
+      REDSIM_ML_ASSETS_DIR: /app/assets
     ports: ["8000:8000"]
+    # The repo's ./assets (README only until `redsim ml build-assets` has run)
+    # mounted read-only at the path the API and the worker parent read as
+    # REDSIM_ML_ASSETS_DIR; the sandbox child inherits the variable.
+    # REDSIM_ML_ASSETS_HOST_DIR points the mount at a tree built elsewhere.
+    volumes: &assets-volume
+      - ${REDSIM_ML_ASSETS_HOST_DIR:-./../assets}:/app/assets:ro
 
   # Long-running attack, explain and model-validate work (-Q scans).
   redsim-worker:
@@ -134,8 +160,11 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+    volumes: *assets-volume
     environment: &worker-env
       REDSIM_ENV: dev
+      REDSIM_ML_ASSETS_DIR: /app/assets
       REDSIM_WEB_ORIGIN: http://localhost:3300
       REDSIM_DB_URL: postgresql+psycopg://redsim:redsim@postgres:5432/redsim
       REDSIM_BROKER_URL: redis://redis:6379/0
@@ -145,7 +174,22 @@ services:
       REDSIM_S3_BUCKET: redsim
       REDSIM_S3_ACCESS_KEY_ID: redsim
       REDSIM_S3_SECRET_ACCESS_KEY: redsim-secret
-      REDSIM_DISABLE_LLM: "1"
+      # Rules-only by default so a stack with no gateway never stalls on one.
+      # Export REDSIM_DISABLE_LLM=0 (or set it in .env beside the PYTHIA_*
+      # names) to let the hardening narrative reach Pythia.
+      # The worker resolves an AuthProfile secret at job pickup, so it needs the
+      # same Fernet key the API encrypted it with. Empty fails closed, never anonymous.
+      REDSIM_AUTH_PROFILES_KEY: ${REDSIM_AUTH_PROFILES_KEY:-}
+      REDSIM_DISABLE_LLM: ${REDSIM_DISABLE_LLM:-1}
+      # Sandbox child budget for a laptop QA run. The spec 20.3 defaults (900
+      # CPU seconds, 2 threads, 1200 s wall clock) are sized for the CI
+      # fixtures: a vehicles_cnn campaign with n_samples 50 reached the explain
+      # stage at about 470 s of wall clock on two threads and was SIGKILLed by
+      # the CPU rlimit. The wall clock stays below the Celery soft limit
+      # (1800 s). Export any of the three to override.
+      REDSIM_ML_SANDBOX_CPU_SECONDS: ${REDSIM_ML_SANDBOX_CPU_SECONDS:-3600}
+      REDSIM_ML_SANDBOX_THREADS: ${REDSIM_ML_SANDBOX_THREADS:-4}
+      REDSIM_ML_SANDBOX_TIMEOUT_S: ${REDSIM_ML_SANDBOX_TIMEOUT_S:-1700}
       # Pythia gateway passthrough (docs/ops/pythia.md). The worker also needs
       # REDSIM_DISABLE_LLM unset before the hardening narrative is produced.
       PYTHIA_BASE_URL: ${PYTHIA_BASE_URL:-}
@@ -184,6 +228,8 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
+    volumes: *assets-volume
     environment:
       <<: *worker-env
       # Off unless the host shell exports the URL; no token variable exists (the bearer is an AuthProfile).

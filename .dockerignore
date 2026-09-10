@@ -23,3 +23,7 @@ redsim_output
 .ruff_cache
 htmlcov
 .coverage
+# The local API session keypair (deploy/scripts/with-session-keypair.sh).
+# deploy/certs/ is COPYed into every image as CA trust; the key stays out.
+deploy/certs/redsim-api-session.key
+deploy/certs/redsim-api-session.pub

@@ -28,6 +28,8 @@
     {
       "username": "admin",
       "email": "admin@redsim.local",
+      "firstName": "Redsim",
+      "lastName": "Admin",
       "enabled": true,
       "emailVerified": true,
       "credentials": [
@@ -38,7 +40,12 @@
       ],
       "realmRoles": [
         "admin"
-      ]
+      ],
+      "attributes": {
+        "redsim_project_roles": [
+          "{\"default\": \"admin\"}"
+        ]
+      }
     }
   ],
   "clients": [
@@ -79,5 +86,18 @@
       "bearerOnly": true,
       "secret": "redsim-api-dev-secret"
     }
-  ]
+  ],
+  "components": {
+    "org.keycloak.userprofile.UserProfileProvider": [
+      {
+        "providerId": "declarative-user-profile",
+        "subComponents": {},
+        "config": {
+          "kc.user.profile.config": [
+            "{\"attributes\":[{\"name\":\"username\",\"displayName\":\"${username}\",\"validations\":{\"length\":{\"min\":3,\"max\":255},\"username-prohibited-characters\":{},\"up-username-not-idn-homograph\":{}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false},{\"name\":\"email\",\"displayName\":\"${email}\",\"validations\":{\"email\":{},\"length\":{\"max\":255}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false,\"required\":{\"roles\":[\"user\"]}},{\"name\":\"firstName\",\"displayName\":\"${firstName}\",\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false,\"required\":{\"roles\":[\"user\"]}},{\"name\":\"lastName\",\"displayName\":\"${lastName}\",\"validations\":{\"length\":{\"max\":255},\"person-name-prohibited-characters\":{}},\"permissions\":{\"view\":[\"admin\",\"user\"],\"edit\":[\"admin\",\"user\"]},\"multivalued\":false,\"required\":{\"roles\":[\"user\"]}},{\"name\":\"redsim_project_roles\",\"displayName\":\"Project memberships (redsim_project_roles)\",\"annotations\":{\"inputType\":\"textarea\",\"inputHelperTextBefore\":\"JSON object mapping a project ID to one role, for example {\\\"default\\\": \\\"admin\\\"}\"},\"validations\":{\"length\":{\"max\":4096}},\"permissions\":{\"view\":[\"admin\"],\"edit\":[\"admin\"]},\"multivalued\":false}],\"groups\":[{\"name\":\"user-metadata\",\"displayHeader\":\"User metadata\",\"displayDescription\":\"Attributes, which refer to user metadata\"}]}"
+          ]
+        }
+      }
+    ]
+  }
 }
