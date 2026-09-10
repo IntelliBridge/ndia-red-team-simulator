@@ -317,7 +317,9 @@ class AuditEvent(Base):
     chain_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id"), nullable=True)
-    run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), nullable=True)
+    # A chain key, not a relational reference: the admission row names the run it is
+    # about to create (spec 6.7 invariant 4), so no FK (0014_audit_run_id_no_fk).
+    run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     actor: Mapped[str] = mapped_column(String(256), nullable=False)
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     target: Mapped[str | None] = mapped_column(String(1024))

@@ -393,7 +393,11 @@ The wave B3 tasks (`docs/interop.md`, `docs/api/v1.md`):
 
 ### Database and policy
 
-`redsim/db` models plus Alembic migrations `0001` to `0013` (`0013_foundry_auto_push`,
+`redsim/db` models plus Alembic migrations `0001` to `0014` (`0014_audit_run_id_no_fk`,
+2026-09-10, drops the foreign key from `audit_events.run_id` to `runs.id`: the
+admission row names the run it is about to create, spec 6.7 invariant 4, and
+the first campaign admitted on a Postgres deployment had failed on that
+constraint; `0013_foundry_auto_push`,
 2026-09-10, adds the nullable JSONB `projects.ml_integrations` that
 `redsim/services/ml_integrations.py` reads and writes; announced in master
 plan section 5).
