@@ -22,6 +22,27 @@ import { useCapabilities } from "@/hooks/useMlCatalog";
 import { useDatasets } from "@/hooks/useMlCatalog";
 import { isLlmTarget, registerLlmTarget } from "@/lib/llm";
 import { EMPTY_LLM_FORM, LlmRegisterForm } from "./llm-register-form";
+
+/** Multipart fields of the upload's input contract (spec 11.3.1); empty strings are not sent. */
+export const EMPTY_INPUT_CONTRACT = {
+  input_scale: "",
+  input_mean: "",
+  input_std: "",
+  input_resize: "",
+  input_layout: "",
+};
+export type InputContractForm = typeof EMPTY_INPUT_CONTRACT;
+export const INPUT_CONTRACT_FIELDS: Array<{
+  field: keyof InputContractForm;
+  label: string;
+  placeholder: string;
+}> = [
+  { field: "input_scale", label: "Scale", placeholder: "255 for raw pixel models" },
+  { field: "input_resize", label: "Resize (px)", placeholder: "224" },
+  { field: "input_mean", label: "Mean per channel", placeholder: "0.485, 0.456, 0.406" },
+  { field: "input_std", label: "Std per channel", placeholder: "0.229, 0.224, 0.225" },
+  { field: "input_layout", label: "ONNX input layout", placeholder: "NCHW or NHWC (sniffed when empty)" },
+];
 import {
   DEFAULT_SORT,
   EMPTY_FILTERS,
@@ -260,6 +281,7 @@ export default function ModelsPage() {
   const [license, setLicense] = useState("");
   const [bundledId, setBundledId] = useState("");
   const [datasetId, setDatasetId] = useState("");
+  const [inputContract, setInputContract] = useState(EMPTY_INPUT_CONTRACT);
   const [llm, setLlm] = useState(EMPTY_LLM_FORM);
   const endpointAvailable =
     capabilities?.endpoint_connector?.status === "available";
@@ -289,6 +311,9 @@ export default function ModelsPage() {
         body.append("declared_format", declaredFormat);
         body.append("modality", "image");
         body.append("dataset_id", datasetId);
+        for (const [field, value] of Object.entries(inputContract)) {
+          if (value.trim()) body.append(field, value.trim());
+        }
         await api("/v1/models", { method: "POST", body });
       } else if (source === "llm") {
         const out = await registerLlmTarget({
@@ -778,9 +803,39 @@ export default function ModelsPage() {
                     className="mt-1 w-full rounded-sm border border-input bg-background px-3 py-2"
                   />
                 </label>
+                <fieldset className="mt-3 border border-border p-3">
+                  <legend className="px-1 text-xs uppercase tracking-wide text-muted-foreground">
+                    Input contract (optional)
+                  </legend>
+                  <p className="text-xs text-muted-foreground">
+                    Attacks perturb [0, 1] pixels at the dataset&apos;s resolution. Declare
+                    what the weights were trained on and the loader folds it into the
+                    model: resize first, then scale, then (x − mean) / std.
+                  </p>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    {INPUT_CONTRACT_FIELDS.map(({ field, label, placeholder }) => (
+                      <label key={field} className="block text-xs">
+                        {label}
+                        <input
+                          value={inputContract[field]}
+                          placeholder={placeholder}
+                          onChange={(event) =>
+                            setInputContract((prev) => ({
+                              ...prev,
+                              [field]: event.target.value,
+                            }))
+                          }
+                          className="mt-1 w-full rounded-sm border border-input bg-background px-2 py-1 font-mono text-xs"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
                 <p className="mt-3 bg-muted p-3 text-xs text-muted-foreground">
-                  ONNX or state_dict with an explicit architecture. Full pickles
-                  are refused. Refusal rules are shown before choosing a file.
+                  ONNX or state_dict with an explicit architecture. A Hugging Face
+                  ResNet in the torchvision key layout loads as resnet18. Full
+                  pickles are refused. Refusal rules are shown before choosing a
+                  file.
                 </p>
               </>
             )}

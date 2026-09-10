@@ -75,7 +75,7 @@ import shutil
 import tempfile
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING, Any, cast
@@ -177,6 +177,9 @@ class DatasetBinding:
     legacy: bool = False            # resolved from a flat ``models[*].eval_split`` entry
     source: str = "bundled"         # ``bundled`` or ``consumed`` (an ``ml_datasets`` row, INTEROP-16)
     project_id: str | None = None   # the consumed slice's project; ``None`` for a bundled split
+    #: The dataset entry's spec 11.3 caveats (the fixture-only sentence among them), so a campaign on an
+    #: uploaded model bound to this split carries the same limitations a bundled model's does (spec 14.5).
+    caveats: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -392,6 +395,7 @@ def resolve_dataset_binding(
                 revision=None if revision is None else str(revision),
                 modality=_dataset_modality(entry, dataset_id, models),
                 fixture_only=bool(entry.get("fixture_only", False)),
+                caveats=[str(c).strip() for c in (entry.get("caveats") or []) if isinstance(c, str) and c.strip()],
             )
 
     legacy = _legacy_binding(dataset_id, requested, models)
@@ -614,6 +618,22 @@ def _evaluation_binding(
     return path, binding.class_names, binding.revision, binding.split
 
 
+def evaluation_caveats(dataset_id: str, *, dataset_split: str | None) -> list[str]:
+    """The bound bundled dataset's spec 11.3 caveats for an upload's manifest (``[]`` when it records none).
+
+    Read beside :func:`_evaluation_binding` on the worker so ``runners.base.dataset_caveats`` appends the
+    same sentences to the campaign limitations that a bundled model on that split carries; a fixture-only
+    dataset therefore says so in every report on an uploaded model.
+    """
+    from redsim.ml.targets.bundled import assets_dir
+
+    try:
+        binding = resolve_dataset_binding(dataset_id, dataset_split=dataset_split, root=assets_dir())
+    except DatasetBindingError:
+        return []
+    return list(binding.caveats)
+
+
 def artifact_target_from_path(
     target_id: str,
     path: Path,
@@ -632,6 +652,7 @@ def artifact_target_from_path(
     dataset_split = str(manifest.get("dataset_split") or "").strip() or None
     consumed = detail.get("consumed_slice") if isinstance(detail.get("consumed_slice"), dict) else None
     eval_data: Any
+    caveats: list[str] = []
     if consumed:
         # INTEROP-16: the worker parent materialised the consumed Parquet slice into the work dir
         # (``materialize_consumed_slice``); the child reads it under the declared schema.
@@ -643,6 +664,7 @@ def artifact_target_from_path(
         eval_data, class_names, dataset_revision, resolved_split = _evaluation_binding(
             dataset_id, dataset_split=dataset_split,
         )
+        caveats = evaluation_caveats(dataset_id, dataset_split=dataset_split)
     return ArtifactTarget(
         target_id,
         path,
@@ -653,6 +675,10 @@ def artifact_target_from_path(
         expected_sha256=str(manifest.get("sha256") or "") or None,
         architecture_id=manifest.get("architecture_id"),
         architecture_kwargs=dict(manifest.get("architecture_kwargs") or {}),
+        input_preprocessing=(
+            dict(manifest["input_preprocessing"]) if isinstance(manifest.get("input_preprocessing"), dict) else None
+        ),
+        dataset_caveats=caveats,
         input_shape=tuple(manifest.get("input_shape") or ()) or None,
         name=str(manifest.get("name") or target_id),
         domain=cast("Domain", str(manifest.get("modality") or "image")),

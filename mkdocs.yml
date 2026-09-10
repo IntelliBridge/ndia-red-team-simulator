@@ -216,6 +216,7 @@ nav:
       - Extending Redsim: dev/extending.md
       - CI pipeline: dev/ci.md
       - Editing the docs: dev/docs.md
+      - Open weights from Hugging Face: dev/open-weights.md
   - Security:
       - Supply-chain integrity: security/supply-chain.md
       - "Policy (SECURITY.md)": https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/SECURITY.md

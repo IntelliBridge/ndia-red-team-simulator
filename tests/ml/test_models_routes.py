@@ -575,3 +575,58 @@ def test_targets_route_rejects_ml_kinds_with_use_models_route(api: SimpleNamespa
     # Non-ML kinds still go through the allowlist service unchanged.
     ok = api.client.post("/v1/targets", json={"project_id": PROJECT, "kind": "url", "value": "http://localhost:3000"})
     assert ok.status_code == 200 and ok.json()["kind"] == "url"
+
+
+# ---------------------------------------------------------------------------
+# Input contract of an open-weights upload: validated in the API, stored in the manifest, never guessed
+# ---------------------------------------------------------------------------
+
+
+def test_upload_input_contract_lands_in_the_manifest(api: SimpleNamespace) -> None:
+    resp = _upload(api, input_scale="255", input_mean="0.485, 0.456, 0.406", input_std="[0.229, 0.224, 0.225]",
+                   input_resize="224", input_layout="nhwc")
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["manifest"]["input_preprocessing"] == {
+        "scale": 255.0, "mean": [0.485, 0.456, 0.406], "std": [0.229, 0.224, 0.225], "resize": 224, "layout": "NHWC",
+    }
+    with api.Session() as sess:
+        target = sess.get(Target, body["id"])
+    assert target is not None
+    assert target.detail["manifest"]["input_preprocessing"] == body["manifest"]["input_preprocessing"]
+    events = _events(api, "model.register")
+    assert events[-1].success is True and events[-1].detail["input_preprocessing"] is True
+
+
+def test_upload_without_input_contract_records_none(api: SimpleNamespace) -> None:
+    resp = _upload(api, input_scale="", input_mean="")
+    assert resp.status_code == 201, resp.text
+    assert "input_preprocessing" not in resp.json()["manifest"]
+    assert _events(api, "model.register")[-1].detail["input_preprocessing"] is False
+
+
+@pytest.mark.parametrize(
+    ("fields", "field"),
+    [
+        ({"input_scale": "0"}, "input_scale"),
+        ({"input_scale": "many"}, "input_scale"),
+        ({"input_mean": "0.5,0.5,0.5"}, "input_std"),
+        ({"input_mean": "0.5,0.5", "input_std": "0.2,0.2"}, "input_mean"),
+        ({"input_mean": "0.5", "input_std": "0"}, "input_std"),
+        ({"input_mean": "[1, 2", "input_std": "1"}, "input_mean"),
+        ({"input_resize": "4"}, "input_resize"),
+        ({"input_resize": "224.5"}, "input_resize"),
+        ({"input_layout": "CHWN"}, "input_layout"),
+    ],
+    ids=["zero-scale", "text-scale", "mean-alone", "two-channels", "zero-std", "bad-json", "resize-small",
+         "resize-float", "layout"],
+)
+def test_upload_input_contract_refusals(api: SimpleNamespace, fields: dict[str, str], field: str) -> None:
+    before = len(_blob_files(api))
+    resp = _upload(api, **fields)
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == "params_out_of_range" and detail["field"] == field
+    assert len(_blob_files(api)) == before
+    event = _events(api, "model.register")[-1]
+    assert event.success is False and event.detail["reason"] == "params_out_of_range"

@@ -76,6 +76,7 @@ from redsim.api.errors import (
     MODEL_TOO_LARGE,
     NOT_FOUND,
     NOT_IMPLEMENTED,
+    PARAMS_OUT_OF_RANGE,
     PICKLE_REFUSED,
     QUEUE_UNAVAILABLE,
     UNSUPPORTED_MODEL_FORMAT,
@@ -89,6 +90,10 @@ from redsim.api.v1.ml_capabilities import (
     catalog_unavailable,
     upload_max_bytes,
 )
+
+# Light service module: manifest JSON reads and the ORM only, no ML imports
+# (tests/test_api_process_has_no_ml.py).
+from redsim.ml.targets.input_contract import InputPreprocessingError, preprocessing_from_fields
 from redsim.services.ml_models import (
     DELETED_STATUS,
     ENDPOINT_KIND,
@@ -109,9 +114,6 @@ from redsim.services.ml_models import (
     safe_filename,
     upload_blob_key,
 )
-
-# Light service module: manifest JSON reads and the ORM only, no ML imports
-# (tests/test_api_process_has_no_ml.py).
 from redsim.services.ml_scores import cached_score_summary
 
 router = APIRouter(prefix="/models", tags=["ml-models"])
@@ -634,6 +636,13 @@ async def register_model(
             raise _refuse(LICENSE_REQUIRED,
                           "license_statement is required: only models with a declared licence are registered",
                           field="license_statement")
+        # The input contract of an open-weights model (spec 11.3.1; ``input_scale``, ``input_mean``,
+        # ``input_std``, ``input_resize``, ``input_layout``) is validated here in pure Python and applied
+        # by the worker's loader; the campaign keeps perturbing [0, 1] NCHW pixels.
+        try:
+            input_preprocessing = preprocessing_from_fields(fields)
+        except InputPreprocessingError as exc:
+            raise _refuse(PARAMS_OUT_OF_RANGE, str(exc), field=exc.field) from exc
         try:
             binding = check_upload_dataset(dataset_id, modality=modality, dataset_split=dataset_split)
         except DatasetBindingError as exc:
@@ -660,6 +669,7 @@ async def register_model(
         "n_classes": len(binding.class_names), "class_names": list(binding.class_names),
         "status": "validating", "license": license_statement,
         "bundled": False,
+        **({"input_preprocessing": input_preprocessing} if input_preprocessing else {}),
     }
     run_id = f"run-{uuid.uuid4().hex[:12]}"
     job_id = f"job-{uuid.uuid4().hex[:12]}"
@@ -695,6 +705,7 @@ async def register_model(
             "blob_key": blob_key,
             "ingest_run_id": run_id,
             "ingest_job_id": job_id,
+            "input_preprocessing": bool(input_preprocessing),
         },
     )
     with get_session() as sess:
