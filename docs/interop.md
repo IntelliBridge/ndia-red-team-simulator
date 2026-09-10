@@ -363,9 +363,17 @@ The push is proven against `tests/ml/fake_foundry_server.py` (a stdlib server
 speaking the v2 create, upload, commit and abort paths with a bearer check and
 a low-entropy JWT-shaped fake token assembled from three segments so no JWT
 literal sits in the source): the happy path, a 503 on commit with the abort,
-the fail-closed cases, and no token, JWT or URL in any audit row. No push to a
-real Foundry instance has been made (INTEROP-26: it needs an operator-configured
-non-operational instance), and the adversarial-dataset push "when exported"
+the fail-closed cases, and no token, JWT or URL in any audit row. On 2026-09-10
+the push reached a real developer-tier Foundry instance for the first time
+(INTEROP-26): the live lane `tests/e2e/test_ml_foundry_live.py` (skips unless `REDSIM_FOUNDRY_LIVE_URL`, `REDSIM_FOUNDRY_LIVE_RID` and `REDSIM_FOUNDRY_LIVE_TOKEN_FILE` are set)
+ran a real campaign, pushed through the API admission and the eager worker,
+and read the committed transaction and both files back through the Datasets
+v2 API with matching digests. First contact found one defect, fixed the same
+day: the real API reads `transactionType` from the JSON body and answers
+`400 MissingRequiredFields` to the query parameter the fake server had
+accepted; the fake server now refuses the query form too. The lane skips in
+CI until an operator supplies the three variables, so the fake server stays
+the CI proof. The adversarial-dataset push "when exported"
 (the second half of INTEROP-23) is not built: `PUSH_PAYLOADS` is `("scorecard",)`
 and the roster says so.
 
@@ -425,7 +433,8 @@ Still open, recorded in the README: the worker-parent
 `atlas_technique_id` key on finding list rows (the tag is in every finding's
 `schema_blob.ml.atlas_technique`); regenerate-in-child for a run whose slices
 were not retained (INTEROP-07, `export_unavailable` instead); the dataset push
-to Foundry (INTEROP-23, `PUSH_PAYLOADS` is `("scorecard",)`); a push against a
-real non-operational instance (INTEROP-26, the owner's call); and the
+to Foundry (INTEROP-23, `PUSH_PAYLOADS` is `("scorecard",)`); the live Foundry
+lane in CI (INTEROP-26 was proven by hand on 2026-09-10; the lane needs
+operator-supplied `REDSIM_FOUNDRY_LIVE_*` variables and skips without them); and the
 public-index fixture `tests/ml/fixtures/public_index.csv`, which snapshots the
 repository's `INDEX.csv` at `4048a209`, before the export rows.

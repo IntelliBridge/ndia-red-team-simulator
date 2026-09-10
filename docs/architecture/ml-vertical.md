@@ -64,7 +64,8 @@ Croissant dataset over Parquet shards, another team's Parquet slice is
 admitted with static checks and parsed only in the sandbox child, every new
 finding carries its ATLAS technique and a campaign has a coverage view, a
 scorecard can be pushed to a configured Foundry instance (off by default,
-proven against a fake server only), campaigns run as batches with a roll-up
+proven against a fake server in CI and against a developer-tier instance on
+2026-09-10), campaigns run as batches with a roll-up
 and grouped compare, models upload in bulk, and
 per-project capacity defers or refuses admissions; the 14 wave B0 stubs are
 gone. Since wave B4 the seven e2e files under `tests/e2e/` drive every one of
@@ -785,8 +786,10 @@ follow-up run's chain, the `Run` with scanner `ml.integration_push` and the
 digest-checked record, guards the payload, stores `ml.integration.payload` /
 `ml.integration.rows` first, decrypts the bearer token only then, pushes,
 stores `ml.integration.receipt` and writes `integration.push.execute` and
-`job.complete`. Proven against `tests/ml/fake_foundry_server.py` only
-(INTEROP-26 unmet); the dataset push is not built. Details in
+`job.complete`. Proven against `tests/ml/fake_foundry_server.py` in CI and,
+on 2026-09-10, against a real developer-tier instance by
+`tests/e2e/test_ml_foundry_live.py` (INTEROP-26); the dataset push is not
+built. Details in
 [Interoperability](../interop.md#foundry-the-scorecard-push) and the
 [API reference](../api/v1.md#integrations).
 
@@ -853,7 +856,7 @@ cell was refused or failed; the single-target path is unchanged.
 | the plan-07 file with its v1 body; `EXECUTION-CONTEXT.md` not refreshed for Phase B; the spec 22 and 26 addenda and the garak supply-chain paragraph not written | closed: plan 07 rewritten onto spec 27 as built, `EXECUTION-CONTEXT.md` refreshed, spec 3.2, 11.6, 11.7, 17.4, 22.6 and 26.7 addenda, `docs/security/supply-chain.md` and `SECURITY.md` garak paragraphs, master plan v2.8 |
 | the wave B2 follow-ups: the capabilities roster, the attacks filter, the completion path writing three formats and no snapshot, the codes off the 17.3 table, `FindingType` without the LLM and manual literals, `auth_profile_in_use` not emitted | closed by the fix pass: the roster read from the tree with the explainer roster, the `endpoint-v1` summary and an `interop` block; `?modality=` on capability tags; four formats and the first snapshot at completion; the third 17.3 addendum (ten codes) with the `endpoint_schema_mismatch` row corrected; `adversarial_llm` and `adversarial_ml_manual` in `redsim/schema.py`; `409 auth_profile_in_use` on `DELETE /v1/auth-profiles/{id}` |
 | the wave B3 follow-ups: the text and detection runners' self-describing slices (INTEROP-04), the consumed-slice binding calls (INTEROP-16), the JWT redaction pattern (INTEROP-28), `atlas_technique_id` on drafts and list rows (INTEROP-18), the capabilities interop block and the `.env.example` and compose pass-through (INTEROP-29, BULK-23), the single-run admissions under the caps (BULK-20, -21), the `batch_id` overlay (BULK-02), `REDSIM_ML_MAX_ADV_ARTIFACT_MB` never reaching the child | closed by the fix pass except: the worker-parent `materialize_consumed_slice` call (INTEROP-16 remainder), so a campaign on a consumed-bound model does not run end to end; the `atlas_technique_id` key on finding list rows (the stamp is on every finding's `schema_blob.ml.atlas_technique`, drafts included) |
-| ENDPOINT-30 (typed transport-failure mapping in the campaign task), INTEROP-07 (regenerate-in-child), INTEROP-23 (the dataset push to Foundry), INTEROP-26 (a real non-operational instance) | open, unchanged, recorded in the README |
+| ENDPOINT-30 (typed transport-failure mapping in the campaign task), INTEROP-07 (regenerate-in-child), INTEROP-23 (the dataset push to Foundry) | open, unchanged, recorded in the README; INTEROP-26 (a real non-operational instance) closed 2026-09-10 by the live lane |
 | product defects the B4 files found | open, by attribution: `redsim/ml/targets/endpoint.py:228` sends the 8-row probe unscaled, so no endpoint reaches `available` through the tiny server (three cases of `test_ml_endpoint.py`); no route derives `architecture_kwargs` from the dataset binding, so a `small_cnn` `state_dict` for a 3-class dataset is refused at validation (`test_ml_bulk.py`); `redsim/ml/pdf.py` raises reportlab's `LayoutError` on a 13-column table (degraded at completion, still raised by the on-demand render); three report-format pins the completion render made stale (`tests/ml/test_audit_campaign.py:113`, `tests/e2e/test_ml_upload_reports.py`, `tests/e2e/test_ml_review_reports.py`), to be moved by their owners |
 
 ## Stages and the stage table

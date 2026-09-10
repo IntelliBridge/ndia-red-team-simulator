@@ -704,8 +704,10 @@ training defenses, the verify report pin) left with it on 2026-09-09.
     campaign task is not built.
   - INTEROP-07 (regenerate-in-child: `export_unavailable` instead, never
     fabricated), INTEROP-23 (the dataset push to Foundry: `PUSH_PAYLOADS` is
-    `("scorecard",)`), INTEROP-26 (no push against a real non-operational
-    instance), `tests/ml/fixtures/public_index.csv` snapshots the public
+    `("scorecard",)`), INTEROP-26 closed on 2026-09-10 (the push reached a
+    developer-tier instance through `tests/e2e/test_ml_foundry_live.py`,
+    which skips in CI without operator-supplied `REDSIM_FOUNDRY_LIVE_*`
+    variables), `tests/ml/fixtures/public_index.csv` snapshots the public
     `INDEX.csv` at `4048a209`, before the export rows.
 - **Owner decisions** (plan 12 section 2, each with the recommended default
   the code follows until the owner rules otherwise): ENDPOINT-26 (no DNS-TXT
@@ -721,8 +723,8 @@ training defenses, the verify report pin) left with it on 2026-09-09.
   independence is identity, never rank), REVIEW_REPORTS-33 (no pickle
   override), REVIEW_REPORTS-35, -36, -41, -42 (membership administration and
   retention purge deferred to the platform team), INTEROP-26 (Foundry tested
-  against a fake endpoint: `tests/ml/fake_foundry_server.py` is the only
-  instance the push has reached), INTEROP-27 / TESTS_DOCS-41 (Lattice as text
+  against `tests/ml/fake_foundry_server.py` in CI and, since 2026-09-10,
+  against a real developer-tier instance by the live lane), INTEROP-27 / TESTS_DOCS-41 (Lattice as text
   only: the roster entry and no code), INTEROP-30 (B2 deployment posture as a
   runbook item of brief package E), INTEROP-34 (imagery exports stay in the
   artifacts bucket), BULK-16 (one defended run projected onto N findings,

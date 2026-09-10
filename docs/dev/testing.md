@@ -133,8 +133,10 @@ extra is absent. A bare `import torch` in a test module fails collection on
   lists. `DEFAULT_TOKEN` is a low-entropy JWT-shaped fake assembled from
   three segments at import, so the redaction is exercised and no JWT literal
   sits in the source for the Aikido hook to find. `tests/ml/test_atlas_foundry.py`
-  runs the push task eagerly against it; no test reaches a real Foundry
-  instance (INTEROP-26).
+  runs the push task eagerly against it. The live lane
+  `tests/e2e/test_ml_foundry_live.py` (skips unless `REDSIM_FOUNDRY_LIVE_URL`, `REDSIM_FOUNDRY_LIVE_RID` and `REDSIM_FOUNDRY_LIVE_TOKEN_FILE` are set)
+  is the only test that reaches a real Foundry instance: it passed on
+  2026-09-10 against a developer-tier stack (INTEROP-26) and skips in CI.
 - `fixtures/run_record.json`: the frozen `GET /v1/runs/{id}/campaign` shape
   with a full `score` block, sha256
   `25be404fca91eb5b11d75795b1f34076be39603a106666f35abf1fc9698f1ca6`.
