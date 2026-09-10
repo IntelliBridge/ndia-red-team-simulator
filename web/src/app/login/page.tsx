@@ -67,13 +67,9 @@ function LoginForm({ next, reason }: { next: string; reason: string | undefined 
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-col justify-center py-10 sm:py-16">
-      <div className="mb-8 space-y-3">
+      <div className="mb-8 space-y-2">
         <div className="redsim-kicker">Adversarial ML Red-Team Simulator</div>
         <h1 className="text-4xl font-semibold tracking-tight">Sign in</h1>
-        <p className="text-sm leading-relaxed text-muted-foreground">
-          Evaluate and harden ML classifiers under adversarial evasion. Open,
-          unclassified public data only.
-        </p>
       </div>
 
       {reason ? (
@@ -157,11 +153,6 @@ function LoginForm({ next, reason }: { next: string; reason: string | undefined 
           {busy ? "Signing in…" : "Sign in"}
         </button>
       </form>
-
-      <p className="mt-6 text-center text-xs leading-relaxed text-muted-foreground">
-        Access is provisioned by your administrator. Contact them for an
-        account or a password reset.
-      </p>
     </div>
   );
 }
