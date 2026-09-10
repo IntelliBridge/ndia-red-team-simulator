@@ -717,8 +717,10 @@ export default function RunPage({ params }: { params: { id: string } }) {
                     attacks: _attacks,
                     ...request
                   } = campaign.config;
+                  // The route is keyed by the Target row id frozen into the config,
+                  // not the registry id the target block carries.
                   const result = await startCampaign(
-                    campaign.target.id,
+                    _targetId || campaign.target.id,
                     request,
                   );
                   window.location.assign(`/runs/${result.run_id}`);

@@ -56,7 +56,9 @@ beforeEach(() => {
   window.sessionStorage.clear();
   fetchChatStatus.mockResolvedValue({ configured: true, model: "anthropic/claude-opus-5" });
   rolesMock.roles = { default: "scanner" };
-  campaignMock.data = campaignFixture;
+  // The target block carries the registry id; the config carries the Target row id
+  // the attacks route is keyed by. The live host has them different.
+  campaignMock.data = { ...campaignFixture, config: { ...campaignFixture.config, target_id: "vehicles_cnn-ecf82c87" } };
   campaignMock.error = undefined;
 });
 
@@ -147,7 +149,7 @@ describe("FindingChatPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Run this campaign" }));
     await waitFor(() => expect(startCampaign).toHaveBeenCalledTimes(1));
     const [targetId, request] = startCampaign.mock.calls[0] as [string, Record<string, unknown>];
-    expect(targetId).toBe("fixture-model");
+    expect(targetId).toBe("vehicles_cnn-ecf82c87");
     expect(request).toMatchObject({ attack_ids: ["hopskipjump"], eps_grid: [0.01, 0.03, 0.1], reference_eps: 0.03, n_samples: 50, dataset_id: "fixture-public-image" });
     expect(request).not.toHaveProperty("scoring");
     const link = await screen.findByRole("link", { name: /run-next-1/ });
