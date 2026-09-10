@@ -34,7 +34,9 @@ COPY redsim ./redsim
 # every redsim.ml_campaign_run ended at pickup with ModuleNotFoundError.
 # The reverse boundary (no torch, ART, onnxruntime or SHAP in the api image)
 # is unchanged and still pinned by tests/test_api_process_has_no_ml.py.
-RUN pip install -e ".[api,worker,ml]"
+# The garak extra rides along because redsim.ml_llm_probe_run spawns the probe
+# child in this image; without it a probe job dies at pickup on import garak.
+RUN pip install -e ".[api,worker,ml,garak]"
 
 # A standalone worker consumes both queues so nothing is stranded; the compose
 # stack overrides this to run a dedicated pool per queue (-Q scans / -Q default)
