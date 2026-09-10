@@ -25,7 +25,7 @@ isolation.
 ## Contribute: a run's adversarial examples as a Croissant dataset
 
 `POST /v1/runs/{run_id}/dataset` (membership, `dataset.export`, remediator)
-turns one terminal campaign or verify run into an open, content-addressed
+turns one terminal campaign run into an open, content-addressed
 dataset. The admission (`redsim/services/ml_datasets_export.py::admit_export`)
 writes the `dataset.export` audit row before the follow-up `Run` (scanner
 `ml.dataset_export`) and `Job` (type `dataset.export`) exist and before the
@@ -37,8 +37,7 @@ queued or running (`409 export_in_flight`), and a broker outage (`503
 queue_unavailable`, the two rows rolled back). One export per run: a second
 call after the first completed answers the existing manifest (`status:
 "exists"` with `manifest_artifact_id` and `manifest_sha256`), never a second
-copy. A verify run exports with its `baseline_run_id` carried in the
-provenance and is never merged with its baseline.
+copy.
 
 The worker (`redsim/workers/tasks/dataset_export.py`) loads the source run's
 persisted slices (`ml.adv_slice`, and `ml.clean_slice` / `ml.control_slice`
@@ -69,7 +68,7 @@ where the run wrote them) and its `ml.flip_matrix`, and builds:
   licence with the coverage caveat, the frozen campaign configuration, the
   run's limitations verbatim, the ATLAS technique per attack through
   `redsim.ml.atlas.technique_for_attack` with `atlas_data` as the fallback,
-  the ATLAS release, and `baseline_run_id` for a verify run). The manifest's
+  the ATLAS release). The manifest's
   own sha256 is the dataset version. `croissant_validate` is the structural
   gate and also refuses banned tokens: no model or tensor file name, no
   `reviewer_notes`, no credential environment name, and no bare MRI (a

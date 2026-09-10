@@ -33,9 +33,9 @@ Implements the pure-Python ML vertical under `redsim/ml/` per spec sections 9,
   `not_run` and removed from the scored set, the robustness curve JSON and
   PNG, dataset caveats and the `subject_centered` and surrogate-transfer
   limitations, and the shared `TinyTabularTarget` test double.
-- Scoring (`scoring.py`): the MRI with the D9 constraints, `FamilyDelta` rows
-  that render an absent cell as unavailable rather than zero, and a typed
-  `IncompatibleCampaigns` refusal that also guards against mixing modalities.
+- Scoring (`scoring.py`): the MRI with the D9 constraints, the per-family
+  table with denominators, and a typed `IncompatibleCampaigns` refusal that
+  also guards against mixing modalities.
 - Explain (`explain/`): SHAP image and tabular explainers, the
   `PartitionExplainer` fallback for image targets without a torch module, the
   explanation cache, stability metrics and the text summary
@@ -61,9 +61,8 @@ the routes that drive these modules are described in
 
 Open in this workstream after the completion pass: nothing blocking. The
 accepted divergences from the spec (single job per campaign, task names,
-report artifact kinds, `usage.{prompt,completion}`, the worker actor, the
-inconclusive verify mapping) are recorded in the ML vertical page. Phase B
-items (text and detection modalities, KernelSHAP for black-box targets,
-adversarial training as an apply step) are excluded from this pass.
+report artifact kinds, `usage.{prompt,completion}`, the worker actor) are
+recorded in the ML vertical page. Phase B items (text and detection
+modalities, KernelSHAP for black-box targets) are excluded from this pass.
 
 Source of truth: docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md.

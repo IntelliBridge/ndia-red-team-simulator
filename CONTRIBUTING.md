@@ -186,10 +186,12 @@ workstreams cannot break each other. Treat these as locked:
 - every field name and type in `redsim/ml/schema.py`, old and new
   (`CampaignConfig`, `MRIRecord`, `MLModelManifest` and `MLFindingDetail`
   are the shared contracts),
-- the migration head and the `ml_campaigns` column set. The head moved once
-  under the protocol, from `0010_ml_vertical` to `0011_phase_b_platform`
+- the migration head and the `ml_campaigns` column set. The head moved twice
+  under the protocol: from `0010_ml_vertical` to `0011_phase_b_platform`
   (wave B0 of the Phase B plan, additive, announced in master plan section 5;
-  `ml_campaigns` gained only the nullable `batch_id`),
+  `ml_campaigns` gained only the nullable `batch_id`), then to
+  `0012_remove_verify_paradigm`, which removed the two finding validation
+  columns and the campaign baseline column on 2026-09-09 and adds no table,
 - the `Action` values in `redsim/api/policy.py` and their minimum roles, and
   the `viewer` rank,
 - the `GET /v1/runs/{id}/campaign` response shape encoded by
@@ -223,7 +225,7 @@ green, and the docs writer for the wave records it in master plan section 0.
 ## Service-layer contract
 
 API write routes call admission services only (`services.scans`,
-`services.verify`, `services.targets`, `services.auth_profiles`,
+`services.targets`, `services.auth_profiles`,
 `services.ml_models`, `services.ml_campaigns`, `services.ml_findings`, and
 since Phase B waves B2 and B3 `services.ml_llm`, `services.finding_review`,
 `services.reports`, `services.ml_batches`, `services.ml_datasets`,

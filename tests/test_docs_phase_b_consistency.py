@@ -26,6 +26,13 @@ What is asserted, and who owns the fix when it fails:
   else the row's subject cell, else the enclosing heading, so "B0 to B3 landed,
   B4 not started" is a claim about B4 only;
 * the mkdocs nav lists plans 10, 11 and 12 so a reader can find them;
+* since the verify paradigm removal of 2026-09-09 (product owner decision,
+  ``docs/project-brief.md`` item 16, master plan section 5) no page that
+  describes the tree names the removed loop as a present feature: no sentence
+  of the root pages or of ``docs/`` (outside the dated history set below)
+  carries a verify-loop, defense-catalog, validation-state or delta token
+  unless that same sentence names the 2026-09-09 removal, and the four removed
+  routes are neither documented as mounted nor mounted (26.11, 26.24);
 * ``scripts/phase_b_gate.sh`` is provably discriminating: its probe program,
   run against a fake stack whose Phase B routes still answer ``501`` for an
   allowed role, fails and names the spec 26 criterion; its garak step, driven
@@ -38,7 +45,11 @@ A failure outside this track's files is reported with an attribution prefix in
 square brackets naming the file to fix, never by weakening the assertion. The
 dated registers ``docs/plans/09-*``, ``10-*`` and ``11-*`` are audits of an
 earlier state and quote the stale phrases as work items, so they are excluded
-from the stale-phrase scan and say so here.
+from the stale-phrase scan and say so here. The verify-token scan excludes a
+larger history set: the product spec (its dated banner marks the loop sections
+as history), the superseded design documents, the ADRs, the brief (the decision
+record) and every dated plan and register except ``EXECUTION-CONTEXT.md``,
+which describes the tree.
 """
 
 from __future__ import annotations
@@ -74,6 +85,37 @@ STALE_SCAN_EXCLUDED = {
     "docs/plans/10-remaining-work-brief.md",
     "docs/plans/11-phase-b-register-2026-09-09.md",
 }
+#: History kept on purpose after the verify paradigm removal (2026-09-09): excluded from the verify-token scan.
+VERIFY_HISTORY_EXCLUDED_PREFIXES = (
+    "docs/superpowers/",
+    "docs/adversarial-ml-redteam-spec.md",
+    "docs/adr/",
+    "docs/project-brief.md",
+)
+VERIFY_HISTORY_EXCLUDED_PLANS = re.compile(r"^docs/plans/\d{2}-")
+#: Tokens of the removed loop. A sentence may carry one only when it names the 2026-09-09 removal.
+STALE_VERIFY_TOKENS = (
+    "verify-after-harden", "verify after harden", "verify.replay", "verify.execute", "verify_replay",
+    "/v1/defenses", "/findings/{id}/verify", "/verify/bulk", "/retests",
+    "MeasuredDelta", "MRIDelta", "FamilyDelta", "CleanAccuracyDelta", "verify_delta",
+    "validation_state", "validated_at", "poc_passed", "poc_failed", "unvalidated",
+    "defense_apply", "DefenseConfig", "defenses.py", "unknown_defense", "defense_modality_mismatch",
+    "feature_squeezing", "spatial_smoothing", "jpeg_compression", "adversarial_training",
+    "defensive_distillation", "train_slice", "derived_from", "ml.derived_model", "ml.training_report",
+    "`ml.verify`", "Expected gain:", "baseline_run_id", "redsim_verify_status_total",
+    "`redsim verify`", "redsim/verify", "verifyFinding", "useDefenses",
+)
+REMOVAL_WORDS = re.compile(r"\b(removed|removal|left|gone|superseded|history|deleted|drops|dropped|void)\b",
+                           re.IGNORECASE)
+#: The routes the removal unmounted. They must be absent from the docs and from the OpenAPI document.
+REMOVED_VERIFY_ROUTES = (
+    ("GET", "/v1/defenses"),
+    ("POST", "/v1/findings/{finding_id}/verify"),
+    ("POST", "/v1/findings/{finding_id}/verify/bulk"),
+    ("GET", "/v1/findings/{finding_id}/retests"),
+)
+#: Test files the spec 22 addendum still names as history, deleted with the verify paradigm. They must stay absent.
+REMOVED_WITH_VERIFY_PARADIGM = frozenset({"tests/ml/test_hardening.py"})
 #: The plan pages the mkdocs nav must list (plan 12 wave B4 phase-b-gate brief).
 NAV_PLANS = (
     "plans/10-remaining-work-brief.md",
@@ -148,7 +190,13 @@ def test_spec_22_addendum_names_only_test_files_that_exist() -> None:
     region = section[marker.start():]
     named = sorted(set(re.findall(r"tests/[\w./-]+?\.py", region)))
     assert named, "the spec 22 addendum names no test file"
-    missing = [name for name in named if _resolve_test_file(name) is None]
+    # The spec is history under its dated banner: the one verify test it names must stay deleted.
+    resurrected = [name for name in named if name in REMOVED_WITH_VERIFY_PARADIGM and _resolve_test_file(name)]
+    if resurrected:
+        attributed_fail("tests/ (the verify paradigm was removed on 2026-09-09)",
+                        "test files deleted with the verify paradigm are back on the tree: " + ", ".join(resurrected))
+    missing = [name for name in named
+               if name not in REMOVED_WITH_VERIFY_PARADIGM and _resolve_test_file(name) is None]
     if missing:
         attributed_fail("docs track: spec section 22 addendum",
                         "test files named but absent from the tree: " + ", ".join(missing))
@@ -229,10 +277,12 @@ def _concrete(path: str) -> str:
 
 
 def _campaign_mirror(engine: Any) -> None:
-    """The migration-owned ``ml_campaigns`` shape (0010 + 0011 ``batch_id``) on sqlite, empty.
+    """The migration-owned ``ml_campaigns`` shape on sqlite, empty.
 
-    Routes that read the campaign row reflect this table; without it a route
-    would raise instead of answering its typed refusal.
+    0010 plus the 0011 ``batch_id`` column, less the baseline column that 0012
+    dropped with the verify paradigm. Routes that read the campaign row reflect
+    this table; without it a route would raise instead of answering its typed
+    refusal.
     """
     from sqlalchemy import JSON, Column, DateTime, MetaData, String, Table, Text
 
@@ -249,7 +299,6 @@ def _campaign_mirror(engine: Any) -> None:
         Column("provenance", JSON),
         Column("score", JSON),
         Column("limitations", JSON, nullable=False),
-        Column("baseline_run_id", String),
         Column("parent_run_id", String),
         Column("batch_id", String),
         Column("reviewer_notes", Text),
@@ -368,6 +417,27 @@ def test_phase_b_route_table_is_mounted_and_its_status_is_honest(docs_api: Simpl
                         f"{len(mismatched)} of {len(rows)} rows:\n  " + "\n  ".join(mismatched))
 
 
+@pytest.mark.integration
+def test_removed_verify_routes_are_neither_mounted_nor_documented(docs_api: SimpleNamespace) -> None:
+    """26.24 after 2026-09-09: the four verify routes left the app, and docs/api/v1.md does not list them.
+
+    The docs half is also covered by the verify-token scan; this test names the
+    routes so a resurrected handler or a resurrected table row fails by name.
+    """
+    templates = [(method.upper(), regex) for path, ops in docs_api.openapi["paths"].items()
+                 for method in ops for regex in [_template_regex(path)]]
+    mounted = [f"{method} {path}" for method, path in REMOVED_VERIFY_ROUTES
+               if any(m == method and regex.match(_concrete(path)) for m, regex in templates)]
+    if mounted:
+        attributed_fail("redsim/api/app.py (the verify paradigm was removed on 2026-09-09)",
+                        "removed routes still mounted: " + ", ".join(mounted))
+    documented = [f"{method} {path}" for method, path in _phase_b_table()
+                  if any(_template_regex(removed).match(_concrete(path)) and method == m
+                         for m, removed in REMOVED_VERIFY_ROUTES)]
+    if documented:
+        attributed_fail("docs track: docs/api/v1.md", "removed routes still in the Phase B table: " + ", ".join(documented))
+
+
 # ---------------------------------------------------------------------------
 # README open items, stale phrases, mkdocs nav (26.11)
 # ---------------------------------------------------------------------------
@@ -471,6 +541,77 @@ def test_no_doc_says_open_pr_23_or_not_started_for_waves_b0_to_b4() -> None:
         problems.append("'not started' said of a Phase B wave at " + ", ".join(not_started))
     if problems:
         attributed_fail("docs track (the files listed)", "; ".join(problems))
+
+
+def _verify_scanned_docs() -> list[Path]:
+    """The docs that describe the tree: the root pages and docs/ minus the dated history set."""
+    scanned = []
+    for path in _scanned_docs():
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        if rel.startswith(VERIFY_HISTORY_EXCLUDED_PREFIXES) or VERIFY_HISTORY_EXCLUDED_PLANS.match(rel):
+            continue
+        scanned.append(path)
+    return scanned
+
+
+def _sentences(text: str) -> Iterator[tuple[int, str]]:
+    """``(first line number, sentence)`` per sentence, paragraphs joined so a wrapped sentence stays whole."""
+    lines = text.splitlines()
+    start = None
+    buffer: list[str] = []
+    for number, line in enumerate(lines + [""], start=1):
+        if line.strip():
+            if start is None:
+                start = number
+            buffer.append(line.strip())
+            continue
+        if buffer and start is not None:
+            for sentence in re.split(r"(?<=[.!?])\s+", " ".join(buffer)):
+                if sentence:
+                    yield start, sentence
+        start, buffer = None, []
+
+
+def stale_verify_tokens_in(sentence: str) -> list[str]:
+    """The removed-loop tokens ``sentence`` carries, unless it names the 2026-09-09 removal itself."""
+    if "2026-09-09" in sentence and REMOVAL_WORDS.search(sentence):
+        return []
+    return [token for token in STALE_VERIFY_TOKENS if token in sentence]
+
+
+def test_stale_verify_tokens_reads_the_sentence_not_the_line() -> None:
+    """The scan's own contract: a removal sentence is exempt, a present-tense sentence is not."""
+    assert stale_verify_tokens_in("A verify campaign re-runs the settings with `feature_squeezing`.") == [
+        "feature_squeezing"]
+    assert stale_verify_tokens_in("`verify.replay` left the policy on 2026-09-09 (20 members remain).") == []
+    assert stale_verify_tokens_in("Since 2026-09-09 `POST /v1/findings/{id}/verify` is the way to measure a fix.") == [
+        "/findings/{id}/verify"]
+    assert stale_verify_tokens_in("Findings close by reviewer decision.") == []
+    joined = list(_sentences("Migration `0012` (2026-09-09) is the head: it drops\n`findings.validation_state`.\n\n"
+                             "Next paragraph."))
+    assert joined == [(1, "Migration `0012` (2026-09-09) is the head: it drops `findings.validation_state`."),
+                      (4, "Next paragraph.")]
+
+
+def test_no_tree_doc_describes_the_removed_verify_loop() -> None:
+    """26.11 after 2026-09-09: no page that describes the tree presents the verify loop as a present feature.
+
+    The verify campaigns, the defense catalog, the finding validation state and
+    the delta were removed by product owner decision (``docs/project-brief.md``
+    item 16). A sentence that names that removal may carry the old names; any
+    other sentence that carries one is a claim about a feature that does not
+    exist.
+    """
+    hits: list[str] = []
+    for path in _verify_scanned_docs():
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        for line, sentence in _sentences(path.read_text(encoding="utf-8", errors="replace")):
+            tokens = stale_verify_tokens_in(sentence)
+            if tokens:
+                hits.append(f"{rel}:{line} {tokens} in {sentence[:120]!r}")
+    if hits:
+        attributed_fail("docs track (the files listed)",
+                        f"{len(hits)} sentence(s) still describe the removed verify loop:\n  " + "\n  ".join(hits))
 
 
 def test_mkdocs_nav_lists_plans_10_11_and_12() -> None:

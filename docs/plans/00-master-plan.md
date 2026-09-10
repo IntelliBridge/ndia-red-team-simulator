@@ -883,6 +883,36 @@ passes that followed PR #22 and the Phase B waves.
 
 ## 5. Corrected shared contracts
 
+**Change note (2026-09-09): the verify paradigm removed, under the plan-01
+section 8 protocol.** Product owner decision (`docs/project-brief.md`, item
+16): every run is a measurement in its own right. Removed from the frozen
+contract and announced here: the schema models `DefenseConfig`, `MRIDelta`,
+`MeasuredDelta`, `FamilyDelta`, `CleanAccuracyDelta`, `FindingVerify` and
+`DerivedFrom`, the fields `CampaignConfig.defense`, `MRIRecord.delta`,
+`CandidateRecommendation.validation` and `.measured`, `MLFindingDetail.verify`
+and `.retests`, `ReviewEvent.verify_run_id`, `MLModelManifest.derived_from`,
+`Provenance.defense` and `.baseline_run_id`, `CampaignRecord.baseline_run_id`,
+the `verify` member of `CampaignKind` and `RunKind` (now `CampaignKind =
+attack | ingest`, `RunKind = attack | ingest | llm_probe`), and the
+`defense_apply` stage (`STAGES` is the P0 tuple again).
+`STANDING_LIMITATIONS[3]` now reads "Recommendations are candidates. None has
+been evaluated against this model; that requires a separate campaign." The
+`Action` `verify.replay` left `redsim/api/policy.py`, the OPA rego and the
+Cedar policy together (20 members remain). The codes `unknown_defense` and
+`defense_modality_mismatch` left `redsim/api/errors.py` and the spec 17.3
+table. The migration head moved a second time, from `0011_phase_b_platform` to
+`0012_remove_verify_paradigm`, which drops `findings.validation_state`,
+`findings.validated_at` and `ml_campaigns.baseline_run_id` and adds no table.
+The frozen fixtures `tests/ml/fixtures/run_record.json` and
+`run_record_phase_b.json` were regenerated without the removed keys. The
+tripwire sha256 of `run_record.json` is
+`25be404fca91eb5b11d75795b1f34076be39603a106666f35abf1fc9698f1ca6` (was
+`e5266f18…`). The routes `GET /v1/defenses`, `POST /v1/findings/{id}/verify`,
+`POST /v1/findings/{id}/verify/bulk` and `GET /v1/findings/{id}/retests`, the
+Celery task `redsim.verify_replay` and the `redsim verify` CLI subcommand are
+gone. The bullets below keep the pre-removal shapes where they name these
+fields, as dated history. Read this note first.
+
 - **Schema** (`redsim/ml/schema.py`): the `RunRecord`/`Measurement`/`Observation`/
   `Interpretation`/`CandidateRecommendation` evidence model stays. It is written
   as a sha256-addressed Artifact (`ml.run_record`) and **projected** onto

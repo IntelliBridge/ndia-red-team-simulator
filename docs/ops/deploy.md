@@ -86,7 +86,7 @@ sandboxed child. Both Dockerfiles copy any `.pem` / `.crt` under
 `deploy/certs/` into the system trust store for proxied networks.
 
 **Queues.** `redsim-worker` consumes `scans` (long-running: today
-`redsim.scan_start` and `redsim.verify_replay`, later `model.validate`,
+`redsim.scan_start`, later `model.validate`,
 `attack.run`, `explain.run`). `redsim-worker-default` consumes `default`
 (`redsim.report_render`, `redsim.reap_stale_jobs`,
 `redsim.verify_tenant_integrity`, `redsim.export_chains_to_worm`, later

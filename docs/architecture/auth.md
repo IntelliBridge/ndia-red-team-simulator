@@ -266,7 +266,7 @@ gated action, the same as an unknown role.
 |--------------|------|----------------------------------------------------------------------------------|
 | `viewer`     | 0    | read runs, findings, artifacts and the scorecard                                 |
 | `scanner`    | 1    | start scans and attack campaigns, request explanations, export reports           |
-| `remediator` | 2    | register models, request hardening, trigger verifies, cancel runs, annotate, plus everything below |
+| `remediator` | 2    | register models, request hardening, cancel runs, annotate, plus everything below |
 | `approver`   | 3    | review (dismiss) findings, plus everything below                                 |
 | `admin`      | 4    | manage targets and auth profiles, verify audit, project settings, everything below |
 
@@ -276,7 +276,6 @@ gated action, the same as an unknown role.
 | `attack.run`          | `scanner`    | ML, routes land with WS4                      |
 | `explain.run`         | `scanner`    | ML, routes land with WS4                      |
 | `report.export`       | `scanner`    | ML                                            |
-| `verify.replay`       | `remediator` | live (`POST /v1/findings/{id}/verify`)        |
 | `run.cancel`          | `remediator` | live                                          |
 | `model.register`      | `remediator` | ML                                            |
 | `harden.recommend`    | `remediator` | ML                                            |

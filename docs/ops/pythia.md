@@ -73,8 +73,7 @@ hardening writer. See "Personas and guardrails" below for what Phase B needs.
 
 The narrative runs in the parent process of the `scans` worker after
 `run_campaign_sandboxed` returns, only on a succeeded `attack.run` or
-`harden.recommend` job whose config set `llm_narrative = true`, and never on
-a `verify.replay` job. In order:
+`harden.recommend` job whose config set `llm_narrative = true`. In order:
 
 1. `REDSIM_DISABLE_LLM` is checked, then `PythiaSettings.from_env()`.
 2. `redsim.llm.router.route("ml.harden_narrative")` resolves the model
