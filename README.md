@@ -662,6 +662,15 @@ training defenses, the verify report pin) left with it on 2026-09-09.
   Playwright stack e2e (`workflow_dispatch` with `run_e2e=true`) has not been
   run. The `tests/e2e` tier covers the API, worker, sandbox and CLI, not a
   browser.
+- **Finding chat** (2026-09-09, the `Chat` drawer on `/findings/[id]`,
+  through Pythia from the Next server; `docs/ops/pythia.md` "Finding chat
+  (web)"): no audit row and no `LLMUsage` row is written per turn, so the
+  chain and the org cost view do not see chat traffic; no per-user rate
+  limit beyond the gateway's own; the system prompt carries the brief's
+  reporting rules as instructions and cannot enforce them, so the panel's
+  standing caveat and the evidence panels remain the record; the drawer has
+  been exercised in vitest against a fake gateway only, not in a browser
+  against a live gateway.
 - **Phase B items the wave B4 e2e files found and left open by attribution**
   (each a `pytest.fail` naming the module; the fixers' notes are quoted):
   - `redsim/ml/targets/endpoint.py:228`: `EndpointTarget.load` "sends
