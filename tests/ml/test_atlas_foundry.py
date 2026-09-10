@@ -46,6 +46,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from redsim.api.auth import CurrentUser, get_current_user
 from redsim.api.errors import (
     AUTH_PROFILE_KIND_UNSUPPORTED,
+    AUTH_PROFILE_REQUIRED,
     CAMPAIGN_NOT_TERMINAL,
     FIXTURE_NOT_EXPORTABLE,
     INTEGRATION_DISABLED,
@@ -649,7 +650,9 @@ def test_foundry_push_refusals_write_success_false_rows(api: SimpleNamespace) ->
     api.enable_foundry()
     good = {"auth_profile_id": api.profile_id}
     cases: list[tuple[str, dict[str, Any] | None, int, str, str | None]] = [
-        (RUN, None, 422, PARAMS_OUT_OF_RANGE, "auth_profile_id"),
+        # Since 2026-09-10 a missing profile falls back to the project setting; none configured here, so the
+        # admission (not pydantic) refuses with its own code.
+        (RUN, None, 422, AUTH_PROFILE_REQUIRED, "auth_profile_id"),
         (RUN, {"auth_profile_id": api.profile_id, "unknown": 1}, 422, PARAMS_OUT_OF_RANGE, None),
         (RUN, {"auth_profile_id": api.form_profile_id}, 422, AUTH_PROFILE_KIND_UNSUPPORTED, "auth_profile_id"),
         (RUN, {"auth_profile_id": api.other_profile_id}, 404, NOT_FOUND, "auth_profile_id"),

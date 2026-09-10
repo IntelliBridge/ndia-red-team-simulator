@@ -23,6 +23,7 @@ sizes and counts only (spec 15.7: never a bare MRI in a list).
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
@@ -46,6 +47,12 @@ _MANIFEST_KIND = "ml.dataset.manifest"
 _PARQUET_KIND = "ml.dataset.parquet"
 _CARD_KIND = "ml.dataset.card"
 _DATASET_KINDS = (_MANIFEST_KIND, _PARQUET_KIND, _CARD_KIND)
+_RUN_RECORD_KIND = "ml.run_record"
+#: The follow-up run of a Foundry push (``redsim.integrations.PUSH_SCANNER``), spelled here so the API
+#: process reads no worker module.
+_PUSH_SCANNER = "ml.integration_push"
+FOUNDRY_STATUSES: tuple[str, ...] = ("not_configured", "not_pushed", "queued", "running", "pushed", "failed")
+FOUNDRY_BLOCKERS: tuple[str, ...] = ("not_terminal", "run_failed", "fixture_target", "score_unavailable")
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -198,14 +205,65 @@ def _dataset_block(run: Any, artifacts: list[Any], jobs: list[Any], *, fixture: 
     return block
 
 
-def list_exports(session: Session, *, project_ids: list[str] | None, limit: int) -> list[dict[str, Any]]:
+def _push_error(table: Mapping[str, Any]) -> str | None:
+    """The first failed stage's error text of a push run, or ``None``."""
+    stages = table.get("stages") if isinstance(table, Mapping) else None
+    if not isinstance(stages, Mapping):
+        return None
+    for frame in stages.values():
+        if isinstance(frame, Mapping) and frame.get("status") == "failed" and frame.get("error"):
+            return str(frame["error"])
+    return None
+
+
+def _foundry_block(run: Any, *, fixture: bool, has_record: bool, ready: bool, auto_push: bool,
+                   push_run: Any | None) -> dict[str, Any]:
+    """The Foundry state of one campaign row: the newest push run, or why none can start (spec 27.3)."""
+    blockers: list[str] = []
+    status = str(run.status)
+    if status not in _TERMINAL:
+        blockers.append("not_terminal")
+    elif status != "succeeded":
+        blockers.append("run_failed")
+    if fixture:
+        blockers.append("fixture_target")
+    if status == "succeeded" and not has_record:
+        blockers.append("score_unavailable")
+    block: dict[str, Any] = {
+        "status": "not_pushed" if ready else "not_configured", "auto_push": auto_push, "push_run_id": None,
+        "transaction_rid": None, "pushed_at": None, "error": None, "blockers": blockers,
+    }
+    if push_run is None:
+        return block
+    table = dict(push_run.stage_table or {})
+    push_status = str(push_run.status)
+    block["push_run_id"] = str(push_run.id)
+    if push_status in _ACTIVE:
+        block["status"] = push_status
+    elif push_status == "succeeded":
+        block["status"] = "pushed"
+        block["transaction_rid"] = table.get("transaction_rid")
+        block["pushed_at"] = table.get("pushed_at") or _iso(push_run.completed_at)
+    else:
+        block["status"] = "failed"
+        block["error"] = _push_error(table) or push_status
+    return block
+
+
+def list_exports(session: Session, *, project_ids: list[str] | None, limit: int,
+                 config: Any | None = None) -> list[dict[str, Any]]:
     """The export rows of the campaign runs in ``project_ids`` (``None`` for every project).
 
     Follow-up runs (the ``ml.dataset_export`` run an export creates), LLM probe
     runs, validation runs and pentest-era runs are not exports of anything and
     are not listed.
     """
-    from redsim.db.models import Artifact, Job, ReportSnapshot, Run, Target
+    from redsim.db.models import Artifact, Job, Project, ReportSnapshot, Run, Target
+    from redsim.services.ml_integrations import (
+        foundry_deployment_block,
+        foundry_effective,
+        foundry_project_settings,
+    )
 
     stmt = select(Run).where(Run.scanner.in_(list(RUN_KINDS))).order_by(Run.created_at.desc(), Run.id.desc())
     if project_ids is not None:
@@ -219,7 +277,10 @@ def list_exports(session: Session, *, project_ids: list[str] | None, limit: int)
     run_ids = [str(r.id) for r in runs]
     wanted_kinds = tuple(_DATASET_KINDS) + tuple(EXPORT_SLICE_KINDS)
     artifacts_by_run: dict[str, list[Any]] = defaultdict(list)
+    has_record: set[str] = set()
     for row in session.execute(select(Artifact).where(Artifact.run_id.in_(run_ids))).scalars():
+        if str(row.kind) == _RUN_RECORD_KIND:
+            has_record.add(str(row.run_id))
         if _report_ext(str(row.kind)) is not None or str(row.kind) in wanted_kinds:
             artifacts_by_run[str(row.run_id)].append(row)
 
@@ -248,6 +309,29 @@ def list_exports(session: Session, *, project_ids: list[str] | None, limit: int)
         if source in run_ids:
             export_jobs_by_source[str(source)].append(job)
 
+    # Foundry: the project's settings against the deployment (one env read), and the newest push run per
+    # campaign (the follow-up run names its source in ``stage_table.parent_run_id``).
+    if config is None:
+        from redsim.config import load_config
+
+        config = load_config()
+    deployment = foundry_deployment_block(config)
+    project_rows = {str(p.id): p for p in session.execute(
+        select(Project).where(Project.id.in_(project_scope))).scalars()}
+    foundry_ready: dict[str, tuple[bool, bool]] = {}
+    for pid, project in project_rows.items():
+        settings = foundry_project_settings(project)
+        effective, _name = foundry_effective(session, project, settings, deployment)
+        foundry_ready[pid] = (bool(effective["ready"]), bool(settings["auto_push"]))
+    push_by_source: dict[str, Any] = {}
+    for push_run in session.execute(
+        select(Run).where(Run.scanner == _PUSH_SCANNER, Run.project_id.in_(project_scope))
+        .order_by(Run.created_at.asc(), Run.id.asc())
+    ).scalars():
+        source = (push_run.stage_table or {}).get("parent_run_id")
+        if source in run_ids:
+            push_by_source[str(source)] = push_run  # ascending order: the newest wins
+
     target_ids = sorted({str(r.target_id) for r in runs if r.target_id})
     targets = {str(t.id): t for t in session.execute(
         select(Target).where(Target.id.in_(target_ids))).scalars()} if target_ids else {}
@@ -271,8 +355,12 @@ def list_exports(session: Session, *, project_ids: list[str] | None, limit: int)
                                       run_id in render_active),
             "dataset": _dataset_block(run, artifacts, export_jobs_by_source.get(run_id, []),
                                       fixture=bool(model["fixture"])),
+            "foundry": _foundry_block(run, fixture=bool(model["fixture"]), has_record=run_id in has_record,
+                                      ready=foundry_ready.get(str(run.project_id), (False, False))[0],
+                                      auto_push=foundry_ready.get(str(run.project_id), (False, False))[1],
+                                      push_run=push_by_source.get(run_id)),
         })
     return rows
 
 
-__all__ = ["DATASET_FORMAT", "REPORT_FORMATS", "RUN_KINDS", "list_exports"]
+__all__ = ["DATASET_FORMAT", "FOUNDRY_BLOCKERS", "FOUNDRY_STATUSES", "REPORT_FORMATS", "RUN_KINDS", "list_exports"]

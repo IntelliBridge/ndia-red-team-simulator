@@ -5,8 +5,9 @@
 // One row per campaign run with the state of its report formats and
 // of its adversarial dataset export, read in one query from the `exports`
 // router. The actions on a row call the API's own gated routes through the
-// router (`report.render` for a re-render, `dataset.export` for a dataset) and
-// the API's refusal is shown beside the row with its code, never rewritten.
+// router (`report.render` for a re-render, `dataset.export` for a dataset,
+// `integration.push` for the Foundry scorecard push) and the API's refusal is
+// shown beside the row with its code, never rewritten.
 // Role gating here is presentation only; the API is the authorization
 // boundary (spec 7.9).
 
@@ -31,6 +32,7 @@ import {
   reportUrl,
   upstreamError,
   type ExportDatasetBlocker,
+  type ExportFoundryBlocker,
   type ExportRow,
   type ReportExt,
 } from "@/lib/api";
@@ -54,6 +56,20 @@ const BLOCKER_TEXT: Record<ExportDatasetBlocker, string> = {
   fixture_target: "fixture target, never exported",
   no_slices: "no adversarial slices retained",
 };
+
+/** What each Foundry push blocker means to a reader (spec 27.3, `create_foundry_push`). */
+const FOUNDRY_BLOCKER_TEXT: Record<ExportFoundryBlocker, string> = {
+  not_terminal: "run not finished",
+  run_failed: "run did not succeed",
+  fixture_target: "fixture target, never pushed",
+  score_unavailable: "no complete score to push",
+};
+
+function shortRid(rid: string | null): string {
+  if (!rid) return "—";
+  const tail = rid.split(".").pop() ?? rid;
+  return tail.length > 8 ? `…${tail.slice(-8)}` : tail;
+}
 
 function shortDigest(sha256: string | null): string {
   if (!sha256) return "—";
@@ -210,6 +226,92 @@ function DatasetCell({
   );
 }
 
+function FoundryCell({
+  row,
+  role,
+  onPush,
+  pending,
+}: {
+  row: ExportRow;
+  role: string | undefined;
+  onPush: () => void;
+  pending: boolean;
+}) {
+  const { foundry } = row;
+  const canPush =
+    row.terminal &&
+    (foundry.status === "not_pushed" || foundry.status === "failed") &&
+    foundry.blockers.length === 0;
+  return (
+    <div className="space-y-1 text-xs">
+      {foundry.status === "pushed" ? (
+        <div>
+          <span className="text-success">pushed</span>
+          <span className="text-muted-foreground">
+            {" · txn "}
+            <span className="font-mono" title={foundry.transaction_rid ?? undefined}>
+              {shortRid(foundry.transaction_rid)}
+            </span>
+          </span>
+          {foundry.push_run_id ? (
+            <>
+              <span className="text-muted-foreground"> · </span>
+              <Link className="text-primary underline" href={`/runs/${foundry.push_run_id}`}>
+                push run
+              </Link>
+            </>
+          ) : null}
+        </div>
+      ) : foundry.status === "queued" || foundry.status === "running" ? (
+        <div className="text-muted-foreground">
+          push {foundry.status}
+          {foundry.push_run_id ? (
+            <>
+              {" · "}
+              <Link className="text-primary underline" href={`/runs/${foundry.push_run_id}`}>
+                push run
+              </Link>
+            </>
+          ) : null}
+        </div>
+      ) : foundry.status === "failed" ? (
+        <div className="text-warning">
+          push failed{foundry.error ? `: ${foundry.error}` : ""}
+          {foundry.push_run_id ? (
+            <>
+              {" · "}
+              <Link className="text-primary underline" href={`/runs/${foundry.push_run_id}`}>
+                push run
+              </Link>
+            </>
+          ) : null}
+        </div>
+      ) : foundry.status === "not_configured" ? (
+        <div className="text-muted-foreground">not configured</div>
+      ) : (
+        <div className="text-muted-foreground">not pushed{foundry.auto_push ? " · auto-push on" : ""}</div>
+      )}
+      {foundry.blockers.length > 0 ? (
+        <div className="text-muted-foreground">
+          {foundry.blockers.map((blocker) => FOUNDRY_BLOCKER_TEXT[blocker]).join(" · ")}
+        </div>
+      ) : null}
+      {canPush ? (
+        <RoleGated minRole="admin" callerRole={role}>
+          <button
+            type="button"
+            className="redsim-ghost px-2 py-0.5 text-xs"
+            disabled={pending}
+            onClick={onPush}
+          >
+            {pending ? "Pushing…" : foundry.status === "failed" ? "Retry push to Foundry" : "Push to Foundry"}
+          </button>
+        </RoleGated>
+      ) : null}
+    </div>
+  );
+}
+
 export function ExportsTable({ project, limit }: ExportsTableProps) {
   const trpc = useTRPC();
   const query = useQuery({
@@ -245,6 +347,7 @@ export function ExportsTable({ project, limit }: ExportsTableProps) {
 
   const renderReport = useMutation(trpc.exports.renderReport.mutationOptions());
   const exportDataset = useMutation(trpc.exports.exportDataset.mutationOptions());
+  const pushFoundry = useMutation(trpc.exports.pushFoundry.mutationOptions());
 
   const startRender = (runId: string) => {
     const key = `${runId}:render`;
@@ -255,6 +358,12 @@ export function ExportsTable({ project, limit }: ExportsTableProps) {
     const key = `${runId}:export`;
     begin(key, runId);
     exportDataset.mutate({ runId }, { onSuccess: () => settle(key, runId)(), onError: settle(key, runId) });
+  };
+
+  const startPush = (runId: string) => {
+    const key = `${runId}:foundry`;
+    begin(key, runId);
+    pushFoundry.mutate({ runId }, { onSuccess: () => settle(key, runId)(), onError: settle(key, runId) });
   };
 
   const upstream = upstreamError(query.error);
@@ -321,6 +430,7 @@ export function ExportsTable({ project, limit }: ExportsTableProps) {
               <TableHead scope="col">Status</TableHead>
               <TableHead scope="col">Reports</TableHead>
               <TableHead scope="col">Dataset</TableHead>
+              <TableHead scope="col">Foundry</TableHead>
               <TableHead scope="col">Created</TableHead>
             </TableRow>
           </TableHeader>
@@ -364,6 +474,14 @@ export function ExportsTable({ project, limit }: ExportsTableProps) {
                       role={role}
                       pending={pending.has(`${row.run_id}:export`)}
                       onExport={() => startExport(row.run_id)}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <FoundryCell
+                      row={row}
+                      role={role}
+                      pending={pending.has(`${row.run_id}:foundry`)}
+                      onPush={() => startPush(row.run_id)}
                     />
                   </TableCell>
                   <TableCell className="text-muted-foreground">

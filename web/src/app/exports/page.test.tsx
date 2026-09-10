@@ -87,8 +87,38 @@ function exportRow(runId: string) {
       error: null,
       blockers: ["no_slices"],
     },
+    foundry: {
+      status: "not_configured",
+      auto_push: false,
+      push_run_id: null,
+      transaction_rid: null,
+      pushed_at: null,
+      error: null,
+      blockers: [],
+    },
   };
 }
+
+const FOUNDRY_SETTINGS = {
+  project_id: "proj-alpha-id",
+  project: "proj-alpha",
+  deployment: {
+    status: "configured",
+    host: "ndia-hackathon-2026.palantirsec.com",
+    reason: null,
+    attested: true,
+    default_dataset_rid: null,
+  },
+  settings: {
+    dataset_rid: "ri.foundry.main.dataset.9bc42537-e3d6-4c3d-8591-f560e9a34c16",
+    auth_profile_id: "authprof-1",
+    auth_profile_name: "foundry",
+    auto_push: true,
+    updated_at: "2026-09-10T03:00:00+00:00",
+    updated_by: "user:demo-admin",
+  },
+  effective: { dataset_rid: "ri.foundry.main.dataset.9bc42537-e3d6-4c3d-8591-f560e9a34c16", ready: true, blockers: [] },
+};
 
 async function renderPage(searchParams?: Record<string, string>): Promise<{ html: string; dehydrated: unknown }> {
   vi.resetModules();
@@ -119,8 +149,14 @@ async function renderPage(searchParams?: Record<string, string>): Promise<{ html
   return { html, dehydrated: dehydrate(getQueryClient()) };
 }
 
+type DehydratedQueryRecord = { queryKey: unknown; state: { status: string; data?: unknown; error?: unknown } };
+
+function dehydratedQueries(state: unknown): DehydratedQueryRecord[] {
+  return (state as { queries: DehydratedQueryRecord[] }).queries;
+}
+
 function dehydratedQuery(state: unknown): { state: { status: string; data?: unknown; error?: unknown } } {
-  const queries = (state as { queries: Array<{ state: { status: string; data?: unknown; error?: unknown } }> }).queries;
+  const queries = dehydratedQueries(state);
   expect(queries).toHaveLength(1);
   return queries[0]!;
 }
@@ -159,6 +195,22 @@ describe("ExportsPage server component", () => {
     expect(url).toContain("limit=25");
   });
 
+  it("prefetches the Foundry settings of the project only when ?project= is given", async () => {
+    upstream.json(200, FOUNDRY_SETTINGS);
+    const { html, dehydrated } = await renderPage({ project: "proj-alpha" });
+    const urls = upstream.calls.map((c) => c.url);
+    expect(urls.some((u) => u.includes("/v1/projects/proj-alpha/integrations/foundry"))).toBe(true);
+    expect(dehydratedQueries(dehydrated)).toHaveLength(2);
+    expect(html).toContain("Palantir Foundry");
+    expect(html).toContain("ndia-hackathon-2026.palantirsec.com");
+    expect(html).toContain("Auto-push finished campaigns");
+
+    upstream.calls.length = 0;
+    upstream.json(200, EMPTY);
+    await renderPage();
+    expect(upstream.calls.some((c) => c.url.includes("/integrations/foundry"))).toBe(false);
+  });
+
   it("never forwards a kind query parameter", async () => {
     await renderPage({ kind: "campaign" });
     expect(upstream.calls[0]?.url ?? "").not.toContain("kind=");
@@ -167,6 +219,7 @@ describe("ExportsPage server component", () => {
   it("renders the empty state and the heading server-side", async () => {
     const { html } = await renderPage();
     expect(html).toContain("Exports");
+    expect(html).toContain("Palantir Foundry");
     expect(html).toContain("Nothing to export yet");
     expect(html).toContain('href="/models"');
   });

@@ -70,6 +70,15 @@ function row(over: Partial<ExportRow> = {}): ExportRow {
       error: null,
       blockers: [],
     },
+    foundry: {
+      status: "not_pushed",
+      auto_push: false,
+      push_run_id: null,
+      transaction_rid: null,
+      pushed_at: null,
+      error: null,
+      blockers: [],
+    },
     ...over,
   };
 }
@@ -174,7 +183,7 @@ describe("ExportsTable rows", () => {
     renderWithProviders(<ExportsTable project="proj-a" />, { dehydratedState });
 
     const headers = screen.getAllByRole("columnheader").map((h) => h.textContent);
-    expect(headers).toEqual(["Run", "Model", "Status", "Reports", "Dataset", "Created"]);
+    expect(headers).toEqual(["Run", "Model", "Status", "Reports", "Dataset", "Foundry", "Created"]);
 
     expect(screen.queryByRole("navigation", { name: "Export kind" })).toBeNull();
     expect(screen.getByText(/UTC$/).textContent).toBe("Jan 02, 2026, 03:04 UTC");
@@ -267,6 +276,7 @@ describe("ExportsTable actions", () => {
     const first = renderWithProviders(<ExportsTable />, { dehydratedState });
     expect(screen.queryByRole("button", { name: "Render again" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Export dataset" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Push to Foundry" })).toBeNull();
     first.unmount();
 
     rolesMock.roles = { default: "scanner" };
@@ -385,5 +395,122 @@ describe("ExportsTable actions", () => {
     expect(String(trpcFetch.mock.calls[0]?.[0])).toContain("exports.renderReport");
     await waitFor(() => expect(screen.getByText(/render in flight/)).toBeTruthy());
     expect(screen.queryByRole("button", { name: "Render again" })).toBeNull();
+  });
+});
+
+describe("ExportsTable Foundry column", () => {
+  function foundry(over: Partial<ExportRow["foundry"]> = {}): ExportRow["foundry"] {
+    return { ...row().foundry, ...over };
+  }
+
+  it("shows each push status with its link, digest and error", async () => {
+    const rows = [
+      row({ run_id: "run-nc", foundry: foundry({ status: "not_configured" }) }),
+      row({ run_id: "run-np", foundry: foundry({ status: "not_pushed", auto_push: true }) }),
+      row({ run_id: "run-q", foundry: foundry({ status: "queued", push_run_id: "run-q-push" }) }),
+      row({ run_id: "run-r", foundry: foundry({ status: "running", push_run_id: "run-r-push" }) }),
+      row({
+        run_id: "run-p",
+        foundry: foundry({
+          status: "pushed",
+          push_run_id: "run-p-push",
+          transaction_rid: "ri.foundry.main.transaction.00000006-c4d1-4e61-9f6b-e69bf6cace83",
+          pushed_at: "2026-09-10T03:40:40+00:00",
+        }),
+      }),
+      row({ run_id: "run-f", foundry: foundry({ status: "failed", push_run_id: "run-f-push", error: "HTTP 401" }) }),
+    ];
+    const dehydratedState = await dehydratedList({ data: list(rows) });
+    renderWithProviders(<ExportsTable />, { dehydratedState });
+
+    expect(screen.getByText("not configured")).toBeTruthy();
+    expect(screen.getByText("not pushed · auto-push on")).toBeTruthy();
+    expect(screen.getByText(/push queued/)).toBeTruthy();
+    expect(screen.getByText(/push running/)).toBeTruthy();
+    expect(screen.getByText("pushed")).toBeTruthy();
+    expect(screen.getByText("…f6cace83").getAttribute("title")).toContain("ri.foundry.main.transaction.");
+    expect(screen.getByText(/push failed: HTTP 401/)).toBeTruthy();
+    const pushRunLinks = screen.getAllByRole("link", { name: "push run" }).map((a) => a.getAttribute("href"));
+    expect(pushRunLinks).toEqual(["/runs/run-q-push", "/runs/run-r-push", "/runs/run-p-push", "/runs/run-f-push"]);
+    // No push button without an admin role.
+    expect(screen.queryByRole("button", { name: /Push to Foundry/ })).toBeNull();
+  });
+
+  it("offers the push only to an admin on a terminal, unblocked, not-yet-pushed row", async () => {
+    rolesMock.roles = { default: "admin" };
+    const rows = [
+      row({ run_id: "run-ok" }),
+      row({ run_id: "run-failed", foundry: foundry({ status: "failed", error: "HTTP 503" }) }),
+      row({ run_id: "run-nc", foundry: foundry({ status: "not_configured" }) }),
+      row({ run_id: "run-pushed", foundry: foundry({ status: "pushed", transaction_rid: "ri.foundry.main.transaction.x" }) }),
+      row({ run_id: "run-blocked", status: "failed", foundry: foundry({ blockers: ["run_failed", "score_unavailable"] }) }),
+      row({ run_id: "run-live", status: "running", terminal: false, foundry: foundry({ blockers: ["not_terminal"] }) }),
+    ];
+    const dehydratedState = await dehydratedList({ data: list(rows) });
+    renderWithProviders(<ExportsTable />, { dehydratedState });
+
+    expect(screen.getAllByRole("button", { name: "Push to Foundry" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Retry push to Foundry" })).toHaveLength(1);
+    expect(screen.getByText("run did not succeed · no complete score to push")).toBeTruthy();
+    expect(screen.getByText("run not finished")).toBeTruthy();
+  });
+
+  it("posts the push for an admin, marks it queued from the refetched row, and shows a refusal by code", async () => {
+    rolesMock.roles = { default: "admin" };
+    const dehydratedState = await dehydratedList({ data: list([row()]) });
+    let call = 0;
+    const { trpcFetch } = renderWithProviders(<ExportsTable />, {
+      dehydratedState,
+      respond: () => {
+        call += 1;
+        if (call === 1) {
+          return [
+            trpcResult({
+              run_id: "run-1-push",
+              job_ids: ["job-p"],
+              status_url: "/v1/runs/run-1-push",
+              integration: "foundry",
+              campaign_run_id: "run-1",
+              target_ref: "ri.foundry.main.dataset.9bc42537-e3d6-4c3d-8591-f560e9a34c16",
+              kind: "integration_push",
+            }),
+          ];
+        }
+        if (call === 2) {
+          return [trpcResult(list([row({ foundry: foundry({ status: "queued", push_run_id: "run-1-push" }) })]))];
+        }
+        return [trpcUpstreamError(501, { code: "integration_disabled", message: "Foundry is not configured", phase: "B" })];
+      },
+    });
+
+    screen.getByRole("button", { name: "Push to Foundry" }).click();
+
+    await waitFor(() => expect(trpcFetch).toHaveBeenCalledTimes(2));
+    expect(String(trpcFetch.mock.calls[0]?.[0])).toContain("exports.pushFoundry");
+    await waitFor(() => expect(screen.getByText(/push queued/)).toBeTruthy());
+    expect(screen.getByRole("link", { name: "push run" }).getAttribute("href")).toBe("/runs/run-1-push");
+    expect(screen.queryByRole("button", { name: "Push to Foundry" })).toBeNull();
+  });
+
+  it("shows the API refusal beside the row when the push is refused", async () => {
+    rolesMock.roles = { default: "admin" };
+    const dehydratedState = await dehydratedList({ data: list([row()]) });
+    let first = true;
+    renderWithProviders(<ExportsTable />, {
+      dehydratedState,
+      respond: () => {
+        if (first) {
+          first = false;
+          return [trpcUpstreamError(501, { code: "integration_disabled", message: "Foundry is not configured" })];
+        }
+        return [trpcResult(list([row()]))];
+      },
+    });
+
+    screen.getByRole("button", { name: "Push to Foundry" }).click();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe("integration_disabled: Foundry is not configured");
+    expect(screen.getByRole("link", { name: "run-1" })).toBeTruthy();
   });
 });

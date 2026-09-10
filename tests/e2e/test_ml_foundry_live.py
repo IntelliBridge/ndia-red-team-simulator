@@ -48,7 +48,7 @@ def _sha256(data: bytes) -> str:
 
 
 def test_live_foundry_push_commits_the_scorecard(
-    e2e_app: E2EApp, e2e_org: E2EOrg, e2e_assets: Path, monkeypatch: pytest.MonkeyPatch,
+    e2e_app: E2EApp, e2e_org: E2EOrg, e2e_bundled: dict[str, str], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from urllib.parse import quote, urlsplit
 
@@ -71,8 +71,7 @@ def test_live_foundry_push_commits_the_scorecard(
 
     # -- a real campaign on the bundled tabular target -------------------------------------------------------
     scanner, admin, viewer = e2e_org.client("scanner"), e2e_org.client("admin"), e2e_org.client("viewer")
-    model_id = h.register_bundled(e2e_app, admin, project_id=e2e_org.project_id, bundled_id=h.TABULAR_MODEL_ID,
-                                  actor=e2e_org.actor("admin"))
+    model_id = e2e_bundled[h.TABULAR_MODEL_ID]
     campaign = h.run_campaign_via_api(scanner, model_id, h.tabular_campaign(), timeout_s=600.0)
     run_id = campaign.run_id
     assert campaign.run["status"] == "succeeded", campaign.run.get("stage_table")

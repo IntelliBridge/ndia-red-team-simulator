@@ -308,3 +308,76 @@ def put_ml_scoring(slug: str, body: Any = Body(default=None),
         project.ml_scoring = validated
         sess.flush()
         return _effective_scoring(project)
+
+
+# --------------------------------------------------------------------------- Foundry integration (2026-09-10)
+
+
+@router.get("/{slug}/integrations/foundry")
+def get_foundry_integration(slug: str, user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    """The project's Foundry settings beside what the operator configured, and whether a push is ready."""
+    from redsim.config import load_config
+    from redsim.db.session import get_session
+    from redsim.services.ml_integrations import foundry_view
+
+    with get_session() as sess:
+        project = _resolve_project_by_slug(sess, slug)
+        ensure_project_access(user, project.id)
+        return foundry_view(sess, project, load_config())
+
+
+@router.put("/{slug}/integrations/foundry")
+def put_foundry_integration(slug: str, body: Any = Body(default=None),
+                            user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
+    """Set the project's Foundry dataset, bearer profile and auto-push toggle. Admin-only; audited before the write.
+
+    Present keys are set, ``null`` clears. The host, attestation and allowlist
+    are not here: they stay operator-set in the environment (spec 27.3, D3).
+    """
+    from redsim.api.errors import ApiError
+    from redsim.audit.chain import resolve_writer
+    from redsim.config import load_config
+    from redsim.db.session import get_session
+    from redsim.safety import authorize
+    from redsim.services.ml_integrations import (
+        foundry_project_settings,
+        foundry_view,
+        store_foundry_settings,
+        validate_foundry_settings,
+    )
+
+    config = load_config()
+    with get_session() as sess:
+        project = _resolve_project_by_slug(sess, slug)
+        project_id, previous = project.id, foundry_project_settings(project)
+    check(user, Action.TARGET_MANAGE, project_id)
+    writer = resolve_writer(config)
+    actor = f"user:{user.sub}"
+    requested = sorted(body) if isinstance(body, dict) else []
+    detail: dict[str, Any] = {
+        "project_id": project_id, "field": "ml_integrations.foundry", "keys": requested,
+        "old_sha256": _sha(previous), "new_sha256": None,
+    }
+    with get_session() as sess:
+        project = _resolve_project_by_slug(sess, slug)
+        try:
+            merged = validate_foundry_settings(sess, project, body, actor=actor, config=config)
+        except ApiError as exc:
+            # A refused change is still on the chain, as a success=False row (ids and digests only).
+            writer.append(action=PROJECT_SETTINGS_ACTION, actor=actor, target=None, allowlist_check="n/a",
+                          override=False, success=False,
+                          detail={**detail, "refusal": exc.code, "message": str(exc)},
+                          run_id=None, project_id=project_id)
+            raise exc.as_http_exception() from exc
+    detail["new_sha256"] = _sha(merged)
+    detail["auto_push"] = bool(merged["auto_push"])
+    detail["dataset_rid"] = merged["dataset_rid"]
+    detail["auth_profile_id"] = merged["auth_profile_id"]
+    # Audit before mutation (spec 10.5): a dataset rid and a profile id are configuration, never secrets.
+    authorize(PROJECT_SETTINGS_ACTION, None, allowlist=[], actor=actor, writer=writer,
+              project_id=project_id, detail=detail)
+    with get_session() as sess:
+        project = _resolve_project_by_slug(sess, slug)
+        store_foundry_settings(project, merged)
+        sess.flush()
+        return foundry_view(sess, project, config)

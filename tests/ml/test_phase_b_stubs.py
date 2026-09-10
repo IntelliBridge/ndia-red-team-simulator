@@ -81,7 +81,9 @@ ROUTES: list[tuple[str, str, dict[str, Any] | None, str, bool, tuple[int, str | 
     ("GET", f"/v1/datasets/{RUN}", None, "run-optional", False, (404, None)),
     ("POST", "/v1/datasets", {"project_id": PROJECT}, "project", True, (415, "unsupported_dataset_format")),
     ("GET", f"/v1/runs/{RUN}/atlas-coverage", None, "run", False, (404, None)),
-    ("POST", f"/v1/runs/{RUN}/integrations/foundry", None, "run", True, (422, "params_out_of_range")),
+    # Since 2026-09-10 an empty push body is valid (the project settings fill it), so the admission answers:
+    # this harness run retained no campaign record.
+    ("POST", f"/v1/runs/{RUN}/integrations/foundry", None, "run", True, (404, None)),
     ("GET", "/v1/integrations", None, "none", False, (200, None)),
     ("POST", "/v1/campaigns/batch", {"project_id": PROJECT, "target_ids": [TARGET]}, "project", True,
      (422, "batch_member_refused")),
