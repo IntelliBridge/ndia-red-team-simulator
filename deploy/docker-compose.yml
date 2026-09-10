@@ -102,6 +102,8 @@ services:
       # REDSIM_CORS_ORIGINS above (redsim/api/ws.py accepts either). Declaring
       # it stops the API from also admitting the unused port 3000 default.
       REDSIM_WEB_ORIGIN: http://localhost:3300
+      # Fernet key for AuthProfile secrets. Without it every create fails closed.
+      REDSIM_AUTH_PROFILES_KEY: ${REDSIM_AUTH_PROFILES_KEY:-}
       REDSIM_OIDC_ISSUER: http://keycloak:8080/realms/redsim
       REDSIM_OIDC_JWKS_URL: http://keycloak:8080/realms/redsim/protocol/openid-connect/certs
       # The public half of the keypair redsim-web signs redsim_api_session
@@ -172,7 +174,13 @@ services:
       REDSIM_S3_BUCKET: redsim
       REDSIM_S3_ACCESS_KEY_ID: redsim
       REDSIM_S3_SECRET_ACCESS_KEY: redsim-secret
-      REDSIM_DISABLE_LLM: "1"
+      # Rules-only by default so a stack with no gateway never stalls on one.
+      # Export REDSIM_DISABLE_LLM=0 (or set it in .env beside the PYTHIA_*
+      # names) to let the hardening narrative reach Pythia.
+      # The worker resolves an AuthProfile secret at job pickup, so it needs the
+      # same Fernet key the API encrypted it with. Empty fails closed, never anonymous.
+      REDSIM_AUTH_PROFILES_KEY: ${REDSIM_AUTH_PROFILES_KEY:-}
+      REDSIM_DISABLE_LLM: ${REDSIM_DISABLE_LLM:-1}
       # Sandbox child budget for a laptop QA run. The spec 20.3 defaults (900
       # CPU seconds, 2 threads, 1200 s wall clock) are sized for the CI
       # fixtures: a vehicles_cnn campaign with n_samples 50 reached the explain
