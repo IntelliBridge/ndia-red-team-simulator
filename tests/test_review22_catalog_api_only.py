@@ -1,7 +1,7 @@
 """Review #22 finding F2: the ML catalog routes work in the API image and never fake an empty catalog.
 
 ``deploy/Dockerfile.api`` installs ``.[api,worker]`` only. The catalog registries
-(``redsim.ml.attacks``, ``redsim.ml.defenses``, ``redsim.ml.targets``) import numpy
+(``redsim.ml.attacks``, ``redsim.ml.targets``) import numpy
 at module level, so numpy must ship with the ``api`` extra while torch, ART,
 onnx(runtime), SHAP and scikit-learn stay in ``ml`` and are imported lazily
 inside the adapters' ``run``/``load`` methods only.
@@ -45,11 +45,11 @@ app = create_app(APISettings(env="dev", auth_mode="dev", cors_origins=["http://l
 client = TestClient(app)
 headers = %r
 out = {}
-for path in ("/v1/attacks", "/v1/defenses", "/v1/ml/capabilities"):
+for path in ("/v1/attacks", "/v1/ml/capabilities"):
     response = client.get(path, headers=headers)
     out[path] = {"status": response.status_code, "body": response.json()}
 out["loaded"] = sorted(m for m in sys.modules if m.split(".")[0] in blocked and sys.modules[m] is not None)
-out["registries"] = sorted(m for m in ("redsim.ml.attacks", "redsim.ml.defenses", "redsim.ml.targets")
+out["registries"] = sorted(m for m in ("redsim.ml.attacks", "redsim.ml.targets")
                            if sys.modules.get(m) is not None)
 print(json.dumps(out))
 """
@@ -60,12 +60,10 @@ blocked = %r
 for name in blocked:
     sys.modules[name] = None
 from redsim.ml.attacks import list_attacks
-from redsim.ml.defenses import list_defenses
 from redsim.ml.targets import list_targets
 from redsim.ml.targets.artifact import architecture_ids
 out = {
     "attacks": sorted(a.id for a in list_attacks()),
-    "defenses": sorted(d["id"] for d in list_defenses()),
     "targets": sorted(t.id for t in list_targets()),
     "architectures": architecture_ids(),
     "loaded": sorted(m for m in sys.modules if m.split(".")[0] in blocked and sys.modules[m] is not None),
@@ -116,7 +114,6 @@ def test_catalog_registries_import_with_ml_frameworks_blocked() -> None:
     out = _run_probe(_REGISTRIES_PROBE, _BLOCKED)
     assert out["loaded"] == [], f"catalog registries imported an ML framework at module import: {out['loaded']}"
     assert {"fgsm", "pgd", "hopskipjump", "noise_control"} <= set(out["attacks"])
-    assert {"feature_squeezing", "spatial_smoothing", "jpeg_compression"} <= set(out["defenses"])
     assert {"vehicles_cnn", "url_trees", "cifar10_smallcnn", "endpoint_stub"} <= set(out["targets"])
     assert "smallcnn" in out["architectures"]
 
@@ -124,7 +121,7 @@ def test_catalog_registries_import_with_ml_frameworks_blocked() -> None:
 def test_catalog_routes_serve_full_catalogs_with_ml_frameworks_blocked() -> None:
     out = _run_probe(_ROUTES_PROBE, _BLOCKED, _AUTH)
     assert out["loaded"] == [], f"serving the catalog imported an ML framework: {out['loaded']}"
-    assert out["registries"] == ["redsim.ml.attacks", "redsim.ml.defenses", "redsim.ml.targets"], (
+    assert out["registries"] == ["redsim.ml.attacks", "redsim.ml.targets"], (
         "the catalogs must come from the real registries, not a fallback")
 
     attacks = out["/v1/attacks"]
@@ -133,18 +130,11 @@ def test_catalog_routes_serve_full_catalogs_with_ml_frameworks_blocked() -> None
     assert {"fgsm", "pgd", "hopskipjump", "noise_control"} <= ids
     assert attacks["body"]["count"] == len(attacks["body"]["attacks"]) >= 4
 
-    defenses = out["/v1/defenses"]
-    assert defenses["status"] == 200, defenses
-    assert {row["id"] for row in defenses["body"]["defenses"]} >= {
-        "feature_squeezing", "spatial_smoothing", "jpeg_compression"}
-    assert defenses["body"]["count"] == len(defenses["body"]["defenses"]) >= 3
-    assert all(row["params_schema"] for row in defenses["body"]["defenses"])
-
     capabilities = out["/v1/ml/capabilities"]
     assert capabilities["status"] == 200, capabilities
     body = capabilities["body"]
     assert "smallcnn" in body["architectures"]
-    assert {"feature_squeezing", "spatial_smoothing", "jpeg_compression"} <= set(body["defenses"])
+    assert "defenses" not in body, "the defense catalog left with the verify paradigm (2026-09-09)"
     bundled = {row["id"] for row in body["bundled_models"]}
     assert {"vehicles_cnn", "url_trees"} <= bundled
     assert "cifar10_smallcnn" not in bundled, "fixture-only targets are never advertised as demo models"
@@ -181,8 +171,6 @@ def _block_package(monkeypatch: pytest.MonkeyPatch, package: str) -> None:
 
 @pytest.mark.parametrize(("path", "package", "payload_key"), [
     ("/v1/attacks", "redsim.ml.attacks", "attacks"),
-    ("/v1/defenses", "redsim.ml.defenses", "defenses"),
-    ("/v1/ml/capabilities", "redsim.ml.defenses", "defenses"),
     ("/v1/ml/capabilities", "redsim.ml.targets", "bundled_models"),
 ])
 def test_catalog_route_refuses_when_registry_is_unimportable(

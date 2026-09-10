@@ -466,8 +466,8 @@ def test_admit_or_defer_defers_over_the_concurrency_cap_never_refuses(api: Simpl
         # Raising the cap admits at once; a deferred job does not occupy a slot.
         project.ml_max_concurrent_runs = 3
         _seed_job(sess, "job-deferred-x", detail={"campaign_config": {}, "deferred": True})
-        again = capacity.admit_or_defer(sess, project, "verify")
-        assert again.deferred is False and again.active == 1 and again.job_type == "verify.replay"
+        again = capacity.admit_or_defer(sess, project, "campaign")
+        assert again.deferred is False and again.active == 1 and again.job_type == "attack.run"
         assert again.marker() == {} and again.response_fields() == {"deferred": False}
     # NULL columns fall back to the deployment default (2 unless the env overrides it).
     with api.session_cm() as sess:
@@ -512,7 +512,7 @@ def test_daily_budget_refuses_429_with_an_audited_row(api: SimpleNamespace) -> N
         # Spent budget: one more is refused as well, without a writer nothing is written here (the caller's row).
         project.ml_daily_run_budget = 1
         with pytest.raises(ApiError) as info:
-            capacity.admit_or_defer(sess, project, "verify", now=now)
+            capacity.admit_or_defer(sess, project, "attack.run", now=now)
         assert info.value.code == "daily_budget_exceeded" and len(writer.events) == 1
         # A follow-on kind is not budgeted (it re-uses an admitted run's samples).
         assert capacity.admit_or_defer(sess, project, "explain", now=now).deferred is False

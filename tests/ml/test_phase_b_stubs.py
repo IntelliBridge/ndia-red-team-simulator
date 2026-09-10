@@ -6,7 +6,7 @@ first push. Wave B0 mounted every route as a ``501 not_implemented`` stub; wave
 B2 replaced the LLM probe, report.render and snapshot stubs and wave B3 replaced
 the rest (interop-contribute / interop-consume: the dataset export and the
 consumed-slice admission; atlas-foundry: ATLAS coverage, the roster and the
-Foundry push; bulk-service-routes: batch campaigns and bulk verify;
+Foundry push; bulk-service-routes: batch campaigns;
 bulk-upload-capacity-cli: bulk upload and the capacity view). ``ROUTES`` is the
 B0 stub list kept as the surface pin; ``REMAINING_STUBS`` lists what still
 answers ``501 not_implemented`` on that surface after B3 (nothing), and the one
@@ -31,7 +31,8 @@ route is refused after its gates):
 * nothing is faked: the refusals create no Run, Job, Target or Finding row and
   every audit row they write is a refusal (``success == False``) or the batch
   admission row that precedes its members' refusals;
-* the OpenAPI document lists every Phase B path and method.
+* the OpenAPI document lists every Phase B path and method, and none of the
+  four paths the verify paradigm took with it (product owner, 2026-09-09).
 
 No ML library is imported (``numpy`` only because the attack catalog route the
 app mounts reads the registry metadata at import).
@@ -89,8 +90,6 @@ ROUTES: list[tuple[str, str, dict[str, Any] | None, str, bool, tuple[int, str | 
     ("POST", "/v1/campaigns/batch/batch-1/cancel", None, "none", False, (404, None)),
     ("GET", "/v1/campaigns/batch/batch-1/compare", None, "none", False, (404, None)),
     ("POST", "/v1/models/bulk", {"project_id": PROJECT}, "project", True, (422, "params_out_of_range")),
-    # The seeded finding is not an ML finding of a campaign run, so no candidate is verifiable.
-    ("POST", f"/v1/findings/{FINDING}/verify/bulk", {}, "finding", True, (422, "params_out_of_range")),
     ("GET", f"/v1/ml/capacity?project={PROJECT}", None, "query", False, (200, None)),
 ]
 
@@ -111,7 +110,6 @@ OPENAPI_PATHS: list[tuple[str, str]] = [
     ("post", "/v1/campaigns/batch/{batch_id}/cancel"),
     ("get", "/v1/campaigns/batch/{batch_id}/compare"),
     ("post", "/v1/models/bulk"),
-    ("post", "/v1/findings/{finding_id}/verify/bulk"),
     ("get", "/v1/ml/capacity"),
     ("post", "/v1/runs/{run_id}/report.render"),
     ("get", "/v1/runs/{run_id}/snapshots"),
@@ -151,7 +149,6 @@ def _campaign_mirror(engine: Any) -> None:
         Column("provenance", JSON),
         Column("score", JSON),
         Column("limitations", JSON, nullable=False),
-        Column("baseline_run_id", String),
         Column("parent_run_id", String),
         Column("batch_id", String),
         Column("reviewer_notes", Text),
@@ -284,7 +281,6 @@ def test_non_member_is_refused_before_the_handler(api: SimpleNamespace, method: 
         ("POST", f"/v1/runs/{UNKNOWN}/report.render", {}),
         ("GET", f"/v1/runs/{UNKNOWN}/snapshots", None),
         ("POST", f"/v1/models/{UNKNOWN}/probes", {}),
-        ("POST", f"/v1/findings/{UNKNOWN}/verify/bulk", {}),
         ("GET", f"/v1/datasets/{UNKNOWN}", None),
         ("GET", f"/v1/campaigns/batch/{UNKNOWN}", None),
         ("POST", f"/v1/campaigns/batch/{UNKNOWN}/cancel", None),
@@ -371,6 +367,25 @@ def test_openapi_lists_every_route(api: SimpleNamespace) -> None:
     for method, template in OPENAPI_PATHS:
         assert template in paths, template
         assert method in paths[template], f"{method.upper()} {template}"
+
+
+#: The verify paradigm's routes (product owner, 2026-09-09): gone from the document and answering 404.
+REMOVED_PATHS: list[tuple[str, str, str]] = [
+    ("GET", "/v1/defenses", "/v1/defenses"),
+    ("POST", "/v1/findings/{finding_id}/verify", f"/v1/findings/{FINDING}/verify"),
+    ("POST", "/v1/findings/{finding_id}/verify/bulk", f"/v1/findings/{FINDING}/verify/bulk"),
+    ("GET", "/v1/findings/{finding_id}/retests", f"/v1/findings/{FINDING}/retests"),
+]
+
+
+@pytest.mark.parametrize(("method", "template", "path"), REMOVED_PATHS)
+def test_verify_paradigm_routes_are_gone(api: SimpleNamespace, method: str, template: str, path: str) -> None:
+    """No operation in the OpenAPI document and a 404 for every caller, admin included."""
+    paths = api.app.openapi()["paths"]
+    assert template not in paths or method.lower() not in paths[template], f"{method} {template}"
+    resp = api.call(ADMIN, method, path, {} if method == "POST" else None)
+    assert resp.status_code == 404, resp.text
+    assert not api.writer.events, "a removed route wrote an audit row"
 
 
 # --------------------------------------------------------------------------- what remains stubbed

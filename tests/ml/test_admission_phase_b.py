@@ -7,8 +7,8 @@ endpoint admission rules (white-box refused with ``attack_requires_gradients``,
 ``explain_k`` capped through ``EXPLAIN_QUERY_CAPS``, the worst-case query budget
 recorded in the frozen snapshot and compared with the per-job cap, no URL or
 credential in the snapshot) and REVIEW_REPORTS-29 (the project's ``ml_scoring``
-override frozen at admission, a client-sent ``scoring`` refused, reruns and
-verify runs keeping their lineage's block).
+override frozen at admission, a client-sent ``scoring`` refused, reruns keeping
+their parent's block).
 
 Offline, on the sqlite harness of ``tests/ml/test_campaign_routes.py``: the real
 FastAPI app, a recording audit writer and a fake ``ml_campaign_run.delay``.
@@ -40,7 +40,6 @@ from redsim.ml.scoring import (
     DEFAULT_REFERENCE_EPS,
     default_reference_eps,
 )
-from redsim.services import ml_campaigns
 from redsim.services.ml_campaigns import (
     BUDGET_LABELS,
     DEFAULT_EDIT_GRID,
@@ -59,7 +58,6 @@ from redsim.services.ml_campaigns import (
     is_default_weights,
     modality_norms,
 )
-from tests.ml.test_admission import seed_verify_baseline
 from tests.ml.test_campaign_routes import (
     ACTOR,
     DATASET,
@@ -633,28 +631,6 @@ def test_rerun_keeps_the_parents_frozen_scoring_after_the_override_changed(api: 
     assert fresh["scoring"]["weights"] == CUSTOM_WEIGHTS
 
 
-def test_verify_keeps_the_baselines_scoring_and_the_phase_a_response_shape(
-    api: Harness, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ids = seed_verify_baseline(api, monkeypatch)
-    set_project_scoring(api, ScoringConfig(weights=MRIWeights(**CUSTOM_WEIGHTS)).model_dump(mode="json"))
-    assert api.client is not None
-
-    response = api.client.post(f"/v1/findings/{ids['fgsm']}/verify", json={})
-
-    assert response.status_code == 202, response.text
-    body = response.json()
-    assert set(body) == {"run_id", "job_ids", "status_url"}
-    with api.Session() as session:
-        job = session.get(Job, body["job_ids"][0])
-    assert job is not None
-    assert job.detail["campaign_config"]["scoring"] == ScoringConfig().model_dump(mode="json"), \
-        "the verify run keeps the baseline's block, not today's project override"
-    (event,) = api.events("verify.replay")
-    assert event.detail["scoring_source"] == "baseline" and event.detail["non_default_weights"] is False
-    assert event.detail["defense_kind"] == "preprocessing"
-
-
 def test_is_default_weights_predicate() -> None:
     assert is_default_weights(ScoringConfig()) is True
     assert is_default_weights({"weights": MRIWeights().as_dict()}) is True
@@ -662,47 +638,6 @@ def test_is_default_weights_predicate() -> None:
     assert is_default_weights(ScoringConfig(weights=MRIWeights(**CUSTOM_WEIGHTS))) is False
     assert is_default_weights({"weights": CUSTOM_WEIGHTS}) is False
     assert is_default_weights({"weights": {"acc": 1.0}}) is False, "a partial vector is never treated as default"
-
-
-# --------------------------------------------------------------------------- verify: training defenses
-
-def test_verify_admits_a_training_defense_on_an_image_torch_model(api: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
-    ids = seed_verify_baseline(api, monkeypatch)
-    assert api.client is not None
-    from redsim.ml.defenses import get_defense
-
-    if get_defense("adversarial_training").get("kind") != "training":   # pragma: no cover - older catalog
-        pytest.skip("the defenses catalog carries no training rows on this tree")
-
-    # r.R1 cites adversarial_training only, so the defense resolves from the recommendation.
-    response = api.client.post(f"/v1/findings/{ids['fgsm']}/verify", json={"recommendation_id": "r.R1"})
-
-    assert response.status_code == 202, response.text
-    with api.Session() as session:
-        job = session.get(Job, response.json()["job_ids"][0])
-    assert job is not None
-    defense = job.detail["campaign_config"]["defense"]
-    assert defense["id"] == "adversarial_training" and defense["params"]["epochs"] >= 1
-    (event,) = api.events("verify.replay")
-    assert event.success and event.detail["defense_kind"] == "training"
-
-
-def test_training_defense_on_a_tabular_tree_ensemble_is_defense_modality_mismatch() -> None:
-    from redsim.ml.defenses import get_defense
-    from redsim.ml.harden.apply import TREE_ENSEMBLE_REASON
-
-    spec = get_defense("adversarial_training")
-    with pytest.raises(ApiError) as excinfo:
-        ml_campaigns._check_training_defense("adversarial_training", spec, modality="tabular", gradients=False)
-    assert excinfo.value.code == "defense_modality_mismatch" and excinfo.value.status == 422
-    assert excinfo.value.detail["reasons"] == [TREE_ENSEMBLE_REASON]
-    # Without gradients there is no torch module to fine-tune: refused, never run and recorded as a fake delta.
-    with pytest.raises(ApiError) as excinfo:
-        ml_campaigns._check_training_defense("adversarial_training", spec, modality="image", gradients=False)
-    assert excinfo.value.code == "params_out_of_range" and "training_defense_unavailable" in excinfo.value.detail["reasons"]
-    # Preprocessing rows are untouched by the check.
-    ml_campaigns._check_training_defense("feature_squeezing", get_defense("feature_squeezing"), modality="tabular",
-                                         gradients=False)
 
 
 # --------------------------------------------------------------------------- the frozen config round-trips

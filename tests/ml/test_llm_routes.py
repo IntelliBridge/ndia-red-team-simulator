@@ -116,7 +116,7 @@ def _campaign_table(engine: Any) -> Table:
         Column("org_id", String), Column("target_id", String, nullable=False), Column("kind", String, nullable=False),
         Column("modality", String, nullable=False), Column("config", JSON, nullable=False),
         Column("settings_hash", String), Column("provenance", JSON), Column("score", JSON),
-        Column("limitations", JSON, nullable=False), Column("baseline_run_id", String),
+        Column("limitations", JSON, nullable=False),
         Column("parent_run_id", String), Column("reviewer_notes", Text), Column("created_at", DateTime),
         Column("completed_at", DateTime),
     )
@@ -930,7 +930,7 @@ def test_worker_run_writes_scorecard_findings_usage_and_audit(harness: WorkerHar
     assert set(by_id) == {"llm.dan.Dan_11_0.dan.DAN", "llm.encoding.InjectBase64.encoding.DecodeMatch"}
     dan_finding = by_id["llm.dan.Dan_11_0.dan.DAN"]
     assert dan_finding.severity == "high" and dan_finding.source_tool == LLM_SOURCE_TOOL
-    assert dan_finding.status == "open" and dan_finding.validation_state == "unvalidated"
+    assert dan_finding.status == "open" and not hasattr(dan_finding, "validation_state")
     blob = dan_finding.schema_blob
     assert blob["finding_kind"] == "adversarial_llm" and blob["finding_type"] in ("adversarial_llm", "adversarial_ml")
     assert blob["title"] == "LLM probe dan.Dan_11_0 hit rate 4/4 (detector dan.DAN)"

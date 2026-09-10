@@ -1,4 +1,4 @@
-"""Batch campaigns, batch cancel, batch compare and bulk verify (register BULK-03..09, -15; plan 12 wave B3).
+"""Batch campaigns, batch cancel and batch compare (register BULK-03..09; plan 12 wave B3).
 
 Offline over the ``tests/ml/test_campaign_routes.py`` harness: a file-backed sqlite
 database with the ``ml_campaigns`` mirror (now carrying ``batch_id``), the real
@@ -23,11 +23,8 @@ Pinned:
 * the compare route groups scorecards by comparability with no delta, mean or rank,
   answers ``409 incompatible_campaigns`` listing the groups when settings differ and
   lists unscored members under ``unavailable``;
-* bulk verify admits one defended run per (defense, params) over every selected
-  finding of the baseline run with ``Job.detail.finding_ids`` and one ``verify.replay``
-  row per finding, and skips findings that are in flight or dismissed;
 * RBAC: viewer and stranger are refused with the plain 403, ``batch.run`` is the
-  scanner tier and cancel and bulk verify the remediator tier.
+  scanner tier and cancel the remediator tier.
 """
 
 from __future__ import annotations
@@ -47,7 +44,7 @@ pytest.importorskip("sqlalchemy")
 
 from redsim.api.auth import CurrentUser, get_current_user
 from redsim.api.errors import HTTP_STATUS
-from redsim.db.models import Artifact, Finding, Job, MlBatch, Run
+from redsim.db.models import Artifact, Job, MlBatch, Run
 from redsim.ml import compare as cmp
 from redsim.ml.schema import CampaignRecord
 from redsim.services.ml_batches import (
@@ -55,7 +52,6 @@ from redsim.services.ml_batches import (
     batch_max_members,
     rollup_status,
 )
-from tests.ml.test_admission import seed_verify_baseline
 from tests.ml.test_campaign_routes import (
     ACTOR,
     MODEL,
@@ -742,143 +738,6 @@ def test_batch_compare_with_no_scored_member_is_409_score_unavailable(api: Harne
         "run-only-partial: MRI not computed (S_expl unavailable (explainer failed))"]
 
 
-# --------------------------------------------------------------------------- bulk verify (BULK-15 / BULK-16)
-
-
-def test_bulk_verify_admits_one_defended_run_per_defense_over_every_selected_finding(
-    api: Harness, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ids = seed_verify_baseline(api, monkeypatch)
-    fgsm, pgd = ids["fgsm"], ids["pgd"]
-    assert api.client is not None
-
-    _as(api, "scanner")
-    refused = api.client.post(f"/v1/findings/{fgsm}/verify/bulk", json={})
-    assert refused.status_code == 403 and isinstance(refused.json()["detail"], str), "verify.replay is remediator"
-    assert api.writer.events == []
-
-    _as(api, "remediator")
-    response = api.client.post(
-        f"/v1/findings/{fgsm}/verify/bulk",
-        json={"defenses": [{"defense": "feature_squeezing"}, {"defense": "jpeg_compression", "params": {"quality": 60}},
-                           {"defense": "feature_squeezing"}]},   # the duplicate collapses
-    )
-    assert response.status_code == 202, response.text
-    body = response.json()
-    batch_id = body["batch_id"]
-    assert body["kind"] == "verify" and body["baseline_run_id"] == ids["run_id"] and body["modality"] == "image"
-    assert body["finding_ids"] == [fgsm, pgd] and body["primary_finding_id"] == fgsm and body["skipped"] == []
-    assert len(body["members"]) == 2 and body["refused"] == []
-    assert [m["defense"]["id"] for m in body["members"]] == ["feature_squeezing", "jpeg_compression"]
-    assert body["members"][1]["defense"]["params"] == {"quality": 60}
-    # One verify in flight per finding: the second defense takes the next selected finding as its primary.
-    assert [m["primary_finding_id"] for m in body["members"]] == [fgsm, pgd]
-
-    with api.Session() as session:
-        jobs = {m["run_id"]: session.get(Job, m["job_ids"][0]) for m in body["members"]}
-        runs = {m["run_id"]: session.get(Run, m["run_id"]) for m in body["members"]}
-        statuses = {fid: session.get(Finding, fid).status for fid in (fgsm, pgd)}  # type: ignore[union-attr]
-        batch = session.get(MlBatch, batch_id)
-    for member in body["members"]:
-        job, run = jobs[member["run_id"]], runs[member["run_id"]]
-        assert job is not None and job.type == "verify.replay"
-        assert job.detail["finding_ids"] == [fgsm, pgd] and job.detail["batch_id"] == batch_id
-        assert job.detail["finding_id"] == member["primary_finding_id"]
-        assert job.detail["baseline_run_id"] == ids["run_id"]
-        assert run is not None and run.scanner == "ml.verify" and run.stage_table["batch_id"] == batch_id
-        assert run.stage_table["finding_ids"] == [fgsm, pgd] and run.stage_table["baseline_run_id"] == ids["run_id"]
-        row = api.campaign_row(member["run_id"])
-        assert row is not None and row["kind"] == "verify" and row["batch_id"] == batch_id
-        assert row["baseline_run_id"] == ids["run_id"]
-    assert statuses == {fgsm: "fixing", pgd: "fixing"}
-    assert batch is not None and batch.kind == "verify" and batch.config["finding_ids"] == [fgsm, pgd]
-    assert [d["defense"] for d in batch.config["defenses"]] == ["feature_squeezing", "jpeg_compression"]
-    assert api.delay_calls == [m["job_ids"][0] for m in body["members"]]
-
-    # Audit: batch.create, then per member the single route's verify.replay row (before its Run existed)
-    # followed by one verify.replay row per additional finding naming the shared run.
-    events = api.writer.events
-    assert events[0].action == "batch.create" and events[0].success and events[0].run_id is None
-    assert events[0].detail["kind"] == "verify" and events[0].detail["finding_ids"] == [fgsm, pgd]
-    assert events[0].detail["defense_ids"] == ["feature_squeezing", "jpeg_compression"]
-    assert events[0].detail["baseline_run_id"] == ids["run_id"] and events[0].detail["n_members"] == 2
-    verify_rows = [e for e in events[1:] if e.action == "verify.replay"]
-    assert len(verify_rows) == 4 and all(e.success for e in verify_rows)
-    run_a, run_b = body["run_ids"]
-    assert [(e.run_id, e.detail["finding_id"]) for e in verify_rows] == [
-        (run_a, fgsm), (run_a, pgd), (run_b, pgd), (run_b, fgsm)]
-    assert verify_rows[1].detail["shared_run_id"] == run_a and verify_rows[1].detail["batch_id"] == batch_id
-    assert verify_rows[1].detail["primary_finding_id"] == fgsm
-    assert verify_rows[1].detail["defense"]["id"] == "feature_squeezing"
-    assert api.writer.run_existed_at_append[:2] == [None, False], "the batch row and the first admission row precede the Run"
-    assert set(events[1].detail) >= {"finding_id", "baseline_run_id", "defense"}
-    assert "campaign_config" not in events[0].detail
-
-    # The view shows the verify members with their findings and whether the worker has projected onto them.
-    view = api.client.get(f"{BATCH_ROUTE}/{batch_id}").json()
-    assert view["kind"] == "verify" and view["requested"]["finding_ids"] == [fgsm, pgd]
-    assert view["requested"]["baseline_run_id"] == ids["run_id"]
-    for member in view["members"]:
-        assert member["kind"] == "verify" and member["baseline_run_id"] == ids["run_id"]
-        assert member["finding_ids"] == [fgsm, pgd]
-        assert [f["projected"] for f in member["findings"]] == [False, False]
-        assert member["defense"]["id"] in {"feature_squeezing", "jpeg_compression"}
-    _assert_no_aggregate(view)
-
-    # Both findings now carry a verify in flight: a further bulk verify has nothing to select.
-    nothing = api.client.post(f"/v1/findings/{fgsm}/verify/bulk", json={})
-    assert nothing.status_code == 422, nothing.text
-    detail = nothing.json()["detail"]
-    assert detail["code"] == "params_out_of_range" and detail["field"] == "finding_ids"
-    assert [(s["finding_id"], s["status"]) for s in detail["skipped"]] == [(fgsm, "fixing"), (pgd, "fixing")]
-    assert api.writer.events[-1].action == "batch.create" and not api.writer.events[-1].success
-
-
-def test_bulk_verify_skips_dismissed_findings_and_collects_defense_refusals(
-    api: Harness, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    ids = seed_verify_baseline(api, monkeypatch)
-    fgsm, pgd = ids["fgsm"], ids["pgd"]
-    with api.Session.begin() as session:
-        session.get(Finding, pgd).status = "false_positive"  # type: ignore[union-attr]
-    assert api.client is not None
-    _as(api, "remediator")
-
-    # An unknown defense: the member is refused with the single route's code, nothing is admitted.
-    response = api.client.post(f"/v1/findings/{fgsm}/verify/bulk", json={"defense": "nope"})
-    assert response.status_code == 422, response.text
-    detail = response.json()["detail"]
-    assert detail["code"] == "batch_member_refused"
-    assert detail["members"][0]["code"] == "unknown_defense" and detail["members"][0]["defense"] == "nope"
-    assert api.counts() == {"runs": 1, "jobs": 0, "campaigns": 1}, "only the seeded baseline exists"
-    with api.Session() as session:
-        assert session.get(Finding, fgsm).status == "open"  # type: ignore[union-attr]
-
-    # The default defense on the one selectable finding; the dismissed one is skipped with its reason.
-    response = api.client.post(f"/v1/findings/{fgsm}/verify/bulk", json={})
-    assert response.status_code == 202, response.text
-    body = response.json()
-    assert body["finding_ids"] == [fgsm]
-    assert body["skipped"] == [{"finding_id": pgd, "status": "false_positive", "reason": "dismissed as a false positive"}]
-    assert len(body["members"]) == 1 and body["members"][0]["defense"]["id"] == "feature_squeezing"
-    with api.Session() as session:
-        job = session.get(Job, body["members"][0]["job_ids"][0])
-    assert job is not None and job.detail["finding_ids"] == [fgsm]
-    verify_rows = [e for e in api.writer.events if e.action == "verify.replay" and e.success]
-    assert len(verify_rows) == 1, "no additional finding, no additional row"
-
-    # finding_ids outside the run's ML findings are refused before anything is written.
-    n_events = len(api.writer.events)
-    outside = api.client.post(f"/v1/findings/{fgsm}/verify/bulk", json={"finding_ids": ["finding-elsewhere"]})
-    assert outside.status_code == 422 and outside.json()["detail"]["field"] == "finding_ids"
-    assert outside.json()["detail"]["reasons"] == ["finding-elsewhere"]
-    assert len(api.writer.events) == n_events + 1 and not api.writer.events[-1].success
-
-    assert api.client.post("/v1/findings/no-such-finding/verify/bulk", json={}).status_code == 404
-    _as(api, None)
-    assert api.client.post(f"/v1/findings/{fgsm}/verify/bulk", json={}).status_code == 403
-
-
 def test_seeded_model_sha_is_the_fixture_constant() -> None:
     """Guard for the harness contract this file leans on (``seed_model`` writes ``SHA256`` into the manifest)."""
     assert len(SHA256) == 64 and MODEL == "model-image-1"
@@ -962,27 +821,6 @@ def test_single_attack_route_refuses_a_spent_daily_budget_with_an_audited_row(ap
 
 
 @pytest.mark.skipif(not _capacity_available(), reason="redsim.services.ml_capacity is not on this tree")
-def test_single_verify_route_is_deferred_over_the_concurrency_cap(api: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
-    from redsim.services.ml_capacity import DEFERRED_KEY
-
-    ids = seed_verify_baseline(api, monkeypatch)
-    monkeypatch.setenv(CAPACITY_ENV, "1")
-    _seed_live_job(api, MODEL)
-    assert api.client is not None
-    _as(api, "remediator")
-    response = api.client.post(f"/v1/findings/{ids['fgsm']}/verify", json={})
-    assert response.status_code == 202, response.text
-    body = response.json()
-    assert body["deferred"] is True and body["capacity"]["code"] == "capacity_deferred"
-    assert api.delay_calls == []
-    with api.Session() as session:
-        job = session.get(Job, body["job_ids"][0])
-        finding = session.get(Finding, ids["fgsm"])
-    assert job is not None and job.status == "queued" and job.detail[DEFERRED_KEY] is True
-    assert finding is not None and finding.status == "fixing", "admitted, waiting for a slot"
-
-
-@pytest.mark.skipif(not _capacity_available(), reason="redsim.services.ml_capacity is not on this tree")
 def test_batch_members_are_decided_once_by_the_batch_service(api: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
     """The batch passes ``capacity_check=False``: with the budget at exactly two admissions both members are
     admitted (the single boundary does not count them a second time) and nothing is refused."""
@@ -1001,9 +839,8 @@ def test_batch_members_are_decided_once_by_the_batch_service(api: Harness, monke
 
 
 def test_batch_stamps_land_before_the_broker_message(api: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The batch stamps (``batch_id``, a verify's ``finding_ids`` and its per-finding ``verify.replay`` rows) are
-    written through the boundary's ``before_enqueue`` hook, so the Job the broker (or an eager worker) picks up
-    already carries them (BULK-16: the projection reaches every selected finding whenever the worker runs)."""
+    """The batch stamp (``batch_id``) is written through the boundary's ``before_enqueue`` hook, so the Job the
+    broker (or an eager worker) picks up already carries it."""
     from redsim.services import ml_campaigns
 
     seen_at_enqueue: list[dict[str, Any]] = []
@@ -1012,10 +849,7 @@ def test_batch_stamps_land_before_the_broker_message(api: Harness, monkeypatch: 
         with api.Session() as session:
             job = session.get(Job, job_id)
             assert job is not None
-            replay_rows = [e for e in api.writer.events if e.action == "verify.replay" and e.run_id == job.run_id]
-            seen_at_enqueue.append({"job_id": job_id, "batch_id": job.detail.get("batch_id"),
-                                    "finding_ids": job.detail.get("finding_ids"),
-                                    "n_replay_rows": len(replay_rows)})
+            seen_at_enqueue.append({"job_id": job_id, "batch_id": job.detail.get("batch_id")})
         api.delay_calls.append(job_id)
         return f"task-{job_id}"
 
@@ -1028,16 +862,4 @@ def test_batch_stamps_land_before_the_broker_message(api: Harness, monkeypatch: 
     assert response.status_code == 202, response.text
     batch_id = response.json()["batch_id"]
     assert [s["batch_id"] for s in seen_at_enqueue] == [batch_id, batch_id]
-    seen_at_enqueue.clear()
-
-    # a verify batch: finding_ids and one verify.replay row per selected finding precede the message
-    ids = seed_verify_baseline(api, monkeypatch)
-    _as(api, "remediator")
-    assert api.client is not None
-    response = api.client.post(f"/v1/findings/{ids['fgsm']}/verify/bulk", json={"defense": "feature_squeezing"})
-    assert response.status_code == 202, response.text
-    (member,) = response.json()["members"]
-    assert len(seen_at_enqueue) == 1 and seen_at_enqueue[0]["job_id"] == member["job_ids"][0]
-    assert seen_at_enqueue[0]["finding_ids"] == [ids["fgsm"], ids["pgd"]]
-    assert seen_at_enqueue[0]["batch_id"] == response.json()["batch_id"]
-    assert seen_at_enqueue[0]["n_replay_rows"] == 2, "the admission row and the second finding's row"
+    assert [s["job_id"] for s in seen_at_enqueue] == [m["job_ids"][0] for m in response.json()["members"]]

@@ -1,23 +1,21 @@
 """Phase B review workflow (plan 12 wave B2, review-workflow track).
 
-REVIEW_REPORTS-02 (confirm), -03 (reopen), -04 (resolve gates), -05 (analyst
+REVIEW_REPORTS-02 (confirm), -03 (reopen), -04 (resolve), -05 (analyst
 drafts, submit, request_changes, revisions), -06 (compare-and-set), -07 (list
-filter and additive keys), -09 (retest links), -11 (audit rows) and -12
-(independence by identity). Offline: a file-backed sqlite harness with the
+filter and additive keys), -11 (audit rows) and -12 (independence by identity).
+Findings close by reviewer decision (2026-09-09): ``resolve`` needs a
+``confirmed`` review and writes ``fixed``. Offline: a file-backed sqlite harness with the
 ``ml_campaigns`` table created by hand (the migration owns it), an in-memory blob
 store keyed by artifact location, a recording audit writer and FastAPI dependency
-overrides for the caller. The baseline campaign is the frozen
-``run_record.json`` fixture; the verify records are derived from it.
+overrides for the caller. The campaign is the frozen ``run_record.json`` fixture.
 """
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +33,7 @@ from redsim.api.auth import CurrentUser, get_current_user
 from redsim.api.settings import APISettings
 from redsim.audit.chain import InMemoryAuditWriter
 from redsim.db.models import Artifact, Base, Finding, Organization, Project, Run, Target
-from redsim.ml.schema import CampaignRecord, FindingReview, FindingVerify, MLFindingDetail
+from redsim.ml.schema import CampaignRecord, FindingReview, MLFindingDetail
 from redsim.services import finding_review as fr
 from redsim.services.ml_findings import project_campaign_findings
 from redsim.storage.blobs import BlobRef
@@ -47,11 +45,8 @@ FIXTURE = Path(__file__).parent / "fixtures" / "run_record.json"
 PROJECT = "project-1"
 OTHER_PROJECT = "project-2"
 BASELINE = "run-fixture-0001"
-VERIFY_OK = "run-verify-ok"
-VERIFY_DRIFT = "run-verify-drift"
 PLAIN = "run-plain"
 CREATOR = "user:creator"
-REQUESTER = "user:requester"
 
 
 def _sha(data: bytes) -> str:
@@ -72,7 +67,6 @@ def _campaign_table(engine: Any) -> Table:
         Column("provenance", JSON),
         Column("score", JSON),
         Column("limitations", JSON, nullable=False),
-        Column("baseline_run_id", String),
         Column("parent_run_id", String),
         Column("reviewer_notes", Text),
         Column("created_at", DateTime),
@@ -137,22 +131,7 @@ def _user(sub: str, role: str, project: str = PROJECT, *, system: bool = False) 
 
 
 def _records(base: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    defense = {"id": "feature_squeezing", "art_class": "art.defences.preprocessor.FeatureSqueezing",
-               "params": {"bit_depth": 4}}
-
-    def verify(run_id: str) -> dict[str, Any]:
-        rec = copy.deepcopy(base)
-        rec.update({"run_id": run_id, "kind": "verify", "baseline_run_id": BASELINE})
-        rec["provenance"]["baseline_run_id"] = BASELINE
-        rec["config"]["defense"] = defense
-        return rec
-
-    ok = verify(VERIFY_OK)
-    drift = verify(VERIFY_DRIFT)
-    drift["settings_hash"] = "d" * 64
-    drift["provenance"]["settings_hash"] = "d" * 64
-    drift["score"]["settings_hash"] = "d" * 64
-    return {BASELINE: base, VERIFY_OK: ok, VERIFY_DRIFT: drift}
+    return {BASELINE: base}
 
 
 @pytest.fixture
@@ -185,10 +164,8 @@ def review_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict
             raw = record.model_dump_json().encode()
             location = f"memory://{PROJECT}/{run_id}/run_record.json/{_sha(raw)}"
             store.blobs[location] = raw
-            created_by = REQUESTER if record.kind == "verify" else CREATOR
             session.add(Run(id=run_id, project_id=PROJECT, target_id=record.config.target_id, mode="api",
-                            scanner="ml.verify" if record.kind == "verify" else "ml.campaign",
-                            status="succeeded", created_by=created_by, stage_table={}))
+                            scanner="ml.campaign", status="succeeded", created_by=CREATOR, stage_table={}))
             session.flush()
             session.add(Artifact(id=f"artifact-{run_id}-record", run_id=run_id, project_id=PROJECT,
                                  kind="ml.run_record", sha256=_sha(raw), location=location,
@@ -199,7 +176,7 @@ def review_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[dict
                 settings_hash=record.settings_hash,
                 provenance=record.provenance.model_dump(mode="json") if record.provenance else None,
                 score=record.score.model_dump(mode="json") if record.score else None,
-                limitations=list(record.limitations), baseline_run_id=record.baseline_run_id,
+                limitations=list(record.limitations),
             ))
         session.add(Run(id=PLAIN, project_id=PROJECT, mode="api", status="succeeded", stage_table={},
                         created_by=CREATOR))
@@ -242,32 +219,6 @@ def _review(api: dict[str, Any], finding_id: str) -> FindingReview:
     return MLFindingDetail.model_validate(_finding(api, finding_id).schema_blob["ml"]).review
 
 
-def _stamp_verify(api: dict[str, Any], finding_id: str, *, run_id: str, outcome: str, settings_hash: str | None,
-                  with_delta: bool = True) -> None:
-    """What the verify worker writes: the retest link, ``fixed`` / ``poc_passed`` on a verified outcome."""
-    record = api["records"][run_id]
-    delta = {"baseline_run_id": BASELINE, "mri_before": 42, "mri_after": 55, "delta": 13,
-             "delta_subscores": {"S_acc": 10.0, "S_asr": 20.0, "S_eps": 5.0, "S_conf": 0.0, "S_expl": 1.0},
-             "delta_acc_clean": {"before": {"n": 200, "n_correct": 172, "accuracy": 0.86},
-                                 "after": {"n": 200, "n_correct": 170, "accuracy": 0.85}, "delta": -0.01},
-             "delta_families": []}
-    link = FindingVerify(run_id=run_id, defense=record.config.defense, outcome=outcome,  # type: ignore[arg-type]
-                         delta=delta if with_delta else None,  # type: ignore[arg-type]
-                         settings_hash=settings_hash, baseline_run_id=BASELINE)
-    with api["get_session"]() as session:
-        finding = session.get(Finding, finding_id)
-        detail = MLFindingDetail.model_validate(finding.schema_blob["ml"])
-        detail.verify = link
-        detail.retests = [*detail.retests, link]
-        blob = dict(finding.schema_blob)
-        blob["ml"] = detail.model_dump(mode="json")
-        status = {"verified": "fixed", "still_vulnerable": "failed", "inconclusive": "open"}[outcome]
-        state = {"verified": "poc_passed", "still_vulnerable": "poc_failed", "inconclusive": "inconclusive"}[outcome]
-        blob["status"] = status
-        finding.schema_blob, finding.status, finding.validation_state = blob, status, state
-        finding.validated_at = datetime.now(UTC)
-
-
 # ---------------------------------------------------------------------------
 # The transition table as data
 # ---------------------------------------------------------------------------
@@ -276,15 +227,15 @@ def _stamp_verify(api: dict[str, Any], finding_id: str, *, run_id: str, outcome:
 def test_transition_table_shape() -> None:
     assert set(fr.TRANSITIONS) == set(fr.DECISIONS) == {"submit", "confirm", "request_changes", "dismiss",
                                                         "reopen", "resolve"}
-    # Confirm, submit, request_changes and resolve never invent a Finding.status.
-    for decision in ("submit", "confirm", "request_changes", "resolve"):
+    # Confirm, submit and request_changes never invent a Finding.status; resolve writes ``fixed``.
+    for decision in ("submit", "confirm", "request_changes"):
         assert fr.TRANSITIONS[decision].to_status is None
     assert fr.TRANSITIONS["dismiss"].to_status == "false_positive"
-    assert fr.TRANSITIONS["dismiss"].from_statuses == frozenset({"open", "failed"})
+    assert fr.TRANSITIONS["dismiss"].from_statuses == frozenset({"open"})
     assert fr.TRANSITIONS["reopen"].to_status == "open"
     assert fr.TRANSITIONS["reopen"].from_statuses == frozenset({"false_positive"})
     assert fr.TRANSITIONS["resolve"].from_review_states == frozenset({"confirmed"})
-    assert fr.TRANSITIONS["resolve"].from_statuses == frozenset({"fixed"})
+    assert fr.TRANSITIONS["resolve"].from_statuses is None and fr.TRANSITIONS["resolve"].to_status == "fixed"
     assert fr.TRANSITIONS["submit"].action == "finding.author" and fr.TRANSITIONS["submit"].author_only
     assert all(t.action == "finding.review" for d, t in fr.TRANSITIONS.items() if d != "submit")
     assert fr.REVIEW_STATES == {"unreviewed", "dismissed", "draft", "in_review", "confirmed", "resolved"}
@@ -297,12 +248,12 @@ def test_independence_is_identity_not_rank() -> None:
     assert fr.independence_violations(actor="user:a", reviewer_is_system=False, campaign_creator="user:b",
                                       revision_author="user:a") == ["revision_author"]
     assert fr.independence_violations(actor="user:a", reviewer_is_system=False, campaign_creator="user:b",
-                                      revision_author="user:c", verify_requesters=["user:a"]) == ["verify_requester"]
+                                      revision_author="user:c") == []
     assert fr.independence_violations(actor="user:a", reviewer_is_system=True, campaign_creator="user:a",
                                       revision_author="user:a") == ["system_principal", "campaign_creator",
                                                                     "revision_author"]
     assert fr.independence_violations(actor="user:z", reviewer_is_system=False, campaign_creator="user:a",
-                                      revision_author="user:b", verify_requesters=["user:c"]) == []
+                                      revision_author="user:b") == []
 
 
 def test_review_state_readers_tolerate_every_blob_shape() -> None:
@@ -362,13 +313,14 @@ def test_confirm_dismiss_reopen_matrix(review_api: dict[str, Any]) -> None:
     assert stale_review.json()["detail"]["expected_review_state"] == "in_review"
     assert reviewer.patch(status_path, json={**confirm, "expected_review_state": "bogus"}).status_code == 422
 
-    # resolve is never reachable from an unconfirmed, unverified finding: every unmet condition is named.
+    # resolve is never reachable from an unconfirmed finding: the unmet condition is named.
     blocked = reviewer.post(f"/v1/findings/{fid}/review/resolve",
                             json={"expected_status": "open", "reason": "closing"})
     assert blocked.status_code == 409 and blocked.json()["detail"]["code"] == "resolution_blocked"
-    assert blocked.json()["detail"]["unmet"] == ["validation_state_not_poc_passed", "status_not_fixed",
-                                                 "review_state_not_confirmed", "no_retest_linked"]
+    assert blocked.json()["detail"]["unmet"] == ["review_state_not_confirmed"]
+    assert "validation_state" not in blocked.json()["detail"] and "verify_run_id" not in blocked.json()["detail"]
     assert writer.last("finding.review").detail["unmet"] == blocked.json()["detail"]["unmet"]
+    assert _finding(review_api, fid).status == "open"
 
     # Audit before the write: when the success row is appended the finding is still unreviewed.
     def _still_unreviewed(event: dict[str, Any]) -> None:
@@ -388,8 +340,9 @@ def test_confirm_dismiss_reopen_matrix(review_api: dict[str, Any]) -> None:
     for key, value in {"decision": "confirm", "from_status": "open", "to_status": "open",
                        "from_review_state": "unreviewed", "to_review_state": "confirmed",
                        "reviewer": "user:reviewer", "campaign_creator": CREATOR, "author": None,
-                       "reason": confirm["reason"], "finding_id": fid, "verify_run_id": None}.items():
+                       "reason": confirm["reason"], "finding_id": fid}.items():
         assert event.detail[key] == value, key
+    assert "verify_run_id" not in event.detail
     # ``confirmed`` keeps Finding.status = open (spec 6.4): no invented status value.
     row = _finding(review_api, fid)
     assert row.status == "open" and row.schema_blob["status"] == "open"
@@ -424,7 +377,8 @@ def test_confirm_dismiss_reopen_matrix(review_api: dict[str, Any]) -> None:
     assert reviewer.get("/v1/findings", params={"status": "open"}).json()["count"] == 2
     assert reviewer.get("/v1/findings", params={"source_tool": "redsim.ml/pgd"}).json()["count"] == 1
     detail = reviewer.get(f"/v1/findings/{fid}").json()
-    assert detail["review_state"] == "confirmed" and detail["validated_at"] is None
+    assert detail["review_state"] == "confirmed"
+    assert "validated_at" not in detail and "validation_state" not in detail
     assert detail["review"]["state"] == "confirmed" and detail["review"]["revision"] is None
     outsider = review_api["as_user"](_user("outsider", "admin", project=OTHER_PROJECT))
     assert outsider.get(f"/v1/findings/{fid}").status_code == 403
@@ -446,7 +400,7 @@ def test_confirm_dismiss_reopen_matrix(review_api: dict[str, Any]) -> None:
     assert writer.last("finding.review").detail["from_review_state"] == "confirmed"
     terminal = reviewer.patch(status_path, json={**dismiss, "expected_status": "false_positive"})
     assert terminal.status_code == 409 and terminal.json()["detail"]["code"] == "run_terminal"
-    assert terminal.json()["detail"]["allowed_from"] == ["failed", "open"]
+    assert terminal.json()["detail"]["allowed_from"] == ["open"]
 
     # Reopen (REVIEW_REPORTS-03): false_positive -> open, review back to unreviewed, history kept.
     reopen = {"status": "open", "expected_status": "false_positive", "reason": "new evidence in the gallery"}
@@ -487,37 +441,12 @@ def test_confirm_dismiss_reopen_matrix(review_api: dict[str, Any]) -> None:
                          json={"expected_status": "open", "reason": "x"}).status_code == 404
 
 
-def test_dismiss_from_failed_and_confirm_from_fixed(review_api: dict[str, Any]) -> None:
-    findings = _project(review_api)
-    reviewer = review_api["as_user"](_user("reviewer", "approver"))
-    pgd = findings["pgd"]
-    _stamp_verify(review_api, pgd, run_id=VERIFY_OK, outcome="still_vulnerable", settings_hash=None)
-    assert _finding(review_api, pgd).status == "failed"
-    confirmed = reviewer.post(f"/v1/findings/{pgd}/review/confirm",
-                              json={"expected_status": "failed", "reason": "still flips after squeezing"})
-    assert confirmed.status_code == 200 and confirmed.json()["status"] == "failed"
-    dismissed = reviewer.patch(f"/v1/findings/{pgd}/status",
-                               json={"status": "false_positive", "expected_status": "failed", "reason": "noise"})
-    assert dismissed.status_code == 200 and dismissed.json()["status"] == "false_positive"
-    assert [h.action for h in _review(review_api, pgd).history] == ["confirm", "dismiss"]
-
-    fgsm = findings["fgsm"]
-    _stamp_verify(review_api, fgsm, run_id=VERIFY_OK, outcome="verified", settings_hash=None)
-    assert _finding(review_api, fgsm).status == "fixed"
-    # ``fixed`` may be confirmed (spec 6.4) but never dismissed.
-    refused = reviewer.patch(f"/v1/findings/{fgsm}/status",
-                             json={"status": "false_positive", "expected_status": "fixed", "reason": "no"})
-    assert refused.status_code == 409 and refused.json()["detail"]["code"] == "run_terminal"
-    ok = reviewer.post(f"/v1/findings/{fgsm}/review/confirm", json={"expected_status": "fixed", "reason": "ok"})
-    assert ok.status_code == 200 and ok.json()["status"] == "fixed" and ok.json()["review_state"] == "confirmed"
-
-
 # ---------------------------------------------------------------------------
-# Resolve (REVIEW_REPORTS-04) and retest links (REVIEW_REPORTS-09)
+# Resolve (REVIEW_REPORTS-04): the reviewer's decision closes the finding
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_gates_and_retest_links(review_api: dict[str, Any]) -> None:
+def test_resolve_closes_a_confirmed_finding(review_api: dict[str, Any]) -> None:
     findings = _project(review_api)
     fid = findings["fgsm"]
     writer: RecordingAuditWriter = review_api["writer"]
@@ -526,75 +455,45 @@ def test_resolve_gates_and_retest_links(review_api: dict[str, Any]) -> None:
 
     assert reviewer.post(f"/v1/findings/{fid}/review/confirm",
                          json={"expected_status": "open", "reason": "genuine"}).status_code == 200
+    assert _finding(review_api, fid).status == "open", "confirm keeps the status; only resolve writes fixed"
 
-    # A retest whose settings differ from the baseline is linked but not comparable.
-    _stamp_verify(review_api, fid, run_id=VERIFY_DRIFT, outcome="verified", settings_hash="d" * 64)
-    row = _finding(review_api, fid)
-    assert row.status == "fixed" and row.validation_state == "poc_passed"
-    drift = reviewer.post(path, json={"expected_status": "fixed", "reason": "resolved"})
-    assert drift.status_code == 409 and drift.json()["detail"]["code"] == "resolution_blocked"
-    assert drift.json()["detail"]["unmet"] == ["settings_hash_mismatch"]
-    assert drift.json()["detail"]["verify_run_id"] == VERIFY_DRIFT
-    refused = writer.last("finding.review")
-    assert refused.success is False and refused.detail["unmet"] == ["settings_hash_mismatch"]
-    assert refused.detail["verify_run_id"] == VERIFY_DRIFT and refused.detail["verify_requesters"] == [REQUESTER]
-    assert _review(review_api, fid).state == "confirmed"
-
-    retests = reviewer.get(f"/v1/findings/{fid}/retests").json()
-    assert retests["count"] == 1 and retests["baseline_run_id"] == BASELINE
-    assert retests["baseline_settings_hash"] == review_api["records"][BASELINE].settings_hash
-    link = retests["retests"][0]
-    assert link["run_id"] == VERIFY_DRIFT and link["compatible"] is False
-    assert link["mismatched"] == ["settings_hash"] and link["delta_mri"] is None and link["delta"] is None
-    assert link["outcome"] == "verified" and link["requested_by"] == REQUESTER and link["run_status"] == "succeeded"
-    assert link["defense"]["id"] == "feature_squeezing"
-
-    # A comparable retest: same settings_hash as the baseline campaign.
-    _stamp_verify(review_api, fid, run_id=VERIFY_OK, outcome="verified",
-                  settings_hash=review_api["records"][BASELINE].settings_hash)
-    retests = reviewer.get(f"/v1/findings/{fid}/retests").json()
-    assert retests["count"] == 2 and retests["retests"][1]["compatible"] is True
-    assert retests["retests"][1]["delta_mri"] == 13 and retests["retests"][1]["mismatched"] == []
-    assert review_api["as_user"](_user("reader", "viewer")).get(f"/v1/findings/{fid}/retests").status_code == 200
-    assert review_api["as_user"](_user("outsider", "admin", project=OTHER_PROJECT)).get(
-        f"/v1/findings/{fid}/retests").status_code == 403
-
-    # Independence for resolve: the retest requester and the campaign creator are refused (403), admin or not.
-    requester = review_api["as_user"](_user("requester", "admin")).post(
-        path, json={"expected_status": "fixed", "reason": "resolved"})
-    assert requester.status_code == 403 and requester.json()["detail"]["relation"] == "verify_requester"
-    assert writer.last("finding.review").detail["independence_violations"] == ["verify_requester"]
+    # Independence for resolve: the campaign creator is refused (403), admin or not.
     creator = review_api["as_user"](_user("creator", "admin")).post(
-        path, json={"expected_status": "fixed", "reason": "resolved"})
+        path, json={"expected_status": "open", "reason": "resolved"})
     assert creator.status_code == 403 and creator.json()["detail"]["relation"] == "campaign_creator"
+    assert writer.last("finding.review").detail["independence_violations"] == ["campaign_creator"]
     assert _review(review_api, fid).state == "confirmed"
 
     # Stale expectation on resolve is a conflict.
-    stale = reviewer.post(path, json={"expected_status": "open", "reason": "resolved"})
+    stale = reviewer.post(path, json={"expected_status": "fixed", "reason": "resolved"})
     assert stale.status_code == 409 and stale.json()["detail"]["code"] == "review_state_conflict"
 
     def _still_confirmed(event: dict[str, Any]) -> None:
         if event["action"] == "finding.review" and event["success"]:
             assert _review(review_api, fid).state == "confirmed"
+            assert _finding(review_api, fid).status == "open"
 
     writer.on_append = _still_confirmed
-    ok = reviewer.post(path, json={"expected_status": "fixed", "expected_review_state": "confirmed",
-                                   "reason": "measured delta at equal settings"})
+    ok = reviewer.post(path, json={"expected_status": "open", "expected_review_state": "confirmed",
+                                   "reason": "the reviewer accepts the measurement as addressed"})
     writer.on_append = None
     assert ok.status_code == 200, ok.text
     assert ok.json()["review_state"] == "resolved" and ok.json()["status"] == "fixed"
-    assert ok.json()["verify_run_id"] == VERIFY_OK
+    assert ok.json()["from_status"] == "open" and ok.json()["from_review_state"] == "confirmed"
+    assert "verify_run_id" not in ok.json() and "validation_state" not in ok.json()
     row = _finding(review_api, fid)
-    assert row.status == "fixed" and row.validation_state == "poc_passed"      # status stays the worker's
+    assert row.status == "fixed" and row.schema_blob["status"] == "fixed"
     review = _review(review_api, fid)
-    assert review.state == "resolved" and review.history[-1].verify_run_id == VERIFY_OK
-    assert [h.action for h in review.history] == ["confirm", "resolve"]
+    assert review.state == "resolved" and [h.action for h in review.history] == ["confirm", "resolve"]
+    assert review.history[-1].to_state == "resolved" and review.history[-1].from_state == "confirmed"
     event = writer.last("finding.review")
     assert event.success is True and event.detail["decision"] == "resolve"
-    assert event.detail["verify_run_id"] == VERIFY_OK and event.detail["to_review_state"] == "resolved"
-    assert event.detail["from_status"] == "fixed" and event.detail["to_status"] == "fixed"
+    assert event.detail["to_review_state"] == "resolved"
+    assert event.detail["from_status"] == "open" and event.detail["to_status"] == "fixed"
+    assert "verify_run_id" not in event.detail and "verify_requesters" not in event.detail
     listed = reviewer.get("/v1/findings", params={"review_state": "resolved"}).json()
     assert [f["id"] for f in listed["findings"]] == [fid]
+    assert reviewer.get("/v1/findings", params={"status": "fixed"}).json()["count"] == 1
 
     # Resolved is terminal for the table: no second resolve, no confirm, no dismiss.
     again = reviewer.post(path, json={"expected_status": "fixed", "reason": "again"})
@@ -602,23 +501,11 @@ def test_resolve_gates_and_retest_links(review_api: dict[str, Any]) -> None:
     assert again.json()["detail"]["unmet"] == ["review_state_not_confirmed"]
     confirm = reviewer.post(f"/v1/findings/{fid}/review/confirm", json={"expected_status": "fixed", "reason": "x"})
     assert confirm.status_code == 409 and confirm.json()["detail"]["code"] == "review_transition_invalid"
-
-
-def test_resolve_needs_a_verified_retest(review_api: dict[str, Any]) -> None:
-    findings = _project(review_api)
-    fid = findings["pgd"]
-    reviewer = review_api["as_user"](_user("reviewer", "approver"))
-    assert reviewer.post(f"/v1/findings/{fid}/review/confirm",
-                         json={"expected_status": "open", "reason": "genuine"}).status_code == 200
-    # An inconclusive retest leaves open / inconclusive: three unmet conditions, no delta in the listing.
-    _stamp_verify(review_api, fid, run_id=VERIFY_OK, outcome="inconclusive", with_delta=False,
-                  settings_hash=review_api["records"][BASELINE].settings_hash)
-    blocked = reviewer.post(f"/v1/findings/{fid}/review/resolve", json={"expected_status": "open", "reason": "r"})
-    assert blocked.status_code == 409
-    assert blocked.json()["detail"]["unmet"] == ["validation_state_not_poc_passed", "status_not_fixed",
-                                                 "retest_outcome_not_verified"]
-    link = reviewer.get(f"/v1/findings/{fid}/retests").json()["retests"][0]
-    assert link["compatible"] is True and link["delta_mri"] is None and link["outcome"] == "inconclusive"
+    dismiss = reviewer.patch(f"/v1/findings/{fid}/status",
+                             json={"status": "false_positive", "expected_status": "fixed", "reason": "no"})
+    assert dismiss.status_code == 409 and dismiss.json()["detail"]["code"] == "run_terminal"
+    assert dismiss.json()["detail"]["allowed_from"] == ["open"]
+    assert _finding(review_api, fid).status == "fixed"
 
 
 # ---------------------------------------------------------------------------
@@ -687,7 +574,7 @@ def test_analyst_draft_lifecycle(review_api: dict[str, Any]) -> None:
     assert blob["title"] == draft["title"] and blob["status"] == "open"
     assert blob["description"].startswith("Analyst-authored draft (revision 1, author user:analyst)")
     assert "[m.evasion.fgsm.eps0.03]" in blob["description"] and "not derived from measurements" in blob["description"]
-    assert blob["remediation_steps"] == "CANDIDATE (not evaluated): Evaluate feature squeezing at bit depth 4."
+    assert blob["remediation_steps"] == "CANDIDATE: Evaluate feature squeezing at bit depth 4."
     assert blob["artifact_path"] == f"artifact-{BASELINE}-record"
     assert json.loads(blob["evidence"]) == {"interpretation": [], "measurements": ["m.clean", "m.evasion.fgsm.eps0.03"],
                                             "observations": ["o.000"]}
@@ -706,7 +593,7 @@ def test_analyst_draft_lifecycle(review_api: dict[str, Any]) -> None:
     assert rev.evidence_ids == draft["evidence_ids"] and rev.observation == draft["observation"]
     assert detail.limitations[-1].startswith("Analyst-authored draft")
     row = _finding(review_api, fid)
-    assert row.source_tool == "manual" and row.validation_state == "unvalidated" and row.severity == "medium"
+    assert row.source_tool == "manual" and row.severity == "medium"
     assert row.scanner_finding_id.startswith("manual.fgsm.") and row.dedup_key.startswith(f"manual:{BASELINE}:fgsm:")
     event = writer.last("finding.author")
     assert event.success is True and event.run_id == BASELINE and event.project_id == PROJECT
@@ -813,10 +700,10 @@ def test_analyst_draft_lifecycle(review_api: dict[str, Any]) -> None:
     assert _finding(review_api, fid).status == "open"
     assert writer.last("finding.review").detail["revision"] == 3
 
-    # The verify route treats the draft as an ML finding but drafts have no measured threshold crossing:
-    # resolve stays blocked until the worker writes poc_passed and fixed.
-    blocked = reviewer.post(f"/v1/findings/{fid}/review/resolve", json={"expected_status": "open", "reason": "x"})
-    assert blocked.status_code == 409 and "no_retest_linked" in blocked.json()["detail"]["unmet"]
+    # A confirmed draft closes by the reviewer's decision like any other finding.
+    resolved = reviewer.post(f"/v1/findings/{fid}/review/resolve", json={"expected_status": "open", "reason": "x"})
+    assert resolved.status_code == 200 and resolved.json()["status"] == "fixed"
+    assert resolved.json()["review_state"] == "resolved"
 
 
 # ---------------------------------------------------------------------------
@@ -829,7 +716,7 @@ def test_status_only_decisions_for_findings_without_review_block(review_api: dic
     with review_api["get_session"]() as session:
         session.add(Finding(id=fid, scanner_finding_id="strix-001", run_id=PLAIN, project_id=PROJECT,
                             schema_blob={"id": "strix-001", "status": "open"}, status="open", severity="high",
-                            source_tool="strix", validation_state="unvalidated"))
+                            source_tool="strix"))
     reviewer = review_api["as_user"](_user("reviewer", "approver"))
     writer: RecordingAuditWriter = review_api["writer"]
     assert reviewer.get(f"/v1/findings/{fid}").json()["review_state"] is None
@@ -850,9 +737,9 @@ def test_status_only_decisions_for_findings_without_review_block(review_api: dic
                               json={"status": "open", "expected_status": "false_positive", "reason": "not a dup"})
     assert reopened.status_code == 200 and _finding(review_api, fid).status == "open"
     assert writer.last("finding.review").detail["decision"] == "reopen"
-    assert reviewer.get(f"/v1/findings/{fid}/retests").json() == {
-        "finding_id": fid, "baseline_run_id": PLAIN, "baseline_settings_hash": None, "validation_state": "unvalidated",
-        "status": "open", "review_state": None, "retests": [], "count": 0}
+    assert reviewer.get(f"/v1/findings/{fid}/retests").status_code == 404, "the retest listing left with verify"
+    resolve = reviewer.post(f"/v1/findings/{fid}/review/resolve", json={"expected_status": "open", "reason": "x"})
+    assert resolve.status_code == 409 and resolve.json()["detail"]["code"] == "review_transition_invalid"
 
 
 def test_llm_findings_review_block_is_honoured(review_api: dict[str, Any]) -> None:
@@ -862,8 +749,7 @@ def test_llm_findings_review_block_is_honoured(review_api: dict[str, Any]) -> No
         session.add(Finding(id=fid, scanner_finding_id="llm.dan.mitigation", run_id=BASELINE, project_id=PROJECT,
                             schema_blob={"id": "llm.dan.mitigation", "status": "open",
                                          "llm": {"probe_id": "dan", "hit_rate": 1.0, "review": {"state": "unreviewed"}}},
-                            status="open", severity="high", source_tool="redsim.ml/llm_probe",
-                            validation_state="unvalidated"))
+                            status="open", severity="high", source_tool="redsim.ml/llm_probe"))
     reviewer = review_api["as_user"](_user("reviewer", "approver"))
     assert reviewer.get(f"/v1/findings/{fid}").json()["review_state"] == "unreviewed"
     confirmed = reviewer.post(f"/v1/findings/{fid}/review/confirm",
@@ -873,7 +759,8 @@ def test_llm_findings_review_block_is_honoured(review_api: dict[str, Any]) -> No
     assert row.status == "open" and row.schema_blob["llm"]["probe_id"] == "dan"
     review = FindingReview.model_validate(row.schema_blob["llm"]["review"])
     assert review.state == "confirmed" and [h.action for h in review.history] == ["confirm"]
-    # No retest can ever be linked to an LLM finding, so resolve stays blocked and no MRI enters it.
-    blocked = reviewer.post(f"/v1/findings/{fid}/review/resolve", json={"expected_status": "open", "reason": "x"})
-    assert blocked.status_code == 409 and "no_retest_linked" in blocked.json()["detail"]["unmet"]
     assert reviewer.get("/v1/findings", params={"review_state": "confirmed"}).json()["count"] == 1
+    # The reviewer's decision closes an LLM finding the same way; no MRI enters it.
+    resolved = reviewer.post(f"/v1/findings/{fid}/review/resolve", json={"expected_status": "open", "reason": "x"})
+    assert resolved.status_code == 200 and resolved.json()["status"] == "fixed"
+    assert FindingReview.model_validate(_finding(review_api, fid).schema_blob["llm"]["review"]).state == "resolved"

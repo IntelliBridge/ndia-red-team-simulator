@@ -1,6 +1,6 @@
 """``GET /v1/exports``: the export inventory behind the web Exports page.
 
-One read route. A row per campaign or verify run of the caller's projects (or
+One read route. A row per campaign run of the caller's projects (or
 of ``?project=`` after the membership gate) with the state of its report
 formats (spec 14.8, 17.1) and of its adversarial dataset export (spec 27.1),
 composed server-side by ``services.ml_exports.list_exports`` so the page loads
@@ -33,15 +33,12 @@ _LIMIT_DEFAULT = 50
 
 
 @router.get("")
-def list_exports_route(project: str | None = None, kind: str | None = None, limit: int = _LIMIT_DEFAULT,
+def list_exports_route(project: str | None = None, limit: int = _LIMIT_DEFAULT,
                        user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """The export inventory: ``{exports, count, report_formats, dataset_format, limit}``."""
     from redsim.db.session import get_session
-    from redsim.services.ml_exports import DATASET_FORMAT, REPORT_FORMATS, RUN_KINDS, list_exports
+    from redsim.services.ml_exports import DATASET_FORMAT, REPORT_FORMATS, list_exports
 
-    if kind is not None and kind not in RUN_KINDS.values():
-        raise api_error(PARAMS_OUT_OF_RANGE, "kind must be one of campaign|verify", field="kind",
-                        allowed=sorted(RUN_KINDS.values()))
     if not 1 <= limit <= _LIMIT_MAX:
         raise api_error(PARAMS_OUT_OF_RANGE, f"limit must be between 1 and {_LIMIT_MAX}", field="limit",
                         minimum=1, maximum=_LIMIT_MAX)
@@ -54,7 +51,7 @@ def list_exports_route(project: str | None = None, kind: str | None = None, limi
 
     try:
         with get_session() as sess:
-            rows = list_exports(sess, project_ids=project_ids, limit=limit, kind=kind)
+            rows = list_exports(sess, project_ids=project_ids, limit=limit)
     except RuntimeError as exc:  # REDSIM_DB_URL missing
         raise api_error(DB_UNAVAILABLE, str(exc)) from exc
     return {

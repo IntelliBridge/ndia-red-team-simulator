@@ -72,16 +72,9 @@ class TestApiClient(unittest.TestCase):
         # no method that could 404 against it.
         self.assertFalse(hasattr(api_client.ApiClient, "fix"))
 
-    def test_verify_posts_with_no_body(self):
-        captured: list = []
-        client = api_client.ApiClient(base_url="http://api.local", token=None)
-        with patch("urllib.request.urlopen",
-                   _stub_urlopen({"job_id": "j3"}, captured)):
-            client.verify(finding_id="f-1")
-        method, url, body, _ = captured[0]
-        self.assertEqual(method, "POST")
-        self.assertEqual(url, "http://api.local/v1/findings/f-1/verify")
-        self.assertIsNone(body)
+    def test_verify_route_client_was_removed_with_the_verify_paradigm(self):
+        # /v1/findings/{id}/verify no longer exists server-side (2026-09-09).
+        self.assertFalse(hasattr(api_client.ApiClient, "verify"))
 
     def test_http_error_is_surfaced_as_ApiError(self):
         client = api_client.ApiClient(base_url="http://api.local", token=None)

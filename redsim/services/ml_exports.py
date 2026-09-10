@@ -1,6 +1,6 @@
 """The export inventory behind ``GET /v1/exports`` (the web Exports page).
 
-One row per campaign or verify run of the caller's projects, newest first,
+One row per campaign run of the caller's projects, newest first,
 saying what has left the platform for that run and what still can:
 
 * the **reports** in the four formats of spec 14.8 and 17.1 (``md``, ``json``,
@@ -37,8 +37,8 @@ from redsim.services.reports import REPORT_RENDER_JOB_TYPE
 REPORT_FORMATS: tuple[str, ...] = ("md", "json", "html", "pdf")
 #: The one dataset export format (spec 27.1).
 DATASET_FORMAT = "croissant-parquet"
-#: Run kinds the inventory lists, keyed by the ``Run.scanner`` the admission wrote.
-RUN_KINDS: dict[str, str] = {"ml.campaign": "campaign", "ml.verify": "verify"}
+#: The run kind the inventory lists, keyed by the ``Run.scanner`` the admission wrote.
+RUN_KINDS: dict[str, str] = {"ml.campaign": "campaign"}
 #: ``Job.status`` values that mean the export has not finished.
 _ACTIVE = frozenset({"queued", "running"})
 _TERMINAL = frozenset({"succeeded", "failed", "cancelled"})
@@ -198,18 +198,16 @@ def _dataset_block(run: Any, artifacts: list[Any], jobs: list[Any], *, fixture: 
     return block
 
 
-def list_exports(session: Session, *, project_ids: list[str] | None, limit: int,
-                 kind: str | None = None) -> list[dict[str, Any]]:
-    """The export rows of the campaign and verify runs in ``project_ids`` (``None`` for every project).
+def list_exports(session: Session, *, project_ids: list[str] | None, limit: int) -> list[dict[str, Any]]:
+    """The export rows of the campaign runs in ``project_ids`` (``None`` for every project).
 
-    ``kind`` narrows to ``campaign`` or ``verify``. Follow-up runs (the
-    ``ml.dataset_export`` run an export creates), LLM probe runs, validation
-    runs and pentest-era runs are not exports of anything and are not listed.
+    Follow-up runs (the ``ml.dataset_export`` run an export creates), LLM probe
+    runs, validation runs and pentest-era runs are not exports of anything and
+    are not listed.
     """
     from redsim.db.models import Artifact, Job, ReportSnapshot, Run, Target
 
-    scanners = [scanner for scanner, run_kind in RUN_KINDS.items() if kind in (None, run_kind)]
-    stmt = select(Run).where(Run.scanner.in_(scanners)).order_by(Run.created_at.desc(), Run.id.desc())
+    stmt = select(Run).where(Run.scanner.in_(list(RUN_KINDS))).order_by(Run.created_at.desc(), Run.id.desc())
     if project_ids is not None:
         if not project_ids:
             return []

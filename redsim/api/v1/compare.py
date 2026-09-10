@@ -11,15 +11,11 @@ Both are thin over the pure ``redsim.ml.compare`` module, which owns the rules:
   seed, n_samples"; a differing weight vector is named ``scoring.weights``;
 * a run whose score is absent or partial (``mri`` is ``None``) is refused with
   ``409 score_unavailable``, never compared on the subscores that do exist;
-* a verify pairing (same ``model_sha256``, one run's ``baseline_run_id`` is the
-  other) answers ``mode: "verify_delta"`` with the measured ΔMRI: the delta the
-  worker persisted on the verify run, or, when it did not persist one, the same
-  ``redsim.ml.scoring.delta`` computation over the two stored records;
-* the same settings on a different model answers ``mode: "side_by_side"`` with
-  two full scorecards and ``delta: null`` (spec 15.6): two scorecards, never one
-  delta;
-* the N-run table lists rows in request order, carries a delta only on verify
-  rows whose own baseline is in the set, and has no mean, rank or aggregate.
+* a compatible pair answers ``mode: "side_by_side"`` with two full scorecards
+  (spec 15.6): two measurements read next to each other, never one number
+  derived from both;
+* the N-run table lists rows in request order and has no mean, rank or
+  aggregate.
 
 Every run is membership-gated before any record is read, so a non-member
 learns nothing about the other campaigns. ``/campaign`` carries
@@ -140,21 +136,6 @@ _compatibility = cmp.compatibility
 _require_complete_score = cmp.require_complete_score
 _changed_variables = cmp.changed_variables
 _scorecard = cmp.scorecard_projection
-_comparison_families = cmp.comparison_families
-
-
-def _measured_delta(
-    *, verify: dict[str, Any], verify_score: dict[str, Any], baseline: dict[str, Any],
-    baseline_score: dict[str, Any],
-) -> tuple[dict[str, Any], str]:
-    """The pure module's measured delta with its refusals mapped onto the 17.3 codes."""
-    try:
-        return cmp.measured_delta(verify=verify, verify_score=verify_score, baseline=baseline,
-                                  baseline_score=baseline_score)
-    except cmp.Incompatible as exc:
-        raise api_error(INCOMPATIBLE_CAMPAIGNS, str(exc), reasons=list(exc.reasons)) from exc
-    except cmp.ScoreUnavailable as exc:
-        raise api_error(SCORE_UNAVAILABLE, "; ".join(exc.reasons), reasons=list(exc.reasons)) from exc
 
 
 # --------------------------------------------------------------------------- N-run table
@@ -179,7 +160,7 @@ def compare_many(
     ids: str = Query(..., description="comma-separated run ids, 2 to 10, in the order the rows should appear"),
     user: CurrentUser = Depends(get_current_user),
 ) -> dict[str, Any]:
-    """The N-run comparison table (REVIEW_REPORTS-26): request order, no mean or rank, deltas only on verify rows."""
+    """The N-run comparison table (REVIEW_REPORTS-26): request order, no mean, rank or aggregate."""
     run_ids = _parse_ids(ids)
     # Membership on every run before any record is read.
     for run_id in run_ids:
@@ -258,8 +239,6 @@ def compare_campaigns(
     left, left_campaign = _load_campaign(run_id)
     right, right_campaign = _load_campaign(with_)
 
-    left_baseline = cmp.baseline_of(left, left_campaign)
-    is_pairing = cmp.is_verify_pairing(run_id, left, left_campaign, with_, right, right_campaign)
     mismatched, unchanged = cmp.pair_reasons(run_id, left, left_campaign, with_, right, right_campaign)
     if mismatched:
         raise api_error(
@@ -277,31 +256,8 @@ def compare_campaigns(
             reasons=left_reasons + right_reasons,
         )
 
-    if is_pairing:
-        verify, baseline = (left, right) if left_baseline == with_ else (right, left)
-        verify_score, baseline_score = (left_score, right_score) if verify is left else (right_score, left_score)
-        delta, source = _measured_delta(
-            verify=verify, verify_score=verify_score, baseline=baseline, baseline_score=baseline_score,
-        )
-        defense = cmp.config(verify).get("defense")
-        return {
-            "compatible": True, "mode": "verify_delta",
-            "verify_run_id": verify.get("run_id"), "baseline_run_id": baseline.get("run_id"),
-            "defense": defense,
-            "delta_source": source,
-            "mri_before": delta.get("mri_before"), "mri_after": delta.get("mri_after"),
-            "delta_mri": delta.get("delta"),
-            "delta_dimensions": delta.get("delta_subscores"),
-            "delta_acc_clean": delta.get("delta_acc_clean"),
-            "delta_families": cmp.comparison_families(delta),
-            "changed_variables": ["defense"],
-            "unchanged_variables": unchanged,
-            "ignored_variables": list(IGNORED_VARIABLES),
-            "non_default_weights": cmp.non_default_weights(verify),
-            "caveats": list(verify.get("limitations", [])),
-        }
     return {
-        "compatible": True, "mode": "side_by_side", "delta": None,
+        "compatible": True, "mode": "side_by_side",
         "scorecards": [cmp.scorecard_projection(left, left_score), cmp.scorecard_projection(right, right_score)],
         "changed_variables": cmp.changed_variables(left, right),
         "unchanged_variables": unchanged,

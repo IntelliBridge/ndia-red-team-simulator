@@ -889,19 +889,15 @@ def test_validate_task_with_a_deleted_profile_refuses_without_probing(
 
 
 # ---------------------------------------------------------------------------
-# Catalog seams closed with the B1 assemble: text / detection rows, defense phases, the LLM domain row
+# Catalog seams closed with the B1 assemble: text / detection rows, the LLM domain row
 # ---------------------------------------------------------------------------
 
 
-def test_catalog_lists_text_and_detection_targets_and_reads_defense_phases_from_the_catalog(
-    api: SimpleNamespace,
-) -> None:
+def test_catalog_lists_text_and_detection_targets(api: SimpleNamespace) -> None:
     """``import redsim.ml.targets`` registers ``sms_tfidf_lr`` and ``assets_frcnn_mnv3`` (MODALITIES-14, -29), so
     ``GET /v1/models`` lists them as unregistered bundled rows with their honest status (no assets built in this
-    harness: ``not_implemented`` with the build-assets reason); ``GET /v1/defenses`` says ``phase: "B"`` for the
-    training defenses because the phase is the catalog row's, not stamped; the LLM domain row names the route
-    that is live (``endpoint_kind: llm`` + ``/probes``) instead of a Phase B placeholder."""
-    from redsim.ml.defenses import ALL_DEFENSES
+    harness: ``not_implemented`` with the build-assets reason); the LLM domain row names the route that is live
+    (``endpoint_kind: llm`` + ``/probes``) instead of a Phase B placeholder."""
     from redsim.ml.targets import list_targets
 
     registry = {info.id: info for info in list_targets()}
@@ -921,21 +917,6 @@ def test_catalog_lists_text_and_detection_targets_and_reads_defense_phases_from_
     assert llm["status"] == "not_implemented" and llm["phase"] == "B" and llm["modality"] == "llm"
     assert "endpoint_kind: llm" in llm["reason"] and "/probes" in llm["reason"]
     assert "not implemented" not in llm["reason"].lower(), "LLM registration and probes are live (LLM-03)"
-
-    defenses = api.client.get("/v1/defenses")
-    assert defenses.status_code == 200, defenses.text
-    body = defenses.json()
-    by_id = {row["id"]: row for row in body["defenses"]}
-    assert body["count"] == len(ALL_DEFENSES) == len(by_id) == 5
-    for source in ALL_DEFENSES:
-        row = by_id[source["id"]]
-        assert row["phase"] == source["phase"] and row["kind"] == source["kind"], row["id"]
-        assert row["modalities"] == list(source["domains"]) and "domains" not in row
-        assert row["status"] == "available"
-        assert all(isinstance(p, dict) and "name" in p for p in row["params_schema"])
-    assert {row["phase"] for row in by_id.values() if row["kind"] == "training"} == {"B"}
-    assert {row["phase"] for row in by_id.values() if row["kind"] == "preprocessing"} == {"A"}
-    assert by_id["adversarial_training"]["requires"] == {"torch_module": True, "train_slice": True}
 
 
 # ---------------------------------------------------------------------------

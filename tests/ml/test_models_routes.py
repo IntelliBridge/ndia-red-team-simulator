@@ -504,7 +504,7 @@ def _campaign_table(engine: Any) -> Any:
         Column("kind", String, nullable=False), Column("modality", String, nullable=False),
         Column("config", JSON, nullable=False), Column("settings_hash", String),
         Column("provenance", JSON), Column("score", JSON), Column("limitations", JSON, nullable=False),
-        Column("baseline_run_id", String), Column("parent_run_id", String), Column("reviewer_notes", Text),
+        Column("parent_run_id", String), Column("reviewer_notes", Text),
         Column("created_at", DateTime), Column("completed_at", DateTime),
     )
     table.create(engine)
@@ -519,14 +519,14 @@ def test_detail_campaign_history_and_last_run_id(api: SimpleNamespace) -> None:
                      scanner="ml.campaign", stage_table={}, created_at=now - timedelta(hours=2),
                      completed_at=now - timedelta(hours=1)))
         sess.add(Run(id="run-new", project_id=PROJECT, target_id="m-hist", mode="api", status="running",
-                     scanner="ml.verify", stage_table={}, created_at=now - timedelta(minutes=5)))
+                     scanner="ml.campaign", stage_table={}, created_at=now - timedelta(minutes=5)))
         sess.commit()
 
     # Without the migration-owned table the history comes from Run rows and says so.
     detail = api.client.get("/v1/models/m-hist").json()
     assert detail["last_run_id"] == "run-new"
     assert [entry["run_id"] for entry in detail["campaign_history"]] == ["run-new", "run-old"]
-    assert detail["campaign_history"][0]["kind"] == "verify" and detail["campaign_history"][1]["kind"] == "attack"
+    assert [entry["kind"] for entry in detail["campaign_history"]] == ["attack", "attack"]
     assert detail["campaign_history"][0]["score_status"] == "pending"
     assert detail["campaign_history"][1]["score_status"] == "unavailable"
     assert all(entry["campaign_record"] == "unavailable" for entry in detail["campaign_history"])
@@ -542,9 +542,8 @@ def test_detail_campaign_history_and_last_run_id(api: SimpleNamespace) -> None:
             settings_hash="a" * 64, score={"mri": 0.42}, limitations=[],
         ))
         sess.execute(table.insert().values(
-            run_id="run-new", project_id=PROJECT, target_id="m-hist", kind="verify", modality="image",
-            config={"attack_ids": ["fgsm"], "reference_eps": 0.03}, settings_hash="a" * 64,
-            baseline_run_id="run-old", limitations=[],
+            run_id="run-new", project_id=PROJECT, target_id="m-hist", kind="attack", modality="image",
+            config={"attack_ids": ["fgsm"], "reference_eps": 0.03}, settings_hash="a" * 64, limitations=[],
         ))
         sess.commit()
     history = api.client.get("/v1/models/m-hist").json()["campaign_history"]
@@ -553,7 +552,7 @@ def test_detail_campaign_history_and_last_run_id(api: SimpleNamespace) -> None:
     assert old["attack_ids"] == ["fgsm", "pgd"] and old["reference_eps"] == 0.03 and old["settings_hash"] == "a" * 64
     assert old["score_status"] == "scored" and old["scorecard_url"] == "/v1/runs/run-old/campaign"
     assert "mri" not in json.dumps(old), "the MRI is a link into the scorecard, never a bare number in a list"
-    assert new["baseline_run_id"] == "run-old" and new["score_status"] == "pending" and new["scorecard_url"] is None
+    assert "baseline_run_id" not in new and new["score_status"] == "pending" and new["scorecard_url"] is None
     assert "campaign_record" not in old
 
 

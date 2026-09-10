@@ -123,7 +123,6 @@ def _ml_campaigns_mirror(engine):
         Column("provenance", JSON),
         Column("score", JSON),
         Column("limitations", JSON, nullable=False),
-        Column("baseline_run_id", String),
         Column("parent_run_id", String),
         Column("batch_id", String),
         Column("reviewer_notes", Text),

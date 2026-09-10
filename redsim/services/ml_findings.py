@@ -48,8 +48,9 @@ logger = logging.getLogger(__name__)
 
 _TERMINAL = {"succeeded", "failed", "cancelled"}
 _SUPPORTED_MODALITIES = {"image", "tabular"}
-# Spec 6.4: the only user-owned transition is ``open | failed -> false_positive``.
-DISMISSABLE_FROM: frozenset[str] = frozenset({"open", "failed"})
+# Spec 6.4: the only user-owned status transition is ``open -> false_positive`` (``fixed`` is the
+# reviewer's ``resolve`` decision, ``redsim.services.finding_review``).
+DISMISSABLE_FROM: frozenset[str] = frozenset({"open"})
 DISMISSED_STATUS = "false_positive"
 
 # Campaign-level artifact kinds that belong on every finding of the run (spec 5.7:
@@ -311,10 +312,10 @@ def finding_description(
 
 
 def finding_remediation_steps(recommendations: Sequence[CandidateRecommendation]) -> str | None:
-    """Spec 5.7: ``"CANDIDATE (not evaluated): ..."`` rendering of the rules-layer candidates."""
+    """Spec 5.7: ``"CANDIDATE: ..."`` rendering of the rules-layer candidates, never an expected gain."""
     if not recommendations:
         return None
-    lines = [f"CANDIDATE ({r.validation}): {r.title}. {r.rationale}" for r in recommendations]
+    lines = [f"CANDIDATE: {r.title}. {r.rationale}" for r in recommendations]
     return "\n".join(lines)
 
 
@@ -482,7 +483,6 @@ def project_campaign_findings(session: Session, campaign: CampaignRecord) -> lis
             id=str(uuid4()), scanner_finding_id=scanner_id, run_id=campaign.run_id,
             project_id=run.project_id, schema_blob=finding, status="open",
             severity=inputs.severity, source_tool=f"redsim.ml/{attack_id}",
-            validation_state="unvalidated",
             dedup_key=f"ml:{model_sha[:16]}:{attack_id}:{campaign.settings_hash[:16]}",
         )
         session.add(row)
@@ -813,7 +813,6 @@ def project_llm_findings(
         db_row = Finding(
             id=str(uuid4()), scanner_finding_id=scanner_id, run_id=run_id, project_id=project_id,
             schema_blob=finding, status="open", severity=severity, source_tool=LLM_SOURCE_TOOL,
-            validation_state="unvalidated",
             dedup_key=f"llm:{str(model_id or '')[:32]}:{probe_id}:{detector}:{settings_hash[:16]}",
         )
         session.add(db_row)

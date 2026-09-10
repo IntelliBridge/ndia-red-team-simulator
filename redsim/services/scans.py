@@ -63,9 +63,9 @@ class JobHandle:
     def to_response(self) -> dict[str, str]:
         """The admission JSON every job endpoint returns.
 
-        One shared shape across scan / verify so clients get the same
+        One shared shape across the admission routes so clients get the same
         ``run_id`` + ``job_id`` + pollable ``status_url`` regardless of which
-        admission route they hit.
+        one they hit.
         """
         return {
             "run_id": self.run_id,
