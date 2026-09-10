@@ -3,6 +3,7 @@ import "@/styles/globals.css";
 import { CommandPalette } from "@/components/command-palette";
 import { NavLinks } from "@/components/nav-links";
 import { SessionKeepalive } from "@/components/session-keepalive";
+import { SiteFooter } from "@/components/site-footer";
 import { env } from "@/env";
 import { TRPCReactProvider } from "@/lib/trpc/client";
 
@@ -114,14 +115,7 @@ export default function RootLayout({
             className="mx-auto max-w-6xl px-6 py-8"
           >
             {children}
-            <footer className="redsim-footer">
-              <div className="redsim-meta mb-2">
-                REDSIM // ADVERSARIAL ML RED-TEAM SIMULATOR
-              </div>
-              Proof of concept on open, unclassified public data. Results are
-              evidence for human review, not a safety, readiness, or
-              certification determination.
-            </footer>
+            <SiteFooter />
           </main>
           <CommandPalette links={NAV_LINKS} />
           <SessionKeepalive />
