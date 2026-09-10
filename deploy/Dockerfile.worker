@@ -27,8 +27,14 @@ COPY pyproject.toml ./
 COPY redsim ./redsim
 
 # This image runs the attacks, so it carries the ml extra (torch, ART,
-# SHAP, onnxruntime, scikit-learn) on top of the Celery worker deps.
-RUN pip install -e ".[worker,ml]"
+# SHAP, onnxruntime, scikit-learn) on top of the Celery worker deps. The api
+# extra is here too: the campaign task imports redsim.services.reports and
+# redsim.services.ml_campaigns, which raise the spec 17.3 codes from
+# redsim.api.errors, and importing that package needs fastapi. Without it
+# every redsim.ml_campaign_run ended at pickup with ModuleNotFoundError.
+# The reverse boundary (no torch, ART, onnxruntime or SHAP in the api image)
+# is unchanged and still pinned by tests/test_api_process_has_no_ml.py.
+RUN pip install -e ".[api,worker,ml]"
 
 # A standalone worker consumes both queues so nothing is stranded; the compose
 # stack overrides this to run a dedicated pool per queue (-Q scans / -Q default)
