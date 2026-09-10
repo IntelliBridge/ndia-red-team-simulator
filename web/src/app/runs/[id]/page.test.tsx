@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import campaignFixture from "@/__fixtures__/campaign.json";
 
 const mocks = vi.hoisted(() => ({
+  api: vi.fn(),
   useCampaign: vi.fn(),
   useRequireAuth: vi.fn(),
   useRoles: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("@/hooks/useRunEvents", () => ({
 }));
 vi.mock("@/lib/api", async () => ({
   ...(await vi.importActual("@/lib/api")),
+  api: mocks.api,
   cancelRun: mocks.cancelRun,
   compareRuns: mocks.compareRuns,
   dismissFinding: mocks.dismissFinding,
@@ -47,6 +49,7 @@ vi.mock("@/lib/api", async () => ({
   reportUrl: (id: string, ext: string) => `/v1/runs/${id}/report.${ext}`,
 }));
 
+import { ApiError } from "@/lib/api";
 import RunPage from "./page";
 
 type RunEvent = {
@@ -72,8 +75,8 @@ function setCampaign(data: ReturnType<typeof campaign> | undefined, error?: unkn
   });
 }
 
-function renderPage() {
-  return render(createElement(RunPage, { params: { id: "fixture-run-001" } }));
+function renderPage(id = "fixture-run-001") {
+  return render(createElement(RunPage, { params: { id } }));
 }
 
 beforeEach(() => {
@@ -228,5 +231,74 @@ describe("/runs/[id] campaign review", () => {
     expect(screen.getByText(/Changed variables: seed/)).toBeTruthy();
     expect(screen.queryByText(/ΔMRI/)).toBeNull();
     expect(screen.queryByText(/verify/i)).toBeNull();
+  });
+});
+
+describe("/runs/[id] runs without a campaign record", () => {
+  function notFound() {
+    return new ApiError(404, JSON.stringify({ detail: { code: "campaign_not_found" } }));
+  }
+
+  it("shows a model validation run instead of 'Campaign not found'", async () => {
+    setCampaign(undefined, notFound());
+    mocks.api.mockResolvedValue({
+      id: "ingest-run-001",
+      project_id: "default",
+      status: "succeeded",
+      scanner: "ml.ingest",
+      mode: "api",
+      created_at: "2026-09-10T12:22:55Z",
+      completed_at: "2026-09-10T12:23:01Z",
+      stage_table: {},
+    });
+    renderPage("ingest-run-001");
+    expect(await screen.findByTestId("run-fallback")).toBeTruthy();
+    expect(screen.getByText("model validation")).toBeTruthy();
+    expect(screen.getByText(/not an attack campaign/)).toBeTruthy();
+    expect(screen.queryByText("Campaign not found.")).toBeNull();
+  });
+
+  it("shows a failed campaign's error and stages, never a scorecard", async () => {
+    setCampaign(undefined, notFound());
+    mocks.api.mockResolvedValue({
+      id: "failed-run-001",
+      project_id: "default",
+      status: "failed",
+      scanner: "ml.campaign",
+      mode: "api",
+      created_at: "2026-09-10T04:53:42Z",
+      completed_at: "2026-09-10T05:10:00Z",
+      stage_table: {
+        error: "SandboxKilled: ML sandbox child died with signal SIGKILL",
+        stages: {
+          load_target: { status: "succeeded" },
+          "attack:pgd": { status: "failed" },
+        },
+      },
+    });
+    renderPage("failed-run-001");
+    expect(await screen.findByTestId("run-fallback")).toBeTruthy();
+    expect(screen.getByText(/did not complete/)).toBeTruthy();
+    expect(screen.getByTestId("run-fallback-error").textContent).toContain(
+      "SandboxKilled",
+    );
+    expect(screen.queryByText("MRI scorecard")).toBeNull();
+  });
+
+  it("says a running campaign is still running", async () => {
+    setCampaign(undefined, notFound());
+    mocks.api.mockResolvedValue({
+      id: "running-run-001",
+      project_id: "default",
+      status: "running",
+      scanner: "ml.campaign",
+      mode: "api",
+      created_at: "2026-09-10T12:30:52Z",
+      completed_at: null,
+      stage_table: { stages: { load_target: { status: "running" } } },
+    });
+    renderPage("running-run-001");
+    expect(await screen.findByTestId("run-fallback")).toBeTruthy();
+    expect(screen.getByText(/still running/)).toBeTruthy();
   });
 });

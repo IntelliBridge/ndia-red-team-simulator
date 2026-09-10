@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import {
@@ -47,7 +48,17 @@ import { LlmScorecardPanel } from "./llm-scorecard";
 // falls back to GET /v1/runs/{id} to learn what kind of run it is.
 const LLM_SCANNER = "ml.llm_probe";
 const LLM_RUN_KIND = "llm_probe";
+const CAMPAIGN_SCANNER = "ml.campaign";
 const ACTIVE_RUN = new Set(["queued", "running"]);
+// Follow-up and ingest runs that never carry a campaign record. Clicking one
+// in /runs used to end in "Campaign not found"; the page now shows the run.
+const RUN_KIND_LABELS: Record<string, string> = {
+  "ml.ingest": "model validation",
+  "ml.dataset_export": "dataset export",
+  "ml.integration_push": "Foundry push",
+  "ml.dataset_ingest": "dataset validation",
+  [CAMPAIGN_SCANNER]: "campaign review",
+};
 const REPORT_KIND_PREFIX = "ml.report_";
 
 export default function RunPage({ params }: { params: { id: string } }) {
@@ -408,6 +419,134 @@ export default function RunPage({ params }: { params: { id: string } }) {
         <div className="h-40 animate-pulse bg-muted" />
       </div>
     );
+  if (error && campaignMissing && runDetail && error.status === 404) {
+    // The run exists but has no campaign record: a model validation, dataset
+    // export or Foundry push run, or a campaign that is still running or did
+    // not complete. Show the run itself instead of "Campaign not found".
+    const scanner = runDetail.scanner ?? "";
+    const isCampaign = scanner === CAMPAIGN_SCANNER;
+    const kind = RUN_KIND_LABELS[scanner] ?? "run";
+    const table = (runDetail.stage_table ?? {}) as Record<string, unknown>;
+    const stageMap =
+      table.stages && typeof table.stages === "object"
+        ? (table.stages as Record<string, { status?: string }>)
+        : {};
+    const tableStages: StageEntry[] = Object.entries(stageMap).map(
+      ([name, row]) => {
+        const mode = String(row?.status ?? "queued");
+        return {
+          name,
+          mode,
+          success:
+            mode === "succeeded"
+              ? true
+              : mode === "failed" || mode === "timed_out"
+                ? false
+                : null,
+        };
+      },
+    );
+    const runStages = stages.length ? stages : tableStages;
+    const tableError =
+      typeof table.error === "string" && table.error ? table.error : null;
+    const parentRunId =
+      typeof table.parent_run_id === "string" ? table.parent_run_id : null;
+    const active = ACTIVE_RUN.has(runDetail.status);
+    const fallbackRole = roles[runDetail.project_id];
+    const summary = isCampaign
+      ? active
+        ? "The campaign is still running. The MRI scorecard, curves and findings appear here when it completes."
+        : runDetail.status === "cancelled"
+          ? "The campaign was cancelled before it completed. No campaign record was written."
+          : "The campaign did not complete. No campaign record was written, so there is no MRI or scorecard for this run."
+      : `This run is a ${kind}, not an attack campaign. It carries no MRI, scorecard or findings.`;
+    return (
+      <div className="space-y-4" data-testid="run-fallback">
+        <header className="gap-4 flex flex-wrap items-end justify-between">
+          <div>
+            <div className="redsim-kicker">{kind}</div>
+            <h1 className="font-mono text-2xl">{params.id}</h1>
+            <div className="mt-2 gap-2 flex flex-wrap items-center">
+              <RunStatusBadge status={runDetail.status} />
+              <span className="redsim-meta">{scanner || "unknown scanner"}</span>
+            </div>
+          </div>
+          {isCampaign && isCancellable(runDetail.status) && (
+            <RoleGated minRole="remediator" callerRole={fallbackRole}>
+              <button
+                type="button"
+                className="redsim-ghost"
+                onClick={() => void cancel()}
+              >
+                Cancel run
+              </button>
+            </RoleGated>
+          )}
+        </header>
+        {cancelError && (
+          <p className="text-warning text-sm" role="alert">
+            {cancelError}
+          </p>
+        )}
+        <PanelSection eyebrow="01" title="Run">
+          <p className="text-sm">{summary}</p>
+          <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="redsim-meta">Project</dt>
+              <dd className="font-mono">{runDetail.project_id}</dd>
+            </div>
+            <div>
+              <dt className="redsim-meta">Started</dt>
+              <dd className="font-mono">{runDetail.created_at}</dd>
+            </div>
+            {runDetail.completed_at && (
+              <div>
+                <dt className="redsim-meta">Completed</dt>
+                <dd className="font-mono">{runDetail.completed_at}</dd>
+              </div>
+            )}
+            {parentRunId && (
+              <div>
+                <dt className="redsim-meta">Source campaign</dt>
+                <dd>
+                  <Link
+                    className="text-primary font-mono underline"
+                    href={`/runs/${encodeURIComponent(parentRunId)}`}
+                  >
+                    {parentRunId}
+                  </Link>
+                </dd>
+              </div>
+            )}
+          </dl>
+          {tableError && (
+            <p
+              className="border-warning/40 bg-warning/10 mt-3 p-3 text-sm border"
+              data-testid="run-fallback-error"
+            >
+              {tableError}
+            </p>
+          )}
+        </PanelSection>
+        {runStages.length > 0 && (
+          <PanelSection eyebrow="02" title="Stages">
+            <StageTimeline stages={runStages} />
+          </PanelSection>
+        )}
+        <p className="text-sm">
+          {scanner === "ml.ingest" ? (
+            <Link className="text-primary underline" href="/models">
+              Back to models
+            </Link>
+          ) : (
+            <Link className="text-primary underline" href="/runs">
+              Back to runs
+            </Link>
+          )}
+        </p>
+      </div>
+    );
+  }
   if (error)
     return (
       <div className="border-destructive/40 bg-destructive/10 p-4 text-sm border">

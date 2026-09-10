@@ -13,7 +13,9 @@ ExecStart=/usr/local/bin/redsim-run scans celery -A redsim.workers.celery_app wo
 Restart=always
 RestartSec=3
 KillMode=mixed
-TimeoutStopSec=60
+# A campaign runs up to 35 min (Celery hard limit 2100 s). A stop is a warm
+# shutdown: the worker finishes the task in flight, then exits. SIGKILL only after.
+TimeoutStopSec=2400
 LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
