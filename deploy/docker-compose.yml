@@ -244,6 +244,12 @@ services:
       # completes the login and mints no redsim cookies, and API calls 401.
       REDSIM_API_SESSION_PRIVATE_KEY: ${REDSIM_API_SESSION_PRIVATE_KEY:-}
       REDSIM_ENV: dev
+      # The finding chat calls the Pythia gateway from the Next server with the
+      # same names the Python services read. Empty leaves the chat unavailable.
+      PYTHIA_BASE_URL: ${PYTHIA_BASE_URL:-}
+      PYTHIA_API_KEY: ${PYTHIA_API_KEY:-}
+      PYTHIA_PERSONA: ${PYTHIA_PERSONA:-}
+      REDSIM_WEB_CHAT_MODEL: ${REDSIM_WEB_CHAT_MODEL:-}
 
   # ----- Always-on Postgres log mirror (F20c) ------------------------------
   # The redsim-log-ingest sidecar receives OTLP/Logs (under the obs profile)

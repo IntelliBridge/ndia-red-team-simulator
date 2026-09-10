@@ -6,8 +6,8 @@
 Reads, in order, ``/opt/redsim/env/common.env`` (KEY=VALUE lines) for the
 Python services or ``<service>.env`` for web and identity, then the
 Secrets Manager JSON ``/opt/redsim/env/<service>.json`` (and ``pythia.json``
-for every Python service when present), and execs the command with that
-environment. The api needs the Pythia variables as much as the workers: the
+for every Python service and for web when present), and execs the command
+with that environment. The api needs the Pythia variables as much as the workers: the
 gateway model picker (``GET /v1/llm/models``), the LLM capability flags, the
 default ``gateway_url`` of an LLM target registration and the allowlist entry
 for the gateway host (``redsim.config`` derives it from ``PYTHIA_BASE_URL``)
@@ -47,7 +47,8 @@ def main(argv: list[str]) -> int:
     # Committed, non-secret overrides (capacity caps and the like) so an operator
     # changes them with a merge to main instead of a hand edit on the host.
     env.update(read_env_file(Path("/opt/redsim/src/deploy/ec2/native/host.env")))
-    for name in ([service] + (["pythia"] if service in PYTHON_SERVICES else [])):
+    # The web process reads the Pythia names too, for the finding chat.
+    for name in ([service] + (["pythia"] if service in PYTHON_SERVICES | {"web"} else [])):
         path = ENV_DIR / f"{name}.json"
         if path.is_file():
             env.update({k: str(v) for k, v in json.loads(path.read_text()).items()})
