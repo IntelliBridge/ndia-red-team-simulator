@@ -653,6 +653,9 @@ def artifact_target_from_path(
         expected_sha256=str(manifest.get("sha256") or "") or None,
         architecture_id=manifest.get("architecture_id"),
         architecture_kwargs=dict(manifest.get("architecture_kwargs") or {}),
+        input_preprocessing=(
+            dict(manifest["input_preprocessing"]) if isinstance(manifest.get("input_preprocessing"), dict) else None
+        ),
         input_shape=tuple(manifest.get("input_shape") or ()) or None,
         name=str(manifest.get("name") or target_id),
         domain=cast("Domain", str(manifest.get("modality") or "image")),

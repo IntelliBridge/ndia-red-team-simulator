@@ -17,6 +17,15 @@ Accepted formats and what loading means for each:
 * ``safetensors_state_dict``  safetensors header, ``safetensors.torch.load_file``, the same architecture
                          allowlist and strict state-dict load -> ``PyTorchClassifier``.
 
+Open-weights checkpoints. A state_dict in the bare torchvision / timm key layout (a Hugging Face
+``model.safetensors`` of a ResNet) is prefixed onto the catalog architecture's ``backbone.`` and recorded
+as ``state_dict_layout: torchvision`` (:func:`adapt_state_dict_layout`); a channels-last ONNX graph is
+sniffed (or declared) and served through a permute (``input_layout: NHWC``). The input contract the
+uploader declares (``redsim.ml.targets.input_contract``: resize, scale, mean / std, layout) is folded
+into the estimator by :func:`make_input_adapter`, so the campaign keeps perturbing [0, 1] NCHW pixels at
+the evaluation slice's resolution and eps keeps its meaning. Nothing is guessed: an absent contract is
+the identity, and the validate job records the clean accuracy that contract earns.
+
 Everything else is refused with ``UnsupportedArtifact``: legacy pickles and joblib files (by
 extension and by the ``\\x80`` PROTO opcode), ``weights_only`` failures (what a "full pickle" means
 operationally), unknown signatures, digest mismatches, unknown or missing architecture ids, and
@@ -46,6 +55,13 @@ from redsim.ml.datasets.sampling import as_model_input, per_class_counts, strati
 from redsim.ml.errors import ArtifactDigestMismatch, DatasetUnavailable, UnsupportedArtifact
 from redsim.ml.schema import Domain, MLModelManifest, TargetInfo
 from redsim.ml.targets.base import Sample
+from redsim.ml.targets.input_contract import (
+    INPUT_LAYOUTS,
+    InputPreprocessing,
+    InputPreprocessingError,
+    sniff_input_layout,
+)
+from redsim.ml.targets.input_contract import parse_input_preprocessing as _parse_input_preprocessing
 
 ArtifactFormat = str  # "onnx" | "torch_state_dict" | "safetensors_state_dict"
 ACCEPTED_FORMATS: tuple[str, ...] = ("onnx", "torch_state_dict", "safetensors_state_dict")
@@ -61,6 +77,76 @@ _CHUNK = 1 << 20
 # either way; below the floor the target stays black-box and says why.
 MIN_ONNX_TORCH_AGREEMENT = 0.99
 AGREEMENT_MAX_N = 1000
+
+
+# --------------------------------------------------------------------------------------
+# Input preprocessing declared at upload (spec 11.3.1: normalisation lives inside the model boundary).
+# The campaign perturbs [0, 1] NCHW pixels at the evaluation slice's resolution. An open-weights model
+# trained on another input contract (raw 0-255 pixels, ImageNet mean / std, upsampled inputs, a
+# channels-last graph) declares that contract here and the loader folds it into the estimator, so eps
+# keeps its meaning and the graph is never edited. Every value is recorded in the manifest.
+# --------------------------------------------------------------------------------------
+
+def parse_input_preprocessing(block: Mapping[str, Any] | None) -> InputPreprocessing:
+    """The contract module's parser, refusing as ``UnsupportedArtifact`` with the ``params_out_of_range`` code."""
+    try:
+        return _parse_input_preprocessing(block)
+    except InputPreprocessingError as exc:
+        raise UnsupportedArtifact(f"{exc.code}: {exc}") from exc
+
+
+def make_input_adapter(prep: InputPreprocessing, *, channels_last: bool = False, inner: Any = None) -> Any:
+    """A torch module applying ``prep`` (and the NHWC permute) before ``inner``; ``inner=None`` returns the input.
+
+    Differentiable end to end, so the white-box estimator's gradients reach the [0, 1] NCHW pixels the
+    campaign perturbs.
+    """
+    import torch
+    import torch.nn.functional as functional
+    from torch import nn
+
+    class _InputAdapter(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.inner = inner
+            self.resize = prep.resize
+            self.scale = float(prep.scale)
+            self.channels_last = channels_last
+            if prep.mean is not None and prep.std is not None:
+                self.register_buffer("mean", torch.tensor(prep.mean, dtype=torch.float32).view(1, -1, 1, 1))
+                self.register_buffer("std", torch.tensor(prep.std, dtype=torch.float32).view(1, -1, 1, 1))
+            else:
+                self.mean = None
+                self.std = None
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            if self.resize is not None and tuple(x.shape[-2:]) != (self.resize, self.resize):
+                x = functional.interpolate(x, size=(self.resize, self.resize), mode="bilinear", align_corners=False)
+            if self.scale != 1.0:
+                x = x * self.scale
+            if self.mean is not None:
+                x = (x - self.mean) / self.std
+            if self.channels_last:
+                x = x.permute(0, 2, 3, 1).contiguous()
+            return self.inner(x) if self.inner is not None else x
+
+    return _InputAdapter().eval()
+
+
+def _numpy_preprocess(prep: InputPreprocessing, *, channels_last: bool) -> Callable[[np.ndarray], np.ndarray] | None:
+    """The same adapter for onnxruntime input, or ``None`` when nothing has to change."""
+    if prep.is_identity and not channels_last:
+        return None
+    adapter = make_input_adapter(prep, channels_last=channels_last)
+
+    def _apply(x: np.ndarray) -> np.ndarray:
+        import torch
+
+        with torch.no_grad():
+            out = adapter(torch.from_numpy(np.ascontiguousarray(x, dtype=np.float32)))
+        return np.ascontiguousarray(out.numpy(), dtype=np.float32)
+
+    return _apply
 
 
 # --------------------------------------------------------------------------------------
@@ -205,14 +291,46 @@ def detect_format(path: Path, declared: str | None = None) -> ArtifactFormat:
 # Loaders (worker side only)
 # --------------------------------------------------------------------------------------
 
-def load_state_dict_module(
+STATE_DICT_LAYOUTS: tuple[str, ...] = ("redsim", "torchvision")
+_CATALOG_BUFFERS: frozenset[str] = frozenset({"input_mean", "input_std"})
+
+
+def adapt_state_dict_layout(module: Any, state: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Accept the bare torchvision / timm key layout for a catalog architecture that wraps a backbone.
+
+    A catalog module stores its backbone under ``backbone.`` and carries the ``input_mean`` /
+    ``input_std`` normalisation buffers; open-weights checkpoints (torchvision, timm, the Hugging Face
+    ``model.safetensors`` of a ResNet) name the same tensors without the prefix and without the buffers.
+    When every key of the file maps one-to-one onto ``backbone.<key>`` and nothing else is missing but
+    the two buffers, the keys are prefixed and the buffers keep the module's identity values (the
+    uploader declares normalisation through ``input_preprocessing``). Any other shape is returned
+    unchanged so the strict load names the mismatch. Returns ``(state, layout)``.
+    """
+    expected = set(module.state_dict().keys())
+    if set(state) == expected:
+        return state, "redsim"
+    if not hasattr(module, "backbone"):
+        return state, "redsim"
+    prefixed = {f"backbone.{k}": v for k, v in state.items()}
+    if set(prefixed) | (expected & _CATALOG_BUFFERS) != expected:
+        return state, "redsim"
+    own = module.state_dict()
+    for name in expected & _CATALOG_BUFFERS:
+        prefixed[name] = own[name]
+    return prefixed, "torchvision"
+
+
+def load_state_dict_module_with_record(
     path: Path,
     architecture_id: str | None,
     architecture_kwargs: dict[str, Any] | None = None,
     *,
     artifact_format: str = "torch_state_dict",
-) -> Any:
-    """Safely load tensors, then apply them strictly to an allowlisted architecture."""
+) -> tuple[Any, dict[str, Any]]:
+    """Safely load tensors, then apply them strictly to an allowlisted architecture; ``(module, record)``.
+
+    ``record`` carries ``state_dict_layout`` (``redsim`` or ``torchvision``) and ``n_tensors``.
+    """
     import torch
 
     module = resolve_architecture(architecture_id, architecture_kwargs)
@@ -234,12 +352,27 @@ def load_state_dict_module(
                                       f"than tensors): {str(exc).splitlines()[0][:200]}") from exc
     if not isinstance(state, dict) or not all(isinstance(v, torch.Tensor) for v in state.values()):
         raise UnsupportedArtifact("unsupported_model_format: the archive is not a state_dict of tensors")
+    state, layout = adapt_state_dict_layout(module, state)
     try:
         module.load_state_dict(state, strict=True)
     except RuntimeError as exc:
         raise UnsupportedArtifact(f"architecture_mismatch: state_dict does not fit {architecture_id!r}: "
                                   f"{str(exc).splitlines()[0][:300]}") from exc
-    return module.eval()
+    return module.eval(), {"state_dict_layout": layout, "n_tensors": len(state)}
+
+
+def load_state_dict_module(
+    path: Path,
+    architecture_id: str | None,
+    architecture_kwargs: dict[str, Any] | None = None,
+    *,
+    artifact_format: str = "torch_state_dict",
+) -> Any:
+    """Safely load tensors, then apply them strictly to an allowlisted architecture."""
+    module, _record = load_state_dict_module_with_record(
+        path, architecture_id, architecture_kwargs, artifact_format=artifact_format,
+    )
+    return module
 
 
 @dataclass
@@ -247,14 +380,21 @@ class OnnxModel:
     session: Any
     input_name: str
     output_name: str
-    input_shape: tuple[int | None, ...]      # without the batch dimension
+    input_shape: tuple[int | None, ...]      # without the batch dimension, always as (C, H, W) for images
     n_outputs: int | None
     ir_version: int
     opsets: dict[str, int] = field(default_factory=dict)
     proto: Any = None                        # the checked ``ModelProto`` (for onnx2torch)
+    input_layout: str = "NCHW"               # what the graph itself consumes
+    graph_input_shape: tuple[int | None, ...] = ()   # the graph's own signature, before any adaptation
+    preprocessing: InputPreprocessing = field(default_factory=InputPreprocessing)
+    preprocess: Callable[[np.ndarray], np.ndarray] | None = None
 
     def run(self, x: np.ndarray) -> np.ndarray:
-        out = self.session.run([self.output_name], {self.input_name: np.ascontiguousarray(x, dtype=np.float32)})
+        xin = np.ascontiguousarray(x, dtype=np.float32)
+        if self.preprocess is not None:
+            xin = self.preprocess(xin)
+        out = self.session.run([self.output_name], {self.input_name: xin})
         return np.asarray(out[0])
 
 
@@ -262,10 +402,18 @@ def _dims(shape: list[Any]) -> tuple[int | None, ...]:
     return tuple(int(d) if isinstance(d, int) and d > 0 else None for d in shape)
 
 
-def load_onnx_model(path: Path, *, intra_op_threads: int = 2) -> OnnxModel:
-    """Parse, check and open an ONNX model with onnxruntime's default CPU provider."""
+def load_onnx_model(path: Path, *, intra_op_threads: int = 2,
+                    preprocessing: InputPreprocessing | None = None) -> OnnxModel:
+    """Parse, check and open an ONNX model with onnxruntime's default CPU provider.
+
+    ``preprocessing`` is the contract the uploader declared; its ``layout`` overrides the sniffed one.
+    A channels-last graph is served through a permute in front of the session, and ``input_shape`` is
+    reported as ``(C, H, W)`` so the caller's shape check reads the same for every graph.
+    """
     import onnx
     import onnxruntime as ort
+
+    prep = preprocessing or InputPreprocessing()
 
     try:
         proto = onnx.load(str(path), load_external_data=False)
@@ -296,9 +444,17 @@ def load_onnx_model(path: Path, *, intra_op_threads: int = 2) -> OnnxModel:
     inp, out = session.get_inputs()[0], session.get_outputs()[0]
     in_dims, out_dims = _dims(list(inp.shape)), _dims(list(out.shape))
     n_outputs = out_dims[-1] if len(out_dims) >= 2 else None
-    return OnnxModel(session=session, input_name=inp.name, output_name=out.name, input_shape=in_dims[1:],
+    graph_dims = in_dims[1:]
+    layout = prep.layout or sniff_input_layout(graph_dims)
+    channels_last = layout == "NHWC"
+    if channels_last and len(graph_dims) != 3:
+        raise UnsupportedArtifact(f"shape_mismatch: an NHWC graph needs a rank-4 input, got {list(inp.shape)}")
+    input_shape = (graph_dims[2], graph_dims[0], graph_dims[1]) if channels_last else graph_dims
+    return OnnxModel(session=session, input_name=inp.name, output_name=out.name, input_shape=input_shape,
                      n_outputs=n_outputs, ir_version=int(proto.ir_version),
-                     opsets={o.domain or "ai.onnx": int(o.version) for o in proto.opset_import}, proto=proto)
+                     opsets={o.domain or "ai.onnx": int(o.version) for o in proto.opset_import}, proto=proto,
+                     input_layout=layout, graph_input_shape=graph_dims, preprocessing=prep,
+                     preprocess=_numpy_preprocess(prep, channels_last=channels_last))
 
 
 def convert_onnx_to_torch(model: OnnxModel) -> tuple[Any, dict[str, Any]]:
@@ -320,7 +476,12 @@ def convert_onnx_to_torch(model: OnnxModel) -> tuple[Any, dict[str, Any]]:
         return None, {"status": "failed", "reason": f"unsupported_onnx_op: {type(exc).__name__}: "
                                                     f"{str(exc).splitlines()[0][:200]}",
                       "converter": "onnx2torch", "version": version}
-    return module.eval(), {"status": "converted", "reason": None, "converter": "onnx2torch", "version": version}
+    module = module.eval()
+    channels_last = model.input_layout == "NHWC"
+    if channels_last or not model.preprocessing.is_identity:
+        # The converted graph consumes what the session consumes; the same adapter sits in front of both.
+        module = make_input_adapter(model.preprocessing, channels_last=channels_last, inner=module)
+    return module, {"status": "converted", "reason": None, "converter": "onnx2torch", "version": version}
 
 
 def onnx_torch_argmax_agreement(model: OnnxModel, module: Any, x: np.ndarray, *,
@@ -506,6 +667,7 @@ class ArtifactTarget:
         dataset_revision: str | None = None,
         license: str | None = None,
         intra_op_threads: int = 2,
+        input_preprocessing: Mapping[str, Any] | None = None,
     ) -> None:
         if not isinstance(dataset_id, str) or not dataset_id.strip():
             raise ValueError("ArtifactTarget needs the dataset_id its evaluation split belongs to")
@@ -517,6 +679,8 @@ class ArtifactTarget:
         self._expected_sha = expected_sha256
         self._arch_id = architecture_id
         self._arch_kwargs = dict(architecture_kwargs or {})
+        self._prep = parse_input_preprocessing(input_preprocessing)
+        self._state_dict_record: dict[str, Any] | None = None
         self._declared_input_shape = tuple(input_shape) if input_shape else None
         self._name = name or f"Uploaded model {self._path.name}"
         self._domain = domain
@@ -574,22 +738,34 @@ class ArtifactTarget:
         if self._declared_input_shape and self._declared_input_shape != sample_shape:
             raise UnsupportedArtifact(f"shape_mismatch: manifest input_shape {self._declared_input_shape} vs "
                                       f"evaluation data {sample_shape}")
+        # What the graph or module sees after the declared preprocessing: the evaluation shape, resized.
+        model_shape = sample_shape
+        if self._prep.resize is not None:
+            if len(sample_shape) != 3:
+                raise UnsupportedArtifact("shape_mismatch: input_preprocessing.resize needs image (C, H, W) data")
+            model_shape = (sample_shape[0], self._prep.resize, self._prep.resize)
         if self._format in {"torch_state_dict", "safetensors_state_dict"}:
+            if self._prep.layout == "NHWC":
+                raise UnsupportedArtifact("params_out_of_range: input_preprocessing.layout NHWC applies to ONNX "
+                                          "graphs; catalog architectures consume NCHW")
             if not self._arch_kwargs:
-                self._arch_kwargs = derived_architecture_kwargs(self._arch_id, sample_shape, len(self._class_names))
-            self._module = load_state_dict_module(
+                self._arch_kwargs = derived_architecture_kwargs(self._arch_id, model_shape, len(self._class_names))
+            module, self._state_dict_record = load_state_dict_module_with_record(
                 self._path,
                 self._arch_id,
                 self._arch_kwargs,
                 artifact_format=self._format,
             )
+            if not self._prep.is_identity:
+                module = make_input_adapter(self._prep, inner=module)
+            self._module = module
             probe = self._torch_logits(self._module, as_model_input(x[:1]))
         else:
-            self._onnx = load_onnx_model(self._path, intra_op_threads=self._threads)
-            for want, got in zip(self._onnx.input_shape, sample_shape):
+            self._onnx = load_onnx_model(self._path, intra_op_threads=self._threads, preprocessing=self._prep)
+            for want, got in zip(self._onnx.input_shape, model_shape):
                 if want is not None and want != got:
-                    raise UnsupportedArtifact(f"shape_mismatch: ONNX input {self._onnx.input_shape} vs "
-                                              f"evaluation data {sample_shape}")
+                    raise UnsupportedArtifact(f"shape_mismatch: ONNX input {self._onnx.input_shape} "
+                                              f"({self._onnx.input_layout} graph) vs evaluation data {model_shape}")
             probe = self._onnx.run(as_model_input(x[:1]))
             self._output_kind = "probabilities" if looks_like_probabilities(probe) else "logits"
         if probe.ndim != 2 or probe.shape[1] != len(self._class_names):
@@ -692,6 +868,8 @@ class ArtifactTarget:
         assert self._y is not None and self._manifest is not None
         m: dict[str, Any] = {
             "source": "uploaded", "file": self._path.name, "architecture_kwargs": self._arch_kwargs or None,
+            "input_preprocessing": None if self._prep.is_identity and self._prep.layout is None else self._prep.record(),
+            **(self._state_dict_record or {}),
             "eval_n": int(self._y.shape[0]), "eval_per_class": per_class_counts(self._y, self._class_names),
             "library_versions": {**library_versions(
                 "torch", "safetensors", "onnx", "onnxruntime", "onnx2torch", "adversarial-robustness-toolbox",
@@ -704,6 +882,8 @@ class ArtifactTarget:
             converted = self._torch_module is not None
             m["onnx"] = {"ir_version": self._onnx.ir_version, "opsets": self._onnx.opsets,
                          "output_kind": self._output_kind,
+                         "input_layout": self._onnx.input_layout,
+                         "graph_input_shape": [d if d is None else int(d) for d in self._onnx.graph_input_shape],
                          "estimator": "PyTorchClassifier" if converted else "BlackBoxClassifier",
                          "predictions": "onnxruntime",
                          "conversion": self._conversion,
@@ -722,8 +902,12 @@ __all__ = [
     "ARCHITECTURE_ALIASES",
     "MIN_ONNX_TORCH_AGREEMENT",
     "PICKLE_SUFFIXES",
+    "INPUT_LAYOUTS",
+    "STATE_DICT_LAYOUTS",
     "ArtifactTarget",
+    "InputPreprocessing",
     "OnnxModel",
+    "adapt_state_dict_layout",
     "architecture_ids",
     "canonical_architecture_id",
     "consumed_eval_slice",
@@ -732,11 +916,15 @@ __all__ = [
     "library_versions",
     "load_onnx_model",
     "load_state_dict_module",
+    "load_state_dict_module_with_record",
     "looks_like_probabilities",
+    "make_input_adapter",
     "model_manifest",
     "onnx_torch_argmax_agreement",
+    "parse_input_preprocessing",
     "resolve_architecture",
     "sha256_file",
     "sniff_format",
+    "sniff_input_layout",
     "verify_sha256",
 ]
