@@ -2,7 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 
-import type { ExportRow, ExportsList } from "@/lib/api";
+import type { AuthProfile, ExportRow, ExportsList, FoundryProjectSettings } from "@/lib/api";
 
 import { mutationProcedure, publicProcedure, router } from "../init";
 import { upstreamFetch } from "../upstream";
@@ -76,6 +76,15 @@ const exportRowSchema: z.ZodType<ExportRow> = z.looseObject({
     error: z.string().nullable(),
     blockers: z.array(z.enum(["not_terminal", "run_failed", "fixture_target", "no_slices"])),
   }),
+  foundry: z.looseObject({
+    status: z.enum(["not_configured", "not_pushed", "queued", "running", "pushed", "failed"]),
+    auto_push: z.boolean(),
+    push_run_id: z.string().nullable(),
+    transaction_rid: z.string().nullable(),
+    pushed_at: z.string().nullable(),
+    error: z.string().nullable(),
+    blockers: z.array(z.enum(["not_terminal", "run_failed", "fixture_target", "score_unavailable"])),
+  }),
 });
 
 const exportsListSchema: z.ZodType<ExportsList> = z.looseObject({
@@ -95,6 +104,72 @@ const datasetExportSchema = z.looseObject({
   job_id: z.string().optional(),
   manifest_sha256: z.string().optional(),
 });
+
+/**
+ * `GET`/`PUT /v1/projects/{slug}/integrations/foundry` (spec 27.3): the operator's
+ * deployment block, the admin's per-project settings and what a push would use.
+ */
+const foundrySettingsSchema: z.ZodType<FoundryProjectSettings> = z.looseObject({
+  project_id: z.string(),
+  project: z.string(),
+  deployment: z.looseObject({
+    status: z.enum(["disabled", "misconfigured", "configured"]),
+    host: z.string().nullable(),
+    reason: z.string().nullable(),
+    attested: z.boolean(),
+    default_dataset_rid: z.string().nullable(),
+  }),
+  settings: z.looseObject({
+    dataset_rid: z.string().nullable(),
+    auth_profile_id: z.string().nullable(),
+    auth_profile_name: z.string().nullable(),
+    auto_push: z.boolean(),
+    updated_at: z.string().nullable(),
+    updated_by: z.string().nullable(),
+  }),
+  effective: z.looseObject({
+    dataset_rid: z.string().nullable(),
+    ready: z.boolean(),
+    blockers: z.array(
+      z.enum([
+        "integration_disabled",
+        "integration_misconfigured",
+        "auth_profile_missing",
+        "auth_profile_deleted",
+        "auth_profile_kind_unsupported",
+        "dataset_rid_missing",
+      ]),
+    ),
+  }),
+});
+
+const authProfileSchema: z.ZodType<AuthProfile> = z.looseObject({
+  id: z.string(),
+  project_id: z.string(),
+  name: z.string(),
+  kind: z.enum(["form", "bearer", "header", "cookie"]),
+  config: z.record(z.string(), z.string()),
+  created_at: z.string(),
+});
+
+/** `GET /v1/auth-profiles?project=`: a bare array, or the `{auth_profiles}` envelope the API also emits. */
+const authProfilesSchema = z
+  .union([z.array(authProfileSchema), z.looseObject({ auth_profiles: z.array(authProfileSchema).optional() })])
+  .transform((out): AuthProfile[] => (Array.isArray(out) ? out : (out.auth_profiles ?? [])));
+
+/** `202` from `POST /v1/runs/{id}/integrations/foundry`: the follow-up push run's handle. */
+const foundryPushSchema = z.looseObject({
+  run_id: z.string(),
+  job_ids: z.array(z.string()),
+  status_url: z.string().optional(),
+  integration: z.string(),
+  campaign_run_id: z.string(),
+  target_ref: z.string(),
+  kind: z.string().optional(),
+});
+
+/** A project slug or id as a path segment. */
+const projectSchema = z.string().min(1, "a project is required").max(200);
 
 /** `202` from `POST /v1/runs/{id}/report.render`. */
 const renderSchema = z.looseObject({
@@ -149,6 +224,58 @@ export const exportsRouter = router({
           body: input.formats ? { formats: input.formats } : {},
         },
         renderSchema,
+      ),
+    ),
+
+  /** The project's Foundry settings and the deployment's roster state (membership). */
+  foundrySettings: publicProcedure
+    .input(z.object({ project: projectSchema }))
+    .query(({ ctx, input }) =>
+      upstreamFetch(
+        ctx,
+        { method: "GET", segments: ["v1", "projects", input.project, "integrations", "foundry"] },
+        foundrySettingsSchema,
+      ),
+    ),
+
+  /** Set the dataset rid, the bearer profile or the auto-push toggle (`target.manage`, admin; audited). */
+  updateFoundrySettings: mutationProcedure
+    .input(
+      z.object({
+        project: projectSchema,
+        dataset_rid: z.string().max(256).nullable().optional(),
+        auth_profile_id: z.string().max(64).nullable().optional(),
+        auto_push: z.boolean().optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => {
+      const { project, ...body } = input;
+      return upstreamFetch(
+        ctx,
+        { method: "PUT", segments: ["v1", "projects", project, "integrations", "foundry"], body },
+        foundrySettingsSchema,
+      );
+    }),
+
+  /** The project's auth profiles (credential-free rows), to pick the bearer profile from. */
+  authProfiles: publicProcedure
+    .input(z.object({ project: projectSchema }))
+    .query(({ ctx, input }) =>
+      upstreamFetch(
+        ctx,
+        { method: "GET", segments: ["v1", "auth-profiles"], query: { project: input.project } },
+        authProfilesSchema,
+      ),
+    ),
+
+  /** Push one finished run's scorecard with the project's settings (`integration.push`, admin). */
+  pushFoundry: mutationProcedure
+    .input(z.object({ runId: idSchema }))
+    .mutation(({ ctx, input }) =>
+      upstreamFetch(
+        ctx,
+        { method: "POST", segments: ["v1", "runs", input.runId, "integrations", "foundry"], body: {} },
+        foundryPushSchema,
       ),
     ),
 });

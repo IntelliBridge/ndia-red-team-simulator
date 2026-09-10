@@ -32,8 +32,9 @@ def _script_dir() -> ScriptDirectory:
 
 
 def test_0012_is_the_single_head_above_0011():
+    # 0013_foundry_auto_push (2026-09-10) sits above 0012; tests/test_migration_0013.py pins that head.
     script = _script_dir()
-    assert script.get_heads() == [REVISION]
+    assert script.get_heads() == ["0013_foundry_auto_push"]
     assert script.get_revision(REVISION).down_revision == DOWN_REVISION
 
 

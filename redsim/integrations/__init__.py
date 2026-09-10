@@ -135,14 +135,17 @@ class FoundryPushRequest(BaseModel):
     """Body of ``POST /v1/runs/{run_id}/integrations/foundry``.
 
     ``auth_profile_id`` names the bearer profile holding the Foundry token (no
-    standing credential, spec 27 rule 3). ``target_ref`` is the Foundry dataset
-    rid to write into; when absent the deployment default
-    ``REDSIM_INTEGRATION_FOUNDRY_DATASET_RID`` applies.
+    standing credential, spec 27 rule 3); since 2026-09-10 it may be omitted,
+    in which case the project's configured profile
+    (``projects.ml_integrations.foundry.auth_profile_id``) applies and its
+    absence is ``422 auth_profile_required``. ``target_ref`` is the Foundry
+    dataset rid to write into; when absent the project's configured rid, then
+    the deployment default ``REDSIM_INTEGRATION_FOUNDRY_DATASET_RID``, applies.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    auth_profile_id: str = Field(min_length=1, max_length=64)
+    auth_profile_id: str | None = Field(default=None, min_length=1, max_length=64)
     target_ref: str | None = Field(default=None, max_length=256)
     payload: Literal["scorecard"] = "scorecard"
 
@@ -312,9 +315,10 @@ def create_foundry_push(
     follow-up ``Run`` and ``Job``, the enqueue (``503 queue_unavailable`` with the
     rows removed when the broker refuses).
     """
-    from redsim.db.models import AuthProfile, Job, Run, Target
+    from redsim.db.models import AuthProfile, Job, Project, Run, Target
     from redsim.db.session import get_session
     from redsim.safety import AuthorizationError, authorize
+    from redsim.services.ml_integrations import foundry_project_settings
     from redsim.services.reports import ml_campaign_row
 
     allowlist = list(getattr(config, "target_allowlist", None) or [])
@@ -371,16 +375,22 @@ def create_foundry_push(
             requested_ref = validate_target_ref(body.target_ref)
         except ValueError as exc:
             refuse(ApiError(PARAMS_OUT_OF_RANGE, str(exc), field="target_ref"), target_ref_problem="malformed")
-        target_ref = requested_ref or settings.dataset_rid
+        # The project's configured Foundry settings (Exports page) fill what the body left out.
+        project_settings = foundry_project_settings(sess.get(Project, project_id))
+        target_ref = requested_ref or project_settings["dataset_rid"] or settings.dataset_rid
         if target_ref is None:
-            refuse(ApiError(PARAMS_OUT_OF_RANGE, "no Foundry dataset to write into: name target_ref in the body or "
-                            "set REDSIM_INTEGRATION_FOUNDRY_DATASET_RID on the worker", field="target_ref",
+            refuse(ApiError(PARAMS_OUT_OF_RANGE, "no Foundry dataset to write into: name target_ref in the body, "
+                            "configure the project's Foundry dataset on the Exports page or set "
+                            "REDSIM_INTEGRATION_FOUNDRY_DATASET_RID on the worker", field="target_ref",
                             reason="target_ref_required"))
         context["target_ref"] = target_ref
-        profile_id = body.auth_profile_id.strip()
+        profile_id = (body.auth_profile_id or project_settings["auth_profile_id"] or "").strip()
+        context["auth_profile_id"] = profile_id or None
+        context["auth_profile_from_project"] = body.auth_profile_id is None and bool(profile_id)
         if not profile_id:
             refuse(ApiError(AUTH_PROFILE_REQUIRED, "auth_profile_id is required: the Foundry token lives in a "
-                            "bearer AuthProfile, never in the request or the environment", field="auth_profile_id"))
+                            "bearer AuthProfile, never in the request or the environment; name it in the body "
+                            "or configure it for the project on the Exports page", field="auth_profile_id"))
         profile = sess.get(AuthProfile, profile_id)
         if profile is None or str(profile.project_id) != project_id:
             refuse(ApiError(NOT_FOUND, f"auth profile {profile_id!r} is not in this project", field="auth_profile_id"))

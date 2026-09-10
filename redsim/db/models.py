@@ -70,6 +70,11 @@ class Project(Base):
     ml_scoring: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     ml_max_concurrent_runs: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ml_daily_run_budget: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 0013_foundry_auto_push (2026-09-10): ``{"foundry": {dataset_rid, auth_profile_id,
+    # auto_push, updated_at, updated_by}}`` as redsim.services.ml_integrations reads
+    # and writes it. NULL means nothing configured. The host, attestation and
+    # allowlist stay operator-set in the environment (spec 27.3).
+    ml_integrations: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     __table_args__ = (UniqueConstraint("org_id", "slug"),)
 
