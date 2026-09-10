@@ -42,7 +42,7 @@ inconclusive outcome, the audit trail -- is asserted before that point.
 
 Run with::
 
-    REDSIM_E2E=1 pytest -q -p no:cacheprovider -m e2e tests/e2e/test_ml_verify_upload_reports.py
+    REDSIM_E2E=1 pytest -q -p no:cacheprovider -m e2e tests/e2e/test_ml_upload_reports.py
 
 Heavy imports happen inside fixtures and tests, after the session fixtures have
 checked the extras, so collection stays green without them.

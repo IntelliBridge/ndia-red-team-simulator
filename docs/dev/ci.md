@@ -447,7 +447,7 @@ without it by design; `e2e` is not green: the B4 files fail by attribution on
 the product defects listed in the README's open items (the unscaled endpoint
 probe, the worker-parent consumed-slice call, `architecture_kwargs` for
 `state_dict` uploads) and two report pins are stale
-(`tests/e2e/test_ml_verify_upload_reports.py`, the uploads and report formats
+(`tests/e2e/test_ml_upload_reports.py`, the uploads and report formats
 file, and `tests/e2e/test_ml_review_reports.py`); `docs` passes; `probes` has not been
 run against `make up` (brief package A). The CI runs for `29db42c`,
 `1439f92`, `57da31f`, `703f8f6` and the B4 push have not been read.
@@ -547,7 +547,7 @@ together with the wave B2 push that follows it. Facts, in order:
 - The B2 integration commit moved the e2e pins that B2 made stale
   (`tests/e2e/test_ml_governance.py`: `report.pdf` is `404 report not yet
   rendered` and an endpoint body without a profile is `422
-  auth_profile_required`; `tests/e2e/test_ml_verify_upload_reports.py::test_reports_sections_and_pdf_404`:
+  auth_profile_required`; `tests/e2e/test_ml_upload_reports.py::test_reports_sections_and_pdf_404`:
   the same `404`, and the projection's weights keys beside the record), so
   the `e2e-python` job has nothing known-red.
 - The wave B2 tests need `reportlab` and `pillow` (worker extra) and `pypdf`

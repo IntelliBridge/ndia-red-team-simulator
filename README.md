@@ -358,7 +358,7 @@ two tabular campaigns through the real child, `audit verify --all` clean then
 broken, the mocked narrative) and the completion-criteria evidence of wave 4
 (on `main` since `e73dea0`): `tests/e2e/test_ml_campaigns.py` (spec 26.4 to
 26.9 and 26.12 to 26.15, an image and a tabular campaign each with its own
-scorecard, the narrative on and off), `tests/e2e/test_ml_verify_upload_reports.py`
+scorecard, the narrative on and off), `tests/e2e/test_ml_upload_reports.py`
 (26.17 ONNX accepted and pickle refused with the audit row, the six report
 sections and the report formats) and `tests/e2e/test_ml_governance.py` (26.21 and 26.22: the RBAC negative
 matrix, the RLS negatives on the Postgres lane, `audit verify --all` passing

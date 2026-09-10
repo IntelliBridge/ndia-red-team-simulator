@@ -114,8 +114,9 @@ REMOVED_VERIFY_ROUTES = (
     ("POST", "/v1/findings/{finding_id}/verify/bulk"),
     ("GET", "/v1/findings/{finding_id}/retests"),
 )
-#: Test files the spec 22 addendum still names as history, deleted with the verify paradigm. They must stay absent.
-REMOVED_WITH_VERIFY_PARADIGM = frozenset({"tests/ml/test_hardening.py"})
+#: Test files the spec 22 addendum still names as history: deleted with the verify paradigm, or renamed
+#: (``test_ml_verify_upload_reports.py`` is ``test_ml_upload_reports.py``). They must stay absent under these names.
+REMOVED_WITH_VERIFY_PARADIGM = frozenset({"tests/ml/test_hardening.py", "tests/e2e/test_ml_verify_upload_reports.py"})
 #: The plan pages the mkdocs nav must list (plan 12 wave B4 phase-b-gate brief).
 NAV_PLANS = (
     "plans/10-remaining-work-brief.md",

@@ -40,7 +40,7 @@ and mark the apply step as open for the account owner.
   mapper).
 - Wave 4 (`3dda572..e73dea0`, 2026-09-09): the three end-to-end
   completion-criteria test files `tests/e2e/test_ml_campaigns.py`,
-  `test_ml_verify_upload_reports.py` and `test_ml_governance.py`; the three
+  `test_ml_upload_reports.py` and `test_ml_governance.py`; the three
   CI fixes for `main` (B1); admission follow-ups (control in `attack_ids` and
   FGSM under L2 refused at admission, idempotent plugin loader, quiet
   re-seed); the documentation refresh; and one product fix the e2e tests

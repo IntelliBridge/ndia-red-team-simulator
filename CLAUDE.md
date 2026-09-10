@@ -795,7 +795,7 @@ Ten commits after `bb43bd7`, integrated by `58461cc` (2026-09-09).
 ### Wave 4 and Phase B waves B0 to B3 (2026-09-09)
 
 - **Wave 4** (`3dda572..e73dea0`, on `main`): the three e2e files
-  (`test_ml_campaigns.py`, `test_ml_verify_upload_reports.py`,
+  (`test_ml_campaigns.py`, `test_ml_upload_reports.py`,
   `test_ml_governance.py`; 22 e2e cases with the smoke file), the CI fixes
   (`d8a9f15`: `python-multipart`, the `Sample` move, the `.trivyignore`
   baseline, lazy torch imports behind `build-assets`), `8eb8870` admission
@@ -1001,7 +1001,7 @@ loader's pin.
   in process for debugging instead of in the real child. Files:
   `tests/e2e/test_harness_smoke.py` (wave 3, 8 cases), the
   completion-criteria evidence `tests/e2e/test_ml_campaigns.py`,
-  `tests/e2e/test_ml_verify_upload_reports.py` and
+  `tests/e2e/test_ml_upload_reports.py` and
   `tests/e2e/test_ml_governance.py` (wave 4, 22 cases with the smoke file) and
   the wave B4 files `test_ml_endpoint.py`, `test_ml_llm.py`,
   `test_ml_text_detection.py`, `test_ml_attacks_harden.py`,

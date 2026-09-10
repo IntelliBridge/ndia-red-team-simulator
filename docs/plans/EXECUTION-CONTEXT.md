@@ -309,7 +309,7 @@ not implemented" is the single list):
   on such a record.
 - Three stale pins the completion render made stale, to be moved by their
   owners: `tests/ml/test_audit_campaign.py:113` (`formats` now includes
-  `pdf`), `tests/e2e/test_ml_verify_upload_reports.py` (uploads and report
+  `pdf`), `tests/e2e/test_ml_upload_reports.py` (uploads and report
   formats: `report.pdf` is no longer `404` after a campaign),
   `tests/e2e/test_ml_review_reports.py` (the
   completion snapshot is version 1, the on-demand render version 2).
@@ -346,7 +346,7 @@ carries pentest-era sections.
   per role, a parent-side mocked Pythia transport, the real `redsim audit
   verify --all` as a subprocess and `REDSIM_E2E_POSTGRES_URL` for the RLS
   lane. Files: `test_harness_smoke.py` (wave 3), `test_ml_campaigns.py`,
-  `test_ml_verify_upload_reports.py`, `test_ml_governance.py` (wave 4),
+  `test_ml_upload_reports.py`, `test_ml_governance.py` (wave 4),
   `test_ml_endpoint.py`, `test_ml_llm.py`, `test_ml_text_detection.py`,
   `test_ml_attacks_harden.py`, `test_ml_review_reports.py`,
   `test_ml_interop.py`, `test_ml_bulk.py` (wave B4). `tests/e2e/README.md`

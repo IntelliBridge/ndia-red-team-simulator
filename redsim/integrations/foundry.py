@@ -81,8 +81,9 @@ FOUNDRY_ENV_NAMES: tuple[str, ...] = (FOUNDRY_URL_ENV, FOUNDRY_DATASET_RID_ENV, 
                                       FOUNDRY_TIMEOUT_ENV)
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
-#: The payload schema id every pushed scorecard file carries.
-PAYLOAD_SCHEMA = "redsim-foundry-scorecard-1"
+#: The payload schema id every pushed scorecard file carries. Version 2 (2026-09-09) dropped the
+#: ``delta``, ``baseline_run_id`` and ``defense`` keys with the verify paradigm.
+PAYLOAD_SCHEMA = "redsim-foundry-scorecard-2"
 #: File names under the run prefix inside the Foundry dataset.
 SCORECARD_FILE = "scorecard.json"
 ROWS_FILE = "rows.jsonl"
@@ -427,7 +428,6 @@ def build_scorecard_payload(record: Any, *, generated_at: datetime | None = None
         "inputs": [i.model_dump(mode="json") for i in score.inputs] if score is not None else [],
         "per_attack": ({k: v.model_dump(mode="json") for k, v in score.per_attack.items()}
                        if score is not None else {}),
-        "delta": score.delta.model_dump(mode="json") if score is not None and score.delta is not None else None,
     }
 
     prov: dict[str, Any] | None = None
@@ -438,7 +438,7 @@ def build_scorecard_payload(record: Any, *, generated_at: datetime | None = None
             "onnxruntime": provenance.onnxruntime, "sklearn": provenance.sklearn, "xgboost": provenance.xgboost,
             "dataset": provenance.dataset, "dataset_revision": provenance.dataset_revision,
             "dataset_split": provenance.dataset_split, "sample_indices_sha256": provenance.sample_indices_sha256,
-            "settings_hash": provenance.settings_hash, "baseline_run_id": provenance.baseline_run_id,
+            "settings_hash": provenance.settings_hash,
             "parent_run_id": provenance.parent_run_id, "device": provenance.device,
             "nondeterminism": list(provenance.nondeterminism),
             "started_at": _iso(provenance.started_at), "finished_at": _iso(provenance.finished_at),
@@ -449,7 +449,6 @@ def build_scorecard_payload(record: Any, *, generated_at: datetime | None = None
         "run_id": rec.run_id,
         "campaign_kind": rec.kind,
         "campaign_status": rec.status,
-        "baseline_run_id": rec.baseline_run_id,
         "target": {"id": rec.target.id, "name": rec.target.name, "domain": rec.target.domain,
                    "status": rec.target.status},
         "model_sha256": model_sha256,
@@ -457,7 +456,6 @@ def build_scorecard_payload(record: Any, *, generated_at: datetime | None = None
         "dataset": {"id": config.dataset_id, "revision": config.dataset_revision, "split": config.dataset_split,
                     "n_samples": config.n_samples, "seed": config.seed, "include_control": config.include_control,
                     "explain_k": config.explain_k},
-        "defense": config.defense.model_dump(mode="json") if config.defense is not None else None,
         "scorecard": scorecard,
         "rows": rows,
         "families": families,

@@ -254,7 +254,7 @@ The files: `tests/e2e/test_harness_smoke.py` (wave 3, 8 cases through the
 real child) and, added in wave 4 as the completion-criteria evidence,
 `tests/e2e/test_ml_campaigns.py` (an image and a tabular campaign to
 `succeeded` with scorecard, findings, limitations and the narrative on and
-off), `tests/e2e/test_ml_verify_upload_reports.py` (an ONNX upload accepted and
+off), `tests/e2e/test_ml_upload_reports.py` (an ONNX upload accepted and
 a pickle refused, the report sections and the report formats) and
 `tests/e2e/test_ml_governance.py` (the RBAC negative matrix, the RLS
 negatives on the Postgres lane, `audit verify --all` clean then broken, no
