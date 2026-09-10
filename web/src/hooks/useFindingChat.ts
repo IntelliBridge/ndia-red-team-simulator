@@ -24,6 +24,8 @@ export type FindingChatState = {
   send: (text: string) => Promise<void>;
   stop: () => void;
   clear: () => void;
+  /** Record on a turn what the analyst did with its proposal (the admitted run id). */
+  annotate: (turnId: string, patch: Pick<ChatTurn, "proposal_run_id">) => void;
 };
 
 /**
@@ -74,6 +76,10 @@ export function useFindingChat(findingId: string, enabled: boolean): FindingChat
     saveConversation(findingId, []);
   }, [findingId]);
 
+  const annotate = useCallback((turnId: string, patch: Pick<ChatTurn, "proposal_run_id">) => {
+    setTurns((current) => current.map((turn) => (turn.id === turnId ? { ...turn, ...patch } : turn)));
+  }, []);
+
   const send = useCallback(
     async (text: string) => {
       const content = text.trim();
@@ -114,5 +120,5 @@ export function useFindingChat(findingId: string, enabled: boolean): FindingChat
     [findingId, streaming, turns],
   );
 
-  return { turns, status, statusError, streaming, model, send, stop, clear };
+  return { turns, status, statusError, streaming, model, send, stop, clear, annotate };
 }
