@@ -56,8 +56,7 @@ The chain has three load-bearing properties:
 }
 ```
 
-The example is the planned `attack.run` admission event (spec section
-5.11). Today's events (`scan.start`, `run.cancel`,
+The example is the planned `attack.run` admission event. Today's events (`scan.start`, `run.cancel`,
 `target.manage` and the rest of the table below) carry the same envelope.
 For an in-boundary ML artifact the `target` argument is `None` and
 `allowlist_check` records `n/a`, because the allowlist is a network-scope
@@ -70,7 +69,7 @@ the shape is the one produced by `redsim.audit.forensic.tool_detail`:
 **digests + refs, not raw bytes**. stdout / stderr land in the blob
 store and the audit row carries `{sha256, location, kind}` so a large
 tool output never inflates an audit row. The ML vertical follows the
-same convention (spec 10.5): ids, counts, hashes and blob references,
+same convention: ids, counts, hashes and blob references,
 never model bytes, images, dataset rows, prompt text or secrets.
 
 `redsim.audit.chain.redact_audit_detail` runs at write-time to scrub
@@ -289,9 +288,9 @@ chain backend handles serialisation, hash linking, and persistence.
 
 ### Planned ML events
 
-The ML vertical adds the actions below (spec section 5.11, emission order
-per task in 10.5). None of the emitters is on `main` yet: admission
-events land with the WS4 routes, worker events with the WS4 tasks. Every
+The ML vertical adds the actions below. None of the emitters is on `main`
+yet: admission events land with the ML routes, worker events with the ML
+tasks. Every
 one goes through `redsim.safety.authorize`, `detail` passes through
 `redact_audit_detail`, and no row carries model bytes, images, dataset
 rows, prompt text or secrets.

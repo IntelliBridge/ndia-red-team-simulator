@@ -1,4 +1,4 @@
-"""Id-keyed registry for the ML vertical (API per docs/plans/01 section 4.1).
+"""Id-keyed registry for the ML vertical.
 
 Distinct from ``redsim.registry.Registry`` (name-keyed, entry-point discovery).
 ``TARGETS`` and ``ATTACKS`` are singletons of this class; other modules only

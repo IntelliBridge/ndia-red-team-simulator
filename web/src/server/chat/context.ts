@@ -15,7 +15,7 @@ import type {
  * Pure functions over the two records the route already fetched with the
  * caller's own credential, so the model sees exactly what the analyst may see
  * and nothing the analyst typed can stand in for a record. The system text
- * carries the reporting rules of `docs/project-brief.md` as instructions:
+ * carries the product's reporting rules as instructions:
  * labels kept, denominators quoted, no expected gain before a verify, no
  * readiness wording. It cannot make the model obey them, so the panel keeps
  * its standing caveat and the analyst keeps the evidence panels.

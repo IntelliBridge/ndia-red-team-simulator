@@ -100,7 +100,7 @@ markdown_extensions:
   - pymdownx.tasklist:
       custom_checkbox: true
   - pymdownx.snippets:
-      # Allow snippets to pull from repo root (for CHANGELOG etc.).
+      # Allow snippets to pull from the repo root.
       base_path: ["docs", "."]
       check_paths: true
   - pymdownx.superfences:
@@ -135,10 +135,10 @@ plugins:
 # Single source of truth: README.md at the repo root.
 #
 # cross_tree_links.py rewrites relative links that escape docs/ (for
-# example ../specs/README.md from project-brief.md) to absolute GitHub
-# URLs when the target exists in the repo, so `mkdocs build --strict`
-# stays green without duplicating the Spec Kit tree into the site.
-# Links to files that exist nowhere are left alone and still fail strict.
+# example ../CONTRIBUTING.md) to absolute GitHub URLs when the target
+# exists in the repo, so `mkdocs build --strict` stays green without
+# duplicating repo-root files into the site. Links to files that exist
+# nowhere are left alone and still fail strict.
 
 hooks:
   - hooks/readme_as_index.py
@@ -155,43 +155,13 @@ watch:
 # Navigation
 # ---------------------------------------------------------------------
 #
-# CHANGELOG / CONTRIBUTING / SECURITY live at the repo root (GitHub
+# CONTRIBUTING / SECURITY live at the repo root (GitHub
 # conventions) and aren't duplicated here. The nav points at the
 # GitHub-hosted copy via a full URL; mkdocs renders external URLs
 # as plain nav entries.
 
 nav:
   - Home: index.md
-  - Product and planning:
-      - Project brief: project-brief.md
-      - Product spec (2026-09-08): superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md
-      - Master plan: plans/00-master-plan.md
-      - Phase plans:
-          - "P0 Contracts + API skeleton": plans/01-p0-contracts-api-skeleton.md
-          - "P1 Targets + assets": plans/02-p1-targets-assets.md
-          - "P2 Attacks + scoring": plans/03-p2-attacks-scoring.md
-          - "P3 Explain, recommend, ATLAS": plans/04-p3-explain-recommend-atlas.md
-          - "P4 Orchestration + API": plans/05-p4-orchestration-api.md
-          - "P5 Web UI": plans/06-p5-web-ui.md
-          - "P6 Interoperability": plans/07-p6-interoperability.md
-          - "P7 Infra + CD": plans/08-p7-infra-cd.md
-          - Execution context: plans/EXECUTION-CONTEXT.md
-      - "Gap register (2026-09-08)": plans/09-gap-register-2026-09-08.md
-      - Phase B:
-          - "Remaining-work brief": plans/10-remaining-work-brief.md
-          - "Phase B register (2026-09-09)": plans/11-phase-b-register-2026-09-09.md
-          - "Phase B plan": plans/12-phase-b-plan.md
-          - "LLM live-gateway brief": plans/13-llm-live-gateway-brief.md
-      - Workstreams:
-          - ML core: workstreams/ml-core.md
-          - ML assets: workstreams/ml-assets.md
-          - Pythia access: workstreams/pythia-access.md
-      - Team backlog: team-backlog.md
-      - Spec-driven workflow: spec-driven-workflow.md
-      - Audit foundation contract: audit-foundation-contract.md
-      - Superseded:
-          - "Hackathon spec (v1)": adversarial-ml-redteam-spec.md
-          - "Redsim design note": superpowers/specs/2026-09-08-redsim-design.md
   - Architecture:
       - Overview: architecture/overview.md
       - Auth: architecture/auth.md
@@ -220,13 +190,6 @@ nav:
   - Security:
       - Supply-chain integrity: security/supply-chain.md
       - "Policy (SECURITY.md)": https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/SECURITY.md
-  - ADRs:
-      - "0001 Vendored submodules": adr/0001-vendored-submodules.md
-      - "0002 Registry seam + runners": adr/0002-registry-seam-and-runners.md
-      - "0004 Unified effect-class gate": adr/0004-unified-effect-class-gate.md
-      - "0005 Worker autoscaling + DR": adr/0005-worker-autoscaling-and-dr.md
-      - "0008 Nix reproducible builds": adr/0008-nix-reproducible-builds.md
-  - "Changelog ↗": https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CHANGELOG.md
   - "Contributing ↗": https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CONTRIBUTING.md
 
 # ---------------------------------------------------------------------

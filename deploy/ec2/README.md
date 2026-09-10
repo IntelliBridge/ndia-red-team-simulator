@@ -60,7 +60,6 @@ aws ssm start-session --target i-0cc7eb0ee0880ea3b        # a shell on the host
 ssh -i ~/.ssh/redsim-ec2.pem ubuntu@100.61.75.31          # from the operator IP
 ```
 
-`deploy-aws.yml` (the ECR image build) is manual only and not part of any deploy.
 
 ## Tenant rows
 

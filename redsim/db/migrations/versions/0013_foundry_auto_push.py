@@ -7,7 +7,7 @@ attestation and the egress allowlist stay operator-set on the API and worker
 
 ``projects.ml_integrations`` (JSONB, nullable) holds ``{"foundry": {...}}`` as
 ``redsim.services.ml_integrations`` reads and writes it. NULL means nothing
-configured. Additive, announced in docs/plans/00-master-plan.md section 5.
+configured. Additive.
 """
 
 from __future__ import annotations

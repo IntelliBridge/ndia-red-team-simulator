@@ -275,15 +275,8 @@ def test_three_policy_files_agree_on_the_phase_b_actions():
         assert cedar[value] == role, f"cedar disagrees on {value}"
 
 
-def test_dataset_export_is_remediator_in_all_three_files_and_the_spec():
-    """Wave B2 alignment: the spec 17.4 table, 27.4 and the 7.4 addendum row all say remediator."""
+def test_dataset_export_is_remediator_in_all_three_files():
+    """Wave B2 alignment: the policy module and both mirrors say remediator."""
     assert _ACTION_MIN_ROLE[Action.DATASET_EXPORT] == "remediator"
     assert _rego_table(REGO.read_text())["dataset.export"] == "remediator"
     assert _cedar_table(CEDAR.read_text())["dataset.export"] == "remediator"
-    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-08-adversarial-ml-redteam-spec.md").read_text()
-    row = next(line for line in spec.splitlines() if line.startswith("| `DATASET_EXPORT` |"))
-    assert "| `remediator` |" in row, row
-    assert "`scanner` |" not in row.split("|")[3], row
-    # The 17.4 route row and the 27.4 vocabulary row never said anything else.
-    assert "`DATASET_EXPORT` (remediator; section 27.4)" in spec
-    assert "`DATASET_EXPORT` (`remediator`)" in spec

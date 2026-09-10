@@ -4,27 +4,25 @@ Pythia (https://github.com/IntelliBridge/pythia) is IntelliBridge's
 OpenAI-compatible agent gateway. Redsim never talks to a model provider
 directly. It holds one Pythia `pk_…` key, and the gateway applies the
 persona, guardrails, metering and audit before a request reaches a model.
-Every LLM call in redsim goes through `redsim/llm/pythia.py` (decision D5 in
-the product spec). There is no litellm and there are no provider keys anywhere
-in the stack.
+Every LLM call in redsim goes through `redsim/llm/pythia.py`. There is no
+litellm and there are no provider keys anywhere in the stack.
 
-Status at `main` `703f8f6` plus Phase B wave B4 (2026-09-09): two consumers
-in the Python services, plus the finding chat of the web process described
-under [Finding chat (web)](#finding-chat-web).
+There are two consumers in the Python services, plus the finding chat of the
+web process described under [Finding chat (web)](#finding-chat-web).
 The first is the optional hardening narrative, one plain, non-streaming chat
 completion per campaign with candidate recommendations, fed the rule outputs,
-the measurements and a SHAP text summary. Since wave 2 it runs in the
+the measurements and a SHAP text summary. It runs in the
 **worker parent** after the sandbox child returns
 (`redsim/workers/tasks/ml_campaign.py::_parent_narrative`), routed through
 `redsim.llm.router.route("ml.harden_narrative")` with the `DbBudgetChecker`,
 and metered as one `LLMUsage` row per call. The sandbox child never holds the
 key. When Pythia is not configured the narrative is skipped, never faked, and
 recommendations render from the rule layer alone with
-`narrative_source = "rules"`. The second, since wave B2, is the garak probe
+`narrative_source = "rules"`. The second is the garak probe
 traffic of `redsim.ml_llm_probe_run` described under
-[Probe traffic](#probe-traffic-wave-b2): it uses its own key from an
+[Probe traffic](#probe-traffic): it uses its own key from an
 `AuthProfile` and its own persona, never `PYTHIA_API_KEY` or the narrative
-writer's persona. Since `7556b22` `redsim doctor`, `redsim.yaml` and
+writer's persona. `redsim doctor`, `redsim.yaml` and
 `.env.example` are Pythia-only: no provider key is listed, checked or written
 anywhere, and `PYTHIA_API_KEY` is the only LLM credential the tree names in
 its configuration files (the probe key lives encrypted in the database).
@@ -69,7 +67,8 @@ model name, never the key or the URL.
 
 Keys are provisioned by the Pythia operators (GovCloud deployment) per team
 and per persona. Ask for a key scoped to the `default` persona for the
-hardening writer. See "Personas and guardrails" below for what Phase B needs.
+hardening writer. See "Personas and guardrails" below for what the probe
+runs need.
 
 ## Where the call is made
 
@@ -125,7 +124,7 @@ Next server, never in the browser and never in FastAPI:
    API refuses (`409 llm_target_required` on a probe finding, a `404`) leaves
    the chat on the finding alone with the reason in the prompt.
 3. `web/src/server/chat/context.ts` builds one system message: the reporting
-   rules of the brief as instructions (labels kept, denominators quoted, no
+   rules as instructions (labels kept, denominators quoted, no
    expected gain before a verify, no readiness wording) plus a compact JSON
    projection of the two records (measurements with `n` and `n_correct`, the
    score with its subscores and weights, the curve, the candidates with their
@@ -252,7 +251,7 @@ and `REDSIM_WEB_CHAT_MODEL` the same way, for the finding chat.
 
 The worker anchor also sets `REDSIM_DISABLE_LLM: "1"`, which the evidence
 pack reports as `llm_enabled: false`. The narrative runs on the `scans`
-worker (`redsim-worker`) since wave 2, so that is the service on which the
+worker (`redsim-worker`), so that is the service on which the
 variable has to be unset (a `docker-compose.override.yml` is the least
 invasive way) before a compose stack can produce a narrative. The API only
 reads the variables to report `llm_narrative.configured`.
@@ -317,14 +316,12 @@ The two embedding models are listed by the gateway but are not chat models.
 Entitlements are a property of the key and persona, so re-run the check after
 a key or persona change rather than relying on this table.
 
-## Probe traffic (wave B2) {#probe-traffic-wave-b2}
+## Probe traffic {#probe-traffic}
 
-Since Phase B wave B2 (`ml(llm): garak through Pythia core: catalog,
-generator, probe child, scorecard` and `feat(llm): probe routes, admission,
-worker, scorecard and findings`) the second Pythia consumer is the LLM
-red-teaming track: garak 0.16.0 probes run against an LLM target through the
-gateway and produce a probe scorecard with k/n denominators and no MRI. How
-the traffic reaches Pythia, verified from `redsim/ml/llm/generator.py`,
+The second Pythia consumer is the LLM red-teaming track: garak 0.16.0 probes
+run against an LLM target through the gateway and produce a probe scorecard
+with k/n denominators and no MRI. How the traffic reaches Pythia, read from
+`redsim/ml/llm/generator.py`,
 `redsim/ml/llm/runner.py`, `redsim/ml/llm/probe_child.py`,
 `redsim/services/ml_llm.py` and `redsim/workers/tasks/ml_llm.py`:
 
@@ -407,7 +404,7 @@ the traffic reaches Pythia, verified from `redsim/ml/llm/generator.py`,
 
 No probe run against the live gateway has been recorded. The tests
 (`tests/ml/test_llm_core.py` and `tests/ml/test_llm_routes.py`, 12 of them
-`garak`-marked, and since wave B4 the e2e file `tests/e2e/test_ml_llm.py`,
+`garak`-marked, and the e2e file `tests/e2e/test_ml_llm.py`,
 four `garak`-marked cases that register an LLM target through
 `POST /v1/models`, run `POST /v1/models/{id}/probes` as each role and drive
 one real garak 0.16.0 run through the eager worker) drive real garak probes
@@ -419,14 +416,14 @@ nowhere else, that the child environment, the work directory and every stored
 file are free of the key, that the k/n scorecard carries no MRI, grade or
 subscore key, and that `/campaign` and `/compare` refuse the probe run. The
 `garak offline` CI lane runs the `tests/ml` cases and the `e2e-python` lane
-(which installs the `garak` extra since wave B4) the e2e file; since wave B4
-the gate's garak step fails on an empty collection rather than passing. No
+(which installs the `garak` extra) the e2e file. The `garak offline` job
+fails on an empty collection rather than passing. No
 deploy image installs the `garak` extra: the transitive `openai` and `litellm`
 clients garak pulls in exist only where the extra is installed, no
 configuration path reaches them (no provider key variable exists,
 `assert_no_litellm` checks the generator's MRO, the API tripwire blocks both
 modules), and the only LLM credentials anywhere are the gateway key and the
-probe key in an `AuthProfile` (D5; `docs/security/supply-chain.md`).
+probe key in an `AuthProfile` (`docs/security/supply-chain.md`).
 
 ## Personas and guardrails
 
@@ -436,14 +433,14 @@ SHAP text summary, with no tools, no images and no structured output. The
 `default` persona's guardrails are appropriate for that traffic and nothing in
 the narrative prompt should trip them.
 
-The probe traffic of wave B2 is different. Its probes are adversarial by
+The probe traffic is different. Its probes are adversarial by
 design: prompt injection, jailbreak attempts, toxicity elicitation. A persona
 with content guardrails enabled would block or rewrite those probes and the
 results would measure Pythia's filters rather than the target model. The
 garak persona therefore needs the permission-gate-only guardrail default
 (authentication, entitlement and metering stay on, content filtering off),
 provisioned as a separate key and persona so the hardening writer's `default`
-persona keeps its guardrails (owner default LLM-26, applied: the registration
+persona keeps its guardrails (the registration
 requires the persona and a `guardrail_mode`, the scorecard limitations state
 the mode, and a mode other than `permission_gate_only` adds the sentence that
 the hit rates measure the gateway's content filters as much as the model).
@@ -452,10 +449,10 @@ The two keys are kept apart by construction: the narrative writer reads
 runner reads its key from the target's `AuthProfile` and its persona from the
 target row. Ask the Pythia operators for the permission-gate-only persona and
 key before the first probe run against the live gateway. The probe material
-is the set of corpora garak ships and loads itself (spec section 11.6; the
-public data repository carries a copy with per-subset licences, owner
-decision TESTS_DOCS-33): those prompts are untrusted data and may only be
+is the set of corpora garak ships and loads itself (the
+public data repository carries a copy with per-subset licences): those
+prompts are untrusted data and may only be
 sent to that permission-gate-only persona, never to the `default` persona and
-never to a production system. HarmBench material is excluded (`fitd.FITD`,
-owner default LLM-08), as are `dan.AutoDAN`, `grandma.GrandmaIntent` and the
+never to a production system. HarmBench material is excluded (`fitd.FITD`),
+as are `dan.AutoDAN`, `grandma.GrandmaIntent` and the
 uncapped corpus variants, each an excluded catalog row with its reason.

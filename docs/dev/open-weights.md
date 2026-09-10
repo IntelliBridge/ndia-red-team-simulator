@@ -8,7 +8,7 @@ the deployed stack runs. Nothing here is a fixture.
 
 ## What an upload needs
 
-An uploaded model is evaluated on a dataset redsim has built (spec 5.5). The
+An uploaded model is evaluated on a dataset redsim has built. The
 binding, not the architecture, decides which public checkpoints fit:
 
 | Bundled dataset | Built by | Public checkpoints that fit |
@@ -17,13 +17,13 @@ binding, not the architecture, decides which public checkpoints fit:
 | `hf:uoft-cs/cifar10` (10 classes, 32 px) | `redsim ml build-assets --dataset cifar10` | ResNet-18 safetensors, MLCommons ResNet-8 ONNX and many more |
 | `kaggle:sid321axn/malicious-urls-dataset` | `--dataset tabular` | none: the feature extractor is redsim's own |
 
-CIFAR-10 is a fixture-only dataset under spec 11.1: a campaign on it carries
+CIFAR-10 is a fixture-only dataset: a campaign on it carries
 the fixture caveat in the report and its findings are not evidence about any
 mission dataset. It is the honest public benchmark for this demonstration.
 ImageNet-trained checkpoints, the bulk of the Hub, need an ImageNet-labelled
 evaluation set and a class-index mapping that the tree does not have.
 
-Formats: `onnx`, `torch_state_dict` and `safetensors_state_dict` (spec 9.2).
+Formats: `onnx`, `torch_state_dict` and `safetensors_state_dict`.
 Full pickles are refused before deserialisation. A state_dict needs an
 `architecture_id` from the catalog (`small_cnn`, `resnet18`). Modality `image`
 or `tabular`.
@@ -33,7 +33,7 @@ or `tabular`.
 The campaign perturbs `[0, 1]` NCHW pixels at the evaluation split's
 resolution, so epsilon means the same thing for every target. Public
 checkpoints were trained on other contracts. Declare the contract at upload
-and the loader folds it into the model boundary (spec 11.3.1):
+and the loader folds it into the model boundary:
 
 | Field | Meaning | Example |
 |---|---|---|
@@ -110,5 +110,5 @@ restart is needed.
   class-index mapping).
 - Transformers architectures (ViT, ConvNeXt) as state_dicts: not in the
   catalog. Export them to ONNX first, then upload the graph.
-- Text and detection uploads answer `501 not_implemented` (Phase B).
+- Text and detection uploads answer `501 not_implemented`.
 - Tabular checkpoints from the Hub: none match redsim's URL feature extractor.

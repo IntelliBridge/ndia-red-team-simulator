@@ -3,9 +3,7 @@
 This doc covers the Next.js app, the design-system workspace and Storybook.
 For the auth flow (the branded login page plus the redsim-signed cookie) see
 [`docs/architecture/auth.md`](../architecture/auth.md). For the API surface
-the app consumes see [`docs/api/v1.md`](../api/v1.md). The target ML pages
-are section 18 of the
-[product spec](../superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md).
+the app consumes see [`docs/api/v1.md`](../api/v1.md).
 
 ## Workspace layout
 
@@ -85,8 +83,7 @@ that entry is updated. The web app reads
 | `Command` | the Cmd/Ctrl-K command palette |
 
 The ML pages add `MriScorecard`, `DimensionBars`, `RobustnessCurve`,
-`MeasurementTable` and `ObservationCard` (master plan WS5, spec section 18).
-None of them is on `main`.
+`MeasurementTable` and `ObservationCard`. None of them is on `main`.
 
 ## Page inventory (on `main`)
 
@@ -103,10 +100,10 @@ None of them is on `main`.
 | `/logs` | terminal-style log viewer over `/v1/logs` |
 | `/cost` | per-org LLM cost dashboard over `/v1/orgs/{id}/cost` |
 
-Planned for the ML vertical (WS5, PR #16 is open): `/models` with
+Planned for the ML vertical (PR #16 is open): `/models` with
 the Add model dialog (bundled picker, ONNX / `state_dict` upload with the
-refusal rules shown before a file is chosen, endpoint tab disabled with the
-Phase B reason), `/models/[id]` with the campaign launcher rendered from
+refusal rules shown before a file is chosen, endpoint tab disabled with its
+reason), `/models/[id]` with the campaign launcher rendered from
 `GET /v1/attacks` `params_schema`, the 13-panel `/runs/[id]` (MRI scorecard
 with subscores, per-family table with denominators, ε curve, observations,
 interpretation, candidate recommendations, limitations, provenance), the

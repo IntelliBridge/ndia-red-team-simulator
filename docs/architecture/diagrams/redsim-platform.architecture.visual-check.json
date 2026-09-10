@@ -6,7 +6,7 @@
   "status": "pass",
   "visualReview": "pending",
   "artifact": {
-    "path": "/Users/noah.behrick/NDIA Hackathon/wt/docs-refresh/docs/architecture/diagrams/redsim-platform.architecture.html",
+    "path": "docs/architecture/diagrams/redsim-platform.architecture.html",
     "sha256": "efe7f42b23e95cd41fb5d0fc6e596d83ef776993fb6d18e6c4cda480c74319c8",
     "bytes": 822575
   },

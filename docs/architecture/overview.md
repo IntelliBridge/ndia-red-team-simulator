@@ -11,10 +11,10 @@ API each have their own page. This file is the shared mental model.
 - [ML vertical](ml-vertical.md)
 - [`/v1/*` HTTP API](../api/v1.md)
 
-Status as of 2026-09-08. Sections that describe the ML campaign flow say
-which parts exist on `main` and which are planned. The
-[product spec](../superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md)
-is the authority where this page is silent or stale.
+Sections that describe the ML campaign flow say which parts exist on `main`
+and which are planned. The [ML vertical](ml-vertical.md) page and the
+[API reference](../api/v1.md) are the authority where this page is silent
+or stale.
 
 ## Purpose
 
@@ -100,7 +100,7 @@ Three boundaries the diagram encodes:
 - **The API never opens a model.** It streams uploaded bytes to the blob
   store, records the sha256 and writes rows. Model loading, attacks and
   SHAP run only on the worker, inside a sandbox child built on the
-  plugin-sandbox pattern of `redsim/scanners/sandbox.py` (spec section 9).
+  plugin-sandbox pattern of `redsim/scanners/sandbox.py`.
   The API image stays free of the `ml` extra.
 - **Pythia is the only LLM egress.** redsim holds one `pk_…` gateway key
   and no provider key. The only outbound call a campaign makes is the
@@ -111,7 +111,7 @@ Three boundaries the diagram encodes:
   audit event before any `Run` or `Job` row exists and before Celery is
   touched. `tests/test_admission_audit_before_enqueue.py` asserts the
   ordering for the live services, and the ML admission services are to
-  join that test when they land (spec 8.2).
+  join that test when they land.
 
 ## Deployment topology
 
@@ -151,8 +151,9 @@ managed equivalents, an optional gVisor `RuntimeClass` for the worker pod
 (`sandbox.enabled`), and a secret guard that refuses to render the dev
 placeholders when `config.env=prod`. The chart renders one worker
 Deployment. The compose split into `scans` and `default` pools and the beat
-process is not mirrored in it. The ECS Fargate target of spec section 20.4
-is WS7 and is not on `main`.
+process is not mirrored in it. The demo host is a single EC2 instance
+deployed over SSM by `.github/workflows/deploy-host.yml`
+(`deploy/ec2/README.md`).
 
 For a per-service walkthrough of the compose stack see
 [`docs/dev/local-stack.md`](../dev/local-stack.md). For the production
@@ -178,8 +179,8 @@ the same admission and execution code runs regardless of who invoked it.
 ## Campaign lifecycle
 
 The product loop is **campaign, attacks, explain, score, recommend**. The
-sequence below is the target design of spec sections
-10.2 and 10.3. What exists on `main` is the admission pattern (audit
+sequence below is the target design. What exists on `main` is the
+admission pattern (audit
 before enqueue, shown for the live services in
 `services/scans.py` and `services/runs.py`), the job
 state machine in `redsim/workers/job_state.py`, the `task_context`
@@ -245,8 +246,7 @@ cite ART classes and papers as plain text. None is evaluated against the
 model, and that requires a separate campaign. Two campaign runs are read
 side by side through `GET /v1/runs/{id}/compare?with=`. The stored model
 is never modified and nothing is deployed. The verify paradigm was removed
-on 2026-09-09 (product owner decision, `docs/project-brief.md`). The
-details are in [ml-vertical.md](ml-vertical.md).
+on 2026-09-09. The details are in [ml-vertical.md](ml-vertical.md).
 
 ## Data model (Postgres)
 
@@ -386,14 +386,14 @@ and **Celery tasks call execution only**. Admission is cheap and
 request-scoped (authorize, insert `Run` and `Job` rows, enqueue).
 Execution is the long-running work. The ML vertical adds
 `services/ml_models.py`, `services/ml_campaigns.py` and
-`services/ml_findings.py` in the same shape (spec 8.3), and the `redsim
+`services/ml_findings.py` in the same shape, and the `redsim
 ml` CLI mirrors `services.scans.start_scan` for the offline path
 (filesystem `RunState`, `JsonlAuditWriter`, the same sandbox child).
 
 ## Execution surface
 
 Redsim discovers pluggable adapters at startup through the generic
-`redsim.registry.Registry[T]` ([ADR 0002](../adr/0002-registry-seam-and-runners.md),
+`redsim.registry.Registry[T]` (upstream ADR 0002,
 [Extending Redsim](../dev/extending.md)). The scanner registry in
 `redsim/scanners/registry.py` keeps the `ScannerAdapter` protocol, the
 open `KNOWN_CAPABILITIES` vocabulary (`dast`, `sast`, `dependency`,
@@ -414,7 +414,7 @@ registry under the entry-point group `redsim.ml.attacks`, so
 `redsim plugins list` and the signature gate cover them too. A
 `CampaignScannerAdapter` façade (`name="ml-campaign"`, capabilities
 `adversarial_ml` and `explainability`) is planned so that
-`list_scanners()` and the offline CLI see the vertical (spec 8.3).
+`list_scanners()` and the offline CLI see the vertical.
 
 ## LLM path
 
@@ -449,24 +449,7 @@ path and no provider client. The layers, bottom up:
 
 ## History and what is deferred
 
-The platform came from IntelliBridge's aegis, whose release history is in
-the
-[CHANGELOG](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CHANGELOG.md)
-and whose architecture decisions are kept as history under `docs/adr/`
-with a provenance banner on each. ADR 0001 (vendored submodules) and ADR
-0004 (the effect-class gate on agents and tools) describe upstream
-mechanisms that left with the pentest domain. ADR 0002 (the registry seam)
-still describes the code. ADR 0005 (worker autoscaling and DR) and ADR
-0008 (Nix reproducible builds) remain open spikes.
-
-Not on `main` as of 2026-09-08:
-
-- WS4: the ML Celery tasks, the sandbox child and the `/v1/models`,
-  `/v1/attacks`, campaign, artifact and compare routes.
-- WS5: the `/models` pages and the campaign and finding review panels
-  (proposed in PR #16).
-- WS7: the ECS Fargate deployment (a Terraform-only foundation in draft
-  PR #19).
-- Datasets and bundled models: none fetched or trained yet.
-- Phase B of the spec: black-box endpoint targets, further attacks and
-  modalities, ATLAS tagging and the interoperability work of section 27.
+The platform came from IntelliBridge's aegis. The pentest domain (scanner
+adapters, agents, remediation, ticketing) left with the fork. Worker
+autoscaling with DR and Nix reproducible builds remain open spikes. The
+README's open items list what is not built.

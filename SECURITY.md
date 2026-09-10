@@ -8,8 +8,7 @@ described below together with the boundaries the adversarial-ML vertical adds.
 
 Open a private security advisory on the GitHub repository
 (`IntelliBridge/ndia-red-team-simulator`, Security tab) or contact the
-repository owner listed in `CODEOWNERS` directly. Do **not** open a public
-issue.
+repository maintainers directly. Do **not** open a public issue.
 
 Include:
 
@@ -431,7 +430,5 @@ Current on 2026-09-09.
 - **Audit redaction** blanks keys containing `token` and known key shapes and,
   since Phase B wave B4 (INTEROP-28), scrubs JWT-shaped values by shape in
   `redsim/audit/redact.py`.
-- Worker autoscaling and multi-region DR
-  ([ADR-0005](docs/adr/0005-worker-autoscaling-and-dr.md)) and Nix
-  reproducible builds ([ADR-0008](docs/adr/0008-nix-reproducible-builds.md))
-  are deferred spikes.
+- Worker autoscaling, multi-region DR and Nix reproducible builds are
+  deferred spikes.

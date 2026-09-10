@@ -10,10 +10,9 @@ The **ML vertical** adds two protocols of its own, `Target` and
 `AttackAdapter`, plus explainers and recommendation rules, and
 registers into the same seam.
 
-This page says what exists on `main` and what the product spec assigns to the
-open ML pull requests (#8 `feat/ml-core`, #9 `feat/ml-assets`). Nothing
-described as "PR #8" or "planned" may be presented as working until it merges
-(`CLAUDE.md`, working rules).
+This page says what exists on `main` and what the open ML pull requests
+(#8 `feat/ml-core`, #9 `feat/ml-assets`) add. Nothing described as "PR #8"
+or "planned" may be presented as working until it merges.
 
 ## What is on `main`
 
@@ -46,12 +45,12 @@ A target is a model plus the public dataset slice it is evaluated on.
 | `torch_model() -> Any` | The `torch.nn.Module` in eval mode, for SHAP `GradientExplainer`. |
 | `manifest() -> dict` | Dataset and weights provenance: names, versions, sha256, training config. |
 
-The spec (section 8.3) assigns the concrete implementations to
+The concrete implementations live in
 `redsim/ml/targets/bundled.py` (bundled catalog and asset manifest reader),
 `artifact.py` (ONNX, `state_dict`, `safetensors`, XGBoost-JSON loaders),
 `architectures.py` (the in-tree architecture catalog that `state_dict`
-uploads must name), `tabular.py`, and `endpoint.py` (Phase B stub). Loaders
-are imported **only inside the sandbox child** (section 9). A `Target` that
+uploads must name), `tabular.py`, and `endpoint.py`. Loaders
+are imported **only inside the sandbox child**. A `Target` that
 needs a download must never fetch at import time.
 
 ### `AttackAdapter` (`redsim/ml/attacks/base.py`)
@@ -70,16 +69,16 @@ renders from it, admission validates against it, the worker re-validates.
 Attack ids are declarative references to registered, bounded ART adapters.
 The repository stores no attack recipes or executable payloads.
 
-Phase A catalog (spec section 12.2), carried by PR #8:
+The core catalog, carried by PR #8:
 
 | Adapter id | Modality | ART class | Access |
 |---|---|---|---|
 | `fgsm` | image | `FastGradientMethod` | white-box |
 | `pgd` | image, tabular (via a build-time differentiable surrogate) | `ProjectedGradientDescent` | white-box |
-| `hopskipjump` | tabular (image in Phase B) | `HopSkipJump` | black-box |
+| `hopskipjump` | tabular, image | `HopSkipJump` | black-box |
 | `noise_control` | image, tabular | none, adapter-native benign noise at the same ε | control, never creates a Finding |
 
-Phase B rows (`cw_l2`, `deepfool`, `zoo`, text and detection attacks) are
+Further rows (`cw_l2`, `deepfool`, `zoo`, text and detection attacks) are
 registered only when their adapter, estimator support and tests exist. Until
 then `GET /v1/attacks` will not list them and the UI shows the modality as
 unavailable with the reason.
@@ -110,8 +109,8 @@ unavailable with the reason.
    and a default. Record `library_versions` from ART and torch.
 2. Register it in `redsim/ml/attacks/registry.py`. A duplicate id raises at
    import.
-3. Add its row to spec section 12.2 (adapter id, ART class, parameters,
-   phase) and to the `GET /v1/attacks` fixture.
+3. Add its row to the catalog table above (adapter id, ART class,
+   parameters) and to the `GET /v1/attacks` fixture.
 4. Test it in-process against `tests/ml/fakes.py::TinyTarget` under the `ml`
    marker, with `pytest.importorskip("torch")` at module top so the 3.13 CI
    lane still collects the module.
@@ -135,7 +134,7 @@ unavailable with the reason.
   when Pythia is not configured. A recommendation carries `status:
   "candidate"` and nothing more. It may cite ART classes and papers as plain
   text. Nothing is applied to the model. The verify paradigm was removed on
-  2026-09-09 (product owner decision, `docs/project-brief.md`).
+  2026-09-09.
 
 ## The platform registry seam
 
@@ -218,7 +217,7 @@ parent's secrets, and a private fd result channel. It is process isolation,
 not a network or filesystem jail.
 
 The ML vertical builds `redsim/ml/sandbox.py` and `sandbox_worker.py` on the
-same primitives with deliberate differences (spec section 9.4): the child
+same primitives with deliberate differences: the child
 imports only in-tree `redsim.ml` code and the untrusted input is the model
 file, there is no in-process path for model bytes and no network switch, the
 parent populates a per-job work directory with the digest-checked model file
@@ -230,7 +229,6 @@ models take the same path on every run. These files are not on `main` yet.
 
 `redsim/effects.py` classifies an action as `read`, `active` or `external`
 and drives the approver gate (`requires_approval`). It was written for the
-pentest agents and tools ([ADR 0004](../adr/0004-unified-effect-class-gate.md))
-and no mounted route consults it today. The ML routes gate on the `Action`
+pentest agents and tools and no mounted route consults it today. The ML routes gate on the `Action`
 members in `redsim/api/policy.py` instead. No route applies anything to a
 model.

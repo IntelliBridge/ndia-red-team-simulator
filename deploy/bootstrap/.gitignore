@@ -1,6 +1,0 @@
-.terraform/
-*.tfstate*
-*.tfplan
-*.tfvars
-*.tfvars.json
-*.tfbackend

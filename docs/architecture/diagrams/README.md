@@ -34,8 +34,7 @@ Source: `redsim-platform.architecture.json`.
 
 ### `attack-campaign.sequence.html`
 
-The Phase A attack campaign as specified in the product spec (sections 10
-and 17): analyst to web to `POST /v1/models/{id}/attacks`, RBAC
+The attack campaign: analyst to web to `POST /v1/models/{id}/attacks`, RBAC
 `attack.run`, the audit row appended before any row or enqueue, the
 `attack.run` chain (sample, clean_eval, attack per epsilon, control), then
 `explain.run` (SHAP), the score stage (MRI), `harden.recommend` (rules

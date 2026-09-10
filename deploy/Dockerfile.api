@@ -34,6 +34,5 @@ RUN pip install -e ".[api,worker]"
 
 EXPOSE 8000
 # Apply pending migrations (alembic.ini -> redsim/db/migrations, URL from
-# REDSIM_DB_URL) and start the redsim FastAPI factory. Spec:
-# docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md.
+# REDSIM_DB_URL) and start the redsim FastAPI factory.
 CMD ["sh", "-c", "alembic upgrade head && uvicorn redsim.api.app:create_app --factory --host 0.0.0.0 --port 8000"]

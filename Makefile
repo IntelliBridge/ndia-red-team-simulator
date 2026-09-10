@@ -162,29 +162,8 @@ typecheck-web: require-install
 # .github/workflows/redsim-ci.yml: ruff with the CI selection, mypy, the
 # Python default tier, then the web typecheck and vitest (``typecheck-web``
 # and the second line of ``test``). A failing vitest test fails this target.
-# deploy-aws.yml does not run it: that workflow only builds images and rolls
-# ECS services.
 check: lint typecheck test
 
-# Phase B completion gate (docs/plans/12-phase-b-plan.md section 6, register
-# TESTS_DOCS-36): scripts/phase_b_gate.sh runs, in order and stopping at the
-# first failure, ruff (CI selection), mypy, the default tier, the ml tier, the
-# garak tier, the e2e tier (Postgres RLS lane when REDSIM_E2E_POSTGRES_URL is
-# set), mkdocs --strict, tests/test_docs_phase_b_consistency.py and, when
-# REDSIM_API_URL and REDSIM_API_TOKEN name a running stack (`make up`), the
-# HTTP probes plus `redsim audit verify --all` (needs REDSIM_DB_URL). Each
-# failure names the spec 26 criterion it fails. `make check` keeps its
-# meaning above; this target is the Phase B definition of done. Needs the
-# ml, docs and garak extras (`EXTRAS=api,worker,test,dev,ml,docs,garak make
-# install`): a missing extra fails its step rather than passing vacuously (the
-# garak step fails on pytest exit 5 and on an all-skipped run, since the tree
-# carries garak-marked tests). From a git worktree the script puts the checkout
-# under test first on PYTHONPATH for the e2e step, because the editable install
-# points at the main checkout; from the main checkout nothing is needed.
-# `scripts/phase_b_gate.sh --list` prints the steps and their criteria.
-check-phase-b:
-	@test -x $(PY) || { echo "error: $(VENV) is missing. Run 'make install' first." >&2; exit 1; }
-	PY=$(PY) scripts/phase_b_gate.sh
 # API-level smoke against a live runtime (remaining-work brief E8):
 # health, OIDC discovery, 401 unauthenticated, then the authenticated reads
 # and an optional campaign when a token or a demo user is in the environment.
@@ -264,5 +243,5 @@ docs-clean:
 	test test-cov \
 	lint lint-py lint-web \
 	typecheck typecheck-py typecheck-web \
-	check check-phase-b up down demo \
+	check up down demo \
 	docs-serve docs-build docs-build-strict docs-clean

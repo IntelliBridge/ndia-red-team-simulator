@@ -1,26 +1,18 @@
-# Interoperability (Phase B wave B3)
+# Interoperability (Croissant, ATLAS, Foundry)
 
-Status as of 2026-09-09: wave B3 of the [Phase B plan](plans/12-phase-b-plan.md)
-is on the tree (six commits, `feat(interop): Croissant/Parquet dataset export
-of a campaign run` through `fix: integrate Phase B wave B3 tracks`), and every
-statement on this page was read from those commits (`redsim/ml/interop/`,
-`redsim/ml/atlas.py`, `redsim/integrations/`, `redsim/services/ml_datasets.py`,
+This page is the narrative of the interoperability surface: what leaves the
+platform, what enters it, and the rules both directions obey. Every statement
+is read from the code (`redsim/ml/interop/`, `redsim/ml/atlas.py`,
+`redsim/integrations/`, `redsim/services/ml_datasets.py`,
 `redsim/services/ml_datasets_export.py`, `redsim/workers/tasks/{dataset_export,
 dataset_validate,integration_push}.py`, `redsim/api/v1/{datasets,integrations,
-attacks}.py` and their tests), not from the writers' reports. The design is
-section 27 of the
-[product spec](superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md)
-(the plan-07 file predates it and keeps a banner saying so). The route
-contracts are in the [API reference](api/v1.md#dataset-export); this page is
-the narrative: what leaves the platform, what enters it, and the rules both
-directions obey. Everything here is opt-in and off by default (spec 27 rule
-1). The end-to-end evidence for the round trip is wave B4's
+attacks}.py` and their tests). The route contracts are in the
+[API reference](api/v1.md#dataset-export). Everything here is opt-in and off
+by default. The end-to-end evidence for the round trip is
 `tests/e2e/test_ml_interop.py` (the export and its shards, a consumed slice
 registered and validated through the real child, the ATLAS tags and coverage,
-the fake Foundry push, `redsim audit verify --all` over the lot); at the B4
-push five of its six cases hold and the consumed slice bound to a campaign
-fails by attribution (see "Consume" below). `tests/ml/` proves each piece in
-isolation.
+the fake Foundry push, `redsim audit verify --all` over the lot). `tests/ml/`
+proves each piece in isolation.
 
 ## Contribute: a run's adversarial examples as a Croissant dataset
 
@@ -32,7 +24,7 @@ writes the `dataset.export` audit row before the follow-up `Run` (scanner
 enqueue on `redsim.dataset_export` (queue `scans`, set at enqueue). It refuses,
 before any row, a run that is not an ML campaign or not terminal or retained no
 adversarial slice (`409 export_unavailable` with the reason), a fixture-only or
-partial run (`422 fixture_not_exportable`, D3), a second export while one is
+partial run (`422 fixture_not_exportable`), a second export while one is
 queued or running (`409 export_in_flight`), and a broker outage (`503
 queue_unavailable`, the two rows rolled back). One export per run: a second
 call after the first completed answers the existing manifest (`status:
@@ -73,11 +65,11 @@ where the run wrote them) and its `ml.flip_matrix`, and builds:
   gate and also refuses banned tokens: no model or tensor file name, no
   `reviewer_notes`, no credential environment name, and no bare MRI (a
   number or grade without its subscores, denominators, grid and
-  `settings_hash`, D9).
+  `settings_hash`).
 - **The dataset card** (`card.py::render_card`): a Hugging Face style Markdown
   card rendered by a template over the manifest and the limitations, with the
   "evidence, not a readiness statement" footer. Never written by the LLM
-  narrator (spec 27 rule 2).
+  narrator.
 
 The files land under `datasets/<source-run-id>/` as `Artifact` rows on the
 source run with kinds `ml.dataset.manifest`, `ml.dataset.parquet` and
@@ -87,8 +79,8 @@ manifest as `application/ld+json` (`404` until an export exists). The
 byte total and the prefix, ids, digests and counts only, then `job.complete`
 closes the follow-up run's chain.
 
-What a live export contains today (INTEROP-04, closed by the B3 reconcile
-pass): the classification runner (image and tabular) writes, under the
+What a live export contains today: the classification runner (image and
+tabular) writes, under the
 `REDSIM_ML_MAX_ADV_ARTIFACT_MB` cap, `clean_slice.npz` after the clean
 evaluation (`x`, `indices`, `y`, `y_pred_clean`, `conf_clean`),
 `adv_slice/<attack>_<eps>.npz` per attack row and `control_slice/<eps>.npz` per
@@ -104,7 +96,7 @@ populated prediction columns; the text and detection runners still persist
 only their own `adv_slice` formats, so the export skips a non-npz slice with a
 caveat and labels a legacy npz from its location only where the backend keeps
 the name. Regenerating a slice in the sandbox child when none was retained
-(INTEROP-07) is carried forward: the honest answer today is
+is not built: the honest answer today is
 `export_unavailable`, never a fabricated slice.
 
 ### The published sample
@@ -194,23 +186,23 @@ writes one `dataset.validate` audit row and the report as the
 which proves the parent never opened a Parquet file.
 
 Parquet contract for a consumed slice: one Parquet file (a second part is
-refused in this wave). Tabular: the declared numeric feature columns plus the
+refused). Tabular: the declared numeric feature columns plus the
 label column (class names or 0-based indices). Image: a binary column of raw
 C-order arrays of the declared dtype at `input_shape` (or a list of numbers
 per row) plus the label column. The loader returns `float32` inputs in the
 declared shape and `int64` labels in the declared class order, which is what
 the evaluation binding consumes.
 
-Binding a consumed slice to a model or a campaign (INTEROP-16) is built on the
+Binding a consumed slice to a model or a campaign is built on the
 service side (`resolve_consumed_slice`, `consumed_dataset_binding` returning a
 `DatasetBinding` with `split: eval`, the Parquet location and the manifest
 digest as the revision; `load_consumed_slice` on the worker). The campaign
-admission calls it since the B3 reconcile pass: a `dataset_id` matching
+admission calls it: a `dataset_id` matching
 `ds-<hex>` must resolve to an `available` slice of the project (else
 `422 dataset_incompatible` naming why, field `dataset_id`, `dataset_role`
 `consumed`) and match the campaign modality; `dataset_revision` defaults to
 the slice's manifest digest; the admitted `attack.run` row and every refusal
-carry `dataset_id` and `dataset_role`. Since wave B4 the upload admission
+carry `dataset_id` and `dataset_role`. The upload admission
 (`services/ml_models.py::check_upload_dataset`, falling back to
 `consumed_upload_binding` for a `ds-…` id: an `available` slice of the
 project, split `eval` only) binds a consumed slice too, and the worker's
@@ -233,13 +225,13 @@ Another team's classifier enters the same way an uploaded model always has:
 `POST /v1/models` multipart with `source: upload`, `declared_format: onnx` (or
 a PyTorch `state_dict` with an allowlisted `architecture`), a
 `license_statement`, the `modality`, `class_names` and the `dataset_id` the
-model is evaluated on (a bundled id today; a consumed `ds-…` id once the
-INTEROP-16 hook lands). Pickles are refused at the door (`415 pickle_refused`)
+model is evaluated on (a bundled id, or a consumed `ds-…` id). Pickles are
+refused at the door (`415 pickle_refused`)
 and the bytes are opened only in the sandbox child by
 `redsim.ml_model_validate`, which records the ONNX to torch conversion and its
 argmax agreement in the validation report. Then `POST /v1/models/{id}/attacks`
 runs a campaign like any bundled target, and `POST /v1/runs/{id}/dataset`
-exports its adversarial examples back out. Operator rule (register risk): a
+exports its adversarial examples back out. Operator rule: a
 consumed slice used in any demo is published to the public data repository
 by the operator before use; the `public` flag on the upload is declared, not
 verified.
@@ -258,15 +250,15 @@ release has no text- or patch-specific technique among the vendored ids (the
 reason is on the row, adding one is an `atlas_data` change, never a guess);
 `label_flip_poisoning` and `backdoor_poisoning` map to `AML.T0020` and are
 reserved for the data-poisoning package F; controls and unknown ids stamp
-`None`. Since B3 `services.ml_findings.build_finding_detail` writes the
+`None`. `services.ml_findings.build_finding_detail` writes the
 technique into `Finding.schema_blob.ml.atlas_technique` on every new ML
 finding (findings written before stay `None`), and `GET /v1/attacks` adds
 `atlas_technique`, `atlas_techniques` (every attributed technique with its
 parent) and `atlas_reason` to each catalog row plus an `atlas` release
 citation on the response; the frozen `AttackInfo` gains no field.
 
-`GET /v1/runs/{run_id}/atlas-coverage` (membership) is the per-campaign view
-of spec 27.2: `exercised` (declared attacks with an evasion measurement row),
+`GET /v1/runs/{run_id}/atlas-coverage` (membership) is the per-campaign
+coverage view: `exercised` (declared attacks with an evasion measurement row),
 `declared_not_run` (with the `not_run` reason from the record), the catalog
 attacks outside the declared set, the controls (technique `None` with the
 control reason), `techniques_exercised`, the release citation, the coverage
@@ -284,10 +276,10 @@ outbound integration, off by default:
 
 - **Settings** are read from the process environment only, never `.env`.
   `REDSIM_INTEGRATION_FOUNDRY_URL` unset means disabled (the default). A set
-  URL must pass the wave B0 egress rules (`https` except loopback, no
+  URL must pass the egress rules (`https` except loopback, no
   userinfo, query or fragment, host in the target allowlist) and the
-  deployment must carry the spec 27.3 operator attestation
-  `REDSIM_INTEGRATION_FOUNDRY_NON_OPERATIONAL=1` (D3); optional
+  deployment must carry the operator attestation
+  `REDSIM_INTEGRATION_FOUNDRY_NON_OPERATIONAL=1`; optional
   `REDSIM_INTEGRATION_FOUNDRY_DATASET_RID` (a validated rid shape, never a
   URL) and `REDSIM_INTEGRATION_FOUNDRY_TIMEOUT_S` (30). A failed rule is
   `FoundryMisconfigured` naming the variable and the rule, never the value.
@@ -308,7 +300,7 @@ outbound integration, off by default:
   setting are left out by construction.
 - **The payload guard**, `validate_push_payload` / `assert_push_payload`: any
   mapping naming `mri` or `grade` must carry the five-key subscores, the
-  grade sentence, `settings_hash`, an ε grid or point and denominators (D9);
+  grade sentence, `settings_hash`, an ε grid or point and denominators;
   grade without MRI and MRI without grade are refused; forbidden keys
   (`expected_gain`, `reviewer_notes`, actor and email keys, `model_bytes`,
   `state_dict`, URL and host keys), credential-shaped keys, URL strings,
@@ -324,7 +316,7 @@ outbound integration, off by default:
   best-effort on failure. Any 4xx, 5xx or transport error is
   `FoundryPushFailed(step, http_status, error_class, aborted)` with no URL or
   body in the message. A real instance whose REST shape differs is a change
-  inside that one class (spec 25 risk).
+  inside that one class.
 - **Admission**, `POST /v1/runs/{run_id}/integrations/foundry`
   (`integration.push`, admin; body `{auth_profile_id, target_ref?, payload:
   "scorecard"}`): `501 integration_disabled` with `reason` `disabled` or
@@ -332,7 +324,7 @@ outbound integration, off by default:
   llm_target_required` for a probe run, `409 campaign_not_terminal`, `409
   score_unavailable` (`reasons: [no_run_record]`), `409 job_in_flight` per
   (campaign run, foundry); `422 fixture_not_exportable` when the target or the
-  frozen snapshot flags a fixture (D3), `422 params_out_of_range` for a
+  frozen snapshot flags a fixture, `422 params_out_of_range` for a
   malformed `target_ref` or none anywhere, `422 auth_profile_kind_unsupported`
   for a non-bearer profile; `404` for an unknown run, a run without a
   campaign row, or a profile outside the project; `503 queue_unavailable`
@@ -364,8 +356,8 @@ speaking the v2 create, upload, commit and abort paths with a bearer check and
 a low-entropy JWT-shaped fake token assembled from three segments so no JWT
 literal sits in the source): the happy path, a 503 on commit with the abort,
 the fail-closed cases, and no token, JWT or URL in any audit row. On 2026-09-10
-the push reached a real developer-tier Foundry instance for the first time
-(INTEROP-26): the live lane `tests/e2e/test_ml_foundry_live.py` (skips unless `REDSIM_FOUNDRY_LIVE_URL`, `REDSIM_FOUNDRY_LIVE_RID` and `REDSIM_FOUNDRY_LIVE_TOKEN_FILE` are set)
+the push reached a real developer-tier Foundry instance for the first time:
+the live lane `tests/e2e/test_ml_foundry_live.py` (skips unless `REDSIM_FOUNDRY_LIVE_URL`, `REDSIM_FOUNDRY_LIVE_RID` and `REDSIM_FOUNDRY_LIVE_TOKEN_FILE` are set)
 ran a real campaign, pushed through the API admission and the eager worker,
 and read the committed transaction and both files back through the Datasets
 v2 API with matching digests. First contact found one defect, fixed the same
@@ -373,14 +365,13 @@ day: the real API reads `transactionType` from the JSON body and answers
 `400 MissingRequiredFields` to the query parameter the fake server had
 accepted; the fake server now refuses the query form too. The lane skips in
 CI until an operator supplies the three variables, so the fake server stays
-the CI proof. The adversarial-dataset push "when exported"
-(the second half of INTEROP-23) is not built: `PUSH_PAYLOADS` is `("scorecard",)`
-and the roster says so.
+the CI proof. The adversarial-dataset push "when exported" is not built:
+`PUSH_PAYLOADS` is `("scorecard",)` and the roster says so.
 
-### Per-project settings and auto-push (2026-09-10)
+### Per-project settings and auto-push
 
-The owner asked for the push to be configurable from the web Exports page and
-to fire on its own. The split keeps spec 27.3 and D3 intact: the host, the
+The push is configurable from the web Exports page and can fire on its own.
+The split keeps the operator bound intact: the host, the
 attestation and the allowlist stay operator-set in the environment, and a
 project admin chooses the rest through `GET` and `PUT
 /v1/projects/{slug}/integrations/foundry` (`redsim.services.ml_integrations`,
@@ -409,17 +400,13 @@ Foundry" button. Tests: `tests/ml/test_foundry_auto_push.py` and
 
 ## Lattice: text only
 
-Anduril Lattice is an operating-picture platform. The D3 bound and the
-constitution's Principle II state "no mission-system connections", so under
-the decisions of 2026-09-08 this integration cannot be enabled. It stays text
-only (spec 27.3, owner decision INTEROP-27 / TESTS_DOCS-41): the roster's
-`lattice` entry is `not_implemented` with `phase: "B"`, that reason, the
-decision reference and the payload a push would carry if it ever existed
-(beside the number and grade: the five subscores with denominators, the ε grid
-points, `settings_hash`, `computed_at`, the grade sentence and a link to the
-full scorecard, D9). No setting, route, task or client exists, and none is
-written until an explicit product-owner decision and a constitution amendment
-proposal say otherwise.
+Anduril Lattice is an operating-picture platform. redsim connects to no
+mission system, so this integration cannot be enabled. It stays text only:
+the roster's `lattice` entry is `not_implemented` with `phase: "B"`, that
+reason and the payload a push would carry if it ever existed (beside the
+number and grade: the five subscores with denominators, the ε grid points,
+`settings_hash`, `computed_at`, the grade sentence and a link to the full
+scorecard). No setting, route, task or client exists.
 
 ## Rules both directions obey
 
@@ -432,7 +419,7 @@ proposal say otherwise.
   Lattice is text.
 - No bare MRI leaves. The manifest validator, the card template and the push
   guard all refuse a number or grade without the five subscores, the
-  denominators, the ε grid and `settings_hash` (D9).
+  denominators, the ε grid and `settings_hash`.
 - The API process imports no ML library: the Parquet writer runs in the
   export task, the Parquet reader in the sandbox child, and
   `tests/test_api_process_has_no_ml.py` blocks `pyarrow` and `mlcroissant`
@@ -441,30 +428,20 @@ proposal say otherwise.
   slice only when a remediator uploads one, a push only when an admin names a
   profile against a configured, attested, allowlisted Foundry host.
 
-## Closed in wave B4, and what stays open
+## What stays open
 
-Closed by the wave B4 fix pass, read from the tree: the text and detection
-runners write the same self-describing slices as the classification runner
-(`redsim/ml/runners/base.py::slice_bytes`; INTEROP-04 for every runner), and
-the export schema gained a nullable `text` column that only a text slice fills
-(a text model has no numeric input tensor, so `input` is null on its rows) and
-labels a detection export's `flipped` column from the flip matrix; the
-INTEROP-16 binding at upload and in the target loader; the JWT pattern in
-`redsim/audit/redact.py` and the Foundry header names (INTEROP-28); the ATLAS
-stamp on analyst drafts (INTEROP-18); the `interop` block on
-`GET /v1/ml/capabilities` and the `.env.example` and compose pass-through of
-the Foundry and capacity variables, the Foundry settings scoped to
-`redsim-worker-default` (INTEROP-29, BULK-23); the e2e round trip
-`tests/e2e/test_ml_interop.py` with the `make check-phase-b` gate and the
-docs-consistency test.
+The text and detection runners write the same self-describing slices as the
+classification runner (`redsim/ml/runners/base.py::slice_bytes`), and the
+export schema has a nullable `text` column that only a text slice fills (a
+text model has no numeric input tensor, so `input` is null on its rows) and
+labels a detection export's `flipped` column from the flip matrix.
 
 Still open, recorded in the README: the worker-parent
-`materialize_consumed_slice` call (INTEROP-16 remainder, above); the
-`atlas_technique_id` key on finding list rows (the tag is in every finding's
+`materialize_consumed_slice` call (above); the `atlas_technique_id` key on
+finding list rows (the tag is in every finding's
 `schema_blob.ml.atlas_technique`); regenerate-in-child for a run whose slices
-were not retained (INTEROP-07, `export_unavailable` instead); the dataset push
-to Foundry (INTEROP-23, `PUSH_PAYLOADS` is `("scorecard",)`); the live Foundry
-lane in CI (INTEROP-26 was proven by hand on 2026-09-10; the lane needs
-operator-supplied `REDSIM_FOUNDRY_LIVE_*` variables and skips without them); and the
-public-index fixture `tests/ml/fixtures/public_index.csv`, which snapshots the
-repository's `INDEX.csv` at `4048a209`, before the export rows.
+were not retained (`export_unavailable` instead); the dataset push to Foundry
+(`PUSH_PAYLOADS` is `("scorecard",)`); the live Foundry lane in CI (the lane
+needs operator-supplied `REDSIM_FOUNDRY_LIVE_*` variables and skips without
+them); and the public-index fixture `tests/ml/fixtures/public_index.csv`,
+which snapshots the repository's `INDEX.csv` before the export rows.
