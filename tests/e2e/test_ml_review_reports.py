@@ -13,30 +13,34 @@ and the real sandbox child, then asserts on what those left behind. The bundled
 12.6 floor of 10), so the finding every review test needs comes from an
 **uploaded** ``SmallCNN`` that memorises the harness's own seeded images,
 registered through ``POST /v1/models`` and validated in the real child, exactly
-as ``tests/e2e/test_ml_verify_upload_reports.py`` does. Nothing measured on it
-is a demo result.
+as ``tests/e2e/test_ml_upload_reports.py`` does. The comparison and idempotency
+tests use two further campaigns with the same settings on the same upload
+(``repeat_campaigns``). Nothing measured on it is a demo result.
 
 1. ``test_review_states_independence_and_conflicts``: the worker finding is
    ``unreviewed``; a stale ``expected_status`` is ``409 review_state_conflict``;
-   the campaign creator is refused; an independent approver confirms; ``resolve``
-   before any retest is ``409 resolution_blocked`` naming every unmet condition.
-   An analyst draft goes ``draft -> in_review``, its author (an admin) is refused
-   ``403 reviewer_not_independent`` on confirm, ``request_changes`` appends a
-   revision and returns it to ``draft``, a resubmission is confirmed, and
-   ``schema_blob.ml.review`` carries the history and the revisions.
-2. ``test_retests_link_and_resolve_after_two_verifies``: two verifies (one by the
-   remediator, one by the approver) append two ``FindingVerify`` links with the
-   baseline's ``settings_hash``; ``GET /retests`` calls both compatible; the
-   retest requester cannot resolve; an independent admin resolves only when the
-   measured outcome is ``verified`` and is otherwise blocked with the unmet list.
+   the campaign creator is refused; ``resolve`` before a confirmation is
+   ``409 resolution_blocked`` with ``unmet == ["review_state_not_confirmed"]``;
+   an independent approver confirms. An analyst draft goes ``draft ->
+   in_review``, its author (an admin) is refused ``403 reviewer_not_independent``
+   on confirm, ``request_changes`` appends a revision and returns it to
+   ``draft``, a resubmission is confirmed, and ``schema_blob.ml.review`` carries
+   the history and the revisions.
+2. ``test_resolve_closes_a_confirmed_finding``: findings close by reviewer
+   decision (product decision of 2026-09-09, no verify campaign): ``resolve`` on
+   the confirmed worker finding writes ``status: fixed`` and ``review_state:
+   resolved`` behind one ``finding.review`` row; a second ``resolve`` and a
+   dismissal of the fixed finding are typed refusals; the retired verify and
+   retest routes answer ``404`` with no audit row.
 3. ``test_report_pdf_snapshots_and_archive``: ``POST report.render`` then
    ``GET report.pdf`` starts with ``%PDF-`` and carries the six section titles
    and the grade statement; two renders are two immutable snapshot rows with
    per-format digests; an admin archives one and a non-admin fetch is
    ``409 snapshot_archived``.
-4. ``test_compare_three_runs_table``: ``GET /v1/runs/compare?ids=`` over the
-   baseline and its two verifies answers rows in request order with a delta
-   only on the verify rows, no mean or rank anywhere; an incompatible triple is
+4. ``test_compare_three_runs_table``: ``GET /v1/runs/compare?ids=`` over three
+   attack campaigns with identical settings answers rows in request order, each
+   a full scorecard, with no delta, mean, rank or baseline anywhere; the pairwise
+   route answers ``side_by_side``; an incompatible triple is
    ``409 incompatible_campaigns`` naming the variable.
 5. ``test_idempotency_key_replay_and_reuse``: a replayed ``Idempotency-Key``
    returns the identical response without a second admission; the same key
@@ -61,7 +65,6 @@ import hashlib
 import io
 import json
 import warnings
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -82,19 +85,18 @@ pytestmark = pytest.mark.e2e
 N_EVAL = h.N_IMAGES // 2
 #: The default finding threshold of spec 15.3; the memorising upload crosses it at eps 0.1.
 FINDING_THRESHOLD = 0.2
-#: The spec 16.5 Phase A defense the demo verifies with (also the route's default).
-FEATURE_SQUEEZING = "feature_squeezing"
 LICENSE_STATEMENT = "e2e harness double trained on seeded random pixels; no licence restriction applies"
 #: The five MRI dimensions (spec 15.2).
 SUBSCORE_KEYS = ("S_acc", "S_asr", "S_eps", "S_conf", "S_expl")
-#: Keys a comparison payload never carries (spec 15.8 i; D9 i).
-FORBIDDEN_TABLE_KEYS = frozenset({"mean", "rank", "average", "aggregate", "ranking"})
+#: Keys a comparison payload never carries (spec 15.8 i; D9 i), plus the verify vocabulary that left the product.
+FORBIDDEN_TABLE_KEYS = frozenset({"mean", "rank", "average", "aggregate", "ranking", "delta", "delta_mri",
+                                  "baseline_run_id", "verify_run_id", "defense", "delta_source", "delta_note"})
 #: A non-default weight vector that sums to one (spec 15.3: never renormalised).
 CUSTOM_WEIGHTS = {"acc": 0.4, "asr": 0.3, "eps": 0.1, "conf": 0.1, "expl": 0.1}
 
 _PARTIAL_SCORE_DEFECT = (
     "product defect, not a harness problem: the campaign ran through the production sandbox child but its "
-    "score is partial ({missing}), so no MRI exists to compare or to resolve on (spec 15.4, 15.6, 26.3 item 15). "
+    "score is partial ({missing}), so no MRI exists to compare (spec 15.4, 15.6, 26.3 item 15). "
     "Every stage that feeds a subscore must complete inside redsim/ml/sandbox_worker.py for the record to carry "
     "a complete score; see the run's limitations: {limitations}"
 )
@@ -231,7 +233,7 @@ def _require_complete_score(campaign: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Module fixtures: the memorising upload, its campaign with findings, two verifies
+# Module fixtures: the memorising upload, its campaign with findings, two repeat campaigns
 # ---------------------------------------------------------------------------
 
 
@@ -313,13 +315,8 @@ def onnx_model(e2e_app: E2EApp, e2e_org: E2EOrg, e2e_bundled: dict[str, str],
 @pytest.fixture(scope="module")
 def finding_campaign(e2e_org: E2EOrg, onnx_model: dict[str, Any]) -> h.CampaignRun:
     """FGSM + PGD (or HopSkipJump alone if the graph exposed no gradients) on the memorising upload, by the scanner."""
-    manifest = onnx_model["record"].get("manifest") or {}
-    if manifest.get("gradients"):
-        body = h.image_campaign(n_samples=N_EVAL, finding_asr_threshold=FINDING_THRESHOLD)
-    else:  # honest fallback: only black-box attacks are admitted on a target without loss gradients (spec 9.5)
-        body = h.image_campaign(n_samples=N_EVAL, finding_asr_threshold=FINDING_THRESHOLD, attack_ids=["hopskipjump"],
-                                attack_params={"hopskipjump": h.tabular_campaign()["attack_params"]["hopskipjump"]})
-    result = h.run_campaign_via_api(e2e_org.client("scanner"), onnx_model["model_id"], body, timeout_s=30.0)
+    result = h.run_campaign_via_api(e2e_org.client("scanner"), onnx_model["model_id"], _campaign_body(onnx_model),
+                                    timeout_s=30.0)
     assert result.status == "succeeded", f"run {result.run_id}: {result.stage_table}"
     assert result.campaign is not None, result.campaign_error
     asr = {m["id"]: m.get("attack_success_rate") for m in result.campaign["measurements"] if m["family"] == "evasion"}
@@ -327,48 +324,30 @@ def finding_campaign(e2e_org: E2EOrg, onnx_model: dict[str, Any]) -> h.CampaignR
     return result
 
 
-@dataclass
-class VerifyRun:
-    """What one ``POST /v1/findings/{id}/verify`` left behind."""
-
-    requester: str
-    finding_id: str
-    body: dict[str, Any] | None
-    run_id: str
-    run: dict[str, Any]
-    campaign: dict[str, Any]
-    finding: dict[str, Any]
-
-    @property
-    def outcome(self) -> str:
-        return str(((self.finding.get("schema_blob") or {}).get("ml") or {}).get("verify", {}).get("outcome"))
-
-
-def _verify_via_api(e2e_org: E2EOrg, identity: str, finding_id: str, body: dict[str, Any] | None) -> VerifyRun:
-    client = e2e_org.client(identity)
-    response = client.post(f"/v1/findings/{finding_id}/verify", json=body) if body is not None else client.post(
-        f"/v1/findings/{finding_id}/verify")
-    assert response.status_code == 202, response.text
-    run_id = str(response.json()["run_id"])
-    run = h.wait_for_run(client, run_id, timeout_s=30.0)
-    assert run["status"] == "succeeded", f"verify {run_id}: {run.get('stage_table')}"
-    return VerifyRun(requester=identity, finding_id=finding_id, body=body, run_id=run_id, run=run,
-                     campaign=_campaign(client, run_id), finding=_finding(client, finding_id))
+def _campaign_body(onnx_model: dict[str, Any]) -> dict[str, Any]:
+    """The one campaign body every run on the upload uses, so the runs share a ``settings_hash``."""
+    manifest = onnx_model["record"].get("manifest") or {}
+    if manifest.get("gradients"):
+        return h.image_campaign(n_samples=N_EVAL, finding_asr_threshold=FINDING_THRESHOLD)
+    # honest fallback: only black-box attacks are admitted on a target without loss gradients (spec 9.5)
+    return h.image_campaign(n_samples=N_EVAL, finding_asr_threshold=FINDING_THRESHOLD, attack_ids=["hopskipjump"],
+                            attack_params={"hopskipjump": h.tabular_campaign()["attack_params"]["hopskipjump"]})
 
 
 @pytest.fixture(scope="module")
-def verifies(e2e_org: E2EOrg, finding_campaign: h.CampaignRun) -> list[VerifyRun]:
-    """Two retests of the first worker finding: explicit ``feature_squeezing`` by the remediator, the route default by the approver."""
-    finding_id = str(finding_campaign.findings[0]["id"])
-    first = _verify_via_api(e2e_org, "remediator", finding_id,
-                            {"defense": FEATURE_SQUEEZING, "params": {"bit_depth": 6}})
-    second = _verify_via_api(e2e_org, "approver", finding_id, None)
-    baseline_hash = finding_campaign.campaign["settings_hash"] if finding_campaign.campaign else None
-    for verify in (first, second):
-        assert verify.campaign["kind"] == "verify" and verify.campaign["baseline_run_id"] == finding_campaign.run_id
-        assert verify.campaign["settings_hash"] == baseline_hash, "the defense is outside the settings hash (spec 5.6)"
-        assert verify.campaign["config"]["defense"]["id"] == FEATURE_SQUEEZING
-    return [first, second]
+def repeat_campaigns(e2e_org: E2EOrg, onnx_model: dict[str, Any], finding_campaign: h.CampaignRun) -> list[h.CampaignRun]:
+    """Two more campaigns with the same body on the same upload: the same settings, each a measurement of its own."""
+    runs: list[h.CampaignRun] = []
+    for _ in range(2):
+        result = h.run_campaign_via_api(e2e_org.client("scanner"), onnx_model["model_id"], _campaign_body(onnx_model),
+                                        timeout_s=30.0)
+        assert result.status == "succeeded", f"run {result.run_id}: {result.stage_table}"
+        assert result.campaign is not None, result.campaign_error
+        assert finding_campaign.campaign is not None
+        assert result.campaign["settings_hash"] == finding_campaign.campaign["settings_hash"], "identical settings"
+        assert result.campaign["kind"] == "attack" and "baseline_run_id" not in result.campaign
+        runs.append(result)
+    return runs
 
 
 # ---------------------------------------------------------------------------
@@ -391,8 +370,9 @@ def test_review_states_independence_and_conflicts(
 
     # -- the worker finding starts unreviewed with an empty history (spec 5.7 review block, 6.4) ---------------
     row = _finding(viewer, finding_id)
-    assert row["status"] == "open" and row["validation_state"] == "unvalidated"
+    assert row["status"] == "open" and "validation_state" not in row and "validated_at" not in row
     assert row["review_state"] == "unreviewed" and row["review"]["state"] == "unreviewed"
+    assert "verify" not in row["schema_blob"]["ml"] and "retests" not in row["schema_blob"]["ml"]
     review = row["schema_blob"]["ml"]["review"]
     assert review["history"] == [] and review["revisions"] == [] and review["reviewer"] is None
 
@@ -412,6 +392,18 @@ def test_review_states_independence_and_conflicts(
     assert creator.status_code == 403, creator.text
     assert viewer.post(f"/v1/findings/{finding_id}/review/confirm",
                        json={"expected_status": "open", "reason": "x"}).status_code == 403
+
+    # -- resolve before a confirmation: 409 resolution_blocked, the one unmet condition named (2026-09-09) ------
+    blocked = approver.post(f"/v1/findings/{finding_id}/review/resolve",
+                            json={"expected_status": "open", "reason": "nothing confirmed yet"})
+    assert blocked.status_code == 409 and _code(blocked) == RESOLUTION_BLOCKED, blocked.text
+    assert _detail(blocked)["unmet"] == ["review_state_not_confirmed"]
+    assert _detail(blocked)["review_state"] == "unreviewed" and _detail(blocked)["status"] == "open"
+    assert "verify_run_id" not in _detail(blocked)
+    refused = _events(e2e_app, chain, REVIEW_ACTION)[-1]
+    assert refused["success"] is False and refused["detail"]["refusal"] == RESOLUTION_BLOCKED
+    assert refused["detail"]["unmet"] == ["review_state_not_confirmed"]
+    assert _finding(viewer, finding_id)["review_state"] == "unreviewed" and _finding(viewer, finding_id)["status"] == "open"
 
     # -- an independent approver confirms; the audit row precedes the write and names everyone ------------------
     ok = approver.post(f"/v1/findings/{finding_id}/review/confirm",
@@ -435,17 +427,6 @@ def test_review_states_independence_and_conflicts(
     listed = viewer.get("/v1/findings", params={"run": run_id, "review_state": "confirmed"}).json()
     assert [f["id"] for f in listed["findings"]] == [finding_id]
 
-    # -- resolve before any retest: 409 resolution_blocked naming every unmet condition (spec 6.4, 15.6) --------
-    blocked = approver.post(f"/v1/findings/{finding_id}/review/resolve",
-                            json={"expected_status": "open", "reason": "nothing measured yet"})
-    assert blocked.status_code == 409 and _code(blocked) == RESOLUTION_BLOCKED, blocked.text
-    assert _detail(blocked)["unmet"] == ["validation_state_not_poc_passed", "status_not_fixed", "no_retest_linked"]
-    assert _detail(blocked)["verify_run_id"] is None and _detail(blocked)["review_state"] == "confirmed"
-    refused = _events(e2e_app, chain, REVIEW_ACTION)[-1]
-    assert refused["success"] is False and refused["detail"]["refusal"] == RESOLUTION_BLOCKED
-    assert refused["detail"]["unmet"] == _detail(blocked)["unmet"]
-    assert _finding(viewer, finding_id)["review_state"] == "confirmed"
-
     # -- an analyst draft (REVIEW_REPORTS-05): draft -> in_review -> draft -> in_review -> confirmed -----------
     record = finding_campaign.campaign
     assert record is not None
@@ -458,7 +439,7 @@ def test_review_states_independence_and_conflicts(
         "title": "e2e analyst draft on the memorising upload (test double, not a product finding)",
         "observation": "The clean row and the evasion rows are cited by id; this text is the analyst's.",
         "interpretation": "Analyst reading; inferred, not measured.",
-        "candidate": "Re-run the campaign after the candidate defense; not evaluated.",
+        "candidate": "Re-run the campaign with the candidate change in place; a separate campaign measures it.",
         "evidence_ids": evidence,
     }
     assert viewer.post("/v1/findings", json=draft_body).status_code == 403, "finding.author is remediator+"
@@ -469,7 +450,7 @@ def test_review_states_independence_and_conflicts(
     assert created.status_code == 201, created.text
     draft_id = str(created.json()["id"])
     assert created.json()["review_state"] == "draft" and created.json()["revision"] == 1
-    assert created.json()["status"] == "open" and created.json()["validation_state"] == "unvalidated"
+    assert created.json()["status"] == "open" and "validation_state" not in created.json()
     assert created.json()["revision_sha256"] and len(created.json()["revision_sha256"]) == 64
 
     revised = admin.patch(f"/v1/findings/{draft_id}/draft", json={"observation": "Revised after a second read."})
@@ -538,10 +519,11 @@ def test_review_states_independence_and_conflicts(
     assert datetime.fromisoformat(str(summary.pop("at"))) == datetime.fromisoformat(str(review["at"]).replace("Z", "+00:00"))
     assert summary == {"state": "confirmed", "reviewer": e2e_org.actor("approver"),
                        "n_history": 4, "n_revisions": 3, "revision": 3}
-    assert draft["status"] == "open" and draft["validation_state"] == "unvalidated"
+    assert draft["status"] == "open" and "validation_state" not in draft and "validated_at" not in draft
     assert draft["schema_blob"]["source_tool"] == "manual"
     assert draft["schema_blob"]["description"].startswith("Analyst-authored draft"), "labelled as the analyst's text"
-    assert draft["schema_blob"]["remediation_steps"].startswith("CANDIDATE (not evaluated)")
+    steps = str(draft["schema_blob"]["remediation_steps"])
+    assert steps.startswith("CANDIDATE: ") and "not evaluated" not in steps, steps[:120]
     assert {m["id"] for m in draft["schema_blob"]["ml"]["measurements"]} <= set(evidence), "only the cited rows"
     assert any("Analyst-authored draft" in lim for lim in draft["schema_blob"]["ml"]["limitations"])
     from redsim.ml.atlas import technique_for_attack
@@ -557,8 +539,8 @@ def test_review_states_independence_and_conflicts(
                  for ev in tail if ev["action"] in {REVIEW_ACTION, AUTHOR_ACTION}]
     assert decisions == [
         (REVIEW_ACTION, False, "confirm"),            # stale expected_status on the worker finding
+        (REVIEW_ACTION, False, "resolve"),            # blocked: not confirmed yet
         (REVIEW_ACTION, True, "confirm"),
-        (REVIEW_ACTION, False, "resolve"),            # blocked before any retest
         (AUTHOR_ACTION, False, "create"),             # unknown evidence id
         (AUTHOR_ACTION, True, "create"),
         (AUTHOR_ACTION, True, "revise"),
@@ -581,108 +563,85 @@ def test_review_states_independence_and_conflicts(
 
 
 # ---------------------------------------------------------------------------
-# 2. Retest links after two verifies, the requester's independence, resolve on the measured gate
+# 2. Resolution is the reviewer's decision: fixed and resolved behind one audit row
 # ---------------------------------------------------------------------------
 
 
-def test_retests_link_and_resolve_after_two_verifies(
-    e2e_app: E2EApp, e2e_org: E2EOrg, finding_campaign: h.CampaignRun, verifies: list[VerifyRun],
+def test_resolve_closes_a_confirmed_finding(
+    e2e_app: E2EApp, e2e_org: E2EOrg, finding_campaign: h.CampaignRun,
 ) -> None:
-    from redsim.api.errors import RESOLUTION_BLOCKED, REVIEWER_NOT_INDEPENDENT
+    from redsim.api.errors import RESOLUTION_BLOCKED, RUN_TERMINAL
     from redsim.services.finding_review import REVIEW_ACTION
-    from redsim.workers.tasks.ml_campaign import VERIFY_STATUS_MAP
-    from redsim.workers.tasks.verify import _STATE_MAP
 
-    viewer, approver, admin = e2e_org.client("viewer"), e2e_org.client("approver"), e2e_org.client("admin")
-    first, second = verifies
-    finding_id = first.finding_id
+    viewer, scanner = e2e_org.client("viewer"), e2e_org.client("scanner")
+    approver, remediator = e2e_org.client("approver"), e2e_org.client("remediator")
     run_id = finding_campaign.run_id
     chain = f"run:{run_id}"
-    baseline = finding_campaign.campaign
-    assert baseline is not None
-    baseline_hash = baseline["settings_hash"]
-
-    # -- MLFindingDetail.retests carries both links in order; ``verify`` is the latest (REVIEW_REPORTS-08) -----
-    row = _finding(viewer, finding_id)
-    detail = row["schema_blob"]["ml"]
-    assert [link["run_id"] for link in detail["retests"]] == [first.run_id, second.run_id]
-    assert detail["verify"] == detail["retests"][-1]
-    for link in detail["retests"]:
-        assert link["settings_hash"] == baseline_hash and link["baseline_run_id"] == run_id
-        assert link["defense"]["id"] == FEATURE_SQUEEZING and link["outcome"] in _STATE_MAP
-    assert detail["retests"][0]["defense"]["params"] == {"bit_depth": 6}
-    assert detail["retests"][1]["defense"]["params"] == {"bit_depth": 4}, "spec 16.5 route default"
-    outcome = str(detail["verify"]["outcome"])
-    # spec 6.4 pairing between the worker's outcome, validation_state and status
-    assert row["validation_state"] == _STATE_MAP[outcome] and row["status"] == VERIFY_STATUS_MAP[outcome]
-    assert row["review_state"] == "confirmed", "the worker's writes keep the review block"
-
-    # -- GET /retests: both links compatible (equal settings_hash), a delta only where measured -------------
-    retests = viewer.get(f"/v1/findings/{finding_id}/retests")
-    assert retests.status_code == 200, retests.text
-    listing = retests.json()
-    assert listing["count"] == 2 and listing["baseline_run_id"] == run_id
-    assert listing["baseline_settings_hash"] == baseline_hash and listing["review_state"] == "confirmed"
-    for link, verify, stored in zip(listing["retests"], verifies, detail["retests"], strict=True):
-        assert link["run_id"] == verify.run_id and link["compatible"] is True and link["mismatched"] == []
-        assert link["settings_hash"] == baseline_hash and link["baseline_run_id"] == run_id
-        assert link["requested_by"] == e2e_org.actor(verify.requester)
-        assert link["run_status"] == "succeeded" and link["job_status"] == "succeeded"
-        assert link["outcome"] == stored["outcome"] and link["defense"] == stored["defense"]
-        if stored["outcome"] != "inconclusive" and stored["delta"] is not None:
-            # the delta is whatever was measured, negative, zero or positive; never filtered by sign
-            assert link["delta_mri"] == stored["delta"]["delta"] and link["delta"] == stored["delta"]
-            assert stored["delta"]["baseline_run_id"] == run_id
-        else:
-            assert link["delta_mri"] is None and link["delta"] is None, "no delta without a measured outcome"
-    assert e2e_org.client(h.OUTSIDER).get(f"/v1/findings/{finding_id}/retests").status_code in (403, 404)
-
-    # -- the requester of the retest a resolve rests on cannot resolve, whatever the rank (spec 7.7) -----------
+    finding_id = str(finding_campaign.findings[0]["id"])
     resolve = f"/v1/findings/{finding_id}/review/resolve"
-    mine = approver.post(resolve, json={"expected_status": row["status"], "reason": "my own retest"})
-    assert mine.status_code == 403 and _code(mine) == REVIEWER_NOT_INDEPENDENT, mine.text
-    assert _detail(mine)["relation"] == "verify_requester"
-    refused = _events(e2e_app, chain, REVIEW_ACTION)[-1]
-    assert refused["success"] is False and refused["detail"]["refusal"] == REVIEWER_NOT_INDEPENDENT
-    assert refused["detail"]["verify_run_id"] == second.run_id
-    assert e2e_org.actor("approver") in refused["detail"]["verify_requesters"]
-    assert _finding(viewer, finding_id)["review_state"] == "confirmed"
 
-    # -- an independent admin resolves only on the measured gate: poc_passed + equal settings_hash ------------
-    resolved = admin.post(resolve, json={"expected_status": row["status"], "expected_review_state": "confirmed",
-                                         "reason": "measured retest at equal settings"})
-    if outcome == "verified":
-        assert resolved.status_code == 200, resolved.text
-        assert resolved.json()["review_state"] == "resolved" and resolved.json()["status"] == "fixed"
-        assert resolved.json()["verify_run_id"] == second.run_id
-        after = _finding(viewer, finding_id)
-        assert after["review_state"] == "resolved" and after["status"] == "fixed"
-        assert after["validation_state"] == "poc_passed", "resolve never touches the worker's columns"
-        history = after["schema_blob"]["ml"]["review"]["history"]
-        assert history[-1]["action"] == "resolve" and history[-1]["verify_run_id"] == second.run_id
-        assert history[-1]["actor"] == e2e_org.actor("admin")
-        event = [ev for ev in _events(e2e_app, chain, REVIEW_ACTION) if ev["success"]][-1]
-        assert event["detail"]["decision"] == "resolve" and event["detail"]["verify_run_id"] == second.run_id
-        assert event["detail"]["to_review_state"] == "resolved" and event["detail"]["to_status"] == "fixed"
-        listed = viewer.get("/v1/findings", params={"run": run_id, "review_state": "resolved"}).json()
-        assert [f["id"] for f in listed["findings"]] == [finding_id]
-        # resolved is terminal for the table
-        again = admin.post(resolve, json={"expected_status": "fixed", "reason": "again"})
-        assert again.status_code == 409 and _code(again) == RESOLUTION_BLOCKED
-        assert _detail(again)["unmet"] == ["review_state_not_confirmed"]
-    else:
-        # The retest did not verify the fix: the finding stays confirmed and the refusal names each condition.
-        assert resolved.status_code == 409 and _code(resolved) == RESOLUTION_BLOCKED, resolved.text
-        unmet = _detail(resolved)["unmet"]
-        assert unmet == ["validation_state_not_poc_passed", "status_not_fixed", "retest_outcome_not_verified"], (
-            outcome, unmet)
-        assert _detail(resolved)["verify_run_id"] == second.run_id
-        assert _detail(resolved)["validation_state"] == _STATE_MAP[outcome]
-        refused = _events(e2e_app, chain, REVIEW_ACTION)[-1]
-        assert refused["success"] is False and refused["detail"]["unmet"] == unmet
-        after = _finding(viewer, finding_id)
-        assert after["review_state"] == "confirmed" and after["status"] == VERIFY_STATUS_MAP[outcome]
-        assert after["schema_blob"]["ml"]["review"]["history"][-1]["action"] == "confirm"
+    # Test 1 confirmed this finding; a run of this test on its own confirms it here the same way.
+    row = _finding(viewer, finding_id)
+    if row["review_state"] != "confirmed":
+        confirmed = approver.post(f"/v1/findings/{finding_id}/review/confirm",
+                                  json={"expected_status": "open", "reason": "the measured rows support the finding"})
+        assert confirmed.status_code == 200, confirmed.text
+        row = _finding(viewer, finding_id)
+    assert row["status"] == "open" and row["review_state"] == "confirmed"
+
+    # -- the retired verify loop is not on the surface: 404 for every role, no gate, no audit row --------------
+    events_before = len(e2e_app.read_chain(chain))
+    for who in (viewer, scanner, remediator, approver):
+        assert who.post(f"/v1/findings/{finding_id}/verify", json={}).status_code == 404
+        assert who.post(f"/v1/findings/{finding_id}/verify/bulk", json={}).status_code == 404
+        assert who.get(f"/v1/findings/{finding_id}/retests").status_code == 404
+    assert len(e2e_app.read_chain(chain)) == events_before, "a 404 on a retired path writes nothing"
+
+    # -- the gate: viewer and scanner are below finding.review; the remediator too (approver+) ------------------
+    for who in (viewer, scanner, remediator):
+        assert who.post(resolve, json={"expected_status": "open", "reason": "x"}).status_code == 403
+    assert len(e2e_app.read_chain(chain)) == events_before, "a role refusal writes no audit row"
+    stale = approver.post(resolve, json={"expected_status": "fixed", "reason": "stale page"})
+    assert stale.status_code == 409 and _detail(stale)["status"] == "open", stale.text
+
+    # -- an independent approver resolves: status fixed, review_state resolved, one audit row before the write --
+    resolved = approver.post(resolve, json={"expected_status": "open", "expected_review_state": "confirmed",
+                                            "reason": "reviewed the measured rows and the candidates"})
+    assert resolved.status_code == 200, resolved.text
+    body = resolved.json()
+    assert body["decision"] == "resolve" and body["status"] == "fixed" and body["from_status"] == "open"
+    assert body["review_state"] == "resolved" and body["from_review_state"] == "confirmed"
+    assert "verify_run_id" not in body and "validation_state" not in body
+    after = _finding(viewer, finding_id)
+    assert after["status"] == "fixed" and after["review_state"] == "resolved"
+    assert "validation_state" not in after and "validated_at" not in after
+    assert after["schema_blob"]["status"] == "fixed"
+    review = after["schema_blob"]["ml"]["review"]
+    assert review["state"] == "resolved" and review["reviewer"] == e2e_org.actor("approver")
+    assert review["history"][-1]["action"] == "resolve" and review["history"][-1]["to_state"] == "resolved"
+    assert review["history"][-1]["from_state"] == "confirmed" and review["history"][-1]["actor"] == e2e_org.actor("approver")
+    assert "verify_run_id" not in review["history"][-1]
+    event = [ev for ev in _events(e2e_app, chain, REVIEW_ACTION) if ev["success"]][-1]
+    assert event["actor"] == e2e_org.actor("approver") and event["detail"]["decision"] == "resolve"
+    assert event["detail"]["to_review_state"] == "resolved" and event["detail"]["to_status"] == "fixed"
+    assert event["detail"]["from_review_state"] == "confirmed" and event["detail"]["from_status"] == "open"
+    assert event["detail"]["campaign_creator"] == e2e_org.actor("scanner")
+    assert "verify_run_id" not in event["detail"]
+    listed = viewer.get("/v1/findings", params={"run": run_id, "review_state": "resolved"}).json()
+    assert [f["id"] for f in listed["findings"]] == [finding_id]
+    fixed = viewer.get("/v1/findings", params={"run": run_id, "status": "fixed"}).json()
+    assert finding_id in {f["id"] for f in fixed["findings"]}
+
+    # -- resolved is terminal: a second resolve is blocked, a dismissal of a fixed finding is the Phase A 409 ----
+    again = approver.post(resolve, json={"expected_status": "fixed", "reason": "again"})
+    assert again.status_code == 409 and _code(again) == RESOLUTION_BLOCKED, again.text
+    assert _detail(again)["unmet"] == ["review_state_not_confirmed"] and _detail(again)["review_state"] == "resolved"
+    dismiss = approver.patch(f"/v1/findings/{finding_id}/status",
+                             json={"status": "false_positive", "expected_status": "fixed", "reason": "no"})
+    assert dismiss.status_code == 409 and _code(dismiss) == RUN_TERMINAL, dismiss.text
+    refused = [ev for ev in _events(e2e_app, chain, REVIEW_ACTION) if not ev["success"]][-2:]
+    assert [ev["detail"]["refusal"] for ev in refused] == [RESOLUTION_BLOCKED, RUN_TERMINAL]
+    assert _finding(viewer, finding_id)["status"] == "fixed", "a refused decision changes nothing"
     assert h.MOCK_PYTHIA_API_KEY not in json.dumps(e2e_app.read_chain(chain), default=str)
 
 
@@ -852,18 +811,16 @@ def test_report_pdf_snapshots_and_archive(
 
 def test_compare_three_runs_table(
     e2e_app: E2EApp, e2e_org: E2EOrg, e2e_bundled: dict[str, str], finding_campaign: h.CampaignRun,
-    verifies: list[VerifyRun],
+    repeat_campaigns: list[h.CampaignRun],
 ) -> None:
     from redsim.api.errors import INCOMPATIBLE_CAMPAIGNS, PARAMS_OUT_OF_RANGE, SCORE_UNAVAILABLE
 
     viewer, scanner = e2e_org.client("viewer"), e2e_org.client("scanner")
     baseline = finding_campaign.campaign
     assert baseline is not None
-    first, second = verifies
-    ids = [finding_campaign.run_id, first.run_id, second.run_id]
-    baseline_score = _require_complete_score(baseline)
-    for verify in verifies:
-        _require_complete_score(verify.campaign)
+    runs = [finding_campaign, *repeat_campaigns]
+    ids = [run.run_id for run in runs]
+    scores = {run.run_id: _require_complete_score(run.campaign or {}) for run in runs}
 
     response = viewer.get("/v1/runs/compare", params={"ids": ",".join(ids)})
     if response.status_code == 409 and _code(response) == SCORE_UNAVAILABLE:
@@ -875,43 +832,39 @@ def test_compare_three_runs_table(
     assert table["mode"] == "table" and table["compatible"] is True and table["run_ids"] == ids
     rows = table["rows"]
     assert [row["run_id"] for row in rows] == ids, "rows come back in request order"
-    assert "no mean, rank" in table["statement"]
+    assert "no delta, mean or rank" in table["statement"]
     for row in rows:
         # spec 15.7 / 26.3 item 13: an MRI never travels without its five subscores, the family table and the curve
-        assert row["mri"] is not None and set(row["subscores"]) == set(SUBSCORE_KEYS)
+        assert row["kind"] == "attack" and row["mri"] == scores[row["run_id"]]["mri"]
+        assert set(row["subscores"]) == set(SUBSCORE_KEYS)
         assert row["families"] and all(f["n"] is not None for f in row["families"])
         assert row["curve"] and row["settings_hash"] == baseline["settings_hash"]
         assert row["non_default_weights"] is False and row["limitations"]
-    assert rows[0]["kind"] == "attack" and rows[0]["delta"] is None and rows[0]["baseline_run_id"] is None
-    assert rows[0]["mri"] == baseline_score["mri"]
-    for row, verify in zip(rows[1:], verifies, strict=True):
-        # a delta only on a verify row whose own baseline is in the set (spec 15.6)
-        assert row["kind"] == "verify" and row["baseline_run_id"] == finding_campaign.run_id
-        assert row["defense"]["id"] == FEATURE_SQUEEZING
-        delta = row["delta"]
-        assert delta is not None and delta["baseline_run_id"] == finding_campaign.run_id
-        assert delta["mri_before"] == baseline_score["mri"] and delta["mri_after"] == row["mri"]
-        assert delta["delta_mri"] == row["mri"] - baseline_score["mri"], "measured, never filtered by sign"
-        assert set(delta["delta_dimensions"]) == set(SUBSCORE_KEYS)
-        assert delta["delta_acc_clean"]["before"]["n"] == delta["delta_acc_clean"]["after"]["n"] == N_EVAL
-        assert row["delta_source"] in {"persisted", "computed"} and row["delta_note"] is None
-        persisted = (verify.campaign["score"] or {}).get("delta")
-        if persisted is not None:
-            assert row["delta_source"] == "persisted" and delta["delta_mri"] == persisted["delta"]
-    assert table["changed_variables_per_row"][ids[0]] == []
-    assert table["changed_variables_per_row"][ids[1]] == ["defense"]
+        assert row["model_sha256"] == baseline["provenance"]["model_sha256"]
+    # every row is a measurement of its own: nothing is derived from another row
+    assert all(table["changed_variables_per_row"][run_id] == [] for run_id in ids), table["changed_variables_per_row"]
     for variable in ("settings_hash", "model_sha256", "sample_indices_sha256", "seed", "n_samples", "eps_grid"):
         assert variable in table["unchanged_variables"], (variable, table["unchanged_variables"])
     assert table["caveats"], "every compared run's limitations travel with the table (spec 14.5)"
 
-    # request order is the caller's; a set without the baseline shows the verify rows without a delta
+    # request order is the caller's
     reversed_table = viewer.get("/v1/runs/compare", params={"ids": ",".join(reversed(ids))}).json()
     assert [row["run_id"] for row in reversed_table["rows"]] == list(reversed(ids))
-    assert reversed_table["rows"][0]["delta"] is not None and reversed_table["rows"][-1]["delta"] is None
-    pair = viewer.get("/v1/runs/compare", params={"ids": ",".join([first.run_id, second.run_id])}).json()
-    _assert_no_aggregate(pair)
-    assert [row["delta"] for row in pair["rows"]] == [None, None]
-    assert all(finding_campaign.run_id in str(row["delta_note"]) for row in pair["rows"]), "the note names the baseline"
+    _assert_no_aggregate(reversed_table)
+
+    # the pairwise route on two runs with identical settings: side by side, two scorecards, nothing computed across
+    pair = viewer.get(f"/v1/runs/{ids[0]}/compare", params={"with": ids[1]})
+    assert pair.status_code == 200, pair.text
+    side = pair.json()
+    _assert_no_aggregate(side)
+    assert side["compatible"] is True and side["mode"] == "side_by_side"
+    assert side["changed_variables"] == [] and "settings_hash" in side["unchanged_variables"]
+    assert [card["run_id"] for card in side["scorecards"]] == ids[:2]
+    for card in side["scorecards"]:
+        assert card["mri"] == scores[card["run_id"]]["mri"] and set(card["subscores"]) == set(SUBSCORE_KEYS)
+        assert card["measurements"] and card["curve"] and card["limitations"]
+    mirrored = viewer.get(f"/v1/runs/{ids[1]}/compare", params={"with": ids[0]}).json()
+    assert [card["run_id"] for card in mirrored["scorecards"]] == [ids[1], ids[0]] and mirrored["mode"] == "side_by_side"
 
     # an incompatible triple: the bundled campaign samples 12 rows of another model (spec 15.6, D9 i)
     other = h.run_campaign_via_api(scanner, e2e_bundled[h.IMAGE_MODEL_ID], h.image_campaign(explain_k=0),
@@ -923,7 +876,7 @@ def test_compare_three_runs_table(
     assert "n_samples" in detail["reasons"] and "not compared across settings" in detail["message"]
     assert detail["pairs"] and all(other.run_id in pair["runs"] for pair in detail["pairs"])
     assert all(ids[0] not in pair["runs"] or ids[1] not in pair["runs"] for pair in detail["pairs"]), (
-        "the baseline and its verify are compatible; only pairs with the other run are named")
+        "the two runs with identical settings are compatible; only pairs with the other run are named")
 
     # bounds and membership
     one = viewer.get("/v1/runs/compare", params={"ids": ids[0]})
@@ -938,7 +891,8 @@ def test_compare_three_runs_table(
 # ---------------------------------------------------------------------------
 
 
-def test_idempotency_key_replay_and_reuse(e2e_app: E2EApp, e2e_org: E2EOrg, verifies: list[VerifyRun]) -> None:
+def test_idempotency_key_replay_and_reuse(e2e_app: E2EApp, e2e_org: E2EOrg,
+                                          repeat_campaigns: list[h.CampaignRun]) -> None:
     from sqlalchemy import select
 
     from redsim.api.errors import IDEMPOTENCY_KEY_REUSED
@@ -947,7 +901,7 @@ def test_idempotency_key_replay_and_reuse(e2e_app: E2EApp, e2e_org: E2EOrg, veri
     from redsim.services.reports import REPORT_RENDER_ACTION
 
     scanner, approver = e2e_org.client("scanner"), e2e_org.client("approver")
-    run_id = verifies[0].run_id
+    run_id = repeat_campaigns[0].run_id
     chain = f"run:{run_id}"
     key = f"e2e-render-{uuid4().hex}"
     body = {"formats": ["md", "pdf"]}

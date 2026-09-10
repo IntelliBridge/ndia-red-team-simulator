@@ -1,4 +1,4 @@
-"""Phase B attacks and training defenses through the e2e harness (plan 12 wave B4, TESTS_DOCS-10, ATTACKS_HARDEN-21/-23).
+"""Phase B attacks and the harden route through the e2e harness (plan 12 wave B4, TESTS_DOCS-10, ATTACKS_HARDEN-21/-23).
 
 Four evidence tests over the real API, the real admission service, the eager
 Celery task body and the real sandbox child:
@@ -18,38 +18,28 @@ Celery task body and the real sandbox child:
    attack on the bundled tabular ensemble records query counts and the
    realizability caveat, and the adversarial slice it left behind holds every
    frozen URL feature at its clean value (spec 12.9).
-4. ``test_training_defense_verify_registers_a_derived_target``: a verify with
-   ``adversarial_training`` and one with ``defensive_distillation`` (tiny budgets)
-   admitted as ``kind: training`` defenses and run through the sandbox child. On a
-   tree where the child can train, the ``defense_apply`` stage is in the stage
-   table, a derived ``Target`` is registered with ``derived_from`` lineage and
-   validated, the ``MeasuredDelta`` is attached to the recommendation naming the
-   defense (its sign is not asserted) and ``verify.execute`` names the derived
-   digest and the training budget. On ``cb1e559`` the child cannot train
-   (``D_TRAIN_SLICE`` below): the honest failure state is asserted and the test
-   fails with that attribution rather than a weakened assertion.
-5. ``test_training_defenses_are_unavailable_for_the_tabular_tree_ensemble``: the
-   register ATTACKS_HARDEN-20 statement on the real bundled ``url_trees`` target
-   (a typed ``TrainingUnavailable``, never a run), and the catalog rows that say so.
+4. ``test_harden_route_yields_candidates_only``: ``POST /v1/findings/{id}/harden``
+   on a worker finding is admitted (``harden.recommend`` row first), runs an
+   ``ml.harden`` follow-on through the sandbox child and merges rule candidates
+   back onto the finding. Every recommendation is ``status: candidate`` and
+   nothing more (no validation label, no measured block, no gain, no
+   ``defense:`` reference), the ``harden.execute`` row records ``narrative_source
+   rules`` and the record's limitations carry the standing sentence that no
+   candidate has been evaluated against this model.
+
+Every run is a measurement in its own right (product decision of 2026-09-09):
+there is no verify campaign, no defense catalog, no training defense, no derived
+target and no measured delta anywhere in this file or in the product.
 
 The shared tree's ``vehicles_cnn`` is a one-epoch CNN that predicts one class for
-every image (8 of 24 clean-correct, below the finding floor of 10), so no verify
-can start from it. Test 4 therefore builds a second tiny tree with the **real
-builder** (``build_tiny_assets(epochs=300)``, a memorising ``small_cnn``) plus a
-bundled training slice written with ``redsim.ml.assets.datasets.write_train_slice``,
-registers that ``vehicles_cnn`` into the *other* organisation's project through
-``register_bundled_model`` (a throwaway blob store, so the shared blob is never
-overwritten) and points ``REDSIM_ML_ASSETS_DIR`` at the tree only while its own
-campaigns run. Nothing measured on either tree is a demo result.
-
-Product defects found on ``cb1e559`` (see :data:`DEFECTS`):
-
-* ``D_TRAIN_SLICE``: no target exposes ``train_sample`` and no bundled training
-  slice is wired into ``build-assets`` or the bundled image target, so
-  ``apply_training_defense`` raises ``TrainingDefenseUnavailable`` inside the
-  verify child for every image target; ``campaign._apply_defense`` does not catch
-  it, so the run fails instead of recording the defense as unavailable with the
-  score withheld. No derived target and no measured delta can exist on this tree.
+every image (8 of 24 clean-correct, below the finding floor of 10), so it yields
+neither a meaningful L2 curve nor a finding. Tests 2 and 4 therefore build a
+second tiny tree with the **real builder** (``build_tiny_assets(epochs=300)``, a
+memorising ``small_cnn``), register that ``vehicles_cnn`` into the *other*
+organisation's project through ``register_bundled_model`` (a throwaway blob
+store, so the shared blob is never overwritten) and point ``REDSIM_ML_ASSETS_DIR``
+at the tree only while their own campaigns run. Nothing measured on either tree
+is a demo result.
 
 Run with::
 
@@ -86,7 +76,6 @@ _READINESS_RE = re.compile(
     r"\b(readiness|ready|certif\w*|deploy\w*|fielding|hardened|safe|safety|proven|validated|guaranteed)\b",
     re.IGNORECASE,
 )
-_HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 L2_GRID = [0.25, 0.5, 1.0]
 L2_REFERENCE = 0.5
@@ -103,33 +92,14 @@ ZOO_N = 10
 MEMORISE_EPOCHS = 300
 #: The whole 24-image evaluation split of the tiny tree.
 N_EVAL = h.N_IMAGES // 2
+#: The default finding threshold of spec 15.3; the memorising model crosses it under FGSM and PGD.
 FINDING_THRESHOLD = 0.2
-#: Tiny, bounded training budgets (spec 3.3, 12.8): the verify child must finish in seconds on a laptop CPU.
-ADVERSARIAL_TRAINING_PARAMS: dict[str, Any] = {"epochs": 1, "train_n": 32, "batch_size": 16, "pgd_iters": 1,
-                                               "wall_budget_s": 60}
-DISTILLATION_PARAMS: dict[str, Any] = {"epochs": 1, "train_n": 32, "batch_size": 16, "temperature": 10,
-                                       "wall_budget_s": 60}
+#: Keys that left the recommendation contract with the verify paradigm (2026-09-09).
+_RETIRED_RECOMMENDATION_KEYS = frozenset({"validation", "measured", "expected_gain", "delta", "delta_mri"})
+#: A bare "+N": no gain is ever claimed for a candidate.
+_BARE_GAIN = re.compile(r"(?<![\w.\-])\+\d")
 
 DEFECTS: dict[str, str] = {
-    "D_TRAIN_SLICE": (
-        "No target exposes the train_sample(n, seed) accessor redsim/ml/harden/apply.py:421-434 (load_train_slice) "
-        "requires when no train_slice is passed: `grep -rn train_sample redsim/` finds only harden/apply.py. "
-        "(On the rebased tree redsim/ml/campaign.py:_apply_defense catches the typed TrainingDefenseUnavailable and "
-        "records the defense as unavailable with the score withheld, so the verify Run now succeeds without a "
-        "defense_apply stage, a derived target or a MeasuredDelta; the honest shape is asserted below, the root "
-        "cause is unchanged.) "
-        "redsim/ml/assets/datasets.py:1485-1542 ships write_train_slice / TrainSliceOptions ('wiring into build.py "
-        "is a follow-up in that file') but redsim/ml/assets/build.py:310-361 build_cnn_asset writes no training "
-        "slice and redsim/ml/targets/bundled.py BundledImageTarget reads none (ATTACKS_HARDEN-11), so "
-        "apply_training_defense raises TrainingDefenseUnavailable(NO_TRAIN_SLICE_REASON, infeasible=False) inside the "
-        "verify child for every image target. redsim/ml/campaign.py:333-374 _apply_defense catches only an "
-        "unimportable module or a missing hook as 'unavailable'; the raised TrainingDefenseUnavailable propagates, "
-        "the child returns a failed partial record and the verify Run fails at the defense_apply stage instead of "
-        "recording the defense as unavailable with the score withheld (the path services/ml_campaigns.py:95-97 "
-        "documents). Consequently no derived Target with derived_from lineage is registered "
-        "(workers/tasks/ml_campaign.py:1210-1351 is never reached with weights) and no MeasuredDelta exists "
-        "(ATTACKS_HARDEN-13, -18; spec 15.6, 16.4, 26.3 item 15)."
-    ),
     "D_RUNNER_NORM": (
         "redsim/ml/campaign.py:376-383 _resolve_attacks refuses every adapter without a `norm_l2` parameter under an "
         "L2 campaign ('supports the L-inf norm only; the campaign norm is l2') instead of asking "
@@ -139,11 +109,6 @@ DEFECTS: dict[str, str] = {
         "(AttackNotApplicable raised before any stage), leaving a failed Run with no measurement: the two "
         "minimal-norm attacks can never run through the campaign frame under the only norm they support "
         "(ATTACKS_HARDEN-01, -02; spec 12.3 minimal-norm paragraph)."
-    ),
-    "D_DEFENSES_PHASE": (
-        "redsim/api/v1/defenses.py:24-34 projects every catalog row with a hard-coded phase 'A' and status "
-        "'available', so the two kind 'training' rows whose catalog phase is 'B' (redsim/ml/defenses.py:1028, "
-        ":1059) are served as Phase A; the served phase should be the row's own."
     ),
 }
 
@@ -232,26 +197,6 @@ def _run_count(e2e_app: E2EApp) -> int:
         return int(sess.execute(select(func.count()).select_from(Run)).scalar() or 0)
 
 
-def _job_detail(e2e_app: E2EApp, job_id: str) -> dict[str, Any]:
-    from redsim.db.models import Job
-
-    with e2e_app.session() as sess:
-        job = sess.get(Job, job_id)
-        assert job is not None, job_id
-        return {"type": job.type, "status": job.status, "detail": dict(job.detail or {})}
-
-
-def _derived_targets(e2e_app: E2EApp, project_id: str) -> list[dict[str, Any]]:
-    from sqlalchemy import select
-
-    from redsim.db.models import Target
-
-    with e2e_app.session() as sess:
-        rows = sess.execute(select(Target).where(Target.project_id == project_id)).scalars().all()
-        return [{"id": str(r.id), "kind": str(r.kind), "value": str(r.value), "detail": dict(r.detail or {})}
-                for r in rows if isinstance(r.detail, dict) and r.detail.get("source") == "derived"]
-
-
 def _finding(client: TestClient, finding_id: str) -> dict[str, Any]:
     response = client.get(f"/v1/findings/{finding_id}")
     assert response.status_code == 200, response.text
@@ -264,11 +209,20 @@ def _recs(detail: dict[str, Any]) -> list[dict[str, Any]]:
     return list(recs) if isinstance(recs, list) else []
 
 
-def _defense_ids(rec: dict[str, Any]) -> set[str]:
+def _assert_candidates_only(recs: list[dict[str, Any]]) -> None:
+    """A recommendation is ``status: candidate`` and nothing more: no validation label, no gain, no delta."""
     from redsim.ml.schema import CandidateRecommendation
-    from redsim.services.ml_campaigns import recommendation_defense_ids
 
-    return recommendation_defense_ids(CandidateRecommendation.model_validate(rec))
+    assert recs, "the rule layer always produces R7"
+    allowed = set(CandidateRecommendation.model_fields)
+    for rec in recs:
+        assert rec["status"] == "candidate", rec.get("id")
+        assert not (set(rec) & _RETIRED_RECOMMENDATION_KEYS), sorted(set(rec) & _RETIRED_RECOMMENDATION_KEYS)
+        assert set(rec) <= allowed, sorted(set(rec) - allowed)
+        text = " ".join(str(rec.get(k) or "") for k in ("title", "rationale", "narrative"))
+        assert not _BARE_GAIN.search(text) and "expected gain" not in text.lower(), text[:200]
+        assert "not evaluated" not in text.lower(), text[:200]
+        assert not [r for r in rec.get("references") or [] if str(r).startswith("defense:")], rec["references"]
 
 
 def _assert_score_state(campaign: dict[str, Any]) -> bool:
@@ -309,41 +263,29 @@ def _assets_dir(root: Path) -> Iterator[None]:
 
 
 # ---------------------------------------------------------------------------
-# A second tiny tree: a memorising small_cnn with a bundled training slice
+# A second tiny tree: a memorising small_cnn
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
 def memorising_tree(e2e_app: E2EApp, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
-    """``build_tiny_assets(epochs=300)`` into its own root, plus ``write_train_slice`` on the training split.
+    """``build_tiny_assets(epochs=300)`` into its own root: a memorising ``small_cnn`` the real builder wrote.
 
-    A precondition of the verify evidence, not a product claim: the memorising CNN clears the finding floor on
-    the tiny slice so a Finding can exist; the shared one-epoch tree's cannot (asserted in
-    ``test_ml_verify_upload_reports.py``).
+    A precondition of the L2 and harden evidence, not a product claim: the memorising CNN clears the finding
+    floor on the tiny slice so a Finding can exist; the shared one-epoch tree's cannot (asserted in
+    ``test_ml_upload_reports.py``).
     """
-    from redsim.ml.assets import datasets as ds
-    from redsim.ml.assets.build import dataset_dir
-    from redsim.ml.assets.manifest import MANIFEST_NAME, AssetManifest, verify_model_assets, write_manifest
+    from redsim.ml.assets.manifest import MANIFEST_NAME, AssetManifest, verify_model_assets
     from redsim.ml.scoring import MIN_CLEAN_CORRECT_FOR_FINDING
 
     del e2e_app  # ordering only: the harness engine exists before a second tree is built
     root = tmp_path_factory.mktemp("e2e-harden-assets")
     h.build_tiny_assets(root, epochs=MEMORISE_EPOCHS)
-    manifest_path = root / MANIFEST_NAME
-    manifest = AssetManifest.model_validate(json.loads(manifest_path.read_text(encoding="utf-8")))
-    entry = manifest.datasets[h.IMAGE_DATASET_ID]
-    data = h.synthetic_images()
-    slice_split, split_entry = ds.write_train_slice(
-        data.train, dataset_dir(root, entry) / ds.TRAIN_SLICE_NAME, root, n=h.N_IMAGES, seed=0,
-        exclude_indices=data.eval.indices,
-    )
-    entry.splits[split_entry.name] = split_entry
-    write_manifest(manifest, manifest_path)
-    reparsed = AssetManifest.model_validate(json.loads(manifest_path.read_text(encoding="utf-8")))
-    for model_id in reparsed.models:
-        problems = verify_model_assets(reparsed, root, model_id)
+    manifest = AssetManifest.model_validate(json.loads((root / MANIFEST_NAME).read_text(encoding="utf-8")))
+    for model_id in manifest.models:
+        problems = verify_model_assets(manifest, root, model_id)
         assert not problems, f"{model_id}: {list(problems.model) + list(problems.dataset)}"
-    model = reparsed.models[h.IMAGE_MODEL_ID]
+    model = manifest.models[h.IMAGE_MODEL_ID]
     assert model.clean_accuracy is not None
     clean_correct = round(model.clean_accuracy.value * model.clean_accuracy.n)
     if clean_correct < MIN_CLEAN_CORRECT_FOR_FINDING:
@@ -351,7 +293,7 @@ def memorising_tree(e2e_app: E2EApp, tmp_path_factory: pytest.TempPathFactory) -
                     f"{model.clean_accuracy.n} clean-correct on the tiny slice, below the finding floor "
                     f"{MIN_CLEAN_CORRECT_FOR_FINDING}; raise MEMORISE_EPOCHS")
     return {"root": root, "clean_correct": clean_correct, "n_eval": model.clean_accuracy.n,
-            "model_sha256": model.sha256, "train_slice": split_entry.name, "train_slice_n": slice_split.n}
+            "model_sha256": model.sha256}
 
 
 @pytest.fixture(scope="module")
@@ -377,7 +319,7 @@ def memorising_model(e2e_app: E2EApp, e2e_org: E2EOrg, e2e_bundled: dict[str, st
 
 @pytest.fixture(scope="module")
 def finding_run(e2e_org: E2EOrg, memorising_model: str, memorising_tree: dict[str, Any]) -> h.CampaignRun:
-    """FGSM + PGD (L-inf, the whole 24-image slice) on the memorising model: the baseline the verifies pair with."""
+    """FGSM + PGD (L-inf, the whole 24-image slice) on the memorising model: the campaign that yields the finding."""
     body = h.image_campaign(n_samples=N_EVAL, finding_asr_threshold=FINDING_THRESHOLD)
     with _assets_dir(memorising_tree["root"]):
         result = h.run_campaign_via_api(e2e_org.client(h.OUTSIDER), memorising_model, body,
@@ -388,7 +330,7 @@ def finding_run(e2e_org: E2EOrg, memorising_model: str, memorising_tree: dict[st
     if not result.findings:
         asr = {m["id"]: m.get("attack_success_rate") for m in result.campaign["measurements"] if m["family"] == "evasion"}
         pytest.fail(f"harness precondition: the memorising model produced no finding (clean {clean['n_correct']}/"
-                    f"{clean['n']}, ASR by row {asr}, threshold {FINDING_THRESHOLD}); nothing to verify")
+                    f"{clean['n']}, ASR by row {asr}, threshold {FINDING_THRESHOLD}); nothing to harden")
     return result
 
 
@@ -652,285 +594,78 @@ def test_zoo_on_url_trees_keeps_frozen_features(e2e_app: E2EApp, e2e_org: E2EOrg
 
 
 # ---------------------------------------------------------------------------
-# 4. Training defenses through the verify child (ATTACKS_HARDEN-11..18; spec 15.6, 16.4, 16.5, 26.3 item 15)
+# 4. The harden route: rule candidates merged onto the finding, candidates and nothing more (spec 16.2, 16.4)
 # ---------------------------------------------------------------------------
 
 
-def _verify(e2e_app: E2EApp, client: TestClient, finding_id: str, body: dict[str, Any],
-            root: Path) -> dict[str, Any]:
-    """POST the verify with the memorising tree active; return everything it left behind."""
-    with _assets_dir(root):
-        response = client.post(f"/v1/findings/{finding_id}/verify", json=body)
-        assert response.status_code == 202, response.text
-        launch: dict[str, Any] = response.json()
-        run_id = str(launch["run_id"])
-        run = h.wait_for_run(client, run_id, timeout_s=120.0)
-    record_response = client.get(f"/v1/runs/{run_id}/campaign")
-    assert record_response.status_code == 200, record_response.text
-    return {"run_id": run_id, "job_id": str(launch["job_ids"][0]), "run": run, "record": record_response.json(),
-            "finding": _finding(client, finding_id)}
-
-
-def _assert_training_verify_admitted(e2e_app: E2EApp, e2e_org: E2EOrg, verify: dict[str, Any], *, defense_id: str,
-                                     params: dict[str, Any], baseline: h.CampaignRun) -> None:
-    """The admission half is the same on every tree: the training defense is frozen and audited as such."""
-    from redsim.ml.defenses import get_defense
-
-    spec = get_defense(defense_id)
-    assert spec["kind"] == "training" and spec["domains"] == ("image",)
-    admission = _events(e2e_app, f"run:{verify['run_id']}", "verify.replay")
-    assert len(admission) == 1 and admission[0]["success"] is True and admission[0]["actor"] == e2e_org.actor(h.OUTSIDER)
-    detail = admission[0]["detail"]
-    assert detail["defense_kind"] == "training" and detail["defense"]["id"] == defense_id
-    assert detail["defense"]["art_class"] == spec["art_class"] and detail["baseline_run_id"] == baseline.run_id
-    for key, value in params.items():
-        assert detail["defense"]["params"][key] == value, (key, detail["defense"]["params"])
-    job = _job_detail(e2e_app, verify["job_id"])
-    assert job["type"] == "verify.replay" and job["detail"]["campaign_config"]["defense"]["id"] == defense_id
-    row = _campaign_row(e2e_app, verify["run_id"])
-    assert row["kind"] == "verify" and row["baseline_run_id"] == baseline.run_id
-    record = verify["record"]
-    assert record["kind"] == "verify" and record["baseline_run_id"] == baseline.run_id
-    assert record["config"]["defense"]["id"] == defense_id
-    assert baseline.campaign is not None
-    assert record["settings_hash"] == baseline.campaign["settings_hash"], "the defense is outside the settings hash"
-
-
-def _assert_training_verify_succeeded(e2e_app: E2EApp, e2e_org: E2EOrg, verify: dict[str, Any], *, defense_id: str,
-                                      params: dict[str, Any], baseline: h.CampaignRun, model_id: str,
-                                      derived_before: set[str]) -> None:
-    """The full ATTACKS_HARDEN-13 / -18 evidence: stage, derived target, lineage, MeasuredDelta, audit row."""
-    from redsim.ml.schema import STAGES, DerivedFrom, MeasuredDelta
-    from redsim.workers.tasks.ml_campaign import VERIFY_STATUS_MAP
-    from redsim.workers.tasks.verify import _STATE_MAP
-
-    record = verify["record"]
-    assert record["status"] == "succeeded" and verify["run"]["status"] == "succeeded"
-    # Spec 6.5 / ATTACKS_HARDEN-15: defense_apply sits after load_target and before sample, and succeeded.
-    table = verify["run"]["stage_table"]
-    assert "defense_apply" in STAGES and table["stages"]["defense_apply"]["status"] == "succeeded", table["stages"]
-    done = list(table["stages_done"])
-    assert done.index("load_target") < done.index("defense_apply") < done.index("sample"), done
-    provenance = record["provenance"]
-    defense_prov = provenance["defense"]
-    assert defense_prov["id"] == defense_id and defense_prov["kind"] == "training"
-    assert _HEX64.match(defense_prov["derived_sha256"]) and defense_prov["derived_sha256"] != defense_prov["parent_sha256"]
-    assert baseline.campaign is not None
-    assert provenance["model_sha256"] == baseline.campaign["provenance"]["model_sha256"], "the 15.6 identity is the parent"
-    report = defense_prov["training_report"]
-    assert report["epochs_requested"] == params["epochs"] and 1 <= report["epochs_run"] <= params["epochs"]
-    assert report["n_train"] <= params["train_n"] and report["wall_budget_s"] == params["wall_budget_s"]
-    assert report["budget_exhausted"] is True or report["wall_time_s"] <= report["wall_budget_s"]
-    assert report["weights_sha256"] == defense_prov["derived_sha256"]
-    assert "train_clean_correct_before" in report and "train_clean_correct_after" in report, "k of n, no claim"
-
-    # ATTACKS_HARDEN-13: exactly one new derived Target, registered then validated, with DerivedFrom lineage.
-    derived = [t for t in _derived_targets(e2e_app, e2e_org.other_project_id) if t["id"] not in derived_before]
-    assert len(derived) == 1, [t["id"] for t in derived]
-    target = derived[0]
-    assert target["kind"] == "ml_model_artifact" and target["id"].startswith("derived-")
-    detail = target["detail"]
-    lineage = DerivedFrom.model_validate(detail["derived_from"])
-    assert lineage.parent_target_id == model_id and lineage.defense_id == defense_id
-    assert lineage.parent_sha256 == defense_prov["parent_sha256"]
-    assert lineage.training_budget["epochs_run"] == report["epochs_run"]
-    assert detail["manifest"]["derived_from"]["defense_id"] == defense_id
-    assert detail["status"] == "available", f"the derived target was not validated: {detail.get('validation')}"
-    validate_chain = f"run:{detail['validation']['ingest_run_id']}"
-    actions = _actions(e2e_app, validate_chain)
-    assert actions[:2] == ["model.register", "model.validate"] and "job.complete" in actions, actions
-    register = _events(e2e_app, validate_chain, "model.register")[0]
-    assert register["detail"]["source"] == "derived" and register["detail"]["target_id"] == target["id"]
-    assert register["detail"]["derived_sha256"] == defense_prov["derived_sha256"]
-    artifacts = _artifact_rows(e2e_org.client(h.OUTSIDER), verify["run_id"])
-    kinds = {row["kind"] for row in artifacts.values()}
-    assert {"ml.derived_model", "ml.training_report"} <= kinds, sorted(kinds)
-
-    # ATTACKS_HARDEN-18: verify.execute names the derived digest and the training budget.
-    execute = _events(e2e_app, f"run:{verify['run_id']}", "verify.execute")[-1]
-    assert execute["detail"]["derived_target_id"] == target["id"]
-    assert execute["detail"]["derived_sha256"] == defense_prov["derived_sha256"]
-    assert execute["detail"]["training_budget"]["epochs_run"] == report["epochs_run"]
-    outcome = execute["detail"]["outcome"]
-    finding = verify["finding"]
-    assert finding["validation_state"] == _STATE_MAP[outcome] and finding["status"] == VERIFY_STATUS_MAP[outcome]
-
-    # Spec 16.4 / 26.3 item 15: the MeasuredDelta sits on the recommendation naming the defense; sign not asserted.
-    if outcome == "inconclusive":
-        pytest.fail(f"verify {verify['run_id']} ({defense_id}) was inconclusive: {execute['detail']['inconclusive_reason']}; "
-                    f"no MeasuredDelta could be attached (limitations: {record['limitations']})")
-    delta = record["score"]["delta"]
-    assert delta is not None and delta["baseline_run_id"] == baseline.run_id
-    assert isinstance(delta["delta"], int) and delta["delta"] == delta["mri_after"] - delta["mri_before"]
-    recs = _recs(finding["schema_blob"]["ml"])
-    naming = {rec["id"] for rec in recs if defense_id in _defense_ids(rec)}
-    assert naming, f"no candidate names {defense_id}: " + ", ".join(f"{r['id']}={sorted(_defense_ids(r))}" for r in recs)
-    measured = {rec["id"]: rec for rec in recs if rec["validation"] == "measured" and rec["measured"] is not None
-                and rec["measured"]["verify_run_id"] == verify["run_id"]}
-    assert set(measured) == naming, (sorted(measured), sorted(naming))
-    for rec in measured.values():
-        block = MeasuredDelta.model_validate(rec["measured"])
-        assert block.defense.id == defense_id and block.delta_mri == delta["delta"]
-        assert block.baseline_run_id == baseline.run_id and block.settings_hash == record["settings_hash"]
-    assert execute["detail"]["measured_for"] == sorted(measured, key=[r["id"] for r in recs].index)
-    compare = e2e_org.client(h.OUTSIDER).get(f"/v1/runs/{verify['run_id']}/compare", params={"with": baseline.run_id})
-    assert compare.status_code == 200, compare.text
-    assert compare.json()["mode"] == "verify_delta" and compare.json()["changed_variables"] == ["defense"]
-    assert compare.json()["delta_mri"] == delta["delta"]
-
-
-def _assert_training_verify_failed_honestly(e2e_app: E2EApp, e2e_org: E2EOrg, verify: dict[str, Any], *,
-                                            defense_id: str, derived_before: set[str]) -> str:
-    """The honest state of a verify whose child could not train: nothing faked, the finding left open."""
-    from redsim.ml.harden.apply import NO_TRAIN_SLICE_REASON
-
-    record = verify["record"]
-    error = str(record["error"] or verify["run"]["stage_table"].get("error") or "")
-    assert verify["run"]["status"] == "failed" and record["status"] == "failed"
-    assert record["score"] is None and record["completeness"] == "partial"
-    # The frame marks load_target done only after the defense hook returned, so the child died inside the
-    # open load_target stage: no stage is done, the open stage is failed, defense_apply never appears.
-    table = verify["run"]["stage_table"]
-    assert table["stages_done"] == [] and table["completeness"] == "partial", table
-    assert table["stages"]["load_target"]["status"] == "failed", table["stages"]
-    # The worker prefixes the raised class on the stage table ("RuntimeError: TrainingDefenseUnavailable: ...").
-    assert "defense_apply" not in table["stages"] and "TrainingDefenseUnavailable" in str(table["error"])
-    # No derived target, no measured delta, the finding inconclusive -> open (spec 6.4).
-    assert not [t for t in _derived_targets(e2e_app, e2e_org.other_project_id) if t["id"] not in derived_before]
-    finding = verify["finding"]
-    assert finding["status"] == "open" and finding["validation_state"] == "inconclusive"
-    detail = finding["schema_blob"]["ml"]
-    assert detail["verify"]["run_id"] == verify["run_id"] and detail["verify"]["outcome"] == "inconclusive"
-    assert detail["verify"]["defense"]["id"] == defense_id and detail["verify"]["delta"] is None
-    assert any(r["run_id"] == verify["run_id"] for r in detail["retests"]), "every verify is a retest (REVIEW_REPORTS-08)"
-    assert all(rec["validation"] == "not evaluated" and rec["measured"] is None for rec in _recs(detail))
-    execute = _events(e2e_app, f"run:{verify['run_id']}", "verify.execute")[-1]
-    assert execute["success"] is False and execute["detail"]["outcome"] == "inconclusive"
-    assert execute["detail"]["delta_mri"] is None and execute["detail"]["measured_for"] == []
-    assert "derived_sha256" not in execute["detail"]
-    complete = _events(e2e_app, f"run:{verify['run_id']}", "job.complete")[-1]
-    assert complete["success"] is False and complete["detail"]["error_class"] == "TrainingDefenseUnavailable"
-    assert error.startswith("TrainingDefenseUnavailable") and NO_TRAIN_SLICE_REASON.split(":")[0] in error, error
-    return error
-
-
-def _assert_training_verify_unavailable_honestly(e2e_app: E2EApp, e2e_org: E2EOrg, verify: dict[str, Any], *,
-                                                 defense_id: str, derived_before: set[str]) -> str:
-    """The honest state of a verify whose child recorded the training defense as unavailable (spec 15.6 / 16.4):
-    the run succeeds on the undefended model, no defense_apply stage, no score, no derived target, no delta, the
-    finding inconclusive -> open. Nothing is claimed that was not measured."""
-    from redsim.ml.harden.apply import NO_TRAIN_SLICE_REASON
-
-    record = verify["record"]
-    defense_prov = record["provenance"]["defense"]
-    assert defense_prov["status"] == "unavailable" and defense_prov["kind"] == "training"
-    assert defense_prov["id"] == defense_id and "derived_sha256" not in defense_prov
-    reason = str(defense_prov["reason"])
-    table = verify["run"]["stage_table"]
-    assert "defense_apply" not in table["stages_done"], "nothing was applied, so no stage says it was"
-    assert table["stages"].get("defense_apply", {}).get("status") in (None, "skipped"), table["stages"]
-    assert record["score"] is None and record["completeness"] == "partial"
-    assert any("was not applied" in item and defense_id in item for item in record["limitations"]), record["limitations"]
-    assert not [t for t in _derived_targets(e2e_app, e2e_org.other_project_id) if t["id"] not in derived_before]
-    finding = verify["finding"]
-    assert finding["status"] == "open" and finding["validation_state"] == "inconclusive"
-    detail = finding["schema_blob"]["ml"]
-    assert detail["verify"]["run_id"] == verify["run_id"] and detail["verify"]["outcome"] == "inconclusive"
-    assert detail["verify"]["defense"]["id"] == defense_id and detail["verify"]["delta"] is None
-    assert all(rec["validation"] == "not evaluated" and rec["measured"] is None for rec in _recs(detail))
-    execute = _events(e2e_app, f"run:{verify['run_id']}", "verify.execute")[-1]
-    assert execute["success"] is False and execute["detail"]["outcome"] == "inconclusive"
-    assert "derived_sha256" not in execute["detail"] and execute["detail"]["measured_for"] == []
-    assert not _events(e2e_app, f"run:{verify['run_id']}", "campaign.score"), "no score row without a score"
-    assert NO_TRAIN_SLICE_REASON.split(":")[0] in reason, reason
-    return f"{defense_id}: recorded unavailable ({reason})"
-
-
-def test_training_defense_verify_registers_a_derived_target(
-    e2e_app: E2EApp, e2e_org: E2EOrg, memorising_model: str, memorising_tree: dict[str, Any], finding_run: h.CampaignRun,
+def test_harden_route_yields_candidates_only(
+    e2e_app: E2EApp, e2e_org: E2EOrg, memorising_tree: dict[str, Any], finding_run: h.CampaignRun,
 ) -> None:
+    from redsim.ml.schema import STANDING_LIMITATIONS
+
     client = e2e_org.client(h.OUTSIDER)
     finding_id = str(finding_run.findings[0]["id"])
     seed = _finding(client, finding_id)
-    assert seed["status"] == "open" and seed["validation_state"] == "unvalidated"
-    assert seed["schema_blob"]["ml"]["verify"] is None
-    failures: list[str] = []
-    for defense_id, params in (("adversarial_training", ADVERSARIAL_TRAINING_PARAMS),
-                               ("defensive_distillation", DISTILLATION_PARAMS)):
-        derived_before = {t["id"] for t in _derived_targets(e2e_app, e2e_org.other_project_id)}
-        verify = _verify(e2e_app, client, finding_id, {"defense": defense_id, "params": params},
-                         memorising_tree["root"])
-        _assert_training_verify_admitted(e2e_app, e2e_org, verify, defense_id=defense_id, params=params,
-                                         baseline=finding_run)
-        defense_prov = (verify["record"].get("provenance") or {}).get("defense") or {}
-        if verify["run"]["status"] == "succeeded" and defense_prov.get("status") == "unavailable":
-            # The child could not train (no training slice reachable from the target) and said so: the run
-            # measures the undefended model with the score withheld. Asserted honestly, then attributed.
-            failures.append(_assert_training_verify_unavailable_honestly(
-                e2e_app, e2e_org, verify, defense_id=defense_id, derived_before=derived_before))
-            continue
-        if verify["run"]["status"] == "succeeded":
-            _assert_training_verify_succeeded(e2e_app, e2e_org, verify, defense_id=defense_id, params=params,
-                                              baseline=finding_run, model_id=memorising_model,
-                                              derived_before=derived_before)
-            continue
-        error = str(verify["record"].get("error") or verify["run"]["stage_table"].get("error") or "")
-        if not error.startswith("TrainingDefenseUnavailable"):
-            pytest.fail(f"verify {verify['run_id']} ({defense_id}) failed for an unexpected reason: {error}; "
-                        f"stages={verify['run']['stage_table'].get('stages_done')}")
-        failures.append(_assert_training_verify_failed_honestly(e2e_app, e2e_org, verify, defense_id=defense_id,
-                                                                derived_before=derived_before))
-    if failures:
-        _fail("D_TRAIN_SLICE", "the verify child could not train on the bundled image model (training slice "
-                               f"{memorising_tree['train_slice']!r} with {memorising_tree['train_slice_n']} rows is in "
-                               "the tree's manifest but no target reads it):\n  " + "\n  ".join(failures))
+    assert seed["status"] == "open" and "validation_state" not in seed and "validated_at" not in seed
+    seed_detail = seed["schema_blob"]["ml"]
+    assert "verify" not in seed_detail and "retests" not in seed_detail, sorted(seed_detail)
+    _assert_candidates_only(_recs(seed_detail))
+    steps = str(seed["schema_blob"]["remediation_steps"])
+    assert steps.startswith("CANDIDATE: ") and "not evaluated" not in steps, steps[:120]
+    assert finding_run.campaign is not None
+    assert STANDING_LIMITATIONS[3] in finding_run.campaign["limitations"]
+    assert "defense" not in finding_run.campaign["config"] and "defense" not in finding_run.campaign["provenance"]
 
+    # The retired verify routes are gone from the surface: 404, no operation, no gate, no audit row.
+    events_before = len(e2e_app.read_chain(f"run:{finding_run.run_id}"))
+    assert client.post(f"/v1/findings/{finding_id}/verify", json={}).status_code == 404
+    assert client.get(f"/v1/findings/{finding_id}/retests").status_code == 404
+    assert client.get("/v1/defenses").status_code == 404
+    assert len(e2e_app.read_chain(f"run:{finding_run.run_id}")) == events_before
 
-# ---------------------------------------------------------------------------
-# 5. The tabular tree ensemble: training defenses are a typed unavailable, never a run (ATTACKS_HARDEN-20)
-# ---------------------------------------------------------------------------
+    # harden.recommend is remediator and above; the outsider is admin of the other project.
+    assert e2e_org.client("remediator").post(f"/v1/findings/{finding_id}/harden",
+                                             json={"llm_narrative": False}).status_code in (403, 404)
+    with _assets_dir(memorising_tree["root"]):
+        response = client.post(f"/v1/findings/{finding_id}/harden", json={"llm_narrative": False})
+        assert response.status_code == 202, response.text
+        launch = response.json()
+        run_id = str(launch["run_id"])
+        run = h.wait_for_run(client, run_id, timeout_s=180.0)
+    assert run["status"] == "succeeded", f"harden run {run_id}: {run.get('stage_table')}"
+    assert run["scanner"] == "ml.harden"
+    chain = f"run:{run_id}"
+    actions = _actions(e2e_app, chain)
+    assert actions[0] == "harden.recommend", actions
+    admission = _events(e2e_app, chain, "harden.recommend")[0]
+    assert admission["success"] is True and admission["actor"] == e2e_org.actor(h.OUTSIDER)
+    assert admission["detail"]["finding_id"] == finding_id
+    assert "harden.execute" in actions and "job.complete" in actions, actions
+    assert not [a for a in actions if a.startswith("verify.")], actions
+    execute = _events(e2e_app, chain, "harden.execute")[-1]
+    assert execute["detail"]["llm_requested"] is False and execute["detail"]["llm_used"] is False
+    assert execute["detail"]["narrative_source"] == "rules"
+    assert not {"measured_for", "delta_mri", "defense", "derived_sha256"} & set(execute["detail"]), execute["detail"]
+    record_response = client.get(f"/v1/runs/{run_id}/campaign")
+    assert record_response.status_code == 200, record_response.text
+    record = record_response.json()
+    assert record["kind"] == "attack" and "baseline_run_id" not in record and "defense" not in record["config"]
+    assert STANDING_LIMITATIONS[3] in record["limitations"], record["limitations"]
+    _assert_candidates_only(_recs(record))
 
-
-def test_training_defenses_are_unavailable_for_the_tabular_tree_ensemble(
-    e2e_app: E2EApp, e2e_org: E2EOrg, e2e_bundled: dict[str, str],
-) -> None:
-    from redsim.ml.defenses import DISTILLATION_ART_NOTE, DISTILLATION_BYPASS, get_defense
-    from redsim.ml.harden.apply import TREE_ENSEMBLE_REASON, TrainingUnavailable, assess_training_target
-    from redsim.ml.targets import TARGETS
-
-    # The catalog the API serves says what each training row needs and does not claim (spec 16.6).
-    catalog = e2e_org.client("viewer").get("/v1/defenses")
-    assert catalog.status_code == 200, catalog.text
-    rows = {row["id"]: row for row in catalog.json()["defenses"]}
-    for defense_id in ("adversarial_training", "defensive_distillation"):
-        row = rows[defense_id]
-        assert row["kind"] == "training" and row["modalities"] == ["image"], row
-        assert row["requires"] == {"torch_module": True, "train_slice": True}
-        assert not _READINESS_RE.search(row["description"]), row["description"]
-        budget = {p["name"]: p for p in row["params_schema"]}
-        assert budget["epochs"]["max"] == 5 and budget["wall_budget_s"]["max"] == 600, "bounded budgets (spec 12.8)"
-    assert DISTILLATION_BYPASS in rows["defensive_distillation"]["references"]
-    assert DISTILLATION_ART_NOTE in rows["defensive_distillation"]["references"]
-    assert any("cw_l2" in ref for ref in rows["defensive_distillation"]["references"]), "the bypass names the attack"
-
-    # On the real loaded bundled tabular target, the same typed record the verify child would persist.
-    del e2e_bundled  # the shared url_trees is registered; the library check reads the same asset tree
-    with _assets_dir(e2e_app.assets_dir):
-        target = TARGETS.get(h.TABULAR_MODEL_ID)
-        target.load()
-        assert target.info().domain == "tabular"
-        for defense_id in ("adversarial_training", "defensive_distillation"):
-            unavailable = assess_training_target(target, defense_id)
-            assert isinstance(unavailable, TrainingUnavailable), defense_id
-            assert unavailable.infeasible is True and unavailable.register_item == "ATTACKS_HARDEN-20"
-            assert unavailable.reason == TREE_ENSEMBLE_REASON and unavailable.code == "training_defense_unavailable"
-            assert unavailable.target_id == h.TABULAR_MODEL_ID and unavailable.domain == "tabular"
-    # The route-level refusal (422 defense_modality_mismatch) needs a tabular Finding to verify; the tiny URL slice
-    # cannot produce one (fewer than MIN_CLEAN_CORRECT_FOR_FINDING clean-correct rows, asserted in test 3), so the
-    # admission check is proven on the finding-independent halves above and in tests/ml/test_admission_phase_b.py.
-    # The served phase label must be the catalog's own (spec 26.5 item 24: unsupported paths say what they are).
-    mislabelled = {did: (rows[did]["phase"], get_defense(did)["phase"]) for did in ("adversarial_training",
-                                                                                   "defensive_distillation")
-                   if rows[did]["phase"] != get_defense(did)["phase"]}
-    if mislabelled:
-        _fail("D_DEFENSES_PHASE", f"GET /v1/defenses serves phase {mislabelled} as (served, catalog)")
+    # The follow-on merged its candidates onto the finding: candidates and nothing more, the review block intact.
+    after = _finding(client, finding_id)
+    detail = after["schema_blob"]["ml"]
+    recs = _recs(detail)
+    _assert_candidates_only(recs)
+    assert {rec["narrative_source"] for rec in recs} == {"rules"} and all(rec["narrative"] is None for rec in recs)
+    # The merge keeps the candidates that cite this attack's evidence (worker ``_merge_followon``), never every rule.
+    attack_id = str(detail["attack_id"])
+    known = {m["id"] for m in detail["measurements"] if m.get("attack_id") == attack_id} | {
+        o["id"] for o in detail["observations"]}
+    assert all(set(rec["triggered_by"]) & known for rec in recs), "every merged candidate cites this finding's evidence"
+    assert detail["review"] == seed_detail["review"], "a harden run never touches the review block"
+    assert after["status"] == "open" and "validation_state" not in after
+    assert STANDING_LIMITATIONS[3] in detail["limitations"]
+    assert any(key.startswith("harden.recommend:") for key in detail["artifacts"]), sorted(detail["artifacts"])
+    assert h.MOCK_PYTHIA_API_KEY not in json.dumps(after)

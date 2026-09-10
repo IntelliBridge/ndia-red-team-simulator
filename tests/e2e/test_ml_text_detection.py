@@ -714,7 +714,7 @@ def test_text_campaign_measurements_and_edit_budget(
     # -- the campaign never faked a stage: every reported stage is in the spec 6.5 table ----------------------
     table = text_run.stage_table
     assert table["error"] is None and table["stages_done"][-1] == "report"
-    assert "defense_apply" not in table["stages"], "an attack run applies no defense"
+    assert "defense_apply" not in table["stages"], "no such stage exists: every run is a measurement of its own"
     for name in ("load_target", "sample", "clean_eval", f"attack:{TEXT_ATTACK_ID}", "control", "score", "report"):
         assert table["stages"][name]["status"] == "succeeded", (name, table["stages"][name])
 
@@ -926,7 +926,7 @@ def test_detection_measurements_count_boxes_with_denominators(
     for name in ("load_target", "sample", "clean_eval", f"attack:{DET_ATTACK_ID}", "control", "explain", "score",
                  "report"):
         assert table["stages"][name]["status"] == "succeeded", (name, table["stages"][name])
-    assert "defense_apply" not in table["stages"]
+    assert "defense_apply" not in table["stages"], "no such stage exists: every run is a measurement of its own"
 
 
 # ---------------------------------------------------------------------------

@@ -335,7 +335,7 @@ def test_image_campaign_succeeds_in_the_real_sandbox_child(
     assert _control_eps(campaign) == set(h.image_campaign()["eps_grid"]), "a control accompanies every eps"
     for rec in _recommendations(campaign):
         assert rec["narrative_source"] == "rules" and rec["narrative"] is None
-        assert rec["validation"] == "not evaluated"
+        assert rec["status"] == "candidate" and "validation" not in rec
     assert campaign["provenance"]["model_sha256"] == h.registered_target(e2e_app, model_id)["detail"]["sha256"]
     assert campaign["project_id"] == e2e_org.project_id
     assert isinstance(campaign["findings"], list)
@@ -577,7 +577,7 @@ def test_mocked_narrative_flips_narrative_source(
         # paragraph body; the canned writer's fixed sentence proves it is the mock's text.
         assert rec["narrative"], rec
         assert "candidate recommendation that has not been evaluated" in rec["narrative"]
-        assert rec["validation"] == "not evaluated"
+        assert rec["status"] == "candidate" and "validation" not in rec
     assert len(pythia.requests) == 1, pythia.requests
     request = pythia.requests[0]
     assert request["method"] == "POST" and request["url"] == MOCK_CHAT_URL
