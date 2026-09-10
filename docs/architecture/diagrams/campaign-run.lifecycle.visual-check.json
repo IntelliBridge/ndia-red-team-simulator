@@ -6,7 +6,7 @@
   "status": "pass",
   "visualReview": "pending",
   "artifact": {
-    "path": "/Users/noah.behrick/NDIA Hackathon/wt/docs-refresh/docs/architecture/diagrams/campaign-run.lifecycle.html",
+    "path": "docs/architecture/diagrams/campaign-run.lifecycle.html",
     "sha256": "36cb473fb59c171a177cdf2259ac9b1225ccc3304123c3752ac3c3efeb95578b",
     "bytes": 804803
   },

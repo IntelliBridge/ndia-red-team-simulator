@@ -8,12 +8,12 @@ be anything but ``candidate``.
 
 This module is the frozen M0 contract (spec sections 5.3 to 5.7, 12.5, 13.3,
 14, 15, 16.4). Later milestones add behaviour, not fields. A field change
-after the freeze follows the protocol in ``docs/plans/01-p0-contracts-api-skeleton.md``
+after the freeze follows the change protocol (additive, default-valued fields only)
 section 8.
 
-Phase B (2026-09-09, ``docs/plans/12-phase-b-plan.md`` section 3) added fields
+Phase B (2026-09-09) added fields
 under that protocol, every one additive and default-valued and each announced in
-``docs/plans/00-master-plan.md`` sections 0 and 5: the ``text`` and ``detection``
+the ``text`` and ``detection``
 vocabularies, the ``edit`` and ``patch_area`` budgets, the per-modality blocks on
 ``Measurement``, ``Observation`` and ``MLModelManifest``, the endpoint and lineage
 blocks on the manifest, the widened review vocabulary with its history and
@@ -21,8 +21,7 @@ revisions, ``CampaignRecord.schema_version``, ``RunSummary.kind`` and
 ``probe_ids``. A record written before Phase B validates unchanged and, viewed
 with ``exclude_unset``, dumps unchanged.
 
-2026-09-09 (product owner decision, ``docs/project-brief.md`` "Decisions
-taken"; announced in ``docs/plans/00-master-plan.md`` section 5): the verify
+2026-09-09 (product owner decision): the verify
 paradigm was removed under the same protocol. Every run is a measurement in
 its own right, so the ``verify`` campaign and run kinds, ``DefenseConfig``,
 ``CampaignConfig.defense``, the ``defense_apply`` stage, ``MRIDelta``,

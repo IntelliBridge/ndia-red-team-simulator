@@ -1,7 +1,6 @@
 """Remove the verify paradigm's columns (product owner decision, 2026-09-09).
 
-Decision record: ``docs/project-brief.md`` ("Decisions taken") and
-``docs/plans/00-master-plan.md`` section 5. Every run is a measurement in its
+Product owner decision of 2026-09-09. Every run is a measurement in its
 own right, so the verify-after-harden loop, the finding validation state and
 the defense catalog left the tree. This revision drops the three columns that
 carried them and nothing else:

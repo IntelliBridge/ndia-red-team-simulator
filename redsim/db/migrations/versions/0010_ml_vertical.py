@@ -1,7 +1,6 @@
 """ML vertical (milestone M0): ``targets.detail`` and the ``ml_campaigns`` table.
 
-Spec: docs/superpowers/specs/2026-09-08-adversarial-ml-redteam-spec.md,
-sections 5.3, 5.5, 5.6 and 7.6. Plan: docs/plans/01-p0-contracts-api-skeleton.md.
+Design: docs/architecture/ml-vertical.md.
 
 Two additive changes and nothing else:
 

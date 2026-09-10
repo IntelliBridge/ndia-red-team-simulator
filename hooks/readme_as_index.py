@@ -14,9 +14,9 @@ in both places.
 Rewrites:
 - ``](docs/X)`` → ``](X)`` so links to docs/-internal pages resolve
   against the mkdocs serve root.
-- ``](CONTRIBUTING.md|SECURITY.md|CHANGELOG.md|CLAUDE.md|specs/…|
-  .specify/…|examples/…|.github/…)`` → absolute GitHub URL using
-  ``repo_url`` from mkdocs.yml (repo-root files the docs site does not own).
+- ``](CONTRIBUTING.md|SECURITY.md|LICENSE|deploy/…|scripts/…|tests/…|
+  web/…|redsim/…|.github/…)`` → absolute GitHub URL using ``repo_url`` from
+  mkdocs.yml (repo-root files the docs site does not own).
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ from pathlib import Path
 # Cross-tree paths that live outside ``docs/`` and must be rewritten
 # to absolute GitHub URLs in the docs-site rendering.
 _CROSS_TREE = re.compile(
-    r"\]\((CONTRIBUTING\.md|SECURITY\.md|CHANGELOG\.md|CLAUDE\.md|"
-    r"specs/[^)]+|\.specify/[^)]+|examples/[^)]+|\.github/[^)]+)\)"
+    r"\]\((CONTRIBUTING\.md|SECURITY\.md|LICENSE|deploy/[^)]+|scripts/[^)]+|"
+    r"tests/[^)]+|web/[^)]+|redsim/[^)]+|\.env\.example|\.github/[^)]+)\)"
 )
 
 
@@ -45,7 +45,7 @@ def on_page_markdown(markdown, page, config, files):  # noqa: ARG001
 
     # docs-internal: strip the leading ``docs/`` so paths resolve from
     # the mkdocs serve root. Handles both file links (docs/x.md) and
-    # directory links (docs/adr/).
+    # directory links (docs/architecture/).
     md = re.sub(r"\]\(docs/", "](", md)
 
     # Cross-tree files: rewrite to absolute GitHub URLs so they at

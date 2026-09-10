@@ -1,6 +1,0 @@
-# Synthetic documentation values only.
-# This must reference separately approved, existing state infrastructure.
-# Do not use the audit bucket. Native S3 lockfiles are configured in versions.tf.
-bucket = "ndia-red-team-existing-terraform-state-example"
-key    = "p7-fargate-foundation/example/terraform.tfstate"
-region = "us-east-1"

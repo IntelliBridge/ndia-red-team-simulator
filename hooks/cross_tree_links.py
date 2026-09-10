@@ -1,11 +1,10 @@
 """mkdocs build hook: rewrite links that escape ``docs/`` to GitHub URLs.
 
-Several process pages under ``docs/`` (``project-brief.md``,
-``team-backlog.md``, ``spec-driven-workflow.md``) link into the Spec Kit tree
-(``specs/``, ``.specify/``) and other repo-root files with relative paths such
-as ``../specs/README.md``. Those paths are correct on GitHub, but the files are
-not part of the mkdocs site, so ``mkdocs build --strict`` rejects every one of
-them as "target is not found among documentation files".
+Pages under ``docs/`` link to repo-root files (``../CONTRIBUTING.md``,
+``../SECURITY.md``, ``../deploy/...``) with relative paths. Those paths are
+correct on GitHub, but the files are not part of the mkdocs site, so
+``mkdocs build --strict`` rejects every one of them as "target is not found
+among documentation files".
 
 This hook runs on every page. For each relative markdown link whose target
 resolves *outside* ``docs_dir`` it checks that the target exists in the

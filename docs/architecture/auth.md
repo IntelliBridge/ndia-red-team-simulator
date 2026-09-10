@@ -285,14 +285,13 @@ gated action, the same as an unknown role.
 | `auth_profile.manage` | `admin`      | live                                          |
 | `audit.verify`        | `admin`      | live                                          |
 
-The seven ML members (spec section 7.4) are on `main` so that the WS4
-routes can gate on them. `model.register` sits at `remediator` because
-an upload admits untrusted bytes that only the sandboxed worker ever
-opens. Endpoint registration (Phase B) is `target.manage`. Finding
-dismissal (`finding.review`) also carries an independence rule in the
-service layer, not in the policy engine: the reviewer may not be the
-campaign creator and may not be a system principal (spec 7.7). That
-check is not built yet.
+The seven ML members are on `main` so that the ML routes can gate on
+them. `model.register` sits at `remediator` because an upload admits
+untrusted bytes that only the sandboxed worker ever opens. Endpoint
+registration is `target.manage`. Finding dismissal (`finding.review`)
+also carries an independence rule in the service layer, not in the
+policy engine: the reviewer may not be the campaign creator and may not
+be a system principal. That check is not built yet.
 
 The table is mirrored verbatim in `deploy/opa/redsim-authz.rego` and
 `deploy/cedar/redsim-policy.cedar`. Change all three together: an
@@ -329,7 +328,7 @@ For ML artifact targets `authorize()` is called with `target=None`, so
 `allowlist_check` records `n/a` and the audit row is the point. Swapping
 the policy engine does not touch `authorize()`. The effect-class
 human-in-the-loop gate of
-[ADR 0004](../adr/0004-unified-effect-class-gate.md) gated the upstream
+the upstream ADR 0004 gated the upstream
 agents and tools and left with the pentest domain.
 
 ### The three engines
