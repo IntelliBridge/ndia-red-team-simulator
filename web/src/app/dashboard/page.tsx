@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import useSWR from "swr";
 import { RunStatusBadge } from "@redsim/design-system";
 import { api, type Finding, type ModelTarget, type Run } from "@/lib/api";
-import { getEmail, logout } from "@/lib/auth";
+import { logout } from "@/lib/auth";
 import { useRequireAuth } from "@/hooks/useRequireAuth";
 import { FindingSummaryCard } from "@/components/finding-summary-card";
 import { rowLink } from "@/lib/row-link";
@@ -139,8 +139,7 @@ export default function DashboardPage() {
   const perDayMax = Math.max(1, ...perDay.map((d) => d.count));
   const recent = [...runs].slice(0, 10);
 
-  // Awaited, so the redirect follows both the Better Auth sign-out and the
-  // redsim cookie clear rather than racing them.
+  // Awaited, so the redirect follows the cookie clear rather than racing it.
   const signOut = async () => {
     await logout();
     router.push("/login");
@@ -151,7 +150,6 @@ export default function DashboardPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Dashboard</h1>
         <div className="flex items-center gap-3 text-sm">
-          <span className="text-muted-foreground">{getEmail() ?? "(session)"}</span>
           <button
             onClick={signOut}
             className="rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted"

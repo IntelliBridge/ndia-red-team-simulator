@@ -31,22 +31,22 @@ afterEach(() => {
 
 describe("web env schema", () => {
   it("throws naming the variable when a required server name is missing", async () => {
-    setEnv({ BETTER_AUTH_URL: "http://localhost:3000" });
-    await expect(importEnv()).rejects.toThrow(/BETTER_AUTH_SECRET/);
+    setEnv({ REDSIM_WEB_ORIGIN: "http://localhost:3000" });
+    await expect(importEnv()).rejects.toThrow(/REDSIM_WEB_SESSION_SECRET/);
   });
 
-  it("rejects a BETTER_AUTH_SECRET shorter than 32 characters", async () => {
+  it("rejects a REDSIM_WEB_SESSION_SECRET shorter than 32 characters", async () => {
     setEnv({
-      BETTER_AUTH_SECRET: "20-characters-here!!",
-      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_WEB_SESSION_SECRET: "20-characters-here!!",
+      REDSIM_WEB_ORIGIN: "http://localhost:3000",
     });
-    await expect(importEnv()).rejects.toThrow(/BETTER_AUTH_SECRET/);
+    await expect(importEnv()).rejects.toThrow(/REDSIM_WEB_SESSION_SECRET/);
   });
 
   it("applies every client default when only the two required names are set", async () => {
     setEnv({
-      BETTER_AUTH_SECRET: VALID_SECRET,
-      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_WEB_SESSION_SECRET: VALID_SECRET,
+      REDSIM_WEB_ORIGIN: "http://localhost:3000",
     });
     const env = await importEnv();
     expect(env.NEXT_PUBLIC_REDSIM_API_URL).toBe("http://localhost:8000");
@@ -59,8 +59,8 @@ describe("web env schema", () => {
 
   it("no longer exposes the httpOnly session cookie name to the client", async () => {
     setEnv({
-      BETTER_AUTH_SECRET: VALID_SECRET,
-      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_WEB_SESSION_SECRET: VALID_SECRET,
+      REDSIM_WEB_ORIGIN: "http://localhost:3000",
       NEXT_PUBLIC_REDSIM_API_SESSION_COOKIE: "redsim_api_session",
     });
     const env = await importEnv();
@@ -69,21 +69,21 @@ describe("web env schema", () => {
 
   it("defaults the three server-side cookie names and the API base", async () => {
     setEnv({
-      BETTER_AUTH_SECRET: VALID_SECRET,
-      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_WEB_SESSION_SECRET: VALID_SECRET,
+      REDSIM_WEB_ORIGIN: "http://localhost:3000",
     });
     const env = await importEnv();
     expect(env.REDSIM_API_SESSION_COOKIE).toBe("redsim_api_session");
     expect(env.REDSIM_CSRF_COOKIE).toBe("redsim_csrf");
-    expect(env.REDSIM_DEV_TOKEN_COOKIE).toBe("redsim_dev_token");
+    expect(env.REDSIM_REFRESH_COOKIE).toBe("redsim_refresh");
     expect(env.REDSIM_API_URL).toBe("http://localhost:8000");
     expect(env.REDSIM_DEV_FIXTURES).toBe(false);
   });
 
   it("rejects a malformed REDSIM_API_URL by name", async () => {
     setEnv({
-      BETTER_AUTH_SECRET: VALID_SECRET,
-      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_WEB_SESSION_SECRET: VALID_SECRET,
+      REDSIM_WEB_ORIGIN: "http://localhost:3000",
       REDSIM_API_URL: "not-a-url",
     });
     await expect(importEnv()).rejects.toThrow(/REDSIM_API_URL/);
@@ -91,8 +91,8 @@ describe("web env schema", () => {
 
   it("reads the fixture flags as booleans from the spellings an operator writes", async () => {
     setEnv({
-      BETTER_AUTH_SECRET: VALID_SECRET,
-      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_WEB_SESSION_SECRET: VALID_SECRET,
+      REDSIM_WEB_ORIGIN: "http://localhost:3000",
       REDSIM_ENV: "test",
       REDSIM_DEV_FIXTURES: "1",
       NEXT_PUBLIC_REDSIM_DEV_FIXTURES: "TRUE",
@@ -105,8 +105,8 @@ describe("web env schema", () => {
   it("refuses the server fixture flag outside the dev or test allowlist", async () => {
     for (const redsimEnv of ["prod", "staging"]) {
       setEnv({
-        BETTER_AUTH_SECRET: VALID_SECRET,
-        BETTER_AUTH_URL: "http://localhost:3000",
+        REDSIM_WEB_SESSION_SECRET: VALID_SECRET,
+        REDSIM_WEB_ORIGIN: "http://localhost:3000",
         REDSIM_ENV: redsimEnv,
         REDSIM_DEV_FIXTURES: "1",
       });
@@ -116,8 +116,8 @@ describe("web env schema", () => {
 
   it("refuses the public fixture flag in prod, naming both variables", async () => {
     setEnv({
-      BETTER_AUTH_SECRET: VALID_SECRET,
-      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_WEB_SESSION_SECRET: VALID_SECRET,
+      REDSIM_WEB_ORIGIN: "http://localhost:3000",
       REDSIM_ENV: "prod",
       REDSIM_DEV_FIXTURES: "1",
       NEXT_PUBLIC_REDSIM_DEV_FIXTURES: "1",
@@ -129,8 +129,8 @@ describe("web env schema", () => {
 
   it("honours fixture mode when REDSIM_ENV is unset, because the default is dev", async () => {
     setEnv({
-      BETTER_AUTH_SECRET: VALID_SECRET,
-      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_WEB_SESSION_SECRET: VALID_SECRET,
+      REDSIM_WEB_ORIGIN: "http://localhost:3000",
       REDSIM_DEV_FIXTURES: "1",
     });
     const env = await importEnv();
@@ -148,8 +148,8 @@ describe("web env schema", () => {
 
   it("leaves the optional Keycloak and session names undefined", async () => {
     setEnv({
-      BETTER_AUTH_SECRET: VALID_SECRET,
-      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_WEB_SESSION_SECRET: VALID_SECRET,
+      REDSIM_WEB_ORIGIN: "http://localhost:3000",
     });
     const env = await importEnv();
     expect(env.KEYCLOAK_ISSUER).toBeUndefined();
@@ -161,8 +161,8 @@ describe("web env schema", () => {
   it("relaxes only the required server names under SKIP_ENV_VALIDATION", async () => {
     setEnv({ SKIP_ENV_VALIDATION: "1" });
     const env = await importEnv();
-    expect(env.BETTER_AUTH_SECRET).toBeUndefined();
-    expect(env.BETTER_AUTH_URL).toBeUndefined();
+    expect(env.REDSIM_WEB_SESSION_SECRET).toBeUndefined();
+    expect(env.REDSIM_WEB_ORIGIN).toBeUndefined();
     // The client schema still runs. Next inlines these at build time, so a
     // hatch that switched them off would bake undefined into the image.
     expect(env.NEXT_PUBLIC_REDSIM_API_URL).toBe("http://localhost:8000");
@@ -178,8 +178,8 @@ describe("web env schema", () => {
 
   it("treats an empty string as unset so the default applies", async () => {
     setEnv({
-      BETTER_AUTH_SECRET: VALID_SECRET,
-      BETTER_AUTH_URL: "http://localhost:3000",
+      REDSIM_WEB_SESSION_SECRET: VALID_SECRET,
+      REDSIM_WEB_ORIGIN: "http://localhost:3000",
       NEXT_PUBLIC_REDSIM_API_URL: "",
     });
     const env = await importEnv();
@@ -188,8 +188,8 @@ describe("web env schema", () => {
 
   it("passes explicit values through unchanged", async () => {
     setEnv({
-      BETTER_AUTH_SECRET: VALID_SECRET,
-      BETTER_AUTH_URL: "https://redsim.example",
+      REDSIM_WEB_SESSION_SECRET: VALID_SECRET,
+      REDSIM_WEB_ORIGIN: "https://redsim.example",
       REDSIM_ENV: "prod",
       KEYCLOAK_ISSUER: "http://keycloak:8080/realms/redsim",
       KEYCLOAK_CLIENT_ID: "redsim-web",

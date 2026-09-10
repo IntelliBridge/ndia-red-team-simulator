@@ -108,10 +108,12 @@ docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 
 ## Sign in
 
-Open `http://localhost:3300` and click **Login**. You are redirected to
-Keycloak (`http://localhost:8080`, realm from
-`deploy/keycloak/realm-export.json`). The seeded admin is
-`admin@redsim.local` / `adminpass`.
+Open `http://localhost:3300`. The login page is the app's own email and
+password form; the web server checks the credentials against the realm from
+`deploy/keycloak/realm-export.json` (Keycloak on `http://localhost:8080`,
+`redsim-web` client with direct access grants). The seeded admin is
+`admin@redsim.local` / `adminpass`. The dev bearer below is for the CLI and
+scripts only: the web app has no dev login.
 
 For programmatic or CLI access in dev mode:
 
@@ -302,7 +304,7 @@ cd deploy && make down-clean     # also drop volumes (wipes Postgres and MinIO d
 | Mode | Activates |
 |---|---|
 | `REDSIM_AUTH_MODE=dev` | `dev:<email>` bearer tokens (default in the compose env) |
-| `REDSIM_AUTH_MODE=oidc` | Keycloak / NextAuth path only |
+| `REDSIM_AUTH_MODE=oidc` | Keycloak-issued bearers and the session cookie only |
 | Cookie auth (browser) | NextAuth via the web UI (works regardless of dev mode) |
 
 The redsim API session cookie is keyed by `REDSIM_API_SESSION_PRIVATE_KEY`

@@ -11,13 +11,10 @@
 // the only router U1 shipped; U8 adds the rest and marks the helpers it
 // retires as it goes.
 //
-// Auth modes:
-//   - Cookie (browser): credentials: "include" so redsim_api_session
-//     rides along; X-Redsim-CSRF auto-attached from the redsim_csrf
-//     cookie on every mutating request.
-//   - Bearer (CLI / programmatic): set window.localStorage.redsim_token
-//     and we'll attach Authorization: Bearer ... (bearer wins server
-//     side, see redsim/api/auth.py).
+// Auth: the cookie session only. credentials: "include" so the httpOnly
+// redsim_api_session rides along, and X-Redsim-CSRF is attached from the
+// readable redsim_csrf cookie on every mutating request. Programmatic callers
+// (the CLI, CI) talk to the API directly with a bearer and never through here.
 //
 // X-Redsim-Request-ID is auto-generated per call so the API +
 // worker + scanner logs correlate.
@@ -34,21 +31,6 @@ const CSRF_COOKIE = env.NEXT_PUBLIC_REDSIM_CSRF_COOKIE;
 const CSRF_HEADER = env.NEXT_PUBLIC_REDSIM_CSRF_HEADER;
 
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-
-function _bearerFromStorage(): string | undefined {
-  if (typeof window === "undefined") return undefined;
-  return localStorage.getItem("redsim_token") ?? undefined;
-}
-
-/**
- * The bearer token a programmatic caller has stashed in localStorage, or
- * undefined for the cookie (browser) path. Exposed so non-fetch transports
- * (e.g. the WebSocket subprotocol channel) can mirror the same auth choice
- * the `api()` helper makes.
- */
-export function bearerToken(): string | undefined {
-  return _bearerFromStorage();
-}
 
 export function readCookie(name: string): string | undefined {
   if (typeof document === "undefined") return undefined;
@@ -80,63 +62,31 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(
-  path: string,
-  init: RequestInit & { token?: string } = {},
-): Promise<T> {
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = {
     Accept: "application/json",
     "X-Redsim-Request-ID": _newRequestId(),
     ...((init.headers as Record<string, string> | undefined) ?? {}),
   };
-
-  // Bearer wins when explicitly supplied or available in localStorage;
-  // otherwise the cookie rides via credentials: "include".
-  // An explicit empty token means "cookie only": the retry below uses it so a
-  // just-removed stale token is not read back from storage.
-  const bearer = init.token === "" ? undefined : (init.token ?? _bearerFromStorage());
-  if (bearer) {
-    headers["Authorization"] = `Bearer ${bearer}`;
-  }
-
-  // CSRF: cookie-authed mutations must echo the cookie via the header.
-  //
-  // The presence of the csrf cookie is the only signal available here (R35).
-  // Gating on the session cookie, as this did, could never fire: that cookie
-  // is httpOnly, so document.cookie never carries it and every cookie-authed
-  // mutation went out without the header for the API to compare.
-  if (!bearer && MUTATING.has(method)) {
+  // Cookie session only. The session cookie is httpOnly and rides along with
+  // credentials: "include"; the csrf cookie is readable and is echoed as the
+  // double-submit header on every mutation.
+  if (MUTATING.has(method)) {
     const csrf = readCookie(CSRF_COOKIE);
     if (csrf) headers[CSRF_HEADER] = csrf;
   }
-
   const resp = await fetch(`${BASE}${path}`, {
     ...init,
     method,
-    credentials: bearer ? "omit" : "include",
+    credentials: "include",
     headers,
   });
-  if (resp.status === 401 && bearer && init.token === undefined) {
-    // The bearer came from localStorage and the API refused it: a stale
-    // redsim_token left behind by an earlier session. It would otherwise
-    // shadow a valid session cookie on every call (seen live on 2026-09-09
-    // as "invalid token: Invalid input segments length" on the login page).
-    // Drop it and retry once on the cookie path.
-    try {
-      localStorage.removeItem("redsim_token");
-    } catch {
-      // storage unavailable: nothing to clear
-    }
-    const { token: _ignored, ...rest } = init;
-    return api<T>(path, { ...rest, token: "" } as RequestInit & { token?: string });
-  }
+  // A 401 on the cookie path usually means the fifteen minute session expired
+  // while the tab was idle. Renew it once through the refresh route and retry;
+  // a second 401 is a real refusal and surfaces as ApiError.
   const retried = ((init.headers as Record<string, string> | undefined) ?? {})["X-Redsim-Retry"] === "1";
-  if (resp.status === 401 && !bearer && !retried) {
-    // Cookie path and the API session cookie has expired (its TTL is short and
-    // the keepalive may have missed a beat while the laptop slept). Re-mint it
-    // from the still-valid Better Auth session and retry once; only when that
-    // fails does the caller see the 401 and requireAuth send the user to /login.
+  if (resp.status === 401 && !retried) {
     const { refreshApiSession } = await import("@/components/session-keepalive");
     if (await refreshApiSession()) {
       return api<T>(path, {
@@ -956,7 +906,7 @@ export type OrgCost = {
 
 /**
  * Fetch a single org's cost rollup over the trailing `days` window.
- * Auth rides the standard `api()` wrapper (cookie or bearer). The API
+ * Auth rides the standard `api()` wrapper (cookie session). The API
  * answers 403 if the caller belongs to no project in the org, 404 if the
  * org is unknown — both surface as ApiError to the caller.
  */

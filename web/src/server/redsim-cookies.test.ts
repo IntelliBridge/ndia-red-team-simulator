@@ -1,46 +1,12 @@
 // @vitest-environment node
 //
-// The carry-forward verifier and the cookie attribute builder. These are the
-// pieces the refresh route depends on to reject a cookie that is authentic
-// but belongs to someone else.
+// The cookie attribute builder and the sign-out clear. These are the pieces
+// every auth route depends on to set and clear the same three names.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { exportPKCS8, generateKeyPair, SignJWT } from "jose";
+import { exportPKCS8, generateKeyPair } from "jose";
 
 const savedEnv = { ...process.env };
-
-async function keypair() {
-  const { privateKey } = await generateKeyPair("RS256", { extractable: true });
-  return exportPKCS8(privateKey);
-}
-
-/** Mint a redsim_api_session-shaped token with the given key and overrides. */
-async function mint(
-  pem: string,
-  overrides: {
-    sub?: string;
-    email?: string;
-    issuer?: string;
-    audience?: string;
-    expired?: boolean;
-  } = {},
-) {
-  const { importPKCS8 } = await import("jose");
-  const key = await importPKCS8(pem, "RS256");
-  const jwt = new SignJWT({
-    email: overrides.email ?? "user@redsim.local",
-    name: "Test User",
-    redsim_project_roles: { default: "approver" },
-  })
-    .setProtectedHeader({ alg: "RS256", kid: "kid-test" })
-    .setIssuer(overrides.issuer ?? "redsim-api-session")
-    .setAudience(overrides.audience ?? "redsim-api")
-    .setSubject(overrides.sub ?? "kc-sub-123")
-    .setIssuedAt();
-  return overrides.expired
-    ? jwt.setExpirationTime("-1h").sign(key)
-    : jwt.setExpirationTime("900s").sign(key);
-}
 
 async function load() {
   vi.resetModules();
@@ -50,8 +16,8 @@ async function load() {
 beforeEach(() => {
   process.env = {
     ...savedEnv,
-    BETTER_AUTH_SECRET: "test-not-a-real-secret-change-me-0123456789",
-    BETTER_AUTH_URL: "http://localhost:3000",
+    REDSIM_WEB_SESSION_SECRET: "test-not-a-real-secret-change-me-0123456789",
+    REDSIM_WEB_ORIGIN: "http://localhost:3000",
     REDSIM_API_SESSION_KEY_ID: "kid-test",
     REDSIM_API_SESSION_TTL_SECONDS: "900",
     REDSIM_ENV: "dev",
@@ -63,209 +29,86 @@ afterEach(() => {
 });
 
 describe("redsim cookie attributes", () => {
-  it("makes the session cookie httpOnly and the csrf cookie readable", async () => {
+  it("makes the session and refresh cookies httpOnly and the csrf cookie readable", async () => {
     const { redsimCookieOptions } = await load();
     expect(redsimCookieOptions("session")).toMatchObject({
       httpOnly: true,
-      sameSite: "lax",
       path: "/",
+      sameSite: "lax",
       maxAge: 900,
-      secure: false,
     });
-    expect(redsimCookieOptions("csrf")).toMatchObject({ httpOnly: false });
+    expect(redsimCookieOptions("csrf")).toMatchObject({ httpOnly: false, path: "/", maxAge: 900 });
+    // The refresh cookie is sent to the auth routes only; nothing else reads it.
+    expect(redsimCookieOptions("refresh", 3600)).toMatchObject({
+      httpOnly: true,
+      path: "/api/auth",
+      maxAge: 3600,
+    });
   });
 
-  it("marks both Secure only under REDSIM_ENV=prod", async () => {
+  it("marks every cookie Secure only under REDSIM_ENV=prod", async () => {
+    let mod = await load();
+    for (const kind of ["session", "csrf", "refresh"] as const) {
+      expect(mod.redsimCookieOptions(kind).secure).toBe(false);
+    }
     process.env.REDSIM_ENV = "prod";
-    const { redsimCookieOptions } = await load();
-    expect(redsimCookieOptions("session").secure).toBe(true);
-    expect(redsimCookieOptions("csrf").secure).toBe(true);
+    mod = await load();
+    for (const kind of ["session", "csrf", "refresh"] as const) {
+      expect(mod.redsimCookieOptions(kind).secure).toBe(true);
+    }
   });
 
-  it("clears every credential cookie with maxAge 0, the dev token included", async () => {
+  it("names the three cookies from the env, with the refresh default", async () => {
+    const { redsimCookieNames } = await load();
+    expect(redsimCookieNames).toEqual({
+      session: "redsim_api_session",
+      csrf: "redsim_csrf",
+      refresh: "redsim_refresh",
+    });
+  });
+});
+
+describe("setRedsimCookies", () => {
+  it("mints the session JWT and a fresh csrf value with the session TTL", async () => {
+    const { privateKey } = await generateKeyPair("RS256", { extractable: true });
+    process.env.REDSIM_API_SESSION_PRIVATE_KEY = await exportPKCS8(privateKey);
+    const { setRedsimCookies } = await load();
+    const set = vi.fn();
+
+    const maxAge = await setRedsimCookies(
+      { sub: "kc-sub", email: "a@b.c", name: "A", projectMemberships: { default: "viewer" } },
+      set,
+    );
+
+    expect(maxAge).toBe(900);
+    expect(set).toHaveBeenCalledTimes(2);
+    expect(set.mock.calls[0]?.[0]).toBe("redsim_api_session");
+    expect(String(set.mock.calls[0]?.[1]).split(".")).toHaveLength(3);
+    expect(set.mock.calls[0]?.[2]).toMatchObject({ httpOnly: true, maxAge: 900 });
+    expect(set.mock.calls[1]?.[0]).toBe("redsim_csrf");
+    expect(set.mock.calls[1]?.[2]).toMatchObject({ httpOnly: false, maxAge: 900 });
+  });
+});
+
+describe("clearRedsimCookies", () => {
+  it("clears every credential cookie with maxAge 0, the refresh cookie on its own path", async () => {
     const { clearRedsimCookies } = await load();
     const set = vi.fn();
     clearRedsimCookies(set);
-    // Three, not two. The dev-token cookie is a credential the tRPC context
-    // accepts on its own, so a sign-out that left it behind would not sign
-    // anyone out of a dev deployment.
     expect(set).toHaveBeenCalledTimes(3);
     expect(set.mock.calls.map((call) => call[0])).toEqual([
       "redsim_api_session",
       "redsim_csrf",
-      "redsim_dev_token",
+      "redsim_refresh",
     ]);
     for (const call of set.mock.calls) {
       expect(call[1]).toBe("");
-      expect(call[2]).toMatchObject({ maxAge: 0, path: "/" });
+      expect(call[2]).toMatchObject({ maxAge: 0 });
     }
-    // Written by document.cookie on the login page, so it has to be cleared
-    // with the readable shape rather than the httpOnly one.
-    expect(set.mock.calls[2]?.[2]).toMatchObject({ httpOnly: false });
-  });
-});
-
-describe("claims read from the linked account", () => {
-  it("takes the Keycloak sub from accountId and the roles from the id_token", async () => {
-    const { claimsFromAccount } = await load();
-    const idToken = [
-      "e30",
-      Buffer.from(
-        JSON.stringify({
-          email: "user@redsim.local",
-          name: "Test User",
-          redsim_project_roles: { default: "approver" },
-        }),
-      ).toString("base64url"),
-      "sig",
-    ].join(".");
-    expect(
-      claimsFromAccount({ accountId: "kc-sub-123", idToken }),
-    ).toEqual({
-      sub: "kc-sub-123",
-      email: "user@redsim.local",
-      name: "Test User",
-      projectMemberships: { default: "approver" },
-    });
-  });
-
-  it("returns an empty roles map rather than throwing on a missing id_token", async () => {
-    const { claimsFromAccount } = await load();
-    expect(
-      claimsFromAccount(
-        { accountId: "kc-sub-123" },
-        { email: "fallback@redsim.local", name: "Fallback" },
-      ),
-    ).toEqual({
-      sub: "kc-sub-123",
-      email: "fallback@redsim.local",
-      name: "Fallback",
-      projectMemberships: {},
-    });
-  });
-
-  // A present but undecodable id_token is a different path from an absent one,
-  // and it was the unexercised one. Each of these throws inside decodeJwt, so
-  // the fallbacks are what keep a malformed token from failing the sign-in.
-  it.each([
-    ["not a jwt at all", "garbage"],
-    ["a token whose payload is not base64url", "e30.!!!not-base64!!!.sig"],
-    ["a token whose payload is not JSON", `e30.${Buffer.from("plain text").toString("base64url")}.sig`],
-    ["a token whose payload is a JSON scalar", `e30.${Buffer.from('"a string"').toString("base64url")}.sig`],
-    ["an empty string", ""],
-  ])("falls back on %s", async (_label, idToken) => {
-    const { claimsFromAccount } = await load();
-    expect(
-      claimsFromAccount(
-        { accountId: "kc-sub-123", idToken },
-        { email: "fallback@redsim.local", name: "Fallback" },
-      ),
-    ).toEqual({
-      sub: "kc-sub-123",
-      email: "fallback@redsim.local",
-      name: "Fallback",
-      projectMemberships: {},
-    });
-  });
-});
-
-describe("carry-forward verification binds to the caller", () => {
-  it("returns the claims for a valid cookie belonging to the caller", async () => {
-    const pem = await keypair();
-    process.env.REDSIM_API_SESSION_PRIVATE_KEY = pem;
-    const { verifyOwnSessionCookie } = await load();
-    const token = await mint(pem);
-    await expect(
-      verifyOwnSessionCookie(token, "user@redsim.local"),
-    ).resolves.toEqual({
-      sub: "kc-sub-123",
-      email: "user@redsim.local",
-      name: "Test User",
-      projectMemberships: { default: "approver" },
-    });
-  });
-
-  it("matches the email case-insensitively", async () => {
-    const pem = await keypair();
-    process.env.REDSIM_API_SESSION_PRIVATE_KEY = pem;
-    const { verifyOwnSessionCookie } = await load();
-    const token = await mint(pem, { email: "User@Redsim.Local" });
-    await expect(
-      verifyOwnSessionCookie(token, "user@redsim.local"),
-    ).resolves.toMatchObject({ sub: "kc-sub-123" });
-  });
-
-  it("rejects an authentic cookie minted for a different user", async () => {
-    const pem = await keypair();
-    process.env.REDSIM_API_SESSION_PRIVATE_KEY = pem;
-    const { verifyOwnSessionCookie } = await load();
-    // Correctly signed, correct issuer and audience, wrong owner. Re-minting
-    // from this would hand user A user B's roles.
-    const token = await mint(pem, { sub: "kc-sub-999", email: "b@redsim.local" });
-    await expect(
-      verifyOwnSessionCookie(token, "a@redsim.local"),
-    ).resolves.toBeUndefined();
-  });
-
-  it("rejects a cookie signed by another key", async () => {
-    const pem = await keypair();
-    const foreign = await keypair();
-    process.env.REDSIM_API_SESSION_PRIVATE_KEY = pem;
-    const { verifyOwnSessionCookie } = await load();
-    const token = await mint(foreign);
-    await expect(
-      verifyOwnSessionCookie(token, "user@redsim.local"),
-    ).resolves.toBeUndefined();
-  });
-
-  it("rejects a foreign audience", async () => {
-    const pem = await keypair();
-    process.env.REDSIM_API_SESSION_PRIVATE_KEY = pem;
-    const { verifyOwnSessionCookie } = await load();
-    const token = await mint(pem, { audience: "some-other-api" });
-    await expect(
-      verifyOwnSessionCookie(token, "user@redsim.local"),
-    ).resolves.toBeUndefined();
-  });
-
-  it("rejects a foreign issuer", async () => {
-    const pem = await keypair();
-    process.env.REDSIM_API_SESSION_PRIVATE_KEY = pem;
-    const { verifyOwnSessionCookie } = await load();
-    const token = await mint(pem, { issuer: "someone-elses-issuer" });
-    await expect(
-      verifyOwnSessionCookie(token, "user@redsim.local"),
-    ).resolves.toBeUndefined();
-  });
-
-  it("rejects an expired cookie", async () => {
-    const pem = await keypair();
-    process.env.REDSIM_API_SESSION_PRIVATE_KEY = pem;
-    const { verifyOwnSessionCookie } = await load();
-    const token = await mint(pem, { expired: true });
-    await expect(
-      verifyOwnSessionCookie(token, "user@redsim.local"),
-    ).resolves.toBeUndefined();
-  });
-
-  it("returns nothing when the cookie or the caller email is missing", async () => {
-    const pem = await keypair();
-    process.env.REDSIM_API_SESSION_PRIVATE_KEY = pem;
-    const { verifyOwnSessionCookie } = await load();
-    const token = await mint(pem);
-    await expect(
-      verifyOwnSessionCookie(undefined, "user@redsim.local"),
-    ).resolves.toBeUndefined();
-    await expect(verifyOwnSessionCookie(token, undefined)).resolves.toBeUndefined();
-  });
-
-  it("returns nothing when the signing key is unset", async () => {
-    const pem = await keypair();
-    delete process.env.REDSIM_API_SESSION_PRIVATE_KEY;
-    const { verifyOwnSessionCookie } = await load();
-    const token = await mint(pem);
-    await expect(
-      verifyOwnSessionCookie(token, "user@redsim.local"),
-    ).resolves.toBeUndefined();
+    expect(set.mock.calls[0]?.[2]).toMatchObject({ path: "/", httpOnly: true });
+    expect(set.mock.calls[1]?.[2]).toMatchObject({ path: "/", httpOnly: false });
+    // A clear has to match the path the cookie was set on, or the browser
+    // keeps the original.
+    expect(set.mock.calls[2]?.[2]).toMatchObject({ path: "/api/auth", httpOnly: true });
   });
 });

@@ -10,7 +10,7 @@ models and connects to no mission system.
 
 The repository is a fork of IntelliBridge's `aegis` security platform. The
 product owner decided on 2026-09-08 to keep the FULL aegis platform (FastAPI,
-Celery, Postgres + Alembic, Redis, S3/MinIO, Keycloak/NextAuth, RBAC and
+Celery, Postgres + Alembic, Redis, S3/MinIO, Keycloak behind the web app's own login page, RBAC and
 Postgres RLS, hash-chained audit log, per-task LLM routing, observability) and
 add one vertical under `redsim/ml/`. The pentest domain (14 scanner adapters,
 Kali, CAI agents, GitHub remediation, ticketing, CI gate) is deleted for good.
@@ -660,7 +660,13 @@ developer's `.env`.
 
 ### Web
 
-`@redsim/web` pages: `/`, `/login`, `/dashboard`, `/runs`, `/runs/[id]`,
+`@redsim/web` pages: `/`, `/login` (2026-09-09: the app's own email and
+password form; `POST /api/auth/login` runs the password grant against the
+realm from the Next server, verifies the ID token and mints
+`redsim_api_session`, `redsim_csrf` and the sealed `redsim_refresh`; the
+refresh and sign-out routes trade and revoke that token; no dev login, no
+Better Auth, nothing names the provider; `docs/architecture/auth.md`),
+`/dashboard`, `/runs`, `/runs/[id]`,
 `/exports` (2026-09-09: the export inventory on the tRPC layer, server
 prefetch of `exports.list` and a hydrated client leaf with the kind filter,
 the format download links, the Croissant manifest link, and the `Render again`

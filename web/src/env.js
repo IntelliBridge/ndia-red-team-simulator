@@ -28,12 +28,13 @@ import { createEnv } from "@t3-oss/env-nextjs";
 import { z } from "zod";
 
 /**
- * The environments that may honour a dev token or answer from fixtures.
+ * The environments that may answer from fixtures.
  *
  * `REDSIM_ENV` defaults to `dev` below, so an unset value reads as `dev` and
  * every deployment that omits the variable keeps booting the way it does
  * today. Anything outside this list -- `prod`, `staging`, a typo -- refuses
- * both, in middleware and in the tRPC context alike (KTD7, KTD13).
+ * fixture mode in the tRPC context (KTD13). There is no dev credential: the
+ * only way into the app is the login page.
  */
 export const DEV_ENVS = ["dev", "test"];
 
@@ -78,37 +79,43 @@ export const env = createEnv({
    * readable from a client component.
    */
   server: {
-    // Better Auth refuses to start without these two, and rotating the secret
-    // invalidates every live browser session.
-    BETTER_AUTH_SECRET: requiredAtRuntime(
-      z.string().min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
+    // The web process's own secret: it seals the refresh cookie and signs the
+    // sign-out hop token. Rotating it signs every browser out. The retired
+    // BETTER_AUTH_SECRET is read as a fallback (see runtimeEnv) so a host that
+    // still carries the old name keeps booting.
+    REDSIM_WEB_SESSION_SECRET: requiredAtRuntime(
+      z.string().min(32, "REDSIM_WEB_SESSION_SECRET must be at least 32 characters"),
     ),
-    BETTER_AUTH_URL: requiredAtRuntime(z.string().url()),
+    // The browser-facing origin, for the same-origin check on the auth routes.
+    // BETTER_AUTH_URL is the fallback name.
+    REDSIM_WEB_ORIGIN: requiredAtRuntime(z.string().url()),
     // Drives the Secure attribute on both redsim cookies.
     REDSIM_ENV: z.string().default("dev"),
-    // Optional so a developer can boot the app without a realm. Better Auth
-    // discovers the issuer at construction and skips the provider when it is
-    // absent, which is the documented local-dev shape.
+    // The identity realm the login route exchanges credentials with. Optional
+    // so a developer can boot the app without a realm: the login route then
+    // answers 503 "sign-in is not configured" and nothing else changes.
     KEYCLOAK_ISSUER: z.string().url().optional(),
-    // The issuer as the browser reaches it, for the authorization redirect.
-    // Unset means the same URL as KEYCLOAK_ISSUER (one host for both).
+    // The issuer as the browser reaches it. The realm stamps tokens with the
+    // URL it was called on, so when the server reaches the realm on a private
+    // address both spellings are accepted as the token issuer.
     KEYCLOAK_PUBLIC_ISSUER: z.string().url().optional(),
     KEYCLOAK_CLIENT_ID: z.string().optional(),
-    // The realm's redsim-web is a public client using PKCE, so this stays
-    // unset in every environment the repo ships.
+    // Set for a confidential client, unset for a public one.
     KEYCLOAK_CLIENT_SECRET: z.string().optional(),
     // Read here so `.env.example` and the deploy surfaces can document them.
     // redsim-session.ts still reads them from process.env directly.
     REDSIM_API_SESSION_PRIVATE_KEY: z.string().optional(),
     REDSIM_API_SESSION_KEY_ID: z.string().optional(),
     REDSIM_API_SESSION_TTL_SECONDS: z.string().optional(),
-    // Defaulted rather than optional so the edge-bundled middleware gate and
-    // the tRPC context read the three cookie names from one validated source.
+    // Defaulted rather than optional so the auth routes and the tRPC context
+    // read the three cookie names from one validated source.
     // redsim-session.ts keeps its own `?? "redsim_api_session"` fallback and
     // stays byte-identical to the base (R14).
     REDSIM_API_SESSION_COOKIE: z.string().default("redsim_api_session"),
     REDSIM_CSRF_COOKIE: z.string().default("redsim_csrf"),
-    REDSIM_DEV_TOKEN_COOKIE: z.string().default("redsim_dev_token"),
+    // The sealed refresh-token cookie the login route writes and the refresh
+    // route reads. httpOnly, scoped to /api/auth.
+    REDSIM_REFRESH_COOKIE: z.string().default("redsim_refresh"),
     // The tRPC layer's upstream base. Server-only, so changing where FastAPI
     // lives no longer rebuilds the web image (KTD6).
     REDSIM_API_URL: z.string().url().default("http://localhost:8000"),
@@ -140,8 +147,9 @@ export const env = createEnv({
    * rather than spread from `process.env`.
    */
   runtimeEnv: {
-    BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
-    BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
+    REDSIM_WEB_SESSION_SECRET:
+      process.env.REDSIM_WEB_SESSION_SECRET ?? process.env.BETTER_AUTH_SECRET,
+    REDSIM_WEB_ORIGIN: process.env.REDSIM_WEB_ORIGIN ?? process.env.BETTER_AUTH_URL,
     REDSIM_ENV: process.env.REDSIM_ENV,
     KEYCLOAK_ISSUER: process.env.KEYCLOAK_ISSUER,
     KEYCLOAK_PUBLIC_ISSUER: process.env.KEYCLOAK_PUBLIC_ISSUER,
@@ -152,7 +160,7 @@ export const env = createEnv({
     REDSIM_API_SESSION_TTL_SECONDS: process.env.REDSIM_API_SESSION_TTL_SECONDS,
     REDSIM_API_SESSION_COOKIE: process.env.REDSIM_API_SESSION_COOKIE,
     REDSIM_CSRF_COOKIE: process.env.REDSIM_CSRF_COOKIE,
-    REDSIM_DEV_TOKEN_COOKIE: process.env.REDSIM_DEV_TOKEN_COOKIE,
+    REDSIM_REFRESH_COOKIE: process.env.REDSIM_REFRESH_COOKIE,
     REDSIM_API_URL: process.env.REDSIM_API_URL,
     REDSIM_DEV_FIXTURES: process.env.REDSIM_DEV_FIXTURES,
     NEXT_PUBLIC_REDSIM_API_URL: process.env.NEXT_PUBLIC_REDSIM_API_URL,

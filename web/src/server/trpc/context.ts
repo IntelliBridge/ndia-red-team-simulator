@@ -1,7 +1,6 @@
 import "server-only";
 
-import { env } from "@/env";
-import { devEnvironment } from "@/server/gate";
+import { DEV_ENVS, env } from "@/env";
 
 /**
  * Whether this deployment may honour a dev token or answer from fixtures.
@@ -11,14 +10,17 @@ import { devEnvironment } from "@/server/gate";
  * accept a dev token, and one of them drifting from the other is a credential
  * bug rather than a cosmetic one (KTD7, KTD13).
  */
-export { devEnvironment as isDevEnvironment };
+/** Whether this process may answer from fixtures (KTD13). */
+export function isDevEnvironment(): boolean {
+  return DEV_ENVS.includes(env.REDSIM_ENV);
+}
 
 /**
  * What the tRPC layer forwards upstream on behalf of one caller.
  *
  * There is no shared service credential: every upstream request carries the
- * browser's own cookie pair or its own dev bearer, so the API's per-principal
- * rate buckets and RLS tenancy stay per user (KTD2, R2).
+ * browser's own cookie pair, so the API's per-principal rate buckets and RLS
+ * tenancy stay per user (KTD2, R2).
  */
 export type Credential =
   | {
@@ -28,7 +30,6 @@ export type Credential =
       /** The client's own X-Redsim-CSRF, never synthesized from the cookie. */
       csrfHeader: string | null;
     }
-  | { kind: "bearer"; token: string }
   | null;
 
 /** Everything the incoming HTTP request contributes, shared by a whole batch. */
@@ -81,9 +82,8 @@ export type RequestParts = { headers: Headers; cookie: CookieReader };
  *
  * The raw value is deliberately not kept as a fallback. This reader has to
  * agree with `cookies()` on the server-component side, which decodes, and a
- * raw value here would make a legitimately encoded credential such as
- * `redsim_dev_token=dev%3Aoperator%40example.test` read differently on the two
- * paths and refuse the hop.
+ * raw value here would make a legitimately encoded credential read differently
+ * on the two paths and refuse the hop.
  */
 export function cookieReaderFromHeader(header: string | null): CookieReader {
   const jar = new Map<string, string>();
@@ -140,20 +140,17 @@ export function newRequestId(): string {
  *    is built from exactly two names, because the API's double-submit
  *    middleware compares the client's header against the csrf cookie on its
  *    own request and answers 403 without it.
- * 2. Otherwise the dev-token cookie becomes a bearer, but only in `dev` or
- *    `test`. `prod`, `staging` and any unknown value forward nothing; an unset
- *    value reads as `dev` through the env module's default.
- * 3. Otherwise there is no credential, and `upstreamFetch` refuses before any
- *    upstream call.
+ * 2. Otherwise there is no credential, and `upstreamFetch` refuses before any
+ *    upstream call. There is no dev credential: the only way in is the login
+ *    page, which sets the session cookie.
  *
- * Nothing else crosses: not the Better Auth session cookie, which the API must
+ * Nothing else crosses: not the sealed refresh cookie, which the API must
  * never see, not any other client header.
  */
 export function createContext(parts: RequestParts): TrpcContext {
   const { headers, cookie } = parts;
   const session = cookie(env.REDSIM_API_SESSION_COOKIE);
   const csrfCookie = cookie(env.REDSIM_CSRF_COOKIE);
-  const devToken = cookie(env.REDSIM_DEV_TOKEN_COOKIE);
 
   let credential: Credential = null;
   if (session !== undefined) {
@@ -164,8 +161,6 @@ export function createContext(parts: RequestParts): TrpcContext {
       cookieHeader: pairs.join("; "),
       csrfHeader: headers.get(env.NEXT_PUBLIC_REDSIM_CSRF_HEADER.toLowerCase()),
     };
-  } else if (devToken !== undefined && devEnvironment()) {
-    credential = { kind: "bearer", token: devToken };
   }
 
   return {
@@ -174,7 +169,7 @@ export function createContext(parts: RequestParts): TrpcContext {
     secFetchSite: headers.get("sec-fetch-site"),
     origin: headers.get("origin"),
     contentType: headers.get("content-type"),
-    fixtures: env.REDSIM_DEV_FIXTURES && devEnvironment(),
+    fixtures: env.REDSIM_DEV_FIXTURES && isDevEnvironment(),
   };
 }
 

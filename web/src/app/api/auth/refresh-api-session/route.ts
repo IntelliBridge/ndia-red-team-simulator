@@ -1,50 +1,53 @@
-// POST /api/auth/refresh-api-session re-mints the redsim_api_session and
-// redsim_csrf cookies for the currently signed-in user.
-//
-// Nothing calls this route today. The measured current behaviour is a 900
-// second cookie lifetime followed by a forced interactive re-auth: requireAuth
-// pushes to /login once the non-httpOnly redsim_csrf cookie expires, and
-// /login renders a button the user must click. An interval caller that
-// refreshes the cookie before it expires does not belong in this route: it
-// would move the refresh trigger from the client to the server, changing the
-// binding this route relies on (the caller's own session email).
-//
-// The carry-forward is only ever taken from a signature-verified existing
-// cookie that is bound to the caller. Re-signing claims decoded without
-// verification would let any logged-in user forge roles into a freshly minted
-// token, and re-signing a cookie that verifies but belongs to someone else
-// would hand them that person's roles.
-
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-import { getSession } from "@/server/better-auth";
+import { refreshWithToken, statusForFailure } from "@/server/identity";
 import {
+  clearRedsimCookies,
   redsimCookieNames,
+  redsimCookieOptions,
   setRedsimCookies,
-  verifyOwnSessionCookie,
 } from "@/server/redsim-cookies";
+import { openRefreshToken, refreshTtlSeconds, sealRefreshToken } from "@/server/refresh-cookie";
 
-export async function POST() {
-  const session = await getSession();
-  if (!session?.user) {
+/**
+ * Renew the API session while a tab is open.
+ *
+ * The session pair lives fifteen minutes. This route opens the sealed refresh
+ * cookie, trades the refresh token for fresh claims at the realm, re-mints the
+ * pair and rotates the refresh cookie. A refresh token the realm no longer
+ * honours (signed out elsewhere, expired, revoked) clears every credential so
+ * the next page load lands on the login page instead of looping on 401.
+ */
+export async function POST(): Promise<NextResponse> {
+  const jar = cookies();
+  const set = (name: string, value: string, options: Parameters<typeof jar.set>[2]) =>
+    jar.set(name, value, options);
+
+  const refreshToken = await openRefreshToken(jar.get(redsimCookieNames.refresh)?.value);
+  if (!refreshToken) {
     return NextResponse.json({ error: "not signed in" }, { status: 401 });
   }
 
-  const jar = cookies();
-  const claims = await verifyOwnSessionCookie(
-    jar.get(redsimCookieNames.session)?.value,
-    session.user.email ?? undefined,
-  );
-  if (!claims) {
-    return NextResponse.json({ error: "not signed in" }, { status: 401 });
+  const result = await refreshWithToken(refreshToken);
+  if (!result.ok) {
+    const status = statusForFailure(result.code);
+    if (status === 401) clearRedsimCookies(set);
+    else console.error(`redsim: session refresh failed upstream (${result.code}): ${result.detail}`);
+    return NextResponse.json({ error: result.code }, { status });
   }
 
   try {
-    const maxAge = await setRedsimCookies(claims, (name, value, options) =>
-      jar.set(name, value, options),
-    );
-    return NextResponse.json({ refreshed: true, expires_in: maxAge });
+    const expiresIn = await setRedsimCookies(result.claims, set);
+    if (result.refreshToken) {
+      const ttl = refreshTtlSeconds(result.refreshExpiresIn);
+      set(
+        redsimCookieNames.refresh,
+        await sealRefreshToken(result.refreshToken, ttl),
+        redsimCookieOptions("refresh", ttl),
+      );
+    }
+    return NextResponse.json({ refreshed: true, expires_in: expiresIn });
   } catch (err) {
     console.warn("redsim: refresh-api-session failed", err);
     return NextResponse.json({ error: "mint failed" }, { status: 500 });

@@ -16,7 +16,7 @@ import { MockUpstream, detailBody } from "@/test/mock-upstream";
 import type { AppRouter } from "@/server/trpc/root";
 
 const API_HOST = "api.internal.invalid";
-const DEV_COOKIE = "dev:tester@example.test";
+const SESSION_COOKIE = "fake-session-cookie-value";
 
 // React 18.3.1 exports no cache(), so server.tsx falls back to identity and
 // each caller in one render would get its own QueryClient. Next bundles a
@@ -97,7 +97,7 @@ function dehydratedQuery(state: unknown): { state: { status: string; data?: unkn
 
 beforeEach(() => {
   jar.clear();
-  jar.set("redsim_dev_token", DEV_COOKIE);
+  jar.set("redsim_api_session", SESSION_COOKIE);
   upstream.json(200, { runs: [], count: 0 });
   upstream.calls.length = 0;
   redirectMock.mockClear();

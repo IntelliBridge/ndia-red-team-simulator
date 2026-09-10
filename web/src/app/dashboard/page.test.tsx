@@ -25,11 +25,9 @@ vi.mock("@/hooks/useRequireAuth", () => ({
   useRequireAuth: useRequireAuthMock,
 }));
 
-// auth helpers the page imports: getEmail (display) + logout (sign-out wiring).
+// auth helper the page imports: logout (sign-out wiring).
 const logoutMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
-const getEmailMock = vi.hoisted(() => vi.fn(() => "dev@redsim.local"));
 vi.mock("@/lib/auth", () => ({
-  getEmail: getEmailMock,
   logout: logoutMock,
 }));
 
@@ -61,8 +59,6 @@ beforeEach(() => {
   replaceMock.mockReset();
   logoutMock.mockReset();
   logoutMock.mockResolvedValue(undefined);
-  getEmailMock.mockReset();
-  getEmailMock.mockReturnValue("dev@redsim.local");
   useRequireAuthMock.mockReturnValue(true);
 });
 
@@ -210,15 +206,6 @@ describe("DashboardPage", () => {
     expect(screen.getByRole("link", { name: "vehicles_cnn" }).getAttribute("href")).toBe("/models/vehicles_cnn-1234abcd");
   });
 
-  it("shows the session email from getEmail()", () => {
-    getEmailMock.mockReturnValue("alice@redsim.local");
-    useSWRMock.mockReturnValue({ data: { runs: [], count: 0 }, error: undefined, isLoading: false });
-
-    render(h(DashboardPage));
-
-    expect(screen.getByText("alice@redsim.local")).toBeTruthy();
-  });
-
   it("signs out: calls logout() then routes to /login", async () => {
     useSWRMock.mockReturnValue({ data: { runs: [], count: 0 }, error: undefined, isLoading: false });
 
@@ -226,8 +213,8 @@ describe("DashboardPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
 
     expect(logoutMock).toHaveBeenCalledTimes(1);
-    // logout() ends the Better Auth and Keycloak sessions before it resolves,
-    // so the redirect lands a microtask later rather than on the click.
+    // logout() clears the cookies before it resolves, so the redirect lands a
+    // microtask later rather than on the click.
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith("/login"));
   });
 });

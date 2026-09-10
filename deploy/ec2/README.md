@@ -78,7 +78,7 @@ Non-secret values: `/opt/redsim/env/{common,web,identity}.env`, written by
 the bootstrap. Secrets: fetched from `ndia-red-team/demo/*` at bootstrap
 into `/opt/redsim/env/*.json` (0600, owner `redsim`). To change one, update
 the secret and re-run the secrets block of the bootstrap (or the whole
-bootstrap, it is idempotent), then restart the unit. `BETTER_AUTH_URL` is the
+bootstrap, it is idempotent), then restart the unit. `REDSIM_WEB_ORIGIN` is the
 public origin, never a callback path or localhost. `REDSIM_DISABLE_LLM` is
 `0` on every Python service when `pythia.json` exists, and the api adds the
 `PYTHIA_BASE_URL` host to `target_allowlist` (`redsim.config`), so LLM targets

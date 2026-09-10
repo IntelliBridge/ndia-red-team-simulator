@@ -20,7 +20,9 @@ import { NextResponse } from "next/server";
 
 import { env } from "@/env";
 import { verifyHopToken } from "@/server/gate";
-import { clearRedsimCookies } from "@/server/redsim-cookies";
+import { revokeRefreshToken } from "@/server/identity";
+import { clearRedsimCookies, redsimCookieNames } from "@/server/redsim-cookies";
+import { openRefreshToken } from "@/server/refresh-cookie";
 import { cookieReaderFromHeader } from "@/server/trpc/context";
 import { checkRequestOrigin } from "@/server/trpc/mutation-gate";
 
@@ -41,15 +43,19 @@ import { checkRequestOrigin } from "@/server/trpc/mutation-gate";
  * @param request - The incoming request, for its fetch metadata and origin.
  * @returns 200 with `{ ok: true }`, or 403 with nothing cleared.
  */
-export function POST(request: Request): NextResponse {
+export async function POST(request: Request): Promise<NextResponse> {
   const verdict = checkRequestOrigin({
     secFetchSite: request.headers.get("sec-fetch-site"),
     origin: request.headers.get("origin"),
-    trustedOrigin: env.BETTER_AUTH_URL ?? "",
+    trustedOrigin: env.REDSIM_WEB_ORIGIN ?? "",
   });
   if (!verdict.ok) return new NextResponse(null, { status: 403 });
 
   const jar = cookies();
+  // End the upstream session first, best effort: a slow or unreachable realm
+  // must never strand the user on an authenticated page.
+  const refreshToken = await openRefreshToken(jar.get(redsimCookieNames.refresh)?.value);
+  if (refreshToken) await revokeRefreshToken(refreshToken);
   clearRedsimCookies((name, value, options) => jar.set(name, value, options));
   return NextResponse.json({ ok: true });
 }
@@ -73,11 +79,10 @@ const LOGIN_TARGET = "/login?reason=rejected";
  */
 export async function GET(request: Request): Promise<NextResponse> {
   const cookie = cookieReaderFromHeader(request.headers.get("cookie"));
-  const credential =
-    cookie(env.REDSIM_API_SESSION_COOKIE) ?? cookie(env.REDSIM_DEV_TOKEN_COOKIE);
+  const credential = cookie(env.REDSIM_API_SESSION_COOKIE);
   const token = new URL(request.url).searchParams.get("hop");
 
-  if (!(await verifyHopToken(env.BETTER_AUTH_SECRET ?? "", token, credential))) {
+  if (!(await verifyHopToken(env.REDSIM_WEB_SESSION_SECRET ?? "", token, credential))) {
     return new NextResponse(null, { status: 403 });
   }
 
