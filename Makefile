@@ -109,11 +109,17 @@ dev: require-install
 	@echo "==> web: http://localhost:3000"
 	$(MAKE) -j dev-api dev-web
 
+# Both run through deploy/scripts/with-session-keypair.sh: redsim-web signs
+# the redsim_api_session cookie with the private half and the API verifies it
+# with the public half, so a dev pair started without them completes the
+# Keycloak login and then answers 401 to every call. The realm itself comes
+# from `make up` (Keycloak on :8080); web/.env names it with KEYCLOAK_ISSUER
+# and KEYCLOAK_CLIENT_ID (web/.env.example has the lines).
 dev-api: require-install
-	$(PY) -m uvicorn redsim.api.app:create_app --factory --reload --port 8000
+	deploy/scripts/with-session-keypair.sh $(PY) -m uvicorn redsim.api.app:create_app --factory --reload --port 8000
 
 dev-web: require-install
-	pnpm --filter $(WEB) dev
+	deploy/scripts/with-session-keypair.sh pnpm --filter $(WEB) dev
 
 dev-worker: require-install
 	$(PY) -m celery -A redsim.workers.celery_app worker -Q scans,default -l info
@@ -215,6 +221,13 @@ up:
 
 down:
 	$(COMPOSE) down
+
+# Tear the compose stack down with its volumes: Postgres, Redis and MinIO
+# start empty on the next `make up`, which migrates and seeds again, and
+# Keycloak re-imports deploy/keycloak/realm-export.json. The session keypair
+# under deploy/certs/ and the built ./assets tree are kept.
+clean:
+	$(COMPOSE) down -v --remove-orphans
 
 # Scripted spec-24 demo against a running `make up` stack (no UI): seed the
 # bundled models, run the image campaign, read the first finding, download the

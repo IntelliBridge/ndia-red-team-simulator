@@ -12,13 +12,14 @@ up:
 up-obs:
 	scripts/with-session-keypair.sh docker compose --profile obs up -d --build
 
-# The organisation and project rows only, through the same script the Fargate
-# runtime runs (deploy/runtime/scripts/seed_project.py, fed on stdin). No User
-# or ProjectMembership row: the API reads memberships from the
-# redsim_project_roles token claim, which the realm export gives the admin
-# user as {"default": "admin"}. A rerun reports the rows as present.
+# The development seed (redsim/db/seed.py): default-org, project default and
+# the admin user twice, once per sign-in path (the Keycloak subject the realm
+# export pins on its admin user, and dev:admin@redsim.local for a dev bearer
+# token), each with an admin membership on the project. redsim-api runs it
+# on every start after the migration, so this target is for a stack whose
+# rows were dropped by hand. A rerun prints "nothing new".
 seed:
-	docker compose exec -T redsim-api python - default-org default Default < runtime/scripts/seed_project.py
+	docker compose exec -T redsim-api python -m redsim.db.seed
 
 token-for:
 	@echo "dev:$$(basename $@)"
