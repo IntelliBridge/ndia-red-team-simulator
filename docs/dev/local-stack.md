@@ -8,12 +8,14 @@ diagrams under `docs/architecture/diagrams/`. For production deployment, see
 web without Docker, tests, lint) see the root `Makefile` and
 [`CONTRIBUTING.md`](https://github.com/IntelliBridge/ndia-red-team-simulator/blob/main/CONTRIBUTING.md).
 State described here is `main` at `58461cc` (2026-09-09, waves 1 to 3 of the
-completion plan merged). The three e2e files of wave 4 are marked "added in
-wave 4".
+completion plan merged) plus the local-stack fixes of 2026-09-10 (the realm
+export, the seed, the session keypair, the asset mount and the pgaudit image
+build). The three e2e files of wave 4 are marked "added in wave 4".
 
 ## Prerequisites
 
-- Docker 24+ running (Compose v2), for the full stack.
+- Docker 24+ running (Compose v2), for the full stack, and `openssl` on the
+  host (macOS ships one) for the one-off session keypair `make up` generates.
 - Free ports: `:8000` API, `:3300` web, `:8080` Keycloak, `:5432` Postgres,
   `:6379` Redis, `:9100` / `:9101` MinIO, `:4319` redsim-log-ingest.
 - Python 3.12 and the `.venv` (`make install`, extras `api,worker,test,dev,ml`
@@ -42,13 +44,17 @@ writer records dataset ids, revisions, splits, weight digests, clean
 accuracy with `n`, dataset caveats and `subject_centered` in
 `assets/MANIFEST.json`. `GET /v1/datasets` and `GET /v1/models` read that
 manifest from `REDSIM_ML_ASSETS_DIR` (default `./assets`), so the API and the
-worker must both see the same directory. Quote clean accuracy from the
-manifest of the build in hand, never as a product claim.
+worker must both see the same directory. The compose file mounts the repo's
+`assets/` read-only at `/app/assets` in `redsim-api`, `redsim-worker` and
+`redsim-worker-default` and sets `REDSIM_ML_ASSETS_DIR` to that path, so a
+tree built here is visible to the stack as soon as it exists. Quote clean
+accuracy from the manifest of the build in hand, never as a product claim.
 
 ## Compose services and profiles
 
 `deploy/docker-compose.yml` brings up, in the default profile: `postgres`
-(postgres 16 with pgaudit), `redis`, `keycloak`, `minio`, `redsim-api`,
+(postgres 16 with pgaudit), `redis`, `keycloak`, `minio` (plus the one-shot
+`minio-init`, which creates the `redsim` bucket and exits), `redsim-api`,
 `redsim-worker` (`-Q scans`: campaigns, model validation),
 `redsim-worker-default` (`-Q default`: report rendering, the reaper, tenant
 integrity, WORM export), `redsim-beat`, `redsim-web` and `redsim-log-ingest`.
@@ -62,7 +68,7 @@ cd deploy && docker compose --profile policy up -d opa           # + OPA for RED
 
 | Profile | Brings up additionally |
 |---|---|
-| (default) | api, the two worker pools, beat, web, postgres, redis, keycloak, minio, redsim-log-ingest |
+| (default) | api, the two worker pools, beat, web, postgres, redis, keycloak, minio (with the one-shot minio-init), redsim-log-ingest |
 | `obs` | otel-collector, loki, jaeger |
 | `obs-search` | elasticsearch, kibana |
 | `policy` | opa |
@@ -74,25 +80,58 @@ or Elasticsearch.
 ## Bring it up
 
 ```bash
-make up                  # docker compose -f deploy/docker-compose.yml up -d --build
-cd deploy && make seed   # default-org, project `default`, user `admin` with the admin role
+make up                  # the session keypair, then docker compose -f deploy/docker-compose.yml up -d --build
+cd deploy && make seed   # organisation default-org and project `default` (rows only; a rerun reports them present)
 ```
 
+`make up` first runs `deploy/scripts/with-session-keypair.sh`. On the first
+run it generates the RSA keypair the web app signs the `redsim_api_session`
+cookie with (`deploy/certs/redsim-api-session.key`, PKCS8, and
+`redsim-api-session.pub`, SubjectPublicKeyInfo; both gitignored and
+dockerignored), and on every run it exports the two halves to compose as
+`REDSIM_API_SESSION_PRIVATE_KEY` (read by `redsim-web`) and
+`REDSIM_API_SESSION_PUBLIC_KEY` (read by `redsim-api`), keeping the compose
+file's `${VAR:-}` contract. A value already exported in your shell wins. `cd
+deploy && make up`, `make up-obs` and `make rebuild` go through the same
+wrapper. A bare `docker compose up` does not: a container recreated that way
+holds empty keys, the login succeeds and every API call the browser makes
+answers 401.
+
 `redsim-api` runs `alembic upgrade head` on start (migrations `0001` to
-`0010`). The worker image installs the CPU torch wheels and then
-`.[worker,ml]`, so it is the slowest image to build. The API image installs
-`.[api,worker]` only and never carries torch, ART, onnxruntime or SHAP.
+`0014`). The worker image installs the CPU torch wheels and then
+`.[api,worker,ml]` (the `api` extra because the campaign task raises the
+spec 17.3 codes from `redsim.api.errors`, whose package needs fastapi), so it
+is the slowest image to build. The API image installs `.[api,worker]` only
+and never carries torch, ART, onnxruntime or SHAP. The
+postgres image adds pgaudit from the PGDG repository over https (the Docker
+Desktop proxy serves the plain-http InRelease gzip-compressed, which apt
+rejects as `Clearsigned file isn't valid, got 'NOSPLIT'`).
 
-Two things the compose file does not do for you at `58461cc`:
+The repo's `assets/` is mounted read-only at `/app/assets` in `redsim-api`
+and both worker pools, with `REDSIM_ML_ASSETS_DIR` set to that path, so the
+bundled models are visible to the stack once `redsim ml build-assets` has
+run. `REDSIM_ML_ASSETS_HOST_DIR=/path/to/assets` points the mount at a tree
+built elsewhere. Until the assets are built the mount holds only the README:
+`GET /v1/datasets` answers `assets.status: "missing"` and registering a
+bundled model answers `409 model_load_refused` with `refusal_reason:
+bundled_assets_missing`.
 
-- **Assets.** No service mounts `assets/` and none sets
-  `REDSIM_ML_ASSETS_DIR`, so a compose worker has no bundled models until you
-  mount the built tree (a `docker-compose.override.yml` adding
-  `./../assets:/app/assets:ro` and `REDSIM_ML_ASSETS_DIR=/app/assets` to
-  `redsim-api` and the worker anchor is the least invasive way). Without it
-  `GET /v1/datasets` answers `assets.status: "missing"` and registering a
-  bundled model answers `409 model_load_refused` with
-  `refusal_reason: bundled_assets_missing`.
+`make seed` feeds `deploy/runtime/scripts/seed_project.py` (the script the
+Fargate runtime runs) to the `redsim-api` container and creates only the
+organisation and project rows. There is no User or ProjectMembership row to
+seed: the API reads the caller's memberships from the `redsim_project_roles`
+token claim, and the realm export gives its `admin` user that attribute as
+`{"default": "admin"}`.
+
+The worker anchor also sets a laptop-sized sandbox budget
+(`REDSIM_ML_SANDBOX_CPU_SECONDS` 3600, `REDSIM_ML_SANDBOX_THREADS` 4,
+`REDSIM_ML_SANDBOX_TIMEOUT_S` 1700, each overridable from the shell): on the
+spec 20.3 defaults a `vehicles_cnn` campaign with `n_samples` 50 reached the
+explain stage after about 470 s on two threads and was killed by the 900
+CPU-second rlimit. The wall clock stays below the Celery soft limit.
+
+One thing the compose file still does not do for you:
+
 - **Narrative.** The worker anchor sets `REDSIM_DISABLE_LLM: "1"`, so no
   compose worker calls Pythia until that is unset (see
   [Pythia in compose](#pythia-in-compose)).
@@ -111,9 +150,17 @@ docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 Open `http://localhost:3300`. The login page is the app's own email and
 password form; the web server checks the credentials against the realm from
 `deploy/keycloak/realm-export.json` (Keycloak on `http://localhost:8080`,
-`redsim-web` client with direct access grants). The seeded admin is
-`admin@redsim.local` / `adminpass`. The dev bearer below is for the CLI and
-scripts only: the web app has no dev login.
+`redsim-web` client with direct access grants). The realm's admin is
+`admin@redsim.local` / `adminpass`; after signing in, Dashboard and Projects
+show the `default` project with the `admin` role, which comes from the
+`redsim_project_roles` attribute on the realm user (the `redsim-web` client
+maps it into the ID token) and not from a database row. The realm's user
+profile declares `firstName`, `lastName` and `redsim_project_roles`, and the
+admin user carries all three: Keycloak 24 answers a password grant for an
+account with an empty required profile field with `invalid_grant: Account is
+not fully set up`, and drops on import any user attribute the profile does not
+declare. The dev bearer below is for the CLI and scripts only: the web app
+has no dev login.
 
 For programmatic or CLI access in dev mode:
 
@@ -298,6 +345,10 @@ make down                        # stop and remove containers, keep volumes
 cd deploy && make down-clean     # also drop volumes (wipes Postgres and MinIO data)
 ```
 
+`down-clean` also drops the imported realm, so the next `make up` imports
+`deploy/keycloak/realm-export.json` afresh. The session keypair under
+`deploy/certs/` is kept and reused.
+
 ## Auth modes for development
 
 | Mode | Activates |
@@ -307,9 +358,11 @@ cd deploy && make down-clean     # also drop volumes (wipes Postgres and MinIO d
 | Cookie auth (browser) | NextAuth via the web UI (works regardless of dev mode) |
 
 The redsim API session cookie is keyed by `REDSIM_API_SESSION_PRIVATE_KEY`
-(web side) and `REDSIM_API_SESSION_PUBLIC_KEY` (api side). The compose stack
-auto-generates a dev keypair on first boot under `deploy/certs/`. In
-production you supply your own (see [`docs/ops/deploy.md`](../ops/deploy.md)).
+(web side) and `REDSIM_API_SESSION_PUBLIC_KEY` (api side). Compose itself
+generates nothing: `make up` runs `deploy/scripts/with-session-keypair.sh`,
+which writes a dev keypair under `deploy/certs/` on the first run and exports
+both halves on every run (see [Bring it up](#bring-it-up)). In production you
+supply your own (see [`docs/ops/deploy.md`](../ops/deploy.md)).
 
 ## Doctor
 
@@ -331,14 +384,42 @@ blob and OIDC probes. No provider key is derived from `redsim.yaml` any more.
   immediately, the OIDC path needs the realm fully loaded.
 - **`POST /v1/models` answers 409 `model_load_refused` with
   `bundled_assets_missing`**: the API process cannot see a built
-  `MANIFEST.json` at `REDSIM_ML_ASSETS_DIR`. Build the assets and mount them.
+  `MANIFEST.json` at `REDSIM_ML_ASSETS_DIR`. Build the assets
+  (`redsim ml build-assets`); the compose file mounts the repo's `assets/`,
+  or set `REDSIM_ML_ASSETS_HOST_DIR` to the tree you built.
+- **Login answers "Account is not fully set up" or the signed-in admin sees
+  no project**: the running Keycloak imported an older realm export. `cd
+  deploy && make down-clean && make up` re-imports
+  `deploy/keycloak/realm-export.json` (the user profile, `firstName`,
+  `lastName` and the `redsim_project_roles` attribute); `--import-realm`
+  never updates an existing realm.
+- **Every API call from the browser answers 401 after a successful login**:
+  the containers were started without the session keypair (a bare `docker
+  compose up`). Use `make up`, or `cd deploy && make rebuild svc=redsim-web`
+  and the same for `redsim-api`.
+- **`POST /v1/models` answers 500 and the api log says `NoSuchBucket`**:
+  the `redsim` bucket is missing from MinIO. `make up` runs the one-shot
+  `minio-init` service before the api; `docker compose ps -a minio-init`
+  should show it exited 0, and `cd deploy && docker compose up minio-init`
+  reruns it.
+- **The postgres image fails to build with `Clearsigned file isn't valid,
+  got 'NOSPLIT'`**: apt read the PGDG InRelease through a proxy that
+  gzip-compressed it. `deploy/Dockerfile.postgres` fetches the PGDG source
+  over https for that reason; rebuild with `cd deploy && docker compose build
+  postgres`.
 - **`POST /v1/models/{id}/attacks` answers 409 `model_load_refused`**: the
   target is not `available` (an upload still `validating` or `refused`, or a
   deleted target). `GET /v1/models/{id}` shows `status` and `refusal_reason`.
 - **Campaign fails with `SandboxTimeout`**: raise
-  `REDSIM_ML_SANDBOX_TIMEOUT_S` on the worker (default 1200, and it must stay
-  below the Celery soft limit) or lower `n_samples`. The partial files are
-  kept as `ml.partial.*` artifacts.
+  `REDSIM_ML_SANDBOX_TIMEOUT_S` on the worker (default 1200, 1700 in compose,
+  and it must stay below the Celery soft limit) or lower `n_samples`. The
+  partial files are kept as `ml.partial.*` artifacts.
+- **Campaign fails with `SandboxKilled` (SIGKILL) before the explain stage
+  finishes**: the child ran out of its CPU rlimit
+  (`REDSIM_ML_SANDBOX_CPU_SECONDS`, 900 by default, 3600 in compose; the
+  sandbox sets soft and hard to the same value, so the kernel kills rather
+  than warns). Raise it, give the child more threads
+  (`REDSIM_ML_SANDBOX_THREADS`), or lower `n_samples` and `explain_k`.
 - **Worker idle or restarting**: `make logs svc=redsim-worker`. Check
   `REDSIM_BROKER_URL` and that the `ml` extra built (the torch wheel download
   is the usual failure behind a proxy without `deploy/certs/`).

@@ -722,7 +722,9 @@ redsim-worker (`-Q scans`), redsim-worker-default (`-Q default`),
 redsim-beat, redsim-web (3300), redsim-log-ingest (4319), plus opt-in
 profiles `policy` (opa), `obs` (otel-collector, loki, jaeger) and
 `obs-search` (elasticsearch, kibana). `Dockerfile.api` installs `.[api,worker]`,
-`Dockerfile.worker` installs CPU torch then `.[worker,ml]`.
+`Dockerfile.worker` installs CPU torch then `.[api,worker,ml]` (the `api`
+extra since 2026-09-10: the campaign task imports `redsim.api.errors`, whose
+package needs fastapi, and without it every campaign failed at pickup).
 `deploy/helm/redsim` is the chart. `deploy/terraform/` (#19, on `main`) is
 the code-only Fargate foundation (existing-VPC checks, private endpoints, an
 ALB with target groups but no listeners, RDS PostgreSQL 16, Redis, two S3
@@ -1046,10 +1048,11 @@ loader's pin.
 - Web: pnpm 10 workspace at the repo root. `pnpm --filter @redsim/web dev`
   (:3000), `pnpm --filter @redsim/web typecheck`, `pnpm --filter @redsim/web
   test` (vitest), `pnpm --filter @redsim/design-system typecheck`.
-- Make targets: `install`, `require-install`, `dev` (pytest, then `dev-api`
-  + `dev-web` under `make -j`), `dev-api` (`uvicorn redsim.api.app:create_app
-  --factory --reload --port 8000`, boots without Postgres or Redis but only
-  `/health`, `/docs` and `/metrics` work until they are up), `dev-web`,
+- Make targets: `install`, `require-install`, `dev` (`dev-api` + `dev-web`
+  under `make -j`, no tests: `make test` is the suite), `dev-api`
+  (`uvicorn redsim.api.app:create_app --factory --reload --port 8000`, boots
+  without Postgres or Redis but only `/health`, `/docs` and `/metrics` work
+  until they are up), `dev-web`,
   `dev-worker` (`celery -A redsim.workers.celery_app worker -Q scans,default`,
   needs Redis, Postgres and the `ml` extra, deliberately not on the `dev`
   line), `test`, `test-cov`, `lint`, `lint-py` (`ruff check` with the CI
@@ -1058,9 +1061,21 @@ loader's pin.
   `docs-serve`, `docs-build`, `docs-build-strict`, `docs-clean` (call
   `mkdocs` from `PATH`, so activate the venv or pass
   `MKDOCS=.venv/bin/mkdocs`).
-- Full stack: `make up` runs compose. `deploy/Makefile` has the finer helpers
-  (`cd deploy && make seed` creates `default-org`, project `default` and user
-  `admin`. `token-for`, `whoami`, `psql`, `logs`, `rebuild`, `down`,
+- Full stack: `make up` runs compose through
+  `deploy/scripts/with-session-keypair.sh`, which generates the API session
+  keypair (`deploy/certs/redsim-api-session.{key,pub}`, gitignored and
+  dockerignored) on the first run and exports both halves as
+  `REDSIM_API_SESSION_PRIVATE_KEY` / `REDSIM_API_SESSION_PUBLIC_KEY`; the
+  compose file mounts the repo's `assets/` read-only at `/app/assets` in
+  `redsim-api` and both worker pools as `REDSIM_ML_ASSETS_DIR`
+  (`REDSIM_ML_ASSETS_HOST_DIR` overrides the host path). `deploy/Makefile`
+  has the finer helpers (`cd deploy && make seed` runs
+  `deploy/runtime/scripts/seed_project.py` in `redsim-api` and creates only
+  `default-org` and project `default`; memberships come from the
+  `redsim_project_roles` claim, which the realm export's `admin` user
+  (`admin@redsim.local` / `adminpass`, with `firstName`, `lastName` and the
+  attribute `{"default": "admin"}` declared in the realm's user profile)
+  carries. `token-for`, `whoami`, `psql`, `logs`, `rebuild`, `down`,
   `down-clean`, `up-obs`). `REDSIM_AUTH_MODE=dev` dev tokens
   (`Bearer dev:<email>`, admin on project `default`) are allowed for the demo
   and refused when `REDSIM_ENV=prod`.
