@@ -40,6 +40,7 @@ import { rowLink } from "@/lib/row-link";
 import { useRoles } from "@/hooks/useRoles";
 import { useRunEvents } from "@/hooks/useRunEvents";
 import { LlmScorecardPanel } from "./llm-scorecard";
+import { ProbeProgress, readProgressBlock } from "./probe-progress";
 
 // Run.scanner / stage_table.kind of a garak probe run (redsim/services/ml_llm.py
 // LLM_SCANNER / LLM_RUN_KIND). Such a run has no campaign record: /campaign
@@ -56,7 +57,11 @@ export default function RunPage({ params }: { params: { id: string } }) {
   const { roles } = useRoles();
   const campaignMissing =
     error instanceof ApiError && (error.status === 404 || error.status === 409);
-  const { data: runDetail, error: runError } = useSWR<RunDetail>(
+  const {
+    data: runDetail,
+    error: runError,
+    mutate: mutateRun,
+  } = useSWR<RunDetail>(
     authed && campaignMissing
       ? `/v1/runs/${encodeURIComponent(params.id)}`
       : null,
@@ -112,6 +117,9 @@ export default function RunPage({ params }: { params: { id: string } }) {
         void llm.mutate();
         void mutateArtifacts();
         void mutateFindings();
+        // The run detail carries stage_table.progress; a job frame is the
+        // moment the success path stamps percent 100.
+        void mutateRun();
       }
       return;
     }
@@ -177,6 +185,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
     const probeIds = Array.isArray(stageTable.probe_ids)
       ? (stageTable.probe_ids as unknown[]).map(String)
       : [];
+    const progress = readProgressBlock(stageTable);
     const artifacts = llmArtifacts?.artifacts ?? [];
     const hasReport = artifacts.some((row) =>
       String(row.kind ?? "").startsWith(REPORT_KIND_PREFIX),
@@ -191,6 +200,7 @@ export default function RunPage({ params }: { params: { id: string } }) {
             <div className="mt-2">
               <RunStatusBadge status={runStatus ?? "queued"} />
             </div>
+            <ProbeProgress block={progress} runStatus={runStatus} />
           </div>
           <div className="gap-3 text-sm flex items-center">
             {hasReport &&

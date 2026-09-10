@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   useRoles: vi.fn(),
   useRunEvents: vi.fn(),
   mutate: vi.fn(),
+  api: vi.fn(),
   cancelRun: vi.fn(),
   compareRuns: vi.fn(),
   dismissFinding: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("@/hooks/useRunEvents", () => ({
 }));
 vi.mock("@/lib/api", async () => ({
   ...(await vi.importActual("@/lib/api")),
+  api: mocks.api,
   cancelRun: mocks.cancelRun,
   compareRuns: mocks.compareRuns,
   dismissFinding: mocks.dismissFinding,
@@ -47,6 +49,7 @@ vi.mock("@/lib/api", async () => ({
   reportUrl: (id: string, ext: string) => `/v1/runs/${id}/report.${ext}`,
 }));
 
+import { ApiError } from "@/lib/api";
 import RunPage from "./page";
 
 type RunEvent = {
@@ -89,6 +92,7 @@ beforeEach(() => {
     },
   );
   mocks.cancelRun.mockResolvedValue({});
+  mocks.api.mockRejectedValue(new Error("no api read is expected in this case"));
   mocks.compareRuns.mockResolvedValue({
     compatible: true,
     mode: "side_by_side",
@@ -204,6 +208,61 @@ describe("/runs/[id] campaign review", () => {
     });
     expect(screen.queryByText("campaign stage")).toBeNull();
     expect(mocks.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers the prompts-sent bar of an LLM probe run from the run detail and revalidates it on a job frame", async () => {
+    // AE2: the campaign read is 404 (a probe run has no campaign record); the page falls back to
+    // GET /v1/runs/{id}, whose stage_table.progress block feeds the header bar. A run id of its own so
+    // SWR's global cache cannot serve another case's data.
+    const runId = "llm-run-reload-001";
+    const detail = {
+      id: runId,
+      project_id: "default",
+      status: "running",
+      scanner: "ml.llm_probe",
+      mode: "probe",
+      created_at: "2026-09-10T12:00:00.000Z",
+      completed_at: null,
+      stage_table: {
+        kind: "llm_probe",
+        stages_done: ["load_target", "entitlement"],
+        progress: {
+          unit: "prompts",
+          done: 37,
+          total: 64,
+          percent: 57,
+          probe: "Dan_11_0",
+          probes_done: 0,
+          n_probes: 2,
+          updated_at: new Date().toISOString(),
+        },
+      },
+    };
+    mocks.api.mockImplementation(async (path: string) => {
+      if (path === `/v1/runs/${runId}`) return detail;
+      if (path.endsWith("/llm-scorecard")) return null;
+      if (path.endsWith("/artifacts")) return { artifacts: [], count: 0 };
+      if (path.startsWith("/v1/findings")) return { findings: [], count: 0 };
+      throw new Error(`unexpected api read ${path}`);
+    });
+    setCampaign(
+      undefined,
+      new ApiError(404, '{"detail":{"code":"campaign_not_found"}}'),
+    );
+    render(createElement(RunPage, { params: { id: runId } }));
+    const bar = await screen.findByRole("progressbar", { name: "prompts sent" });
+    expect(bar.getAttribute("aria-valuenow")).toBe("57");
+    expect(
+      screen.getByText(/^prompts sent 37 of 64 · probe Dan_11_0 · updated \d+ s ago$/),
+    ).toBeTruthy();
+    const runReads = () =>
+      mocks.api.mock.calls.filter(([path]) => path === `/v1/runs/${runId}`)
+        .length;
+    expect(runReads()).toBe(1);
+    act(() => {
+      eventHandler?.({ type: "job", status: "running" });
+    });
+    await waitFor(() => expect(runReads()).toBe(2));
   });
 
   it("cancels active campaigns only after confirmation", async () => {
