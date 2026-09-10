@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import campaignFixture from "@/__fixtures__/campaign.json";
 import findingFixture from "@/__fixtures__/finding.json";
-import type { Campaign, Finding, Observation } from "@/lib/api";
+import type { AttackInfo, Campaign, Finding, Observation } from "@/lib/api";
 
 import {
   buildMessages,
@@ -85,5 +85,28 @@ describe("finding chat context", () => {
     for (const phrase of ["expected gain", "denominator", "readiness", "candidate", "not evaluated", "Do not guess"]) {
       expect(SYSTEM_PROMPT).toContain(phrase);
     }
+  });
+
+  it("bounds a proposal to the attack roster and keeps the analyst as the one who approves", () => {
+    for (const phrase of ["redsim-proposal", "available_attacks", "approves it", "requires_gradients is false", "Never say what the proposed campaign will find"]) {
+      expect(SYSTEM_PROMPT).toContain(phrase);
+    }
+  });
+
+  it("puts the attack roster in the context as ids and flags, never the params schema", () => {
+    const attacks = [
+      {
+        id: "hopskipjump", name: "HopSkipJump", domain: "image", family: "evasion", description: "x",
+        params_schema: [{ name: "max_iter" }], references: ["r"], phase: "A", access: "black-box",
+        requires_gradients: false, status: "available", capabilities: ["modality:image", "norm:linf", "norm:l2"],
+      },
+    ] as unknown as AttackInfo[];
+    const doc = JSON.parse(serializeContext({ finding, campaign, attacks })) as { available_attacks: Array<Record<string, unknown>> };
+    expect(doc.available_attacks).toEqual([
+      { id: "hopskipjump", name: "HopSkipJump", family: "evasion", access: "black-box", requires_gradients: false, status: "available", reason: null, norms: ["linf", "l2"] },
+    ]);
+    expect(JSON.stringify(doc)).not.toContain("params_schema");
+    const without = JSON.parse(serializeContext({ finding, campaign })) as { available_attacks: unknown };
+    expect(without.available_attacks).toBeNull();
   });
 });

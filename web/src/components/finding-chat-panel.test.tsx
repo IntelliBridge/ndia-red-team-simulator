@@ -6,6 +6,8 @@ import findingFixture from "@/__fixtures__/finding.json";
 import type { Finding } from "@/lib/api";
 import type { ChatStreamEvent } from "@/lib/chat";
 
+import campaignFixture from "@/__fixtures__/campaign.json";
+
 const fetchChatStatus = vi.hoisted(() => vi.fn());
 const streamFindingChat = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/chat", async () => ({
@@ -14,7 +16,28 @@ vi.mock("@/lib/chat", async () => ({
   streamFindingChat,
 }));
 
+const startCampaign = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/api", async () => ({
+  ...(await vi.importActual<typeof import("@/lib/api")>("@/lib/api")),
+  startCampaign,
+}));
+
+const rolesMock = vi.hoisted(() => ({ roles: { default: "scanner" } as Record<string, string> }));
+vi.mock("@/hooks/useRoles", () => ({
+  useRoles: () => ({ roles: rolesMock.roles, projects: [], isLoading: false, error: undefined }),
+}));
+
+const campaignMock = vi.hoisted(() => ({ data: undefined as unknown, error: undefined as unknown }));
+vi.mock("@/hooks/useCampaign", () => ({
+  useCampaign: () => ({ data: campaignMock.data, error: campaignMock.error }),
+}));
+
 import { FindingChatPanel } from "./finding-chat-panel";
+
+const PROPOSAL_TEXT =
+  "Run a black-box attack next.\n\n```redsim-proposal\n" +
+  JSON.stringify({ attack_ids: ["hopskipjump"], norm: "linf", eps_grid: [0.01, 0.03, 0.1], reference_eps: 0.03, n_samples: 50, rationale: "m1 measured 24/50 correct at eps 0.03." }) +
+  "\n```";
 
 const finding = findingFixture as unknown as Finding;
 
@@ -32,6 +55,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   window.sessionStorage.clear();
   fetchChatStatus.mockResolvedValue({ configured: true, model: "anthropic/claude-opus-5" });
+  rolesMock.roles = { default: "scanner" };
+  campaignMock.data = campaignFixture;
+  campaignMock.error = undefined;
 });
 
 afterEach(() => cleanup());
@@ -49,7 +75,7 @@ describe("FindingChatPanel", () => {
     expect(dialog).toBeTruthy();
     expect(screen.getByText(/fixture-finding/)).toBeTruthy();
     await waitFor(() => expect(screen.getByText(/anthropic\/claude-opus-5 via Pythia/)).toBeTruthy());
-    expect(screen.getAllByRole("listitem", {})).toHaveLength(6);
+    expect(screen.getAllByRole("listitem", {})).toHaveLength(7);
     expect(screen.getByText(/Not a measurement/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Close chat" })).toBeTruthy();
@@ -101,6 +127,65 @@ describe("FindingChatPanel", () => {
     await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/no Pythia gateway settings/));
     expect((screen.getByLabelText("Your question") as HTMLTextAreaElement).disabled).toBe(true);
     expect(screen.queryByRole("button", { name: /What limitations/ })).toBeNull();
+  });
+
+  it("renders a proposal as a card, runs it through the API on approval and links the admitted run", async () => {
+    streamFindingChat.mockReturnValue(answer({ type: "delta", text: PROPOSAL_TEXT }, { type: "done" }));
+    startCampaign.mockResolvedValue({ run_id: "run-next-1", job_ids: ["job-1"], status_url: "/v1/runs/run-next-1" });
+    mount();
+    await screen.findByRole("dialog");
+    fireEvent.click(await screen.findByRole("button", { name: /Propose a campaign/ }));
+    const card = await screen.findByRole("region", { name: "Proposed campaign" });
+    expect(card.textContent).toContain("candidate, not run");
+    expect(card.textContent).toContain("hopskipjump");
+    expect(card.textContent).toContain("0.01, 0.03, 0.1");
+    expect(card.textContent).toContain("m1 measured 24/50 correct");
+    // The block never reaches the prose.
+    expect(screen.getByText("Run a black-box attack next.")).toBeTruthy();
+    expect(screen.queryByText(/redsim-proposal/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Run this campaign" }));
+    await waitFor(() => expect(startCampaign).toHaveBeenCalledTimes(1));
+    const [targetId, request] = startCampaign.mock.calls[0] as [string, Record<string, unknown>];
+    expect(targetId).toBe("fixture-model");
+    expect(request).toMatchObject({ attack_ids: ["hopskipjump"], eps_grid: [0.01, 0.03, 0.1], reference_eps: 0.03, n_samples: 50, dataset_id: "fixture-public-image" });
+    expect(request).not.toHaveProperty("scoring");
+    const link = await screen.findByRole("link", { name: /run-next-1/ });
+    expect(link.getAttribute("href")).toBe("/runs/run-next-1");
+    expect(screen.queryByRole("button", { name: "Run this campaign" })).toBeNull();
+    // The admitted run survives with the transcript.
+    expect(window.sessionStorage.getItem("redsim.chat.fixture-finding")).toContain("run-next-1");
+  });
+
+  it("shows the API refusal by code and hides the Run button from a viewer", async () => {
+    streamFindingChat.mockReturnValue(answer({ type: "delta", text: PROPOSAL_TEXT }, { type: "done" }));
+    const { ApiError } = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+    startCampaign.mockRejectedValue(
+      new ApiError(422, JSON.stringify({ detail: { code: "attack_requires_gradients", message: "no gradients" } })),
+    );
+    mount();
+    await screen.findByRole("dialog");
+    fireEvent.click(await screen.findByRole("button", { name: /Propose a campaign/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Run this campaign" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("attack_requires_gradients: no gradients"));
+
+    cleanup();
+    rolesMock.roles = { default: "viewer" };
+    mount();
+    await screen.findByRole("region", { name: "Proposed campaign" });
+    expect(screen.queryByRole("button", { name: "Run this campaign" })).toBeNull();
+  });
+
+  it("says why an unusable proposal cannot run and keeps the prose", async () => {
+    streamFindingChat.mockReturnValue(
+      answer({ type: "delta", text: "Text.\n```redsim-proposal\n{\"attack_ids\": []}\n```" }, { type: "done" }),
+    );
+    mount();
+    await screen.findByRole("dialog");
+    fireEvent.click(await screen.findByRole("button", { name: /Propose a campaign/ }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/cannot run: attack_ids/));
+    expect(screen.getByText("Text.")).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "Proposed campaign" })).toBeNull();
   });
 
   it("closes through the Close button", async () => {

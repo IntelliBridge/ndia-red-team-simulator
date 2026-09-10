@@ -1,6 +1,7 @@
 import "server-only";
 
 import type {
+  AttackInfo,
   Campaign,
   CandidateRecommendation,
   Finding,
@@ -47,7 +48,11 @@ export const SYSTEM_PROMPT = [
   "5. Do not use readiness, fielding, deployment, certification, accreditation or approval wording about the model or the system. Do not say that the model is safe, secure, hardened or ready.",
   "6. When the context flags fixture or illustrative data, say so in the answer.",
   "7. Be brief. Use plain sentences and short paragraphs. Use dashes for a list. Do not use Markdown headings or tables. Use the finding's own terms: the attack id, eps, the family name.",
+  "8. When the analyst asks what to run next, or asks you to propose a campaign, end the answer with exactly one proposal block: a fenced code block whose language tag is redsim-proposal, holding one JSON object with the keys attack_ids (a non-empty list), norm, eps_grid (3 to 6 increasing numbers), reference_eps (one member of eps_grid), n_samples (a positive integer, at most the recorded n_samples or 500 when none is recorded) and rationale (one sentence naming the recorded evidence that motivates it). Use only attack ids listed under available_attacks in the context with status available; when the model has no gradients, use only attacks whose requires_gradients is false. Keep the recorded norm unless the analyst asks for another. Write nothing after the block. The proposal is a candidate campaign: an analyst reads it, approves it and the platform admits it through its own checks and audit trail. Never say what the proposed campaign will find or that it will improve, confirm or fix anything. When no proposal is appropriate, write no block and say why.",
 ].join("\n");
+
+/** The language tag of the fenced proposal block the panel looks for (rule 8). */
+export const PROPOSAL_FENCE = "redsim-proposal";
 
 type Json = Record<string, unknown>;
 
@@ -223,11 +228,30 @@ export function campaignSummary(campaign: Campaign): Json {
   };
 }
 
+/** One attack row as the model may name it in a proposal: id, name, access and status, no schema. */
+export function compactAttack(row: AttackInfo): Json {
+  const tags = (row as AttackInfo & { capabilities?: unknown }).capabilities;
+  return {
+    id: row.id,
+    name: row.name,
+    family: row.family,
+    access: row.access,
+    requires_gradients: row.requires_gradients,
+    status: row.status,
+    reason: row.reason ?? null,
+    norms: Array.isArray(tags)
+      ? tags.filter((tag): tag is string => typeof tag === "string" && tag.startsWith("norm:")).map((tag) => tag.slice(5))
+      : null,
+  };
+}
+
 export type ContextInput = {
   finding: Finding;
   campaign: Campaign | null;
   /** Why the campaign record is absent, when it is (an upstream code). */
   campaignUnavailable?: string | null;
+  /** The attack catalog for the campaign's modality, when the route could read it. */
+  attacks?: AttackInfo[] | null;
 };
 
 /**
@@ -242,6 +266,7 @@ export function serializeContext(input: ContextInput): string {
     finding,
     campaign,
     campaign_unavailable: input.campaignUnavailable ?? null,
+    available_attacks: input.attacks ? input.attacks.map(compactAttack) : null,
     trimmed: [] as string[],
   };
   const trimmed = doc.trimmed as string[];

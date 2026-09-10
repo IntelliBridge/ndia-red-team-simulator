@@ -37,6 +37,7 @@ def list_exports_route(project: str | None = None, limit: int = _LIMIT_DEFAULT,
                        user: CurrentUser = Depends(get_current_user)) -> dict[str, Any]:
     """The export inventory: ``{exports, count, report_formats, dataset_format, limit}``."""
     from redsim.db.session import get_session
+    from redsim.services.evidence_pack import load_evidence_signer, signer_status
     from redsim.services.ml_exports import DATASET_FORMAT, REPORT_FORMATS, list_exports
 
     if not 1 <= limit <= _LIMIT_MAX:
@@ -54,10 +55,17 @@ def list_exports_route(project: str | None = None, limit: int = _LIMIT_DEFAULT,
             rows = list_exports(sess, project_ids=project_ids, limit=limit)
     except RuntimeError as exc:  # REDSIM_DB_URL missing
         raise api_error(DB_UNAVAILABLE, str(exc)) from exc
+    try:
+        signing = signer_status(load_evidence_signer())
+    except (OSError, TypeError, ValueError) as exc:  # an unreadable key: say so, never fail the inventory
+        signing = {"configured": False, "algorithm": None, "key_id": None,
+                   "reason": f"the configured evidence signing key could not be read ({exc.__class__.__name__})"}
     return {
         "exports": rows,
         "count": len(rows),
         "report_formats": list(REPORT_FORMATS),
         "dataset_format": DATASET_FORMAT,
         "limit": limit,
+        # Whether GET /v1/runs/{id}/evidence-pack signs its manifest on this deployment, and with which key.
+        "evidence_signing": signing,
     }
