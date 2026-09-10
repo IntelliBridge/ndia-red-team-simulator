@@ -24,15 +24,15 @@ import { isLlmTarget, registerLlmTarget } from "@/lib/llm";
 import { EMPTY_LLM_FORM, LlmRegisterForm } from "./llm-register-form";
 
 /** Multipart fields of the upload's input contract (spec 11.3.1); empty strings are not sent. */
-export const EMPTY_INPUT_CONTRACT = {
+const EMPTY_INPUT_CONTRACT = {
   input_scale: "",
   input_mean: "",
   input_std: "",
   input_resize: "",
   input_layout: "",
 };
-export type InputContractForm = typeof EMPTY_INPUT_CONTRACT;
-export const INPUT_CONTRACT_FIELDS: Array<{
+type InputContractForm = typeof EMPTY_INPUT_CONTRACT;
+const INPUT_CONTRACT_FIELDS: Array<{
   field: keyof InputContractForm;
   label: string;
   placeholder: string;
