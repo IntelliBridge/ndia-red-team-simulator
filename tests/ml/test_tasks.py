@@ -1,4 +1,4 @@
-"""Worker task ``redsim.ml_campaign_run`` end to end on sqlite (spec 6.5, 5.8, 6.4, 10.5, 10.6).
+"""Worker task ``redsim.ml_campaign_run`` end to end on sqlite (spec 6.5, 5.8, 10.5, 10.6).
 
 The task body runs through the real ``task_context`` on a file-backed sqlite
 database with the sandboxed campaign runner replaced by a fake that returns a
@@ -35,12 +35,11 @@ from redsim.db.models import (
     LLMUsage,
     Organization,
     Project,
-    RemediationAttempt,
     Run,
     Target,
 )
 from redsim.ml.errors import SandboxTimeout
-from redsim.ml.schema import STAGES, CampaignRecord, grade_for_mri
+from redsim.ml.schema import STAGES, CampaignRecord
 from redsim.services.ml_findings import project_campaign_findings
 from redsim.storage import FilesystemBlobStore
 from tests.conftest import patch_jsonb_for_sqlite
@@ -51,27 +50,11 @@ FIXTURE = Path(__file__).parent / "fixtures" / "run_record.json"
 BASELINE_RUN_ID = "run-baseline-0001"
 ATTACK_RUN_ID = "run-attack-0001"
 ATTACK_JOB_ID = "job-attack-0001"
-VERIFY_RUN_ID = "run-verify-0001"
-VERIFY_JOB_ID = "job-verify-0001"
 FOLLOWON_RUN_ID = "run-followon-0001"
 FOLLOWON_JOB_ID = "job-followon-0001"
 PROJECT_ID = "project-1"
 ORG_ID = "org-1"
 CREATOR = "user:alice"
-DEFENSE = {
-    "id": "feature_squeezing",
-    "art_class": "art.defences.preprocessor.FeatureSqueezing",
-    "params": {"bit_depth": 4},
-}
-# A ``kind: training`` defense (redsim.ml.defenses.TRAINING_DEFENSES): the child fine-tunes a copy and emits the
-# defense_apply stage right after load_target (ATTACKS_HARDEN-12/-15).
-TRAINING_DEFENSE = {
-    "id": "adversarial_training",
-    "art_class": "art.defences.trainer.AdversarialTrainer",
-    "params": {"epochs": 1},
-}
-COMPLETE_VERIFY_MRI = 50
-MISSING_SUBSCORE = "S_expl unavailable (no SHAP attributions were produced for the defended copy)"
 
 
 # --------------------------------------------------------------------------- records
@@ -79,39 +62,6 @@ MISSING_SUBSCORE = "S_expl unavailable (no SHAP attributions were produced for t
 
 def fixture_record() -> CampaignRecord:
     return CampaignRecord.model_validate(json.loads(FIXTURE.read_text()))
-
-
-def verify_record(*, partial: bool = False, defense: dict[str, Any] = DEFENSE) -> CampaignRecord:
-    """A verify child of the fixture campaign: same model, sample and settings, with the defense.
-
-    A training ``defense`` adds the ``defense_apply`` stage after ``load_target`` in ``stages_done`` and the
-    derived model's digest to the provenance, as ``redsim.ml.campaign`` records it.
-    """
-    data = json.loads(FIXTURE.read_text())
-    data["run_id"] = "run-local-child"
-    data["kind"] = "verify"
-    data["baseline_run_id"] = BASELINE_RUN_ID
-    data["config"]["defense"] = defense
-    data["provenance"]["baseline_run_id"] = BASELINE_RUN_ID
-    data["provenance"]["defense"] = defense
-    if defense["id"] == TRAINING_DEFENSE["id"]:
-        stages = list(data["stages_done"])
-        stages.insert(stages.index("load_target") + 1, "defense_apply")
-        data["stages_done"] = stages
-        data["provenance"]["defense"] = {**defense, "kind": "training", "parent_sha256": data["provenance"]["model_sha256"],
-                                         "derived_sha256": "b" * 64}
-    score = data["score"]
-    if partial:
-        score["subscores"]["S_expl"] = None
-        for per_attack in score["per_attack"].values():
-            per_attack["S_expl"] = {"value": None, "n": None, "reason": "explanations unavailable"}
-        score.update({"mri": None, "grade": None, "completeness": "partial", "reading": None,
-                      "missing": [MISSING_SUBSCORE]})
-        data["completeness"] = "partial"
-        data["missing"] = [MISSING_SUBSCORE]
-    else:
-        score.update({"mri": COMPLETE_VERIFY_MRI, "grade": grade_for_mri(COMPLETE_VERIFY_MRI)})
-    return CampaignRecord.model_validate(data)
 
 
 def _campaign_table(engine: Any) -> Table:
@@ -128,7 +78,6 @@ def _campaign_table(engine: Any) -> Table:
         Column("provenance", JSON),
         Column("score", JSON),
         Column("limitations", JSON, nullable=False),
-        Column("baseline_run_id", String),
         Column("parent_run_id", String),
         Column("reviewer_notes", Text),
         Column("created_at", DateTime),
@@ -236,8 +185,7 @@ class Harness:
 
     def add_job(self, *, run_id: str, job_id: str, job_type: str, config: dict[str, Any],
                 detail: dict[str, Any] | None = None, kind: str = "attack",
-                baseline_run_id: str | None = None, parent_run_id: str | None = None,
-                scanner: str = "ml.campaign") -> None:
+                parent_run_id: str | None = None, scanner: str = "ml.campaign") -> None:
         with self.get_session() as session:
             session.add(Run(id=run_id, project_id=PROJECT_ID, scanner=scanner, target_id=config["target_id"],
                             status="queued", stage_table={"stage": None, "stages_done": [], "jobs": {}},
@@ -248,23 +196,13 @@ class Harness:
             session.execute(self.campaigns.insert().values(
                 run_id=run_id, project_id=PROJECT_ID, target_id=config["target_id"], kind=kind,
                 modality=config["modality"], config=config, limitations=[],
-                baseline_run_id=baseline_run_id, parent_run_id=parent_run_id,
+                parent_run_id=parent_run_id,
             ))
 
     def add_attack_job(self, *, llm_narrative: bool = False) -> None:
         config = self.baseline.config.model_dump(mode="json")
         config["llm_narrative"] = llm_narrative
         self.add_job(run_id=ATTACK_RUN_ID, job_id=ATTACK_JOB_ID, job_type="attack.run", config=config)
-
-    def add_verify_job(self, finding_id: str, *, recommendation_id: str | None = "r.R2",
-                       defense: dict[str, Any] = DEFENSE) -> None:
-        config = self.baseline.config.model_dump(mode="json")
-        config["defense"] = defense
-        detail: dict[str, Any] = {"finding_id": finding_id, "baseline_run_id": BASELINE_RUN_ID}
-        if recommendation_id is not None:
-            detail["recommendation_id"] = recommendation_id
-        self.add_job(run_id=VERIFY_RUN_ID, job_id=VERIFY_JOB_ID, job_type="verify.replay", config=config,
-                     detail=detail, kind="verify", baseline_run_id=BASELINE_RUN_ID, scanner="ml.verify")
 
     def add_followon_job(self, finding_id: str, *, job_type: str) -> None:
         config = self.baseline.config.model_dump(mode="json")
@@ -295,10 +233,6 @@ class Harness:
             sink.put("curve/robustness_curve.png", b"\x89PNG fake", "image/png")
             sink.put("flip_matrix.json", b'{"flipped": {}}', "application/json")
             sink.put("adv_slice/fgsm_eps0.03.npz", b"npz", "application/octet-stream")
-            if record.config.defense is not None and record.config.defense.id == TRAINING_DEFENSE["id"]:
-                # redsim.ml.harden.apply writes the derived state_dict and its training record through the sink.
-                sink.put("derived_model/weights.pt", b"PK\x03\x04 derived state_dict placeholder", "application/octet-stream")
-                sink.put("derived_model/training_report.json", b'{"epochs_run": 1}', "application/json")
             sink.put("obs_000/clean.png", b"png-clean", "image/png")
             sink.put("obs_000/shap_clean.png", b"png-shap", "image/png")
             sink.put("obs_000/shap_meta.json", b"{}", "application/json")
@@ -389,11 +323,10 @@ def test_artifact_kinds_follow_the_5_8_vocabulary() -> None:
         "ml/partial/run_record.json": "ml.partial.run_record",
         "ml/partial/curve/fgsm.json": "ml.partial.curve",
         "ml/partial/events.jsonl": "ml.partial.events",
-        # Phase B (MODALITIES-44, ATTACKS_HARDEN-15): the text modality's word diff and token bars
+        # Phase B (MODALITIES-44): the text modality's word diff and token bars
         # (redsim.ml.explain.shap_text.TEXT_DIFF_NAME / TEXT_PLOT_NAME) and its JSON-lines slices, the detection
         # modality's box record, drawn inputs and scorecard (redsim.ml.runners.detection.BOXES_JSON_NAME /
-        # CLEAN_PNG_NAME / ADV_PNG_NAME / SCORECARD_NAME), the training defenses' derived model and report
-        # (redsim.ml.harden.apply.WEIGHTS_ARTIFACT / REPORT_ARTIFACT).
+        # CLEAN_PNG_NAME / ADV_PNG_NAME / SCORECARD_NAME).
         "obs_002/text_diff.json": "ml.text.diff",
         "obs_002/shap_text.png": "ml.shap.text",
         "obs_002/shap_values.npz": "ml.shap.values",
@@ -403,9 +336,6 @@ def test_artifact_kinds_follow_the_5_8_vocabulary() -> None:
         "obs_001/adv_boxes.png": "ml.input.adv",
         "adv_slice/dpatch_eps0.03.npz": "ml.adv_slice",
         "detection_scorecard.json": "ml.detection.scorecard",
-        "derived_model/weights.pt": "ml.derived_model",
-        "derived_model/training_report.json": "ml.training_report",
-        "ml/partial/derived_model/weights.pt": "ml.partial.derived_model",
         "ml/partial/obs_001/boxes.json": "ml.partial.detection.boxes",
     }
     for name, kind in expected.items():
@@ -414,7 +344,6 @@ def test_artifact_kinds_follow_the_5_8_vocabulary() -> None:
 
 
 def test_expected_stages_follow_schema_stages_order() -> None:
-    from redsim.ml.schema import DefenseConfig
     from redsim.workers.tasks.ml_campaign import expected_stages
 
     record = fixture_record()
@@ -422,19 +351,20 @@ def test_expected_stages_follow_schema_stages_order() -> None:
     assert stages == ["load_target", "sample", "clean_eval", "attack:fgsm", "attack:pgd", "control",
                       "explain", "score", "interpret", "recommend", "report"]
     assert stages == list(record.stages_done)
+    # STAGES with the per-attack expansion: the bases, deduplicated, are the frozen tuple in order.
     bases = [s.split(":", 1)[0] for s in stages]
-    # defense_apply (Phase B) is expected only when the campaign applies a training defense ...
-    assert [b for i, b in enumerate(bases) if b not in bases[:i]] == [s for s in STAGES if s != "defense_apply"]
-    training = record.config.model_copy(update={"defense": DefenseConfig.model_validate(TRAINING_DEFENSE)})
-    with_defense = expected_stages(training)
-    assert with_defense[:2] == ["load_target", "defense_apply"] and with_defense[2:] == stages[1:]
-    training_bases = [s.split(":", 1)[0] for s in with_defense]
-    assert [b for i, b in enumerate(training_bases) if b not in training_bases[:i]] == list(STAGES)
-    # ... never for a preprocessing defense (wrapped inside load_target) or an id the catalog does not know.
-    preprocessing = record.config.model_copy(update={"defense": DefenseConfig.model_validate(DEFENSE)})
-    assert expected_stages(preprocessing) == stages
-    unknown = record.config.model_copy(update={"defense": DefenseConfig(id="not_a_catalog_defense")})
-    assert expected_stages(unknown) == stages
+    assert [b for i, b in enumerate(bases) if b not in bases[:i]] == list(STAGES)
+    assert "defense_apply" not in stages
+    # The optional stages follow the config: no control without the noise control, no explain at
+    # explain_k 0, no recommend without auto_recommend. Every other stage is always expected.
+    no_control = record.config.model_copy(update={"include_control": False})
+    assert expected_stages(no_control) == [s for s in stages if s != "control"]
+    no_explain = record.config.model_copy(update={"explain_k": 0})
+    assert expected_stages(no_explain) == [s for s in stages if s != "explain"]
+    no_recommend = record.config.model_copy(update={"auto_recommend": False})
+    assert expected_stages(no_recommend) == [s for s in stages if s != "recommend"]
+    one_attack = record.config.model_copy(update={"attack_ids": ["fgsm"]})
+    assert expected_stages(one_attack) == [s for s in stages if s != "attack:pgd"]
 
 
 # --------------------------------------------------------------------------- attack.run
@@ -455,7 +385,7 @@ def test_campaign_completes_and_projects_findings(harness: Harness) -> None:
     with harness.sessions() as session:
         findings = session.query(Finding).filter(Finding.run_id == ATTACK_RUN_ID).all()
     assert {f.schema_blob["ml"]["attack_id"] for f in findings} == {"fgsm", "pgd"}
-    assert all(f.status == "open" and f.validation_state == "unvalidated" for f in findings)
+    assert all(f.status == "open" for f in findings)
 
     # The persisted record carries the platform run id and the child's evidence.
     persisted = harness.persisted_record(ATTACK_RUN_ID)
@@ -582,7 +512,7 @@ def test_child_load_refusal_is_a_failed_job_with_refused_model_load(harness: Har
     record = fixture_record()
     failed = partial_campaign_record(
         record.config, status="failed", error="ModelLoadRefused: pickle_refused: torch.save object detected",
-        stages_done=[], baseline_run_id=None, parent_run_id=None,
+        stages_done=[], parent_run_id=None,
     )
     harness.install_sandbox(failed, stages=[])
 
@@ -599,170 +529,6 @@ def test_child_load_refusal_is_a_failed_job_with_refused_model_load(harness: Har
     run = harness.row(Run, ATTACK_RUN_ID)
     assert run is not None and run.stage_table["completeness"] == "partial"
     assert run.stage_table["stages"]["load_target"]["status"] == "failed"
-
-
-# --------------------------------------------------------------------------- verify.replay
-
-
-def _recommendation(finding: Finding, rec_id: str) -> dict[str, Any]:
-    return next(r for r in finding.schema_blob["ml"]["recommendations"] if r["id"] == rec_id)
-
-
-def test_verify_worker_measures_delta_and_moves_state(harness: Harness) -> None:
-    finding_id = harness.seed_baseline()
-    harness.add_verify_job(finding_id, recommendation_id="r.R2")
-    harness.install_sandbox(verify_record(partial=False))
-    baseline = fixture_record()
-    assert baseline.score is not None and baseline.score.mri is not None
-    expected_delta = COMPLETE_VERIFY_MRI - baseline.score.mri
-
-    result = harness.run_job(VERIFY_JOB_ID)
-
-    assert result["status"] == "succeeded"
-    assert result["verify"] == {"outcome": "still_vulnerable", "validation_state": "poc_failed", "status": "failed"}
-    job = harness.row(Job, VERIFY_JOB_ID)
-    assert job is not None and job.status == "succeeded", job.error if job else None
-    finding = harness.row(Finding, finding_id)
-    assert finding is not None
-    # spec 6.4 via verify._STATE_MAP
-    assert finding.validation_state == "poc_failed" and finding.status == "failed"
-    assert finding.validated_at is not None
-    verify = finding.schema_blob["ml"]["verify"]
-    assert verify["run_id"] == VERIFY_RUN_ID and verify["outcome"] == "still_vulnerable"
-    assert verify["delta"]["mri_before"] == baseline.score.mri
-    assert verify["delta"]["mri_after"] == COMPLETE_VERIFY_MRI
-    assert verify["delta"]["delta"] == expected_delta
-    # the MeasuredDelta sits on the named recommendation only (r.R2 names FeatureSqueezing)
-    r2 = _recommendation(finding, "r.R2")
-    assert r2["validation"] == "measured" and r2["measured"]["delta_mri"] == expected_delta
-    assert r2["measured"]["defense"]["id"] == DEFENSE["id"]
-    assert r2["measured"]["verify_run_id"] == VERIFY_RUN_ID
-    assert r2["measured"]["baseline_run_id"] == BASELINE_RUN_ID
-    others = [r for r in finding.schema_blob["ml"]["recommendations"] if r["id"] != "r.R2"]
-    assert others, "the fgsm finding carries more than the named recommendation"
-    assert all(r["validation"] == "not evaluated" and r["measured"] is None for r in others)
-    # remediation log row (spec 10.2)
-    with harness.sessions() as session:
-        attempts = session.query(RemediationAttempt).filter(RemediationAttempt.finding_id == finding_id).all()
-    assert len(attempts) == 1
-    assert attempts[0].action == f"ml.verify.{DEFENSE['id']}" and attempts[0].success is False
-    assert json.loads(attempts[0].detail["result"])["outcome"] == "still_vulnerable"
-    # verify.execute on the run chain
-    events = harness.events(VERIFY_RUN_ID)
-    verify_rows = [e for e in events if e["action"] == "verify.execute"]
-    assert len(verify_rows) == 1 and verify_rows[0]["success"] is True
-    detail = verify_rows[0]["detail"]
-    assert detail["outcome"] == "still_vulnerable" and detail["validation_state"] == "poc_failed"
-    assert detail["delta_mri"] == expected_delta and detail["measured_for"] == ["r.R2"]
-    assert detail["defense"]["id"] == DEFENSE["id"]
-    # A preprocessing defense wraps the target inside load_target: no defense_apply stage is expected or written.
-    run = harness.row(Run, VERIFY_RUN_ID)
-    assert run is not None and "defense_apply" not in run.stage_table["stages"]
-
-
-def test_training_defense_verify_records_defense_apply_after_load_target(harness: Harness) -> None:
-    """ATTACKS_HARDEN-15: with ``adversarial_training`` the child emits ``defense_apply`` right after ``load_target``;
-    the worker expects it there, records it succeeded in the 6.5 table, publishes its frame in order and stores the
-    derived model and training report under their spec 5.8 kinds."""
-    finding_id = harness.seed_baseline()
-    harness.add_verify_job(finding_id, recommendation_id=None, defense=TRAINING_DEFENSE)
-    record = verify_record(partial=False, defense=TRAINING_DEFENSE)
-    assert record.stages_done[:2] == ["load_target", "defense_apply"]
-    frames: list[dict[str, Any]] = []
-    harness.monkeypatch.setattr("redsim.workers.events.publish_job_event",
-                                lambda run_id, job_id, status, **extra: frames.append({"status": status, **extra}))
-    harness.install_sandbox(record)
-
-    result = harness.run_job(VERIFY_JOB_ID)
-
-    assert result["status"] == "succeeded" and result["stages_done"] == list(record.stages_done)
-    run = harness.row(Run, VERIFY_RUN_ID)
-    assert run is not None
-    table = run.stage_table
-    assert table["stages_done"] == list(record.stages_done) and table["completeness"] == "complete"
-    stages = table["stages"]
-    assert stages["defense_apply"]["status"] == "succeeded" and stages["defense_apply"]["job_id"] == VERIFY_JOB_ID
-    assert stages["defense_apply"]["started_at"] == stages["load_target"]["finished_at"], \
-        "defense_apply is the expected stage right after load_target, so it opened when load_target closed"
-    assert stages["sample"]["started_at"] == stages["defense_apply"]["finished_at"]
-    assert all(stages[name]["status"] == "succeeded" for name in record.stages_done)
-    assert not any(entry["status"] == "skipped" for entry in stages.values())
-    succeeded = [f["name"] for f in frames if f.get("type") == "stage" and f["status"] == "succeeded"]
-    assert succeeded == list(record.stages_done)
-    running = [f["name"] for f in frames if f.get("type") == "stage" and f["status"] == "running"]
-    assert running[:3] == ["load_target", "defense_apply", "sample"]
-    kinds = {a.kind for a in harness.artifacts(VERIFY_RUN_ID)}
-    assert {"ml.derived_model", "ml.training_report", "ml.run_record"} <= kinds
-    persisted = harness.persisted_record(VERIFY_RUN_ID)
-    assert persisted.config.defense is not None and persisted.config.defense.id == TRAINING_DEFENSE["id"]
-    assert "defense_apply" in persisted.stages_done
-    assert persisted.provenance is not None and persisted.provenance.defense is not None
-    assert persisted.provenance.defense["kind"] == "training"
-    # The verify projection still lands (the delta is measured against the baseline as for any defense).
-    finding = harness.row(Finding, finding_id)
-    assert finding is not None and finding.schema_blob["ml"]["verify"]["defense"]["id"] == TRAINING_DEFENSE["id"]
-    events = harness.events(VERIFY_RUN_ID)
-    assert [e["action"] for e in events if e["action"] == "verify.execute"] == ["verify.execute"]
-
-
-def test_verify_without_recommendation_id_attaches_to_the_recommendation_naming_the_defense(
-    harness: Harness,
-) -> None:
-    finding_id = harness.seed_baseline()
-    harness.add_verify_job(finding_id, recommendation_id=None)
-    harness.install_sandbox(verify_record(partial=False))
-
-    harness.run_job(VERIFY_JOB_ID)
-
-    finding = harness.row(Finding, finding_id)
-    assert finding is not None
-    assert _recommendation(finding, "r.R2")["validation"] == "measured"
-    others = [r for r in finding.schema_blob["ml"]["recommendations"] if r["id"] != "r.R2"]
-    assert others and all(r["validation"] == "not evaluated" for r in others)
-
-
-def test_verify_child_failure_leaves_the_finding_inconclusive_and_open(harness: Harness) -> None:
-    from redsim.ml.sandbox import partial_campaign_record
-
-    finding_id = harness.seed_baseline()
-    harness.add_verify_job(finding_id)
-    config = verify_record().config
-    failed = partial_campaign_record(
-        config, status="failed", error="SandboxKilled: ML sandbox child died with signal SIGKILL",
-        stages_done=["load_target", "sample"], baseline_run_id=BASELINE_RUN_ID, parent_run_id=None,
-    )
-    harness.install_sandbox(failed, stages=["load_target", "sample"])
-
-    with pytest.raises(RuntimeError, match="SandboxKilled"):
-        harness.run_job(VERIFY_JOB_ID)
-
-    finding = harness.row(Finding, finding_id)
-    assert finding is not None
-    assert finding.validation_state == "inconclusive" and finding.status == "open"
-    assert finding.schema_blob["ml"]["verify"]["outcome"] == "inconclusive"
-    assert _recommendation(finding, "r.R2")["validation"] == "not evaluated"
-    events = harness.events(VERIFY_RUN_ID)
-    verify_rows = [e for e in events if e["action"] == "verify.execute"]
-    assert len(verify_rows) == 1 and verify_rows[0]["success"] is False
-    assert verify_rows[0]["detail"]["outcome"] == "inconclusive"
-    assert events[-1]["action"] == "job.complete" and events[-1]["success"] is False
-
-
-def test_verify_timeout_leaves_the_finding_inconclusive_and_open(harness: Harness) -> None:
-    finding_id = harness.seed_baseline()
-    harness.add_verify_job(finding_id)
-    harness.install_sandbox(verify_record(), stages=["load_target"],
-                            raise_after=SandboxTimeout("ML sandbox timed out after 1200s"))
-
-    with pytest.raises(SandboxTimeout):
-        harness.run_job(VERIFY_JOB_ID)
-
-    finding = harness.row(Finding, finding_id)
-    assert finding is not None
-    assert finding.validation_state == "inconclusive" and finding.status == "open"
-    run = harness.row(Run, VERIFY_RUN_ID)
-    assert run is not None and run.stage_table["completeness"] == "partial"
-    assert run.stage_table["stages"]["sample"]["status"] == "timed_out"
 
 
 # --------------------------------------------------------------------------- explain.run / harden.recommend
@@ -798,7 +564,7 @@ def test_followon_writeback_merges_child_results_into_the_parent_finding(harness
     from redsim.ml.schema import MLFindingDetail
 
     detail = MLFindingDetail.model_validate(ml)
-    assert detail.review.state == "unreviewed" and detail.verify is None
+    assert detail.review.state == "unreviewed"
     assert detail.artifacts["harden.recommend:run_record"]
     # the follow-on run itself projects no new finding rows
     with harness.sessions() as session:

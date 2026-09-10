@@ -1,7 +1,7 @@
 """The worker's audit trail carries the spec 5.11 / 10.5 vocabulary on the run chain.
 
-One ``attack.run`` job and one ``verify.replay`` job run end to end on the
-sqlite harness of ``tests/ml/test_tasks.py`` with the JSONL chain writer, so
+One ``attack.run`` job runs end to end on the sqlite harness of
+``tests/ml/test_tasks.py`` with the JSONL chain writer, so
 every row has a real ``prev_hash`` / ``this_hash`` and ``verify_chain`` walks
 the campaign trail exactly as ``redsim audit verify --run`` does. Rows are
 checked for the emission order, the service actor, the redaction rules (ids,
@@ -26,12 +26,8 @@ from redsim.audit.redact import redact_audit_detail
 from tests.ml.test_tasks import (
     ATTACK_JOB_ID,
     ATTACK_RUN_ID,
-    DEFENSE,
-    VERIFY_JOB_ID,
-    VERIFY_RUN_ID,
     Harness,
     fixture_record,
-    verify_record,
 )
 
 pytestmark = pytest.mark.integration
@@ -43,16 +39,6 @@ ATTACK_ORDER = [
     "explain.execute",
     "campaign.score",
     "harden.execute",
-    "report.render",
-    "job.complete",
-]
-VERIFY_ORDER = [
-    "model.load",
-    "attack.execute.fgsm",
-    "attack.execute.pgd",
-    "explain.execute",
-    "campaign.score",
-    "verify.execute",
     "report.render",
     "job.complete",
 ]
@@ -133,32 +119,6 @@ def test_full_chain_carries_5_11_vocabulary(harness: Harness) -> None:
     mutated[3]["detail"] = {**mutated[3]["detail"], "n_observations": 99}
     broken = verify_chain(mutated)
     assert broken.verified is False and broken.broken_at == 4
-
-
-def test_verify_chain_carries_verify_execute_in_order(harness: Harness) -> None:
-    finding_id = harness.seed_baseline()
-    harness.add_verify_job(finding_id, recommendation_id="r.R2")
-    harness.install_sandbox(verify_record(partial=False))
-
-    harness.run_job(VERIFY_JOB_ID)
-
-    events = harness.events(VERIFY_RUN_ID)
-    assert [e["action"] for e in events] == VERIFY_ORDER
-    assert {e["actor"] for e in events} == {"worker:verify.replay"}
-    assert verify_chain(events).verified is True
-    verify = next(e for e in events if e["action"] == "verify.execute")
-    assert verify["success"] is True
-    detail = verify["detail"]
-    assert detail["finding_id"] == finding_id
-    assert detail["defense"] == DEFENSE
-    assert detail["outcome"] == "still_vulnerable" and detail["validation_state"] == "poc_failed"
-    assert detail["finding_status"] == "failed"
-    assert isinstance(detail["delta_mri"], int)
-    assert set(detail["delta_subscores"]) == {"S_acc", "S_asr", "S_eps", "S_conf", "S_expl"}
-    assert detail["measured_for"] == ["r.R2"]
-    assert detail["baseline_run_id"] == "run-baseline-0001"
-    complete = events[-1]
-    assert complete["detail"]["status"] == "succeeded" and complete["detail"]["n_findings"] == 1
 
 
 def test_refused_steps_are_success_false_rows_that_still_chain(harness: Harness) -> None:
