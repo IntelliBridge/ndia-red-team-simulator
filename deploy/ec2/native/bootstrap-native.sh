@@ -62,7 +62,11 @@ else
   rm -f "$HOST_DIR/env/pythia.json"
 fi
 BUCKET="$(aws secretsmanager get-secret-value --region $REGION --secret-id ndia-red-team/demo/api --query SecretString --output text | jq -r '.REDSIM_S3_BUCKET // empty')"
-BUCKET="${BUCKET:-${REDSIM_S3_BUCKET:-ndia-red-team-demo-140381642432-us-east-1-artifacts}}"
+if [ -z "$BUCKET" ] && [ -z "${REDSIM_S3_BUCKET:-}" ]; then
+  ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+  REDSIM_S3_BUCKET="ndia-red-team-demo-${ACCOUNT_ID}-${REGION}-artifacts"
+fi
+BUCKET="${BUCKET:-${REDSIM_S3_BUCKET}}"
 
 cat > $HOST_DIR/env/common.env <<EOF
 REDSIM_ENV=prod
@@ -103,10 +107,12 @@ KC_HTTP_RELATIVE_PATH=/auth
 KC_HOSTNAME=${ORIGIN}/auth
 KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true
 KC_PROXY_HEADERS=xforwarded
-KC_BOOTSTRAP_ADMIN_USERNAME=redsim-admin
 REDSIM_PUBLIC_ORIGIN=${ORIGIN}
 KC_CACHE=local
 EOF
+if [ -n "${REDSIM_KC_ADMIN_USERNAME:-}" ]; then
+  echo "KC_BOOTSTRAP_ADMIN_USERNAME=${REDSIM_KC_ADMIN_USERNAME}" >> $HOST_DIR/env/identity.env
+fi
 set -x
 install -m 0755 "$NATIVE_DIR/redsim-run" /usr/local/bin/redsim-run
 install -m 0755 "$NATIVE_DIR/redsim-deploy" /usr/local/bin/redsim-deploy
