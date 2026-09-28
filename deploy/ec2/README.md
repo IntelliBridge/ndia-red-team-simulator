@@ -8,9 +8,9 @@ IAM roles, the VPC) stays and is what the host uses.
 
 | Item | Value |
 |---|---|
-| Instance | `i-0cc7eb0ee0880ea3b`, `t3.xlarge`, Ubuntu 24.04, us-east-1a, subnet `ndia-red-team-demo-public-a` |
-| Elastic IP | `100.61.75.31` (`eipalloc-0de107af31e9bf3aa`), A record `redsim.ndia.agiledefense.xyz`, TTL 60 |
-| Security groups | `redsim-ec2` (443 and 80 public, 22 from the operator IP) plus the foundation's `api` and `identity` groups, which RDS and Redis admit |
+| Instance | `t3.xlarge`, Ubuntu 24.04, us-east-1a, subnet `ndia-red-team-demo-public-a` |
+| Elastic IP | an Elastic IP with the A record of the public hostname, TTL 60 |
+| Security groups | `redsim-ec2` (443 and 80 public) plus the foundation's `api` and `identity` groups, which RDS and Redis admit |
 | Instance role | `redsim-ec2`: SSM core, ECR read, `secretsmanager:GetSecretValue` on `ndia-red-team/demo/*`, the artifacts bucket |
 | Checkout | `/opt/redsim/src` (a clone of this repository, detached at the deployed commit) |
 | Python | `/opt/redsim/venv` (3.12, `.[api,worker,ml,garak]` with CPU torch, editable install of the checkout) |
@@ -53,11 +53,11 @@ lockfile changed, realm when it changed), restarts the units and requires
 From a laptop, without waiting for GitHub:
 
 ```bash
-export AWS_PROFILE=ndia-hackathon AWS_CA_BUNDLE=$HOME/.aws/Zscaler_Root_CA.pem AWS_REGION=us-east-1
+export AWS_PROFILE=<profile> AWS_REGION=us-east-1   # AWS_CA_BUNDLE=<root CA> behind a TLS proxy
+export EC2_INSTANCE_ID=<instance id>
 make deploy-host            # origin/main
 make deploy-host REF=my-branch
-aws ssm start-session --target i-0cc7eb0ee0880ea3b        # a shell on the host
-ssh -i ~/.ssh/redsim-ec2.pem ubuntu@100.61.75.31          # from the operator IP
+aws ssm start-session --target "$EC2_INSTANCE_ID"        # a shell on the host
 ```
 
 
@@ -95,8 +95,9 @@ changes, run Alembic once with the migration credentials
    `--metadata-options HttpTokens=required,HttpPutResponseHopLimit=2`, an
    80 GB gp3 root, and associate the Elastic IP.
 2. On the host: `git clone https://github.com/IntelliBridge/ndia-red-team-simulator.git /opt/redsim/src`,
-   write `/opt/redsim/deploy.env` with `REDSIM_PUBLIC_ORIGIN=https://redsim.ndia.agiledefense.xyz`
-   and `REDSIM_DB_HOST=<rds host>`, download and extract the asset bundle
+   write `/opt/redsim/deploy.env` with `REDSIM_PUBLIC_ORIGIN=https://<public hostname>`
+   and `REDSIM_DB_HOST=<rds host>` (optionally `REDSIM_S3_BUCKET` and
+   `REDSIM_KC_ADMIN_USERNAME` for a fresh Keycloak database), download and extract the asset bundle
    into `/opt/redsim/assets` (`assets/bundles/<sha>.tar.gz` in the artifacts
    bucket, verify the SHA-256), then
    `bash /opt/redsim/src/deploy/ec2/native/bootstrap-native.sh`.
@@ -108,4 +109,4 @@ changes, run Alembic once with the migration credentials
 - One host, no redundancy; units restart on failure and on reboot.
 - The web app runs the Next.js dev server for instant reloads; first page
   loads compile on demand and take a few seconds.
-- Port 22 admits only the operator IP recorded at launch; SSM needs no port.
+- Shell access is through SSM; port 22 admits only one allowlisted address.
