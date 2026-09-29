@@ -127,7 +127,7 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
       - name: Restore the CPU torch wheels
         id: torch-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.TORCH_WHEELS }}
           key: ml-tier-${{ runner.os }}-py3.12-torch-${{ steps.torch.outputs.version }}
@@ -655,7 +655,7 @@ jobs:
           fi
       - name: Upload the harness directory (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-python-harness
           path: ${{ runner.temp }}/redsim-e2e
