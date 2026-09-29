@@ -112,7 +112,7 @@ garak = [
     # OpenAI-compatible generator at Pythia. garak installs litellm, openai and
     # other provider clients; none is configured or imported by redsim
     # (tests/test_api_process_has_no_ml.py). CI lane: "garak offline" (docs/dev/ci.md).
-    "garak>=0.16,<0.17",
+    "garak>=0.16,<0.18",
 ]
 
 [project.scripts]
