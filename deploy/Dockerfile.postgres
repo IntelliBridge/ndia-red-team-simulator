@@ -1,4 +1,4 @@
-FROM postgres:16
+FROM postgres:18
 
 # pgaudit logs DDL + role/GRANT changes out-of-band, so any attempt to disable
 # the audit_events append-only controls (DROP TRIGGER, ALTER ROLE, GRANT) is
